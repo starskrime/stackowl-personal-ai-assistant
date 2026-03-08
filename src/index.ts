@@ -11,8 +11,15 @@ import { loadConfig } from './config/loader.js';
 import { ProviderRegistry } from './providers/registry.js';
 import { OwlRegistry } from './owls/registry.js';
 import { OwlEngine } from './engine/runtime.js';
-import type { ChatMessage } from './providers/base.js';
 import { TelegramChannel } from './channels/telegram.js';
+import { ToolRegistry } from './tools/registry.js';
+import { ShellTool } from './tools/shell.js';
+import { ReadFileTool, WriteFileTool } from './tools/files.js';
+import { WebFetchTool } from './tools/web.js';
+import { SessionStore } from './memory/store.js';
+import { ParliamentOrchestrator } from './parliament/orchestrator.js';
+import { PelletStore } from './pellets/store.js';
+import { OwlEvolutionEngine } from './owls/evolution.js';
 import { createInterface } from 'node:readline';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -55,7 +62,37 @@ async function bootstrap() {
     // Initialize engine
     const engine = new OwlEngine();
 
-    return { config, providerRegistry, owlRegistry, engine, workspacePath };
+    // Initialize tools
+    const toolRegistry = new ToolRegistry();
+    toolRegistry.registerAll([
+        ShellTool,
+        ReadFileTool,
+        WriteFileTool,
+        WebFetchTool,
+    ]);
+
+    // Initialize session store
+    const sessionStore = new SessionStore(workspacePath);
+    await sessionStore.init();
+
+    // Initialize pellet store
+    const pelletStore = new PelletStore(workspacePath);
+    await pelletStore.init();
+
+    // Evolution Engine
+    const evolutionEngine = new OwlEvolutionEngine(providerRegistry.getDefault(), config.defaultModel, sessionStore, owlRegistry);
+
+    return {
+        config,
+        providerRegistry,
+        owlRegistry,
+        engine,
+        toolRegistry,
+        sessionStore,
+        pelletStore,
+        evolutionEngine,
+        workspacePath
+    };
 }
 
 // ─── Chat Command ────────────────────────────────────────────────
@@ -63,7 +100,7 @@ async function bootstrap() {
 async function chatCommand(owlName?: string) {
     console.log(BANNER);
 
-    const { providerRegistry, owlRegistry, engine, config } = await bootstrap();
+    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, workspacePath } = await bootstrap();
 
     // Select owl
     const owl = owlName
@@ -102,7 +139,12 @@ async function chatCommand(owlName?: string) {
         chalk.dim(`\nType your message. Use ${chalk.bold('/quit')} to exit, ${chalk.bold('/owls')} to list owls.\n`)
     );
 
-    const sessionHistory: ChatMessage[] = [];
+    const session = await sessionStore.getRecentOrCreate(owl.persona.name);
+    const sessionHistory = session.messages;
+
+    if (sessionHistory.length > 0) {
+        console.log(chalk.dim(`  [Resumed session with ${sessionHistory.length / 2} past turns]\n`));
+    }
 
     const rl = createInterface({
         input: process.stdin,
@@ -157,6 +199,8 @@ async function chatCommand(owlName?: string) {
                 owl,
                 sessionHistory,
                 model: config.defaultModel,
+                toolRegistry,
+                cwd: workspacePath,
             });
 
             console.log(response.content);
@@ -164,6 +208,9 @@ async function chatCommand(owlName?: string) {
             // Update session history
             sessionHistory.push({ role: 'user', content: input });
             sessionHistory.push({ role: 'assistant', content: response.content });
+
+            // Save to disk
+            await sessionStore.saveSession(session);
 
             if (response.usage) {
                 console.log(
@@ -178,6 +225,59 @@ async function chatCommand(owlName?: string) {
 
         rl.prompt();
     });
+}
+
+// ─── Parliament Command ──────────────────────────────────────────
+
+async function parliamentCommand(topic?: string) {
+    console.log(BANNER);
+
+    if (!topic || topic.trim() === '') {
+        console.error(chalk.red('❌ Please provide a topic for the Parliament to debate.'));
+        console.log(chalk.dim('Example: stackowl parliament "Should we migrate from PostgreSQL to DynamoDB?"'));
+        process.exit(1);
+    }
+
+    const { providerRegistry, owlRegistry, config, pelletStore } = await bootstrap();
+    const provider = providerRegistry.getDefault();
+    const model = config.defaultModel;
+
+    // Pick 3-4 owls for the debate (default to Noctua, Archimedes, Scrooge, and Socrates if available)
+    const participants = [
+        owlRegistry.get('Noctua'),
+        owlRegistry.get('Archimedes'),
+        owlRegistry.get('Scrooge'),
+        owlRegistry.get('Socrates'),
+    ].filter(Boolean) as any[];
+
+    if (participants.length < 2) {
+        // Fallback to whatever owls we have
+        const allOwls = owlRegistry.listOwls();
+        if (allOwls.length < 2) {
+            console.error(chalk.red('❌ Parliament requires at least 2 owls. Create more OWL.md files.'));
+            process.exit(1);
+        }
+        participants.length = 0;
+        participants.push(...allOwls.slice(0, 4));
+    }
+
+    console.log(chalk.cyan(`\nSummoning Parliament...\n`));
+
+    const orchestrator = new ParliamentOrchestrator(provider, model, pelletStore);
+
+    try {
+        const session = await orchestrator.convene({
+            topic,
+            participants,
+            contextMessages: [],
+        });
+
+        console.log('\n\n' + chalk.bold.green('=== FINAL REPORT ===\n'));
+        console.log(orchestrator.formatSessionMarkdown(session));
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red(`\nParliament session failed: ${msg}`));
+    }
 }
 
 // ─── Owls Command ────────────────────────────────────────────────
@@ -223,12 +323,82 @@ async function statusCommand() {
     console.log('');
 }
 
+// ─── Pellets Command ───────────────────────────────────────────────
+
+async function pelletsCommand(opts: { search?: string; read?: string }) {
+    console.log(BANNER);
+
+    const { pelletStore } = await bootstrap();
+
+    if (opts.read) {
+        // Read a specific pellet
+        const pellet = await pelletStore.get(opts.read);
+        if (!pellet) {
+            console.error(chalk.red(`❌ Pellet "${opts.read}" not found.`));
+            process.exit(1);
+        }
+
+        console.log(chalk.bold.cyan(`📦 PELLET: ${pellet.title}`));
+        console.log(chalk.dim(`Generated: ${new Date(pellet.generatedAt).toLocaleString()}`));
+        console.log(chalk.dim(`Source: ${pellet.source}`));
+        console.log(chalk.dim(`Tags: ${pellet.tags.join(', ')}`));
+        console.log(chalk.dim(`Owls: ${pellet.owls.join(', ')}`));
+        console.log('\n' + pellet.content);
+        return;
+    }
+
+    // List or search pellets
+    let pellets = await pelletStore.listAll();
+
+    if (opts.search) {
+        pellets = await pelletStore.search(opts.search);
+        console.log(chalk.cyan(`🔍 Search results for "${opts.search}":\n`));
+    } else {
+        console.log(chalk.cyan(`📦 Knowledge Pellets:\n`));
+    }
+
+    if (pellets.length === 0) {
+        console.log(chalk.dim('No pellets found. Trigger a Parliament session to generate some.'));
+        return;
+    }
+
+    for (const p of pellets) {
+        console.log(`${chalk.bold(p.title)} ${chalk.dim(`(ID: ${p.id})`)}`);
+        console.log(`  ${chalk.dim('Tags: ')} ${p.tags.join(', ')}`);
+        console.log(`  ${chalk.dim('Owls: ')} ${p.owls.join(', ')}`);
+        console.log('');
+    }
+}
+
+// ─── Evolve Command ────────────────────────────────────────────────
+
+async function evolveCommand(owlName: string) {
+    console.log(BANNER);
+
+    const { evolutionEngine } = await bootstrap();
+
+    if (!owlName) {
+        console.error(chalk.red('❌ Please provide an owl name to evolve.'));
+        process.exit(1);
+    }
+
+    try {
+        const mutated = await evolutionEngine.evolve(owlName);
+        if (!mutated) {
+            console.log(chalk.yellow(`\n🦤 No evolution triggered for ${owlName}. They didn't learn anything new.`));
+        }
+    } catch (error) {
+        console.error(chalk.red('\nEvolution failed:'), error);
+        process.exit(1);
+    }
+}
+
 // ─── Telegram Command ────────────────────────────────────────────
 
 async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     console.log(BANNER);
 
-    const { providerRegistry, owlRegistry, config } = await bootstrap();
+    const { providerRegistry, owlRegistry, config, toolRegistry, sessionStore, workspacePath } = await bootstrap();
 
     // Get Telegram bot token from config or credentials file
     let botToken = '';
@@ -285,6 +455,9 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
         provider,
         owl,
         model: config.defaultModel,
+        toolRegistry,
+        sessionStore,
+        cwd: workspacePath,
     });
 
     // Graceful shutdown
@@ -331,10 +504,42 @@ program
     });
 
 program
+    .command('parliament [topic]')
+    .description('Convene a Parliament of owls to debate a complex topic')
+    .action((topic) => {
+        parliamentCommand(topic).catch((err) => {
+            console.error(chalk.red(`Fatal error: ${err.message}`));
+            process.exit(1);
+        });
+    });
+
+program
     .command('owls')
     .description('List available owl personas')
     .action(async () => {
         await owlsCommand();
+    });
+
+program
+    .command('pellets')
+    .description('Manage and search Knowledge Pellets')
+    .option('-s, --search <query>', 'Search pellets by keyword or tag')
+    .option('-r, --read <id>', 'Read the full content of a specific pellet')
+    .action((opts) => {
+        pelletsCommand(opts).catch((err) => {
+            console.error(chalk.red(`Fatal error: ${err.message}`));
+            process.exit(1);
+        });
+    });
+
+program
+    .command('evolve <owlName>')
+    .description('Trigger a DNA evolution pass for a specific owl')
+    .action((owlName) => {
+        evolveCommand(owlName).catch((err) => {
+            console.error(chalk.red(`Fatal error: ${err.message}`));
+            process.exit(1);
+        });
     });
 
 program

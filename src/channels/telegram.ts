@@ -6,10 +6,12 @@
  */
 
 import { Bot, type Context } from 'grammy';
-import type { ModelProvider, ChatMessage } from '../providers/base.js';
+import type { ModelProvider } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import { OwlEngine } from '../engine/runtime.js';
 import { ProactivePinger } from '../heartbeat/proactive.js';
+import type { ToolRegistry } from '../tools/registry.js';
+import type { SessionStore, Session } from '../memory/store.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -19,11 +21,13 @@ interface TelegramChannelConfig {
     provider: ModelProvider;
     owl: OwlInstance;
     model: string;
+    toolRegistry?: ToolRegistry;
+    sessionStore: SessionStore;
+    cwd: string;
 }
 
 interface UserSession {
-    history: ChatMessage[];
-    owlName: string;
+    session: Session;
     lastActivity: number;
 }
 
@@ -96,6 +100,10 @@ export class TelegramChannel {
             const userId = ctx.from?.id;
             if (userId) {
                 this.sessions.delete(userId);
+                const newSession = this.config.sessionStore.createSession(this.config.owl.persona.name);
+                newSession.id = `telegram_${userId}`;
+                await this.config.sessionStore.saveSession(newSession);
+                this.sessions.set(userId, { session: newSession, lastActivity: Date.now() });
             }
             await ctx.reply('🔄 Session reset. Starting fresh.');
         });
@@ -111,7 +119,7 @@ export class TelegramChannel {
             msg += `Provider: ${this.escapeMarkdown(this.config.provider.name)}\n`;
             msg += `Model: ${this.escapeMarkdown(this.config.model)}\n`;
             msg += `Owl: ${this.config.owl.persona.emoji} ${this.escapeMarkdown(this.config.owl.persona.name)}\n`;
-            msg += `Session messages: ${session?.history.length ?? 0}`;
+            msg += `Session messages: ${session?.session.messages.length ?? 0}`;
 
             await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
         });
@@ -127,7 +135,7 @@ export class TelegramChannel {
             if (!text || text.startsWith('/')) return;
 
             // Get or create session
-            const session = this.getOrCreateSession(userId);
+            const userSession = await this.getOrCreateSession(userId);
 
             // Track this chat for proactive pinging
             this.activeChatIds.add(ctx.chat.id);
@@ -139,19 +147,24 @@ export class TelegramChannel {
                 const response = await this.engine.run(text, {
                     provider: this.config.provider,
                     owl: this.config.owl,
-                    sessionHistory: session.history,
+                    sessionHistory: userSession.session.messages,
                     model: this.config.model,
+                    toolRegistry: this.config.toolRegistry,
+                    cwd: this.config.cwd,
                 });
 
                 // Update session history
-                session.history.push({ role: 'user', content: text });
-                session.history.push({ role: 'assistant', content: response.content });
-                session.lastActivity = Date.now();
+                userSession.session.messages.push({ role: 'user', content: text });
+                userSession.session.messages.push({ role: 'assistant', content: response.content });
+                userSession.lastActivity = Date.now();
 
                 // Trim session if too long
-                if (session.history.length > MAX_SESSION_HISTORY) {
-                    session.history = session.history.slice(-MAX_SESSION_HISTORY);
+                if (userSession.session.messages.length > MAX_SESSION_HISTORY) {
+                    userSession.session.messages = userSession.session.messages.slice(-MAX_SESSION_HISTORY);
                 }
+
+                // Save to disk
+                await this.config.sessionStore.saveSession(userSession.session);
 
                 // Format and send response
                 const header = `${response.owlEmoji} *${this.escapeMarkdown(response.owlName)}*\n\n`;
@@ -213,19 +226,28 @@ export class TelegramChannel {
     /**
      * Get or create a user's session.
      */
-    private getOrCreateSession(userId: number): UserSession {
-        let session = this.sessions.get(userId);
+    private async getOrCreateSession(userId: number): Promise<UserSession> {
+        let userSession = this.sessions.get(userId);
 
-        if (!session || Date.now() - session.lastActivity > SESSION_TIMEOUT_MS) {
-            session = {
-                history: [],
-                owlName: this.config.owl.persona.name,
+        if (!userSession || Date.now() - userSession.lastActivity > SESSION_TIMEOUT_MS) {
+            // Try loading from disk
+            const sessionId = `telegram_${userId}`;
+            let loadedSession = await this.config.sessionStore.loadSession(sessionId);
+
+            if (!loadedSession) {
+                loadedSession = this.config.sessionStore.createSession(this.config.owl.persona.name);
+                loadedSession.id = sessionId;
+                await this.config.sessionStore.saveSession(loadedSession);
+            }
+
+            userSession = {
+                session: loadedSession,
                 lastActivity: Date.now(),
             };
-            this.sessions.set(userId, session);
+            this.sessions.set(userId, userSession);
         }
 
-        return session;
+        return userSession;
     }
 
     /**
@@ -306,10 +328,10 @@ export class TelegramChannel {
                             },
                             getRecentHistory: () => {
                                 // Get the most recent session's history for context
-                                const sessions = Array.from(this.sessions.values());
-                                if (sessions.length === 0) return [];
-                                const latest = sessions.sort((a, b) => b.lastActivity - a.lastActivity)[0];
-                                return latest ? latest.history : [];
+                                const userSessions = Array.from(this.sessions.values());
+                                if (userSessions.length === 0) return [];
+                                const latest = userSessions.sort((a, b) => b.lastActivity - a.lastActivity)[0];
+                                return latest ? latest.session.messages : [];
                             },
                         },
                     );

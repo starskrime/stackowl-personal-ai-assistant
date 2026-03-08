@@ -5,8 +5,9 @@
  * with integrated Challenge Mode.
  */
 
-import type { ModelProvider, ChatMessage, ToolDefinition, ChatResponse } from '../providers/base.js';
+import type { ModelProvider, ChatMessage, ChatResponse } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
+import type { ToolRegistry } from '../tools/registry.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -14,7 +15,8 @@ export interface EngineContext {
     provider: ModelProvider;
     owl: OwlInstance;
     sessionHistory: ChatMessage[];
-    tools?: ToolDefinition[];
+    toolRegistry?: ToolRegistry;
+    cwd?: string;
     model?: string;
 }
 
@@ -44,7 +46,7 @@ export class OwlEngine {
         userMessage: string,
         context: EngineContext
     ): Promise<EngineResponse> {
-        const { provider, owl, sessionHistory, tools, model } = context;
+        const { provider, owl, sessionHistory, toolRegistry, cwd, model } = context;
         const toolsUsed: string[] = [];
 
         // 1. Build system prompt from owl persona + DNA
@@ -60,6 +62,7 @@ export class OwlEngine {
         // 3. ReAct loop — call model, handle tool calls iteratively
         let response: ChatResponse;
         let iterations = 0;
+        const tools = toolRegistry?.getDefinitions();
 
         if (tools && tools.length > 0) {
             // ReAct loop with tools
@@ -72,13 +75,20 @@ export class OwlEngine {
                 messages.push({
                     role: 'assistant',
                     content: response.content || '',
+                    toolCalls: response.toolCalls,
                 });
 
                 // Execute each tool and add results
                 for (const toolCall of response.toolCalls) {
                     toolsUsed.push(toolCall.name);
-                    // Tool execution would happen here — for now, placeholder
-                    const toolResult = `[Tool "${toolCall.name}" executed with args: ${JSON.stringify(toolCall.arguments)}]`;
+                    let toolResult: string;
+                    if (toolRegistry) {
+                        const toolCtx = { cwd: cwd || process.cwd() };
+                        toolResult = await toolRegistry.execute(toolCall.name, toolCall.arguments, toolCtx);
+                    } else {
+                        toolResult = `Error: ToolRegistry not provided, cannot execute ${toolCall.name}`;
+                    }
+
                     messages.push({
                         role: 'tool',
                         content: toolResult,
