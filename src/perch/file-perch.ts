@@ -5,7 +5,7 @@
  * Used for detecting structural changes or edits.
  */
 
-import { watch } from 'node:fs';
+import { watch, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PerchPoint, PerchEvent } from './manager.js';
 
@@ -25,15 +25,23 @@ export class FilePerch implements PerchPoint {
         this.emitFn = emit;
 
         try {
-            // Watch src directory specifically to avoid spamming on node_modules or builds
-            const targetDir = join(this.rootPath, 'src');
+            // Prefer watching src/ to avoid noise from node_modules/builds.
+            // Fall back to rootPath itself if src/ doesn't exist yet.
+            const srcDir = join(this.rootPath, 'src');
+            const targetDir = existsSync(srcDir) ? srcDir : this.rootPath;
+
+            if (targetDir === this.rootPath) {
+                console.log(`[FilePerch] workspace/src not found — watching workspace root instead.`);
+            }
+
             this.watcher = watch(targetDir, { recursive: true }, (eventType, filename) => {
                 if (filename && this.shouldProcess(filename)) {
                     this.handleFileChange(eventType, filename);
                 }
             });
         } catch (error) {
-            console.error('[FilePerch] Failed to start watcher:', error);
+            // Non-fatal — perch watching is a best-effort passive feature
+            console.warn(`[FilePerch] Could not start watcher: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -48,9 +56,17 @@ export class FilePerch implements PerchPoint {
     }
 
     private shouldProcess(filename: string): boolean {
-        // Ignore dotfiles, temp files, and non-source files
+        // Ignore dotfiles, temp files, and binary files
         if (filename.startsWith('.') || filename.endsWith('~') || filename.endsWith('.tmp')) return false;
         if (!filename.endsWith('.ts') && !filename.endsWith('.json') && !filename.endsWith('.md')) return false;
+
+        // Ignore session files (Telegram and CLI sessions generate constant writes)
+        if (filename.includes('sessions/')) return false;
+        if (filename.includes('sessions\\')) return false;
+
+        // Ignore pellet store and ledger writes — internal system files, not user-authored changes
+        if (filename.includes('pellets/')) return false;
+        if (filename.includes('synthesized/_manifest')) return false;
 
         return true;
     }

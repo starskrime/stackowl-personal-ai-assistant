@@ -13,6 +13,7 @@ import { ProactivePinger } from '../heartbeat/proactive.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { SessionStore, Session } from '../memory/store.js';
 import type { StackOwlConfig } from '../config/loader.js';
+import { EvolutionHandler, type ToolProposal } from '../evolution/handler.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -25,12 +26,21 @@ export interface TelegramChannelConfig {
     toolRegistry?: ToolRegistry;
     sessionStore: SessionStore;
     cwd?: string;
+    evolution?: EvolutionHandler;
+}
+
+interface PendingApproval {
+    proposal: ToolProposal;
+    originalMessage: string;
 }
 
 
 interface UserSession {
     session: Session;
     lastActivity: number;
+    pendingApproval?: PendingApproval;
+    /** Resolver waiting for a y/n answer to the npm install question */
+    pendingInstallResolve?: (approved: boolean) => void;
 }
 
 // ─── Session hygiene constants ───────────────────────────────────
@@ -142,10 +152,94 @@ export class TelegramChannel {
             // Track this chat for proactive pinging
             this.activeChatIds.add(ctx.chat.id);
 
+            // ─── Pending npm install approval ────────────────────────
+            if (userSession.pendingInstallResolve) {
+                const resolve = userSession.pendingInstallResolve;
+                userSession.pendingInstallResolve = undefined;
+                const answer = text.trim().toLowerCase();
+                resolve(answer === 'yes' || answer === 'y');
+                return;
+            }
+
+            // ─── Pending tool approval flow ───────────────────────────
+            if (userSession.pendingApproval) {
+                const { proposal, originalMessage } = userSession.pendingApproval;
+                const answer = text.trim().toLowerCase();
+
+                if (answer === 'yes' || answer === 'y') {
+                    userSession.pendingApproval = undefined;
+                    await ctx.reply(`🔧 Building *${this.escapeMarkdown(proposal.toolName)}*\\.\\.\\.`, { parse_mode: 'MarkdownV2' });
+                    await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+
+                    try {
+                        if (!this.config.evolution || !this.config.toolRegistry) {
+                            await ctx.reply('❌ Self-improvement system not configured on this bot instance.');
+                            return;
+                        }
+
+                        const engineContext = {
+                            provider: this.config.provider,
+                            owl: this.config.owl,
+                            sessionHistory: userSession.session.messages,
+                            config: this.config.config,
+                            toolRegistry: this.config.toolRegistry,
+                            cwd: this.config.cwd,
+                        };
+
+                        const askInstall = async (deps: string[]) => {
+                            await ctx.reply(
+                                `📦 Install npm deps: \`${this.escapeMarkdown(deps.join(' '))}\`\\?\n\nReply *yes* to install or *no* to skip\\.`,
+                                { parse_mode: 'MarkdownV2' }
+                            );
+                            return new Promise<boolean>((resolve) => {
+                                userSession.pendingInstallResolve = resolve;
+                            });
+                        };
+
+                        const onProgress = async (msg: string) => {
+                            await ctx.reply(this.escapeMarkdown(msg), { parse_mode: 'MarkdownV2' });
+                        };
+
+                        const { response: retryResponse, depsToInstall, depsInstalled } = await this.config.evolution.buildAndRetry(
+                            proposal, originalMessage, engineContext, this.engine, askInstall, onProgress
+                        );
+
+                        let confirmMsg = `✅ Tool *${this.escapeMarkdown(proposal.toolName)}* is live\\!\n`;
+                        if (depsInstalled) {
+                            confirmMsg += `✅ npm deps installed\\.\n`;
+                        } else if (depsToInstall.length > 0) {
+                            confirmMsg += `⚠️ Deps not installed — run manually: \`npm install ${this.escapeMarkdown(depsToInstall.join(' '))}\`\n`;
+                        }
+                        confirmMsg += `\n🔄 Retrying your request\\.\\.\\.`;
+                        await ctx.reply(confirmMsg, { parse_mode: 'MarkdownV2' });
+                        await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+
+                        userSession.session.messages.push({ role: 'user', content: originalMessage });
+                        userSession.session.messages.push({ role: 'assistant', content: retryResponse.content });
+                        userSession.lastActivity = Date.now();
+                        await this.config.sessionStore.saveSession(userSession.session);
+
+                        await this.sendResponse(ctx, retryResponse.owlEmoji, retryResponse.owlName, retryResponse.content);
+                    } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        await ctx.reply(`❌ Synthesis failed: ${msg}`);
+                    }
+                } else if (answer === 'no' || answer === 'n') {
+                    userSession.pendingApproval = undefined;
+                    await ctx.reply('↩ Skipped. The owl will work with what it has.');
+                } else {
+                    await ctx.reply('Reply *yes* to build the tool or *no* to skip\\.', { parse_mode: 'MarkdownV2' });
+                }
+                return;
+            }
+            // ─────────────────────────────────────────────────────────
+
             // Show typing indicator
             await ctx.api.sendChatAction(ctx.chat.id, 'typing');
 
             try {
+                console.log(`[Telegram] ← user ${userId}: "${text.slice(0, 80)}"`);
+
                 const response = await this.engine.run(text, {
                     provider: this.config.provider,
                     owl: this.config.owl,
@@ -154,6 +248,57 @@ export class TelegramChannel {
                     toolRegistry: this.config.toolRegistry,
                     cwd: this.config.cwd,
                 });
+
+                console.log(`[Telegram] engine done | gap=${!!response.pendingCapabilityGap} | evolution=${!!this.config.evolution} | tools=${response.toolsUsed.join(',') || 'none'}`);
+
+                // ─── Self-Improvement: Capability Gap Detected ────────
+                if (response.pendingCapabilityGap && this.config.evolution) {
+                    console.log(`[Telegram] → starting proposal flow for gap: "${response.pendingCapabilityGap.description.slice(0, 60)}"`);
+                    const gap = response.pendingCapabilityGap;
+
+                    await this.sendResponse(ctx, response.owlEmoji, response.owlName, response.content);
+                    await ctx.reply('🧠 Reasoning about what tool would help\\.\\.\\.', { parse_mode: 'MarkdownV2' });
+                    await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+
+                    const engineContext = {
+                        provider: this.config.provider,
+                        owl: this.config.owl,
+                        sessionHistory: userSession.session.messages,
+                        config: this.config.config,
+                        toolRegistry: this.config.toolRegistry,
+                        cwd: this.config.cwd,
+                    };
+                    const proposal = await this.config.evolution.designSpec(gap, engineContext);
+
+                    // Format and send the proposal
+                    const params = proposal.parameters.length > 0
+                        ? proposal.parameters.map(p => `  • ${p.name} \\(${p.type}\\) — ${this.escapeMarkdown(p.description)}`).join('\n')
+                        : '  _none_';
+                    const deps = proposal.dependencies.length > 0
+                        ? this.escapeMarkdown(proposal.dependencies.join(', '))
+                        : '_none_';
+
+                    const proposalMsg =
+                        `⚡ *Capability Gap — Tool Proposal*\n` +
+                        `─────────────────────────────\n` +
+                        `*Tool name:* \`${this.escapeMarkdown(proposal.toolName)}\`\n` +
+                        `*What it does:* ${this.escapeMarkdown(proposal.description)}\n` +
+                        `*Parameters:*\n${params}\n` +
+                        `*npm deps:* ${deps}\n` +
+                        `*Safety:* ${this.escapeMarkdown(proposal.safetyNote)}\n` +
+                        `*Why:* ${this.escapeMarkdown(proposal.rationale)}\n` +
+                        `*File:* \`src/tools/synthesized/${this.escapeMarkdown(proposal.toolName)}\\.ts\`\n` +
+                        `─────────────────────────────\n` +
+                        `Reply *yes* to build this tool or *no* to skip\\.`;
+
+                    await ctx.reply(proposalMsg, { parse_mode: 'MarkdownV2' });
+
+                    // Store pending approval — next message will be the answer
+                    userSession.pendingApproval = { proposal, originalMessage: text };
+                    userSession.lastActivity = Date.now();
+                    return;
+                }
+                // ─────────────────────────────────────────────────────
 
                 // Update session history
                 userSession.session.messages.push({ role: 'user', content: text });
@@ -168,23 +313,7 @@ export class TelegramChannel {
                 // Save to disk
                 await this.config.sessionStore.saveSession(userSession.session);
 
-                // Format and send response
-                const header = `${response.owlEmoji} *${this.escapeMarkdown(response.owlName)}*\n\n`;
-                const fullMessage = header + this.escapeMarkdown(response.content);
-
-                // Telegram has a 4096 char limit — split if needed
-                if (fullMessage.length <= 4096) {
-                    await ctx.reply(fullMessage, { parse_mode: 'MarkdownV2' });
-                } else {
-                    // Send in chunks
-                    const chunks = this.splitMessage(response.content, 3800);
-                    for (let i = 0; i < chunks.length; i++) {
-                        const prefix = i === 0 ? header : '';
-                        await ctx.reply(prefix + this.escapeMarkdown(chunks[i]), {
-                            parse_mode: 'MarkdownV2',
-                        });
-                    }
-                }
+                await this.sendResponse(ctx, response.owlEmoji, response.owlName, response.content);
 
                 // Show token usage as a subtle footer
                 if (response.usage) {
@@ -250,6 +379,24 @@ export class TelegramChannel {
         }
 
         return userSession;
+    }
+
+    /**
+     * Send an owl response, chunking if needed to stay within Telegram's 4096 char limit.
+     */
+    private async sendResponse(ctx: Context, emoji: string, name: string, content: string): Promise<void> {
+        const header = `${emoji} *${this.escapeMarkdown(name)}*\n\n`;
+        const fullMessage = header + this.escapeMarkdown(content);
+
+        if (fullMessage.length <= 4096) {
+            await ctx.reply(fullMessage, { parse_mode: 'MarkdownV2' });
+        } else {
+            const chunks = this.splitMessage(content, 3800);
+            for (let i = 0; i < chunks.length; i++) {
+                const prefix = i === 0 ? header : '';
+                await ctx.reply(prefix + this.escapeMarkdown(chunks[i]), { parse_mode: 'MarkdownV2' });
+            }
+        }
     }
 
     /**

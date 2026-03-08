@@ -10,6 +10,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/stackowl.config.json"
 CREDENTIALS_FILE="$SCRIPT_DIR/.stackowl.credentials.json"
 
+# Runtime state — always initialize to avoid "unbound variable" with set -u
+SMART_ROUTING_JSON=""
+TELEGRAM_TOKEN=""
+PROVIDER=""
+BASE_URL=""
+API_KEY=""
+MODEL=""
+
 # ─── Colors ─────────────────────────────────────────────────────
 
 RED='\033[0;31m'

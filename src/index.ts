@@ -20,6 +20,10 @@ import { SessionStore } from './memory/store.js';
 import { ParliamentOrchestrator } from './parliament/orchestrator.js';
 import { PelletStore } from './pellets/store.js';
 import { OwlEvolutionEngine } from './owls/evolution.js';
+import { ToolSynthesizer } from './evolution/synthesizer.js';
+import { CapabilityLedger } from './evolution/ledger.js';
+import { DynamicToolLoader } from './evolution/loader.js';
+import { EvolutionHandler } from './evolution/handler.js';
 import { InstinctRegistry } from './instincts/registry.js';
 import { InstinctEngine } from './instincts/engine.js';
 import { PerchManager } from './perch/manager.js';
@@ -84,8 +88,20 @@ async function bootstrap() {
     const pelletStore = new PelletStore(workspacePath, providerRegistry.getDefault());
     await pelletStore.init();
 
-    // Evolution Engine
+    // Evolution Engine (DNA)
     const evolutionEngine = new OwlEvolutionEngine(providerRegistry.getDefault(), config, sessionStore, owlRegistry);
+
+    // Self-improvement system
+    const synthesizer = new ToolSynthesizer();
+    const ledger = new CapabilityLedger();
+    const loader = new DynamicToolLoader(ledger);
+    const evolution = new EvolutionHandler(synthesizer, ledger, loader);
+
+    // Load any previously synthesized tools into the registry
+    const synthesizedCount = await loader.loadAll(toolRegistry);
+    if (synthesizedCount > 0) {
+        console.log(chalk.dim(`  [Loaded ${synthesizedCount} synthesized tool(s) from previous sessions]`));
+    }
 
     // Instincts
     const instinctRegistry = new InstinctRegistry(workspacePath);
@@ -108,7 +124,11 @@ async function bootstrap() {
         instinctRegistry,
         instinctEngine,
         perchManager,
-        workspacePath
+        workspacePath,
+        evolution,
+        synthesizer,
+        ledger,
+        loader,
     };
 }
 
@@ -117,7 +137,7 @@ async function bootstrap() {
 async function chatCommand(owlName?: string) {
     console.log(BANNER);
 
-    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, instinctRegistry, instinctEngine, perchManager, workspacePath } = await bootstrap();
+    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, instinctRegistry, instinctEngine, perchManager, workspacePath, evolution } = await bootstrap();
 
     // Select owl
     const owl = owlName
@@ -153,7 +173,7 @@ async function chatCommand(owlName?: string) {
         chalk.dim(` (${owl.persona.type}, challenge: ${owl.dna.evolvedTraits.challengeLevel})`)
     );
     console.log(
-        chalk.dim(`\nType your message. Use ${chalk.bold('/quit')} to exit, ${chalk.bold('/owls')} to list owls.\n`)
+        chalk.dim(`\nType your message. Commands: ${chalk.bold('/quit')} · ${chalk.bold('/owls')} · ${chalk.bold('/status')} · ${chalk.bold('/capabilities')}\n`)
     );
 
     const session = await sessionStore.getRecentOrCreate(owl.persona.name);
@@ -211,6 +231,27 @@ async function chatCommand(owlName?: string) {
             return;
         }
 
+        if (input === '/capabilities') {
+            const records = await evolution.listAll();
+            if (records.length === 0) {
+                console.log(chalk.dim('\n  No synthesized tools yet. The owl will build them when needed.\n'));
+            } else {
+                console.log(chalk.bold('\n🔧 Synthesized Tools:\n'));
+                for (const r of records) {
+                    const icon = r.status === 'active' ? chalk.green('✓') : r.status === 'failed' ? chalk.red('✗') : chalk.dim('⊘');
+                    console.log(`  ${icon} ${chalk.bold(r.toolName)}`);
+                    console.log(`     ${chalk.dim(r.description)}`);
+                    console.log(`     ${chalk.dim(`By: ${r.createdBy} | Used: ${r.timesUsed}x | Status: ${r.status}`)}`);
+                    if (r.dependencies.length > 0) {
+                        console.log(`     ${chalk.dim(`Deps: ${r.dependencies.join(', ')}`)}`);
+                    }
+                    console.log('');
+                }
+            }
+            rl.prompt();
+            return;
+        }
+
         // Send to engine
         try {
             // 1. Check Instincts
@@ -224,7 +265,6 @@ async function chatCommand(owlName?: string) {
             let finalProcessingInput = input;
             if (triggeredInstinct) {
                 console.log(chalk.yellow(`\n⚡ Instinct Triggered: ${triggeredInstinct.name.toUpperCase()}`));
-                // Inject instinct instructions into the user constraint invisibly
                 finalProcessingInput = `User Input: ${input}\n\n[SYSTEM OVERRIDE - INSTINCT TRIGGERED]\n${triggeredInstinct.actionPrompt}`;
             }
 
@@ -238,6 +278,98 @@ async function chatCommand(owlName?: string) {
                 toolRegistry,
                 cwd: workspacePath,
             });
+
+            // ─── Self-Improvement: Capability Gap Detected ──────────────
+            if (response.pendingCapabilityGap) {
+                console.log(response.content);
+                console.log('');
+
+                console.log(chalk.dim(`\n🧠 Reasoning about what tool would help...`));
+                const proposal = await evolution.designSpec(response.pendingCapabilityGap, {
+                    provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath,
+                });
+
+                console.log(chalk.bold.cyan(`\n⚡ Capability Gap — Tool Proposal`));
+                console.log(chalk.dim('─'.repeat(52)));
+                console.log(`  ${chalk.bold('Tool name:')}    ${proposal.toolName}`);
+                console.log(`  ${chalk.bold('What it does:')} ${proposal.description}`);
+                if (proposal.parameters.length > 0) {
+                    console.log(`  ${chalk.bold('Parameters:')}`);
+                    for (const p of proposal.parameters) {
+                        console.log(`    • ${p.name} (${p.type})${p.required ? '' : ' (optional)'} — ${p.description}`);
+                    }
+                }
+                if (proposal.dependencies.length > 0) {
+                    console.log(`  ${chalk.bold('npm deps:')}     ${proposal.dependencies.join(', ')}`);
+                }
+                console.log(`  ${chalk.bold('Safety:')}       ${proposal.safetyNote}`);
+                console.log(`  ${chalk.bold('Why:')}          ${proposal.rationale}`);
+                console.log(`  ${chalk.bold('File:')}         src/tools/synthesized/${proposal.toolName}.ts`);
+                console.log(chalk.dim('─'.repeat(52)));
+
+                const answer = await new Promise<string>((resolve) => {
+                    rl.question(chalk.cyan('\nBuild this tool? [y/n]: '), resolve);
+                });
+
+                if (answer.trim().toLowerCase().startsWith('y')) {
+                    console.log(chalk.dim(`\n🔧 Generating implementation...`));
+                    try {
+                        const engineContext = { provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath };
+
+                        const askInstall = async (deps: string[]) => {
+                            const installAnswer = await new Promise<string>((resolve) => {
+                                rl.question(
+                                    chalk.cyan(`\n📦 Install npm deps (${deps.join(', ')})? [y/n]: `),
+                                    resolve
+                                );
+                            });
+                            return installAnswer.trim().toLowerCase().startsWith('y');
+                        };
+
+                        const onProgress = async (msg: string) => {
+                            console.log(chalk.dim(`  ${msg}`));
+                        };
+
+                        const { response: retryResponse, depsToInstall, depsInstalled } = await evolution.buildAndRetry(
+                            proposal, finalProcessingInput, engineContext, engine, askInstall, onProgress
+                        );
+
+                        console.log(chalk.green(`\n✓ Tool "${proposal.toolName}" built and loaded.`));
+                        if (depsInstalled) {
+                            console.log(chalk.green(`  ✓ npm deps installed.`));
+                        } else if (depsToInstall.length > 0) {
+                            console.log(chalk.yellow(`  ⚠ Deps not installed — run manually: npm install ${depsToInstall.join(' ')}`));
+                        }
+                        console.log(chalk.dim(`\n🔄 Retrying...\n`));
+                        process.stdout.write(chalk.yellow(`${owl.persona.emoji} ${owl.persona.name}: `));
+                        console.log(retryResponse.content);
+
+                        sessionHistory.push({ role: 'user', content: input });
+                        sessionHistory.push({ role: 'assistant', content: retryResponse.content });
+                        await sessionStore.saveSession(session);
+
+                        if (retryResponse.usage) {
+                            console.log(chalk.dim(`  [tokens: ${retryResponse.usage.promptTokens}→${retryResponse.usage.completionTokens}]`));
+                        }
+                    } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        console.error(chalk.red(`\n❌ Synthesis failed: ${msg}\n`));
+                        sessionHistory.push({ role: 'user', content: input });
+                        sessionHistory.push({ role: 'assistant', content: response.content });
+                        await sessionStore.saveSession(session);
+                    }
+                } else {
+                    console.log(chalk.dim('\n↩ Skipped.\n'));
+                    sessionHistory.push({ role: 'user', content: input });
+                    sessionHistory.push({ role: 'assistant', content: response.content });
+                    await sessionStore.saveSession(session);
+                }
+
+                console.log('');
+                rl.prompt();
+                return;
+            }
+            // ─────────────────────────────────────────────────────────────
 
             console.log(response.content);
 
@@ -433,7 +565,7 @@ async function evolveCommand(owlName: string) {
 async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     console.log(BANNER);
 
-    const { providerRegistry, owlRegistry, config, toolRegistry, sessionStore, workspacePath } = await bootstrap();
+    const { providerRegistry, owlRegistry, config, toolRegistry, sessionStore, workspacePath, evolution } = await bootstrap();
 
     // Get Telegram bot token from config or credentials file
     let botToken = '';
@@ -494,6 +626,7 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
         toolRegistry,
         sessionStore,
         cwd: workspacePath,
+        evolution,
     });
 
     // We must hackilly inject telegram into perchManager for now, or just recreate it

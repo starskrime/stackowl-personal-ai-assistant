@@ -10,6 +10,7 @@ import type { OwlInstance } from '../owls/persona.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { StackOwlConfig } from '../config/loader.js';
 import { ModelRouter } from './router.js';
+import { GapDetector } from '../evolution/detector.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -20,6 +21,15 @@ export interface EngineContext {
     config: StackOwlConfig;
     toolRegistry?: ToolRegistry;
     cwd?: string;
+}
+
+export interface PendingCapabilityGap {
+    /** Name of the tool the LLM tried to call that doesn't exist, if any */
+    attemptedToolName?: string;
+    /** The user's original request */
+    userRequest: string;
+    /** LLM description of why it couldn't help */
+    description: string;
 }
 
 export interface EngineResponse {
@@ -33,6 +43,8 @@ export interface EngineResponse {
         promptTokens: number;
         completionTokens: number;
     };
+    /** Set when the engine detected a capability gap that needs user approval to resolve */
+    pendingCapabilityGap?: PendingCapabilityGap;
 }
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -51,21 +63,25 @@ export class OwlEngine {
     ): Promise<EngineResponse> {
         const { provider, owl, sessionHistory, config, toolRegistry, cwd } = context;
         const toolsUsed: string[] = [];
+        const gapDetector = new GapDetector();
+
+        // Track if a missing-tool gap was encountered during the ReAct loop
+        let missingToolName: string | undefined;
 
         // 1. Determine optimal model
         const optimalModel = await ModelRouter.route(userMessage, provider, config);
 
-        // 1. Build system prompt from owl persona + DNA
+        // 2. Build system prompt from owl persona + DNA
         const systemPrompt = this.buildSystemPrompt(owl);
 
-        // 2. Assemble message list
+        // 3. Assemble message list
         const messages: ChatMessage[] = [
             { role: 'system', content: systemPrompt },
             ...sessionHistory,
             { role: 'user', content: userMessage },
         ];
 
-        // 3. ReAct loop — call model, handle tool calls iteratively
+        // 4. ReAct loop — call model, handle tool calls iteratively
         let response: ChatResponse;
         let iterations = 0;
         const tools = toolRegistry?.getDefinitions();
@@ -86,11 +102,16 @@ export class OwlEngine {
 
                 // Execute each tool and add results
                 for (const toolCall of response.toolCalls) {
-                    toolsUsed.push(toolCall.name);
                     let toolResult: string;
-                    if (toolRegistry) {
+
+                    if (toolRegistry && !toolRegistry.has(toolCall.name)) {
+                        // Tool doesn't exist — signal gap and let the LLM know gracefully
+                        missingToolName = toolCall.name;
+                        toolResult = `Tool "${toolCall.name}" is not available in the current toolkit.`;
+                    } else if (toolRegistry) {
                         const toolCtx = { cwd: cwd || process.cwd() };
                         toolResult = await toolRegistry.execute(toolCall.name, toolCall.arguments, toolCtx);
+                        toolsUsed.push(toolCall.name);
                     } else {
                         toolResult = `Error: ToolRegistry not provided, cannot execute ${toolCall.name}`;
                     }
@@ -111,8 +132,47 @@ export class OwlEngine {
             response = await provider.chat(messages, optimalModel);
         }
 
-        // 4. Check if challenge mode should engage
+        // 5. Check if challenge mode should engage
         const challenged = this.shouldChallenge(userMessage, owl);
+
+        // 6. Gap detection — tool call attempted but tool doesn't exist
+        if (missingToolName) {
+            console.log(`[Evolution] Tool-not-found gap detected: "${missingToolName}"`);
+
+            return {
+                content: response.content,
+                owlName: owl.persona.name,
+                owlEmoji: owl.persona.emoji,
+                challenged,
+                toolsUsed,
+                modelUsed: optimalModel,
+                usage: response.usage
+                    ? { promptTokens: response.usage.promptTokens, completionTokens: response.usage.completionTokens }
+                    : undefined,
+                pendingCapabilityGap: gapDetector.fromMissingTool(missingToolName, userMessage),
+            };
+        }
+
+        // 7. Gap detection — LLM expressed inability in natural language
+        console.log(`[Evolution] checking response for gap:\n  "${response.content.slice(0, 200).replace(/\n/g, ' ')}"`);
+        const nlGap = gapDetector.detectFromResponse(response.content, userMessage);
+        if (nlGap) {
+            console.log(`[Evolution] NL gap detected: "${nlGap.description.slice(0, 80)}..."`);
+            // Strip the marker from content before displaying to the user
+            const cleanContent = response.content.replace(/\[CAPABILITY_GAP:[^\]]*\]/gi, '').trim();
+            return {
+                content: cleanContent,
+                owlName: owl.persona.name,
+                owlEmoji: owl.persona.emoji,
+                challenged,
+                toolsUsed,
+                modelUsed: optimalModel,
+                usage: response.usage
+                    ? { promptTokens: response.usage.promptTokens, completionTokens: response.usage.completionTokens }
+                    : undefined,
+                pendingCapabilityGap: nlGap,
+            };
+        }
 
         return {
             content: response.content,
@@ -168,6 +228,15 @@ export class OwlEngine {
                 }
             }
         }
+
+        // Self-improvement marker
+        prompt += '\n## IMPORTANT: Capability Gaps\n';
+        prompt += 'You have a set of tools available. If a user asks you to do something that requires a tool or capability you do NOT have,\n';
+        prompt += 'you MUST include this exact marker somewhere in your response:\n';
+        prompt += '[CAPABILITY_GAP: one sentence describing what you tried to do and why you cannot]\n';
+        prompt += 'Example: [CAPABILITY_GAP: tried to take a screenshot but no screen capture tool is available]\n';
+        prompt += 'Example: [CAPABILITY_GAP: tried to send an email but no email/SMTP tool is available]\n';
+        prompt += 'This marker is invisible to the user — it is stripped before display. Do NOT add it if you simply choose not to do something for ethical reasons.\n';
 
         // Core directive: challenge mode
         prompt += '\n## IMPORTANT: Challenge Mode\n';

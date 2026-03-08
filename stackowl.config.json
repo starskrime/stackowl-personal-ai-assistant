@@ -1,0 +1,29 @@
+{
+  "providers": {
+    "ollama": { "baseUrl": "http://172.30.60.14:11434", "defaultModel": "gpt-oss:120b" }
+  },
+  "defaultProvider": "ollama",
+  "defaultModel": "gpt-oss:120b",
+  "workspace": "./workspace",
+  "gateway": {
+    "port": 3077,
+    "host": "127.0.0.1"
+  },
+  "parliament": {
+    "maxRounds": 3,
+    "maxOwls": 6
+  },
+  "heartbeat": {
+    "enabled": false,
+    "intervalMinutes": 30
+  },
+  "owlDna": {
+    "enabled": true,
+    "evolutionBatchSize": 5,
+    "decayRatePerWeek": 0.01
+  },
+  "telegram": {
+    "botToken": "8328644901:AAH7YAQWI-ACfUzcvnK8kqzbc6fNRIAQL9A",
+    "enabled": true
+  }
+}
