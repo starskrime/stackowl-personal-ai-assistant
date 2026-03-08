@@ -1,0 +1,55 @@
+{
+  "name": "stackowl-personal-ai-assistant",
+  "version": "0.1.0",
+  "description": "🦉 StackOwl — A vendor-agnostic personal AI assistant with multi-owl personalities, Parliament brainstorming, Instincts, Pellets, and Owl DNA evolution.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "stackowl": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/",
+    "format": "prettier --write src/",
+    "stackowl": "tsx src/index.ts"
+  },
+  "keywords": [
+    "ai-assistant",
+    "ollama",
+    "local-ai",
+    "multi-agent",
+    "personal-assistant",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "chokidar": "^4.0.3",
+    "commander": "^13.1.0",
+    "cosine-similarity": "^1.0.0",
+    "grammy": "^1.41.1",
+    "gray-matter": "^4.0.3",
+    "ollama": "^0.5.14",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.1",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.14",
+    "eslint": "^9.22.0",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

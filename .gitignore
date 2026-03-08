@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Credentials (NEVER commit API keys)
+.stackowl.credentials.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Session data (optional — uncomment to exclude)
+# workspace/sessions/
+# workspace/memory/embeddings.json
