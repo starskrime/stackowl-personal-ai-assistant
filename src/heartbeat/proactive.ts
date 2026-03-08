@@ -7,6 +7,7 @@
 
 import type { ModelProvider, ChatMessage } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
+import type { StackOwlConfig } from '../config/loader.js';
 import { OwlEngine } from '../engine/runtime.js';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ export interface PingConfig {
 export interface PingContext {
     provider: ModelProvider;
     owl: OwlInstance;
-    model: string;
+    config: StackOwlConfig;
     /** Callback to send a message to the user */
     sendToUser: (message: string) => Promise<void>;
     /** Get recent session history for context */
@@ -226,7 +227,7 @@ export class ProactivePinger {
                 provider: this.context.provider,
                 owl: this.context.owl,
                 sessionHistory: this.context.getRecentHistory?.() ?? [],
-                model: this.context.model,
+                config: this.context.config,
             });
 
             await this.context.sendToUser(response.content);

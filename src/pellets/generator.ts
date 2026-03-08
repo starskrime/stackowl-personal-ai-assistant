@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ModelProvider } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import { OwlEngine } from '../engine/runtime.js';
+import type { StackOwlConfig } from '../config/loader.js';
 import type { Pellet } from './store.js';
 
 export class PelletGenerator {
@@ -25,9 +26,9 @@ export class PelletGenerator {
     async generate(
         sourceMaterial: string,
         sourceName: string,
-        context: { provider: ModelProvider; owl: OwlInstance; model: string }
+        context: { provider: ModelProvider; owl: OwlInstance; config: StackOwlConfig }
     ): Promise<Pellet> {
-        const { provider, owl, model } = context;
+        const { provider, owl, config } = context;
 
         console.log(`[PelletGenerator] 📦 ${owl.persona.name} is digesting knowledge from: ${sourceName}...`);
 
@@ -51,7 +52,7 @@ export class PelletGenerator {
             provider,
             owl,
             sessionHistory: [],
-            model,
+            config,
         });
 
         // Parse JSON (attempt to clean if wrapped in code blocks)

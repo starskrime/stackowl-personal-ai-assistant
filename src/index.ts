@@ -20,6 +20,11 @@ import { SessionStore } from './memory/store.js';
 import { ParliamentOrchestrator } from './parliament/orchestrator.js';
 import { PelletStore } from './pellets/store.js';
 import { OwlEvolutionEngine } from './owls/evolution.js';
+import { InstinctRegistry } from './instincts/registry.js';
+import { InstinctEngine } from './instincts/engine.js';
+import { PerchManager } from './perch/manager.js';
+import { FilePerch } from './perch/file-perch.js';
+import { StackOwlServer } from './server/index.js';
 import { createInterface } from 'node:readline';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -76,11 +81,20 @@ async function bootstrap() {
     await sessionStore.init();
 
     // Initialize pellet store
-    const pelletStore = new PelletStore(workspacePath);
+    const pelletStore = new PelletStore(workspacePath, providerRegistry.getDefault());
     await pelletStore.init();
 
     // Evolution Engine
-    const evolutionEngine = new OwlEvolutionEngine(providerRegistry.getDefault(), config.defaultModel, sessionStore, owlRegistry);
+    const evolutionEngine = new OwlEvolutionEngine(providerRegistry.getDefault(), config, sessionStore, owlRegistry);
+
+    // Instincts
+    const instinctRegistry = new InstinctRegistry(workspacePath);
+    await instinctRegistry.loadAll();
+    const instinctEngine = new InstinctEngine();
+
+    // Perch Points
+    const perchManager = new PerchManager(providerRegistry.getDefault(), config, owlRegistry);
+    perchManager.addPerch(new FilePerch(workspacePath));
 
     return {
         config,
@@ -91,6 +105,9 @@ async function bootstrap() {
         sessionStore,
         pelletStore,
         evolutionEngine,
+        instinctRegistry,
+        instinctEngine,
+        perchManager,
         workspacePath
     };
 }
@@ -100,7 +117,7 @@ async function bootstrap() {
 async function chatCommand(owlName?: string) {
     console.log(BANNER);
 
-    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, workspacePath } = await bootstrap();
+    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, instinctRegistry, instinctEngine, perchManager, workspacePath } = await bootstrap();
 
     // Select owl
     const owl = owlName
@@ -146,6 +163,9 @@ async function chatCommand(owlName?: string) {
         console.log(chalk.dim(`  [Resumed session with ${sessionHistory.length / 2} past turns]\n`));
     }
 
+    // Start perches (passive observation)
+    await perchManager.startAll();
+
     const rl = createInterface({
         input: process.stdin,
         output: process.stdout,
@@ -164,6 +184,7 @@ async function chatCommand(owlName?: string) {
         // Handle commands
         if (input === '/quit' || input === '/exit') {
             console.log(chalk.dim('\n🦉 Goodbye. The owls are always watching.\n'));
+            perchManager.stopAll();
             rl.close();
             process.exit(0);
         }
@@ -192,13 +213,28 @@ async function chatCommand(owlName?: string) {
 
         // Send to engine
         try {
+            // 1. Check Instincts
+            const availableInstincts = instinctRegistry.getContextInstincts(owl.persona.name);
+            const triggeredInstinct = await instinctEngine.evaluate(input, availableInstincts, {
+                provider,
+                owl,
+                config
+            });
+
+            let finalProcessingInput = input;
+            if (triggeredInstinct) {
+                console.log(chalk.yellow(`\n⚡ Instinct Triggered: ${triggeredInstinct.name.toUpperCase()}`));
+                // Inject instinct instructions into the user constraint invisibly
+                finalProcessingInput = `User Input: ${input}\n\n[SYSTEM OVERRIDE - INSTINCT TRIGGERED]\n${triggeredInstinct.actionPrompt}`;
+            }
+
             process.stdout.write(chalk.yellow(`\n${owl.persona.emoji} ${owl.persona.name}: `));
 
-            const response = await engine.run(input, {
+            const response = await engine.run(finalProcessingInput, {
                 provider,
                 owl,
                 sessionHistory,
-                model: config.defaultModel,
+                config,
                 toolRegistry,
                 cwd: workspacePath,
             });
@@ -240,7 +276,6 @@ async function parliamentCommand(topic?: string) {
 
     const { providerRegistry, owlRegistry, config, pelletStore } = await bootstrap();
     const provider = providerRegistry.getDefault();
-    const model = config.defaultModel;
 
     // Pick 3-4 owls for the debate (default to Noctua, Archimedes, Scrooge, and Socrates if available)
     const participants = [
@@ -263,7 +298,7 @@ async function parliamentCommand(topic?: string) {
 
     console.log(chalk.cyan(`\nSummoning Parliament...\n`));
 
-    const orchestrator = new ParliamentOrchestrator(provider, model, pelletStore);
+    const orchestrator = new ParliamentOrchestrator(provider, config, pelletStore);
 
     try {
         const session = await orchestrator.convene({
@@ -450,19 +485,27 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
     console.log(chalk.green(`✓ Channel: 📱 Telegram`));
 
+    // Create telegram channel first so perch can use it
     const telegram = new TelegramChannel({
         botToken,
         provider,
         owl,
-        model: config.defaultModel,
+        config,
         toolRegistry,
         sessionStore,
         cwd: workspacePath,
     });
 
+    // We must hackilly inject telegram into perchManager for now, or just recreate it
+    // To match our MVP architecture, we can just attach it loosely or recreate it
+    const perchWithTelegram = new PerchManager(provider, config, owlRegistry, telegram);
+    perchWithTelegram.addPerch(new FilePerch(workspacePath));
+    await perchWithTelegram.startAll();
+
     // Graceful shutdown
     const shutdown = () => {
-        console.log(chalk.dim('\n🦉 Shutting down Telegram bot...'));
+        console.log(chalk.dim('\n🦉 Shutting down Telegram bot & observers...'));
+        perchWithTelegram.stopAll();
         telegram.stop();
         process.exit(0);
     };
@@ -475,6 +518,79 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     // Optionally also launch CLI chat
     if (opts.withCli) {
         console.log(chalk.dim('\n📱 Telegram bot running in background. CLI also active.\n'));
+        await chatCommand(opts.owl);
+    }
+}
+
+// ─── Web Command ─────────────────────────────────────────────────
+
+async function webCommand(port?: string) {
+    console.log(BANNER);
+    const resolvedPort = port ? parseInt(port, 10) : 3000;
+
+    const { config, providerRegistry, owlRegistry, pelletStore, sessionStore, toolRegistry, workspacePath } = await bootstrap();
+    const provider = providerRegistry.getDefault();
+
+    // Health check
+    const healthy = await provider.healthCheck();
+    if (!healthy) {
+        console.error(chalk.red(`❌ Cannot reach ${provider.name} provider. Is it running?`));
+        process.exit(1);
+    }
+
+    const server = new StackOwlServer(
+        config,
+        provider,
+        owlRegistry,
+        pelletStore,
+        sessionStore,
+        toolRegistry,
+        workspacePath,
+        resolvedPort
+    );
+
+    await server.start();
+}
+
+// ─── All Command ─────────────────────────────────────────────────
+
+async function allCommand(opts: { owl?: string; port?: string }) {
+    // 1. Start Web Server
+    const resolvedPort = opts.port ? parseInt(opts.port, 10) : 3000;
+    const { config, providerRegistry, owlRegistry, pelletStore, sessionStore, toolRegistry, workspacePath } = await bootstrap();
+    const provider = providerRegistry.getDefault();
+
+    const healthy = await provider.healthCheck();
+    if (!healthy) {
+        console.error(chalk.red(`❌ Cannot reach ${provider.name} provider. Is it running?`));
+        process.exit(1);
+    }
+
+    const server = new StackOwlServer(config, provider, owlRegistry, pelletStore, sessionStore, toolRegistry, workspacePath, resolvedPort);
+    await server.start();
+
+    // 2. Check for Telegram
+    let botToken = '';
+    const configAny = config as unknown as Record<string, unknown>;
+    const telegramConfig = configAny['telegram'] as { botToken?: string; enabled?: boolean } | undefined;
+
+    if (telegramConfig?.botToken) {
+        botToken = telegramConfig.botToken;
+    } else {
+        const credPath = join(process.cwd(), '.stackowl.credentials.json');
+        if (existsSync(credPath)) {
+            try {
+                const creds = JSON.parse(await readFile(credPath, 'utf-8')) as Record<string, string>;
+                botToken = creds['telegramBotToken'] ?? '';
+            } catch { }
+        }
+    }
+
+    if (botToken) {
+        // Start Telegram and then CLI
+        await telegramCommand({ owl: opts.owl, withCli: true });
+    } else {
+        // No telegram, just start CLI directly
         await chatCommand(opts.owl);
     }
 }
@@ -543,10 +659,33 @@ program
     });
 
 program
+    .command('web')
+    .description('Start the StackOwl Web UI Server')
+    .option('-p, --port <number>', 'Port to listen on', '3000')
+    .action((opts) => {
+        webCommand(opts.port).catch((err) => {
+            console.error(chalk.red(`Fatal error: ${err.message}`));
+            process.exit(1);
+        });
+    });
+
+program
     .command('status')
     .description('Show system status and provider health')
     .action(async () => {
         await statusCommand();
+    });
+
+program
+    .command('all')
+    .description('Start all available channels (CLI, Web, and optionally Telegram)')
+    .option('-o, --owl <name>', 'Owl persona to use')
+    .option('-p, --port <number>', 'Port for Web UI', '3000')
+    .action((opts) => {
+        allCommand(opts).catch((err) => {
+            console.error(chalk.red(`Fatal error: ${err.message}`));
+            process.exit(1);
+        });
     });
 
 // Default to chat if no command given

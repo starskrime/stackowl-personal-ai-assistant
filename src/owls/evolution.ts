@@ -9,18 +9,19 @@ import type { ChallengeLevel } from './persona.js';
 import type { SessionStore } from '../memory/store.js';
 import type { OwlRegistry } from './registry.js';
 import type { ModelProvider } from '../providers/base.js';
+import type { StackOwlConfig } from '../config/loader.js';
 import { OwlEngine } from '../engine/runtime.js';
 
 export class OwlEvolutionEngine {
     private engine: OwlEngine;
     private provider: ModelProvider;
-    private model: string;
+    private config: StackOwlConfig;
     private sessionStore: SessionStore;
     private owlRegistry: OwlRegistry;
 
-    constructor(provider: ModelProvider, model: string, sessionStore: SessionStore, owlRegistry: OwlRegistry) {
+    constructor(provider: ModelProvider, config: StackOwlConfig, sessionStore: SessionStore, owlRegistry: OwlRegistry) {
         this.provider = provider;
-        this.model = model;
+        this.config = config;
         this.sessionStore = sessionStore;
         this.owlRegistry = owlRegistry;
         this.engine = new OwlEngine();
@@ -80,7 +81,7 @@ export class OwlEvolutionEngine {
             provider: this.provider,
             owl,
             sessionHistory: [],
-            model: this.model,
+            config: this.config,
         });
 
         // 3. Parse JSON and apply mutations

@@ -12,19 +12,21 @@ import { OwlEngine } from '../engine/runtime.js';
 import { ProactivePinger } from '../heartbeat/proactive.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { SessionStore, Session } from '../memory/store.js';
+import type { StackOwlConfig } from '../config/loader.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
-interface TelegramChannelConfig {
+export interface TelegramChannelConfig {
     botToken: string;
     allowedUserIds?: number[];
     provider: ModelProvider;
     owl: OwlInstance;
-    model: string;
+    config: StackOwlConfig;
     toolRegistry?: ToolRegistry;
     sessionStore: SessionStore;
-    cwd: string;
+    cwd?: string;
 }
+
 
 interface UserSession {
     session: Session;
@@ -117,7 +119,7 @@ export class TelegramChannel {
 
             let msg = `🦉 *StackOwl Status*\n\n`;
             msg += `Provider: ${this.escapeMarkdown(this.config.provider.name)}\n`;
-            msg += `Model: ${this.escapeMarkdown(this.config.model)}\n`;
+            msg += `Model: ${this.escapeMarkdown(this.config.config.defaultModel)}\n`;
             msg += `Owl: ${this.config.owl.persona.emoji} ${this.escapeMarkdown(this.config.owl.persona.name)}\n`;
             msg += `Session messages: ${session?.session.messages.length ?? 0}`;
 
@@ -148,7 +150,7 @@ export class TelegramChannel {
                     provider: this.config.provider,
                     owl: this.config.owl,
                     sessionHistory: userSession.session.messages,
-                    model: this.config.model,
+                    config: this.config.config,
                     toolRegistry: this.config.toolRegistry,
                     cwd: this.config.cwd,
                 });
@@ -287,6 +289,25 @@ export class TelegramChannel {
     }
 
     /**
+     * Broadcast a proactive message to all active chats (e.g. from a Perch point)
+     */
+    async broadcastProactiveMessage(message: string): Promise<void> {
+        const owl = this.config.owl;
+        const header = `${owl.persona.emoji} *${this.escapeMarkdown(owl.persona.name)}*\n\n`;
+        const formatted = header + this.escapeMarkdown(message);
+
+        for (const chatId of this.activeChatIds) {
+            try {
+                await this.bot.api.sendMessage(chatId, formatted, { parse_mode: 'MarkdownV2' });
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                console.error(`[TelegramChannel] Failed to broadcast to ${chatId}: ${errMsg}`);
+                this.activeChatIds.delete(chatId);
+            }
+        }
+    }
+
+    /**
      * Start the bot (long polling).
      */
     async start(): Promise<void> {
@@ -306,25 +327,9 @@ export class TelegramChannel {
                         {
                             provider: this.config.provider,
                             owl: this.config.owl,
-                            model: this.config.model,
+                            config: this.config.config,
                             sendToUser: async (message: string) => {
-                                // Send to all active chats
-                                for (const chatId of this.activeChatIds) {
-                                    try {
-                                        const owl = this.config.owl;
-                                        const header = `${owl.persona.emoji} *${this.escapeMarkdown(owl.persona.name)}*\n\n`;
-                                        await this.bot.api.sendMessage(
-                                            chatId,
-                                            header + this.escapeMarkdown(message),
-                                            { parse_mode: 'MarkdownV2' }
-                                        );
-                                    } catch (err) {
-                                        const errMsg = err instanceof Error ? err.message : String(err);
-                                        console.error(`[TelegramChannel] Failed to send proactive ping to ${chatId}: ${errMsg}`);
-                                        // Remove invalid chat IDs
-                                        this.activeChatIds.delete(chatId);
-                                    }
-                                }
+                                await this.broadcastProactiveMessage(message);
                             },
                             getRecentHistory: () => {
                                 // Get the most recent session's history for context

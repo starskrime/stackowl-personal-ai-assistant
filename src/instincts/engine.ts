@@ -8,6 +8,7 @@
 import type { Instinct } from './registry.js';
 import type { ModelProvider } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
+import type { StackOwlConfig } from '../config/loader.js';
 import { OwlEngine } from '../engine/runtime.js';
 
 export class InstinctEngine {
@@ -24,11 +25,11 @@ export class InstinctEngine {
     async evaluate(
         userMessage: string,
         availableInstincts: Instinct[],
-        context: { provider: ModelProvider; owl: OwlInstance; model: string }
+        context: { provider: ModelProvider; owl: OwlInstance; config: StackOwlConfig }
     ): Promise<Instinct | null> {
         if (availableInstincts.length === 0) return null;
 
-        const { provider, owl, model } = context;
+        const { provider, owl, config } = context;
 
         // Build a prompt that asks the LLM to classify the input
         const instinctDescriptions = availableInstincts
@@ -47,7 +48,7 @@ export class InstinctEngine {
                 provider,
                 owl,
                 sessionHistory: [],
-                model,
+                config,
             });
 
             // Parse response

@@ -118,9 +118,19 @@ update_config() {
 
   # Build provider-specific config
   local provider_json=""
+  local smart_routing_json=""
   case "$provider" in
     ollama)
-      provider_json="\"ollama\": { \"baseUrl\": \"$base_url\", \"defaultModel\": \"$model\" }"
+      if [ -n "$SMART_ROUTING_JSON" ]; then
+        provider_json="\"ollama\": { \"baseUrl\": \"$base_url\", \"defaultModel\": \"$model\" }"
+        smart_routing_json=',
+  "smartRouting": {
+    "enabled": true,
+    "availableModels": [ '"$SMART_ROUTING_JSON"' ]
+  }'
+      else
+        provider_json="\"ollama\": { \"baseUrl\": \"$base_url\", \"defaultModel\": \"$model\" }"
+      fi
       ;;
     openai)
       provider_json="\"openai\": { \"apiKey\": \"$api_key\", \"defaultModel\": \"$model\" }"
@@ -167,7 +177,7 @@ update_config() {
     "enabled": true,
     "evolutionBatchSize": 5,
     "decayRatePerWeek": 0.01
-  }$telegram_json
+  }$telegram_json$smart_routing_json
 }
 EOF
 
@@ -233,6 +243,29 @@ collect_ollama_details() {
       echo -e "${DIM}  Available models:${RESET}"
       echo "$MODELS"
     fi
+
+    echo ""
+    log_step "Dynamic Model Setup (Optional)"
+    log_dim "StackOwl can automatically route complex vs simple tasks to different models."
+    read -rp "$(echo -e "${CYAN}Enable dynamic model selection? [y/N]:${RESET} ")" use_smart_routing
+
+    if [[ "$use_smart_routing" =~ ^[Yy] ]]; then
+        SMART_ROUTING_JSON=""
+        # Add default model as fallback
+        SMART_ROUTING_JSON="{\"name\": \"$MODEL\", \"description\": \"General purpose default model\"}"
+
+        echo -e "${DIM}Enter additional models (leave blank to finish):${RESET}"
+        while true; do
+            read -rp "$(echo -e "${CYAN}Model name (e.g., qwen2.5-coder:32b):${RESET} ")" extra_model
+            if [ -z "$extra_model" ]; then
+                break
+            fi
+            read -rp "$(echo -e "${CYAN}Description of when to use this model:${RESET} ")" extra_desc
+            SMART_ROUTING_JSON="$SMART_ROUTING_JSON, {\"name\": \"$extra_model\", \"description\": \"$extra_desc\"}"
+        done
+        log_info "Smart routing configured with additional models."
+    fi
+
   else
     log_warn "Cannot reach Ollama at $BASE_URL"
     log_dim "Make sure Ollama is running. You can still proceed — it will connect when available."
@@ -400,22 +433,34 @@ select_channel() {
 
   if [ -n "$TELEGRAM_TOKEN" ]; then
     echo -e "  ${BOLD}2)${RESET} 📱 Telegram       ${DIM}— Chat via Telegram bot${RESET}"
-    echo -e "  ${BOLD}3)${RESET} 🔄 Both           ${DIM}— CLI + Telegram simultaneously${RESET}"
+    echo -e "  ${BOLD}3)${RESET} 🔄 CLI + Telegram ${DIM}— Both simultaneously${RESET}"
+    echo -e "  ${BOLD}4)${RESET} 🌐 Web UI         ${DIM}— Start Web Dashboard${RESET}"
+    echo -e "  ${BOLD}5)${RESET} 🚀 All            ${DIM}— Start CLI, Telegram, and Web UI${RESET}"
+  else
+    echo -e "  ${BOLD}2)${RESET} 🌐 Web UI         ${DIM}— Start Web Dashboard${RESET}"
+    echo -e "  ${BOLD}3)${RESET} 🚀 All            ${DIM}— Start CLI and Web UI${RESET}"
   fi
   echo ""
 
   while true; do
     if [ -n "$TELEGRAM_TOKEN" ]; then
-      read -rp "$(echo -e "${CYAN}Enter choice [1-3]:${RESET} ")" channel_choice
+      read -rp "$(echo -e "${CYAN}Enter choice [1-5]:${RESET} ")" channel_choice
       case "$channel_choice" in
         1) LAUNCH_MODE="chat"; break ;;
         2) LAUNCH_MODE="telegram"; break ;;
         3) LAUNCH_MODE="telegram --with-cli"; break ;;
+        4) LAUNCH_MODE="web"; break ;;
+        5) LAUNCH_MODE="all"; break ;;
         *) log_error "Invalid choice." ;;
       esac
     else
-      LAUNCH_MODE="chat"
-      break
+      read -rp "$(echo -e "${CYAN}Enter choice [1-3]:${RESET} ")" channel_choice
+      case "$channel_choice" in
+        1) LAUNCH_MODE="chat"; break ;;
+        2) LAUNCH_MODE="web"; break ;;
+        3) LAUNCH_MODE="all"; break ;;
+        *) log_error "Invalid choice." ;;
+      esac
     fi
   done
 }

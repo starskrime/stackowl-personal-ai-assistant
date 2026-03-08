@@ -6,9 +6,10 @@
  */
 
 import { join } from 'node:path';
-import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, unlink, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import matter from 'gray-matter';
+import type { ModelProvider } from '../providers/base.js';
 
 export interface Pellet {
     id: string; // The filename (without .md)
@@ -23,15 +24,30 @@ export interface Pellet {
 
 export class PelletStore {
     private pelletsDir: string;
+    private provider?: ModelProvider;
+    private vectorIndex: Record<string, number[]> = {};
+    private indexPath: string;
 
-    constructor(workspacePath: string) {
+    constructor(workspacePath: string, provider?: ModelProvider) {
         this.pelletsDir = join(workspacePath, 'pellets');
+        this.provider = provider;
+        this.indexPath = join(this.pelletsDir, 'vector_index.json');
     }
 
-    /** Ensure the pellets directory exists */
+    /** Ensure the pellets directory and index exists */
     async init(): Promise<void> {
         if (!existsSync(this.pelletsDir)) {
             await mkdir(this.pelletsDir, { recursive: true });
+        }
+
+        if (existsSync(this.indexPath)) {
+            try {
+                const raw = await readFile(this.indexPath, 'utf-8');
+                this.vectorIndex = JSON.parse(raw);
+            } catch (e) {
+                console.error('[PelletStore] Failed to load vector index, starting fresh.', e);
+                this.vectorIndex = {};
+            }
         }
     }
 
@@ -56,9 +72,19 @@ export class PelletStore {
 
         // Write safely to tmp then rename
         await writeFile(mdPath, raw, 'utf-8');
-        // Rename (overwrite if exists)
-        await writeFile(finalPath, raw, 'utf-8');
-        await unlink(mdPath);
+        await rename(mdPath, finalPath);
+
+        // Generate and save embedding if provider exists
+        if (this.provider) {
+            try {
+                const textToEmbed = `${pellet.title}\n\n${pellet.tags.join(', ')}\n\n${pellet.content}`;
+                const response = await this.provider.embed(textToEmbed);
+                this.vectorIndex[pellet.id] = response.embedding;
+                await writeFile(this.indexPath, JSON.stringify(this.vectorIndex, null, 2), 'utf-8');
+            } catch (error) {
+                console.error(`[PelletStore] Failed to generate embedding for ${pellet.id}:`, error);
+            }
+        }
     }
 
     /**
@@ -117,30 +143,81 @@ export class PelletStore {
     }
 
     /**
-     * Delete a pellet by ID.
+     * Delete a pellet by ID and its embedding.
      */
     async delete(id: string): Promise<boolean> {
         const mdPath = join(this.pelletsDir, `${id}.md`);
         if (existsSync(mdPath)) {
             await unlink(mdPath);
+            if (this.vectorIndex[id]) {
+                delete this.vectorIndex[id];
+                await writeFile(this.indexPath, JSON.stringify(this.vectorIndex, null, 2), 'utf-8');
+            }
             return true;
         }
         return false;
     }
 
     /**
-     * Search pellets by tags or keyword in title.
-     * In a robust system, this would use embeddings + cosine similarity.
+     * Semantic search pellets by query using Cosine Similarity.
+     * Falls back to text search if no provider is available or embedding fails.
      */
     async search(query: string): Promise<Pellet[]> {
         const all = await this.listAll();
-        const lowerQuery = query.toLowerCase();
+        if (all.length === 0) return [];
 
+        // If no provider or no query, fallback to text search
+        if (!this.provider || !query.trim()) {
+            return this.textSearch(query, all);
+        }
+
+        try {
+            const queryResponse = await this.provider.embed(query);
+            const queryVec = queryResponse.embedding;
+
+            // Score all pellets with an embedding
+            const scored: { pellet: Pellet; score: number }[] = [];
+
+            for (const p of all) {
+                const vec = this.vectorIndex[p.id];
+                if (vec) {
+                    scored.push({ pellet: p, score: this.cosineSimilarity(queryVec, vec) });
+                }
+            }
+
+            // Sort by highest similarity
+            scored.sort((a, b) => b.score - a.score);
+
+            // Return top results (e.g. top 5 or anything above threshold)
+            // Or just return the sorted list of all embedded pellets
+            return scored.map(s => s.pellet);
+        } catch (error) {
+            console.error('[PelletStore] Semantic search failed, falling back to text search:', error);
+            return this.textSearch(query, all);
+        }
+    }
+
+    private textSearch(query: string, all: Pellet[]): Pellet[] {
+        const lowerQuery = query.toLowerCase();
         return all.filter(p => {
             if (p.title.toLowerCase().includes(lowerQuery)) return true;
             if (p.tags.some(t => t.toLowerCase().includes(lowerQuery))) return true;
             if (p.content.toLowerCase().includes(lowerQuery)) return true;
             return false;
         });
+    }
+
+    private cosineSimilarity(a: number[], b: number[]): number {
+        if (a.length !== b.length) return 0;
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+        for (let i = 0; i < a.length; i++) {
+            dotProduct += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+        }
+        if (normA === 0 || normB === 0) return 0;
+        return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
     }
 }

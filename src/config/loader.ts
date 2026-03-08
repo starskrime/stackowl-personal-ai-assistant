@@ -32,6 +32,13 @@ export interface StackOwlConfig {
         evolutionBatchSize: number;
         decayRatePerWeek: number;
     };
+    smartRouting?: {
+        enabled: boolean;
+        availableModels: {
+            name: string;
+            description: string;
+        }[];
+    };
 }
 
 export interface ProviderConfigEntry {
@@ -71,6 +78,10 @@ const DEFAULT_CONFIG: StackOwlConfig = {
         evolutionBatchSize: 5,
         decayRatePerWeek: 0.01,
     },
+    smartRouting: {
+        enabled: false,
+        availableModels: []
+    }
 };
 
 // ─── Loader ──────────────────────────────────────────────────────
@@ -112,6 +123,10 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
                 ...DEFAULT_CONFIG.owlDna,
                 ...userConfig.owlDna,
             },
+            smartRouting: {
+                ...DEFAULT_CONFIG.smartRouting,
+                ...(userConfig.smartRouting || {}),
+            } as NonNullable<StackOwlConfig['smartRouting']>
         };
 
         return config;

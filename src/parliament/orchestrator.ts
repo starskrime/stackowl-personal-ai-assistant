@@ -6,6 +6,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import type { ModelProvider } from '../providers/base.js';
+import type { StackOwlConfig } from '../config/loader.js';
 import { OwlEngine } from '../engine/runtime.js';
 import type { ParliamentConfig, ParliamentSession, OwlPosition } from './protocol.js';
 import { PelletGenerator } from '../pellets/generator.js';
@@ -14,13 +15,13 @@ import type { PelletStore } from '../pellets/store.js';
 export class ParliamentOrchestrator {
     private provider: ModelProvider;
     private engine: OwlEngine;
-    private model: string;
+    private config: StackOwlConfig;
     private pelletGenerator: PelletGenerator;
     private pelletStore: PelletStore;
 
-    constructor(provider: ModelProvider, model: string, pelletStore: PelletStore) {
+    constructor(provider: ModelProvider, config: StackOwlConfig, pelletStore: PelletStore) {
         this.provider = provider;
-        this.model = model;
+        this.config = config;
         this.pelletStore = pelletStore;
         this.engine = new OwlEngine();
         this.pelletGenerator = new PelletGenerator();
@@ -60,7 +61,7 @@ export class ParliamentOrchestrator {
                 const pellet = await this.pelletGenerator.generate(
                     mdTranscript,
                     `Parliament Session: ${config.topic}`,
-                    { provider: this.provider, owl: config.participants[0], model: this.model }
+                    { provider: this.provider, owl: config.participants[0], config: this.config }
                 );
                 await this.pelletStore.save(pellet);
                 console.log(`\n📦 Saved Knowledge Pellet: ${pellet.id}.md`);
@@ -93,7 +94,7 @@ export class ParliamentOrchestrator {
                 provider: this.provider,
                 owl,
                 sessionHistory: [],
-                model: this.model,
+                config: this.config,
             });
 
             // Extract position tag
@@ -154,7 +155,7 @@ export class ParliamentOrchestrator {
                 provider: this.provider,
                 owl,
                 sessionHistory: [],
-                model: this.model,
+                config: this.config,
             });
 
             // Try to figure out who they challenged
@@ -204,7 +205,7 @@ export class ParliamentOrchestrator {
             provider: this.provider,
             owl: synthesizer,
             sessionHistory: [],
-            model: this.model,
+            config: this.config,
         });
 
         session.synthesis = response.content;

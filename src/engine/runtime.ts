@@ -8,6 +8,8 @@
 import type { ModelProvider, ChatMessage, ChatResponse } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import type { ToolRegistry } from '../tools/registry.js';
+import type { StackOwlConfig } from '../config/loader.js';
+import { ModelRouter } from './router.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -15,9 +17,9 @@ export interface EngineContext {
     provider: ModelProvider;
     owl: OwlInstance;
     sessionHistory: ChatMessage[];
+    config: StackOwlConfig;
     toolRegistry?: ToolRegistry;
     cwd?: string;
-    model?: string;
 }
 
 export interface EngineResponse {
@@ -26,6 +28,7 @@ export interface EngineResponse {
     owlEmoji: string;
     challenged: boolean;
     toolsUsed: string[];
+    modelUsed: string;
     usage?: {
         promptTokens: number;
         completionTokens: number;
@@ -46,8 +49,11 @@ export class OwlEngine {
         userMessage: string,
         context: EngineContext
     ): Promise<EngineResponse> {
-        const { provider, owl, sessionHistory, toolRegistry, cwd, model } = context;
+        const { provider, owl, sessionHistory, config, toolRegistry, cwd } = context;
         const toolsUsed: string[] = [];
+
+        // 1. Determine optimal model
+        const optimalModel = await ModelRouter.route(userMessage, provider, config);
 
         // 1. Build system prompt from owl persona + DNA
         const systemPrompt = this.buildSystemPrompt(owl);
@@ -66,7 +72,7 @@ export class OwlEngine {
 
         if (tools && tools.length > 0) {
             // ReAct loop with tools
-            response = await provider.chatWithTools(messages, tools, model);
+            response = await provider.chatWithTools(messages, tools, optimalModel);
 
             while (response.toolCalls && response.toolCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
                 iterations++;
@@ -98,11 +104,11 @@ export class OwlEngine {
                 }
 
                 // Continue the loop
-                response = await provider.chatWithTools(messages, tools, model);
+                response = await provider.chatWithTools(messages, tools, optimalModel);
             }
         } else {
             // Simple chat without tools
-            response = await provider.chat(messages, model);
+            response = await provider.chat(messages, optimalModel);
         }
 
         // 4. Check if challenge mode should engage
@@ -114,6 +120,7 @@ export class OwlEngine {
             owlEmoji: owl.persona.emoji,
             challenged,
             toolsUsed,
+            modelUsed: optimalModel,
             usage: response.usage
                 ? {
                     promptTokens: response.usage.promptTokens,
