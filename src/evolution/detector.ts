@@ -1,9 +1,13 @@
 /**
  * StackOwl — Capability Gap Detector
  *
- * Identifies when an owl lacks the tools or capabilities
- * to fulfill a user request.
+ * Two-stage detection:
+ *   1. Structured marker [CAPABILITY_GAP: ...] — zero cost, injected via system prompt
+ *   2. LLM binary classifier — runs only when response looks like a refusal,
+ *      works regardless of apostrophe encoding, phrasing, or language
  */
+
+import type { ModelProvider } from '../providers/base.js';
 
 export type GapType = 'TOOL_MISSING' | 'CAPABILITY_GAP';
 
@@ -14,45 +18,37 @@ export interface CapabilityGap {
     description: string;
 }
 
-// Structured marker injected by the system prompt — most reliable signal
+// Structured marker set by the system prompt — deterministic when the model includes it
 const STRUCTURED_MARKER = /\[CAPABILITY_GAP:\s*([^\]]+)\]/i;
 
-// Broad fallback patterns for when the marker isn't present
-// Ordered from most specific to most general
-const GAP_PATTERNS = [
-    // Explicit tool mentions
-    /i don'?t have (?:a |an |the )?tool/i,
-    /no tool (?:for|to|available)/i,
-    /would need (?:a |an )?(?:new )?tool/i,
-
-    // Ability / capability
-    /i (?:lack|don'?t have) (?:the )?(?:ability|capability)/i,
-    /i'?m not (?:able|equipped) to/i,
-    /(?:beyond|outside) (?:my|the) (?:current )?capabilities/i,
-
-    // Can't + real-world actions that always require tools
-    /(?:can'?t|cannot|unable to) (?:take|capture|record) (?:a |an )?(?:screenshot|screen capture|photo|picture|video)/i,
-    /(?:can'?t|cannot|unable to) (?:send|compose|draft) (?:an? )?(?:email|sms|text message|notification)/i,
-    /(?:can'?t|cannot|unable to) (?:access|interact with|control) (?:your |the )?(?:screen|desktop|display|gui|browser|app)/i,
-    /(?:can'?t|cannot|unable to) (?:make|place) (?:a |an )?(?:phone )?call/i,
-    /(?:can'?t|cannot|unable to) (?:play|stream) (?:audio|video|music|sound)/i,
-    /(?:can'?t|cannot|unable to) (?:connect to|query|access) (?:your |the )?(?:database|db|api|server)/i,
-
-    // Generic "I can't do X" where X is a real-world action
-    /(?:i |unfortunately )?(?:can'?t|cannot|i'?m unable to) (?:capture|view|see|observe|monitor|watch|record|take|open|launch|run|execute) (?:your |the )?(?:screen|desktop|display|application|app|program|browser|window)/i,
+// Cheap Unicode-aware pre-filter — avoids running the classifier on every message.
+// Catches ASCII and curly-quote variants. Only needs one of these to be present.
+const REFUSAL_SIGNALS = [
+    "can't", "cannot", "can\u2019t",       // can't / can't
+    "unable to",
+    "don't have", "don\u2019t have",        // don't have / don't have
+    "i lack", "i\u2019m sorry", "i'm sorry",
+    "not able to", "not equipped",
+    "beyond my", "outside my",
 ];
 
 export class GapDetector {
     /**
-     * Check if the LLM's final response signals a capability gap.
+     * Detect whether the LLM's response signals a capability gap.
      *
-     * Checks the structured [CAPABILITY_GAP: ...] marker first (injected via system prompt).
-     * Falls back to broad NLP patterns if the marker isn't present.
+     * Async because stage 2 calls the LLM for binary classification.
+     * Returns null if no gap detected (normal response).
      */
-    detectFromResponse(responseText: string, userRequest: string): CapabilityGap | null {
-        // 1. Structured marker — deterministic, no false positives
+    async detectFromResponse(
+        responseText: string,
+        userRequest: string,
+        provider: ModelProvider,
+        model: string,
+    ): Promise<CapabilityGap | null> {
+        // Stage 1: structured marker — instant, no API call
         const markerMatch = responseText.match(STRUCTURED_MARKER);
         if (markerMatch) {
+            console.log(`[GapDetector] structured marker found`);
             return {
                 type: 'CAPABILITY_GAP',
                 userRequest,
@@ -60,22 +56,20 @@ export class GapDetector {
             };
         }
 
-        // 2. Broad fallback patterns
-        for (const pattern of GAP_PATTERNS) {
-            if (pattern.test(responseText)) {
-                return {
-                    type: 'CAPABILITY_GAP',
-                    userRequest,
-                    description: responseText.slice(0, 300),
-                };
-            }
+        // Stage 2: pre-filter — skip classifier on clearly normal responses
+        const lower = responseText.toLowerCase();
+        const looksLikeRefusal = REFUSAL_SIGNALS.some(s => lower.includes(s));
+        if (!looksLikeRefusal) {
+            return null;
         }
 
-        return null;
+        console.log(`[GapDetector] refusal signal found, running LLM classifier...`);
+        return this.classifyWithLLM(responseText, userRequest, provider, model);
     }
 
     /**
      * Build a gap from a tool call that failed because the tool doesn't exist.
+     * Synchronous — no classifier needed, the failure is unambiguous.
      */
     fromMissingTool(toolName: string, userRequest: string): CapabilityGap {
         return {
@@ -84,5 +78,47 @@ export class GapDetector {
             userRequest,
             description: `The owl tried to call a tool named "${toolName}" which does not exist in the registry.`,
         };
+    }
+
+    private async classifyWithLLM(
+        responseText: string,
+        userRequest: string,
+        provider: ModelProvider,
+        model: string,
+    ): Promise<CapabilityGap | null> {
+        const prompt = `You are a binary classifier. Read the user request and AI response below, then answer with YES or NO only.
+
+User request: "${userRequest}"
+AI response: "${responseText.slice(0, 500)}"
+
+Question: Is the AI declining because it LACKS A TECHNICAL TOOL or SYSTEM CAPABILITY to do this task?
+
+Answer YES if the AI is saying it cannot physically do something due to missing tools, access, or technical capability — for example: can't take a screenshot, can't send an email, can't access a database, can't control the screen, can't make a call.
+
+Answer NO if the AI is: refusing for ethical/policy reasons, asking for clarification, saying it doesn't know a fact, or successfully completing the task.
+
+Reply with a single word: YES or NO.`;
+
+        try {
+            const response = await provider.chat(
+                [{ role: 'user', content: prompt }],
+                model,
+            );
+
+            const answer = response.content.trim().toUpperCase();
+            console.log(`[GapDetector] classifier answered: ${answer}`);
+
+            if (answer.startsWith('YES')) {
+                return {
+                    type: 'CAPABILITY_GAP',
+                    userRequest,
+                    description: responseText.slice(0, 300),
+                };
+            }
+        } catch (err) {
+            console.warn(`[GapDetector] classifier call failed: ${err instanceof Error ? err.message : err}`);
+        }
+
+        return null;
     }
 }

@@ -23,4 +23,5 @@ Thumbs.db
 # Session data (optional — uncomment to exclude)
 # workspace/sessions/
 # workspace/memory/embeddings.json
-workspace/sessions/*
+workspace/*
+src/tools/synthesized/*

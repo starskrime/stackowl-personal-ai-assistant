@@ -10,10 +10,12 @@ import type { ToolImplementation, ToolContext } from './registry.js';
 
 const execAsync = promisify(exec);
 
+const ESCAPE_PATTERNS = ['../..', '/etc/', '/var/', '/root/', '/home/'];
+
 export const ShellTool: ToolImplementation = {
     definition: {
         name: 'run_shell_command',
-        description: 'Execute a shell command. Use this to compile code, run tests, listing files, git commands, etc.',
+        description: 'Execute a shell command. Use this to compile code, run tests, list files, run git commands, etc. TIP: Always adapt your commands to the "Host Environment" (OS Platform) specified in your system prompt. When inspecting network ports, ALWAYS use flags that disable port-to-service name resolution (e.g., `lsof -i -P -n` on macOS/Linux or `netstat -ano` on Windows) so you see raw port numbers instead of confusing service aliases (e.g., seeing "hbci" instead of "3000").',
         parameters: {
             type: 'object',
             properties: {
@@ -30,24 +32,41 @@ export const ShellTool: ToolImplementation = {
         const cmd = args['command'] as string;
         if (!cmd) throw new Error('Command argument missing');
 
+        // Warn (but don't block) on potential path escapes
+        const hasEscape = ESCAPE_PATTERNS.some(p => cmd.includes(p));
+        if (hasEscape) {
+            console.warn(`[ShellTool] WARNING: command may access paths outside workspace: ${cmd.slice(0, 100)}`);
+        }
+
         try {
             const { stdout, stderr } = await execAsync(cmd, { cwd: context.cwd });
-            let output = stdout;
-            if (stderr) {
-                output += `\n[Stderr]:\n${stderr}`;
-            }
 
-            // Truncate if too long (e.g. 10k chars max)
-            if (output.length > 10000) {
-                return output.substring(0, 5000) + '\n...[output truncated]...\n' + output.substring(output.length - 5000);
-            }
+            const stdoutTrimmed = stdout.length > 8000
+                ? stdout.substring(0, 4000) + '\n...[stdout truncated]...\n' + stdout.substring(stdout.length - 4000)
+                : stdout;
 
-            return output || '(Command completed with no output)';
+            const stderrTrimmed = stderr.length > 2000
+                ? stderr.substring(0, 2000) + '\n...[stderr truncated]...'
+                : stderr;
+
+            return [
+                `EXIT_CODE: 0`,
+                `STDOUT:\n${stdoutTrimmed || '(none)'}`,
+                `STDERR:\n${stderrTrimmed || '(none)'}`,
+            ].join('\n\n');
         } catch (error: any) {
-            let errorResp = `Command failed with error code ${error.code || 'unknown'}:`;
-            if (error.stdout) errorResp += `\n[Stdout]:\n${error.stdout}`;
-            if (error.stderr) errorResp += `\n[Stderr]:\n${error.stderr}`;
-            return errorResp;
+            const stdoutTrimmed = (error.stdout || '').length > 4000
+                ? (error.stdout as string).substring(0, 4000) + '\n...[truncated]'
+                : (error.stdout || '');
+            const stderrTrimmed = (error.stderr || '').length > 4000
+                ? (error.stderr as string).substring(0, 4000) + '\n...[truncated]'
+                : (error.stderr || '');
+
+            return [
+                `EXIT_CODE: ${error.code ?? 1}`,
+                `STDOUT:\n${stdoutTrimmed || '(none)'}`,
+                `STDERR:\n${stderrTrimmed || '(none)'}`,
+            ].join('\n\n');
         }
     },
 };

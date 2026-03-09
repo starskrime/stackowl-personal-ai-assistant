@@ -6,9 +6,13 @@
  */
 
 import type { ToolDefinition } from '../providers/base.js';
+import type { EngineContext } from '../engine/runtime.js';
+
+export type { ToolDefinition };
 
 export interface ToolContext {
     cwd: string;
+    engineContext?: EngineContext;
 }
 
 export interface ToolImplementation {

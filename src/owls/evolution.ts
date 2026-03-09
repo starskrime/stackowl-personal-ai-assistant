@@ -28,6 +28,53 @@ export class OwlEvolutionEngine {
     }
 
     /**
+     * Apply DNA decay toward neutral (0.5) if more than 7 days have passed since last decay.
+     * Prevents stale preferences from dominating forever.
+     */
+    async applyDecayIfNeeded(owlName: string): Promise<boolean> {
+        const owl = this.owlRegistry.get(owlName);
+        if (!owl) return false;
+
+        const decayRate = this.config.owlDna?.decayRatePerWeek ?? 0.01;
+        if (decayRate <= 0) return false;
+
+        const lastEvolved = owl.dna.lastEvolved
+            ? new Date(owl.dna.lastEvolved).getTime()
+            : 0;
+        const daysSince = (Date.now() - lastEvolved) / (1000 * 60 * 60 * 24);
+
+        if (daysSince < 7) return false;
+
+        const weeksElapsed = Math.floor(daysSince / 7);
+        const factor = decayRate * weeksElapsed;
+        let changed = false;
+
+        // Decay learnedPreferences toward neutral 0.5
+        for (const key of Object.keys(owl.dna.learnedPreferences)) {
+            const current = owl.dna.learnedPreferences[key];
+            const decayed = current + (0.5 - current) * factor;
+            owl.dna.learnedPreferences[key] = Math.max(0, Math.min(1, decayed));
+            changed = true;
+        }
+
+        // Decay expertiseGrowth toward 0.5
+        for (const key of Object.keys(owl.dna.expertiseGrowth)) {
+            const current = owl.dna.expertiseGrowth[key];
+            const decayed = current + (0.5 - current) * factor;
+            owl.dna.expertiseGrowth[key] = Math.max(0, Math.min(1, decayed));
+            changed = true;
+        }
+
+        if (changed) {
+            owl.dna.lastEvolved = new Date().toISOString();
+            await this.owlRegistry.saveDNA(owlName);
+            console.log(`[Evolution] Applied ${weeksElapsed}-week DNA decay to ${owlName}.`);
+        }
+
+        return changed;
+    }
+
+    /**
      * Trigger an evolution pass for a specific owl.
      * Analyzes their most recent session and updates their DNA.
      */

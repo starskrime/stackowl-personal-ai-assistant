@@ -9,6 +9,9 @@ import type { ModelProvider, ChatMessage } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import type { StackOwlConfig } from '../config/loader.js';
 import { OwlEngine } from '../engine/runtime.js';
+import { MemoryConsolidator } from './consolidation.js';
+import { ToolPruner } from '../evolution/pruner.js';
+import type { CapabilityLedger } from '../evolution/ledger.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -30,10 +33,13 @@ export interface PingContext {
     provider: ModelProvider;
     owl: OwlInstance;
     config: StackOwlConfig;
+    capabilityLedger: CapabilityLedger;
     /** Callback to send a message to the user */
     sendToUser: (message: string) => Promise<void>;
     /** Get recent session history for context */
     getRecentHistory?: () => ChatMessage[];
+    /** The user ID to run consolidation for */
+    userId?: string;
 }
 
 export type PingType =
@@ -47,12 +53,15 @@ export type PingType =
 
 const DEFAULT_PING_CONFIG: PingConfig = {
     enabled: true,
-    checkInIntervalMinutes: 120, // every 2 hours
+    checkInIntervalMinutes: 20,  // base interval — actual timing is randomized ±50%
     morningBrief: true,
     morningBriefHour: 9,
     quietHoursStart: 22,
     quietHoursEnd: 7,
 };
+
+// Minimum time between ANY two pings (prevents spam even with short intervals)
+const MIN_PING_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── Proactive Pinger ────────────────────────────────────────────
 
@@ -63,6 +72,7 @@ export class ProactivePinger {
     private timers: NodeJS.Timeout[] = [];
     private lastPingTime: number = 0;
     private lastMorningBriefDate: string = '';
+    private lastConsolidationDate: string = '';
 
     constructor(context: PingContext, config?: Partial<PingConfig>) {
         this.config = { ...DEFAULT_PING_CONFIG, ...config };
@@ -78,13 +88,13 @@ export class ProactivePinger {
 
         console.log('[ProactivePinger] 🔔 Proactive pinging started');
 
-        // Periodic check-in timer
-        const checkInMs = this.config.checkInIntervalMinutes * 60 * 1000;
+        // Periodic check-in timer — use a shorter tick (1 min) and randomize
+        // actual ping timing internally so it feels organic, not clockwork.
         const checkInTimer = setInterval(() => {
             this.maybeCheckIn().catch((err) => {
                 console.error('[ProactivePinger] Check-in error:', err);
             });
-        }, checkInMs);
+        }, 60 * 1000); // tick every minute, maybeCheckIn decides whether to actually ping
         this.timers.push(checkInTimer);
 
         // Morning brief timer — check every minute around the brief hour
@@ -94,6 +104,22 @@ export class ProactivePinger {
             });
         }, 60 * 1000);
         this.timers.push(morningTimer);
+
+        // 🧠 Daily Memory Consolidation timer
+        const consolidationTimer = setInterval(() => {
+            this.maybeConsolidateMemory().catch((err) => {
+                console.error('[ProactivePinger] Memory consolidation error:', err);
+            });
+        }, 60 * 1000);
+        this.timers.push(consolidationTimer);
+
+        // 🧹 Autonomous Tool Pruning timer
+        const pruningTimer = setInterval(() => {
+            this.maybePruneTools().catch((err) => {
+                console.error('[ProactivePinger] Tool pruning error:', err);
+            });
+        }, 60 * 1000);
+        this.timers.push(pruningTimer);
 
         // Send a greeting on start
         this.sendGreeting().catch((err) => {
@@ -150,9 +176,18 @@ export class ProactivePinger {
     private async maybeCheckIn(): Promise<void> {
         if (this.isQuietHours()) return;
 
-        // Minimum 30 min between any pings
         const now = Date.now();
-        if (now - this.lastPingTime < 30 * 60 * 1000) return;
+
+        // Enforce minimum cooldown between any two pings
+        if (now - this.lastPingTime < MIN_PING_COOLDOWN_MS) return;
+
+        // Randomize: only proceed if we've passed a random threshold within the interval window.
+        // This makes pinging feel organic — sometimes 15 min, sometimes 35 min.
+        const intervalMs = this.config.checkInIntervalMinutes * 60 * 1000;
+        const timeSincePing = now - this.lastPingTime;
+        // Probability of pinging increases linearly from 0 at MIN_COOLDOWN to 1.0 at 2x interval
+        const probability = Math.min(1.0, (timeSincePing - MIN_PING_COOLDOWN_MS) / (intervalMs * 2));
+        if (Math.random() > probability) return;
 
         const hour = new Date().getHours();
         const recentHistory = this.context.getRecentHistory?.() ?? [];
@@ -219,6 +254,67 @@ export class ProactivePinger {
     }
 
     /**
+     * Maybe run the daily memory consolidation job.
+     * Extracts persistent facts from the day's chat logs and saves them to owl_dna.json.
+     */
+    private async maybeConsolidateMemory(): Promise<void> {
+        const now = new Date();
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+        const dateKey = now.toISOString().split('T')[0];
+
+        // Run at 3 AM by default (when the user is asleep)
+        // Hardcoded for now, but could be added to PingConfig
+        if (hour !== 3 || minute !== 0) return;
+        if (this.lastConsolidationDate === dateKey) return;
+
+        this.lastConsolidationDate = dateKey;
+
+        // Ensure we know who we are consolidating for
+        const userId = this.context.userId;
+        if (!userId) {
+            console.log('[ProactivePinger] Skipping consolidation: no userId in context');
+            return;
+        }
+
+        try {
+            const consolidator = new MemoryConsolidator(this.context.provider, this.context.owl, this.context.config.workspace);
+            await consolidator.consolidateSession(userId);
+        } catch (e) {
+            console.error('[ProactivePinger] Memory consolidation failed:', e);
+        }
+    }
+
+    /**
+     * Maybe run the autonomous tool pruner.
+     * Scans for failing tools and attempts to rewrite or archive them.
+     */
+    private async maybePruneTools(): Promise<void> {
+        const now = new Date();
+        const hour = now.getHours();
+
+        // Run every 4 hours (e.g. 0, 4, 8, 12, 16, 20)
+        if (hour % 4 !== 0 || now.getMinutes() !== 0) return;
+
+        const dateKey = `${now.toISOString().split('T')[0]}_${hour}`;
+        if (this.lastConsolidationDate === dateKey) return; // Reusing this key variable slightly hackily for MVP, would normally track separately
+        this.lastConsolidationDate = dateKey;
+
+        try {
+            // Provide the configured global ledger
+            const pruner = new ToolPruner(
+                this.context.provider,
+                this.context.owl,
+                this.context.config.workspace,
+                this.context.capabilityLedger
+            );
+            await pruner.scanAndPrune();
+        } catch (e) {
+            console.error('[ProactivePinger] Tool pruning failed:', e);
+        }
+    }
+
+    /**
      * Generate a proactive message using the LLM and send it.
      */
     private async generateAndSend(prompt: string, _type: PingType): Promise<void> {
@@ -228,6 +324,7 @@ export class ProactivePinger {
                 owl: this.context.owl,
                 sessionHistory: this.context.getRecentHistory?.() ?? [],
                 config: this.context.config,
+                skipGapDetection: true,  // Proactive messages are pre-generated — never evolve on them
             });
 
             await this.context.sendToUser(response.content);

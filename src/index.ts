@@ -7,6 +7,7 @@
 import { resolve } from 'node:path';
 import { program } from 'commander';
 import chalk from 'chalk';
+import { log } from './logger.js';
 import { loadConfig } from './config/loader.js';
 import { ProviderRegistry } from './providers/registry.js';
 import { OwlRegistry } from './owls/registry.js';
@@ -14,9 +15,11 @@ import { OwlEngine } from './engine/runtime.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { ToolRegistry } from './tools/registry.js';
 import { ShellTool } from './tools/shell.js';
-import { ReadFileTool, WriteFileTool } from './tools/files.js';
+import { ReadFileTool, WriteFileTool, EditFileTool } from './tools/files.js';
+import { MemoryConsolidator } from './memory/consolidator.js';
 import { WebFetchTool } from './tools/web.js';
 import { SessionStore } from './memory/store.js';
+import { SummonParliamentTool } from './tools/parliament.js';
 import { ParliamentOrchestrator } from './parliament/orchestrator.js';
 import { PelletStore } from './pellets/store.js';
 import { OwlEvolutionEngine } from './owls/evolution.js';
@@ -34,18 +37,6 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-// ─── ASCII Art Banner ────────────────────────────────────────────
-
-const BANNER = `
-${chalk.yellow('   _____ __             __   ____            __')}
-${chalk.yellow('  / ___// /_____ ______/ /__/ __ \\\\__      __/ /')}
-${chalk.yellow('  \\\\__ \\\\/ __/ __ `/ ___/ //_/ / / / | /| / / / ')}
-${chalk.yellow(' ___/ / /_/ /_/ / /__/ ,< / /_/ /| |/ |/ / /  ')}
-${chalk.yellow('/____/\\\\__/\\\\__,_/\\\\___/_/|_|\\\\____/ |__/|__/_/   ')}
-${chalk.dim('──────────────────────────────────────────────────')}
-${chalk.dim('🦉 Personal AI Assistant • Challenge Everything')}
-${chalk.dim('──────────────────────────────────────────────────')}
-`;
 
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
 
@@ -77,7 +68,9 @@ async function bootstrap() {
         ShellTool,
         ReadFileTool,
         WriteFileTool,
+        EditFileTool,
         WebFetchTool,
+        new SummonParliamentTool(),
     ]);
 
     // Initialize session store
@@ -90,6 +83,11 @@ async function bootstrap() {
 
     // Evolution Engine (DNA)
     const evolutionEngine = new OwlEvolutionEngine(providerRegistry.getDefault(), config, sessionStore, owlRegistry);
+
+    // Apply DNA decay for all owls if overdue (runs at most once per week per owl)
+    for (const o of owlRegistry.listOwls()) {
+        await evolutionEngine.applyDecayIfNeeded(o.persona.name).catch(() => {});
+    }
 
     // Self-improvement system
     const synthesizer = new ToolSynthesizer();
@@ -135,9 +133,9 @@ async function bootstrap() {
 // ─── Chat Command ────────────────────────────────────────────────
 
 async function chatCommand(owlName?: string) {
-    console.log(BANNER);
 
-    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, instinctRegistry, instinctEngine, perchManager, workspacePath, evolution } = await bootstrap();
+
+    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, pelletStore: bootstrap_pelletStore, instinctRegistry, instinctEngine, perchManager, workspacePath, evolution, ledger, evolutionEngine } = await bootstrap();
 
     // Select owl
     const owl = owlName
@@ -183,6 +181,16 @@ async function chatCommand(owlName?: string) {
         console.log(chalk.dim(`  [Resumed session with ${sessionHistory.length / 2} past turns]\n`));
     }
 
+    // Load persistent memory for system prompt injection
+    const memoryContext = await MemoryConsolidator.loadMemory(workspacePath);
+    if (memoryContext) {
+        console.log(chalk.dim(`  [Memory loaded from previous sessions]\n`));
+    }
+
+    // Track messages for mid-session evolution trigger
+    let messagesSinceEvolution = 0;
+    const evolutionInterval = config.owlDna?.evolutionBatchSize ?? 10;
+
     // Start perches (passive observation)
     await perchManager.startAll();
 
@@ -203,9 +211,18 @@ async function chatCommand(owlName?: string) {
 
         // Handle commands
         if (input === '/quit' || input === '/exit') {
-            console.log(chalk.dim('\n🦉 Goodbye. The owls are always watching.\n'));
+            console.log(chalk.dim('\n🦉 Saving memory and evolving DNA...'));
             perchManager.stopAll();
             rl.close();
+
+            // Consolidate memory from this session
+            const consolidator = new MemoryConsolidator(provider, owl, workspacePath);
+            await consolidator.extractAndAppend(sessionHistory).catch(() => {});
+
+            // Evolve owl DNA based on this session
+            await evolutionEngine.evolve(owl.persona.name).catch(() => {});
+
+            console.log(chalk.dim('🦉 Goodbye. The owls are always watching.\n'));
             process.exit(0);
         }
 
@@ -268,7 +285,7 @@ async function chatCommand(owlName?: string) {
                 finalProcessingInput = `User Input: ${input}\n\n[SYSTEM OVERRIDE - INSTINCT TRIGGERED]\n${triggeredInstinct.actionPrompt}`;
             }
 
-            process.stdout.write(chalk.yellow(`\n${owl.persona.emoji} ${owl.persona.name}: `));
+            log.cli.incoming('cli', input);
 
             const response = await engine.run(finalProcessingInput, {
                 provider,
@@ -276,7 +293,9 @@ async function chatCommand(owlName?: string) {
                 sessionHistory,
                 config,
                 toolRegistry,
+                pelletStore: bootstrap_pelletStore,
                 cwd: workspacePath,
+                memoryContext,
             });
 
             // ─── Self-Improvement: Capability Gap Detected ──────────────
@@ -284,82 +303,42 @@ async function chatCommand(owlName?: string) {
                 console.log(response.content);
                 console.log('');
 
-                console.log(chalk.dim(`\n🧠 Reasoning about what tool would help...`));
+                console.log(chalk.bold.cyan(`\n⚡ Capability Gap Detected — Auto-building tool...`));
                 const proposal = await evolution.designSpec(response.pendingCapabilityGap, {
-                    provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath,
+                    provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath, capabilityLedger: ledger,
                 });
 
-                console.log(chalk.bold.cyan(`\n⚡ Capability Gap — Tool Proposal`));
-                console.log(chalk.dim('─'.repeat(52)));
-                console.log(`  ${chalk.bold('Tool name:')}    ${proposal.toolName}`);
-                console.log(`  ${chalk.bold('What it does:')} ${proposal.description}`);
-                if (proposal.parameters.length > 0) {
-                    console.log(`  ${chalk.bold('Parameters:')}`);
-                    for (const p of proposal.parameters) {
-                        console.log(`    • ${p.name} (${p.type})${p.required ? '' : ' (optional)'} — ${p.description}`);
+                const engineContext = { provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath, capabilityLedger: ledger };
+                const onProgress = async (msg: string) => { console.log(chalk.dim(`  ${msg}`)); };
+
+                try {
+                    // Auto-install deps without asking
+                    const autoInstall = async (deps: string[]) => {
+                        console.log(chalk.dim(`  📦 Auto-installing npm deps: ${deps.join(', ')}...`));
+                        return true;
+                    };
+
+                    const { response: retryResponse, depsInstalled } = await evolution.buildAndRetry(
+                        proposal, finalProcessingInput, engineContext, engine, autoInstall, onProgress
+                    );
+
+                    console.log(chalk.green(`\n✓ Tool "${proposal.toolName}" ready.`));
+                    if (depsInstalled) console.log(chalk.green(`  ✓ npm deps installed.`));
+
+                    console.log(chalk.dim(`\n🔄 Retrying...\n`));
+                    process.stdout.write(chalk.yellow(`${owl.persona.emoji} ${owl.persona.name}: `));
+                    console.log(retryResponse.content);
+
+                    sessionHistory.push({ role: 'user', content: input });
+                    sessionHistory.push({ role: 'assistant', content: retryResponse.content });
+                    await sessionStore.saveSession(session);
+
+                    if (retryResponse.usage) {
+                        console.log(chalk.dim(`  [tokens: ${retryResponse.usage.promptTokens}→${retryResponse.usage.completionTokens}]`));
                     }
-                }
-                if (proposal.dependencies.length > 0) {
-                    console.log(`  ${chalk.bold('npm deps:')}     ${proposal.dependencies.join(', ')}`);
-                }
-                console.log(`  ${chalk.bold('Safety:')}       ${proposal.safetyNote}`);
-                console.log(`  ${chalk.bold('Why:')}          ${proposal.rationale}`);
-                console.log(`  ${chalk.bold('File:')}         src/tools/synthesized/${proposal.toolName}.ts`);
-                console.log(chalk.dim('─'.repeat(52)));
-
-                const answer = await new Promise<string>((resolve) => {
-                    rl.question(chalk.cyan('\nBuild this tool? [y/n]: '), resolve);
-                });
-
-                if (answer.trim().toLowerCase().startsWith('y')) {
-                    console.log(chalk.dim(`\n🔧 Generating implementation...`));
-                    try {
-                        const engineContext = { provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath };
-
-                        const askInstall = async (deps: string[]) => {
-                            const installAnswer = await new Promise<string>((resolve) => {
-                                rl.question(
-                                    chalk.cyan(`\n📦 Install npm deps (${deps.join(', ')})? [y/n]: `),
-                                    resolve
-                                );
-                            });
-                            return installAnswer.trim().toLowerCase().startsWith('y');
-                        };
-
-                        const onProgress = async (msg: string) => {
-                            console.log(chalk.dim(`  ${msg}`));
-                        };
-
-                        const { response: retryResponse, depsToInstall, depsInstalled } = await evolution.buildAndRetry(
-                            proposal, finalProcessingInput, engineContext, engine, askInstall, onProgress
-                        );
-
-                        console.log(chalk.green(`\n✓ Tool "${proposal.toolName}" built and loaded.`));
-                        if (depsInstalled) {
-                            console.log(chalk.green(`  ✓ npm deps installed.`));
-                        } else if (depsToInstall.length > 0) {
-                            console.log(chalk.yellow(`  ⚠ Deps not installed — run manually: npm install ${depsToInstall.join(' ')}`));
-                        }
-                        console.log(chalk.dim(`\n🔄 Retrying...\n`));
-                        process.stdout.write(chalk.yellow(`${owl.persona.emoji} ${owl.persona.name}: `));
-                        console.log(retryResponse.content);
-
-                        sessionHistory.push({ role: 'user', content: input });
-                        sessionHistory.push({ role: 'assistant', content: retryResponse.content });
-                        await sessionStore.saveSession(session);
-
-                        if (retryResponse.usage) {
-                            console.log(chalk.dim(`  [tokens: ${retryResponse.usage.promptTokens}→${retryResponse.usage.completionTokens}]`));
-                        }
-                    } catch (err) {
-                        const msg = err instanceof Error ? err.message : String(err);
-                        console.error(chalk.red(`\n❌ Synthesis failed: ${msg}\n`));
-                        sessionHistory.push({ role: 'user', content: input });
-                        sessionHistory.push({ role: 'assistant', content: response.content });
-                        await sessionStore.saveSession(session);
-                    }
-                } else {
-                    console.log(chalk.dim('\n↩ Skipped.\n'));
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.error(chalk.red(`\n❌ Auto-build failed: ${msg}\n`));
                     sessionHistory.push({ role: 'user', content: input });
                     sessionHistory.push({ role: 'assistant', content: response.content });
                     await sessionStore.saveSession(session);
@@ -371,6 +350,8 @@ async function chatCommand(owlName?: string) {
             }
             // ─────────────────────────────────────────────────────────────
 
+            log.cli.outgoing('cli', response.content);
+            process.stdout.write(chalk.yellow(`\n${owl.persona.emoji} ${owl.persona.name}: `));
             console.log(response.content);
 
             // Update session history
@@ -386,6 +367,13 @@ async function chatCommand(owlName?: string) {
                 );
             }
             console.log('');
+
+            // Mid-session evolution: trigger DNA update every N messages
+            messagesSinceEvolution++;
+            if (messagesSinceEvolution >= evolutionInterval) {
+                messagesSinceEvolution = 0;
+                evolutionEngine.evolve(owl.persona.name).catch(() => {});
+            }
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.error(chalk.red(`\n❌ Error: ${msg}\n`));
@@ -398,7 +386,7 @@ async function chatCommand(owlName?: string) {
 // ─── Parliament Command ──────────────────────────────────────────
 
 async function parliamentCommand(topic?: string) {
-    console.log(BANNER);
+
 
     if (!topic || topic.trim() === '') {
         console.error(chalk.red('❌ Please provide a topic for the Parliament to debate.'));
@@ -493,7 +481,7 @@ async function statusCommand() {
 // ─── Pellets Command ───────────────────────────────────────────────
 
 async function pelletsCommand(opts: { search?: string; read?: string }) {
-    console.log(BANNER);
+
 
     const { pelletStore } = await bootstrap();
 
@@ -540,7 +528,7 @@ async function pelletsCommand(opts: { search?: string; read?: string }) {
 // ─── Evolve Command ────────────────────────────────────────────────
 
 async function evolveCommand(owlName: string) {
-    console.log(BANNER);
+
 
     const { evolutionEngine } = await bootstrap();
 
@@ -563,7 +551,7 @@ async function evolveCommand(owlName: string) {
 // ─── Telegram Command ────────────────────────────────────────────
 
 async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
-    console.log(BANNER);
+
 
     const { providerRegistry, owlRegistry, config, toolRegistry, sessionStore, workspacePath, evolution } = await bootstrap();
 
@@ -658,7 +646,7 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
 // ─── Web Command ─────────────────────────────────────────────────
 
 async function webCommand(port?: string) {
-    console.log(BANNER);
+
     const resolvedPort = port ? parseInt(port, 10) : 3000;
 
     const { config, providerRegistry, owlRegistry, pelletStore, sessionStore, toolRegistry, workspacePath } = await bootstrap();

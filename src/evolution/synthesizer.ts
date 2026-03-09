@@ -13,7 +13,6 @@ import type { ModelProvider } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import type { StackOwlConfig } from '../config/loader.js';
 import type { CapabilityGap } from './detector.js';
-import { OwlEngine } from '../engine/runtime.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const SYNTHESIZED_DIR = join(__dirname, '../tools/synthesized');
@@ -42,12 +41,6 @@ export interface ToolProposal {
 // ─── Synthesizer ─────────────────────────────────────────────────
 
 export class ToolSynthesizer {
-    private engine: OwlEngine;
-
-    constructor() {
-        this.engine = new OwlEngine();
-    }
-
     /**
      * Step 1: Design a tool spec from a detected gap.
      * This is what gets shown to the user for approval — no code written yet.
@@ -58,36 +51,43 @@ export class ToolSynthesizer {
         owl: OwlInstance,
         config: StackOwlConfig
     ): Promise<ToolProposal> {
+        const platform = process.platform; // 'darwin' | 'linux' | 'win32'
+
         const prompt =
-            `You are the self-improvement engine for an AI assistant called StackOwl.\n\n` +
-            `A capability gap was detected:\n` +
-            `- User request: "${gap.userRequest}"\n` +
-            `- Gap type: ${gap.type}\n` +
-            (gap.attemptedToolName ? `- Tool attempted: "${gap.attemptedToolName}"\n` : '') +
-            `- Description: ${gap.description}\n\n` +
-            `Design the minimal tool needed to resolve this gap. Respond ONLY with valid JSON:\n` +
+            `You are the self-improvement engine for an AI assistant called StackOwl.\n` +
+            `StackOwl runs as a Node.js process on the SAME MACHINE as the user (platform: ${platform}).\n` +
+            `It has full access to: child_process (exec/spawn), the filesystem, network, and all system commands.\n\n` +
+            `The user made this request: "${gap.userRequest}"\n\n` +
+            `Design a tool that DIRECTLY FULFILLS the user's request using system-level capabilities.\n` +
+            `CRITICAL RULES:\n` +
+            `- The tool must ACTUALLY DO the action (e.g., capture screen, send email, read files).\n` +
+            `- Do NOT design a tool that asks the user to do the task themselves.\n` +
+            `- Do NOT design a tool that just processes something the user would manually send.\n` +
+            `- Use system commands where appropriate:\n` +
+            `    macOS: screencapture, osascript, say, open\n` +
+            `    Linux: scrot, xdotool, notify-send\n` +
+            `    Any OS: child_process.exec(), Node.js fs, https, etc.\n\n` +
+            `Respond ONLY with valid JSON:\n` +
             `{\n` +
             `  "toolName": "snake_case_tool_name",\n` +
-            `  "description": "One sentence: what this tool does",\n` +
+            `  "description": "One sentence: what this tool DOES (active voice, e.g. 'Captures a screenshot of the screen and returns the file path')",\n` +
             `  "parameters": [\n` +
             `    { "name": "param_name", "type": "string|number|boolean", "description": "what it is", "required": true }\n` +
             `  ],\n` +
-            `  "rationale": "One sentence: why this resolves the gap",\n` +
+            `  "rationale": "One sentence: which system command or API this uses and how",\n` +
             `  "dependencies": ["npm-package-name"],\n` +
-            `  "safetyNote": "What external systems this touches: filesystem / network / none"\n` +
+            `  "safetyNote": "What external systems this touches: filesystem / network / screen / none"\n` +
             `}\n\n` +
-            `Rules:\n` +
-            `- toolName must be unique, snake_case, and descriptive\n` +
-            `- Keep it minimal — solve only what's needed for the user's request\n` +
+            `Additional rules:\n` +
+            `- toolName must be snake_case and describe the ACTION (not 'processor' or 'handler')\n` +
+            `- Keep it minimal — solve only what the user asked for\n` +
             `- If no npm packages are needed, set dependencies to []\n` +
             `- Output ONLY the JSON object, no markdown fences`;
 
-        const response = await this.engine.run(prompt, {
-            provider,
-            owl,
-            sessionHistory: [],
-            config,
-        });
+        const response = await provider.chat(
+            [{ role: 'user', content: prompt }],
+            config.defaultModel,
+        );
 
         const spec = this.parseJson(response.content);
         const toolName = (spec.toolName as string | undefined) ?? 'custom_tool';
@@ -113,8 +113,9 @@ export class ToolSynthesizer {
     async implement(
         proposal: ToolProposal,
         provider: ModelProvider,
-        owl: OwlInstance,
-        config: StackOwlConfig
+        _owl: OwlInstance,
+        config: StackOwlConfig,
+        previousError?: string
     ): Promise<string> {
         const schemaProperties = proposal.parameters.reduce((acc, p) => {
             acc[p.name] = { type: p.type, description: p.description };
@@ -131,14 +132,36 @@ export class ToolSynthesizer {
         const pascalName = toPascalCase(proposal.toolName);
         const timestamp = new Date().toISOString();
 
-        const prompt =
-            `You are implementing a new TypeScript tool for the StackOwl AI assistant.\n\n` +
+        const platform = process.platform;
+
+        let prompt =
+            `You are implementing a new TypeScript tool for the StackOwl AI assistant.\n` +
+            `StackOwl runs as a Node.js process on the SAME MACHINE as the user (platform: ${platform}).\n` +
+            `The tool has FULL access to child_process, filesystem, network, and all system commands.\n\n`;
+
+        if (previousError) {
+            prompt +=
+                `[CRITICAL CORRECTION REQUIRED]\n` +
+                `Your previous attempt to build this tool failed with the following error when loading into the Node.js V8 execution engine:\n` +
+                `\`\`\`\n${previousError}\n\`\`\`\n` +
+                `You MUST fix this error in your rewrite. If it was a missing module (like node:formdata), use a different native approach (like native Node fetch) or add the correct npm package to your imports.\n\n`;
+        }
+
+        prompt +=
             `Tool spec:\n` +
             `- Name: ${proposal.toolName}\n` +
             `- Description: ${proposal.description}\n` +
             `- Parameters: ${JSON.stringify(proposal.parameters, null, 2)}\n` +
             `- Dependencies: ${proposal.dependencies.length > 0 ? proposal.dependencies.join(', ') : 'none (Node.js built-ins only)'}\n` +
-            `- Safety: ${proposal.safetyNote}\n\n` +
+            `- Safety: ${proposal.safetyNote}\n` +
+            `- How to implement: ${proposal.rationale}\n\n` +
+            `CRITICAL: The execute() function must ACTIVELY PERFORM the action.\n` +
+            `Do NOT write code that just tells the user what to do manually.\n` +
+            `Do NOT write code that waits for the user to upload something.\n` +
+            `Examples of correct approach:\n` +
+            `  - "take screenshot" → exec('screencapture /tmp/shot.png') then read & return the file path\n` +
+            `  - "open browser" → exec('open https://example.com') on macOS\n` +
+            `  - "read clipboard" → exec('pbpaste') on macOS\n\n` +
             `Write the COMPLETE TypeScript file. Use EXACTLY this structure:\n\n` +
             `// AUTO-GENERATED by ${proposal.owlEmoji} ${proposal.owlName} | ${timestamp}\n` +
             `// Reason: ${proposal.rationale}\n` +
@@ -156,18 +179,17 @@ export class ToolSynthesizer {
             `};\n\n` +
             `export default ${pascalName}Tool;\n\n` +
             `Implementation rules:\n` +
-            `- Use 'node:' prefix for built-ins (node:fs/promises, node:path, etc.)\n` +
-            `- Always return a human-readable string\n` +
-            `- Throw descriptive Error objects on failure\n` +
+            `- Use 'node:' prefix for built-ins (node:fs/promises, node:path, node:child_process, etc.)\n` +
+            `- For shell commands: import { promisify } from 'node:util'; import { exec } from 'node:child_process'; const execAsync = promisify(exec);\n` +
+            `- Always return a descriptive string of what was done (e.g., "Screenshot saved to /tmp/shot.png")\n` +
+            `- Throw descriptive Error objects on failure (include actual error message)\n` +
             `- Only export the default — no named exports\n` +
-            `- Output ONLY the file content, no explanation`;
+            `- Output ONLY the TypeScript file content, no explanation, no markdown fences`;
 
-        const response = await this.engine.run(prompt, {
-            provider,
-            owl,
-            sessionHistory: [],
-            config,
-        });
+        const response = await provider.chat(
+            [{ role: 'user', content: prompt }],
+            config.defaultModel,
+        );
 
         // Extract raw code — strip markdown fences if present
         let code = response.content.trim();

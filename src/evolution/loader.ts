@@ -12,7 +12,7 @@ import type { CapabilityLedger } from './ledger.js';
 import { SYNTHESIZED_DIR } from './synthesizer.js';
 
 export class DynamicToolLoader {
-    constructor(private ledger: CapabilityLedger) {}
+    constructor(private ledger: CapabilityLedger) { }
 
     /**
      * Load all active synthesized tools at startup.
@@ -31,8 +31,12 @@ export class DynamicToolLoader {
                 continue;
             }
 
-            const ok = await this.importAndRegister(tsPath, registry);
-            if (ok) loaded++;
+            try {
+                await this.importAndRegister(tsPath, registry);
+                loaded++;
+            } catch (err) {
+                console.error(`[Evolution] Failed to blanket-load synthesized tool at startup (${record.fileName}):`, err);
+            }
         }
 
         return loaded;
@@ -41,12 +45,13 @@ export class DynamicToolLoader {
     /**
      * Hot-load a single newly synthesized tool without restarting.
      * Uses a cache-busting query string so Node doesn't serve a stale cached import.
+     * Throws an error with the detailed module loading failure reason if it fails.
      */
-    async loadOne(filePath: string, registry: ToolRegistry): Promise<boolean> {
-        return this.importAndRegister(filePath, registry);
+    async loadOne(filePath: string, registry: ToolRegistry): Promise<void> {
+        await this.importAndRegister(filePath, registry);
     }
 
-    private async importAndRegister(filePath: string, registry: ToolRegistry): Promise<boolean> {
+    private async importAndRegister(filePath: string, registry: ToolRegistry): Promise<void> {
         try {
             // Cache-bust so a re-synthesized tool with the same name is always freshly loaded
             const url = `${filePath}?t=${Date.now()}`;
@@ -54,15 +59,13 @@ export class DynamicToolLoader {
             const tool = mod.default;
 
             if (!tool || !tool.definition || typeof tool.execute !== 'function') {
-                console.error(`[Evolution] Invalid tool structure in: ${filePath}`);
-                return false;
+                throw new Error(`[Evolution] Invalid tool structure in: ${filePath}`);
             }
 
             registry.register(tool);
-            return true;
         } catch (err) {
-            console.error(`[Evolution] Failed to load synthesized tool from ${filePath}:`, err);
-            return false;
+            // Re-throw so the caller (handler.ts) can feed this compile/load error back to the LLM
+            throw err;
         }
     }
 }

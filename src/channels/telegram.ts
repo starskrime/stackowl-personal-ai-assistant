@@ -6,6 +6,9 @@
  */
 
 import { Bot, type Context } from 'grammy';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ModelProvider } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import { OwlEngine } from '../engine/runtime.js';
@@ -14,6 +17,8 @@ import type { ToolRegistry } from '../tools/registry.js';
 import type { SessionStore, Session } from '../memory/store.js';
 import type { StackOwlConfig } from '../config/loader.js';
 import { EvolutionHandler, type ToolProposal } from '../evolution/handler.js';
+import type { CapabilityLedger } from '../evolution/ledger.js';
+import { log } from '../logger.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -27,6 +32,7 @@ export interface TelegramChannelConfig {
     sessionStore: SessionStore;
     cwd?: string;
     evolution?: EvolutionHandler;
+    capabilityLedger?: CapabilityLedger;
 }
 
 interface PendingApproval {
@@ -57,6 +63,7 @@ export class TelegramChannel {
     private sessions: Map<number, UserSession> = new Map();
     private pinger: ProactivePinger | null = null;
     private activeChatIds: Set<number> = new Set();
+    private chatIdsPath: string;
 
     constructor(config: TelegramChannelConfig) {
         if (!config.botToken || config.botToken.trim() === '') {
@@ -66,8 +73,33 @@ export class TelegramChannel {
         this.config = config;
         this.engine = new OwlEngine();
         this.bot = new Bot(config.botToken);
+        this.chatIdsPath = join(config.cwd ?? process.cwd(), 'known_chat_ids.json');
 
         this.setupHandlers();
+    }
+
+    /** Load persisted chat IDs from disk into activeChatIds */
+    private async loadChatIds(): Promise<void> {
+        if (!existsSync(this.chatIdsPath)) return;
+        try {
+            const raw = await readFile(this.chatIdsPath, 'utf-8');
+            const ids: number[] = JSON.parse(raw);
+            for (const id of ids) this.activeChatIds.add(id);
+            log.telegram.info(`Loaded ${ids.length} known chat ID(s)`);
+        } catch {
+            // Non-fatal — file may be malformed
+        }
+    }
+
+    /** Persist current activeChatIds to disk */
+    private async saveChatIds(): Promise<void> {
+        try {
+            const dir = join(this.chatIdsPath, '..');
+            if (!existsSync(dir)) await mkdir(dir, { recursive: true });
+            await writeFile(this.chatIdsPath, JSON.stringify([...this.activeChatIds]), 'utf-8');
+        } catch (err) {
+            log.telegram.warn(`Could not persist chat IDs: ${err instanceof Error ? err.message : err}`);
+        }
     }
 
     /**
@@ -87,8 +119,9 @@ export class TelegramChannel {
                 { parse_mode: 'MarkdownV2' }
             );
 
-            // Track this chat for proactive pinging
+            // Track this chat for proactive pinging and persist for restarts
             this.activeChatIds.add(ctx.chat.id);
+            this.saveChatIds().catch(() => { });
         });
 
         // /owls command
@@ -149,8 +182,11 @@ export class TelegramChannel {
             // Get or create session
             const userSession = await this.getOrCreateSession(userId);
 
-            // Track this chat for proactive pinging
-            this.activeChatIds.add(ctx.chat.id);
+            // Track this chat for proactive pinging and persist for restarts
+            if (!this.activeChatIds.has(ctx.chat.id)) {
+                this.activeChatIds.add(ctx.chat.id);
+                this.saveChatIds().catch(() => { });
+            }
 
             // ─── Pending npm install approval ────────────────────────
             if (userSession.pendingInstallResolve) {
@@ -168,12 +204,12 @@ export class TelegramChannel {
 
                 if (answer === 'yes' || answer === 'y') {
                     userSession.pendingApproval = undefined;
-                    await ctx.reply(`🔧 Building *${this.escapeMarkdown(proposal.toolName)}*\\.\\.\\.`, { parse_mode: 'MarkdownV2' });
+                    await ctx.reply(`🔧 Building <code>${this.escapeHtml(proposal.toolName)}</code>...`, { parse_mode: 'HTML' });
                     await ctx.api.sendChatAction(ctx.chat.id, 'typing');
 
                     try {
                         if (!this.config.evolution || !this.config.toolRegistry) {
-                            await ctx.reply('❌ Self-improvement system not configured on this bot instance.');
+                            await ctx.reply('❌ Self-improvement system not configured on this bot instance.', { parse_mode: 'HTML' });
                             return;
                         }
 
@@ -188,8 +224,8 @@ export class TelegramChannel {
 
                         const askInstall = async (deps: string[]) => {
                             await ctx.reply(
-                                `📦 Install npm deps: \`${this.escapeMarkdown(deps.join(' '))}\`\\?\n\nReply *yes* to install or *no* to skip\\.`,
-                                { parse_mode: 'MarkdownV2' }
+                                `📦 Install npm deps: <code>${this.escapeHtml(deps.join(' '))}</code>\n\nReply <b>yes</b> to install or <b>no</b> to skip.`,
+                                { parse_mode: 'HTML' }
                             );
                             return new Promise<boolean>((resolve) => {
                                 userSession.pendingInstallResolve = resolve;
@@ -197,21 +233,22 @@ export class TelegramChannel {
                         };
 
                         const onProgress = async (msg: string) => {
-                            await ctx.reply(this.escapeMarkdown(msg), { parse_mode: 'MarkdownV2' });
+                            // Plain text — progress messages may contain any characters
+                            await ctx.reply(msg);
                         };
 
                         const { response: retryResponse, depsToInstall, depsInstalled } = await this.config.evolution.buildAndRetry(
                             proposal, originalMessage, engineContext, this.engine, askInstall, onProgress
                         );
 
-                        let confirmMsg = `✅ Tool *${this.escapeMarkdown(proposal.toolName)}* is live\\!\n`;
+                        let confirmMsg = `✅ Tool <code>${this.escapeHtml(proposal.toolName)}</code> is live!\n`;
                         if (depsInstalled) {
-                            confirmMsg += `✅ npm deps installed\\.\n`;
+                            confirmMsg += `✅ npm deps installed.\n`;
                         } else if (depsToInstall.length > 0) {
-                            confirmMsg += `⚠️ Deps not installed — run manually: \`npm install ${this.escapeMarkdown(depsToInstall.join(' '))}\`\n`;
+                            confirmMsg += `⚠️ Deps not installed — run manually: <code>npm install ${this.escapeHtml(depsToInstall.join(' '))}</code>\n`;
                         }
-                        confirmMsg += `\n🔄 Retrying your request\\.\\.\\.`;
-                        await ctx.reply(confirmMsg, { parse_mode: 'MarkdownV2' });
+                        confirmMsg += `\n🔄 Retrying your request...`;
+                        await ctx.reply(confirmMsg, { parse_mode: 'HTML' });
                         await ctx.api.sendChatAction(ctx.chat.id, 'typing');
 
                         userSession.session.messages.push({ role: 'user', content: originalMessage });
@@ -228,7 +265,7 @@ export class TelegramChannel {
                     userSession.pendingApproval = undefined;
                     await ctx.reply('↩ Skipped. The owl will work with what it has.');
                 } else {
-                    await ctx.reply('Reply *yes* to build the tool or *no* to skip\\.', { parse_mode: 'MarkdownV2' });
+                    await ctx.reply('Reply <b>yes</b> to build the tool or <b>no</b> to skip.', { parse_mode: 'HTML' });
                 }
                 return;
             }
@@ -238,7 +275,8 @@ export class TelegramChannel {
             await ctx.api.sendChatAction(ctx.chat.id, 'typing');
 
             try {
-                console.log(`[Telegram] ← user ${userId}: "${text.slice(0, 80)}"`);
+                log.telegram.incoming(`user:${userId}`, text);
+                log.telegram.separator();
 
                 const response = await this.engine.run(text, {
                     provider: this.config.provider,
@@ -246,18 +284,36 @@ export class TelegramChannel {
                     sessionHistory: userSession.session.messages,
                     config: this.config.config,
                     toolRegistry: this.config.toolRegistry,
+                    capabilityLedger: this.config.capabilityLedger,
                     cwd: this.config.cwd,
+                    onProgress: async (msg: string) => {
+                        try {
+                            // Convert simple markdown patterns to HTML — much safer than Markdown/MarkdownV2
+                            // which chokes on unbalanced backticks or asterisks from tool output
+                            const html = this.escapeHtml(msg)
+                                .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+                                .replace(/`(.+?)`/g, '<code>$1</code>')
+                                .replace(/^_(.+)_$/gm, '<i>$1</i>');
+                            await ctx.reply(html, { parse_mode: 'HTML' });
+                            await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+                        } catch (err) {
+                            log.telegram.warn(`onProgress send failed: ${err instanceof Error ? err.message : String(err)}`);
+                        }
+                    }
                 });
 
-                console.log(`[Telegram] engine done | gap=${!!response.pendingCapabilityGap} | evolution=${!!this.config.evolution} | tools=${response.toolsUsed.join(',') || 'none'}`);
+                log.telegram.outgoing(`user:${userId}`, response.content);
+                log.telegram.info(`model:${response.modelUsed} | tools:[${response.toolsUsed.join(', ') || 'none'}] | gap:${!!response.pendingCapabilityGap}`);
 
-                // ─── Self-Improvement: Capability Gap Detected ────────
+                // ─── Self-Improvement: Capability Gap → AUTO-BUILD ───────
                 if (response.pendingCapabilityGap && this.config.evolution) {
-                    console.log(`[Telegram] → starting proposal flow for gap: "${response.pendingCapabilityGap.description.slice(0, 60)}"`);
                     const gap = response.pendingCapabilityGap;
+                    log.evolution.evolve(`Auto-building tool for gap: "${gap.description.slice(0, 80)}"`);
 
+                    // Send the owl's original (apologetic) response first,
+                    // then immediately start building
                     await this.sendResponse(ctx, response.owlEmoji, response.owlName, response.content);
-                    await ctx.reply('🧠 Reasoning about what tool would help\\.\\.\\.', { parse_mode: 'MarkdownV2' });
+                    await ctx.reply('🧠 I don\'t have that capability yet — building it now...');
                     await ctx.api.sendChatAction(ctx.chat.id, 'typing');
 
                     const engineContext = {
@@ -266,43 +322,91 @@ export class TelegramChannel {
                         sessionHistory: userSession.session.messages,
                         config: this.config.config,
                         toolRegistry: this.config.toolRegistry,
+                        capabilityLedger: this.config.capabilityLedger,
                         cwd: this.config.cwd,
                     };
-                    const proposal = await this.config.evolution.designSpec(gap, engineContext);
 
-                    // Format and send the proposal
-                    const params = proposal.parameters.length > 0
-                        ? proposal.parameters.map(p => `  • ${p.name} \\(${p.type}\\) — ${this.escapeMarkdown(p.description)}`).join('\n')
-                        : '  _none_';
-                    const deps = proposal.dependencies.length > 0
-                        ? this.escapeMarkdown(proposal.dependencies.join(', '))
-                        : '_none_';
+                    try {
+                        const proposal = await this.config.evolution.designSpec(gap, engineContext);
 
-                    const proposalMsg =
-                        `⚡ *Capability Gap — Tool Proposal*\n` +
-                        `─────────────────────────────\n` +
-                        `*Tool name:* \`${this.escapeMarkdown(proposal.toolName)}\`\n` +
-                        `*What it does:* ${this.escapeMarkdown(proposal.description)}\n` +
-                        `*Parameters:*\n${params}\n` +
-                        `*npm deps:* ${deps}\n` +
-                        `*Safety:* ${this.escapeMarkdown(proposal.safetyNote)}\n` +
-                        `*Why:* ${this.escapeMarkdown(proposal.rationale)}\n` +
-                        `*File:* \`src/tools/synthesized/${this.escapeMarkdown(proposal.toolName)}\\.ts\`\n` +
-                        `─────────────────────────────\n` +
-                        `Reply *yes* to build this tool or *no* to skip\\.`;
+                        if (proposal.existingTool) {
+                            log.evolution.evolve(`Reusing existing tool: ${proposal.toolName}`);
+                            await ctx.reply(`♻️ Found existing tool <code>${this.escapeHtml(proposal.toolName)}</code> — retrying...`, { parse_mode: 'HTML' });
+                        } else {
+                            log.evolution.evolve(`Synthesizing new tool: ${proposal.toolName}`);
+                            await ctx.reply(`⚡ Synthesizing <code>${this.escapeHtml(proposal.toolName)}.ts</code>...`, { parse_mode: 'HTML' });
+                        }
+                        await ctx.api.sendChatAction(ctx.chat.id, 'typing');
 
-                    await ctx.reply(proposalMsg, { parse_mode: 'MarkdownV2' });
+                        // Auto-install npm deps silently (no user question)
+                        const autoInstall = async (_deps: string[]) => true;
 
-                    // Store pending approval — next message will be the answer
-                    userSession.pendingApproval = { proposal, originalMessage: text };
-                    userSession.lastActivity = Date.now();
-                    return;
+                        const onProgress = async (msg: string) => {
+                            // Only surface meaningful steps, not every log line
+                            if (msg.startsWith('✅') || msg.startsWith('❌') || msg.startsWith('⚠️')) {
+                                await ctx.reply(msg);
+                            }
+                        };
+
+                        const { response: retryResponse } = await this.config.evolution.buildAndRetry(
+                            proposal, text, engineContext, this.engine, autoInstall, onProgress
+                        );
+
+                        // Update session history with the retry response transcript
+                        userSession.session.messages.push({ role: 'user', content: text });
+                        for (const msg of retryResponse.newMessages) {
+                            userSession.session.messages.push(msg);
+                        }
+                        userSession.lastActivity = Date.now();
+                        await this.config.sessionStore.saveSession(userSession.session);
+
+                        await this.sendResponse(ctx, retryResponse.owlEmoji, retryResponse.owlName, retryResponse.content);
+                        return;
+                    } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        log.evolution.error(`Auto-build failed: ${msg}`);
+                        await ctx.reply(`❌ Couldn't build that capability cleanly. Re-evaluating strategy...`);
+
+                        // ─── RELENTLESS REACT FALLBACK ────────────────────────
+                        // Instead of giving up, we force the AI to observe its failure and try
+                        // a different approach using ONLY existing tools.
+                        const fallbackInstruction =
+                            `[SYSTEM UPDATE] Your attempt to synthesize a new tool failed with error:\n` +
+                            `\`\`\`\n${msg}\n\`\`\`\n` +
+                            `You MUST attempt to fulfill the user's original request ("${text}") using a completely DIFFERENT strategy. ` +
+                            `Use ONLY your existing tools. Do NOT attempt to synthesize another tool.`;
+
+                        userSession.session.messages.push({ role: 'system', content: fallbackInstruction });
+
+                        await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+
+                        // We skip gap detection entirely so the agent doesn't get stuck in an infinite synthesis loop
+                        const fallbackContext = {
+                            ...engineContext,
+                            skipGapDetection: true
+                        };
+
+                        const fallbackResponse = await this.engine.run(text, fallbackContext);
+
+                        // Update session history with the new fallback attempt transcript
+                        userSession.session.messages.push({ role: 'user', content: text });
+                        for (const msg of fallbackResponse.newMessages) {
+                            userSession.session.messages.push(msg);
+                        }
+                        userSession.lastActivity = Date.now();
+                        await this.config.sessionStore.saveSession(userSession.session);
+
+                        await this.sendResponse(ctx, fallbackResponse.owlEmoji, fallbackResponse.owlName, fallbackResponse.content);
+                        return;
+                    }
                 }
-                // ─────────────────────────────────────────────────────
+                // ─────────────────────────────────────────────────────────
 
-                // Update session history
+                // Update session history with the full continuous transcript
                 userSession.session.messages.push({ role: 'user', content: text });
-                userSession.session.messages.push({ role: 'assistant', content: response.content });
+                for (const msg of response.newMessages) {
+                    userSession.session.messages.push(msg);
+                }
                 userSession.lastActivity = Date.now();
 
                 // Trim session if too long
@@ -324,14 +428,14 @@ export class TelegramChannel {
                 }
             } catch (error) {
                 const msg = error instanceof Error ? error.message : String(error);
-                console.error(`[TelegramChannel] Error for user ${userId}:`, msg);
+                log.telegram.error(`Unhandled error for user ${userId}: ${msg}`);
                 await ctx.reply(`❌ Error: ${msg}`);
             }
         });
 
         // Error handler
         this.bot.catch((err) => {
-            console.error('[TelegramChannel] Bot error:', err.message);
+            log.telegram.error(`Bot error: ${err.message}`);
         });
     }
 
@@ -385,6 +489,38 @@ export class TelegramChannel {
      * Send an owl response, chunking if needed to stay within Telegram's 4096 char limit.
      */
     private async sendResponse(ctx: Context, emoji: string, name: string, content: string): Promise<void> {
+        // ── Detect and send image files referenced in the response ───
+        // If the content mentions an image file path (from a tool like capture_screenshot),
+        // send it as a Telegram photo instead of raw markdown text.
+        // Match image file paths — exclude backticks, quotes, and common markdown punctuation
+        const imagePathMatch = content.match(/([^\s"'`*_]+\.(?:png|jpg|jpeg|gif|webp))/i);
+        if (imagePathMatch) {
+            // Strip any stray non-path characters (backticks, asterisks) that slipped in
+            const imagePath = imagePathMatch[1].replace(/[`*_'"]/g, '');
+            const { existsSync } = await import('node:fs');
+            log.telegram.info(`Image path detected: "${imagePath}" | exists: ${existsSync(imagePath)}`);
+            if (existsSync(imagePath)) {
+                try {
+                    const { InputFile } = await import('grammy');
+                    const caption = content
+                        .replace(/!\[.*?\]\(.*?\)/g, '')
+                        .replace(imagePath, '')
+                        .trim()
+                        || `${emoji} ${name}`;
+
+                    await ctx.replyWithPhoto(
+                        new InputFile(imagePath),
+                        { caption: caption.slice(0, 1024) }
+                    );
+                    return;
+                } catch (err) {
+                    log.telegram.error(`sendPhoto failed for "${imagePath}": ${err instanceof Error ? err.message : err}`);
+                    // Fall through to text reply
+                }
+            }
+        }
+
+        // ── Normal text reply ─────────────────────────────────────────
         const header = `${emoji} *${this.escapeMarkdown(name)}*\n\n`;
         const fullMessage = header + this.escapeMarkdown(content);
 
@@ -392,9 +528,17 @@ export class TelegramChannel {
             await ctx.reply(fullMessage, { parse_mode: 'MarkdownV2' });
         } else {
             const chunks = this.splitMessage(content, 3800);
-            for (let i = 0; i < chunks.length; i++) {
+            const MAX_CHUNKS = 5; // Prevent rate-limit bans from infinite loops
+            for (let i = 0; i < Math.min(chunks.length, MAX_CHUNKS); i++) {
                 const prefix = i === 0 ? header : '';
                 await ctx.reply(prefix + this.escapeMarkdown(chunks[i]), { parse_mode: 'MarkdownV2' });
+                // Rate limit protection
+                if (i < Math.min(chunks.length, MAX_CHUNKS) - 1) {
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
+            if (chunks.length > MAX_CHUNKS) {
+                await ctx.reply(`_...[Output truncated, ${chunks.length - MAX_CHUNKS} chunks omitted to prevent rate limits]..._`, { parse_mode: 'MarkdownV2' });
             }
         }
     }
@@ -436,6 +580,17 @@ export class TelegramChannel {
     }
 
     /**
+     * Escape special characters for Telegram HTML parse mode.
+     * Much simpler and safer for dynamic content than MarkdownV2.
+     */
+    private escapeHtml(text: string): string {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    /**
      * Broadcast a proactive message to all active chats (e.g. from a Perch point)
      */
     async broadcastProactiveMessage(message: string): Promise<void> {
@@ -446,9 +601,10 @@ export class TelegramChannel {
         for (const chatId of this.activeChatIds) {
             try {
                 await this.bot.api.sendMessage(chatId, formatted, { parse_mode: 'MarkdownV2' });
+                log.telegram.outgoing(`chat:${chatId}`, message);
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                console.error(`[TelegramChannel] Failed to broadcast to ${chatId}: ${errMsg}`);
+                log.telegram.error(`Failed to broadcast to chat:${chatId}: ${errMsg}`);
                 this.activeChatIds.delete(chatId);
             }
         }
@@ -458,12 +614,17 @@ export class TelegramChannel {
      * Start the bot (long polling).
      */
     async start(): Promise<void> {
-        console.log(`[TelegramChannel] 🤖 Bot starting...`);
+        log.telegram.info(`Bot starting...`);
 
         try {
+            // Pre-populate activeChatIds from disk so greeting reaches user on restart
+            await this.loadChatIds();
+
             const me = await this.bot.api.getMe();
             console.log(`[TelegramChannel] ✓ Connected as @${me.username}`);
             console.log(`[TelegramChannel] ✓ Owl: ${this.config.owl.persona.emoji} ${this.config.owl.persona.name}`);
+
+            const self = this;
 
             await this.bot.start({
                 onStart: () => {
@@ -475,12 +636,20 @@ export class TelegramChannel {
                             provider: this.config.provider,
                             owl: this.config.owl,
                             config: this.config.config,
+                            capabilityLedger: this.config.capabilityLedger!,
                             sendToUser: async (message: string) => {
                                 await this.broadcastProactiveMessage(message);
                             },
+                            get userId() {
+                                // Default to the most recently active chat for consolidation
+                                const userSessions = Array.from(self.sessions?.values() || []) as any[];
+                                if (userSessions.length === 0) return undefined;
+                                const latest = userSessions.sort((a, b) => b.lastActivity - a.lastActivity)[0];
+                                return latest ? latest.userId : undefined;
+                            },
                             getRecentHistory: () => {
                                 // Get the most recent session's history for context
-                                const userSessions = Array.from(this.sessions.values());
+                                const userSessions = Array.from(self.sessions.values());
                                 if (userSessions.length === 0) return [];
                                 const latest = userSessions.sort((a, b) => b.lastActivity - a.lastActivity)[0];
                                 return latest ? latest.session.messages : [];
