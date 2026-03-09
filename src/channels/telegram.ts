@@ -18,6 +18,7 @@ import type { SessionStore, Session } from '../memory/store.js';
 import type { StackOwlConfig } from '../config/loader.js';
 import { EvolutionHandler, type ToolProposal } from '../evolution/handler.js';
 import type { CapabilityLedger } from '../evolution/ledger.js';
+import type { LearningEngine } from '../learning/self-study.js';
 import { log } from '../logger.js';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ export interface TelegramChannelConfig {
     cwd?: string;
     evolution?: EvolutionHandler;
     capabilityLedger?: CapabilityLedger;
+    learningEngine?: LearningEngine;
 }
 
 interface PendingApproval {
@@ -426,6 +428,13 @@ export class TelegramChannel {
                 // Save to disk
                 await this.config.sessionStore.saveSession(userSession.session);
 
+                // Reactive learning — fire-and-forget after saving session
+                if (this.config.learningEngine) {
+                    this.config.learningEngine
+                        .processConversation(userSession.session.messages)
+                        .catch(err => log.telegram.warn(`Learning failed: ${err instanceof Error ? err.message : err}`));
+                }
+
                 await this.sendResponse(ctx, response.owlEmoji, response.owlName, response.content);
 
                 // Show token usage as a subtle footer
@@ -615,6 +624,7 @@ export class TelegramChannel {
                             owl: this.config.owl,
                             config: this.config.config,
                             capabilityLedger: this.config.capabilityLedger!,
+                            learningEngine: this.config.learningEngine,
                             sendToUser: async (message: string) => {
                                 await this.broadcastProactiveMessage(message);
                             },

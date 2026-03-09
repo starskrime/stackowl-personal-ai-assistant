@@ -7,7 +7,6 @@
 
 import type { OwlRegistry } from '../owls/registry.js';
 import type { ModelProvider } from '../providers/base.js';
-import type { TelegramChannel } from '../channels/telegram.js';
 import type { StackOwlConfig } from '../config/loader.js';
 import { OwlEngine } from '../engine/runtime.js';
 
@@ -29,18 +28,19 @@ export class PerchManager {
     private provider: ModelProvider;
     private config: StackOwlConfig;
     private owlRegistry: OwlRegistry;
-    private telegram?: TelegramChannel;
+    /** Callback to broadcast a proactive message to all active channels */
+    private broadcast?: (message: string) => Promise<void>;
 
     constructor(
         provider: ModelProvider,
         config: StackOwlConfig,
         owlRegistry: OwlRegistry,
-        telegram?: TelegramChannel
+        broadcast?: (message: string) => Promise<void>
     ) {
         this.provider = provider;
         this.config = config;
         this.owlRegistry = owlRegistry;
-        this.telegram = telegram;
+        this.broadcast = broadcast;
         this.engine = new OwlEngine();
     }
 
@@ -99,9 +99,9 @@ export class PerchManager {
             // Use ANSI clear line carriage return if we are in readline, but standard log is fine for now
             console.log(msg);
 
-            // Send to Telegram if attached
-            if (this.telegram) {
-                await this.telegram.broadcastProactiveMessage(response.content);
+            // Broadcast to all registered channels via gateway callback
+            if (this.broadcast) {
+                await this.broadcast(response.content);
             }
 
         } catch (error) {

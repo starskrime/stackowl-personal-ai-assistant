@@ -35,6 +35,8 @@ export interface EngineContext {
     onProgress?: (msg: string) => Promise<void>;
     /** Optional persistent memory content to inject into system prompt */
     memoryContext?: string;
+    /** User preferences to inject into system prompt (from PreferenceStore.toContextString()) */
+    preferencesContext?: string;
     /** Channel-provided callback to send a file/image to the user. Path must be absolute. */
     sendFile?: (filePath: string, caption?: string) => Promise<void>;
 }
@@ -93,7 +95,7 @@ export class OwlEngine {
         log.engine.model(optimalModel);
 
         // 2. Build system prompt (async — may inject pellets + memory)
-        const systemPrompt = await this.buildSystemPrompt(owl, toolRegistry, context.pelletStore, userMessage, context.memoryContext);
+        const systemPrompt = await this.buildSystemPrompt(owl, toolRegistry, context.pelletStore, userMessage, context.memoryContext, context.preferencesContext);
 
         // 3. Compress history if too long to prevent context drift on local models
         const wasLong = sessionHistory.length > CONTEXT_WINDOW_THRESHOLD;
@@ -377,7 +379,8 @@ export class OwlEngine {
         toolRegistry?: ToolRegistry,
         pelletStore?: PelletStore,
         userMessage?: string,
-        memoryContext?: string
+        memoryContext?: string,
+        preferencesContext?: string,
     ): Promise<string> {
         const { persona, dna } = owl;
 
@@ -416,6 +419,11 @@ export class OwlEngine {
                     prompt += `- ${domain}: ${Math.round(score * 100)}% proficiency\n`;
                 }
             }
+        }
+
+        // Inject user preferences (quiet hours, formatting, style, etc.)
+        if (preferencesContext && preferencesContext.trim().length > 0) {
+            prompt += '\n' + preferencesContext + '\n';
         }
 
         // Inject persistent memory (facts from past sessions)

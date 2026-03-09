@@ -2,7 +2,8 @@
   "providers": {
     "ollama": {
       "baseUrl": "http://172.30.60.14:11434",
-      "defaultModel": "gpt-oss:120b"
+      "defaultModel": "gpt-oss:120b",
+      "defaultEmbeddingModel": "gpt-oss:120b"
     }
   },
   "defaultProvider": "ollama",

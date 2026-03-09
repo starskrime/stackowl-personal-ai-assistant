@@ -166,22 +166,32 @@ export class OllamaProvider implements ModelProvider {
     }
 
     async embed(text: string, model?: string): Promise<EmbeddingResponse> {
-        const resolvedModel = model ?? this.defaultEmbeddingModel;
+        // Try the dedicated embedding model first; fall back to the main chat model
+        const candidates = [
+            model ?? this.defaultEmbeddingModel,
+            this.defaultModel,
+        ].filter((m, i, a) => m && a.indexOf(m) === i); // deduplicate
 
-        try {
-            const response = await this.client.embed({
-                model: resolvedModel,
-                input: text,
-            });
+        let lastError: Error | undefined;
 
-            return {
-                embedding: response.embeddings[0] as number[],
-                model: resolvedModel,
-            };
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`[OllamaProvider] Embed failed: ${message}`);
+        for (const candidate of candidates) {
+            try {
+                const response = await this.client.embed({
+                    model: candidate,
+                    input: text,
+                });
+                return {
+                    embedding: response.embeddings[0] as number[],
+                    model: candidate,
+                };
+            } catch (error) {
+                lastError = error instanceof Error ? error : new Error(String(error));
+                // Only retry on "model not found" errors; hard-fail on others
+                if (!lastError.message.toLowerCase().includes('not found')) break;
+            }
         }
+
+        throw new Error(`[OllamaProvider] Embed failed: ${lastError?.message}`);
     }
 
     async listModels(): Promise<string[]> {

@@ -7,23 +7,23 @@
 import { resolve } from 'node:path';
 import { program } from 'commander';
 import chalk from 'chalk';
-import { log } from './logger.js';
+// log imported by adapters/gateway internally
 import { loadConfig } from './config/loader.js';
 import { ProviderRegistry } from './providers/registry.js';
 import { OwlRegistry } from './owls/registry.js';
-import { OwlEngine } from './engine/runtime.js';
-import { TelegramChannel } from './channels/telegram.js';
 import { ToolRegistry } from './tools/registry.js';
 import { ShellTool } from './tools/shell.js';
 import { ReadFileTool, WriteFileTool, EditFileTool } from './tools/files.js';
 import { SendFileTool } from './tools/send_file.js';
 import { MemoryConsolidator } from './memory/consolidator.js';
-import { WebFetchTool } from './tools/web.js';
+import { WebCrawlTool } from './tools/web.js';
+import { GoogleSearchTool } from './tools/search.js';
 import { SessionStore } from './memory/store.js';
 import { SummonParliamentTool } from './tools/parliament.js';
 import { ParliamentOrchestrator } from './parliament/orchestrator.js';
 import { PelletStore } from './pellets/store.js';
 import { OwlEvolutionEngine } from './owls/evolution.js';
+import { LearningEngine } from './learning/self-study.js';
 import { ToolSynthesizer } from './evolution/synthesizer.js';
 import { CapabilityLedger } from './evolution/ledger.js';
 import { DynamicToolLoader } from './evolution/loader.js';
@@ -33,7 +33,10 @@ import { InstinctEngine } from './instincts/engine.js';
 import { PerchManager } from './perch/manager.js';
 import { FilePerch } from './perch/file-perch.js';
 import { StackOwlServer } from './server/index.js';
-import { createInterface } from 'node:readline';
+import { OwlGateway } from './gateway/core.js';
+import { TelegramAdapter } from './gateway/adapters/telegram.js';
+import { CLIAdapter } from './gateway/adapters/cli.js';
+import { PreferenceStore } from './preferences/store.js';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -60,9 +63,6 @@ async function bootstrap() {
     const owlRegistry = new OwlRegistry(workspacePath);
     await owlRegistry.loadAll();
 
-    // Initialize engine
-    const engine = new OwlEngine();
-
     // Initialize tools
     const toolRegistry = new ToolRegistry();
     toolRegistry.registerAll([
@@ -70,7 +70,8 @@ async function bootstrap() {
         ReadFileTool,
         WriteFileTool,
         EditFileTool,
-        WebFetchTool,
+        WebCrawlTool,
+        GoogleSearchTool,
         SendFileTool,
         new SummonParliamentTool(),
     ]);
@@ -82,6 +83,17 @@ async function bootstrap() {
     // Initialize pellet store
     const pelletStore = new PelletStore(workspacePath, providerRegistry.getDefault());
     await pelletStore.init();
+
+    // Learning Engine — instantiated here so bootstrap can share it across CLI + Telegram
+    // (actual owl binding happens after owl selection, so we expose a factory)
+    const learningEngineFactory = (owl: import('./owls/persona.js').OwlInstance) =>
+        new LearningEngine(
+            providerRegistry.getDefault(),
+            owl,
+            config,
+            pelletStore,
+            workspacePath,
+        );
 
     // Evolution Engine (DNA)
     const evolutionEngine = new OwlEvolutionEngine(providerRegistry.getDefault(), config, sessionStore, owlRegistry);
@@ -108,6 +120,10 @@ async function bootstrap() {
     await instinctRegistry.loadAll();
     const instinctEngine = new InstinctEngine();
 
+    // User Preference Store
+    const preferenceStore = new PreferenceStore(workspacePath);
+    await preferenceStore.load();
+
     // Perch Points
     const perchManager = new PerchManager(providerRegistry.getDefault(), config, owlRegistry);
     perchManager.addPerch(new FilePerch(workspacePath));
@@ -116,7 +132,6 @@ async function bootstrap() {
         config,
         providerRegistry,
         owlRegistry,
-        engine,
         toolRegistry,
         sessionStore,
         pelletStore,
@@ -129,260 +144,80 @@ async function bootstrap() {
         synthesizer,
         ledger,
         loader,
+        learningEngineFactory,
+        preferenceStore,
     };
+}
+
+// ─── Gateway Builder ─────────────────────────────────────────────
+
+async function buildGateway(
+    b: Awaited<ReturnType<typeof bootstrap>>,
+    owl: NonNullable<ReturnType<Awaited<ReturnType<typeof bootstrap>>['owlRegistry']['get']>>,
+): Promise<OwlGateway> {
+    const provider = b.providerRegistry.getDefault();
+    const memoryContext = await MemoryConsolidator.loadMemory(b.workspacePath);
+    if (memoryContext) {
+        console.log(chalk.dim('  [Memory loaded from previous sessions]'));
+    }
+
+    const gateway = new OwlGateway({
+        provider,
+        owl,
+        owlRegistry:      b.owlRegistry,
+        config:           b.config,
+        toolRegistry:     b.toolRegistry,
+        sessionStore:     b.sessionStore,
+        pelletStore:      b.pelletStore,
+        capabilityLedger: b.ledger,
+        evolution:        b.evolution,
+        evolutionEngine:  b.evolutionEngine,
+        learningEngine:   b.learningEngineFactory(owl),
+        instinctRegistry: b.instinctRegistry,
+        instinctEngine:   b.instinctEngine,
+        preferenceStore:  b.preferenceStore,
+        memoryContext,
+        cwd:              b.workspacePath,
+    });
+
+    return gateway;
 }
 
 // ─── Chat Command ────────────────────────────────────────────────
 
 async function chatCommand(owlName?: string) {
+    const b = await bootstrap();
 
-
-    const { providerRegistry, owlRegistry, engine, config, toolRegistry, sessionStore, pelletStore: bootstrap_pelletStore, instinctRegistry, instinctEngine, perchManager, workspacePath, evolution, ledger, evolutionEngine } = await bootstrap();
-
-    // Select owl
-    const owl = owlName
-        ? owlRegistry.get(owlName)
-        : owlRegistry.getDefault();
-
+    const owl = owlName ? b.owlRegistry.get(owlName) : b.owlRegistry.getDefault();
     if (!owl) {
         console.error(chalk.red(`❌ Owl "${owlName}" not found.`));
-        console.log(chalk.dim('Available owls:'));
-        for (const o of owlRegistry.listOwls()) {
-            console.log(chalk.dim(`  ${o.persona.emoji} ${o.persona.name} (${o.persona.type})`));
+        for (const o of b.owlRegistry.listOwls()) {
+            console.log(chalk.dim(`  ${o.persona.emoji} ${o.persona.name}`));
         }
         process.exit(1);
     }
 
-    const provider = providerRegistry.getDefault();
-
-    // Health check
-    const healthy = await provider.healthCheck();
-    if (!healthy) {
-        console.error(
-            chalk.red(`❌ Cannot reach ${provider.name} provider. Is it running?`)
-        );
+    const provider = b.providerRegistry.getDefault();
+    if (!await provider.healthCheck()) {
+        console.error(chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`));
         process.exit(1);
     }
 
-    console.log(
-        chalk.green(`✓ Connected to ${provider.name}`) +
-        chalk.dim(` (model: ${config.defaultModel})`)
-    );
-    console.log(
-        chalk.green(`✓ Active owl: ${owl.persona.emoji} ${owl.persona.name}`) +
-        chalk.dim(` (${owl.persona.type}, challenge: ${owl.dna.evolvedTraits.challengeLevel})`)
-    );
-    console.log(
-        chalk.dim(`\nType your message. Commands: ${chalk.bold('/quit')} · ${chalk.bold('/owls')} · ${chalk.bold('/status')} · ${chalk.bold('/capabilities')}\n`)
-    );
+    console.log(chalk.green(`✓ Connected to ${provider.name}`) + chalk.dim(` (model: ${b.config.defaultModel})`));
 
-    const session = await sessionStore.getRecentOrCreate(owl.persona.name);
-    const sessionHistory = session.messages;
+    const gateway = await buildGateway(b, owl);
+    const adapter = new CLIAdapter(gateway);
+    gateway.register(adapter);
 
-    if (sessionHistory.length > 0) {
-        console.log(chalk.dim(`  [Resumed session with ${sessionHistory.length / 2} past turns]\n`));
-    }
+    await b.perchManager.startAll();
 
-    // Load persistent memory for system prompt injection
-    const memoryContext = await MemoryConsolidator.loadMemory(workspacePath);
-    if (memoryContext) {
-        console.log(chalk.dim(`  [Memory loaded from previous sessions]\n`));
-    }
-
-    // Track messages for mid-session evolution trigger
-    let messagesSinceEvolution = 0;
-    const evolutionInterval = config.owlDna?.evolutionBatchSize ?? 10;
-
-    // Start perches (passive observation)
-    await perchManager.startAll();
-
-    const rl = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        prompt: chalk.cyan('You: '),
+    process.on('SIGINT', async () => {
+        b.perchManager.stopAll();
+        adapter.stop();
+        process.exit(0);
     });
 
-    rl.prompt();
-
-    rl.on('line', async (line) => {
-        const input = line.trim();
-        if (!input) {
-            rl.prompt();
-            return;
-        }
-
-        // Handle commands
-        if (input === '/quit' || input === '/exit') {
-            console.log(chalk.dim('\n🦉 Saving memory and evolving DNA...'));
-            perchManager.stopAll();
-            rl.close();
-
-            // Consolidate memory from this session
-            const consolidator = new MemoryConsolidator(provider, owl, workspacePath);
-            await consolidator.extractAndAppend(sessionHistory).catch(() => {});
-
-            // Evolve owl DNA based on this session
-            await evolutionEngine.evolve(owl.persona.name).catch(() => {});
-
-            console.log(chalk.dim('🦉 Goodbye. The owls are always watching.\n'));
-            process.exit(0);
-        }
-
-        if (input === '/owls') {
-            console.log(chalk.bold('\nAvailable Owls:'));
-            for (const o of owlRegistry.listOwls()) {
-                console.log(`  ${o.persona.emoji} ${chalk.bold(o.persona.name)} — ${o.persona.type} (challenge: ${o.dna.evolvedTraits.challengeLevel})`);
-            }
-            console.log('');
-            rl.prompt();
-            return;
-        }
-
-        if (input === '/status') {
-            console.log(chalk.bold('\nStatus:'));
-            console.log(`  Provider: ${provider.name}`);
-            console.log(`  Model: ${config.defaultModel}`);
-            console.log(`  Owl: ${owl.persona.emoji} ${owl.persona.name}`);
-            console.log(`  DNA Generation: ${owl.dna.generation}`);
-            console.log(`  Session messages: ${sessionHistory.length}`);
-            console.log('');
-            rl.prompt();
-            return;
-        }
-
-        if (input === '/capabilities') {
-            const records = await evolution.listAll();
-            if (records.length === 0) {
-                console.log(chalk.dim('\n  No synthesized tools yet. The owl will build them when needed.\n'));
-            } else {
-                console.log(chalk.bold('\n🔧 Synthesized Tools:\n'));
-                for (const r of records) {
-                    const icon = r.status === 'active' ? chalk.green('✓') : r.status === 'failed' ? chalk.red('✗') : chalk.dim('⊘');
-                    console.log(`  ${icon} ${chalk.bold(r.toolName)}`);
-                    console.log(`     ${chalk.dim(r.description)}`);
-                    console.log(`     ${chalk.dim(`By: ${r.createdBy} | Used: ${r.timesUsed}x | Status: ${r.status}`)}`);
-                    if (r.dependencies.length > 0) {
-                        console.log(`     ${chalk.dim(`Deps: ${r.dependencies.join(', ')}`)}`);
-                    }
-                    console.log('');
-                }
-            }
-            rl.prompt();
-            return;
-        }
-
-        // Send to engine
-        try {
-            // 1. Check Instincts
-            const availableInstincts = instinctRegistry.getContextInstincts(owl.persona.name);
-            const triggeredInstinct = await instinctEngine.evaluate(input, availableInstincts, {
-                provider,
-                owl,
-                config
-            });
-
-            let finalProcessingInput = input;
-            if (triggeredInstinct) {
-                console.log(chalk.yellow(`\n⚡ Instinct Triggered: ${triggeredInstinct.name.toUpperCase()}`));
-                finalProcessingInput = `User Input: ${input}\n\n[SYSTEM OVERRIDE - INSTINCT TRIGGERED]\n${triggeredInstinct.actionPrompt}`;
-            }
-
-            log.cli.incoming('cli', input);
-
-            const response = await engine.run(finalProcessingInput, {
-                provider,
-                owl,
-                sessionHistory,
-                config,
-                toolRegistry,
-                pelletStore: bootstrap_pelletStore,
-                cwd: workspacePath,
-                memoryContext,
-            });
-
-            // ─── Self-Improvement: Capability Gap Detected ──────────────
-            if (response.pendingCapabilityGap) {
-                console.log(response.content);
-                console.log('');
-
-                console.log(chalk.bold.cyan(`\n⚡ Capability Gap Detected — Auto-building tool...`));
-                const proposal = await evolution.designSpec(response.pendingCapabilityGap, {
-                    provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath, capabilityLedger: ledger,
-                });
-
-                const engineContext = { provider, owl, sessionHistory, config, toolRegistry, cwd: workspacePath, capabilityLedger: ledger };
-                const onProgress = async (msg: string) => { console.log(chalk.dim(`  ${msg}`)); };
-
-                try {
-                    // Auto-install deps without asking
-                    const autoInstall = async (deps: string[]) => {
-                        console.log(chalk.dim(`  📦 Auto-installing npm deps: ${deps.join(', ')}...`));
-                        return true;
-                    };
-
-                    const { response: retryResponse, depsInstalled } = await evolution.buildAndRetry(
-                        proposal, finalProcessingInput, engineContext, engine, autoInstall, onProgress
-                    );
-
-                    console.log(chalk.green(`\n✓ Tool "${proposal.toolName}" ready.`));
-                    if (depsInstalled) console.log(chalk.green(`  ✓ npm deps installed.`));
-
-                    console.log(chalk.dim(`\n🔄 Retrying...\n`));
-                    process.stdout.write(chalk.yellow(`${owl.persona.emoji} ${owl.persona.name}: `));
-                    console.log(retryResponse.content);
-
-                    sessionHistory.push({ role: 'user', content: input });
-                    sessionHistory.push({ role: 'assistant', content: retryResponse.content });
-                    await sessionStore.saveSession(session);
-
-                    if (retryResponse.usage) {
-                        console.log(chalk.dim(`  [tokens: ${retryResponse.usage.promptTokens}→${retryResponse.usage.completionTokens}]`));
-                    }
-                } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    console.error(chalk.red(`\n❌ Auto-build failed: ${msg}\n`));
-                    sessionHistory.push({ role: 'user', content: input });
-                    sessionHistory.push({ role: 'assistant', content: response.content });
-                    await sessionStore.saveSession(session);
-                }
-
-                console.log('');
-                rl.prompt();
-                return;
-            }
-            // ─────────────────────────────────────────────────────────────
-
-            log.cli.outgoing('cli', response.content);
-            process.stdout.write(chalk.yellow(`\n${owl.persona.emoji} ${owl.persona.name}: `));
-            console.log(response.content);
-
-            // Update session history
-            sessionHistory.push({ role: 'user', content: input });
-            sessionHistory.push({ role: 'assistant', content: response.content });
-
-            // Save to disk
-            await sessionStore.saveSession(session);
-
-            if (response.usage) {
-                console.log(
-                    chalk.dim(`  [tokens: ${response.usage.promptTokens}→${response.usage.completionTokens}]`)
-                );
-            }
-            console.log('');
-
-            // Mid-session evolution: trigger DNA update every N messages
-            messagesSinceEvolution++;
-            if (messagesSinceEvolution >= evolutionInterval) {
-                messagesSinceEvolution = 0;
-                evolutionEngine.evolve(owl.persona.name).catch(() => {});
-            }
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            console.error(chalk.red(`\n❌ Error: ${msg}\n`));
-        }
-
-        rl.prompt();
-    });
+    await adapter.start();
 }
 
 // ─── Parliament Command ──────────────────────────────────────────
@@ -553,94 +388,75 @@ async function evolveCommand(owlName: string) {
 // ─── Telegram Command ────────────────────────────────────────────
 
 async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
+    const b = await bootstrap();
 
-
-    const { providerRegistry, owlRegistry, config, toolRegistry, sessionStore, workspacePath, evolution } = await bootstrap();
-
-    // Get Telegram bot token from config or credentials file
+    // Read bot token
     let botToken = '';
-    const configAny = config as unknown as Record<string, unknown>;
-    const telegramConfig = configAny['telegram'] as { botToken?: string; enabled?: boolean } | undefined;
-
+    const telegramConfig = (b.config as any)['telegram'] as { botToken?: string } | undefined;
     if (telegramConfig?.botToken) {
         botToken = telegramConfig.botToken;
     } else {
-        // Try credentials file
         const credPath = join(process.cwd(), '.stackowl.credentials.json');
         if (existsSync(credPath)) {
             try {
                 const creds = JSON.parse(await readFile(credPath, 'utf-8')) as Record<string, string>;
                 botToken = creds['telegramBotToken'] ?? '';
-            } catch {
-                // Ignore parse errors
-            }
+            } catch { /* ignore */ }
         }
     }
 
     if (!botToken) {
         console.error(chalk.red('❌ Telegram bot token not found.'));
-        console.log(chalk.dim('  Run ./start.sh to configure, or add "telegram.botToken" to stackowl.config.json'));
+        console.log(chalk.dim('  Run ./start.sh to configure, or set "telegram.botToken" in stackowl.config.json'));
         process.exit(1);
     }
 
-    const owl = opts.owl
-        ? owlRegistry.get(opts.owl)
-        : owlRegistry.getDefault();
-
+    const owl = opts.owl ? b.owlRegistry.get(opts.owl) : b.owlRegistry.getDefault();
     if (!owl) {
         console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
         process.exit(1);
     }
 
-    const provider = providerRegistry.getDefault();
-
-    // Health check
-    const healthy = await provider.healthCheck();
-    if (!healthy) {
-        console.error(
-            chalk.red(`❌ Cannot reach ${provider.name} provider. Is it running?`)
-        );
+    const provider = b.providerRegistry.getDefault();
+    if (!await provider.healthCheck()) {
+        console.error(chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`));
         process.exit(1);
     }
 
-    console.log(chalk.green(`✓ Provider: ${provider.name}`) + chalk.dim(` (model: ${config.defaultModel})`));
+    console.log(chalk.green(`✓ Provider: ${provider.name}`) + chalk.dim(` (model: ${b.config.defaultModel})`));
     console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
     console.log(chalk.green(`✓ Channel: 📱 Telegram`));
 
-    // Create telegram channel first so perch can use it
-    const telegram = new TelegramChannel({
+    const gateway = await buildGateway(b, owl);
+    const adapter = new TelegramAdapter(gateway, {
         botToken,
-        provider,
-        owl,
-        config,
-        toolRegistry,
-        sessionStore,
-        cwd: workspacePath,
-        evolution,
+        chatIdsPath: join(b.workspacePath, 'known_chat_ids.json'),
     });
+    gateway.register(adapter);
 
-    // We must hackilly inject telegram into perchManager for now, or just recreate it
-    // To match our MVP architecture, we can just attach it loosely or recreate it
-    const perchWithTelegram = new PerchManager(provider, config, owlRegistry, telegram);
-    perchWithTelegram.addPerch(new FilePerch(workspacePath));
-    await perchWithTelegram.startAll();
+    // Perch: broadcast through gateway so all channels receive it
+    const perch = new PerchManager(
+        provider,
+        b.config,
+        b.owlRegistry,
+        (msg: string) => gateway.broadcastProactive(msg),
+    );
+    perch.addPerch(new FilePerch(b.workspacePath));
+    await perch.startAll();
 
-    // Graceful shutdown
     const shutdown = () => {
-        console.log(chalk.dim('\n🦉 Shutting down Telegram bot & observers...'));
-        perchWithTelegram.stopAll();
-        telegram.stop();
+        console.log(chalk.dim('\n🦉 Shutting down...'));
+        perch.stopAll();
+        adapter.stop();
         process.exit(0);
     };
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
 
-    // Start Telegram bot
-    await telegram.start();
+    await adapter.start();
 
-    // Optionally also launch CLI chat
     if (opts.withCli) {
-        console.log(chalk.dim('\n📱 Telegram bot running in background. CLI also active.\n'));
+        console.log(chalk.dim('\n📱 Telegram running. CLI also active.\n'));
         await chatCommand(opts.owl);
     }
 }

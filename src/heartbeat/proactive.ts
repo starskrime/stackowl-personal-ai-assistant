@@ -12,6 +12,8 @@ import { OwlEngine } from '../engine/runtime.js';
 import { MemoryConsolidator } from './consolidation.js';
 import { ToolPruner } from '../evolution/pruner.js';
 import type { CapabilityLedger } from '../evolution/ledger.js';
+import type { LearningEngine } from '../learning/self-study.js';
+import type { PreferenceStore } from '../preferences/store.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -40,6 +42,10 @@ export interface PingContext {
     getRecentHistory?: () => ChatMessage[];
     /** The user ID to run consolidation for */
     userId?: string;
+    /** Learning engine for proactive self-study sessions */
+    learningEngine?: LearningEngine;
+    /** User preference store — used to check dynamic quiet hours */
+    preferenceStore?: PreferenceStore;
 }
 
 export type PingType =
@@ -73,6 +79,7 @@ export class ProactivePinger {
     private lastPingTime: number = 0;
     private lastMorningBriefDate: string = '';
     private lastConsolidationDate: string = '';
+    private lastSelfStudyDate: string = '';
 
     constructor(context: PingContext, config?: Partial<PingConfig>) {
         this.config = { ...DEFAULT_PING_CONFIG, ...config };
@@ -121,6 +128,14 @@ export class ProactivePinger {
         }, 60 * 1000);
         this.timers.push(pruningTimer);
 
+        // 🧠 Proactive Self-Study timer
+        const selfStudyTimer = setInterval(() => {
+            this.maybeSelfStudy().catch((err) => {
+                console.error('[ProactivePinger] Self-study error:', err);
+            });
+        }, 60 * 1000);
+        this.timers.push(selfStudyTimer);
+
         // Send a greeting on start
         this.sendGreeting().catch((err) => {
             console.error('[ProactivePinger] Greeting error:', err);
@@ -140,11 +155,19 @@ export class ProactivePinger {
 
     /**
      * Check if we're in quiet hours.
+     * User-configured quiet hours (from PreferenceStore) take priority over defaults.
      */
     private isQuietHours(): boolean {
+        // Dynamic: if the user has set quiet hours via conversation, honour those
+        if (this.context.preferenceStore) {
+            return this.context.preferenceStore.isQuietHours(
+                this.config.quietHoursStart,
+                this.config.quietHoursEnd,
+            );
+        }
+        // Static fallback from PingConfig
         const hour = new Date().getHours();
         if (this.config.quietHoursStart > this.config.quietHoursEnd) {
-            // Wraps around midnight (e.g., 22-7)
             return hour >= this.config.quietHoursStart || hour < this.config.quietHoursEnd;
         }
         return hour >= this.config.quietHoursStart && hour < this.config.quietHoursEnd;
@@ -311,6 +334,41 @@ export class ProactivePinger {
             await pruner.scanAndPrune();
         } catch (e) {
             console.error('[ProactivePinger] Tool pruning failed:', e);
+        }
+    }
+
+    /**
+     * Proactive self-study session — runs at 2 AM.
+     * The owl quietly researches queued topics while the user is asleep.
+     * No message is sent to the user; knowledge is stored as Pellets.
+     */
+    private async maybeSelfStudy(): Promise<void> {
+        if (!this.context.learningEngine) return;
+
+        const now = new Date();
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+        const dateKey = now.toISOString().split('T')[0];
+
+        // Run at 2 AM, once per day
+        if (hour !== 2 || minute !== 0) return;
+        if (this.lastSelfStudyDate === dateKey) return;
+
+        this.lastSelfStudyDate = dateKey;
+
+        try {
+            console.log('[ProactivePinger] 🧠 Starting overnight self-study session...');
+            const result = await this.context.learningEngine.runStudySession(4);
+
+            if (result.studied.length > 0) {
+                console.log(
+                    `[ProactivePinger] ✓ Self-study done: studied [${result.studied.join(', ')}], ` +
+                    `${result.pelletsCreated} pellets created, ` +
+                    `${result.newFrontierTopics.length} new topics discovered`
+                );
+            }
+        } catch (err) {
+            console.error('[ProactivePinger] Self-study session failed:', err);
         }
     }
 
