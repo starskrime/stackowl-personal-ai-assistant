@@ -5,10 +5,10 @@
  * Users can chat with their owl through a Telegram bot.
  */
 
-import { Bot, type Context } from 'grammy';
+import { Bot, InputFile, type Context } from 'grammy';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, extname } from 'node:path';
 import type { ModelProvider } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import { OwlEngine } from '../engine/runtime.js';
@@ -299,7 +299,16 @@ export class TelegramChannel {
                         } catch (err) {
                             log.telegram.warn(`onProgress send failed: ${err instanceof Error ? err.message : String(err)}`);
                         }
-                    }
+                    },
+                    sendFile: async (filePath: string, caption?: string) => {
+                        const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+                        const ext = extname(filePath).toLowerCase();
+                        if (IMAGE_EXTS.has(ext)) {
+                            await ctx.replyWithPhoto(new InputFile(filePath), caption ? { caption } : {});
+                        } else {
+                            await ctx.replyWithDocument(new InputFile(filePath), caption ? { caption } : {});
+                        }
+                    },
                 });
 
                 log.telegram.outgoing(`user:${userId}`, response.content);
@@ -489,37 +498,6 @@ export class TelegramChannel {
      * Send an owl response, chunking if needed to stay within Telegram's 4096 char limit.
      */
     private async sendResponse(ctx: Context, emoji: string, name: string, content: string): Promise<void> {
-        // ── Detect and send image files referenced in the response ───
-        // If the content mentions an image file path (from a tool like capture_screenshot),
-        // send it as a Telegram photo instead of raw markdown text.
-        // Match image file paths — exclude backticks, quotes, and common markdown punctuation
-        const imagePathMatch = content.match(/([^\s"'`*_]+\.(?:png|jpg|jpeg|gif|webp))/i);
-        if (imagePathMatch) {
-            // Strip any stray non-path characters (backticks, asterisks) that slipped in
-            const imagePath = imagePathMatch[1].replace(/[`*_'"]/g, '');
-            const { existsSync } = await import('node:fs');
-            log.telegram.info(`Image path detected: "${imagePath}" | exists: ${existsSync(imagePath)}`);
-            if (existsSync(imagePath)) {
-                try {
-                    const { InputFile } = await import('grammy');
-                    const caption = content
-                        .replace(/!\[.*?\]\(.*?\)/g, '')
-                        .replace(imagePath, '')
-                        .trim()
-                        || `${emoji} ${name}`;
-
-                    await ctx.replyWithPhoto(
-                        new InputFile(imagePath),
-                        { caption: caption.slice(0, 1024) }
-                    );
-                    return;
-                } catch (err) {
-                    log.telegram.error(`sendPhoto failed for "${imagePath}": ${err instanceof Error ? err.message : err}`);
-                    // Fall through to text reply
-                }
-            }
-        }
-
         // ── Normal text reply ─────────────────────────────────────────
         const header = `${emoji} *${this.escapeMarkdown(name)}*\n\n`;
         const fullMessage = header + this.escapeMarkdown(content);

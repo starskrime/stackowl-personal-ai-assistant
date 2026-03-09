@@ -16,6 +16,7 @@ import { TelegramChannel } from './channels/telegram.js';
 import { ToolRegistry } from './tools/registry.js';
 import { ShellTool } from './tools/shell.js';
 import { ReadFileTool, WriteFileTool, EditFileTool } from './tools/files.js';
+import { SendFileTool } from './tools/send_file.js';
 import { MemoryConsolidator } from './memory/consolidator.js';
 import { WebFetchTool } from './tools/web.js';
 import { SessionStore } from './memory/store.js';
@@ -70,6 +71,7 @@ async function bootstrap() {
         WriteFileTool,
         EditFileTool,
         WebFetchTool,
+        SendFileTool,
         new SummonParliamentTool(),
     ]);
 

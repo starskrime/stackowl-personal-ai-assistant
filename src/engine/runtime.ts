@@ -35,6 +35,8 @@ export interface EngineContext {
     onProgress?: (msg: string) => Promise<void>;
     /** Optional persistent memory content to inject into system prompt */
     memoryContext?: string;
+    /** Channel-provided callback to send a file/image to the user. Path must be absolute. */
+    sendFile?: (filePath: string, caption?: string) => Promise<void>;
 }
 
 export interface PendingCapabilityGap {
