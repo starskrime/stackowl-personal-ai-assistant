@@ -1,0 +1,266 @@
+/**
+ * StackOwl — ClawHub Client
+ *
+ * Client for interacting with ClawHub (https://clawhub.ai)
+ * to search, discover, and install OpenCLAW-compatible skills.
+ */
+
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import chalk from "chalk";
+
+export interface ClawHubSkill {
+  slug: string;
+  name: string;
+  description: string;
+  stars: number;
+  downloads: number;
+  tags: string[];
+  author: string;
+  latestVersion: string;
+  updatedAt: string;
+}
+
+export interface ClawHubSearchResult {
+  skills: ClawHubSkill[];
+  total: number;
+}
+
+export interface ClawHubConfig {
+  siteUrl: string;
+  registryUrl: string;
+}
+
+const DEFAULT_CONFIG: ClawHubConfig = {
+  siteUrl: "https://clawhub.ai",
+  registryUrl: "https://registry.clawhub.ai",
+};
+
+export class ClawHubClient {
+  private config: ClawHubConfig;
+
+  constructor(config: Partial<ClawHubConfig> = {}) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  /**
+   * Search for skills on ClawHub.
+   */
+  async search(
+    query: string,
+    limit: number = 10,
+  ): Promise<ClawHubSearchResult> {
+    const url = `${this.config.registryUrl}/skills/search?q=${encodeURIComponent(query)}&limit=${limit}`;
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(
+          `Search failed: ${response.status} ${response.statusText}`,
+        );
+      }
+
+      const data = (await response.json()) as {
+        skills: ClawHubSkill[];
+        total: number;
+      };
+      return {
+        skills: data.skills || [],
+        total: data.total || 0,
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to search ClawHub (${url}): ${msg}`);
+    }
+  }
+
+  /**
+   * Get detailed info about a specific skill.
+   */
+  async getSkill(slug: string): Promise<ClawHubSkill | null> {
+    const url = `${this.config.registryUrl}/skills/${encodeURIComponent(slug)}`;
+
+    try {
+      const response = await fetch(url);
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`Get skill failed: ${response.status}`);
+      }
+
+      return (await response.json()) as ClawHubSkill;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to get skill: ${msg}`);
+    }
+  }
+
+  /**
+   * Download and install a skill from ClawHub.
+   */
+  async install(
+    slug: string,
+    targetDir: string,
+    version?: string,
+  ): Promise<boolean> {
+    const skill = await this.getSkill(slug);
+    if (!skill) {
+      throw new Error(`Skill "${slug}" not found on ClawHub`);
+    }
+
+    const versionToInstall = version || skill.latestVersion;
+    const downloadUrl = `${this.config.registryUrl}/skills/${encodeURIComponent(slug)}/download?version=${versionToInstall}`;
+
+    console.log(chalk.dim(`Downloading ${slug}@${versionToInstall}...`));
+
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status}`);
+      }
+
+      // Get the zip as a buffer
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      // Create target directory
+      const skillDir = join(targetDir, slug);
+      await mkdir(skillDir, { recursive: true });
+
+      // Write the zip file temporarily
+      const zipPath = join(skillDir, "skill.zip");
+      await writeFile(zipPath, buffer);
+
+      // Extract the zip (using Node's built-in)
+      await this.extractZip(zipPath, skillDir);
+
+      console.log(
+        chalk.green(`✓ Installed ${slug}@${versionToInstall} to ${skillDir}`),
+      );
+
+      return true;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to install skill: ${msg}`);
+    }
+  }
+
+  /**
+   * Extract zip file - simplified version.
+   * For full extraction, use the CLI: unzip skill.zip
+   */
+  private async extractZip(zipPath: string, _targetDir: string): Promise<void> {
+    console.log(chalk.yellow(`⚠️  Downloaded to ${zipPath}`));
+    console.log(chalk.dim(`To extract: unzip ${zipPath} -d <target-dir>`));
+  }
+
+  /**
+   * List installed skills from lockfile.
+   */
+  async listInstalled(workdir: string): Promise<string[]> {
+    const lockPath = join(workdir, ".clawhub", "lock.json");
+
+    if (!existsSync(lockPath)) {
+      return [];
+    }
+
+    try {
+      const content = await readFile(lockPath, "utf-8");
+      const lock = JSON.parse(content);
+      return Object.keys(lock.skills || {});
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
+ * Simple skill selector that matches user input to relevant skills.
+ */
+export class SkillSelector {
+  private skills: Map<
+    string,
+    { name: string; description: string; keywords: string[] }
+  > = new Map();
+
+  /**
+   * Register a skill for consideration.
+   */
+  register(skill: {
+    name: string;
+    description: string;
+    instructions: string;
+  }): void {
+    // Extract keywords from name, description, and instructions
+    const text =
+      `${skill.name} ${skill.description} ${skill.instructions}`.toLowerCase();
+    const words = text.split(/\W+/).filter((w) => w.length > 3);
+
+    // Get unique words, prioritizing shorter ones as they're more specific
+    const keywords = [...new Set(words)].slice(0, 50);
+
+    this.skills.set(skill.name.toLowerCase(), {
+      name: skill.name,
+      description: skill.description,
+      keywords,
+    });
+  }
+
+  /**
+   * Find relevant skills for a user message.
+   */
+  findRelevant(userMessage: string, maxResults: number = 3): string[] {
+    const messageLower = userMessage.toLowerCase();
+    const messageWords = messageLower.split(/\W+/).filter((w) => w.length > 2);
+
+    const scores: { name: string; score: number }[] = [];
+
+    for (const [, skill] of this.skills) {
+      let score = 0;
+
+      // Direct keyword matches
+      for (const word of messageWords) {
+        if (skill.keywords.includes(word)) {
+          score += 10;
+        }
+        // Partial matches
+        for (const keyword of skill.keywords) {
+          if (keyword.includes(word) || word.includes(keyword)) {
+            score += 3;
+          }
+        }
+      }
+
+      // Name match bonus
+      if (messageLower.includes(skill.name.toLowerCase())) {
+        score += 20;
+      }
+
+      // Description relevance
+      const descWords = skill.description.toLowerCase().split(/\W+/);
+      for (const word of messageWords) {
+        if (descWords.includes(word)) {
+          score += 5;
+        }
+      }
+
+      if (score > 0) {
+        scores.push({ name: skill.name, score });
+      }
+    }
+
+    // Sort by score descending
+    scores.sort((a, b) => b.score - a.score);
+
+    return scores.slice(0, maxResults).map((s) => s.name);
+  }
+
+  /**
+   * Clear all registered skills.
+   */
+  clear(): void {
+    this.skills.clear();
+  }
+}

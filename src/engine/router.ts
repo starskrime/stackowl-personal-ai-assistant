@@ -8,6 +8,11 @@
 import type { ModelProvider } from '../providers/base.js';
 import type { StackOwlConfig } from '../config/loader.js';
 
+export interface RouteDecision {
+    modelName: string;
+    providerName?: string;
+}
+
 export class ModelRouter {
     /**
      * Determine the best model for the given prompt context.
@@ -17,18 +22,28 @@ export class ModelRouter {
     static async route(
         prompt: string,
         provider: ModelProvider,
-        config: StackOwlConfig
-    ): Promise<string> {
+        config: StackOwlConfig,
+        failureCount: number = 0
+    ): Promise<RouteDecision> {
+        // If the local model is repeatedly failing tool execution, force cross-provider fallback
+        if (failureCount >= 2 && config.smartRouting?.fallbackModel) {
+            console.warn(`[ModelRouter] Local model repeated failure detected (${failureCount}x). Routing to fallback: ${config.smartRouting.fallbackProvider} / ${config.smartRouting.fallbackModel}`);
+            return {
+                modelName: config.smartRouting.fallbackModel,
+                providerName: config.smartRouting.fallbackProvider
+            };
+        }
+
         // If smart routing is disabled or misconfigured, fallback to default immediately
         if (!config.smartRouting?.enabled || config.smartRouting.availableModels.length === 0) {
-            return config.defaultModel;
+            return { modelName: config.defaultModel };
         }
 
         const models = config.smartRouting.availableModels;
 
         // If there's only one model in the roster, just use it
         if (models.length === 1) {
-            return models[0].name;
+            return { modelName: models[0].name };
         }
 
         const modelListDesc = models
@@ -59,15 +74,15 @@ Output strictly and EXACTLY the exact name of the selected model. No explanation
             // Verify the selected model actually exists in our roster
             const selectedModel = models.find(m => m.name === selection);
             if (selectedModel) {
-                return selectedModel.name;
+                return { modelName: selectedModel.name };
             } else {
                 // If it hallucinates, fallback gracefully
                 console.warn(`[ModelRouter] Hallucinated model selection: "${selection}". Falling back to default.`);
-                return config.defaultModel;
+                return { modelName: config.defaultModel };
             }
         } catch (error) {
             console.error('[ModelRouter] Routing failed. Error:', error);
-            return config.defaultModel; // Safe fallback
+            return { modelName: config.defaultModel }; // Safe fallback
         }
     }
 }

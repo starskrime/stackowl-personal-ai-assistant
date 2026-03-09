@@ -123,14 +123,17 @@ export class TelegramAdapter implements ChannelAdapter {
             );
         });
 
-        this.bot.command('reset', async (ctx) => {
+        const resetHandler = async (ctx: any) => {
             if (!this.isAllowed(ctx)) return;
             // endSession will handle consolidation; just clear the in-memory session
             const userId = String(ctx.from?.id ?? ctx.chat.id);
             const sessionId = makeSessionId(this.id, userId);
-            await this.gateway.endSession(sessionId).catch(() => {});
-            await ctx.reply('🔄 Session reset. Starting fresh.');
-        });
+            await this.gateway.endSession(sessionId).catch(() => { });
+            await ctx.reply('🔄 Context reset. Starting fresh.');
+        };
+
+        this.bot.command('reset', resetHandler);
+        this.bot.command('clear', resetHandler);
 
         this.bot.command('status', async (ctx) => {
             if (!this.isAllowed(ctx)) return;
@@ -181,9 +184,9 @@ export class TelegramAdapter implements ChannelAdapter {
             try {
                 const response = await this.gateway.handle(
                     {
-                        id:        makeMessageId(),
+                        id: makeMessageId(),
                         channelId: this.id,
-                        userId:    String(userId),
+                        userId: String(userId),
                         sessionId: makeSessionId(this.id, String(userId)),
                         text,
                     },
@@ -253,16 +256,18 @@ export class TelegramAdapter implements ChannelAdapter {
         const config = self.gateway.getConfig();
 
         this.pinger = new ProactivePinger({
-            provider:         self.gateway.getProvider(),
+            provider: self.gateway.getProvider(),
             owl,
             config,
             capabilityLedger: self.gateway.getCapabilityLedger()!,
-            learningEngine:   self.gateway.getLearningEngine(),
-            preferenceStore:  self.gateway.getPreferenceStore(),
+            learningEngine: self.gateway.getLearningEngine(),
+            preferenceStore: self.gateway.getPreferenceStore(),
+            reflexionEngine: self.gateway.getReflexionEngine(),
+            toolRegistry: self.gateway.getToolRegistry(),
             sendToUser: async (message: string) => {
                 await self.broadcast({
-                    content:  message,
-                    owlName:  owl.persona.name,
+                    content: message,
+                    owlName: owl.persona.name,
                     owlEmoji: owl.persona.emoji,
                     toolsUsed: [],
                 });
@@ -328,7 +333,7 @@ export class TelegramAdapter implements ChannelAdapter {
         if (!userId) return false;
         if (!this.config.allowedUserIds?.length) return true;
         const allowed = this.config.allowedUserIds.includes(userId);
-        if (!allowed) ctx.reply('🔒 Not authorized.').catch(() => {});
+        if (!allowed) ctx.reply('🔒 Not authorized.').catch(() => { });
         return allowed;
     }
 
@@ -340,7 +345,7 @@ export class TelegramAdapter implements ChannelAdapter {
     private trackChat(chatId: number): void {
         if (!this.activeChatIds.has(chatId)) {
             this.activeChatIds.add(chatId);
-            this.saveChatIds().catch(() => {});
+            this.saveChatIds().catch(() => { });
         }
     }
 

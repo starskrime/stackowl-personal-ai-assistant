@@ -6,13 +6,14 @@
  */
 
 import type { ModelProvider, ProviderConfig } from './base.js';
-import { OllamaProvider } from './ollama.js';
+import { createOllamaProvider } from './ollama.js';
+import { createAnthropicProvider } from './anthropic.js';
 
 type ProviderFactory = (config: ProviderConfig) => ModelProvider;
 
 const BUILT_IN_FACTORIES: Record<string, ProviderFactory> = {
-    ollama: (config) => new OllamaProvider(config),
-    // Future: openai, anthropic
+    ollama: createOllamaProvider,
+    anthropic: createAnthropicProvider,
 };
 
 export class ProviderRegistry {
@@ -32,8 +33,12 @@ export class ProviderRegistry {
             );
         }
 
-        const provider = factory(config);
-        this.providers.set(config.name, provider);
+        try {
+            const provider = factory(config);
+            this.providers.set(config.name, provider);
+        } catch (error) {
+            console.warn(`[ProviderRegistry] Warning: Failed to initialize provider "${config.name}". It will be disabled. Reason: ${(error as Error).message}`);
+        }
     }
 
     /**

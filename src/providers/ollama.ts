@@ -1,215 +1,46 @@
 /**
- * StackOwl — Ollama Provider
+ * StackOwl — Ollama Provider (LangChain Backed)
  *
- * Connects to an Ollama instance (local or remote).
- * Supports chat, tool calling, streaming, and embeddings.
+ * Connects to a local/remote Ollama instance via `@langchain/ollama`.
  */
 
-import { Ollama } from 'ollama';
-import type {
-    ModelProvider,
-    ChatMessage,
-    ChatResponse,
-    ChatOptions,
-    ToolDefinition,
-    StreamChunk,
-    EmbeddingResponse,
-    ProviderConfig,
-    ToolCall,
-} from './base.js';
+import { ChatOllama, OllamaEmbeddings } from "@langchain/ollama";
+import { LangChainProvider } from "./langchain.js";
+import type { ProviderConfig } from "./base.js";
 
-export class OllamaProvider implements ModelProvider {
-    readonly name = 'ollama';
-    private client: Ollama;
-    private defaultModel: string;
-    private defaultEmbeddingModel: string;
+class OllamaProvider extends LangChainProvider {
+    private baseUrl: string;
 
-    constructor(config: ProviderConfig) {
-        const baseUrl = config.baseUrl ?? 'http://127.0.0.1:11434';
-        this.client = new Ollama({ host: baseUrl });
-        this.defaultModel = config.defaultModel ?? 'llama3.2';
-        this.defaultEmbeddingModel = config.defaultEmbeddingModel ?? 'nomic-embed-text';
-    }
-
-    async chat(
-        messages: ChatMessage[],
-        model?: string,
-        options?: ChatOptions
-    ): Promise<ChatResponse> {
-        const resolvedModel = model ?? this.defaultModel;
-
-        try {
-            const response = await this.client.chat({
-                model: resolvedModel,
-                messages: messages.map((m) => ({
-                    role: m.role,
-                    content: m.content,
-                })),
-                options: {
-                    temperature: options?.temperature,
-                    num_predict: options?.maxTokens,
-                    top_p: options?.topP,
-                    stop: options?.stop,
-                },
-                stream: false,
-            });
-
-            return {
-                content: response.message.content,
-                model: resolvedModel,
-                finishReason: 'stop',
-                usage: {
-                    promptTokens: response.prompt_eval_count ?? 0,
-                    completionTokens: response.eval_count ?? 0,
-                    totalTokens: (response.prompt_eval_count ?? 0) + (response.eval_count ?? 0),
-                },
-            };
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`[OllamaProvider] Chat failed: ${message}`);
-        }
-    }
-
-    async chatWithTools(
-        messages: ChatMessage[],
-        tools: ToolDefinition[],
-        model?: string,
-        options?: ChatOptions
-    ): Promise<ChatResponse> {
-        const resolvedModel = model ?? this.defaultModel;
-
-        try {
-            const ollamaTools = tools.map((tool) => ({
-                type: 'function' as const,
-                function: {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.parameters,
-                },
-            }));
-
-            const response = await this.client.chat({
-                model: resolvedModel,
-                messages: messages.map((m) => ({
-                    role: m.role,
-                    content: m.content,
-                })),
-                tools: ollamaTools,
-                options: {
-                    temperature: options?.temperature,
-                    num_predict: options?.maxTokens,
-                    top_p: options?.topP,
-                },
-                stream: false,
-            });
-
-            const toolCalls: ToolCall[] = [];
-            if (response.message.tool_calls) {
-                for (const tc of response.message.tool_calls) {
-                    toolCalls.push({
-                        id: `tc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-                        name: tc.function.name,
-                        arguments: tc.function.arguments as Record<string, unknown>,
-                    });
-                }
-            }
-
-            return {
-                content: response.message.content,
-                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-                model: resolvedModel,
-                finishReason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
-                usage: {
-                    promptTokens: response.prompt_eval_count ?? 0,
-                    completionTokens: response.eval_count ?? 0,
-                    totalTokens: (response.prompt_eval_count ?? 0) + (response.eval_count ?? 0),
-                },
-            };
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`[OllamaProvider] ChatWithTools failed: ${message}`);
-        }
-    }
-
-    async *chatStream(
-        messages: ChatMessage[],
-        model?: string,
-        options?: ChatOptions
-    ): AsyncGenerator<StreamChunk> {
-        const resolvedModel = model ?? this.defaultModel;
-
-        try {
-            const stream = await this.client.chat({
-                model: resolvedModel,
-                messages: messages.map((m) => ({
-                    role: m.role,
-                    content: m.content,
-                })),
-                options: {
-                    temperature: options?.temperature,
-                    num_predict: options?.maxTokens,
-                    top_p: options?.topP,
-                },
-                stream: true,
-            });
-
-            for await (const chunk of stream) {
-                yield {
-                    content: chunk.message.content,
-                    done: chunk.done,
-                };
-            }
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`[OllamaProvider] Stream failed: ${message}`);
-        }
-    }
-
-    async embed(text: string, model?: string): Promise<EmbeddingResponse> {
-        // Try the dedicated embedding model first; fall back to the main chat model
-        const candidates = [
-            model ?? this.defaultEmbeddingModel,
-            this.defaultModel,
-        ].filter((m, i, a) => m && a.indexOf(m) === i); // deduplicate
-
-        let lastError: Error | undefined;
-
-        for (const candidate of candidates) {
-            try {
-                const response = await this.client.embed({
-                    model: candidate,
-                    input: text,
-                });
-                return {
-                    embedding: response.embeddings[0] as number[],
-                    model: candidate,
-                };
-            } catch (error) {
-                lastError = error instanceof Error ? error : new Error(String(error));
-                // Only retry on "model not found" errors; hard-fail on others
-                if (!lastError.message.toLowerCase().includes('not found')) break;
-            }
-        }
-
-        throw new Error(`[OllamaProvider] Embed failed: ${lastError?.message}`);
-    }
-
-    async listModels(): Promise<string[]> {
-        try {
-            const response = await this.client.list();
-            return response.models.map((m) => m.name);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`[OllamaProvider] ListModels failed: ${message}`);
-        }
+    constructor(baseUrl: string, chatModel: ChatOllama, defaultModel: string, embeddingModel: OllamaEmbeddings) {
+        super('ollama', chatModel, defaultModel, embeddingModel);
+        this.baseUrl = baseUrl;
     }
 
     async healthCheck(): Promise<boolean> {
         try {
-            await this.client.list();
-            return true;
+            // A much faster health check for Ollama than loading a heavy model into memory
+            const res = await fetch(`${this.baseUrl}/api/tags`, { method: 'GET', signal: AbortSignal.timeout(5000) });
+            return res.ok;
         } catch {
             return false;
         }
     }
+}
+
+export function createOllamaProvider(config: ProviderConfig): LangChainProvider {
+    const baseUrl = config.baseUrl ?? 'http://127.0.0.1:11434';
+    const defaultModel = config.defaultModel ?? 'llama3.2';
+    const defaultEmbeddingModel = config.defaultEmbeddingModel ?? 'nomic-embed-text';
+
+    const chatModel = new ChatOllama({
+        baseUrl,
+        model: defaultModel,
+    });
+
+    const embeddingModel = new OllamaEmbeddings({
+        baseUrl,
+        model: defaultEmbeddingModel,
+    });
+
+    return new OllamaProvider(baseUrl, chatModel, defaultModel, embeddingModel);
 }

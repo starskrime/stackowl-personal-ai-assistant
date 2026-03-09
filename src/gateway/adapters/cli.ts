@@ -39,7 +39,7 @@ export class CLIAdapter implements ChannelAdapter {
         private gateway: OwlGateway,
         config: CLIAdapterConfig = {},
     ) {
-        this.userId    = config.userId ?? 'local';
+        this.userId = config.userId ?? 'local';
         this.sessionId = makeSessionId(this.id, this.userId);
     }
 
@@ -57,7 +57,7 @@ export class CLIAdapter implements ChannelAdapter {
         const owl = this.gateway.getOwl();
 
         this.rl = createInterface({
-            input:  process.stdin,
+            input: process.stdin,
             output: process.stdout,
             prompt: chalk.cyan('You: '),
         });
@@ -66,7 +66,7 @@ export class CLIAdapter implements ChannelAdapter {
             `\nType your message. Commands: ` +
             `${chalk.bold('/quit')} · ${chalk.bold('/owls')} · ` +
             `${chalk.bold('/status')} · ${chalk.bold('/capabilities')} · ` +
-            `${chalk.bold('/learning')}\n`
+            `${chalk.bold('/learning')} · ${chalk.bold('/clear')}\n`
         ));
         console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`) +
             chalk.dim(` (challenge: ${owl.dna.evolvedTraits.challengeLevel})`));
@@ -106,60 +106,60 @@ export class CLIAdapter implements ChannelAdapter {
     }
 
     private async processLine(input: string): Promise<void> {
-            if (await this.handleCommand(input)) {
-                return; // command consumed
-            }
+        if (await this.handleCommand(input)) {
+            return; // command consumed
+        }
 
-            // Regular message → gateway
-            this.rl!.pause();
-            try {
-                log.cli.incoming(this.userId, input);
+        // Regular message → gateway
+        this.rl!.pause();
+        try {
+            log.cli.incoming(this.userId, input);
 
-                const response = await this.gateway.handle(
-                    {
-                        id:        makeMessageId(),
-                        channelId: this.id,
-                        userId:    this.userId,
-                        sessionId: this.sessionId,
-                        text:      input,
+            const response = await this.gateway.handle(
+                {
+                    id: makeMessageId(),
+                    channelId: this.id,
+                    userId: this.userId,
+                    sessionId: this.sessionId,
+                    text: input,
+                },
+                {
+                    onProgress: async (msg: string) => {
+                        console.log(chalk.dim(`  ⋯ ${msg}`));
                     },
-                    {
-                        onProgress: async (msg: string) => {
-                            console.log(chalk.dim(`  ⋯ ${msg}`));
-                        },
-                        // CLI: no file-sending capability in terminal
-                        onFile: async (filePath: string) => {
-                            console.log(chalk.dim(`  [File ready: ${filePath}]`));
-                        },
-                        askInstall: async (deps: string[]) => {
-                            return new Promise<boolean>((resolve) => {
-                                const tmpRl = createInterface({ input: process.stdin, output: process.stdout });
-                                tmpRl.question(
-                                    chalk.yellow(`\n📦 Install npm deps: ${deps.join(' ')}? [y/n] `),
-                                    (answer) => {
-                                        tmpRl.close();
-                                        resolve(answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes');
-                                    }
-                                );
-                            });
-                        },
-                    }
-                );
-
-                log.cli.outgoing(this.userId, response.content);
-                this.printResponse(response);
-
-                if (response.usage) {
-                    console.log(chalk.dim(`  [tokens: ${response.usage.promptTokens}→${response.usage.completionTokens}]`));
+                    // CLI: no file-sending capability in terminal
+                    onFile: async (filePath: string) => {
+                        console.log(chalk.dim(`  [File ready: ${filePath}]`));
+                    },
+                    askInstall: async (deps: string[]) => {
+                        return new Promise<boolean>((resolve) => {
+                            const tmpRl = createInterface({ input: process.stdin, output: process.stdout });
+                            tmpRl.question(
+                                chalk.yellow(`\n📦 Install npm deps: ${deps.join(' ')}? [y/n] `),
+                                (answer) => {
+                                    tmpRl.close();
+                                    resolve(answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes');
+                                }
+                            );
+                        });
+                    },
                 }
-            } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                log.cli.error(`Error: ${msg}`);
-                console.error(chalk.red(`\n❌ Error: ${msg}\n`));
-            } finally {
-                this.rl!.resume();
-                this.rl!.prompt();
+            );
+
+            log.cli.outgoing(this.userId, response.content);
+            this.printResponse(response);
+
+            if (response.usage) {
+                console.log(chalk.dim(`  [tokens: ${response.usage.promptTokens}→${response.usage.completionTokens}]`));
             }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.cli.error(`Error: ${msg}`);
+            console.error(chalk.red(`\n❌ Error: ${msg}\n`));
+        } finally {
+            this.rl!.resume();
+            this.rl!.prompt();
+        }
     }
 
     // ─── Command handling ─────────────────────────────────────────
@@ -170,10 +170,23 @@ export class CLIAdapter implements ChannelAdapter {
 
         if (input === '/quit' || input === '/exit') {
             console.log(chalk.dim('\n🦉 Saving session and evolving...'));
-            await this.gateway.endSession(this.sessionId).catch(() => {});
+            await this.gateway.endSession(this.sessionId).catch(() => { });
             console.log(chalk.dim('🦉 Goodbye. The owls are always watching.\n'));
             rl.close();
             process.exit(0);
+        }
+
+        if (input === '/clear' || input === '/reset') {
+            await this.gateway.handle({
+                id: makeMessageId(),
+                channelId: this.id,
+                userId: this.userId,
+                sessionId: this.sessionId,
+                text: '/reset',
+            });
+            console.log(chalk.dim('\n🧹 Context cleared! Starting fresh. What would you like to work on?\n'));
+            rl.prompt();
+            return true;
         }
 
         if (input === '/owls') {
@@ -188,7 +201,7 @@ export class CLIAdapter implements ChannelAdapter {
         }
 
         if (input === '/status') {
-            const owl    = this.gateway.getOwl();
+            const owl = this.gateway.getOwl();
             const config = this.gateway.getConfig();
             console.log(chalk.bold('\nStatus:'));
             console.log(`  Provider: ${config.defaultProvider}`);
@@ -253,6 +266,6 @@ export class CLIAdapter implements ChannelAdapter {
     }
 
     private async gracefulShutdown(): Promise<void> {
-        await this.gateway.endSession(this.sessionId).catch(() => {});
+        await this.gateway.endSession(this.sessionId).catch(() => { });
     }
 }

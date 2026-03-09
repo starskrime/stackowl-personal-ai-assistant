@@ -6,26 +6,19 @@
  */
 
 import type { ToolImplementation, ToolContext } from './registry.js';
-import { CheerioCrawler } from 'crawlee';
-
-// Keep Crawlee storage out of the project workspace
-process.env['CRAWLEE_STORAGE_DIR'] = '/tmp/stackowl-crawlee';
+import puppeteer from 'puppeteer';
 
 export const WebCrawlTool: ToolImplementation = {
     definition: {
         name: 'web_crawl',
-        description: 'Fetch and read the text content of any webpage. Use this to read articles, documentation, or any public URL.',
+        description: 'Fetch and read the spatial/semantic content of any webpage. Uses a headless browser to extract the Accessibility Tree, showing you exact buttons, links, and inputs.',
         parameters: {
             type: 'object',
             properties: {
                 url: {
                     type: 'string',
                     description: 'Full URL to fetch (e.g. https://example.com/article)',
-                },
-                selector: {
-                    type: 'string',
-                    description: 'Optional CSS selector to extract a specific section (e.g. "article", "main", ".content")',
-                },
+                }
             },
             required: ['url'],
         },
@@ -35,44 +28,76 @@ export const WebCrawlTool: ToolImplementation = {
         const url = args['url'] as string;
         if (!url?.startsWith('http')) throw new Error('A valid http/https URL is required');
 
-        const selector = (args['selector'] as string | undefined)?.trim() || '';
-        let pageText = '';
-        let pageTitle = '';
+        let browser;
+        try {
+            browser = await puppeteer.launch({
+                headless: true,
+                args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            const page = await browser.newPage();
 
-        const crawler = new CheerioCrawler({
-            maxRequestsPerCrawl: 1,
-            requestHandlerTimeoutSecs: 15,
-            async requestHandler({ $ }) {
-                // Remove noise elements
-                $('script, style, nav, header, footer, aside, iframe, noscript, [role="navigation"]').remove();
+            // Set a realistic viewport and user agent
+            await page.setViewport({ width: 1280, height: 800 });
+            await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-                if (selector) {
-                    const section = $(selector);
-                    pageText = section.text();
-                } else {
-                    // Prefer main content areas
-                    const main = $('article, main, [role="main"], .content, #content, .post, .article-body');
-                    pageText = main.length > 0 ? main.first().text() : $('body').text();
+            // Wait for network idle to ensure SPAs/React apps finish rendering
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+            // Extract the Accessibility Tree
+            const snapshot = await page.accessibility.snapshot();
+
+            if (!snapshot) {
+                return `Failed to extract accessibility tree from ${url}. Page might be completely empty or inaccessible.`;
+            }
+
+            const pageTitle = await page.title();
+
+            // Helper to recursively format the AXTree into a readable string
+            function formatNode(node: any, depth: number = 0): string {
+                let result = '';
+                const indent = '  '.repeat(depth);
+
+                // Only include nodes that are semantically meaningful or have text
+                const isMeaningful = node.role !== 'generic' && node.role !== 'RootWebArea';
+                const hasText = node.name && node.name.trim() !== '';
+
+                if (isMeaningful || hasText) {
+                    const role = node.role ? `[${node.role}]` : '';
+                    const name = node.name ? ` ${node.name}` : '';
+                    const val = node.value ? ` (Value: ${node.value})` : '';
+                    const state = node.checked !== undefined ? ` (Checked: ${node.checked})` : '';
+                    const disabled = node.disabled ? ` (DISABLED)` : '';
+
+                    if (role || name) {
+                        result += `${indent}${role}${name}${val}${state}${disabled}\n`;
+                    }
                 }
 
-                pageTitle = $('title').text().trim();
-                pageText = pageText.replace(/\s+/g, ' ').trim();
-            },
-        });
+                // Increase depth for children only if this node was meaningful
+                const nextDepth = (isMeaningful || hasText) ? depth + 1 : depth;
 
-        try {
-            await crawler.run([url]);
+                if (node.children) {
+                    for (const child of node.children) {
+                        result += formatNode(child, nextDepth);
+                    }
+                }
+
+                return result;
+            }
+
+            const treeString = formatNode(snapshot);
+
+            const MAX = 20000; // AX Trees are token efficient, we can allow more text
+            const truncated = treeString.length > MAX
+                ? treeString.slice(0, MAX) + `\n\n... [truncated — ${treeString.length - MAX} chars omitted]`
+                : treeString;
+
+            return `### ${pageTitle || url}\n\n${truncated}`;
+
         } catch (err) {
-            throw new Error(`Crawl failed: ${err instanceof Error ? err.message : String(err)}`);
+            throw new Error(`Browser fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            if (browser) await browser.close();
         }
-
-        if (!pageText) return `No readable text found at ${url}`;
-
-        const MAX = 8000;
-        const truncated = pageText.length > MAX
-            ? pageText.slice(0, MAX) + `\n\n... [truncated — ${pageText.length - MAX} chars omitted]`
-            : pageText;
-
-        return `### ${pageTitle || url}\n\n${truncated}`;
     },
 };

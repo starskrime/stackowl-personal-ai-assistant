@@ -11,9 +11,11 @@ import type { StackOwlConfig } from '../config/loader.js';
 import { OwlEngine } from '../engine/runtime.js';
 import { MemoryConsolidator } from './consolidation.js';
 import { ToolPruner } from '../evolution/pruner.js';
+import type { ToolRegistry } from '../tools/registry.js';
 import type { CapabilityLedger } from '../evolution/ledger.js';
 import type { LearningEngine } from '../learning/self-study.js';
 import type { PreferenceStore } from '../preferences/store.js';
+import type { ReflexionEngine } from '../evolution/reflexion.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -36,6 +38,7 @@ export interface PingContext {
     owl: OwlInstance;
     config: StackOwlConfig;
     capabilityLedger: CapabilityLedger;
+    toolRegistry?: ToolRegistry;
     /** Callback to send a message to the user */
     sendToUser: (message: string) => Promise<void>;
     /** Get recent session history for context */
@@ -46,6 +49,8 @@ export interface PingContext {
     learningEngine?: LearningEngine;
     /** User preference store — used to check dynamic quiet hours */
     preferenceStore?: PreferenceStore;
+    /** Reflexion engine for extracting rules from past failures */
+    reflexionEngine?: ReflexionEngine;
 }
 
 export type PingType =
@@ -80,6 +85,7 @@ export class ProactivePinger {
     private lastMorningBriefDate: string = '';
     private lastConsolidationDate: string = '';
     private lastSelfStudyDate: string = '';
+    private lastDreamTime: number = 0;
 
     constructor(context: PingContext, config?: Partial<PingConfig>) {
         this.config = { ...DEFAULT_PING_CONFIG, ...config };
@@ -135,6 +141,14 @@ export class ProactivePinger {
             });
         }, 60 * 1000);
         this.timers.push(selfStudyTimer);
+
+        // 🧠 Idle-Time Dreaming (Reflexion) timer
+        const dreamTimer = setInterval(() => {
+            this.maybeDream().catch((err) => {
+                console.error('[ProactivePinger] Dream error:', err);
+            });
+        }, 60 * 1000);
+        this.timers.push(dreamTimer);
 
         // Send a greeting on start
         this.sendGreeting().catch((err) => {
@@ -373,6 +387,26 @@ export class ProactivePinger {
     }
 
     /**
+     * Idle-Time Dreaming — reflects on past mistakes to adapt heuristics.
+     */
+    private async maybeDream(): Promise<void> {
+        if (!this.context.reflexionEngine) return;
+
+        const now = Date.now();
+        // Run at most once every 15 minutes during idle time
+        const DREAM_INTERVAL_MS = 15 * 60 * 1000;
+
+        if (now - this.lastDreamTime < DREAM_INTERVAL_MS) return;
+        this.lastDreamTime = now;
+
+        try {
+            await this.context.reflexionEngine.dream();
+        } catch (err) {
+            console.error('[ProactivePinger] Dream session failed:', err);
+        }
+    }
+
+    /**
      * Generate a proactive message using the LLM and send it.
      */
     private async generateAndSend(prompt: string, _type: PingType): Promise<void> {
@@ -382,6 +416,8 @@ export class ProactivePinger {
                 owl: this.context.owl,
                 sessionHistory: this.context.getRecentHistory?.() ?? [],
                 config: this.context.config,
+                toolRegistry: this.context.toolRegistry,
+                cwd: this.context.config.workspace,
                 skipGapDetection: true,  // Proactive messages are pre-generated — never evolve on them
             });
 

@@ -4,6 +4,9 @@
       "baseUrl": "http://172.30.60.14:11434",
       "defaultModel": "gpt-oss:120b",
       "defaultEmbeddingModel": "gpt-oss:120b"
+    },
+    "anthropic": {
+      "defaultModel": "claude-3-5-sonnet-latest"
     }
   },
   "defaultProvider": "ollama",
@@ -29,5 +32,18 @@
   "telegram": {
     "botToken": "8328644901:AAH7YAQWI-ACfUzcvnK8kqzbc6fNRIAQL9A",
     "enabled": true
+  },
+  "smartRouting": {
+    "enabled": true,
+    "fallbackProvider": "anthropic",
+    "fallbackModel": "claude-3-5-sonnet-latest"
+  },
+  "skills": {
+    "enabled": true,
+    "directories": [
+      "./workspace/skills"
+    ],
+    "watch": true,
+    "watchDebounceMs": 250
   }
 }
