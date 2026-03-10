@@ -16,8 +16,6 @@ import { ShellTool } from "./tools/shell.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
 import { MemoryConsolidator } from "./memory/consolidator.js";
-import { GoogleSearchTool } from "./tools/search.js";
-import { WebCrawlTool } from "./tools/web.js";
 import { SessionStore } from "./memory/store.js";
 import { OrchestrateTasksTool } from "./tools/orchestrate.js";
 import { SummonParliamentTool } from "./tools/parliament.js";
@@ -68,17 +66,36 @@ async function bootstrap() {
 
   // Initialize tools
   const toolRegistry = new ToolRegistry();
+  const { BrowserTool, WebSearchTool } = await import("./compat/index.js");
+  const { SessionsListTool, SessionsHistoryTool, SessionStatusTool } =
+    await import("./compat/tools/sessions.js");
+  const { MemorySearchTool, MemoryGetTool } =
+    await import("./compat/tools/memory.js");
+  const { CronTool } = await import("./compat/tools/cron.js");
   toolRegistry.registerAll([
     ShellTool,
     ReadFileTool,
     WriteFileTool,
     EditFileTool,
-    WebCrawlTool,
-    GoogleSearchTool,
     OrchestrateTasksTool,
     SendFileTool,
     new SummonParliamentTool(),
     PatchTool,
+    // OpenCLAW-compatible tools
+    new BrowserTool(workspacePath),
+    new WebSearchTool(
+      "brave",
+      process.env.BRAVE_API_KEY || process.env.WEB_SEARCH_API_KEY,
+    ),
+    // Session tools
+    new SessionsListTool(workspacePath),
+    new SessionsHistoryTool(workspacePath),
+    new SessionStatusTool(),
+    // Memory tools
+    new MemorySearchTool(workspacePath),
+    new MemoryGetTool(workspacePath),
+    // Cron tool
+    new CronTool(workspacePath),
   ]);
 
   // Initialize session store
@@ -115,7 +132,7 @@ async function bootstrap() {
 
   // Apply DNA decay for all owls if overdue (runs at most once per week per owl)
   for (const o of owlRegistry.listOwls()) {
-    await evolutionEngine.applyDecayIfNeeded(o.persona.name).catch(() => { });
+    await evolutionEngine.applyDecayIfNeeded(o.persona.name).catch(() => {});
   }
 
   // Self-improvement system
@@ -161,7 +178,7 @@ async function bootstrap() {
   const reflexionEngine = new ReflexionEngine(
     providerRegistry.getDefault(),
     sessionStore,
-    pelletStore
+    pelletStore,
   );
 
   // Perch Points
@@ -258,7 +275,7 @@ async function chatCommand(owlName?: string) {
 
   console.log(
     chalk.green(`✓ Connected to ${provider.name}`) +
-    chalk.dim(` (model: ${b.config.defaultModel})`),
+      chalk.dim(` (model: ${b.config.defaultModel})`),
   );
 
   const gateway = await buildGateway(b, owl);
@@ -654,7 +671,7 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
 
   console.log(
     chalk.green(`✓ Provider: ${provider.name}`) +
-    chalk.dim(` (model: ${b.config.defaultModel})`),
+      chalk.dim(` (model: ${b.config.defaultModel})`),
   );
   console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
   console.log(chalk.green(`✓ Channel: 📱 Telegram`));
@@ -786,7 +803,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
           string
         >;
         botToken = creds["telegramBotToken"] ?? "";
-      } catch { }
+      } catch {}
     }
   }
 

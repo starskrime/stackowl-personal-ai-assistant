@@ -48,6 +48,8 @@ export interface EngineContext {
   sendFile?: (filePath: string, caption?: string) => Promise<void>;
   /** Provider registry to fetch fallback providers dynamically for cross-provider routing */
   providerRegistry?: ProviderRegistry;
+  /** When true, isolate this task from previous context - ignore session history */
+  isolatedTask?: boolean;
 }
 
 export interface PendingCapabilityGap {
@@ -87,14 +89,14 @@ const MAX_TOOL_ITERATIONS = 10;
  * executing tool calls in each iteration — if the signal is present, all pending
  * tool calls are dropped and the loop exits immediately.
  */
-const DONE_SIGNAL = '[DONE]';
+const DONE_SIGNAL = "[DONE]";
 
 function hasDoneSignal(content: string): boolean {
   return content.includes(DONE_SIGNAL);
 }
 
 function stripDoneSignal(content: string): string {
-  return content.replace(/\[DONE\]/g, '').trim();
+  return content.replace(/\[DONE\]/g, "").trim();
 }
 
 /**
@@ -107,7 +109,7 @@ function isFailureResult(result: string): boolean {
   const exitMatch = result.match(/EXIT_CODE:\s*(\d+)/);
   if (exitMatch && parseInt(exitMatch[1], 10) !== 0) return true;
   // Explicit diagnostic hint = tool detected a known failure condition
-  if (result.includes('[SYSTEM DIAGNOSTIC HINT:')) return true;
+  if (result.includes("[SYSTEM DIAGNOSTIC HINT:")) return true;
   return false;
 }
 const CONTEXT_WINDOW_THRESHOLD = 20;
@@ -118,7 +120,7 @@ const CONTEXT_COMPRESSION_BATCH = 10;
  * iterations or broke due to repeated failures. The gateway uses this to
  * track stuck tasks across consecutive messages.
  */
-export const EXHAUSTION_MARKER = '__STACKOWL_EXHAUSTED__';
+export const EXHAUSTION_MARKER = "__STACKOWL_EXHAUSTED__";
 
 // ─── Owl Engine ──────────────────────────────────────────────────
 
@@ -144,9 +146,17 @@ export class OwlEngine {
 
     // Dynamic provider resolution based on route (if cross-provider routing is needed early)
     let currentProvider = provider;
-    if (routeDecision.providerName && routeDecision.providerName !== provider.name && context.providerRegistry) {
-      log.engine.warn(`Cross-provider routing on first turn: Swapping ${provider.name} for ${routeDecision.providerName}`);
-      currentProvider = context.providerRegistry.get(routeDecision.providerName);
+    if (
+      routeDecision.providerName &&
+      routeDecision.providerName !== provider.name &&
+      context.providerRegistry
+    ) {
+      log.engine.warn(
+        `Cross-provider routing on first turn: Swapping ${provider.name} for ${routeDecision.providerName}`,
+      );
+      currentProvider = context.providerRegistry.get(
+        routeDecision.providerName,
+      );
     }
 
     log.engine.model(optimalModel);
@@ -163,22 +173,55 @@ export class OwlEngine {
     );
 
     // 3. Compress history if too long to prevent context drift on local models
-    const wasLong = sessionHistory.length > CONTEXT_WINDOW_THRESHOLD;
-    const compressedHistory = await this.compressHistory(
-      sessionHistory,
-      currentProvider,
-      optimalModel,
-    );
-    if (wasLong) {
+    // If isolatedTask is true, only use the last 2 messages (recent context only)
+    let historyToUse = sessionHistory;
+    if (context.isolatedTask && sessionHistory.length > 2) {
+      // For isolated tasks, only use last 2 messages to prevent context bleeding
+      historyToUse = sessionHistory.slice(-2);
       log.engine.info(
-        `Context compressed: ${sessionHistory.length} → ${compressedHistory.length} messages`,
+        `Task isolated: using only last ${historyToUse.length} messages instead of ${sessionHistory.length}`,
+      );
+    } else if (sessionHistory.length > CONTEXT_WINDOW_THRESHOLD) {
+      // Normal compression for long sessions
+      const compressed = await this.compressHistory(
+        sessionHistory,
+        currentProvider,
+        optimalModel,
+      );
+      historyToUse = compressed;
+      log.engine.info(
+        `Context compressed: ${sessionHistory.length} → ${historyToUse.length} messages`,
       );
     }
 
-    // 4. Assemble message list with a Late-Binding System Directive
+    // 4. Check if this is a NEW TASK that should isolate from previous context
+    // Pass through context for task detection - the gateway decides whether to isolate
+    const isNewTask =
+      userMessage
+        .toLowerCase()
+        .match(
+          /^(new|another|different|start over|forget|clear|reset)[\s:]/i,
+        ) !== null;
+
+    // 4b. Assemble message list with a Late-Binding System Directive
     // Local models suffer from instruction drift across long contexts.
     // We inject the ReAct rule at the very bottom so it's the last thing they read.
-    let finalUserMessage = `<NEW_TASK>\n${userMessage}\n</NEW_TASK>`;
+    let taskIsolationDirective = "";
+    if (isNewTask || context.isolatedTask) {
+      taskIsolationDirective = `
+<TASK_ISOLATION>
+IMPORTANT: This is a NEW, INDEPENDENT task. The previous conversation history below is for REFERENCE ONLY.
+Do NOT continue from where the previous conversation left off. Do NOT build upon previous responses.
+Focus ONLY on the user's current request below. If the previous context is irrelevant, ignore it completely.
+</TASK_ISOLATION>
+`;
+    }
+
+    let finalUserMessage =
+      taskIsolationDirective +
+      `<NEW_TASK>
+${userMessage}
+</NEW_TASK>`;
     if (toolRegistry && toolRegistry.getDefinitions().length > 0) {
       finalUserMessage +=
         `\n\n[SYSTEM DIRECTIVE — ReAct Rules]\n` +
@@ -195,7 +238,7 @@ export class OwlEngine {
 
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
-      ...compressedHistory,
+      ...historyToUse,
       { role: "user", content: finalUserMessage },
     ];
 
@@ -218,7 +261,11 @@ export class OwlEngine {
 
       // ReAct loop with tools
       log.engine.llmRequest(optimalModel, messages);
-      response = await currentProvider.chatWithTools(messages, tools, optimalModel);
+      response = await currentProvider.chatWithTools(
+        messages,
+        tools,
+        optimalModel,
+      );
       log.engine.llmResponse(
         optimalModel,
         response.content,
@@ -299,7 +346,8 @@ export class OwlEngine {
               name: toolCall.name,
             });
             // Count as a soft failure so the model gets the analysis directive
-            toolFailStreak[toolCall.name] = (toolFailStreak[toolCall.name] ?? 0) + 1;
+            toolFailStreak[toolCall.name] =
+              (toolFailStreak[toolCall.name] ?? 0) + 1;
             globalConsecutiveFailures++;
             continue;
           }
@@ -344,14 +392,15 @@ export class OwlEngine {
             // contains a non-zero EXIT_CODE or a SYSTEM DIAGNOSTIC HINT.
             // These must be treated the same as hard failures — the LLM must be
             // forced to read the result and switch strategy, not just retry.
-            const isSoftFailure = !isHardFailure && isFailureResult(toolResult!);
+            const isSoftFailure =
+              !isHardFailure && isFailureResult(toolResult!);
             const isAnyFailure = isHardFailure || isSoftFailure;
 
             toolsUsed.push(toolCall.name);
             if (context.capabilityLedger) {
               context.capabilityLedger
                 .recordUsage(toolCall.name, !isAnyFailure)
-                .catch(() => { });
+                .catch(() => {});
             }
 
             // On every failure (hard OR soft): force the LLM to reason about what
@@ -363,24 +412,25 @@ export class OwlEngine {
               const streak = toolFailStreak[toolCall.name];
 
               // If the result contains a DIAGNOSTIC HINT, force the LLM to act on it
-              const hasHint = toolResult!.includes('[SYSTEM DIAGNOSTIC HINT:');
+              const hasHint = toolResult!.includes("[SYSTEM DIAGNOSTIC HINT:");
               const hintNote = hasHint
                 ? `\n⚠️ THE RESULT ABOVE CONTAINS A [SYSTEM DIAGNOSTIC HINT] — THIS IS CRITICAL. ` +
                   `Read the hint carefully. It tells you exactly what went wrong and what tool or approach to use instead. ` +
                   `You MUST follow it. Do not repeat the same action that produced this hint.`
-                : '';
+                : "";
 
               const analysisPrompt =
                 `[SYSTEM OVERRIDE: ERROR ANALYSIS REQUIRED — failure #${streak}]\n` +
                 `Tool: "${toolCall.name}"\n` +
-                `Result: ${isSoftFailure ? 'returned non-zero exit code or diagnostic hint (soft failure)' : 'threw an exception (hard failure)'}\n\n` +
+                `Result: ${isSoftFailure ? "returned non-zero exit code or diagnostic hint (soft failure)" : "threw an exception (hard failure)"}\n\n` +
                 `You MUST step back and reason through this before your next action:\n` +
                 `1. Read the full tool result above — the error is described there.\n` +
                 `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
                 `3. Do NOT retry the same command with the same arguments.\n` +
                 `4. If the tool requires something unavailable here (e.g. curl in a no-network sandbox), ` +
                 `USE A DIFFERENT TOOL (e.g. web_crawl for URL fetching).\n` +
-                hintNote + "\n\n" +
+                hintNote +
+                "\n\n" +
                 (streak >= MAX_TOOL_FAIL_STREAK
                   ? `🛑 CRITICAL: This tool has failed ${streak} consecutive times. ` +
                     `DO NOT call "${toolCall.name}" again under any circumstances. ` +
@@ -388,7 +438,7 @@ export class OwlEngine {
                   : `Choose a different approach for your next tool call.`);
 
               log.engine.warn(
-                `Tool "${toolCall.name}" ${isSoftFailure ? 'soft-failed' : 'hard-failed'} (streak: ${streak}) — injecting self-healing directive`,
+                `Tool "${toolCall.name}" ${isSoftFailure ? "soft-failed" : "hard-failed"} (streak: ${streak}) — injecting self-healing directive`,
               );
               messages.push({ role: "system", content: analysisPrompt });
 
@@ -424,18 +474,33 @@ export class OwlEngine {
         // it's highly likely the local model is hallucinating or stuck.
         // Try to trigger a fallback router switch to a heavier cloud model.
         if (globalConsecutiveFailures >= 2) {
-          const newRoute = ModelRouter.route(userMessage, config, globalConsecutiveFailures);
+          const newRoute = ModelRouter.route(
+            userMessage,
+            config,
+            globalConsecutiveFailures,
+          );
 
-          if (newRoute.providerName && newRoute.providerName !== currentProvider.name && context.providerRegistry) {
+          if (
+            newRoute.providerName &&
+            newRoute.providerName !== currentProvider.name &&
+            context.providerRegistry
+          ) {
             try {
-              const fallbackProvider = context.providerRegistry.get(newRoute.providerName);
+              const fallbackProvider = context.providerRegistry.get(
+                newRoute.providerName,
+              );
               log.engine.warn(
                 `[Cross-Provider Hot Swap] Tool failed ${globalConsecutiveFailures}x. Swapping provider: ${currentProvider.name} → ${newRoute.providerName}`,
               );
               currentProvider = fallbackProvider;
-              if (context.onProgress) await context.onProgress(`🔄 **Cross-Provider Triggered:** Swapping to ${newRoute.providerName} (${newRoute.modelName}) to resolve failure.`);
+              if (context.onProgress)
+                await context.onProgress(
+                  `🔄 **Cross-Provider Triggered:** Swapping to ${newRoute.providerName} (${newRoute.modelName}) to resolve failure.`,
+                );
             } catch (err) {
-              log.engine.warn(`Could not swap to fallback provider "${newRoute.providerName}" - staying on current provider. Reason: ${(err as Error).message}`);
+              log.engine.warn(
+                `Could not swap to fallback provider "${newRoute.providerName}" - staying on current provider. Reason: ${(err as Error).message}`,
+              );
             }
           }
 
@@ -449,7 +514,11 @@ export class OwlEngine {
 
         // Continue the loop
         log.engine.llmRequest(optimalModel, messages);
-        response = await currentProvider.chatWithTools(messages, tools, optimalModel);
+        response = await currentProvider.chatWithTools(
+          messages,
+          tools,
+          optimalModel,
+        );
         log.engine.llmResponse(
           optimalModel,
           response.content,
@@ -462,19 +531,21 @@ export class OwlEngine {
       // If we hit the iteration cap (or broke due to repeated failures),
       // the LLM never reached a clean answer. Make one final call:
       // "you're stuck — tell the user what happened and offer options."
-      const loopExhausted = iterations >= MAX_TOOL_ITERATIONS || loopBrokenEarly;
+      const loopExhausted =
+        iterations >= MAX_TOOL_ITERATIONS || loopBrokenEarly;
       if (loopExhausted) {
         log.engine.warn(
           `ReAct loop exhausted (${iterations} iterations, ${globalConsecutiveFailures} consecutive failures). ` +
-          `Generating stuck-task summary for user.`
+            `Generating stuck-task summary for user.`,
         );
 
-        const toolSummary = toolsUsed.length > 0
-          ? `Tools attempted: ${[...new Set(toolsUsed)].join(', ')}.`
-          : 'No tools successfully completed.';
+        const toolSummary =
+          toolsUsed.length > 0
+            ? `Tools attempted: ${[...new Set(toolsUsed)].join(", ")}.`
+            : "No tools successfully completed.";
 
         const exhaustionPrompt: ChatMessage = {
-          role: 'system',
+          role: "system",
           content:
             `[STUCK-TASK ESCALATION]\n` +
             `You have used ${iterations} tool iterations and could not complete the user's request.\n` +
@@ -491,7 +562,10 @@ export class OwlEngine {
 
         messages.push(exhaustionPrompt);
         try {
-          const exhaustionResponse = await currentProvider.chat(messages, optimalModel);
+          const exhaustionResponse = await currentProvider.chat(
+            messages,
+            optimalModel,
+          );
           // Tag the content so the gateway can track this as a stuck response
           response = {
             ...exhaustionResponse,
@@ -511,7 +585,6 @@ export class OwlEngine {
               `Which would you like?\n${EXHAUSTION_MARKER}`,
           };
         }
-
       }
     } else {
       // Simple chat without tools
@@ -526,7 +599,9 @@ export class OwlEngine {
     }
 
     // 6. Challenged = true when DNA challenge level is high/relentless (deterministic, no dice roll)
-    const challenged = ['high', 'relentless'].includes(owl.dna.evolvedTraits.challengeLevel);
+    const challenged = ["high", "relentless"].includes(
+      owl.dna.evolvedTraits.challengeLevel,
+    );
 
     // Calculate which messages were added *during* this specific run (excluding the initial system+history+user)
     const initialMessageCount = sessionHistory.length + 2; // +2 for System and User prompt
@@ -556,9 +631,9 @@ export class OwlEngine {
         newMessages,
         usage: response.usage
           ? {
-            promptTokens: response.usage.promptTokens,
-            completionTokens: response.usage.completionTokens,
-          }
+              promptTokens: response.usage.promptTokens,
+              completionTokens: response.usage.completionTokens,
+            }
           : undefined,
         pendingCapabilityGap: gapDetector.fromMissingTool(
           missingToolName,
@@ -609,9 +684,9 @@ export class OwlEngine {
           newMessages,
           usage: response.usage
             ? {
-              promptTokens: response.usage.promptTokens,
-              completionTokens: response.usage.completionTokens,
-            }
+                promptTokens: response.usage.promptTokens,
+                completionTokens: response.usage.completionTokens,
+              }
             : undefined,
           pendingCapabilityGap: nlGap,
         };
@@ -628,9 +703,9 @@ export class OwlEngine {
       newMessages,
       usage: response.usage
         ? {
-          promptTokens: response.usage.promptTokens,
-          completionTokens: response.usage.completionTokens,
-        }
+            promptTokens: response.usage.promptTokens,
+            completionTokens: response.usage.completionTokens,
+          }
         : undefined,
     };
   }
@@ -708,21 +783,29 @@ export class OwlEngine {
 
     // Challenge level → specific push-back instructions
     const challengeDirectives: Record<string, string> = {
-      low:       "Be supportive and affirming. Only push back when something is factually wrong.",
-      medium:    "Offer your honest opinion. If you see a flaw in the user's plan, name it clearly once and explain why.",
-      high:      "Actively interrogate assumptions. For any plan or decision, identify the biggest risk or weak point before agreeing.",
-      relentless:"Be a rigorous adversary. Challenge every assumption. Steelman the opposing view. If the user's idea is sound, say so — but only after stress-testing it.",
+      low: "Be supportive and affirming. Only push back when something is factually wrong.",
+      medium:
+        "Offer your honest opinion. If you see a flaw in the user's plan, name it clearly once and explain why.",
+      high: "Actively interrogate assumptions. For any plan or decision, identify the biggest risk or weak point before agreeing.",
+      relentless:
+        "Be a rigorous adversary. Challenge every assumption. Steelman the opposing view. If the user's idea is sound, say so — but only after stress-testing it.",
     };
-    const challengeDir = challengeDirectives[dna.evolvedTraits.challengeLevel] ?? challengeDirectives.medium;
+    const challengeDir =
+      challengeDirectives[dna.evolvedTraits.challengeLevel] ??
+      challengeDirectives.medium;
     prompt += `**Challenge mode (${dna.evolvedTraits.challengeLevel}):** ${challengeDir}\n\n`;
 
     // Verbosity → concrete length and format instructions
     const verbosityDirectives: Record<string, string> = {
-      terse:   "Be extremely concise. One sentence per point. No preamble. No sign-offs. Lead with the answer.",
-      normal:  "Match the length to the complexity of the question. Don't pad.",
-      verbose: "Explain your reasoning fully. Include relevant context, examples, and edge cases. Use headers for long responses.",
+      terse:
+        "Be extremely concise. One sentence per point. No preamble. No sign-offs. Lead with the answer.",
+      normal: "Match the length to the complexity of the question. Don't pad.",
+      verbose:
+        "Explain your reasoning fully. Include relevant context, examples, and edge cases. Use headers for long responses.",
     };
-    const verbosityDir = verbosityDirectives[dna.evolvedTraits.verbosity] ?? verbosityDirectives.normal;
+    const verbosityDir =
+      verbosityDirectives[dna.evolvedTraits.verbosity] ??
+      verbosityDirectives.normal;
     prompt += `**Verbosity (${dna.evolvedTraits.verbosity}):** ${verbosityDir}\n\n`;
 
     prompt += `You have had ${dna.interactionStats.totalConversations} conversation(s) with this user. Calibrate familiarity accordingly.\n`;
@@ -734,7 +817,8 @@ export class OwlEngine {
     if (strongPrefs.length > 0) {
       prompt += "\n## User Preferences\n";
       for (const [pref, score] of strongPrefs) {
-        prompt += score > 0.7 ? `- Prefers: ${pref}\n` : `- Dislikes: ${pref}\n`;
+        prompt +=
+          score > 0.7 ? `- Prefers: ${pref}\n` : `- Dislikes: ${pref}\n`;
       }
     }
 
@@ -776,24 +860,74 @@ export class OwlEngine {
           prompt += "\n## Relevant Past Knowledge\n";
           for (const pellet of top) {
             prompt += `\n**${pellet.title}**`;
-            if (pellet.tags.length > 0) prompt += ` [${pellet.tags.join(", ")}]`;
+            if (pellet.tags.length > 0)
+              prompt += ` [${pellet.tags.join(", ")}]`;
             prompt += `\n${pellet.content.slice(0, 400)}`;
             if (pellet.content.length > 400) prompt += "\n...[truncated]";
             prompt += "\n";
           }
         }
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     }
 
-    // Tools — compact one-liner per tool (schema injected by provider's tool-calling API)
+    // Tools — comprehensive documentation with examples
     if (toolRegistry) {
       const tools = toolRegistry.getDefinitions();
       if (tools.length > 0) {
         prompt += "\n## Tools Available\n";
-        prompt += "Use tools only when you need information you do not already have. Do NOT use tools to verify answers you are already confident in.\n";
-        for (const tool of tools) {
-          prompt += `- **${tool.name}**: ${tool.description}\n`;
+        prompt +=
+          "Use tools when you need information you don't have. Choose the right tool for the job:\n\n";
+
+        // Group tools by category for better understanding
+        const toolGuides: Record<string, string[]> = {
+          "Web & Browser": [
+            "web_fetch - Get content from a URL (good for articles, docs)",
+            "web_search - Search the web for current info",
+            "browser - Full browser automation: navigate, click, type, screenshot",
+          ],
+          "Files & Code": [
+            "read - Read file contents",
+            "write - Create or overwrite files",
+            "edit - Make targeted edits to files",
+            "shell - Run shell commands, scripts, git, npm, etc.",
+          ],
+          Communication: ["send_file - Send files to user"],
+          Special: [
+            "parliament - Get multiple owl perspectives on complex questions",
+            "orchestrate - Run multiple tasks in parallel",
+          ],
+        };
+
+        // Add categorized tool list
+        for (const [category, toolList] of Object.entries(toolGuides)) {
+          const availableTools = tools.filter((t) =>
+            toolList.some((guide) => guide.startsWith(t.name)),
+          );
+          if (availableTools.length > 0) {
+            prompt += `### ${category}\n`;
+            for (const tool of availableTools) {
+              prompt += `- **${tool.name}**: ${tool.description}\n`;
+            }
+            prompt += "\n";
+          }
         }
+
+        // Add tool-specific usage hints
+        prompt += "### When to Use Each Tool\n";
+        prompt +=
+          "- **web_search**: Use for current events, facts, recent information\n";
+        prompt +=
+          "- **web_fetch**: Use for specific URLs, articles, documentation\n";
+        prompt +=
+          "- **browser**: Use for interactive websites, forms, JavaScript-heavy pages\n";
+        prompt +=
+          "- **shell**: Use for git, npm, running scripts, system commands\n";
+        prompt += "- **read/write/edit**: Use for code and config files\n";
+        prompt +=
+          "- **parliament**: Use for important decisions, brainstorming, getting diverse perspectives\n";
+
         prompt +=
           "\n**Tool discipline rules:**\n" +
           "- Call a tool only if the answer genuinely requires it (file content, live data, code execution).\n" +
@@ -805,7 +939,8 @@ export class OwlEngine {
 
     // Capability gap marker — only shown when tools are loaded
     if (toolRegistry && toolRegistry.getDefinitions().length > 0) {
-      prompt += "\n[CAPABILITY_GAP: ...] is stripped before display. Use it only for genuine missing tool/access gaps.\n";
+      prompt +=
+        "\n[CAPABILITY_GAP: ...] is stripped before display. Use it only for genuine missing tool/access gaps.\n";
     }
 
     // DNA reminder — last line so it's freshest in context window
@@ -813,5 +948,4 @@ export class OwlEngine {
 
     return prompt;
   }
-
 }

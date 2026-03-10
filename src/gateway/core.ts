@@ -122,7 +122,10 @@ export class OwlGateway {
       return this.applyStuckTaskCheck(laneKey, response);
     });
     // Store only the tail; GC cleans up resolved promises automatically
-    this.lanes.set(laneKey, next.catch(() => {}));
+    this.lanes.set(
+      laneKey,
+      next.catch(() => {}),
+    );
     return next;
   }
 
@@ -148,7 +151,7 @@ export class OwlGateway {
 
       // Strip the internal marker from what the user sees
       const cleanContent = response.content
-        .replace(EXHAUSTION_MARKER, '')
+        .replace(EXHAUSTION_MARKER, "")
         .trimEnd();
 
       if (streak >= OwlGateway.STUCK_THRESHOLD) {
@@ -201,7 +204,9 @@ export class OwlGateway {
     }
 
     // Check for explicit skill invocation: /skill <name> [args...]
-    const skillMatch = message.text.trim().match(/^\/skill\s+(\S+)(?:\s+(.+))?$/i);
+    const skillMatch = message.text
+      .trim()
+      .match(/^\/skill\s+(\S+)(?:\s+(.+))?$/i);
     if (skillMatch && this.ctx.skillsLoader) {
       const skillName = skillMatch[1];
       const skillArgs = skillMatch[2] ?? "";
@@ -214,17 +219,25 @@ export class OwlGateway {
           `The user has explicitly requested this skill. Follow its instructions exactly.\n\n` +
           `<skill name="${skill.name}">\n${skill.instructions}\n</skill>\n\n` +
           (skillArgs ? `User arguments: ${skillArgs}` : "");
-        const engineCtx = this.buildEngineContext(session, callbacks, skillDirective);
-        const response = await this.engine.run(skillArgs || skill.description, engineCtx);
+        const engineCtx = this.buildEngineContext(
+          session,
+          callbacks,
+          skillDirective,
+        );
+        const response = await this.engine.run(
+          skillArgs || skill.description,
+          engineCtx,
+        );
         await this.saveSession(session, message.text, response.newMessages);
         this.postProcess(session.messages);
         return toGatewayResponse(response);
       } else {
         // Unknown skill — list available ones
         const allSkills = registry.listEnabled();
-        const list = allSkills.length > 0
-          ? allSkills.map((s) => `• ${s.name}: ${s.description}`).join("\n")
-          : "(no skills loaded)";
+        const list =
+          allSkills.length > 0
+            ? allSkills.map((s) => `• ${s.name}: ${s.description}`).join("\n")
+            : "(no skills loaded)";
         return {
           content: `❓ Skill "${skillName}" not found. Available skills:\n${list}`,
           owlName: this.ctx.owl.persona.name,
@@ -294,6 +307,7 @@ export class OwlGateway {
     }
 
     // Add fresh start directive if topic switch detected
+    const isIsolatedTask = !!freshStartDirective;
     if (freshStartDirective) {
       text = `${freshStartDirective}\n\nUser request: ${text}`;
     }
@@ -302,6 +316,7 @@ export class OwlGateway {
       session,
       callbacks,
       dynamicSkillsContext,
+      isIsolatedTask,
     );
     const response = await this.engine.run(text, engineCtx);
 
@@ -356,9 +371,11 @@ export class OwlGateway {
     if (this.ctx.learningEngine) {
       try {
         await this.ctx.learningEngine.processConversation(messages);
-        log.engine.info('[endSession:learning] ✓ completed');
+        log.engine.info("[endSession:learning] ✓ completed");
       } catch (err) {
-        log.engine.warn(`[endSession:learning] ✗ failed: ${err instanceof Error ? err.message : err}`);
+        log.engine.warn(
+          `[endSession:learning] ✗ failed: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
 
@@ -366,9 +383,13 @@ export class OwlGateway {
     if (this.ctx.evolutionEngine) {
       try {
         await this.ctx.evolutionEngine.evolve(this.ctx.owl.persona.name);
-        log.engine.info(`[endSession:dna-evolve(${this.ctx.owl.persona.name})] ✓ completed`);
+        log.engine.info(
+          `[endSession:dna-evolve(${this.ctx.owl.persona.name})] ✓ completed`,
+        );
       } catch (err) {
-        log.engine.warn(`[endSession:dna-evolve] ✗ failed: ${err instanceof Error ? err.message : err}`);
+        log.engine.warn(
+          `[endSession:dna-evolve] ✗ failed: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
   }
@@ -482,7 +503,7 @@ export class OwlGateway {
 
       const askInstall =
         callbacks.askInstall ?? (async (_deps: string[]) => true);
-      const onProgress = callbacks.onProgress ?? (async (_msg: string) => { });
+      const onProgress = callbacks.onProgress ?? (async (_msg: string) => {});
 
       const { response: retryResponse } =
         await this.ctx.evolution!.buildAndRetry(
@@ -495,7 +516,12 @@ export class OwlGateway {
         );
 
       // userAlreadySaved=true: the user message was saved in the normal path before gap was detected
-      await this.saveSession(session, message.text, retryResponse.newMessages, true);
+      await this.saveSession(
+        session,
+        message.text,
+        retryResponse.newMessages,
+        true,
+      );
       this.postProcess(session.messages);
       return toGatewayResponse(retryResponse);
     } catch (err) {
@@ -569,7 +595,10 @@ export class OwlGateway {
   private runBackground(name: string, task: Promise<unknown>): void {
     task.then(
       () => log.engine.info(`[bg:${name}] ✓ completed`),
-      (err) => log.engine.warn(`[bg:${name}] ✗ failed: ${err instanceof Error ? err.message : String(err)}`),
+      (err) =>
+        log.engine.warn(
+          `[bg:${name}] ✗ failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
     );
   }
 
@@ -579,12 +608,18 @@ export class OwlGateway {
    */
   private postProcess(messages: ChatMessage[]): void {
     if (this.ctx.learningEngine) {
-      this.runBackground('learning', this.ctx.learningEngine.processConversation(messages));
+      this.runBackground(
+        "learning",
+        this.ctx.learningEngine.processConversation(messages),
+      );
     }
 
     this.messageCount++;
     const evolutionInterval = this.ctx.config.owlDna?.evolutionBatchSize ?? 10;
-    if (this.messageCount % evolutionInterval === 0 && this.ctx.evolutionEngine) {
+    if (
+      this.messageCount % evolutionInterval === 0 &&
+      this.ctx.evolutionEngine
+    ) {
       this.runBackground(
         `dna-evolve(${this.ctx.owl.persona.name})`,
         this.ctx.evolutionEngine.evolve(this.ctx.owl.persona.name),
@@ -600,22 +635,36 @@ export class OwlGateway {
    *
    * Does NOT mutate the history array — caller owns the mutation.
    */
-  private detectTopicSwitch(text: string, history: ChatMessage[]): string | null {
+  private detectTopicSwitch(
+    text: string,
+    history: ChatMessage[],
+  ): string | null {
     if (history.length === 0) return null;
 
     const trimmed = text.trim().toLowerCase();
 
     const RESET_PHRASES = [
-      'new topic', 'start over', 'forget that', 'forget everything',
-      'fresh start', 'reset', 'clear', '/new', 'new task',
+      "new topic",
+      "start over",
+      "forget that",
+      "forget everything",
+      "fresh start",
+      "reset",
+      "clear",
+      "/new",
+      "new task",
     ];
-    const LONE_GREETINGS = ['hi', 'hello', 'hey', 'yo', 'sup'];
+    const LONE_GREETINGS = ["hi", "hello", "hey", "yo", "sup"];
 
-    const isReset = RESET_PHRASES.some(p => trimmed === p || trimmed.startsWith(p + ' '));
+    const isReset = RESET_PHRASES.some(
+      (p) => trimmed === p || trimmed.startsWith(p + " "),
+    );
     const isLoneGreeting = LONE_GREETINGS.includes(trimmed);
 
     if (isReset || isLoneGreeting) {
-      log.engine.info(`Topic switch detected (keyword: "${trimmed}"). Context will be flushed.`);
+      log.engine.info(
+        `Topic switch detected (keyword: "${trimmed}"). Context will be flushed.`,
+      );
       return `[SYSTEM DIRECTIVE: Context has been flushed. You are starting a fresh task.]`;
     }
 
@@ -626,6 +675,7 @@ export class OwlGateway {
     session: Session,
     callbacks: GatewayCallbacks,
     dynamicSkillsContext: string = "",
+    isolatedTask: boolean = false,
   ): EngineContext {
     const preferencesContext =
       this.ctx.preferenceStore?.toContextString() ?? "";
@@ -636,14 +686,17 @@ export class OwlGateway {
     let skillsContext = "";
     if (this.ctx.skillsLoader) {
       const registry = this.ctx.skillsLoader.getRegistry();
-      const alwaysSkills = registry.listEnabled().filter(
-        (s) => s.metadata.openclaw?.always === true,
-      );
+      const alwaysSkills = registry
+        .listEnabled()
+        .filter((s) => s.metadata.openclaw?.always === true);
       if (alwaysSkills.length > 0) {
-        skillsContext = "\n## Always-Available Skills\n" +
-          alwaysSkills.map((s) =>
-            `\n<skill name="${s.name}">\n${s.instructions}\n</skill>`
-          ).join("\n");
+        skillsContext =
+          "\n## Always-Available Skills\n" +
+          alwaysSkills
+            .map(
+              (s) => `\n<skill name="${s.name}">\n${s.instructions}\n</skill>`,
+            )
+            .join("\n");
       }
     }
 
@@ -662,6 +715,7 @@ export class OwlGateway {
       memoryContext: this.ctx.memoryContext,
       preferencesContext: preferencesContext || undefined,
       skillsContext: finalSkillsContext || undefined,
+      isolatedTask: isolatedTask,
       onProgress: callbacks.onProgress,
       sendFile: callbacks.onFile,
       providerRegistry: this.ctx.providerRegistry,
@@ -673,7 +727,7 @@ export class OwlGateway {
     if (!this.ctx.preferenceStore) return;
     const detector = new PreferenceDetector(this.ctx.provider);
     this.runBackground(
-      'preference-detect',
+      "preference-detect",
       detector.detect(userMessage, this.ctx.preferenceStore, channelId),
     );
   }
