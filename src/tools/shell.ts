@@ -2,28 +2,164 @@
  * StackOwl — Shell Tool (Zero-Trust Sandboxed)
  *
  * Allows owls to execute terminal commands safely inside ephemeral Docker containers.
+ *
+ * Output capture: uses child_process.spawn (not dockerode stream API) so stdout/stderr
+ * are always returned to the LLM, not just printed to the terminal.
  */
 
-import { exec } from 'node:child_process';
+import { spawn, exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import Docker from 'dockerode';
 import type { ToolImplementation, ToolContext } from './registry.js';
 import { log } from '../logger.js';
 import { resolve } from 'node:path';
 
 const execAsync = promisify(exec);
-const docker = new Docker(); // Connects to local docker socket by default
+
+const SANDBOX_IMAGE = 'node:22-alpine';
+const EXEC_TIMEOUT_MS = 30_000;
+const IMAGE_PULL_TIMEOUT_MS = 120_000;
+
+// ─── Pre-flight: Network Command Detection ────────────────────────────────────
+// The sandbox runs with --network none, so any command that requires internet
+// access will silently fail. Detect these upfront and advise the LLM immediately.
+
+const NETWORK_FETCH_PATTERNS = [
+    /\b(curl|wget)\s+https?:\/\//,
+    /\bfetch\s+['"]https?:\/\//,
+];
+
+function detectNetworkFetch(cmd: string): string | null {
+    if (NETWORK_FETCH_PATTERNS.some(p => p.test(cmd))) {
+        return (
+            `[SYSTEM DIAGNOSTIC HINT: The sandbox has no internet access (--network none). ` +
+            `You cannot use curl/wget to fetch URLs inside the sandbox. ` +
+            `Use the 'web_crawl' tool to fetch any web page or URL instead. ` +
+            `If you need both fetched content and shell processing, fetch with web_crawl first, ` +
+            `then pass the result into a shell command via stdin or a temp file.]`
+        );
+    }
+    return null;
+}
+
+// ─── Docker Spawn (proper stdout/stderr capture) ──────────────────────────────
+
+interface DockerResult {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+}
+
+function runInDocker(cmd: string, workspaceDir: string): Promise<DockerResult> {
+    return new Promise((resolvePromise, reject) => {
+        const proc = spawn('docker', [
+            'run', '--rm',
+            '--volume', `${workspaceDir}:/workspace`,
+            '--workdir', '/workspace',
+            '--network', 'none',
+            '--env', 'NODE_ENV=development',
+            SANDBOX_IMAGE,
+            'sh', '-c', cmd,   // cmd passed as single arg — no shell escaping needed
+        ]);
+
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+        const timer = setTimeout(() => {
+            proc.kill('SIGKILL');
+            reject(new Error(`Sandbox timed out after ${EXEC_TIMEOUT_MS / 1000}s`));
+        }, EXEC_TIMEOUT_MS);
+
+        proc.on('close', (code) => {
+            clearTimeout(timer);
+            resolvePromise({ exitCode: code ?? 0, stdout, stderr });
+        });
+
+        proc.on('error', (err) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+    });
+}
+
+// ─── Tier 1 Auto-Heal: Pull missing image ────────────────────────────────────
+
+async function ensureImage(): Promise<void> {
+    log.tool.warn(`[ShellTool] Image '${SANDBOX_IMAGE}' not found. Auto-pulling (Tier 1 heal)...`);
+    await execAsync(`docker pull ${SANDBOX_IMAGE}`, { timeout: IMAGE_PULL_TIMEOUT_MS });
+    log.tool.info(`[ShellTool] Image '${SANDBOX_IMAGE}' pulled successfully.`);
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function cap(s: string, max: number): string {
+    return s.length > max
+        ? s.slice(0, max) + `\n...[truncated — ${s.length - max} chars omitted]`
+        : s;
+}
+
+function formatResult(
+    exitCode: number,
+    stdout: string,
+    stderr: string,
+    diagnosticHint = '',
+): string {
+    return [
+        `EXIT_CODE: ${exitCode}`,
+        `STDOUT:\n${cap(stdout, 6000) || '(none)'}`,
+        `STDERR:\n${cap(stderr, 2000) || '(none)'}${diagnosticHint ? '\n\n' + diagnosticHint : ''}`,
+    ].join('\n\n');
+}
+
+function buildDiagnosticHint(exitCode: number, stdout: string, stderr: string): string {
+    const combined = stdout + stderr;
+
+    if (exitCode === 127 || combined.includes('not found') || combined.includes('No such file or directory')) {
+        return (
+            `[SYSTEM DIAGNOSTIC HINT: A command was not found in the Alpine Linux sandbox. ` +
+            `Alpine only includes busybox utilities by default — no curl, wget, git, python, etc. ` +
+            `To install a missing package: chain 'apk add <pkg> && <your command>' in one command. ` +
+            `To fetch URLs, use the 'web_crawl' tool instead of curl/wget.]`
+        );
+    }
+    if (exitCode === 126) {
+        return `[SYSTEM DIAGNOSTIC HINT: Permission denied. Check file permissions (chmod +x) before executing.]`;
+    }
+    if (combined.toLowerCase().includes('out of memory') || combined.includes('Killed')) {
+        return `[SYSTEM DIAGNOSTIC HINT: Process was killed (OOM or timeout). Try a smaller input or break the task into steps.]`;
+    }
+    return `[SYSTEM DIAGNOSTIC HINT: Non-zero exit code ${exitCode}. Check the stderr above for the root cause.]`;
+}
+
+// ─── Raw (unsandboxed) fallback ───────────────────────────────────────────────
+
+async function executeRawCommand(cmd: string, cwd: string): Promise<string> {
+    try {
+        const { stdout, stderr } = await execAsync(cmd, { cwd, timeout: EXEC_TIMEOUT_MS });
+        return formatResult(0, stdout, stderr);
+    } catch (error: any) {
+        return formatResult(
+            error.code ?? 1,
+            error.stdout ?? '',
+            error.stderr ?? '',
+        );
+    }
+}
+
+// ─── Tool ────────────────────────────────────────────────────────────────────
 
 export const ShellTool: ToolImplementation = {
     definition: {
         name: 'run_shell_command',
-        description: 'Execute a shell command in an isolated Alpine Linux sandbox. Use this to safely test code, evaluate logic, or explore files. Note: Commands run inside an ephemeral Docker container mounted to your workspace. Processes that bind to ports or run continuously without exiting will be forcibly killed.',
+        description: 'Execute a shell command in an isolated Alpine Linux sandbox (no internet access). Use this to safely run code, evaluate logic, or process files. NOTE: The sandbox has NO network access — use the web_crawl tool to fetch URLs instead of curl/wget. To install a missing package, chain apk add before your command in the same shell invocation.',
         parameters: {
             type: 'object',
             properties: {
                 command: {
                     type: 'string',
-                    description: 'The shell command to execute',
+                    description: 'The shell command to execute inside the Alpine sandbox.',
                 },
             },
             required: ['command'],
@@ -38,135 +174,68 @@ export const ShellTool: ToolImplementation = {
         const workspaceDir = resolve(context.cwd);
 
         if (!useSandbox) {
-            log.tool.warn(`[ShellTool] WARNING: Executing raw command outside sandbox: ${cmd}`);
-            return await executeRawCommand(cmd, workspaceDir);
+            log.tool.warn(`[ShellTool] WARNING: Executing outside sandbox: ${cmd}`);
+            return executeRawCommand(cmd, workspaceDir);
         }
 
-        log.tool.info(`[ShellTool] Executing in isolation sandbox: ${cmd}`);
+        // ── Pre-flight: detect network fetch commands immediately ──
+        const networkHint = detectNetworkFetch(cmd);
+        if (networkHint) {
+            log.tool.warn(`[ShellTool] Network command blocked pre-flight: ${cmd.slice(0, 80)}`);
+            return formatResult(126, '', 'Network fetch commands are not supported in the sandbox.', networkHint);
+        }
 
-        // Ensure we have a light image
-        // Using standard 'node:22-alpine' as it matches StackOwl's engine and has npm
-        const image = 'node:22-alpine';
-
-        const runDockerCommand = async () => {
-            return new Promise<[string, string]>(async (resolvePromise, reject) => {
-                try {
-                    await docker.run(image, ['sh', '-c', cmd], process.stdout, {
-                        Tty: false,
-                        HostConfig: {
-                            Binds: [`${workspaceDir}:/workspace`],
-                            AutoRemove: true,
-                            NetworkMode: 'none',
-                        },
-                        WorkingDir: '/workspace',
-                        Env: ['NODE_ENV=development']
-                    });
-                    resolvePromise(['Executed safely via Docker. (Output capturing requires stream multiplexing, returning success header instead)', '']);
-                } catch (e: any) {
-                    reject(e);
-                }
-            });
-        };
+        log.tool.info(`[ShellTool] Executing in sandbox: ${cmd}`);
 
         try {
-            await runDockerCommand();
-            return [
-                `EXIT_CODE: 0`,
-                `STDOUT:\n(Docker Execution Successful)`,
-                `STDERR:\n(none)`,
-            ].join('\n\n');
+            const result = await runInDocker(cmd, workspaceDir);
 
-        } catch (error: any) {
-            // Tier 1: Subconscious Auto-Healing
-            // Catch missing image errors and automatically pull them without bothering the LLM
-            if (error.statusCode === 404 && error.message.includes('No such image')) {
-                log.tool.warn(`[ShellTool] Missing image '${image}'. Subconscious auto-healing triggered...`);
+            if (result.exitCode !== 0) {
+                const hint = buildDiagnosticHint(result.exitCode, result.stdout, result.stderr);
+                log.tool.warn(`[ShellTool] Command exited with code ${result.exitCode}`);
+                return formatResult(result.exitCode, result.stdout, result.stderr, hint);
+            }
+
+            return formatResult(0, result.stdout, result.stderr);
+
+        } catch (spawnError: any) {
+            const msg: string = spawnError.message ?? String(spawnError);
+
+            // ── Tier 1 Auto-Heal: missing Docker image ──
+            if (msg.includes('Unable to find image') || msg.includes('No such image') || msg.includes('pull access denied')) {
                 try {
-                    // Pull the image as a stream
-                    await new Promise<void>((resolve, reject) => {
-                        docker.pull(image, (err: any, stream: any) => {
-                            if (err) return reject(err);
-                            docker.modem.followProgress(stream, onFinished, onProgress);
-                            function onFinished(err: any) {
-                                if (err) return reject(err);
-                                resolve();
-                            }
-                            function onProgress() { }
-                        });
-                    });
-                    log.tool.info(`[ShellTool] Image '${image}' pulled successfully. Retrying command...`);
-
-                    // Retry original command
-                    await runDockerCommand();
-
-                    return [
-                        `EXIT_CODE: 0`,
-                        `STDOUT:\n(Docker Execution Successful)`,
-                        `STDERR:\n(none)`,
-                    ].join('\n\n');
-                } catch (pullError: any) {
-                    log.tool.error(`[ShellTool] Auto-healing failed to pull image:`, pullError);
-                    // Fall through to normal error reporting
-                    error = pullError;
+                    await ensureImage();
+                    const retryResult = await runInDocker(cmd, workspaceDir);
+                    if (retryResult.exitCode !== 0) {
+                        const hint = buildDiagnosticHint(retryResult.exitCode, retryResult.stdout, retryResult.stderr);
+                        return formatResult(retryResult.exitCode, retryResult.stdout, retryResult.stderr, hint);
+                    }
+                    return formatResult(0, retryResult.stdout, retryResult.stderr);
+                } catch (pullErr: any) {
+                    log.tool.error(`[ShellTool] Auto-heal pull failed:`, pullErr);
+                    return formatResult(1, '', String(pullErr.message ?? pullErr),
+                        `[SYSTEM DIAGNOSTIC HINT: Docker image pull failed. Docker daemon may be unavailable or the image registry is unreachable. Consider disabling sandboxing in config.]`
+                    );
                 }
             }
 
-            log.tool.error(`Sandbox execution failed:`, error);
-            if (error.message && error.message.includes('connect ENOENT')) {
-                log.tool.warn(`Docker daemon not found. Falling back to unsafe raw host execution.`);
-                return await executeRawCommand(cmd, workspaceDir);
+            // ── Docker daemon not running → raw fallback ──
+            if (msg.includes('Cannot connect to the Docker daemon') || msg.includes('connect ENOENT') || msg.includes('ENOENT')) {
+                log.tool.warn(`[ShellTool] Docker daemon unavailable. Falling back to raw host execution.`);
+                return executeRawCommand(cmd, workspaceDir);
             }
 
-            // Tier 2: Pre-frontal Hinting
-            // Wrap standard OS errors with semantic hints to prevent catastrophic retry loops
-            let diagnosticHint = '';
-            if (error.statusCode === 404 && error.message.includes('No such image')) {
-                diagnosticHint = `\n\n[SYSTEM DIAGNOSTIC HINT: The sandbox environment requires the Docker image '${image}'. You must pull this image to the host machine or run the application in a different way.]`;
-            } else if (error.statusCode === 127 || error.message.includes('command not found')) {
-                diagnosticHint = `\n\n[SYSTEM DIAGNOSTIC HINT: The command you are trying to run does not exist in the basic Alpine Linux sandbox. You may need to 'apk add' the required package first.]`;
-            } else {
-                diagnosticHint = `\n\n[SYSTEM DIAGNOSTIC HINT: This command failed during sandbox execution. Check if you are missing dependencies or if your paths are absolute.]`;
+            // ── Timeout ──
+            if (msg.includes('timed out')) {
+                return formatResult(124, '', msg,
+                    `[SYSTEM DIAGNOSTIC HINT: Command timed out after ${EXEC_TIMEOUT_MS / 1000}s. Break long-running tasks into smaller steps or increase the timeout in config.]`
+                );
             }
 
-            return [
-                `EXIT_CODE: ${error.statusCode ?? 1}`,
-                `STDOUT:\n(none)`,
-                `STDERR:\n${error.message || '(Docker execution Error)'}${diagnosticHint}`,
-            ].join('\n\n');
+            log.tool.error(`[ShellTool] Unexpected spawn error:`, spawnError);
+            return formatResult(1, '', msg,
+                `[SYSTEM DIAGNOSTIC HINT: Unexpected sandbox error. Check Docker is running on this machine.]`
+            );
         }
     },
 };
-
-// Original unsafe execution method
-async function executeRawCommand(cmd: string, cwd: string): Promise<string> {
-    try {
-        const { stdout, stderr } = await execAsync(cmd, { cwd });
-
-        const stdoutTrimmed = stdout.length > 8000
-            ? stdout.substring(0, 4000) + '\n...[stdout truncated]...\n' + stdout.substring(stdout.length - 4000)
-            : stdout;
-
-        const stderrTrimmed = stderr.length > 2000
-            ? stderr.substring(0, 2000) + '\n...[stderr truncated]...'
-            : stderr;
-
-        return [
-            `EXIT_CODE: 0`,
-            `STDOUT:\n${stdoutTrimmed || '(none)'}`,
-            `STDERR:\n${stderrTrimmed || '(none)'}`,
-        ].join('\n\n');
-    } catch (error: any) {
-        const stdoutTrimmed = (error.stdout || '').length > 4000
-            ? (error.stdout as string).substring(0, 4000) + '\n...[truncated]'
-            : (error.stdout || '');
-        const stderrTrimmed = (error.stderr || '').length > 4000
-            ? (error.stderr as string).substring(0, 4000) + '\n...[truncated]'
-            : (error.stderr || '');
-
-        return [
-            `EXIT_CODE: ${error.code ?? 1}`,
-            `STDOUT:\n${stdoutTrimmed || '(none)'}`,
-            `STDERR:\n${stderrTrimmed || '(none)'}`,
-        ].join('\n\n');
-    }
-}

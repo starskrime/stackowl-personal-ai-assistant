@@ -21,6 +21,7 @@ import { WebCrawlTool } from "./tools/web.js";
 import { SessionStore } from "./memory/store.js";
 import { OrchestrateTasksTool } from "./tools/orchestrate.js";
 import { SummonParliamentTool } from "./tools/parliament.js";
+import { PatchTool } from "./tools/toolsmith.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -77,6 +78,7 @@ async function bootstrap() {
     OrchestrateTasksTool,
     SendFileTool,
     new SummonParliamentTool(),
+    PatchTool,
   ]);
 
   // Initialize session store

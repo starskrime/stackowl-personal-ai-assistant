@@ -17,7 +17,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { ChatMessage } from "../providers/base.js";
 import type { Session } from "../memory/store.js";
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
-import { OwlEngine } from "../engine/runtime.js";
+import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
 import { log } from "../logger.js";
@@ -49,6 +49,23 @@ export class OwlGateway {
   private sessions: Map<string, SessionCache> = new Map();
   private messageCount = 0;
   private skillInjector: SkillContextInjector | null = null;
+
+  /**
+   * Lane Queue — one active Promise per session key.
+   * Guarantees serial execution: a second message from the same session
+   * waits for the first to finish before starting.
+   * This prevents race conditions on session history and memory state.
+   */
+  private lanes: Map<string, Promise<unknown>> = new Map();
+
+  /**
+   * Stuck-task tracker — counts consecutive exhausted responses per session.
+   * When a session returns EXHAUSTION_MARKER N times in a row, the gateway
+   * replaces the response with a structured escalation asking the user to
+   * clarify, pivot, or accept the task can't be done.
+   */
+  private stuckStreak: Map<string, number> = new Map();
+  private static readonly STUCK_THRESHOLD = 2;
 
   constructor(private ctx: GatewayContext) {
     this.engine = new OwlEngine();
@@ -89,11 +106,83 @@ export class OwlGateway {
 
   /**
    * Process an incoming message from any channel.
-   * The adapter provides per-message callbacks for streaming (onProgress, onFile).
+   *
+   * Execution is serialized per session via the Lane Queue — if a message
+   * arrives while the previous one is still processing, it waits in line.
+   * This makes session history mutations safe and fully deterministic.
    */
-  async handle(
+  handle(
     message: GatewayMessage,
     callbacks: GatewayCallbacks = {},
+  ): Promise<GatewayResponse> {
+    const laneKey = message.sessionId;
+    const prev = this.lanes.get(laneKey) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      const response = await this.handleInLane(message, callbacks);
+      return this.applyStuckTaskCheck(laneKey, response);
+    });
+    // Store only the tail; GC cleans up resolved promises automatically
+    this.lanes.set(laneKey, next.catch(() => {}));
+    return next;
+  }
+
+  /**
+   * Track consecutive exhausted responses per session.
+   * After STUCK_THRESHOLD exhaustions in a row, replace the response with
+   * a structured escalation that gives the user 3 concrete options:
+   *   (a) Provide more information / clarify
+   *   (b) Try a completely different approach
+   *   (c) Accept the task cannot be completed right now
+   *
+   * On any non-exhausted response the streak resets to zero.
+   */
+  private applyStuckTaskCheck(
+    sessionKey: string,
+    response: GatewayResponse,
+  ): GatewayResponse {
+    const isExhausted = response.content.includes(EXHAUSTION_MARKER);
+
+    if (isExhausted) {
+      const streak = (this.stuckStreak.get(sessionKey) ?? 0) + 1;
+      this.stuckStreak.set(sessionKey, streak);
+
+      // Strip the internal marker from what the user sees
+      const cleanContent = response.content
+        .replace(EXHAUSTION_MARKER, '')
+        .trimEnd();
+
+      if (streak >= OwlGateway.STUCK_THRESHOLD) {
+        // Escalate — give the user agency
+        log.engine.warn(
+          `[stuck-task] Session "${sessionKey}" has been stuck for ${streak} consecutive responses. Escalating.`,
+        );
+        const escalation =
+          `⚠️ **I've been stuck on this task for ${streak} attempts and haven't been able to make progress.**\n\n` +
+          `Here's what I tried:\n${cleanContent}\n\n` +
+          `To move forward, I need you to choose one of these options:\n\n` +
+          `**A) Provide more information or clarify** — if there's something I'm missing or misunderstanding, tell me and I'll try again.\n\n` +
+          `**B) Try a completely different approach** — describe what you'd like me to do differently, and I'll start fresh.\n\n` +
+          `**C) Accept that this can't be done right now** — I'll note the limitation and you can revisit it later.\n\n` +
+          `_Reply with A, B, or C (or just tell me what you'd like to do)._`;
+
+        return {
+          ...response,
+          content: escalation,
+        };
+      }
+
+      // Streak below threshold — return cleaned response but don't escalate yet
+      return { ...response, content: cleanContent };
+    }
+
+    // Non-exhausted response — reset streak
+    this.stuckStreak.set(sessionKey, 0);
+    return response;
+  }
+
+  private async handleInLane(
+    message: GatewayMessage,
+    callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse> {
     const session = await this.getOrCreateSession(message);
 
@@ -111,11 +200,50 @@ export class OwlGateway {
       };
     }
 
-    // Check for topic switch using LLM intent routing
-    const freshStartDirective = await this.detectTopicSwitch(
+    // Check for explicit skill invocation: /skill <name> [args...]
+    const skillMatch = message.text.trim().match(/^\/skill\s+(\S+)(?:\s+(.+))?$/i);
+    if (skillMatch && this.ctx.skillsLoader) {
+      const skillName = skillMatch[1];
+      const skillArgs = skillMatch[2] ?? "";
+      const registry = this.ctx.skillsLoader.getRegistry();
+      const skill = registry.get(skillName);
+      if (skill) {
+        log.engine.info(`Explicit skill invocation: ${skill.name}`);
+        const skillDirective =
+          `[SKILL INVOKED: ${skill.name}]\n` +
+          `The user has explicitly requested this skill. Follow its instructions exactly.\n\n` +
+          `<skill name="${skill.name}">\n${skill.instructions}\n</skill>\n\n` +
+          (skillArgs ? `User arguments: ${skillArgs}` : "");
+        const engineCtx = this.buildEngineContext(session, callbacks, skillDirective);
+        const response = await this.engine.run(skillArgs || skill.description, engineCtx);
+        await this.saveSession(session, message.text, response.newMessages);
+        this.postProcess(session.messages);
+        return toGatewayResponse(response);
+      } else {
+        // Unknown skill — list available ones
+        const allSkills = registry.listEnabled();
+        const list = allSkills.length > 0
+          ? allSkills.map((s) => `• ${s.name}: ${s.description}`).join("\n")
+          : "(no skills loaded)";
+        return {
+          content: `❓ Skill "${skillName}" not found. Available skills:\n${list}`,
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
+    }
+
+    // Check for topic switch (heuristic, no LLM call)
+    const freshStartDirective = this.detectTopicSwitch(
       message.text,
       session.messages,
     );
+    // Flush both in-memory and on-disk session state atomically
+    if (freshStartDirective) {
+      session.messages = [];
+      await this.ctx.sessionStore.saveSession(session);
+    }
 
     // Evaluate instincts — may inject behavioral constraints
     let text = message.text;
@@ -226,16 +354,22 @@ export class OwlGateway {
 
     // Reactive learning
     if (this.ctx.learningEngine) {
-      await this.ctx.learningEngine
-        .processConversation(messages)
-        .catch(() => { });
+      try {
+        await this.ctx.learningEngine.processConversation(messages);
+        log.engine.info('[endSession:learning] ✓ completed');
+      } catch (err) {
+        log.engine.warn(`[endSession:learning] ✗ failed: ${err instanceof Error ? err.message : err}`);
+      }
     }
 
     // DNA evolution
     if (this.ctx.evolutionEngine) {
-      await this.ctx.evolutionEngine
-        .evolve(this.ctx.owl.persona.name)
-        .catch(() => { });
+      try {
+        await this.ctx.evolutionEngine.evolve(this.ctx.owl.persona.name);
+        log.engine.info(`[endSession:dna-evolve(${this.ctx.owl.persona.name})] ✓ completed`);
+      } catch (err) {
+        log.engine.warn(`[endSession:dna-evolve] ✗ failed: ${err instanceof Error ? err.message : err}`);
+      }
     }
   }
 
@@ -301,6 +435,9 @@ export class OwlGateway {
   getEvolution() {
     return this.ctx.evolution;
   }
+  getSkillsLoader() {
+    return this.ctx.skillsLoader;
+  }
   getLearningEngine() {
     return this.ctx.learningEngine;
   }
@@ -357,15 +494,16 @@ export class OwlGateway {
           onProgress,
         );
 
-      await this.saveSession(session, message.text, retryResponse.newMessages);
+      // userAlreadySaved=true: the user message was saved in the normal path before gap was detected
+      await this.saveSession(session, message.text, retryResponse.newMessages, true);
       this.postProcess(session.messages);
       return toGatewayResponse(retryResponse);
     } catch (err) {
       log.evolution.error(
         `Gap handling failed: ${err instanceof Error ? err.message : err}`,
       );
-      // Fallback: return original apologetic response
-      await this.saveSession(session, message.text, response.newMessages);
+      // Fallback: return original apologetic response (user message already saved)
+      await this.saveSession(session, message.text, response.newMessages, true);
       this.postProcess(session.messages);
       return toGatewayResponse(response);
     }
@@ -398,8 +536,13 @@ export class OwlGateway {
     session: Session,
     userText: string,
     newMessages: ChatMessage[],
+    userAlreadySaved = false,
   ): Promise<void> {
-    session.messages.push({ role: "user", content: userText });
+    // Guard: only append the user turn if it wasn't already saved
+    // (capability gap retry path calls saveSession twice for the same user message)
+    if (!userAlreadySaved) {
+      session.messages.push({ role: "user", content: userText });
+    }
     for (const msg of newMessages) {
       session.messages.push(msg);
     }
@@ -420,63 +563,60 @@ export class OwlGateway {
   // ─── Private: Post-processing ────────────────────────────────
 
   /**
-   * Fire-and-forget tasks that run after every response:
-   * learning signal extraction and mid-session DNA evolution.
+   * Run a named background task. Logs both start and success/failure so
+   * every subsystem is observable — no silent failures.
+   */
+  private runBackground(name: string, task: Promise<unknown>): void {
+    task.then(
+      () => log.engine.info(`[bg:${name}] ✓ completed`),
+      (err) => log.engine.warn(`[bg:${name}] ✗ failed: ${err instanceof Error ? err.message : String(err)}`),
+    );
+  }
+
+  /**
+   * Fire-and-forget tasks that run after every response.
+   * Each task is named so failures are visible in logs.
    */
   private postProcess(messages: ChatMessage[]): void {
     if (this.ctx.learningEngine) {
-      this.ctx.learningEngine.processConversation(messages).catch(() => { });
+      this.runBackground('learning', this.ctx.learningEngine.processConversation(messages));
     }
 
     this.messageCount++;
     const evolutionInterval = this.ctx.config.owlDna?.evolutionBatchSize ?? 10;
-    if (
-      this.messageCount % evolutionInterval === 0 &&
-      this.ctx.evolutionEngine
-    ) {
-      this.ctx.evolutionEngine
-        .evolve(this.ctx.owl.persona.name)
-        .catch((err) =>
-          log.evolution.warn(
-            `Mid-session evolution failed: ${err instanceof Error ? err.message : err}`,
-          ),
-        );
+    if (this.messageCount % evolutionInterval === 0 && this.ctx.evolutionEngine) {
+      this.runBackground(
+        `dna-evolve(${this.ctx.owl.persona.name})`,
+        this.ctx.evolutionEngine.evolve(this.ctx.owl.persona.name),
+      );
     }
   }
 
   // ─── Private: Engine Context ─────────────────────────────────
 
   /**
-   * Use a fast LLM call to detect if the user is explicitly changing subjects.
-   * If yes, auto-flush the session working memory to prevent context bleeding.
+   * Detect an explicit topic switch using keyword heuristics only — no LLM call.
+   * Returns a flush directive string when detected; caller must clear session.messages.
+   *
+   * Does NOT mutate the history array — caller owns the mutation.
    */
-  private async detectTopicSwitch(text: string, history: ChatMessage[]): Promise<string | null> {
+  private detectTopicSwitch(text: string, history: ChatMessage[]): string | null {
     if (history.length === 0) return null;
 
-    const lower = text.trim().toLowerCase();
-    if (['hi', 'hello', 'hey', 'new topic'].includes(lower)) {
-      history.length = 0; // Auto-flush!
-      log.engine.info('Topic switch detected via keyword. Flushed context.');
+    const trimmed = text.trim().toLowerCase();
+
+    const RESET_PHRASES = [
+      'new topic', 'start over', 'forget that', 'forget everything',
+      'fresh start', 'reset', 'clear', '/new', 'new task',
+    ];
+    const LONE_GREETINGS = ['hi', 'hello', 'hey', 'yo', 'sup'];
+
+    const isReset = RESET_PHRASES.some(p => trimmed === p || trimmed.startsWith(p + ' '));
+    const isLoneGreeting = LONE_GREETINGS.includes(trimmed);
+
+    if (isReset || isLoneGreeting) {
+      log.engine.info(`Topic switch detected (keyword: "${trimmed}"). Context will be flushed.`);
       return `[SYSTEM DIRECTIVE: Context has been flushed. You are starting a fresh task.]`;
-    }
-
-    try {
-      // Fast semantic router using the LLM
-      const prompt = `Analyze this new user message:\n"${text}"\n\nDoes this message represent a COMPLETE change in topic/task from whatever they were doing previously, or a request to start something entirely new? Reply with ONLY "YES" or "NO".`;
-      const result = await this.ctx.provider.chatWithTools(
-        [{ role: 'user', content: prompt }],
-        [],
-        this.ctx.config.defaultModel // Use default (likely fast) model
-      );
-
-      const answer = result.content.trim().toUpperCase();
-      if (answer.includes('YES')) {
-        history.length = 0; // Auto-flush working memory!
-        log.engine.info('Topic switch detected via LLM semantic routing. Flushed context.');
-        return `[SYSTEM DIRECTIVE: Context has been explicitly flushed by the router. This is a brand new, isolated task. DO NOT bring up formatting or concepts from previous tasks.]`;
-      }
-    } catch (e) {
-      log.engine.warn('Failed to run semantic intent router', e);
     }
 
     return null;
@@ -490,24 +630,24 @@ export class OwlGateway {
     const preferencesContext =
       this.ctx.preferenceStore?.toContextString() ?? "";
 
-    // Build skills context from loaded skills (static + dynamic)
+    // Always-include skills: inject full XML instructions (not just names)
+    // These are skills marked `openclaw.always: true` — always present in context.
+    // Relevant skills (per-message) are injected in handle() as dynamicSkillsContext.
     let skillsContext = "";
     if (this.ctx.skillsLoader) {
       const registry = this.ctx.skillsLoader.getRegistry();
-      const skills = registry.listEnabled();
-      if (skills.length > 0) {
-        const lines = [
-          "You have access to the following skills that can help with user requests:\n",
-        ];
-        for (const skill of skills) {
-          const emoji = skill.metadata.openclaw?.emoji || "•";
-          lines.push(`- ${emoji} **${skill.name}**: ${skill.description}`);
-        }
-        skillsContext = "\n## Available Skills\n" + lines.join("\n");
+      const alwaysSkills = registry.listEnabled().filter(
+        (s) => s.metadata.openclaw?.always === true,
+      );
+      if (alwaysSkills.length > 0) {
+        skillsContext = "\n## Always-Available Skills\n" +
+          alwaysSkills.map((s) =>
+            `\n<skill name="${s.name}">\n${s.instructions}\n</skill>`
+          ).join("\n");
       }
     }
 
-    // Merge static and dynamic skill contexts
+    // Merge always-on skills + per-message relevant skills
     const finalSkillsContext = skillsContext + dynamicSkillsContext;
 
     return {
@@ -532,9 +672,10 @@ export class OwlGateway {
   private detectPreferences(userMessage: string, channelId: string): void {
     if (!this.ctx.preferenceStore) return;
     const detector = new PreferenceDetector(this.ctx.provider);
-    detector
-      .detect(userMessage, this.ctx.preferenceStore, channelId)
-      .catch(() => { });
+    this.runBackground(
+      'preference-detect',
+      detector.detect(userMessage, this.ctx.preferenceStore, channelId),
+    );
   }
 }
 

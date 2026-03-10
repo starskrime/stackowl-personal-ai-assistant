@@ -66,7 +66,8 @@ export class CLIAdapter implements ChannelAdapter {
             `\nType your message. Commands: ` +
             `${chalk.bold('/quit')} · ${chalk.bold('/owls')} · ` +
             `${chalk.bold('/status')} · ${chalk.bold('/capabilities')} · ` +
-            `${chalk.bold('/learning')} · ${chalk.bold('/clear')}\n`
+            `${chalk.bold('/learning')} · ${chalk.bold('/skills')} · ` +
+            `${chalk.bold('/skill <name>')} · ${chalk.bold('/clear')}\n`
         ));
         console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`) +
             chalk.dim(` (challenge: ${owl.dna.evolvedTraits.challengeLevel})`));
@@ -231,6 +232,30 @@ export class CLIAdapter implements ChannelAdapter {
                     console.log(`     ${chalk.dim(r.description)}`);
                     console.log(`     ${chalk.dim(`Used: ${r.timesUsed}x | Status: ${r.status}`)}`);
                     console.log('');
+                }
+            }
+            rl.prompt();
+            return true;
+        }
+
+        if (input === '/skills') {
+            const loader = this.gateway.getSkillsLoader?.();
+            if (!loader) {
+                console.log(chalk.dim('\n  Skills not loaded.\n'));
+            } else {
+                const skills = loader.getRegistry().listEnabled();
+                if (skills.length === 0) {
+                    console.log(chalk.dim('\n  No skills loaded. Add SKILL.md files to workspace/skills/\n'));
+                } else {
+                    console.log(chalk.bold('\n🎯 Available Skills:\n'));
+                    for (const s of skills) {
+                        const emoji = s.metadata.openclaw?.emoji || '🎯';
+                        const always = s.metadata.openclaw?.always ? chalk.cyan(' [always]') : '';
+                        console.log(`  ${emoji} ${chalk.bold(s.name)}${always}`);
+                        console.log(`     ${chalk.dim(s.description)}`);
+                        console.log(`     ${chalk.dim(`Use: /skill ${s.name}`)}`);
+                        console.log('');
+                    }
                 }
             }
             rl.prompt();

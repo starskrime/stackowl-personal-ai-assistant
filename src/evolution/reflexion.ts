@@ -13,6 +13,13 @@ import type { PelletStore } from '../pellets/store.js';
 import { log } from '../logger.js';
 
 export class ReflexionEngine {
+    /**
+     * Tracks which failures have already been analyzed this process lifetime.
+     * Key format: "<sessionId>:<failureIndex>" — prevents generating duplicate
+     * behavioral patches for the same failure across multiple dream() calls.
+     */
+    private processedFailures = new Set<string>();
+
     constructor(
         private provider: ModelProvider,
         private sessionStore: SessionStore,
@@ -42,6 +49,15 @@ export class ReflexionEngine {
 
             if (failureIndex === -1) {
                 log.evolution.info('   No significant failures found to reflect on.');
+                return;
+            }
+
+            // Guard: skip if we already generated a patch for this exact failure.
+            // Without this, every 15-minute tick re-analyzes the same failure in the
+            // same session and saves identical behavioral patches to the pellet store.
+            const failureKey = `${recentSession.id}:${failureIndex}`;
+            if (this.processedFailures.has(failureKey)) {
+                log.evolution.info(`   Failure already processed (${failureKey}) — skipping duplicate dream.`);
                 return;
             }
 
@@ -98,6 +114,16 @@ Respond strictly in the following JSON format:
                     content: parsed.heuristic,
                     version: 1
                 });
+
+                // Mark this failure as processed so future dream() calls don't re-analyze
+                // the same event and produce duplicate patches.
+                this.processedFailures.add(failureKey);
+
+                // Bound the set so it doesn't grow unboundedly across many sessions
+                if (this.processedFailures.size > 200) {
+                    const oldest = this.processedFailures.values().next().value;
+                    if (oldest) this.processedFailures.delete(oldest);
+                }
             }
 
         } catch (error: any) {

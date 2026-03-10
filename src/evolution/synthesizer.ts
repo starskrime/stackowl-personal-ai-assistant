@@ -1,9 +1,15 @@
 /**
  * StackOwl — Tool Synthesizer
  *
- * Two-step LLM pipeline:
- *   1. designSpec()  — reason about what tool is needed (returns proposal for user approval)
- *   2. implement()   — write the TypeScript implementation to src/tools/synthesized/
+ * Two paths for handling capability gaps:
+ *
+ *   PRIMARY  — generateSkillMd(): generates a SKILL.md file that teaches the LLM
+ *              to accomplish the task using existing tools (shell, files, web).
+ *              Safe, auditable, no compilation step. Preferred for everything.
+ *
+ *   FALLBACK — designSpec() + implement(): TypeScript code generation for tasks that
+ *              genuinely cannot be expressed as shell-level instructions.
+ *              Kept as escape hatch; not used by default.
  */
 
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -16,6 +22,15 @@ import type { CapabilityGap } from './detector.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const SYNTHESIZED_DIR = join(__dirname, '../tools/synthesized');
+
+// ─── Skill Synthesis (primary path) ──────────────────────────────
+
+export interface SkillSynthesisResult {
+    skillName: string;
+    description: string;
+    filePath: string;
+    content: string;
+}
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -41,6 +56,71 @@ export interface ToolProposal {
 // ─── Synthesizer ─────────────────────────────────────────────────
 
 export class ToolSynthesizer {
+    /**
+     * PRIMARY PATH: Generate a SKILL.md from a capability gap.
+     *
+     * Skills teach the LLM HOW to accomplish a task using existing tools
+     * (run_shell_command, read_file, write_file, web_crawl, etc.).
+     * No TypeScript compilation, no dynamic import, no npm install.
+     *
+     * Returns the path to the written SKILL.md and its content.
+     */
+    async generateSkillMd(
+        gap: CapabilityGap,
+        provider: ModelProvider,
+        _owl: OwlInstance,
+        config: StackOwlConfig,
+        skillsDir: string,
+    ): Promise<SkillSynthesisResult> {
+        const platform = process.platform;
+
+        const prompt =
+            `You are writing a SKILL.md for an AI assistant called StackOwl.\n` +
+            `StackOwl runs locally on ${platform} and has access to these tools:\n` +
+            `  - run_shell_command(command): runs any shell command and returns output\n` +
+            `  - read_file(path): reads a file from disk\n` +
+            `  - write_file(path, content): writes content to a file\n` +
+            `  - web_crawl(url): fetches a URL and returns text content\n\n` +
+            `The user tried to do: "${gap.userRequest}"\n\n` +
+            `Write a SKILL.md that teaches the LLM how to accomplish this using shell commands and the tools above.\n` +
+            `Use concrete, step-by-step instructions. Include the exact shell commands to use.\n\n` +
+            `Output ONLY valid SKILL.md content in this exact format:\n` +
+            `---\n` +
+            `name: skill_name_in_snake_case\n` +
+            `description: one sentence describing what this skill does\n` +
+            `openclaw:\n` +
+            `  emoji: 🔧\n` +
+            `---\n\n` +
+            `# How to [accomplish the task]\n\n` +
+            `[Step-by-step instructions for the LLM. Be concrete. Include exact shell commands.]\n\n` +
+            `## Examples\n` +
+            `[1-2 concrete examples]\n\n` +
+            `Rules:\n` +
+            `- name must be snake_case, describe the action (e.g. take_screenshot, send_email)\n` +
+            `- Instructions must be actionable using the tools listed above\n` +
+            `- No TypeScript, no code generation — pure natural language instructions\n` +
+            `- Output ONLY the SKILL.md content, nothing else`;
+
+        const response = await provider.chat(
+            [{ role: 'user', content: prompt }],
+            config.defaultModel,
+        );
+
+        const content = response.content.trim();
+
+        // Extract skill name from frontmatter
+        const nameMatch = content.match(/^name:\s*(\S+)/m);
+        const skillName = nameMatch ? nameMatch[1].replace(/[^a-z0-9_]/gi, '_') : 'synthesized_skill';
+
+        // Write to skills directory
+        const skillDir = join(skillsDir, skillName);
+        const filePath = join(skillDir, 'SKILL.md');
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(filePath, content, 'utf-8');
+
+        return { skillName, description: gap.userRequest.slice(0, 100), filePath, content };
+    }
+
     /**
      * Step 1: Design a tool spec from a detected gap.
      * This is what gets shown to the user for approval — no code written yet.

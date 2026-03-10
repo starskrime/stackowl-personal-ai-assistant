@@ -1,8 +1,14 @@
 /**
  * StackOwl — Evolution Handler
  *
- * Shared logic for ALL channels: design a tool spec when a capability gap is
- * detected, then build + load + retry after the user approves.
+ * Handles capability gaps in two modes:
+ *
+ *   PRIMARY  — Skill synthesis: generates a SKILL.md that teaches the LLM to
+ *              accomplish the task using shell commands + existing tools. Safe,
+ *              auditable, zero compilation risk.
+ *
+ *   FALLBACK — TypeScript synthesis: code generation + dynamic import. Used only
+ *              when a skills directory is not configured.
  *
  * Channels are responsible ONLY for:
  *   1. Formatting and displaying the proposal (channel-specific UI)
@@ -24,28 +30,18 @@ import { log } from '../logger.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = dirname(dirname(__dirname)); // src/evolution/../../ = project root
+const PROJECT_ROOT = dirname(dirname(__dirname));
 
 export type { ToolProposal };
 
 export interface BuildResult {
     filePath: string;
     response: EngineResponse;
-    /** Deps that were requested to install — empty if all were installed or none needed */
     depsToInstall: string[];
     depsInstalled: boolean;
 }
 
-/**
- * Called by the channel to ask the user if it's OK to run npm install.
- * Returns true if user approves, false to skip (tool still loads, just may fail at runtime).
- */
 export type InstallApprovalCallback = (deps: string[]) => Promise<boolean>;
-
-/**
- * Called throughout buildAndRetry to report progress to the user.
- * Channels implement this differently (console.log vs Telegram message).
- */
 export type ProgressCallback = (message: string) => Promise<void>;
 
 export class EvolutionHandler {
@@ -60,19 +56,13 @@ export class EvolutionHandler {
     }
 
     /**
-     * Design a tool spec from a detected gap.
-     * Returns the proposal for the channel to display and ask approval for.
-     * No code is written yet.
-     *
-     * If an existing tool in the ledger already covers this gap, returns
-     * a proposal pointing to that tool instead of designing a new one.
+     * Design a proposal from a detected gap.
+     * Checks for existing tools first (dedup), then designs a new spec.
      */
     async designSpec(gap: PendingCapabilityGap, context: EngineContext): Promise<ToolProposal & { existingTool?: boolean }> {
-        log.evolution.evolve(`Designing tool spec for gap: "${gap.description.slice(0, 80)}"`);
+        log.evolution.evolve(`Designing spec for gap: "${gap.description.slice(0, 80)}"`);
 
-        // ─── Dedup check: does a tool for this gap already exist? ────
-        // Only use the user's request — the gap description is LLM refusal text
-        // full of noise words ("sorry", "boss", "have") that dilute matching.
+        // Dedup: does a tool for this gap already exist?
         const existing = await this.ledger.findExisting(gap.userRequest);
         if (existing) {
             log.evolution.info(`Found existing tool: "${existing.toolName}" — skipping design`);
@@ -89,7 +79,6 @@ export class EvolutionHandler {
                 existingTool: true,
             };
         }
-        // ─────────────────────────────────────────────────────────────
 
         const gapDetector = new GapDetector();
         const capabilityGap = gap.attemptedToolName
@@ -102,12 +91,10 @@ export class EvolutionHandler {
     }
 
     /**
-     * Build the approved tool, install deps (with user approval), hot-load it,
-     * record it, and retry the original request.
-     * Called by the channel after the user approves the tool proposal.
+     * Build the approved capability and retry the original request.
      *
-     * @param askInstallApproval - Channel-provided callback to ask user about npm install.
-     *                             If not provided, deps are NOT auto-installed.
+     * PRIMARY path: generate a SKILL.md → inject into retry context.
+     * FALLBACK path: TypeScript synthesis → dynamic import (when skills dir unavailable).
      */
     async buildAndRetry(
         proposal: ToolProposal & { existingTool?: boolean },
@@ -117,96 +104,160 @@ export class EvolutionHandler {
         askInstallApproval?: InstallApprovalCallback,
         onProgress?: ProgressCallback,
     ): Promise<BuildResult> {
-        if (!context.toolRegistry) {
-            throw new Error('ToolRegistry is required in context for tool synthesis.');
-        }
-
         const progress = async (msg: string) => {
             log.evolution.info(msg);
             if (onProgress) await onProgress(msg);
         };
 
-        let filePath: string = '';
-
+        // ─── Re-use existing TypeScript tool ─────────────────────────
         if (proposal.existingTool) {
-            // ─── Re-use existing tool (no synthesis needed) ──────────
-            filePath = proposal.filePath;
-            await progress(`♻️ Re-using existing tool "${proposal.toolName}" — no synthesis needed.`);
-
-            // Ensure it's loaded into the registry (may not be if it was retired or startup failed)
-            if (!context.toolRegistry.has(proposal.toolName)) {
+            await progress(`♻️ Re-using existing tool "${proposal.toolName}"`);
+            if (context.toolRegistry && !context.toolRegistry.has(proposal.toolName)) {
                 await progress(`🔌 Loading ${proposal.toolName} into registry...`);
-                try {
-                    await this.loader.loadOne(filePath, context.toolRegistry);
-                    await progress(`✅ ${proposal.toolName} registered and ready.`);
-                } catch (loadErr) {
-                    throw new Error(`Existing tool ${filePath} could not be loaded: ${loadErr instanceof Error ? loadErr.message : String(loadErr)}. Check the file manually.`);
-                }
+                await this.loader.loadOne(proposal.filePath, context.toolRegistry!);
+                await progress(`✅ ${proposal.toolName} registered.`);
             }
-        } else {
-            // ─── Full synthesis path with Self-Correction Loop ───────
-            const MAX_RETRIES = 3;
-            let attempt = 1;
-            let lastError: string | undefined;
+            return this.retryWithTool(proposal, originalMessage, context, engine, progress);
+        }
 
-            while (attempt <= MAX_RETRIES) {
-                try {
-                    // Step 1 — Generate TypeScript implementation
-                    await progress(`✍️ Writing ${proposal.toolName}.ts (Attempt ${attempt}/${MAX_RETRIES})...`);
-                    filePath = await this.synthesizer.implement(proposal, context.provider, context.owl, context.config, lastError);
-                    await progress(`✅ ${proposal.toolName}.ts written to src/tools/synthesized/`);
+        // ─── PRIMARY: Skill synthesis ─────────────────────────────────
+        const skillsDir = context.config.skills?.directories?.[0];
+        if (skillsDir) {
+            return this.buildWithSkill(proposal, originalMessage, context, engine, progress, skillsDir);
+        }
 
-                    // Step 2 — Install npm dependencies if needed and approved
-                    if (proposal.dependencies.length > 0 && askInstallApproval) {
-                        const approved = await askInstallApproval(proposal.dependencies);
-                        if (approved) {
-                            await progress(`📦 Running: npm install ${proposal.dependencies.join(' ')}...`);
-                            try {
-                                const { stdout, stderr } = await execAsync(
-                                    `npm install ${proposal.dependencies.join(' ')}`,
-                                    { cwd: PROJECT_ROOT }
-                                );
-                                if (stdout) log.evolution.debug(`npm stdout: ${stdout.trim()}`);
-                                if (stderr) log.evolution.warn(`npm stderr: ${stderr.trim()}`);
-                                await progress(`✅ npm install complete.`);
-                            } catch (err) {
-                                const msg = err instanceof Error ? err.message : String(err);
-                                log.evolution.error(`npm install failed: ${msg}`);
-                                await progress(`⚠️ npm install failed: ${msg}`);
-                            }
-                        } else {
-                            await progress(`⏭️ Skipped npm install — tool may fail at runtime if deps are missing.`);
+        // ─── FALLBACK: TypeScript synthesis ───────────────────────────
+        log.evolution.warn('No skills directory configured — falling back to TypeScript synthesis');
+        return this.buildWithTypeScript(proposal, originalMessage, context, engine, progress, askInstallApproval);
+    }
+
+    // ─── Primary: SKILL.md synthesis ─────────────────────────────────
+
+    private async buildWithSkill(
+        proposal: ToolProposal,
+        originalMessage: string,
+        context: EngineContext,
+        engine: OwlEngine,
+        progress: ProgressCallback,
+        skillsDir: string,
+    ): Promise<BuildResult> {
+        await progress(`🧠 Synthesizing skill for: "${originalMessage.slice(0, 60)}..."`);
+
+        const gap = {
+            type: 'CAPABILITY_GAP' as const,
+            userRequest: originalMessage,
+            description: proposal.rationale,
+        };
+
+        const skill = await this.synthesizer.generateSkillMd(
+            gap,
+            context.provider,
+            context.owl,
+            context.config,
+            skillsDir,
+        );
+
+        await progress(`✅ Skill "${skill.skillName}" written to ${skill.filePath}`);
+        await progress(`📚 Skill will be available for future sessions automatically.`);
+        await progress(`🔄 Retrying your request with the new skill...`);
+
+        // Inject the skill instructions directly into the retry context
+        const skillDirective =
+            `[NEW SKILL SYNTHESIZED: ${skill.skillName}]\n` +
+            `You now know how to accomplish this task. Follow the skill instructions below exactly.\n\n` +
+            `<skill name="${skill.skillName}">\n${skill.content}\n</skill>`;
+
+        const retryContext: EngineContext = {
+            ...context,
+            sessionHistory: [{ role: 'system', content: skillDirective }],
+            skipGapDetection: true,
+        };
+
+        const response = await engine.run(originalMessage, retryContext);
+        response.pendingCapabilityGap = undefined;
+
+        return {
+            filePath: skill.filePath,
+            response,
+            depsToInstall: [],
+            depsInstalled: false,
+        };
+    }
+
+    // ─── Fallback: TypeScript synthesis ──────────────────────────────
+
+    private async buildWithTypeScript(
+        proposal: ToolProposal,
+        originalMessage: string,
+        context: EngineContext,
+        engine: OwlEngine,
+        progress: ProgressCallback,
+        askInstallApproval?: InstallApprovalCallback,
+    ): Promise<BuildResult> {
+        if (!context.toolRegistry) {
+            throw new Error('ToolRegistry is required for TypeScript tool synthesis.');
+        }
+
+        const MAX_RETRIES = 3;
+        let attempt = 1;
+        let lastError: string | undefined;
+        let filePath = '';
+
+        while (attempt <= MAX_RETRIES) {
+            try {
+                await progress(`✍️ Writing ${proposal.toolName}.ts (Attempt ${attempt}/${MAX_RETRIES})...`);
+                filePath = await this.synthesizer.implement(proposal, context.provider, context.owl, context.config, lastError);
+                await progress(`✅ ${proposal.toolName}.ts written`);
+
+                if (proposal.dependencies.length > 0 && askInstallApproval) {
+                    const approved = await askInstallApproval(proposal.dependencies);
+                    if (approved) {
+                        await progress(`📦 Running: npm install ${proposal.dependencies.join(' ')}...`);
+                        try {
+                            const { stdout, stderr } = await execAsync(
+                                `npm install ${proposal.dependencies.join(' ')}`,
+                                { cwd: PROJECT_ROOT }
+                            );
+                            if (stdout) log.evolution.debug(`npm stdout: ${stdout.trim()}`);
+                            if (stderr) log.evolution.warn(`npm stderr: ${stderr.trim()}`);
+                            await progress(`✅ npm install complete.`);
+                        } catch (err) {
+                            await progress(`⚠️ npm install failed: ${err instanceof Error ? err.message : err}`);
                         }
+                    } else {
+                        await progress(`⏭️ Skipped npm install.`);
                     }
-
-                    // Step 3 — Hot-load the tool
-                    await progress(`🔌 Loading ${proposal.toolName} into registry...`);
-                    await this.loader.loadOne(filePath, context.toolRegistry);
-                    await progress(`✅ ${proposal.toolName} registered and ready.`);
-
-                    // Step 4 — Persist to ledger
-                    await this.ledger.record(proposal);
-
-                    // Break out of the loop if everything succeeded
-                    break;
-                } catch (err) {
-                    lastError = err instanceof Error ? err.message : String(err);
-                    await progress(`❌ Build attempt ${attempt} failed: ${lastError}`);
-
-                    if (attempt === MAX_RETRIES) {
-                        throw new Error(`Tool synthesis failed after ${MAX_RETRIES} attempts. Last error: ${lastError}`);
-                    }
-
-                    await progress(`🔄 Self-correcting: Asking AI to fix the compilation error...`);
-                    attempt++;
                 }
+
+                await progress(`🔌 Loading ${proposal.toolName} into registry...`);
+                await this.loader.loadOne(filePath, context.toolRegistry);
+                await progress(`✅ ${proposal.toolName} registered.`);
+                await this.ledger.record(proposal);
+                break;
+            } catch (err) {
+                lastError = err instanceof Error ? err.message : String(err);
+                await progress(`❌ Build attempt ${attempt} failed: ${lastError}`);
+                if (attempt === MAX_RETRIES) {
+                    throw new Error(`Tool synthesis failed after ${MAX_RETRIES} attempts. Last error: ${lastError}`);
+                }
+                await progress(`🔄 Self-correcting...`);
+                attempt++;
             }
         }
 
-        // ─── Retry with CLEAN context ────────────────────────────────
-        // Critical: do NOT pass the old sessionHistory that contains the LLM's
-        // refusal ("I can't do this"). The LLM will see that and repeat it.
-        // Instead, pass a fresh history with a strong system instruction.
+        return this.retryWithTool(proposal, originalMessage, context, engine, progress, filePath);
+    }
+
+    // ─── Shared retry helper ──────────────────────────────────────────
+
+    private async retryWithTool(
+        proposal: ToolProposal,
+        originalMessage: string,
+        context: EngineContext,
+        engine: OwlEngine,
+        progress: ProgressCallback,
+        filePath?: string,
+    ): Promise<BuildResult> {
         await progress(`🔄 Retrying your request with the new tool...`);
 
         const systemInstruction =
@@ -216,26 +267,21 @@ export class EvolutionHandler {
 
         const retryContext: EngineContext = {
             ...context,
-            sessionHistory: [{ role: 'system', content: systemInstruction }], // Fresh start + strong instruction
-            skipGapDetection: true, // Don't re-trigger evolution on retry
+            sessionHistory: [{ role: 'system', content: systemInstruction }],
+            skipGapDetection: true,
         };
 
         const response = await engine.run(originalMessage, retryContext);
-
-        // Never re-trigger evolution after a retry — belt-and-suspenders safety
         response.pendingCapabilityGap = undefined;
 
         return {
-            filePath,
+            filePath: filePath ?? proposal.filePath,
             response,
             depsToInstall: proposal.dependencies,
-            depsInstalled: !proposal.existingTool,
+            depsInstalled: true,
         };
     }
 
-    /**
-     * List all synthesized tools from the ledger.
-     */
     async listAll() {
         await this.ledger.load();
         return this.ledger.listAll();

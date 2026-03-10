@@ -10,10 +10,13 @@ import type { SessionStore } from '../memory/store.js';
 import type { OwlRegistry } from './registry.js';
 import type { ModelProvider } from '../providers/base.js';
 import type { StackOwlConfig } from '../config/loader.js';
-import { OwlEngine } from '../engine/runtime.js';
+
+// Max user+assistant messages sent to the LLM for analysis.
+// Keeps evolution prompts predictable in size regardless of session length.
+const MAX_EVOLUTION_MESSAGES = 12; // last 6 turns
+const MAX_MSG_CHARS = 400;        // per message content cap
 
 export class OwlEvolutionEngine {
-    private engine: OwlEngine;
     private provider: ModelProvider;
     private config: StackOwlConfig;
     private sessionStore: SessionStore;
@@ -24,7 +27,6 @@ export class OwlEvolutionEngine {
         this.config = config;
         this.sessionStore = sessionStore;
         this.owlRegistry = owlRegistry;
-        this.engine = new OwlEngine();
     }
 
     /**
@@ -101,12 +103,21 @@ export class OwlEvolutionEngine {
 
         console.log(`\n🧬 [Evolution] ${owl.persona.emoji} ${owl.persona.name} is reflecting on their recent interactions...`);
 
-        // 2. Ask the LLM to analyze the conversation
-        const transcript = latestSession.messages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n');
+        // 2. Ask the LLM to analyze the conversation.
+        // Use provider.chat() directly — no tools, no ReAct loop.
+        // The full OwlEngine is overkill here: we just need a single JSON response.
+        // Also cap transcript length so long sessions don't overflow the context window.
+        const relevantMessages = latestSession.messages
+            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .slice(-MAX_EVOLUTION_MESSAGES);
+
+        const transcript = relevantMessages
+            .map(m => `[${m.role.toUpperCase()}]: ${(m.content ?? '').slice(0, MAX_MSG_CHARS)}`)
+            .join('\n\n');
 
         const prompt = `You are the subconscious of "${owl.persona.name}", analyzing a recent conversation to learn and evolve.\n\n` +
             `CURRENT DNA STATE:\n${JSON.stringify(owl.dna, null, 2)}\n\n` +
-            `RECENT CONVERSATION:\n${transcript}\n\n` +
+            `RECENT CONVERSATION (last ${relevantMessages.length} turns):\n${transcript}\n\n` +
             `Task: Analyze the user's responses. Did they express annoyance at your verbosity? Did they explicitly state a preference (e.g., "I prefer Rust")? Did they reject your advice, or accept it?\n` +
             `Return a JSON object with proposed mutations to your DNA. Schema:\n` +
             `{\n` +
@@ -124,12 +135,14 @@ export class OwlEvolutionEngine {
             `}\n\n` +
             `Output ONLY valid JSON.`;
 
-        const response = await this.engine.run(prompt, {
-            provider: this.provider,
-            owl,
-            sessionHistory: [],
-            config: this.config,
-        });
+        const response = await this.provider.chat(
+            [
+                { role: 'system', content: 'You are a self-reflection module for an AI assistant. Output only valid JSON — no prose, no code fences.' },
+                { role: 'user', content: prompt },
+            ],
+            undefined,
+            { temperature: 0.2 },
+        );
 
         // 3. Parse JSON and apply mutations
         try {

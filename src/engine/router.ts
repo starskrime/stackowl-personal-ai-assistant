@@ -1,88 +1,111 @@
 /**
  * StackOwl — Dynamic Model Router
  *
- * Intercepts a prompt and evaluates the task complexity, then routes it
- * to the most appropriate AI model from the configured `smartRouting` roster.
+ * Routes prompts to the most appropriate model using a fast heuristic
+ * (token/complexity scoring) instead of an LLM call. Zero added latency.
+ *
+ * Routing tiers (in order of ascending capability):
+ *   SIMPLE   — conversational, short, no code/math/tools implied
+ *   STANDARD — default; most tasks land here
+ *   HEAVY    — code generation, multi-step reasoning, long documents
  */
 
-import type { ModelProvider } from '../providers/base.js';
 import type { StackOwlConfig } from '../config/loader.js';
+import { log } from '../logger.js';
 
 export interface RouteDecision {
     modelName: string;
     providerName?: string;
 }
 
+// ─── Heuristic Signals ───────────────────────────────────────────
+
+const HEAVY_PATTERNS = [
+    /\b(implement|refactor|architect|design|migrate|debug|optimize|write.*code|generate.*code)\b/i,
+    /\b(algorithm|database|sql|typescript|javascript|python|rust|golang|kubernetes|docker)\b/i,
+    /\b(compare|analyze|explain.*in.*detail|summarize.*document|research|plan)\b/i,
+    /\b(parliament|orchestrate|multi.*step|complex)\b/i,
+];
+
+const SIMPLE_PATTERNS = [
+    /^(hi|hello|hey|thanks|thank you|ok|okay|sure|yes|no|yep|nope|cool)[\s.!?]*$/i,
+    /^.{0,40}$/,  // Very short messages
+];
+
+function scoreComplexity(prompt: string): 'simple' | 'standard' | 'heavy' {
+    const trimmed = prompt.trim();
+
+    // Short/conversational → simple
+    if (SIMPLE_PATTERNS.some(p => p.test(trimmed))) {
+        return 'simple';
+    }
+
+    // Code/analysis signals → heavy
+    if (HEAVY_PATTERNS.some(p => p.test(trimmed))) {
+        return 'heavy';
+    }
+
+    // Word count as secondary signal
+    const wordCount = trimmed.split(/\s+/).length;
+    if (wordCount > 60) return 'heavy';
+    if (wordCount < 12) return 'simple';
+
+    return 'standard';
+}
+
+// ─── Router ──────────────────────────────────────────────────────
+
 export class ModelRouter {
     /**
-     * Determine the best model for the given prompt context.
-     * Uses the default routing model (typically fast, like llama3.2) to evaluate
-     * the task and pick one of the available models.
+     * Determine the best model for the given prompt using fast heuristics.
+     * No LLM calls — zero added latency per message.
+     *
+     * failureCount > 0 triggers escalation to the fallback (cloud) provider.
      */
-    static async route(
+    static route(
         prompt: string,
-        provider: ModelProvider,
         config: StackOwlConfig,
         failureCount: number = 0
-    ): Promise<RouteDecision> {
-        // If the local model is repeatedly failing tool execution, force cross-provider fallback
+    ): RouteDecision {
+        // Repeated tool failures → force cross-provider fallback immediately
         if (failureCount >= 2 && config.smartRouting?.fallbackModel) {
-            console.warn(`[ModelRouter] Local model repeated failure detected (${failureCount}x). Routing to fallback: ${config.smartRouting.fallbackProvider} / ${config.smartRouting.fallbackModel}`);
+            log.engine.warn(
+                `[ModelRouter] Local model failed ${failureCount}x. ` +
+                `Escalating to ${config.smartRouting.fallbackProvider} / ${config.smartRouting.fallbackModel}`
+            );
             return {
                 modelName: config.smartRouting.fallbackModel,
-                providerName: config.smartRouting.fallbackProvider
+                providerName: config.smartRouting.fallbackProvider,
             };
         }
 
-        // If smart routing is disabled or misconfigured, fallback to default immediately
-        if (!config.smartRouting?.enabled || config.smartRouting.availableModels.length === 0) {
+        // Smart routing disabled or no roster → use default
+        if (!config.smartRouting?.enabled || !config.smartRouting.availableModels?.length) {
             return { modelName: config.defaultModel };
         }
 
         const models = config.smartRouting.availableModels;
 
-        // If there's only one model in the roster, just use it
+        // Single model in roster → no decision needed
         if (models.length === 1) {
             return { modelName: models[0].name };
         }
 
-        const modelListDesc = models
-            .map(m => `- **${m.name}**: ${m.description}`)
-            .join('\n');
+        // Score task complexity
+        const tier = scoreComplexity(prompt);
 
-        const sysPrompt = `You are the StackOwl Engine Router.
-Your job is to read the user's upcoming task and decide WHICH AI MODEL is best suited to handle it, based purely on their descriptions.
-
-Available Models:
-${modelListDesc}
-
-Output strictly and EXACTLY the exact name of the selected model. No explanation, no markdown ticks, just the model name.`;
-
-        try {
-            // Ping the provider using the default (fast) model as the evaluator
-            const res = await provider.chat(
-                [
-                    { role: 'system', content: sysPrompt },
-                    { role: 'user', content: prompt }
-                ],
-                config.defaultModel, // The routing logic always uses the default fast model
-                { temperature: 0.1, maxTokens: 50 } // Low temp for deterministic routing
-            );
-
-            const selection = res.content.trim();
-
-            // Verify the selected model actually exists in our roster
-            const selectedModel = models.find(m => m.name === selection);
-            if (selectedModel) {
-                return { modelName: selectedModel.name };
-            } else {
-                // If it hallucinates, fallback gracefully
-                console.warn(`[ModelRouter] Hallucinated model selection: "${selection}". Falling back to default.`);
-                return { modelName: config.defaultModel };
-            }
-        } catch (error) {
-            console.error('[ModelRouter] Routing failed. Error:', error);
-            return { modelName: config.defaultModel }; // Safe fallback
+        // Map tier to roster position by index (assume models ordered light → heavy)
+        let targetIndex: number;
+        if (tier === 'simple') {
+            targetIndex = 0;
+        } else if (tier === 'heavy') {
+            targetIndex = models.length - 1;
+        } else {
+            targetIndex = Math.floor(models.length / 2);
         }
+
+        const selected = models[targetIndex];
+        log.engine.info(`[ModelRouter] Tier="${tier}" → ${selected.name}`);
+        return { modelName: selected.name };
     }
 }

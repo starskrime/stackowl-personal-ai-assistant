@@ -85,15 +85,20 @@ export class ParliamentOrchestrator {
 
         const promises = session.config.participants.map(async (owl) => {
             const prompt = `PARLIAMENT TOPIC: ${session.config.topic}\n\n` +
-                `Context:\n${session.config.contextMessages.map(m => `[${m.role}]: ${m.content}`).join('\n')}\n\n` +
                 `Task: Provide your initial hardline position on this topic based on your sole expertise (${owl.persona.type}). ` +
                 `State exactly one of these positions at the very beginning of your response: [FOR, AGAINST, CONDITIONAL, NEUTRAL, ANALYSIS]. ` +
                 `Then provide a single paragraph (max 4 sentences) arguing your case. Be opinionated.`;
 
+            // Pass actual session context so owls know what the user was discussing
+            const sessionHistory = session.config.contextMessages.map(m => ({
+                role: m.role as import('../providers/base.js').MessageRole,
+                content: m.content,
+            }));
+
             const response = await this.engine.run(prompt, {
                 provider: this.provider,
                 owl,
-                sessionHistory: [],
+                sessionHistory,
                 config: this.config,
             });
 
@@ -151,10 +156,15 @@ export class ParliamentOrchestrator {
                 `call them out specifically. Name the owl you are challenging. Keep it to 2-3 sentences. ` +
                 `If everyone is mostly right, play devil's advocate.`;
 
+            const sessionHistory = session.config.contextMessages.map(m => ({
+                role: m.role as import('../providers/base.js').MessageRole,
+                content: m.content,
+            }));
+
             const response = await this.engine.run(prompt, {
                 provider: this.provider,
                 owl,
-                sessionHistory: [],
+                sessionHistory,
                 config: this.config,
             });
 
@@ -201,10 +211,15 @@ export class ParliamentOrchestrator {
             `3. Suggest the concrete next step. ` +
             `Do NOT give a non-answer. Make a call even if the group is divided.`;
 
+        const sessionHistory = session.config.contextMessages.map(m => ({
+            role: m.role as import('../providers/base.js').MessageRole,
+            content: m.content,
+        }));
+
         const response = await this.engine.run(prompt, {
             provider: this.provider,
             owl: synthesizer,
-            sessionHistory: [],
+            sessionHistory,
             config: this.config,
         });
 
