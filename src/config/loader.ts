@@ -32,6 +32,14 @@ export interface StackOwlConfig {
     evolutionBatchSize: number;
     decayRatePerWeek: number;
   };
+  engine?: {
+    /**
+     * Maximum number of tool-calling iterations per ReAct loop.
+     * Increase for complex multi-step tasks. Default: 15.
+     * Was previously hardcoded at 10 — too low for real workflows.
+     */
+    maxToolIterations?: number;
+  };
   smartRouting?: {
     enabled: boolean;
     fallbackProvider?: string; // e.g. 'anthropic'
@@ -106,6 +114,9 @@ const DEFAULT_CONFIG: StackOwlConfig = {
     enabled: true,
     debugOutput: false,
   },
+  engine: {
+    maxToolIterations: 15,
+  },
 };
 
 // ─── Loader ──────────────────────────────────────────────────────
@@ -166,6 +177,10 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         ...DEFAULT_CONFIG.sandboxing!,
         ...(userConfig.sandboxing || {}),
       } as NonNullable<StackOwlConfig["sandboxing"]>,
+      engine: {
+        ...DEFAULT_CONFIG.engine,
+        ...(userConfig.engine || {}),
+      },
     };
 
     return config;

@@ -106,6 +106,21 @@ Use this when you need current information, facts, or web resources.`,
       return this.formatResults(results);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+
+      // If API fails, suggest using browser tool instead
+      if (
+        msg.includes("422") ||
+        msg.includes("401") ||
+        msg.includes("not configured")
+      ) {
+        return (
+          `ERROR: Search API not available (${msg}).\n\n` +
+          `Use the 'browser' tool instead for web search:\n` +
+          `1. browser action="navigate" url="https://duckduckgo.com/?q=${encodeURIComponent(query)}"\n` +
+          `2. browser action="snapshot" to get results`
+        );
+      }
+
       return `ERROR: Search failed - ${msg}`;
     }
   }
@@ -115,6 +130,11 @@ Use this when you need current information, facts, or web resources.`,
     count: number,
   ): Promise<SearchResult[]> {
     const apiKey = this.apiKey || process.env.BRAVE_API_KEY;
+
+    // If no API key, try DuckDuckGo as free fallback
+    if (!apiKey) {
+      return this.duckDuckGoSearch(query, count);
+    }
 
     const url = new URL(BRAVE_API_BASE);
     url.searchParams.set("q", query);
@@ -131,6 +151,10 @@ Use this when you need current information, facts, or web resources.`,
     const response = await fetch(url.toString(), { headers });
 
     if (!response.ok) {
+      // Fallback to DuckDuckGo on error
+      if (!response.ok) {
+        return this.duckDuckGoSearch(query, count);
+      }
       throw new Error(
         `Brave API error: ${response.status} ${response.statusText}`,
       );
@@ -153,6 +177,60 @@ Use this when you need current information, facts, or web resources.`,
       url: r.url || "",
       snippet: r.description || "",
     }));
+  }
+
+  /**
+   * Free fallback search using DuckDuckGo HTML
+   */
+  private async duckDuckGoSearch(
+    query: string,
+    count: number,
+  ): Promise<SearchResult[]> {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; StackOwl/1.0)",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`DuckDuckGo error: ${response.status}`);
+    }
+
+    const html = await response.text();
+
+    // Simple HTML parsing to extract results
+    const results: SearchResult[] = [];
+    const regex =
+      /<a class="result__a" href="([^"]+)"[^>]*>([^<]+)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+
+    let match;
+    let i = 0;
+    while ((match = regex.exec(html)) !== null && i < count) {
+      results.push({
+        title: match[2].trim(),
+        url: match[1],
+        snippet: match[3].replace(/<[^>]+>/g, "").trim(),
+      });
+      i++;
+    }
+
+    // Fallback: simpler regex if above doesn't work
+    if (results.length === 0) {
+      const simpleRegex =
+        /<a class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g;
+      while ((match = simpleRegex.exec(html)) !== null && i < count) {
+        results.push({
+          title: match[2].trim(),
+          url: match[1],
+          snippet: "",
+        });
+        i++;
+      }
+    }
+
+    return results;
   }
 
   private async perplexitySearch(

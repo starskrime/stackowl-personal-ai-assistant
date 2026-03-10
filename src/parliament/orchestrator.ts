@@ -145,10 +145,17 @@ export class ParliamentOrchestrator {
             `- ${p.owlName} [${p.position}]: ${p.argument}`
         ).join('\n\n');
 
-        // Let the most contrary or highest-challenge owl lead the critique
-        for (const owl of session.config.participants) {
-            // Skip owls that don't challenge well
-            if (owl.dna.evolvedTraits.challengeLevel === 'low') continue;
+        // Pick the single most contrary/challenging owl to lead cross-examination.
+        // Running all non-low owls produces redundant, conflicting critiques.
+        // Priority: relentless > high > medium — then fall back to first participant.
+        const challengeRank: Record<string, number> = { relentless: 3, high: 2, medium: 1, low: 0 };
+        const challenger = session.config.participants
+            .filter(o => o.dna.evolvedTraits.challengeLevel !== 'low')
+            .sort((a, b) => (challengeRank[b.dna.evolvedTraits.challengeLevel] ?? 0) - (challengeRank[a.dna.evolvedTraits.challengeLevel] ?? 0))[0]
+            ?? session.config.participants[0];
+
+        for (const owl of [challenger]) {
+            // Only the chosen challenger runs
 
             const prompt = `PARLIAMENT TOPIC: ${session.config.topic}\n\n` +
                 `Other owls have stated their positions:\n${allPositions}\n\n` +

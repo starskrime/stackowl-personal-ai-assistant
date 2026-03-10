@@ -18,6 +18,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { Session } from "../memory/store.js";
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
+import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
 import { log } from "../logger.js";
@@ -67,8 +68,33 @@ export class OwlGateway {
   private stuckStreak: Map<string, number> = new Map();
   private static readonly STUCK_THRESHOLD = 2;
 
+  /**
+   * Cross-turn attempt logs — one per active session.
+   * Persists across handle() calls so the model always knows what was
+   * already tried in previous messages of this conversation.
+   */
+  private attemptLogs = new AttemptLogRegistry();
+
   constructor(private ctx: GatewayContext) {
     this.engine = new OwlEngine();
+
+    // Ensure DNA is persisted on process exit.
+    // Without this, any mutations from the current session are lost when the
+    // process exits normally (ctrl-c, pm2 restart, etc.).
+    const saveDNAOnExit = () => {
+      if (ctx.owlRegistry) {
+        const owl = ctx.owlRegistry.getDefault?.() ?? ctx.owl;
+        ctx.owlRegistry.saveDNA(owl.persona.name).catch(() => {});
+      }
+    };
+    process.once('exit', saveDNAOnExit);
+    process.once('SIGINT', () => { saveDNAOnExit(); process.exit(0); });
+    process.once('SIGTERM', () => { saveDNAOnExit(); process.exit(0); });
+
+    // Evict stale sessions from memory every 30 minutes.
+    // Without this, a long-running Telegram bot accumulates one entry per user
+    // in the sessions Map forever — a memory leak in production.
+    setInterval(() => this.evictStaleSessions(), 30 * 60 * 1000).unref();
 
     // Initialize skill injector if skills are enabled
     if (ctx.skillsLoader) {
@@ -192,6 +218,7 @@ export class OwlGateway {
     // Check for /reset command - clear session history
     if (message.text.trim().toLowerCase() === "/reset") {
       session.messages = [];
+      this.attemptLogs.delete(message.sessionId);
       await this.ctx.sessionStore.saveSession(session);
       log.engine.info(`Session reset for ${message.sessionId}`);
       return {
@@ -223,6 +250,8 @@ export class OwlGateway {
           session,
           callbacks,
           skillDirective,
+          false,
+          this.attemptLogs.get(message.sessionId),
         );
         const response = await this.engine.run(
           skillArgs || skill.description,
@@ -255,6 +284,7 @@ export class OwlGateway {
     // Flush both in-memory and on-disk session state atomically
     if (freshStartDirective) {
       session.messages = [];
+      this.attemptLogs.delete(message.sessionId);
       await this.ctx.sessionStore.saveSession(session);
     }
 
@@ -317,6 +347,7 @@ export class OwlGateway {
       callbacks,
       dynamicSkillsContext,
       isIsolatedTask,
+      this.attemptLogs.get(message.sessionId),
     );
     const response = await this.engine.run(text, engineCtx);
 
@@ -586,6 +617,28 @@ export class OwlGateway {
     if (cached) cached.lastActivity = Date.now();
   }
 
+  // ─── Private: Session Cache Eviction ─────────────────────────
+
+  /**
+   * Remove sessions that haven't been active within SESSION_TIMEOUT_MS.
+   * Also prunes their attempt logs so we don't accumulate memory for dead sessions.
+   */
+  private evictStaleSessions(): void {
+    const now = Date.now();
+    const activeIds = new Set<string>();
+    for (const [key, cache] of this.sessions) {
+      if (now - cache.lastActivity > SESSION_TIMEOUT_MS) {
+        this.sessions.delete(key);
+        this.stuckStreak.delete(key);
+        this.attemptLogs.delete(key);
+        log.engine.info(`[session-evict] Evicted stale session "${key}"`);
+      } else {
+        activeIds.add(key);
+      }
+    }
+    this.attemptLogs.pruneStale(activeIds);
+  }
+
   // ─── Private: Post-processing ────────────────────────────────
 
   /**
@@ -676,6 +729,7 @@ export class OwlGateway {
     callbacks: GatewayCallbacks,
     dynamicSkillsContext: string = "",
     isolatedTask: boolean = false,
+    attemptLog?: import("../memory/attempt-log.js").AttemptLog,
   ): EngineContext {
     const preferencesContext =
       this.ctx.preferenceStore?.toContextString() ?? "";
@@ -716,6 +770,7 @@ export class OwlGateway {
       preferencesContext: preferencesContext || undefined,
       skillsContext: finalSkillsContext || undefined,
       isolatedTask: isolatedTask,
+      attemptLog,
       onProgress: callbacks.onProgress,
       sendFile: callbacks.onFile,
       providerRegistry: this.ctx.providerRegistry,

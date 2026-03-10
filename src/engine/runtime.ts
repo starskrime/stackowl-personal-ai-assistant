@@ -17,6 +17,7 @@ import type { StackOwlConfig } from "../config/loader.js";
 import type { OwlRegistry } from "../owls/registry.js";
 import type { PelletStore } from "../pellets/store.js";
 import type { ProviderRegistry } from "../providers/registry.js";
+import type { AttemptLog } from "../memory/attempt-log.js";
 import { ModelRouter } from "./router.js";
 import { GapDetector } from "../evolution/detector.js";
 import { log } from "../logger.js";
@@ -50,6 +51,13 @@ export interface EngineContext {
   providerRegistry?: ProviderRegistry;
   /** When true, isolate this task from previous context - ignore session history */
   isolatedTask?: boolean;
+  /**
+   * Cross-turn attempt log for this session.
+   * Tracks every tool call + outcome across ALL messages so the model
+   * never repeats a failed approach from a previous turn.
+   * Injected into the system prompt as a synthesized "what was tried" block.
+   */
+  attemptLog?: AttemptLog;
 }
 
 export interface PendingCapabilityGap {
@@ -80,7 +88,8 @@ export interface EngineResponse {
 
 // ─── Constants ───────────────────────────────────────────────────
 
-const MAX_TOOL_ITERATIONS = 10;
+/** Default max iterations — overridable via config.engine.maxToolIterations */
+const DEFAULT_MAX_TOOL_ITERATIONS = 15;
 
 /**
  * OpenCLAW-style completion signal.
@@ -112,6 +121,31 @@ function isFailureResult(result: string): boolean {
   if (result.includes("[SYSTEM DIAGNOSTIC HINT:")) return true;
   return false;
 }
+/**
+ * Classify a tool failure result as TRANSIENT (worth retrying with a different approach)
+ * or NON-RETRYABLE (will always fail — stop and tell the user).
+ * This classification is injected into the error analysis prompt to help the model decide
+ * whether to try again vs escalate immediately.
+ */
+function classifyToolError(result: string): 'TRANSIENT' | 'NON-RETRYABLE' {
+  const lower = result.toLowerCase();
+  const nonRetryablePatterns = [
+    'permission denied', 'access denied', 'forbidden',
+    'command not found', 'not found: ', 'enoent',
+    'no such file', 'cannot find', 'tool not available',
+    'not installed', 'not supported', 'unsupported',
+    'syntax error', 'invalid argument', 'illegal option',
+  ];
+  const transientPatterns = [
+    'timeout', 'timed out', 'econnreset', 'econnrefused',
+    'network', 'rate limit', 'too many requests', '429',
+    'temporarily', 'retry', 'service unavailable', '503',
+  ];
+  if (transientPatterns.some(p => lower.includes(p))) return 'TRANSIENT';
+  if (nonRetryablePatterns.some(p => lower.includes(p))) return 'NON-RETRYABLE';
+  return 'TRANSIENT'; // default: assume worth trying a different approach
+}
+
 const CONTEXT_WINDOW_THRESHOLD = 20;
 const CONTEXT_COMPRESSION_BATCH = 10;
 
@@ -136,6 +170,7 @@ export class OwlEngine {
       context;
     const toolsUsed: string[] = [];
     const gapDetector = new GapDetector();
+    const MAX_TOOL_ITERATIONS = config.engine?.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
 
     // Track if a missing-tool gap was encountered during the ReAct loop
     let missingToolName: string | undefined;
@@ -162,6 +197,11 @@ export class OwlEngine {
     log.engine.model(optimalModel);
 
     // 2. Build system prompt (async — may inject pellets + memory + skills)
+    // Signal new turn to attempt log BEFORE building the prompt so the injected
+    // block reflects the correct current turn number.
+    context.attemptLog?.newTurn();
+    const attemptLogBlock = context.attemptLog?.toPromptBlock() ?? '';
+
     const systemPrompt = await this.buildSystemPrompt(
       owl,
       toolRegistry,
@@ -170,6 +210,7 @@ export class OwlEngine {
       context.memoryContext,
       context.preferencesContext,
       context.skillsContext,
+      attemptLogBlock,
     );
 
     // 3. Compress history if too long to prevent context drift on local models
@@ -182,13 +223,19 @@ export class OwlEngine {
         `Task isolated: using only last ${historyToUse.length} messages instead of ${sessionHistory.length}`,
       );
     } else if (sessionHistory.length > CONTEXT_WINDOW_THRESHOLD) {
-      // Normal compression for long sessions
-      const compressed = await this.compressHistory(
-        sessionHistory,
-        currentProvider,
-        optimalModel,
+      // Normal compression for long sessions — with a 5s timeout guard.
+      // If the compression LLM call takes too long (e.g. model busy), fall back to
+      // trimming the oldest messages rather than blocking the ReAct loop.
+      const compressionFallback = new Promise<ChatMessage[]>((resolve) =>
+        setTimeout(
+          () => resolve(sessionHistory.slice(-CONTEXT_COMPRESSION_BATCH)),
+          5000,
+        ),
       );
-      historyToUse = compressed;
+      historyToUse = await Promise.race([
+        this.compressHistory(sessionHistory, currentProvider, optimalModel),
+        compressionFallback,
+      ]);
       log.engine.info(
         `Context compressed: ${sessionHistory.length} → ${historyToUse.length} messages`,
       );
@@ -258,6 +305,13 @@ ${userMessage}
       // If the model calls the exact same tool with the exact same args a second time,
       // skip execution and inject a hint — the result is already in context.
       const seenToolCalls = new Set<string>();
+
+      // Sliding-window loop detector — track the last N tool names called.
+      // Even if args differ slightly, calling the same tool > TOOL_WINDOW_MAX_REPEATS
+      // times in a short window means the model is stuck. Inject a forced stop.
+      const recentToolNames: string[] = [];
+      const TOOL_WINDOW_SIZE = 10;
+      const TOOL_WINDOW_MAX_REPEATS = 3;
 
       // ReAct loop with tools
       log.engine.llmRequest(optimalModel, messages);
@@ -345,13 +399,35 @@ ${userMessage}
               toolCallId: toolCall.id,
               name: toolCall.name,
             });
-            // Count as a soft failure so the model gets the analysis directive
+            context.attemptLog?.record(toolCall.name, toolCall.arguments, 'duplicate-blocked', 'identical call already executed this session');
             toolFailStreak[toolCall.name] =
               (toolFailStreak[toolCall.name] ?? 0) + 1;
             globalConsecutiveFailures++;
             continue;
           }
           seenToolCalls.add(callFingerprint);
+
+          // ── Sliding-window repetition guard ───────────────────────
+          // Track this tool name in the rolling window.
+          recentToolNames.push(toolCall.name);
+          if (recentToolNames.length > TOOL_WINDOW_SIZE) recentToolNames.shift();
+          const repeatCount = recentToolNames.filter(n => n === toolCall.name).length;
+          if (repeatCount > TOOL_WINDOW_MAX_REPEATS) {
+            log.engine.warn(
+              `Sliding-window loop detected: "${toolCall.name}" called ${repeatCount}x in last ${recentToolNames.length} calls — forcing stop`,
+            );
+            messages.push({
+              role: 'system',
+              content:
+                `[LOOP DETECTOR] You have called "${toolCall.name}" ${repeatCount} times in the last ${recentToolNames.length} tool calls — ` +
+                `this pattern indicates you are stuck in a loop. ` +
+                `STOP calling this tool. Synthesize what you have already observed and write your final answer now. ` +
+                `Do NOT call any more tools. Append [DONE] to your response.`,
+            });
+            shouldBreakLoop = true;
+            loopBrokenEarly = true;
+            break;
+          }
 
           if (toolRegistry && !toolRegistry.has(toolCall.name)) {
             // Tool doesn't exist — signal gap and let the LLM know gracefully
@@ -407,6 +483,14 @@ ${userMessage}
             // went wrong before deciding its next action. Without this, local models
             // read the error and immediately retry the same failing call.
             if (isAnyFailure) {
+              // Record in cross-turn attempt log so future messages know this failed
+              context.attemptLog?.record(
+                toolCall.name,
+                toolCall.arguments,
+                isHardFailure ? 'hard-fail' : 'soft-fail',
+                toolResult!,
+              );
+
               toolFailStreak[toolCall.name] =
                 (toolFailStreak[toolCall.name] ?? 0) + 1;
               const streak = toolFailStreak[toolCall.name];
@@ -419,10 +503,20 @@ ${userMessage}
                   `You MUST follow it. Do not repeat the same action that produced this hint.`
                 : "";
 
+              const errorClass = classifyToolError(toolResult!);
+              const errorClassNote =
+                errorClass === 'NON-RETRYABLE'
+                  ? `\n⛔ ERROR CLASS: [NON-RETRYABLE] — This failure will repeat regardless of how you retry it. ` +
+                    `Do NOT call "${toolCall.name}" again with any variation of these arguments. ` +
+                    `Switch tools or approach entirely, or tell the user it cannot be done in this environment.`
+                  : `\n♻️ ERROR CLASS: [TRANSIENT] — This may be a temporary issue (network, rate-limit). ` +
+                    `Try a different tool or approach rather than retrying the same call immediately.`;
+
               const analysisPrompt =
                 `[SYSTEM OVERRIDE: ERROR ANALYSIS REQUIRED — failure #${streak}]\n` +
                 `Tool: "${toolCall.name}"\n` +
-                `Result: ${isSoftFailure ? "returned non-zero exit code or diagnostic hint (soft failure)" : "threw an exception (hard failure)"}\n\n` +
+                `Result: ${isSoftFailure ? "returned non-zero exit code or diagnostic hint (soft failure)" : "threw an exception (hard failure)"}\n` +
+                errorClassNote + "\n\n" +
                 `You MUST step back and reason through this before your next action:\n` +
                 `1. Read the full tool result above — the error is described there.\n` +
                 `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
@@ -452,7 +546,13 @@ ${userMessage}
 
               globalConsecutiveFailures++;
             } else {
-              // Genuine success — reset streaks
+              // Genuine success — record and reset streaks
+              context.attemptLog?.record(
+                toolCall.name,
+                toolCall.arguments,
+                'success',
+                toolResult!,
+              );
               toolFailStreak[toolCall.name] = 0;
               globalConsecutiveFailures = 0;
             }
@@ -768,6 +868,7 @@ ${userMessage}
     memoryContext?: string,
     preferencesContext?: string,
     skillsContext?: string,
+    attemptLogBlock?: string,
   ): Promise<string> {
     const { persona, dna } = owl;
 
@@ -852,10 +953,18 @@ ${userMessage}
       prompt += "\n";
     }
 
-    // Relevant pellets — inject top 2, capped at 400 chars each
+    // Cross-turn attempt log — injected FRESH every request, never compressed away.
+    // This is the primary mechanism preventing the model from repeating approaches
+    // that already failed in previous messages of this conversation.
+    if (attemptLogBlock?.trim()) {
+      prompt += `\n${attemptLogBlock}\n`;
+    }
+
+    // Relevant pellets — inject top 3, capped at 400 chars each.
+    // Hard limit prevents context explosion when pellet store is large.
     if (pelletStore && userMessage) {
       try {
-        const top = (await pelletStore.search(userMessage)).slice(0, 2);
+        const top = (await pelletStore.search(userMessage)).slice(0, 3);
         if (top.length > 0) {
           prompt += "\n## Relevant Past Knowledge\n";
           for (const pellet of top) {

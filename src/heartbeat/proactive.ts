@@ -150,10 +150,12 @@ export class ProactivePinger {
         }, 60 * 1000);
         this.timers.push(dreamTimer);
 
-        // Send a greeting on start
-        this.sendGreeting().catch((err) => {
-            console.error('[ProactivePinger] Greeting error:', err);
-        });
+        // Send a greeting on start — but respect quiet hours
+        if (!this.isQuietHours()) {
+            this.sendGreeting().catch((err) => {
+                console.error('[ProactivePinger] Greeting error:', err);
+            });
+        }
     }
 
     /**
@@ -266,6 +268,7 @@ export class ProactivePinger {
      */
     private async maybeMorningBrief(): Promise<void> {
         if (!this.config.morningBrief) return;
+        if (this.isQuietHours()) return;
 
         const now = new Date();
         const hour = now.getHours();

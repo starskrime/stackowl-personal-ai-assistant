@@ -25,6 +25,9 @@ export class SkillContextInjector {
   private clawHub: ClawHubClient | null;
   private options: Required<SkillContextOptions>;
   private recentlySearched: Set<string> = new Set();
+  /** Relevance cache: message prefix → matched skill names. Cleared on refreshSelector(). */
+  private relevanceCache: Map<string, string[]> = new Map();
+  private static readonly CACHE_KEY_LENGTH = 100;
 
   constructor(registry: SkillsRegistry, options: SkillContextOptions = {}) {
     this.registry = registry;
@@ -49,8 +52,10 @@ export class SkillContextInjector {
 
   /**
    * Refresh the skill selector with current registry contents.
+   * Also clears the relevance cache since the skill set changed.
    */
   refreshSelector(): void {
+    this.relevanceCache.clear();
     this.selector.clear();
     for (const skill of this.registry.listEnabled()) {
       this.selector.register({
@@ -63,12 +68,22 @@ export class SkillContextInjector {
 
   /**
    * Get relevant skills for a user message.
+   * Results are cached by the first 100 chars of the message to avoid
+   * re-running the full keyword scoring loop on every tool call.
    */
   getRelevantSkills(userMessage: string): Skill[] {
-    const skillNames = this.selector.findRelevant(
-      userMessage,
-      this.options.maxSkills,
-    );
+    const cacheKey = userMessage.slice(0, SkillContextInjector.CACHE_KEY_LENGTH).toLowerCase();
+    let skillNames = this.relevanceCache.get(cacheKey);
+
+    if (!skillNames) {
+      skillNames = this.selector.findRelevant(userMessage, this.options.maxSkills);
+      this.relevanceCache.set(cacheKey, skillNames);
+      // Bound cache size — evict oldest entry when it grows too large
+      if (this.relevanceCache.size > 200) {
+        const firstKey = this.relevanceCache.keys().next().value;
+        if (firstKey !== undefined) this.relevanceCache.delete(firstKey);
+      }
+    }
 
     return skillNames
       .map((name) => this.registry.get(name))

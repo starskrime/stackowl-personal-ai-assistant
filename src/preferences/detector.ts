@@ -51,13 +51,30 @@ export class PreferenceDetector {
         const hasKeyword = PREFERENCE_KEYWORDS.some(kw => lower.includes(kw));
         if (!hasKeyword) return [];
 
-        // Tier 2: LLM extraction
+        // Tier 2: LLM extraction — but only run it if there's actually something new to learn.
+        // If the message is very short (< 8 words) and all known preference keys already have
+        // a value stored, skip the LLM call entirely. This prevents re-running extraction
+        // every time the user says "keep it brief" when the preference is already set.
+        const knownKeys = Object.values(PREF);
+        const allAlreadySet = knownKeys.every(k => store.get(k, channel) !== undefined || store.get(k, 'all') !== undefined);
+        const isShortRepeat = allAlreadySet && userMessage.trim().split(/\s+/).length < 12;
+        if (isShortRepeat) {
+            log.engine.info('[Preferences] All known preferences already set — skipping LLM extraction');
+            return [];
+        }
+
         try {
             const extracted = await this.extractWithLLM(userMessage, channel);
             if (extracted.length === 0) return [];
 
             const updated: string[] = [];
             for (const p of extracted) {
+                // Skip keys that are already set to the exact same value — no-op
+                const existing = store.get(p.key, p.channel) ?? store.get(p.key, 'all');
+                if (JSON.stringify(existing) === JSON.stringify(p.value)) {
+                    log.engine.info(`[Preferences] ${p.key} unchanged — skipping write`);
+                    continue;
+                }
                 await store.set(p.key, p.value, userMessage, p.channel);
                 updated.push(p.key);
                 log.engine.info(`[Preferences] Stored: ${p.key} = ${JSON.stringify(p.value)} (channel: ${p.channel})`);
