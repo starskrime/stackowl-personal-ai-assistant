@@ -19,6 +19,8 @@ import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { CapabilityGap } from "./detector.js";
+import { SkillCritic } from "../skills/critic.js";
+import { SkillParser } from "../skills/parser.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const SYNTHESIZED_DIR = join(__dirname, "../tools/synthesized");
@@ -106,7 +108,38 @@ export class ToolSynthesizer {
       config.defaultModel,
     );
 
-    const content = response.content.trim();
+    let content = response.content.trim();
+
+    // ── Post-synthesis critique pass (Self-Refine, max 1 retry) ──────
+    const critic = new SkillCritic(provider);
+    const parser = new SkillParser();
+    try {
+      const provisionalSkill = parser.parseContent(content, "provisional");
+      const critique = await critic.critique(provisionalSkill);
+
+      if (critique.overallScore < 0.6) {
+        // Score too low — ask the model to regenerate with critique context
+        const retryPrompt =
+          prompt +
+          `\n\n[QUALITY FEEDBACK — your first draft scored ${critique.overallScore.toFixed(2)}/1.0]\n` +
+          `You MUST address all of the following issues:\n` +
+          `- Name: ${critique.nameClarityScore.feedback}\n` +
+          `- Instructions: ${critique.instructionClarityScore.feedback}\n` +
+          `- Trigger: ${critique.triggerPrecisionScore.feedback}\n` +
+          `Rewrite the SKILL.md now, fixing all issues above.`;
+
+        const retryResponse = await provider.chat(
+          [{ role: "user", content: retryPrompt }],
+          config.defaultModel,
+        );
+        const retryContent = retryResponse.content.trim();
+        if (retryContent.includes("---") && retryContent.includes("name:")) {
+          content = retryContent;
+        }
+      }
+    } catch {
+      // Non-fatal: if critique fails, proceed with original content
+    }
 
     // Extract skill name from frontmatter
     const nameMatch = content.match(/^name:\s*(\S+)/m);

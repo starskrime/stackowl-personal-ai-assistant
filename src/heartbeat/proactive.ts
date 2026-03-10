@@ -16,6 +16,10 @@ import type { CapabilityLedger } from '../evolution/ledger.js';
 import type { LearningEngine } from '../learning/self-study.js';
 import type { PreferenceStore } from '../preferences/store.js';
 import type { ReflexionEngine } from '../evolution/reflexion.js';
+import { SkillEvolver } from '../skills/evolver.js';
+import { PatternMiner } from '../skills/pattern-miner.js';
+import type { SkillsRegistry } from '../skills/registry.js';
+import type { SessionStore } from '../memory/store.js';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -51,6 +55,12 @@ export interface PingContext {
     preferenceStore?: PreferenceStore;
     /** Reflexion engine for extracting rules from past failures */
     reflexionEngine?: ReflexionEngine;
+    /** Skills registry for evolution pass */
+    skillsRegistry?: SkillsRegistry;
+    /** Absolute path to skills directory (for PatternMiner crystallization) */
+    skillsDir?: string;
+    /** Session store used by PatternMiner to read conversation history */
+    sessionStore?: SessionStore;
 }
 
 export type PingType =
@@ -86,6 +96,7 @@ export class ProactivePinger {
     private lastConsolidationDate: string = '';
     private lastSelfStudyDate: string = '';
     private lastDreamTime: number = 0;
+    private lastSkillEvolutionDate: string = '';
 
     constructor(context: PingContext, config?: Partial<PingConfig>) {
         this.config = { ...DEFAULT_PING_CONFIG, ...config };
@@ -149,6 +160,14 @@ export class ProactivePinger {
             });
         }, 60 * 1000);
         this.timers.push(dreamTimer);
+
+        // 🌱 Skill Evolution + Pattern Mining timer (5 AM)
+        const skillEvoTimer = setInterval(() => {
+            this.maybeEvolveSkills().catch((err) => {
+                console.error('[ProactivePinger] Skill evolution error:', err);
+            });
+        }, 60 * 1000);
+        this.timers.push(skillEvoTimer);
 
         // Send a greeting on start — but respect quiet hours
         if (!this.isQuietHours()) {
@@ -406,6 +425,69 @@ export class ProactivePinger {
             await this.context.reflexionEngine.dream();
         } catch (err) {
             console.error('[ProactivePinger] Dream session failed:', err);
+        }
+    }
+
+    /**
+     * Skill Evolution + Pattern Mining — runs at 5 AM, once per day.
+     *
+     * Two phases:
+     *   1. SkillEvolver: critiques every registered skill and rewrites low-scoring ones
+     *      (Self-Refine loop, max 2 iterations each).
+     *   2. PatternMiner: scans recent session history for repeated successful tool
+     *      sequences and crystallizes them as new SKILL.md files (LATS-inspired).
+     *
+     * Neither phase sends anything to the user — all work is silent.
+     */
+    private async maybeEvolveSkills(): Promise<void> {
+        if (!this.context.skillsRegistry) return;
+
+        const now = new Date();
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+        const dateKey = now.toISOString().split('T')[0];
+
+        // Run at 5 AM, once per day
+        if (hour !== 5 || minute !== 0) return;
+        if (this.lastSkillEvolutionDate === dateKey) return;
+
+        this.lastSkillEvolutionDate = dateKey;
+
+        // Phase 1: Evolve existing skills
+        try {
+            console.log('[ProactivePinger] 🌱 Starting overnight skill evolution pass...');
+            const evolver = new SkillEvolver(this.context.provider, this.context.config);
+            const report = await evolver.evolveAll(this.context.skillsRegistry);
+            console.log(
+                `[ProactivePinger] ✓ Skill evolution done: ` +
+                `${report.improved}/${report.evaluated} improved, ` +
+                `${report.failed} failed`
+            );
+        } catch (err) {
+            console.error('[ProactivePinger] Skill evolution failed:', err);
+        }
+
+        // Phase 2: Mine new skills from conversation history
+        if (this.context.sessionStore && this.context.skillsDir) {
+            try {
+                console.log('[ProactivePinger] ⛏️  Starting pattern mining pass...');
+                const miner = new PatternMiner(
+                    this.context.provider,
+                    this.context.sessionStore,
+                    this.context.config,
+                );
+                const newSkills = await miner.mine(
+                    this.context.skillsRegistry,
+                    this.context.skillsDir,
+                );
+                if (newSkills.length > 0) {
+                    console.log(`[ProactivePinger] ✓ Pattern miner crystallized ${newSkills.length} new skill(s): [${newSkills.join(', ')}]`);
+                } else {
+                    console.log('[ProactivePinger] Pattern miner: no new patterns found');
+                }
+            } catch (err) {
+                console.error('[ProactivePinger] Pattern mining failed:', err);
+            }
         }
     }
 

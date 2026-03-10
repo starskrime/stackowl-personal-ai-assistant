@@ -36,6 +36,11 @@ export class PelletStore {
   private indexPath: string;
   private embeddingsSupported: boolean = true;
 
+  /** In-memory cache for listAll() — avoids readdir + readFile on every search() call */
+  private listAllCache: Pellet[] | null = null;
+  private static readonly CACHE_TTL_MS = 30_000; // 30 seconds
+  private cacheExpiresAt = 0;
+
   constructor(workspacePath: string, provider?: ModelProvider) {
     this.pelletsDir = join(workspacePath, "pellets");
     this.provider = provider;
@@ -84,6 +89,9 @@ export class PelletStore {
     // Write safely to tmp then rename
     await writeFile(mdPath, raw, "utf-8");
     await rename(mdPath, finalPath);
+
+    // Invalidate the list cache so next search() picks up the new pellet
+    this.listAllCache = null;
 
     // Generate and save embedding if provider exists and supports embeddings
     if (this.provider) {
@@ -142,9 +150,15 @@ export class PelletStore {
 
   /**
    * List all available pellets.
+   * Results are cached for 30 seconds — invalidated on save() or delete().
    */
   async listAll(): Promise<Pellet[]> {
     await this.init();
+
+    // Return cached result if still fresh
+    if (this.listAllCache && Date.now() < this.cacheExpiresAt) {
+      return this.listAllCache;
+    }
 
     try {
       const files = await readdir(this.pelletsDir);
@@ -159,11 +173,17 @@ export class PelletStore {
       }
 
       // Sort by most recently generated
-      return pellets.sort((a, b) => {
+      const sorted = pellets.sort((a, b) => {
         return (
           new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime()
         );
       });
+
+      // Cache the result
+      this.listAllCache = sorted;
+      this.cacheExpiresAt = Date.now() + PelletStore.CACHE_TTL_MS;
+
+      return sorted;
     } catch (error) {
       console.error("[PelletStore] Failed to list pellets:", error);
       return [];
@@ -177,6 +197,7 @@ export class PelletStore {
     const mdPath = join(this.pelletsDir, `${id}.md`);
     if (existsSync(mdPath)) {
       await unlink(mdPath);
+      this.listAllCache = null; // Invalidate cache
       if (this.vectorIndex[id]) {
         delete this.vectorIndex[id];
         await writeFile(

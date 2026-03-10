@@ -19,6 +19,9 @@ import type { StackOwlConfig } from '../config/loader.js';
 import { EvolutionHandler, type ToolProposal } from '../evolution/handler.js';
 import type { CapabilityLedger } from '../evolution/ledger.js';
 import type { LearningEngine } from '../learning/self-study.js';
+import type { PreferenceStore } from '../preferences/store.js';
+import { PreferenceDetector } from '../preferences/detector.js';
+import { AttemptLogRegistry } from '../memory/attempt-log.js';
 import { log } from '../logger.js';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -35,6 +38,9 @@ export interface TelegramChannelConfig {
     evolution?: EvolutionHandler;
     capabilityLedger?: CapabilityLedger;
     learningEngine?: LearningEngine;
+    preferenceStore?: PreferenceStore;
+    /** When true, show token usage after each response (default: false) */
+    showTokenUsage?: boolean;
 }
 
 interface PendingApproval {
@@ -67,6 +73,21 @@ export class TelegramChannel {
     private activeChatIds: Set<number> = new Set();
     private chatIdsPath: string;
 
+    /**
+     * Lane Queue — one active Promise per userId.
+     * Serializes messages so rapid sends don't cause race conditions on session state.
+     */
+    private lanes: Map<number, Promise<unknown>> = new Map();
+
+    /**
+     * Cross-turn attempt logs — one per active user.
+     * Gives the model memory of what failed in earlier messages of the same conversation.
+     */
+    private attemptLogs = new AttemptLogRegistry();
+
+    /** Preference detector — reused across messages (avoids re-constructing the provider ref) */
+    private preferenceDetector: PreferenceDetector | null = null;
+
     constructor(config: TelegramChannelConfig) {
         if (!config.botToken || config.botToken.trim() === '') {
             throw new Error('[TelegramChannel] Bot token is required. Get one from @BotFather on Telegram.');
@@ -77,7 +98,26 @@ export class TelegramChannel {
         this.bot = new Bot(config.botToken);
         this.chatIdsPath = join(config.cwd ?? process.cwd(), 'known_chat_ids.json');
 
+        if (config.preferenceStore) {
+            this.preferenceDetector = new PreferenceDetector(config.provider);
+        }
+
+        // Evict stale sessions every 30 minutes so the Map doesn't grow forever
+        setInterval(() => this.evictStaleSessions(), 30 * 60 * 1000).unref();
+
         this.setupHandlers();
+    }
+
+    /** Remove sessions that haven't been active within SESSION_TIMEOUT_MS */
+    private evictStaleSessions(): void {
+        const now = Date.now();
+        for (const [userId, session] of this.sessions) {
+            if (now - session.lastActivity > SESSION_TIMEOUT_MS) {
+                this.sessions.delete(userId);
+                this.attemptLogs.delete(`telegram_${userId}`);
+                log.telegram.info(`[session-evict] Evicted stale session for user ${userId}`);
+            }
+        }
     }
 
     /** Load persisted chat IDs from disk into activeChatIds */
@@ -122,7 +162,7 @@ export class TelegramChannel {
             );
 
             // Track this chat for proactive pinging and persist for restarts
-            this.activeChatIds.add(ctx.chat.id);
+            this.activeChatIds.add(ctx.chat!.id);
             this.saveChatIds().catch(() => { });
         });
 
@@ -138,6 +178,23 @@ export class TelegramChannel {
             msg += `DNA Generation: ${owl.dna.generation}`;
 
             await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+        });
+
+        // /help command — show available commands
+        this.bot.command('help', async (ctx) => {
+            if (!this.isAllowed(ctx)) return;
+            const owl = this.config.owl;
+            await ctx.reply(
+                `${owl.persona.emoji} *${this.escapeMarkdown(owl.persona.name)}* — available commands:\n\n` +
+                `/start — introduce the owl\n` +
+                `/help — show this message\n` +
+                `/reset — clear conversation history and start fresh\n` +
+                `/status — show provider, model, and session info\n` +
+                `/owls — show owl DNA and traits\n` +
+                `/skill \\<name\\> — invoke a named skill directly\n\n` +
+                `_Just chat naturally — no commands needed for most things\\._`,
+                { parse_mode: 'MarkdownV2' }
+            );
         });
 
         // /reset command — clear session history
@@ -171,7 +228,7 @@ export class TelegramChannel {
             await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
         });
 
-        // Handle text messages
+        // Handle text messages — serialized per user via Lane Queue
         this.bot.on('message:text', async (ctx) => {
             if (!this.isAllowed(ctx)) return;
 
@@ -181,12 +238,29 @@ export class TelegramChannel {
             const text = ctx.message.text;
             if (!text || text.startsWith('/')) return;
 
+            // Lane Queue: serialize messages from the same user to prevent race conditions
+            const prev = this.lanes.get(userId) ?? Promise.resolve();
+            const next = prev.then(() => this.handleMessageInLane(ctx, userId, text));
+            this.lanes.set(userId, next.catch(() => {}));
+            await next;
+        });
+
+        // Error handler
+        this.bot.catch((err) => {
+            log.telegram.error(`Bot error: ${err.message}`);
+        });
+    }
+
+    /**
+     * Process a message inside the lane queue — safe to mutate session state here.
+     */
+    private async handleMessageInLane(ctx: Context, userId: number, text: string): Promise<void> {
             // Get or create session
             const userSession = await this.getOrCreateSession(userId);
 
             // Track this chat for proactive pinging and persist for restarts
-            if (!this.activeChatIds.has(ctx.chat.id)) {
-                this.activeChatIds.add(ctx.chat.id);
+            if (!this.activeChatIds.has(ctx.chat!.id)) {
+                this.activeChatIds.add(ctx.chat!.id);
                 this.saveChatIds().catch(() => { });
             }
 
@@ -207,7 +281,7 @@ export class TelegramChannel {
                 if (answer === 'yes' || answer === 'y') {
                     userSession.pendingApproval = undefined;
                     await ctx.reply(`🔧 Building <code>${this.escapeHtml(proposal.toolName)}</code>...`, { parse_mode: 'HTML' });
-                    await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+                    await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
 
                     try {
                         if (!this.config.evolution || !this.config.toolRegistry) {
@@ -251,7 +325,7 @@ export class TelegramChannel {
                         }
                         confirmMsg += `\n🔄 Retrying your request...`;
                         await ctx.reply(confirmMsg, { parse_mode: 'HTML' });
-                        await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+                        await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
 
                         userSession.session.messages.push({ role: 'user', content: originalMessage });
                         userSession.session.messages.push({ role: 'assistant', content: retryResponse.content });
@@ -274,11 +348,16 @@ export class TelegramChannel {
             // ─────────────────────────────────────────────────────────
 
             // Show typing indicator
-            await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+            await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
 
             try {
                 log.telegram.incoming(`user:${userId}`, text);
                 log.telegram.separator();
+
+                // Signal new turn to the attempt log before running the engine
+                const sessionKey = `telegram_${userId}`;
+                const attemptLog = this.attemptLogs.get(sessionKey);
+                attemptLog.newTurn();
 
                 const response = await this.engine.run(text, {
                     provider: this.config.provider,
@@ -288,6 +367,7 @@ export class TelegramChannel {
                     toolRegistry: this.config.toolRegistry,
                     capabilityLedger: this.config.capabilityLedger,
                     cwd: this.config.cwd,
+                    attemptLog,
                     onProgress: async (msg: string) => {
                         try {
                             // Convert simple markdown patterns to HTML — much safer than Markdown/MarkdownV2
@@ -297,7 +377,7 @@ export class TelegramChannel {
                                 .replace(/`(.+?)`/g, '<code>$1</code>')
                                 .replace(/^_(.+)_$/gm, '<i>$1</i>');
                             await ctx.reply(html, { parse_mode: 'HTML' });
-                            await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+                            await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
                         } catch (err) {
                             log.telegram.warn(`onProgress send failed: ${err instanceof Error ? err.message : String(err)}`);
                         }
@@ -325,7 +405,7 @@ export class TelegramChannel {
                     // then immediately start building
                     await this.sendResponse(ctx, response.owlEmoji, response.owlName, response.content);
                     await ctx.reply('🧠 I don\'t have that capability yet — building it now...');
-                    await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+                    await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
 
                     const engineContext = {
                         provider: this.config.provider,
@@ -347,7 +427,7 @@ export class TelegramChannel {
                             log.evolution.evolve(`Synthesizing new tool: ${proposal.toolName}`);
                             await ctx.reply(`⚡ Synthesizing <code>${this.escapeHtml(proposal.toolName)}.ts</code>...`, { parse_mode: 'HTML' });
                         }
-                        await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+                        await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
 
                         // Auto-install npm deps silently (no user question)
                         const autoInstall = async (_deps: string[]) => true;
@@ -389,7 +469,7 @@ export class TelegramChannel {
 
                         userSession.session.messages.push({ role: 'system', content: fallbackInstruction });
 
-                        await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+                        await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
 
                         // We skip gap detection entirely so the agent doesn't get stuck in an infinite synthesis loop
                         const fallbackContext = {
@@ -437,24 +517,25 @@ export class TelegramChannel {
 
                 await this.sendResponse(ctx, response.owlEmoji, response.owlName, response.content);
 
-                // Show token usage as a subtle footer
-                if (response.usage) {
+                // Show token usage only when explicitly enabled — hidden by default to reduce noise
+                if (response.usage && this.config.showTokenUsage) {
                     await ctx.reply(
                         `_${response.usage.promptTokens}→${response.usage.completionTokens} tokens_`,
                         { parse_mode: 'MarkdownV2' }
                     );
+                }
+
+                // Detect and persist preferences expressed in this message (fire-and-forget)
+                if (this.preferenceDetector && this.config.preferenceStore) {
+                    this.preferenceDetector
+                        .detect(text, this.config.preferenceStore, `telegram_${userId}`)
+                        .catch(err => log.telegram.warn(`Preference detection failed: ${err instanceof Error ? err.message : err}`));
                 }
             } catch (error) {
                 const msg = error instanceof Error ? error.message : String(error);
                 log.telegram.error(`Unhandled error for user ${userId}: ${msg}`);
                 await ctx.reply(`❌ Error: ${msg}`);
             }
-        });
-
-        // Error handler
-        this.bot.catch((err) => {
-            log.telegram.error(`Bot error: ${err.message}`);
-        });
     }
 
     /**
@@ -625,6 +706,7 @@ export class TelegramChannel {
                             config: this.config.config,
                             capabilityLedger: this.config.capabilityLedger!,
                             learningEngine: this.config.learningEngine,
+                            preferenceStore: this.config.preferenceStore,
                             sendToUser: async (message: string) => {
                                 await this.broadcastProactiveMessage(message);
                             },

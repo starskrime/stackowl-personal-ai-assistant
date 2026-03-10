@@ -50,6 +50,8 @@ export class OwlGateway {
   private sessions: Map<string, SessionCache> = new Map();
   private messageCount = 0;
   private skillInjector: SkillContextInjector | null = null;
+  /** Singleton PreferenceDetector — avoids re-constructing on every message */
+  private preferenceDetector: PreferenceDetector | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -90,6 +92,11 @@ export class OwlGateway {
     process.once('exit', saveDNAOnExit);
     process.once('SIGINT', () => { saveDNAOnExit(); process.exit(0); });
     process.once('SIGTERM', () => { saveDNAOnExit(); process.exit(0); });
+
+    // Preference detector — created once if preference store is configured
+    if (ctx.preferenceStore) {
+      this.preferenceDetector = new PreferenceDetector(ctx.provider);
+    }
 
     // Evict stale sessions from memory every 30 minutes.
     // Without this, a long-running Telegram bot accumulates one entry per user
@@ -779,11 +786,10 @@ export class OwlGateway {
 
   /** Fire-and-forget: detect preference statements and persist them. */
   private detectPreferences(userMessage: string, channelId: string): void {
-    if (!this.ctx.preferenceStore) return;
-    const detector = new PreferenceDetector(this.ctx.provider);
+    if (!this.ctx.preferenceStore || !this.preferenceDetector) return;
     this.runBackground(
       "preference-detect",
-      detector.detect(userMessage, this.ctx.preferenceStore, channelId),
+      this.preferenceDetector.detect(userMessage, this.ctx.preferenceStore, channelId),
     );
   }
 }
