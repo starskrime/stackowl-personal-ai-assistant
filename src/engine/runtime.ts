@@ -878,25 +878,26 @@ ${userMessage}
       if (tools.length > 0) {
         prompt += "\n## Tools Available\n";
         prompt +=
-          "Use tools when you need information you don't have. Choose the right tool for the job:\n\n";
+          "You have access to these tools. Use your judgment to choose the best one for each task:\n\n";
 
         // Group tools by category for better understanding
         const toolGuides: Record<string, string[]> = {
           "Web & Browser": [
-            "web_fetch - Get content from a URL (good for articles, docs)",
-            "web_search - Search the web for current info",
-            "browser - Full browser automation: navigate, click, type, screenshot",
+            "web_fetch - Get content from a URL",
+            "web_search - Search the web",
+            "browser - Full browser automation",
           ],
           "Files & Code": [
-            "read - Read file contents",
-            "write - Create or overwrite files",
-            "edit - Make targeted edits to files",
-            "shell - Run shell commands, scripts, git, npm, etc.",
+            "read - Read files",
+            "write - Write files",
+            "edit - Edit files",
+            "shell - Run shell commands",
           ],
-          Communication: ["send_file - Send files to user"],
+          Communication: ["send_file - Send files"],
           Special: [
-            "parliament - Get multiple owl perspectives on complex questions",
-            "orchestrate - Run multiple tasks in parallel",
+            "parliament - Multi-owl debate",
+            "orchestrate - Parallel tasks",
+            "memory_search - Search memory",
           ],
         };
 
@@ -914,26 +915,19 @@ ${userMessage}
           }
         }
 
-        // Add tool-specific usage hints
-        prompt += "### When to Use Each Tool\n";
         prompt +=
-          "- **web_search**: Use for current events, facts, recent information\n";
-        prompt +=
-          "- **web_fetch**: Use for specific URLs, articles, documentation\n";
-        prompt +=
-          "- **browser**: Use for interactive websites, forms, JavaScript-heavy pages\n";
-        prompt +=
-          "- **shell**: Use for git, npm, running scripts, system commands\n";
-        prompt += "- **read/write/edit**: Use for code and config files\n";
-        prompt +=
-          "- **parliament**: Use for important decisions, brainstorming, getting diverse perspectives\n";
+          "\n**Tool discipline:**\n" +
+          "- Use tools when you genuinely need information you don't have\n" +
+          "- Don't repeat the same tool call with same arguments\n" +
+          "- When done, append [DONE] to return immediately\n";
 
+        // Emphasize self-improvement capability
         prompt +=
-          "\n**Tool discipline rules:**\n" +
-          "- Call a tool only if the answer genuinely requires it (file content, live data, code execution).\n" +
-          "- Never call the same tool with the same arguments twice — the previous result is already in your context.\n" +
-          "- When your response IS the final answer, append `[DONE]` at the end. The engine will return your answer immediately and discard any pending tool calls.\n" +
-          "- If you need a capability that no tool provides, output `[CAPABILITY_GAP: description]`.\n";
+          "\n**Self-Improvement (Your Superpower):**\n" +
+          "- If you need a tool that doesn't exist → output [CAPABILITY_GAP: what you need]\n" +
+          "- The system will automatically BUILD that tool for you\n" +
+          "- You can then use your new tool to complete the task\n" +
+          '- This makes you infinitely extensible — you never have to say "I can\'t"\n';
       }
     }
 
