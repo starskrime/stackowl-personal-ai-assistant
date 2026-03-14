@@ -283,12 +283,7 @@ export class EvolutionHandler {
         originalMessage,
         toolNames,
         existingSkills,
-      );
-      log.evolution.info(
-        `[CNA] verdict=${assessment.verdict} type=${assessment.requestType} — ${assessment.reasoning}`,
-      );
-      log.evolution.info(
-        `[CNA] verdict=${assessment.verdict} type=${assessment.requestType} — ${assessment.reasoning}`,
+        proposal.rationale, // Pass the gap description so CNA knows the engine already tried existing tools
       );
       log.evolution.info(
         `[CNA] verdict=${assessment.verdict} type=${assessment.requestType} — ${assessment.reasoning}`,

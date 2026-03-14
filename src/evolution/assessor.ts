@@ -123,11 +123,17 @@ export class CapabilityNeedAssessor {
    * Assess whether a capability gap warrants new skill synthesis.
    *
    * Returns a verdict with reasoning. Call this BEFORE generateSkillMd().
+   *
+   * @param gapDescription — Why the engine declared a gap (e.g. "Need ability to
+   *   programmatically control Chrome browser"). When provided, the engine has
+   *   ALREADY tried existing tools and determined they are insufficient — so the
+   *   assessor should weigh this heavily toward SYNTHESIZE.
    */
   async assess(
     userRequest: string,
     availableToolNames: string[],
     existingSkills: Skill[],
+    gapDescription?: string,
   ): Promise<AssessmentResult> {
     // ── Gate 1: Fast heuristic pre-filter ────────────────────────
     const heuristicType = heuristicRequestType(userRequest);
@@ -166,6 +172,19 @@ export class CapabilityNeedAssessor {
         reasoning: `Skill "${bestSkill.name}" already covers this (${(bestOverlap * 100).toFixed(0)}% keyword overlap). Improve it instead.`,
         suggestedExistingSkill: bestSkill.name,
         overlapScore: bestOverlap,
+      };
+    }
+
+    // ── Fast-path: if the engine explicitly declared a gap, trust it ──
+    // The engine already tried all available tools and determined they can't
+    // handle the request. Running the LLM assessor would just second-guess
+    // that decision (often incorrectly, e.g. seeing "google_search" and
+    // concluding it covers "open Chrome browser").
+    if (gapDescription) {
+      return {
+        verdict: 'SYNTHESIZE',
+        requestType: 'OPERATIONAL',
+        reasoning: `Engine gap: ${gapDescription.slice(0, 120)}`,
       };
     }
 
