@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { program } from "commander";
 import chalk from "chalk";
 // log imported by adapters/gateway internally
+import { initFileLog } from "./logger.js";
 import { loadConfig } from "./config/loader.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
@@ -52,6 +53,9 @@ async function bootstrap() {
   const basePath = process.cwd();
   const config = await loadConfig(basePath);
   const workspacePath = resolve(basePath, config.workspace);
+
+  // Initialize file-based session log (overwrites on each restart)
+  initFileLog(workspacePath);
 
   // Initialize provider registry
   const providerRegistry = new ProviderRegistry();
