@@ -328,6 +328,12 @@ export class OwlGateway {
       }
     }
 
+    // ─── Explicit learning request ──────────────────────────────
+    // Matches: /learn <topic>, "learn how to <topic>", "can you learn <topic>",
+    // "study <topic>", "research <topic> for me"
+    const learnResult = await this.handleLearnRequest(message, callbacks);
+    if (learnResult) return learnResult;
+
     // Check for topic switch (heuristic, no LLM call)
     const freshStartDirective = this.detectTopicSwitch(
       message.text,
@@ -558,6 +564,121 @@ export class OwlGateway {
   }
   getReflexionEngine() {
     return this.ctx.reflexionEngine;
+  }
+
+  // ─── Private: Explicit Learning Request ──────────────────────
+
+  /**
+   * Detect and handle explicit learning requests from the user.
+   *
+   * Matches patterns like:
+   *   /learn send email
+   *   Can you learn how to send email?
+   *   Learn to track flights
+   *   Study cryptocurrency pricing
+   *   Research how to control the browser for me
+   *
+   * When matched, triggers the learning engine's researcher directly
+   * instead of letting the model answer the "how to" question.
+   */
+  private async handleLearnRequest(
+    message: GatewayMessage,
+    callbacks: GatewayCallbacks,
+  ): Promise<GatewayResponse | null> {
+    if (!this.ctx.learningEngine) return null;
+
+    const text = message.text.trim();
+
+    // /learn <topic> — explicit command
+    const slashLearn = text.match(/^\/learn\s+(.+)$/i);
+    if (slashLearn) {
+      return this.executeLearnRequest(slashLearn[1].trim(), callbacks);
+    }
+
+    // Natural language patterns:
+    //   "can you learn how to X", "learn how to X", "learn to X",
+    //   "study X", "research X for me", "go learn about X",
+    //   "teach yourself X", "figure out how to X"
+    const nlPatterns = [
+      /^(?:can you |please |go )?\s*learn\s+(?:how\s+)?(?:to\s+)?(.+?)[\s?.!]*$/i,
+      /^(?:can you |please )?\s*study\s+(.+?)[\s?.!]*$/i,
+      /^(?:can you |please )?\s*research\s+(.+?)(?:\s+for me)?[\s?.!]*$/i,
+      /^(?:can you |please )?\s*teach yourself\s+(.+?)[\s?.!]*$/i,
+      /^(?:can you |please )?\s*figure out\s+(?:how to\s+)?(.+?)[\s?.!]*$/i,
+    ];
+
+    for (const pattern of nlPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1].length > 3) {
+        return this.executeLearnRequest(match[1].trim(), callbacks);
+      }
+    }
+
+    return null;
+  }
+
+  private async executeLearnRequest(
+    topic: string,
+    callbacks: GatewayCallbacks,
+  ): Promise<GatewayResponse> {
+    const owl = this.ctx.owl;
+
+    await callbacks.onProgress?.(
+      `🧠 Starting self-study on: **${topic}**`,
+    );
+    await callbacks.onProgress?.(
+      `📚 Researching and creating knowledge pellets...`,
+    );
+
+    try {
+      const { KnowledgeResearcher } = await import('../learning/researcher.js');
+      const { KnowledgeGraphManager } = await import('../learning/knowledge-graph.js');
+
+      const graphManager = new KnowledgeGraphManager(this.ctx.cwd ?? process.cwd());
+      await graphManager.load();
+
+      const researcher = new KnowledgeResearcher(
+        this.ctx.provider,
+        owl,
+        this.ctx.config,
+        this.ctx.pelletStore!,
+        graphManager,
+      );
+
+      const result = await researcher.research(topic);
+      await graphManager.save();
+
+      const pelletSummary = result.pellets.length > 0
+        ? result.pellets.map(p => `  - **${p.title}**`).join('\n')
+        : '  (no pellets created)';
+
+      const relatedSummary = result.relatedTopics.length > 0
+        ? `\n\n**Related topics discovered:** ${result.relatedTopics.join(', ')}`
+        : '';
+
+      await callbacks.onProgress?.(`✅ Self-study complete!`);
+
+      return {
+        content:
+          `${owl.persona.emoji} I've studied **${topic}** and created ${result.pellets.length} knowledge pellet(s):\n\n` +
+          `${pelletSummary}${relatedSummary}\n\n` +
+          `This knowledge is now saved and will be automatically used in future conversations about this topic.`,
+        owlName: owl.persona.name,
+        owlEmoji: owl.persona.emoji,
+        toolsUsed: [],
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.evolution.error(`Learn request failed: ${msg}`);
+      return {
+        content:
+          `${owl.persona.emoji} I tried to study **${topic}** but ran into an issue: ${msg}\n\n` +
+          `I'll add it to my study queue for later.`,
+        owlName: owl.persona.name,
+        owlEmoji: owl.persona.emoji,
+        toolsUsed: [],
+      };
+    }
   }
 
   // ─── Private: Capability Gap ─────────────────────────────────
