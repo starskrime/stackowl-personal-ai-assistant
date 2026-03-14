@@ -183,6 +183,7 @@ export class TelegramAdapter implements ChannelAdapter {
             log.telegram.incoming(`user:${userId}`, text);
 
             try {
+                const streamCtx = this.createStreamHandler(ctx);
                 const response = await this.gateway.handle(
                     {
                         id: makeMessageId(),
@@ -221,7 +222,7 @@ export class TelegramAdapter implements ChannelAdapter {
                                 state.pendingInstallResolve = resolve;
                             });
                         },
-                        onStreamEvent: this.createStreamHandler(ctx),
+                        onStreamEvent: streamCtx.handler,
                     }
                 );
 
@@ -231,7 +232,12 @@ export class TelegramAdapter implements ChannelAdapter {
                     `usage:${response.usage ? `${response.usage.promptTokens}→${response.usage.completionTokens}` : 'n/a'}`
                 );
 
-                await this.sendResponse(ctx, response);
+                // Only send the final response if streaming didn't already deliver it.
+                // When streaming is active, the user sees the answer build up in real-time
+                // via editMessageText — sending it again would duplicate the message.
+                if (!streamCtx.status.delivered) {
+                    await this.sendResponse(ctx, response);
+                }
 
                 if (response.usage) {
                     await ctx.reply(
@@ -285,9 +291,14 @@ export class TelegramAdapter implements ChannelAdapter {
      * Sends an initial message on the first text_delta, then throttles
      * edits to max 1/second to stay within Telegram rate limits.
      */
-    private createStreamHandler(ctx: Context): (event: StreamEvent) => Promise<void> {
+    /**
+     * Creates a stream handler and returns both the handler function and a
+     * status object that tracks whether streaming successfully delivered content.
+     */
+    private createStreamHandler(ctx: Context): { handler: (event: StreamEvent) => Promise<void>; status: { delivered: boolean } } {
         const chatId = ctx.chat?.id;
-        if (!chatId) return async () => {};
+        const status = { delivered: false };
+        if (!chatId) return { handler: async () => {}, status };
 
         let messageId: number | null = null;
         let accumulated = '';
@@ -310,7 +321,7 @@ export class TelegramAdapter implements ChannelAdapter {
             }
         };
 
-        return async (event: StreamEvent) => {
+        const handler = async (event: StreamEvent) => {
             switch (event.type) {
                 case 'text_delta': {
                     accumulated += event.content;
@@ -358,10 +369,15 @@ export class TelegramAdapter implements ChannelAdapter {
                     // Final flush to ensure all accumulated text is shown
                     if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
                     await flushEdit();
+                    // Mark that streaming successfully delivered content
+                    if (messageId && accumulated.length > 0) {
+                        status.delivered = true;
+                    }
                     break;
                 }
             }
         };
+        return { handler, status };
     }
 
     // ─── Response formatting ──────────────────────────────────────
