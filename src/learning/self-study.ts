@@ -54,8 +54,11 @@ export class LearningEngine {
      * - Immediately researches knowledge gaps (assistant was uncertain → high priority)
      */
     async processConversation(messages: ChatMessage[]): Promise<void> {
-        const relevant = messages.filter(m => m.role === 'user' || m.role === 'assistant');
-        if (relevant.length < 4) return; // Too short to learn from
+        // Count user messages — even a single user question that stumped the assistant
+        // is worth learning from. We pass ALL messages (including tool results) to the
+        // extractor so it can see what tools were tried and what failed.
+        const userMessages = messages.filter(m => m.role === 'user');
+        if (userMessages.length < 1) return; // Nothing to learn from
 
         try {
             await this.graphManager.load();
@@ -96,9 +99,10 @@ export class LearningEngine {
                 );
 
                 // Context from recent turns to make research more targeted
-                const recentContext = relevant
+                const recentContext = messages
+                    .filter((m: ChatMessage) => m.role === 'user' || m.role === 'assistant')
                     .slice(-6)
-                    .map(m => (m.content ?? '').slice(0, 200))
+                    .map((m: ChatMessage) => (m.content ?? '').slice(0, 200))
                     .join(' ');
 
                 // Research up to 2 gaps immediately (don't block too long)

@@ -56,7 +56,7 @@ export class KnowledgeResearcher {
         const pellets: Pellet[] = [];
         const allRelatedTopics: string[] = [];
 
-        for (const question of questions.slice(0, 3)) {
+        for (const question of questions.slice(0, 2)) {
             try {
                 const { pellet, relatedTopics } = await this.answerAndStore(domain, question);
                 pellets.push(pellet);
@@ -82,13 +82,13 @@ export class KnowledgeResearcher {
      */
     private async generateQuestions(domain: string, context?: string): Promise<string[]> {
         const prompt =
-            `You help an AI assistant become more knowledgeable about "${domain}".\n` +
-            (context ? `Recent conversation context: ${context.slice(0, 500)}\n\n` : '\n') +
-            `Generate exactly 3 highly specific, practical questions about "${domain}" ` +
-            `that a personal AI assistant should know to help users better.\n\n` +
-            `Focus on: real-world usage, common pitfalls, best practices, patterns.\n` +
-            `Make questions specific enough that a deep answer would be genuinely useful.\n\n` +
-            `Return ONLY a JSON array: ["question 1", "question 2", "question 3"]`;
+            `An AI assistant just failed to help a user with "${domain}".\n` +
+            (context ? `Here's what happened: ${context.slice(0, 500)}\n\n` : '\n') +
+            `Generate exactly 2 specific, actionable questions that, once answered, ` +
+            `would let the assistant handle this situation next time.\n\n` +
+            `Focus on: HOW to do it (tools, APIs, commands, techniques).\n` +
+            `Not theory — practical "here's how you actually do it" knowledge.\n\n` +
+            `Return ONLY a JSON array: ["question 1", "question 2"]`;
 
         try {
             const response = await this.provider.chat([
@@ -110,9 +110,8 @@ export class KnowledgeResearcher {
         }
 
         return [
-            `What are the most important best practices for ${domain}?`,
-            `What are the most common mistakes and pitfalls when working with ${domain}?`,
-            `What are the key patterns and techniques that experts use with ${domain}?`,
+            `How can an AI assistant practically help users with ${domain}? What tools, APIs, or approaches should it use?`,
+            `What are the most common user requests related to ${domain} and how should an AI assistant handle each one?`,
         ];
     }
 
@@ -124,29 +123,28 @@ export class KnowledgeResearcher {
         question: string,
     ): Promise<{ pellet: Pellet; relatedTopics: string[] }> {
         const prompt =
-            `You are ${this.owl.persona.name}, a knowledgeable AI assistant building your own expertise.\n\n` +
-            `Research and answer this question thoroughly:\n` +
-            `"${question}"\n\n` +
-            `Provide a comprehensive, practical answer in structured markdown:\n\n` +
-            `## Key Insight\n` +
-            `(1-2 sentences capturing the most important thing to know)\n\n` +
-            `## Details\n` +
-            `(Thorough explanation with concrete examples, code snippets if relevant)\n\n` +
-            `## Common Pitfalls\n` +
-            `(What to avoid, what trips people up)\n\n` +
-            `## Related Topics\n` +
-            `(End with this exact line: RELATED_JSON: ["topic1", "topic2", "topic3"])`;
+            `Question: "${question}"\n\n` +
+            `Write a CONCISE knowledge card (max 150 words) that answers this question.\n\n` +
+            `Format:\n` +
+            `**Answer:** (1-2 sentence direct answer)\n` +
+            `**How to do it:** (concrete steps, tools, APIs, or commands — be specific)\n` +
+            `**Example:** (one brief example if applicable)\n\n` +
+            `End with: RELATED_JSON: ["topic1", "topic2", "topic3"]\n\n` +
+            `Rules:\n` +
+            `- Be concise. No filler. No disclaimers.\n` +
+            `- Focus on WHAT TO DO, not theory.\n` +
+            `- If it involves an API/tool, name the specific one.\n` +
+            `- Max 150 words before the RELATED_JSON line.`;
 
         const response = await this.provider.chat([
             {
                 role: 'system',
                 content:
-                    `You are building a personal knowledge base. Generate accurate, practical, ` +
-                    `well-structured knowledge that will help an AI assistant give better answers. ` +
-                    `Be specific and concrete, not vague and generic.`,
+                    `You generate concise knowledge cards for an AI assistant. ` +
+                    `Be direct and practical. Max 150 words. No fluff.`,
             },
             { role: 'user', content: prompt },
-        ]);
+        ], undefined, { temperature: 0.2 });
 
         // Extract related topics from the structured marker
         const relatedTopics: string[] = [];
