@@ -18,6 +18,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { Session } from "../memory/store.js";
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
+import { shouldUsePlanner } from "../engine/planner.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
@@ -31,6 +32,8 @@ import type {
   ChannelAdapter,
   GatewayContext,
 } from "./types.js";
+import type { GatewayMiddleware, MiddlewareContext } from "./middleware.js";
+import { RateLimitMiddleware, LoggingMiddleware } from "./middleware.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -60,6 +63,7 @@ export class OwlGateway {
    * This prevents race conditions on session history and memory state.
    */
   private lanes: Map<string, Promise<unknown>> = new Map();
+  private middleware: GatewayMiddleware[] = [];
 
   /**
    * Stuck-task tracker — counts consecutive exhausted responses per session.
@@ -98,6 +102,12 @@ export class OwlGateway {
       this.preferenceDetector = new PreferenceDetector(ctx.provider);
     }
 
+    // Built-in middleware
+    this.middleware.push(new LoggingMiddleware());
+    if (ctx.config.gateway?.rateLimit) {
+      this.middleware.push(new RateLimitMiddleware(ctx.config.gateway.rateLimit));
+    }
+
     // Evict stale sessions from memory every 30 minutes.
     // Without this, a long-running Telegram bot accumulates one entry per user
     // in the sessions Map forever — a memory leak in production.
@@ -133,6 +143,12 @@ export class OwlGateway {
   register(adapter: ChannelAdapter): void {
     this.adapters.set(adapter.id, adapter);
     log.engine.info(`Channel registered: ${adapter.name} [${adapter.id}]`);
+  }
+
+  /** Add a middleware to the pipeline. */
+  use(mw: GatewayMiddleware): void {
+    this.middleware.push(mw);
+    log.engine.info(`Middleware registered: ${mw.name}`);
   }
 
   // ─── Main Entry Point ────────────────────────────────────────
@@ -217,6 +233,35 @@ export class OwlGateway {
   }
 
   private async handleInLane(
+    message: GatewayMessage,
+    callbacks: GatewayCallbacks,
+  ): Promise<GatewayResponse> {
+    // Run middleware before hooks
+    const mwCtx: MiddlewareContext = {
+      sessionId: message.sessionId,
+      channelId: message.channelId,
+      userId: message.userId,
+    };
+    for (const mw of this.middleware) {
+      if (mw.before) {
+        const shortCircuit = await mw.before(message, mwCtx);
+        if (shortCircuit) return shortCircuit;
+      }
+    }
+
+    const response = await this.handleCore(message, callbacks);
+
+    // Run middleware after hooks
+    let finalResponse = response;
+    for (const mw of this.middleware) {
+      if (mw.after) {
+        finalResponse = await mw.after(message, finalResponse, mwCtx);
+      }
+    }
+    return finalResponse;
+  }
+
+  private async handleCore(
     message: GatewayMessage,
     callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse> {
@@ -356,7 +401,12 @@ export class OwlGateway {
       isIsolatedTask,
       this.attemptLogs.get(message.sessionId),
     );
-    const response = await this.engine.run(text, engineCtx);
+    // Use planner for complex multi-step tasks when enabled
+    const planningEnabled = this.ctx.config.engine?.planning?.enabled ?? false;
+    const response =
+      planningEnabled && shouldUsePlanner(text)
+        ? await this.engine.runWithPlan(text, engineCtx)
+        : await this.engine.run(text, engineCtx);
 
     // Capability gap detected — try to synthesize the missing tool and retry
     if (response.pendingCapabilityGap && this.ctx.evolution) {
@@ -779,6 +829,7 @@ export class OwlGateway {
       isolatedTask: isolatedTask,
       attemptLog,
       onProgress: callbacks.onProgress,
+      onStreamEvent: callbacks.onStreamEvent,
       sendFile: callbacks.onFile,
       providerRegistry: this.ctx.providerRegistry,
     };

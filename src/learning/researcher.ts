@@ -40,6 +40,16 @@ export class KnowledgeResearcher {
      *  4. Update knowledge graph with new depth + frontier topics
      */
     async research(domain: string, context?: string): Promise<ResearchResult> {
+        // Guard: cap total pellets to prevent unbounded growth
+        const MAX_PELLETS = 50;
+        const existing = await this.pelletStore.listAll();
+        if (existing.length >= MAX_PELLETS) {
+            log.evolution.warn(
+                `Self-study: pellet store at capacity (${existing.length}/${MAX_PELLETS}) — skipping research for "${domain}"`,
+            );
+            return { domain, pellets: [], relatedTopics: [] };
+        }
+
         log.evolution.evolve(`Self-study: researching "${domain}"...`);
 
         const questions = await this.generateQuestions(domain, context);

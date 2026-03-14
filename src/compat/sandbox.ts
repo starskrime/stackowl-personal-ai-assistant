@@ -2,7 +2,7 @@
  * StackOwl — Docker Sandbox
  *
  * Provides isolated container execution for tools, similar to OpenCLAW.
- * Protects the host from malicious commands.
+ * Protects the host from malicious commands while allowing full network access.
  */
 
 import { exec, spawn } from "node:child_process";
@@ -35,9 +35,9 @@ export class DockerSandbox {
 
   constructor(config: SandboxConfig) {
     this.config = {
-      enabled: config.enabled ?? false,
+      enabled: config.enabled ?? true, // Enable by default to maintain security
       image: config.image || DEFAULT_IMAGE,
-      networkAccess: config.networkAccess ?? false,
+      networkAccess: config.networkAccess ?? true, // FULL network access by default
       maxMemory: config.maxMemory || "512m",
       maxCpu: config.maxCpu || 1,
       workspacePath: config.workspacePath || process.cwd(),
@@ -72,7 +72,7 @@ export class DockerSandbox {
       cwd = "/workspace",
       env = {},
       timeout = 30000,
-      networkAccess = this.config.networkAccess ?? false,
+      networkAccess = this.config.networkAccess ?? true, // Use full access by default
     } = options;
 
     const executionId = randomUUID();
@@ -96,8 +96,10 @@ export class DockerSandbox {
       `${this.config.workspacePath || process.cwd()}:/workspace:ro`,
     ];
 
-    // Network access
-    if (!networkAccess) {
+    // Add network access - FULL network by default
+    if (networkAccess) {
+      // No --network none flag = full network access
+    } else {
       dockerArgs.push("--network", "none");
     }
 
@@ -193,9 +195,8 @@ export class DockerSandbox {
       `${this.config.workspacePath || process.cwd()}:/workspace:ro`,
     ];
 
-    if (!(this.config.networkAccess ?? false)) {
-      dockerArgs.push("--network", "none");
-    }
+    // Always allow network access for interactive execution
+    // Remove --network none constraint
 
     for (const [key, value] of Object.entries(env)) {
       dockerArgs.push("-e", `${key}=${value}`);

@@ -18,6 +18,10 @@ export interface StackOwlConfig {
   gateway: {
     port: number;
     host: string;
+    rateLimit?: {
+      maxPerMinute: number;
+      maxPerHour: number;
+    };
   };
   parliament: {
     maxRounds: number;
@@ -39,6 +43,31 @@ export interface StackOwlConfig {
      * Was previously hardcoded at 10 — too low for real workflows.
      */
     maxToolIterations?: number;
+    /** Max estimated tokens before context compression triggers. Default: 8000. */
+    maxContextTokens?: number;
+    /** Max chars per tool result before truncation. Default: 6000. */
+    maxToolResultLength?: number;
+    /** Number of recent messages to keep verbatim during compression. Default: 10. */
+    contextKeepRecent?: number;
+    /** Enable plan-then-execute mode for complex tasks. */
+    planning?: {
+      enabled: boolean;
+    };
+  };
+  /** MCP server connections */
+  mcp?: {
+    servers: Array<{
+      name: string;
+      transport: "stdio" | "sse";
+      command?: string;
+      args?: string[];
+      url?: string;
+      env?: Record<string, string>;
+    }>;
+  };
+  /** Tool permission gating by category */
+  tools?: {
+    permissions?: Record<string, "allowed" | "prompt" | "denied">;
   };
   smartRouting?: {
     enabled: boolean;

@@ -18,6 +18,7 @@ import { join, extname } from 'node:path';
 import { ProactivePinger } from '../../heartbeat/proactive.js';
 import { log } from '../../logger.js';
 import { makeSessionId, makeMessageId, OwlGateway } from '../core.js';
+import type { StreamEvent } from '../../providers/base.js';
 import type { ChannelAdapter, GatewayResponse } from '../types.js';
 
 // ─── Config ──────────────────────────────────────────────────────
@@ -220,6 +221,7 @@ export class TelegramAdapter implements ChannelAdapter {
                                 state.pendingInstallResolve = resolve;
                             });
                         },
+                        onStreamEvent: this.createStreamHandler(ctx),
                     }
                 );
 
@@ -274,6 +276,92 @@ export class TelegramAdapter implements ChannelAdapter {
             },
         });
         this.pinger.start();
+    }
+
+    // ─── Streaming (edit-in-place) ──────────────────────────────────
+
+    /**
+     * Create a StreamEvent handler for edit-in-place streaming.
+     * Sends an initial message on the first text_delta, then throttles
+     * edits to max 1/second to stay within Telegram rate limits.
+     */
+    private createStreamHandler(ctx: Context): (event: StreamEvent) => Promise<void> {
+        const chatId = ctx.chat?.id;
+        if (!chatId) return async () => {};
+
+        let messageId: number | null = null;
+        let accumulated = '';
+        let lastEditTime = 0;
+        let pendingEdit: ReturnType<typeof setTimeout> | null = null;
+        const THROTTLE_MS = 1000;
+
+        const flushEdit = async () => {
+            if (!messageId || !accumulated) return;
+            try {
+                await this.bot.api.editMessageText(
+                    chatId,
+                    messageId,
+                    this.escHtml(accumulated),
+                    { parse_mode: 'HTML' },
+                );
+                lastEditTime = Date.now();
+            } catch {
+                // Edit may fail if content unchanged or message too old — non-fatal
+            }
+        };
+
+        return async (event: StreamEvent) => {
+            switch (event.type) {
+                case 'text_delta': {
+                    accumulated += event.content;
+
+                    if (!messageId) {
+                        // Send initial message
+                        try {
+                            const sent = await this.bot.api.sendMessage(
+                                chatId,
+                                this.escHtml(accumulated) || '...',
+                                { parse_mode: 'HTML' },
+                            );
+                            messageId = sent.message_id;
+                            lastEditTime = Date.now();
+                        } catch {
+                            // If initial send fails, streaming will fall back to final response
+                        }
+                        return;
+                    }
+
+                    // Throttled edit
+                    const elapsed = Date.now() - lastEditTime;
+                    if (elapsed >= THROTTLE_MS) {
+                        if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
+                        await flushEdit();
+                    } else if (!pendingEdit) {
+                        pendingEdit = setTimeout(async () => {
+                            pendingEdit = null;
+                            await flushEdit();
+                        }, THROTTLE_MS - elapsed);
+                    }
+                    break;
+                }
+                case 'tool_start': {
+                    accumulated += `\n⚙️ Running: ${event.toolName}...`;
+                    await flushEdit();
+                    break;
+                }
+                case 'tool_end': {
+                    accumulated += ` ✅`;
+                    await flushEdit();
+                    break;
+                }
+                case 'done': {
+                    // Final flush to ensure all accumulated text is shown
+                    if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
+                    await flushEdit();
+                    break;
+                }
+            }
+        };
     }
 
     // ─── Response formatting ──────────────────────────────────────

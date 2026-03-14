@@ -13,6 +13,7 @@ import { createInterface } from 'node:readline';
 import chalk from 'chalk';
 import { makeSessionId, makeMessageId, OwlGateway } from '../core.js';
 import { log } from '../../logger.js';
+import type { StreamEvent } from '../../providers/base.js';
 import type { ChannelAdapter, GatewayResponse } from '../types.js';
 
 // ─── Config ──────────────────────────────────────────────────────
@@ -144,6 +145,7 @@ export class CLIAdapter implements ChannelAdapter {
                             );
                         });
                     },
+                    onStreamEvent: this.createStreamHandler(),
                 }
             );
 
@@ -278,6 +280,44 @@ export class CLIAdapter implements ChannelAdapter {
         }
 
         return false;
+    }
+
+    // ─── Streaming ────────────────────────────────────────────────
+
+    /**
+     * Create a StreamEvent handler for progressive stdout streaming.
+     * Text deltas are written directly to stdout as they arrive.
+     */
+    private createStreamHandler(): (event: StreamEvent) => Promise<void> {
+        let headerPrinted = false;
+        const owl = this.gateway.getOwl();
+
+        return async (event: StreamEvent) => {
+            switch (event.type) {
+                case 'text_delta': {
+                    if (!headerPrinted) {
+                        process.stdout.write('\n' + chalk.yellow(`${owl.persona.emoji} ${owl.persona.name}: `));
+                        headerPrinted = true;
+                    }
+                    process.stdout.write(event.content);
+                    break;
+                }
+                case 'tool_start': {
+                    process.stdout.write(chalk.dim(`\n  ⚙️ ${event.toolName}...`));
+                    break;
+                }
+                case 'tool_end': {
+                    process.stdout.write(chalk.dim(' ✓'));
+                    break;
+                }
+                case 'done': {
+                    if (headerPrinted) {
+                        process.stdout.write('\n');
+                    }
+                    break;
+                }
+            }
+        };
     }
 
     // ─── Display ─────────────────────────────────────────────────

@@ -15,6 +15,8 @@ import { ToolRegistry } from "./tools/registry.js";
 import { ShellTool } from "./tools/shell.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
+import { GoogleSearchTool } from "./tools/search.js";
+import { WebCrawlTool } from "./tools/web.js";
 import { MemoryConsolidator } from "./memory/consolidator.js";
 import { SessionStore } from "./memory/store.js";
 import { OrchestrateTasksTool } from "./tools/orchestrate.js";
@@ -39,6 +41,7 @@ import { CLIAdapter } from "./gateway/adapters/cli.js";
 import { PreferenceStore } from "./preferences/store.js";
 import { ReflexionEngine } from "./evolution/reflexion.js";
 import { SkillsLoader } from "./skills/index.js";
+import { MCPManager } from "./tools/mcp/manager.js";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -66,7 +69,7 @@ async function bootstrap() {
 
   // Initialize tools
   const toolRegistry = new ToolRegistry();
-  const { BrowserTool, WebSearchTool } = await import("./compat/index.js");
+  const { WebSearchTool } = await import("./compat/index.js");
   const { SessionsListTool, SessionsHistoryTool, SessionStatusTool } =
     await import("./compat/tools/sessions.js");
   const { MemorySearchTool, MemoryGetTool } =
@@ -79,10 +82,13 @@ async function bootstrap() {
     EditFileTool,
     OrchestrateTasksTool,
     SendFileTool,
+    GoogleSearchTool,
+    WebCrawlTool,
     new SummonParliamentTool(),
     PatchTool,
-    // OpenCLAW-compatible tools
-    new BrowserTool(workspacePath),
+    // OpenCLAW-compatible tools - BrowserTool disabled (requires Chrome)
+    // Use google_search and web_crawl instead for web access
+    // new BrowserTool(workspacePath),
     new WebSearchTool(
       "brave",
       process.env.BRAVE_API_KEY || process.env.WEB_SEARCH_API_KEY,
@@ -168,6 +174,20 @@ async function bootstrap() {
       watchDebounceMs: config.skills.watchDebounceMs ?? 250,
     });
     console.log(chalk.dim(`  [Loaded ${skillsCount} skills]`));
+  }
+
+  // Load tool permissions from config
+  if (config.tools?.permissions) {
+    toolRegistry.loadPermissions(config.tools.permissions as any);
+  }
+
+  // MCP server connections
+  const mcpManager = new MCPManager();
+  if (config.mcp?.servers?.length) {
+    const mcpCount = await mcpManager.connectAll(config.mcp.servers, toolRegistry);
+    if (mcpCount > 0) {
+      console.log(chalk.dim(`  [MCP: ${mcpCount} tool(s) from ${config.mcp.servers.length} server(s)]`));
+    }
   }
 
   // User Preference Store

@@ -9,6 +9,8 @@ import type {
   ModelProvider,
   ChatMessage,
   ChatResponse,
+  StreamEvent,
+  ToolCall,
 } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -47,6 +49,8 @@ export interface EngineContext {
   skillsContext?: string;
   /** Channel-provided callback to send a file/image to the user. Path must be absolute. */
   sendFile?: (filePath: string, caption?: string) => Promise<void>;
+  /** Skills registry — used by CapabilityNeedAssessor to check coverage before synthesis */
+  skillsRegistry?: import("../skills/registry.js").SkillsRegistry;
   /** Provider registry to fetch fallback providers dynamically for cross-provider routing */
   providerRegistry?: ProviderRegistry;
   /** When true, isolate this task from previous context - ignore session history */
@@ -58,6 +62,12 @@ export interface EngineContext {
    * Injected into the system prompt as a synthesized "what was tried" block.
    */
   attemptLog?: AttemptLog;
+  /**
+   * Fine-grained streaming callback for real-time text + tool events.
+   * When the provider supports chatWithToolsStream(), events are emitted
+   * here as they arrive. Channels use this for edit-in-place streaming.
+   */
+  onStreamEvent?: (event: StreamEvent) => Promise<void>;
 }
 
 export interface PendingCapabilityGap {
@@ -127,27 +137,56 @@ function isFailureResult(result: string): boolean {
  * This classification is injected into the error analysis prompt to help the model decide
  * whether to try again vs escalate immediately.
  */
-function classifyToolError(result: string): 'TRANSIENT' | 'NON-RETRYABLE' {
+function classifyToolError(result: string): "TRANSIENT" | "NON-RETRYABLE" {
   const lower = result.toLowerCase();
   const nonRetryablePatterns = [
-    'permission denied', 'access denied', 'forbidden',
-    'command not found', 'not found: ', 'enoent',
-    'no such file', 'cannot find', 'tool not available',
-    'not installed', 'not supported', 'unsupported',
-    'syntax error', 'invalid argument', 'illegal option',
+    "permission denied",
+    "access denied",
+    "forbidden",
+    "command not found",
+    "not found: ",
+    "enoent",
+    "no such file",
+    "cannot find",
+    "tool not available",
+    "not installed",
+    "not supported",
+    "unsupported",
+    "syntax error",
+    "invalid argument",
+    "illegal option",
   ];
   const transientPatterns = [
-    'timeout', 'timed out', 'econnreset', 'econnrefused',
-    'network', 'rate limit', 'too many requests', '429',
-    'temporarily', 'retry', 'service unavailable', '503',
+    "timeout",
+    "timed out",
+    "econnreset",
+    "econnrefused",
+    "network",
+    "rate limit",
+    "too many requests",
+    "429",
+    "temporarily",
+    "retry",
+    "service unavailable",
+    "503",
   ];
-  if (transientPatterns.some(p => lower.includes(p))) return 'TRANSIENT';
-  if (nonRetryablePatterns.some(p => lower.includes(p))) return 'NON-RETRYABLE';
-  return 'TRANSIENT'; // default: assume worth trying a different approach
+  if (transientPatterns.some((p) => lower.includes(p))) return "TRANSIENT";
+  if (nonRetryablePatterns.some((p) => lower.includes(p)))
+    return "NON-RETRYABLE";
+  return "TRANSIENT"; // default: assume worth trying a different approach
 }
 
 const CONTEXT_WINDOW_THRESHOLD = 20;
 const CONTEXT_COMPRESSION_BATCH = 10;
+
+/** Simple token estimator: ~4 chars per token */
+function estimateTokens(messages: ChatMessage[]): number {
+  let chars = 0;
+  for (const m of messages) {
+    chars += (m.content?.length ?? 0) + 10; // 10 for role/overhead
+  }
+  return Math.ceil(chars / 4);
+}
 
 /**
  * Marker embedded in the response content when the ReAct loop exhausted all
@@ -155,6 +194,74 @@ const CONTEXT_COMPRESSION_BATCH = 10;
  * track stuck tasks across consecutive messages.
  */
 export const EXHAUSTION_MARKER = "__STACKOWL_EXHAUSTED__";
+
+// ─── Streaming Helper ────────────────────────────────────────────
+
+/**
+ * Consume a chatWithToolsStream() generator and accumulate a full ChatResponse
+ * while emitting StreamEvents to the callback in real-time.
+ *
+ * This lets the engine use the same ReAct loop logic regardless of whether
+ * the response was streamed or synchronous.
+ */
+async function consumeStream(
+  stream: AsyncGenerator<StreamEvent>,
+  onEvent?: (event: StreamEvent) => Promise<void>,
+): Promise<ChatResponse> {
+  let content = "";
+  const toolCalls: ToolCall[] = [];
+  const toolCallMap = new Map<
+    string,
+    { id: string; name: string; argsStr: string }
+  >();
+  let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
+  let model = "";
+
+  for await (const event of stream) {
+    // Emit to channel in real-time
+    if (onEvent) {
+      await onEvent(event).catch(() => {});
+    }
+
+    switch (event.type) {
+      case "text_delta":
+        content += event.content;
+        break;
+      case "tool_start":
+        toolCallMap.set(event.toolCallId, {
+          id: event.toolCallId,
+          name: event.toolName,
+          argsStr: "",
+        });
+        break;
+      case "tool_args_delta": {
+        const tc = toolCallMap.get(event.toolCallId);
+        if (tc) tc.argsStr += event.argsDelta;
+        break;
+      }
+      case "tool_end": {
+        toolCalls.push({
+          id: event.toolCallId,
+          name: event.toolName,
+          arguments: event.arguments,
+        });
+        toolCallMap.delete(event.toolCallId);
+        break;
+      }
+      case "done":
+        if (event.usage) usage = event.usage;
+        break;
+    }
+  }
+
+  return {
+    content,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    model,
+    finishReason: toolCalls.length > 0 ? "tool_calls" : "stop",
+    usage,
+  };
+}
 
 // ─── Owl Engine ──────────────────────────────────────────────────
 
@@ -170,7 +277,8 @@ export class OwlEngine {
       context;
     const toolsUsed: string[] = [];
     const gapDetector = new GapDetector();
-    const MAX_TOOL_ITERATIONS = config.engine?.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
+    const MAX_TOOL_ITERATIONS =
+      config.engine?.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
 
     // Track if a missing-tool gap was encountered during the ReAct loop
     let missingToolName: string | undefined;
@@ -200,7 +308,7 @@ export class OwlEngine {
     // Signal new turn to attempt log BEFORE building the prompt so the injected
     // block reflects the correct current turn number.
     context.attemptLog?.newTurn();
-    const attemptLogBlock = context.attemptLog?.toPromptBlock() ?? '';
+    const attemptLogBlock = context.attemptLog?.toPromptBlock() ?? "";
 
     const systemPrompt = await this.buildSystemPrompt(
       owl,
@@ -222,23 +330,35 @@ export class OwlEngine {
       log.engine.info(
         `Task isolated: using only last ${historyToUse.length} messages instead of ${sessionHistory.length}`,
       );
-    } else if (sessionHistory.length > CONTEXT_WINDOW_THRESHOLD) {
-      // Normal compression for long sessions — with a 5s timeout guard.
-      // If the compression LLM call takes too long (e.g. model busy), fall back to
-      // trimming the oldest messages rather than blocking the ReAct loop.
-      const compressionFallback = new Promise<ChatMessage[]>((resolve) =>
-        setTimeout(
-          () => resolve(sessionHistory.slice(-CONTEXT_COMPRESSION_BATCH)),
-          5000,
-        ),
-      );
-      historyToUse = await Promise.race([
-        this.compressHistory(sessionHistory, currentProvider, optimalModel),
-        compressionFallback,
-      ]);
-      log.engine.info(
-        `Context compressed: ${sessionHistory.length} → ${historyToUse.length} messages`,
-      );
+    } else {
+      const maxTokens = config.engine?.maxContextTokens ?? 8000;
+      const keepRecent = config.engine?.contextKeepRecent ?? 10;
+      const estTokens = estimateTokens(sessionHistory);
+      const needsCompression =
+        sessionHistory.length > CONTEXT_WINDOW_THRESHOLD || estTokens > maxTokens;
+
+      if (needsCompression) {
+        // Two-tier: keep last N messages verbatim, compress the rest
+        const recentMessages = sessionHistory.slice(-keepRecent);
+        const olderMessages = sessionHistory.slice(0, -keepRecent);
+
+        if (olderMessages.length > 0) {
+          const compressionFallback = new Promise<ChatMessage[]>((resolve) =>
+            setTimeout(() => resolve(recentMessages), 5000),
+          );
+          historyToUse = await Promise.race([
+            this.compressHistory(olderMessages, currentProvider, optimalModel).then(
+              (compressed) => [...compressed, ...recentMessages],
+            ),
+            compressionFallback,
+          ]);
+        } else {
+          historyToUse = recentMessages;
+        }
+        log.engine.info(
+          `Context compressed: ${sessionHistory.length} msgs (~${estTokens} tokens) → ${historyToUse.length} msgs`,
+        );
+      }
     }
 
     // 4. Check if this is a NEW TASK that should isolate from previous context
@@ -279,7 +399,9 @@ ${userMessage}
         `Do not use a tool just because tools are available.\n` +
         `3. SIGNAL COMPLETION: when your response is the final answer, append [DONE] at the very end. ` +
         `The engine will drop any pending tool calls and return your answer immediately.\n` +
-        `4. CAPABILITY GAP: if you need a tool that doesn't exist, output [CAPABILITY_GAP: <description>].\n` +
+        `4. CAPABILITY GAP: output [CAPABILITY_GAP: <description>] ONLY if the request requires a genuine SYSTEM ACTION ` +
+        `(OS-level, hardware, network call to an external service) that no available tool or shell command can perform. ` +
+        `Do NOT use this for knowledge gaps, analysis, or tasks solvable with run_shell_command.\n` +
         `5. NEVER call the same tool with the same arguments twice — the result is already in your context.`;
     }
 
@@ -313,13 +435,20 @@ ${userMessage}
       const TOOL_WINDOW_SIZE = 10;
       const TOOL_WINDOW_MAX_REPEATS = 3;
 
-      // ReAct loop with tools
+      // ReAct loop with tools — use streaming when available
       log.engine.llmRequest(optimalModel, messages);
-      response = await currentProvider.chatWithTools(
-        messages,
-        tools,
-        optimalModel,
-      );
+      if (currentProvider.chatWithToolsStream && context.onStreamEvent) {
+        response = await consumeStream(
+          currentProvider.chatWithToolsStream(messages, tools, optimalModel),
+          context.onStreamEvent,
+        );
+      } else {
+        response = await currentProvider.chatWithTools(
+          messages,
+          tools,
+          optimalModel,
+        );
+      }
       log.engine.llmResponse(
         optimalModel,
         response.content,
@@ -363,209 +492,295 @@ ${userMessage}
           toolCalls: response.toolCalls,
         });
 
-        // Execute each tool and add results
+        // Execute tools — parallel when multiple independent tools are requested
         let shouldBreakLoop = false;
+
+        // Phase 1: Pre-filter through guards sequentially (cheap, no I/O)
+        type ToolAction =
+          | { kind: "duplicate"; toolCall: ToolCall }
+          | { kind: "loop-detected"; toolCall: ToolCall }
+          | { kind: "missing"; toolCall: ToolCall }
+          | { kind: "no-registry"; toolCall: ToolCall }
+          | { kind: "execute"; toolCall: ToolCall };
+
+        const actions: ToolAction[] = [];
         for (const toolCall of response.toolCalls) {
           log.tool.toolCall(toolCall.name, toolCall.arguments);
-          if (context.onProgress) {
-            const argsStr =
-              Object.keys(toolCall.arguments || {}).length > 0
-                ? JSON.stringify(toolCall.arguments).slice(0, 50) + "..."
-                : "";
-            await context.onProgress(
-              `⚙️ **Running tool:** \`${toolCall.name}\` ${argsStr}`,
-            );
-          }
-
-          let toolResult: string;
-          let isHardFailure = false;
 
           // ── Duplicate tool call guard ──────────────────────────────
-          // If the model calls the exact same tool+args it already called
-          // this session, skip execution entirely. The result is already in
-          // the message context — re-running is pure waste and signals the
-          // model is looping. Inject a direct "use the result above" hint.
           const callFingerprint = `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`;
           if (seenToolCalls.has(callFingerprint)) {
             log.engine.warn(
               `Duplicate tool call skipped: ${toolCall.name} (same args already executed this session)`,
             );
-            messages.push({
-              role: "tool",
-              content:
-                `[SYSTEM: Duplicate call blocked. You already called "${toolCall.name}" with these exact arguments earlier in this session. ` +
-                `The result is already present in your context above — read it and use it to form your final answer. ` +
-                `Do NOT call this tool again with the same arguments.]`,
-              toolCallId: toolCall.id,
-              name: toolCall.name,
-            });
-            context.attemptLog?.record(toolCall.name, toolCall.arguments, 'duplicate-blocked', 'identical call already executed this session');
-            toolFailStreak[toolCall.name] =
-              (toolFailStreak[toolCall.name] ?? 0) + 1;
-            globalConsecutiveFailures++;
+            actions.push({ kind: "duplicate", toolCall });
             continue;
           }
           seenToolCalls.add(callFingerprint);
 
           // ── Sliding-window repetition guard ───────────────────────
-          // Track this tool name in the rolling window.
           recentToolNames.push(toolCall.name);
-          if (recentToolNames.length > TOOL_WINDOW_SIZE) recentToolNames.shift();
-          const repeatCount = recentToolNames.filter(n => n === toolCall.name).length;
+          if (recentToolNames.length > TOOL_WINDOW_SIZE)
+            recentToolNames.shift();
+          const repeatCount = recentToolNames.filter(
+            (n) => n === toolCall.name,
+          ).length;
           if (repeatCount > TOOL_WINDOW_MAX_REPEATS) {
             log.engine.warn(
               `Sliding-window loop detected: "${toolCall.name}" called ${repeatCount}x in last ${recentToolNames.length} calls — forcing stop`,
             );
-            messages.push({
-              role: 'system',
-              content:
-                `[LOOP DETECTOR] You have called "${toolCall.name}" ${repeatCount} times in the last ${recentToolNames.length} tool calls — ` +
-                `this pattern indicates you are stuck in a loop. ` +
-                `STOP calling this tool. Synthesize what you have already observed and write your final answer now. ` +
-                `Do NOT call any more tools. Append [DONE] to your response.`,
-            });
-            shouldBreakLoop = true;
-            loopBrokenEarly = true;
-            break;
+            actions.push({ kind: "loop-detected", toolCall });
+            break; // Stop processing further tool calls
           }
 
           if (toolRegistry && !toolRegistry.has(toolCall.name)) {
-            // Tool doesn't exist — signal gap and let the LLM know gracefully
-            missingToolName = toolCall.name;
-            toolResult = `Tool "${toolCall.name}" is not available in the current toolkit.`;
-            log.tool.warn(
-              `Tool not found: ${toolCall.name} — triggering gap detection`,
-            );
+            actions.push({ kind: "missing", toolCall });
           } else if (toolRegistry) {
-            const toolCtx = {
-              cwd: cwd || process.cwd(),
-              engineContext: context,
-            };
-            try {
-              toolResult = await toolRegistry.execute(
-                toolCall.name,
-                toolCall.arguments,
-                toolCtx,
-              );
-              log.tool.toolResult(toolCall.name, toolResult, true);
-              if (context.onProgress) {
-                await context.onProgress(
-                  `✅ **Tool finished:** \`${toolCall.name}\``,
-                );
-              }
-            } catch (e) {
-              isHardFailure = true;
-              toolResult = `Tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
-              log.tool.toolResult(toolCall.name, toolResult, false);
-              if (context.onProgress) {
-                await context.onProgress(
-                  `❌ **Tool failed:** \`${toolCall.name}\``,
-                );
-              }
-            }
-
-            // Detect soft failures: tool returned without throwing but the result
-            // contains a non-zero EXIT_CODE or a SYSTEM DIAGNOSTIC HINT.
-            // These must be treated the same as hard failures — the LLM must be
-            // forced to read the result and switch strategy, not just retry.
-            const isSoftFailure =
-              !isHardFailure && isFailureResult(toolResult!);
-            const isAnyFailure = isHardFailure || isSoftFailure;
-
-            toolsUsed.push(toolCall.name);
-            if (context.capabilityLedger) {
-              context.capabilityLedger
-                .recordUsage(toolCall.name, !isAnyFailure)
-                .catch(() => {});
-            }
-
-            // On every failure (hard OR soft): force the LLM to reason about what
-            // went wrong before deciding its next action. Without this, local models
-            // read the error and immediately retry the same failing call.
-            if (isAnyFailure) {
-              // Record in cross-turn attempt log so future messages know this failed
-              context.attemptLog?.record(
-                toolCall.name,
-                toolCall.arguments,
-                isHardFailure ? 'hard-fail' : 'soft-fail',
-                toolResult!,
-              );
-
-              toolFailStreak[toolCall.name] =
-                (toolFailStreak[toolCall.name] ?? 0) + 1;
-              const streak = toolFailStreak[toolCall.name];
-
-              // If the result contains a DIAGNOSTIC HINT, force the LLM to act on it
-              const hasHint = toolResult!.includes("[SYSTEM DIAGNOSTIC HINT:");
-              const hintNote = hasHint
-                ? `\n⚠️ THE RESULT ABOVE CONTAINS A [SYSTEM DIAGNOSTIC HINT] — THIS IS CRITICAL. ` +
-                  `Read the hint carefully. It tells you exactly what went wrong and what tool or approach to use instead. ` +
-                  `You MUST follow it. Do not repeat the same action that produced this hint.`
-                : "";
-
-              const errorClass = classifyToolError(toolResult!);
-              const errorClassNote =
-                errorClass === 'NON-RETRYABLE'
-                  ? `\n⛔ ERROR CLASS: [NON-RETRYABLE] — This failure will repeat regardless of how you retry it. ` +
-                    `Do NOT call "${toolCall.name}" again with any variation of these arguments. ` +
-                    `Switch tools or approach entirely, or tell the user it cannot be done in this environment.`
-                  : `\n♻️ ERROR CLASS: [TRANSIENT] — This may be a temporary issue (network, rate-limit). ` +
-                    `Try a different tool or approach rather than retrying the same call immediately.`;
-
-              const analysisPrompt =
-                `[SYSTEM OVERRIDE: ERROR ANALYSIS REQUIRED — failure #${streak}]\n` +
-                `Tool: "${toolCall.name}"\n` +
-                `Result: ${isSoftFailure ? "returned non-zero exit code or diagnostic hint (soft failure)" : "threw an exception (hard failure)"}\n` +
-                errorClassNote + "\n\n" +
-                `You MUST step back and reason through this before your next action:\n` +
-                `1. Read the full tool result above — the error is described there.\n` +
-                `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
-                `3. Do NOT retry the same command with the same arguments.\n` +
-                `4. If the tool requires something unavailable here (e.g. curl in a no-network sandbox), ` +
-                `USE A DIFFERENT TOOL (e.g. web_crawl for URL fetching).\n` +
-                hintNote +
-                "\n\n" +
-                (streak >= MAX_TOOL_FAIL_STREAK
-                  ? `🛑 CRITICAL: This tool has failed ${streak} consecutive times. ` +
-                    `DO NOT call "${toolCall.name}" again under any circumstances. ` +
-                    `Switch to a completely different approach or tool NOW.`
-                  : `Choose a different approach for your next tool call.`);
-
-              log.engine.warn(
-                `Tool "${toolCall.name}" ${isSoftFailure ? "soft-failed" : "hard-failed"} (streak: ${streak}) — injecting self-healing directive`,
-              );
-              messages.push({ role: "system", content: analysisPrompt });
-
-              if (streak >= MAX_TOOL_FAIL_STREAK + 1) {
-                log.engine.warn(
-                  `LLM ignored error analysis ${streak}x for "${toolCall.name}" — breaking ReAct loop`,
-                );
-                shouldBreakLoop = true;
-                loopBrokenEarly = true;
-              }
-
-              globalConsecutiveFailures++;
-            } else {
-              // Genuine success — record and reset streaks
-              context.attemptLog?.record(
-                toolCall.name,
-                toolCall.arguments,
-                'success',
-                toolResult!,
-              );
-              toolFailStreak[toolCall.name] = 0;
-              globalConsecutiveFailures = 0;
-            }
+            actions.push({ kind: "execute", toolCall });
           } else {
-            toolResult = `Error: ToolRegistry not provided, cannot execute ${toolCall.name}`;
+            actions.push({ kind: "no-registry", toolCall });
+          }
+        }
+
+        // Phase 2: Execute eligible tools in parallel
+        const executableActions = actions.filter((a) => a.kind === "execute");
+        const toolCtx = { cwd: cwd || process.cwd(), engineContext: context };
+
+        // Fire all tool executions concurrently
+        const executionResults = new Map<
+          string,
+          { result: string; isHardFailure: boolean }
+        >();
+
+        if (executableActions.length > 0) {
+          if (context.onProgress) {
+            const toolNames = executableActions.map((a) => `\`${a.toolCall.name}\``).join(", ");
+            await context.onProgress(
+              executableActions.length > 1
+                ? `⚙️ **Running ${executableActions.length} tools in parallel:** ${toolNames}`
+                : `⚙️ **Running tool:** ${toolNames}`,
+            );
           }
 
-          messages.push({
-            role: "tool",
-            content: toolResult!,
-            toolCallId: toolCall.id,
-            name: toolCall.name,
+          const promises = executableActions.map(async (action) => {
+            const tc = action.toolCall;
+            try {
+              const result = await toolRegistry!.execute(
+                tc.name,
+                tc.arguments,
+                toolCtx,
+              );
+              return { id: tc.id, result, isHardFailure: false };
+            } catch (e) {
+              return {
+                id: tc.id,
+                result: `Tool execution failed: ${e instanceof Error ? e.message : String(e)}`,
+                isHardFailure: true,
+              };
+            }
           });
+
+          const settled = await Promise.allSettled(promises);
+          for (const s of settled) {
+            if (s.status === "fulfilled") {
+              executionResults.set(s.value.id, {
+                result: s.value.result,
+                isHardFailure: s.value.isHardFailure,
+              });
+            }
+          }
+        }
+
+        // Phase 3: Process results sequentially (maintains message order & error handling)
+        for (const action of actions) {
+          const toolCall = action.toolCall;
+          let toolResult: string;
+
+          switch (action.kind) {
+            case "duplicate": {
+              messages.push({
+                role: "tool",
+                content:
+                  `[SYSTEM: Duplicate call blocked. You already called "${toolCall.name}" with these exact arguments earlier in this session. ` +
+                  `The result is already present in your context above — read it and use it to form your final answer. ` +
+                  `Do NOT call this tool again with the same arguments.]`,
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+              });
+              context.attemptLog?.record(
+                toolCall.name,
+                toolCall.arguments,
+                "duplicate-blocked",
+                "identical call already executed this session",
+              );
+              toolFailStreak[toolCall.name] =
+                (toolFailStreak[toolCall.name] ?? 0) + 1;
+              globalConsecutiveFailures++;
+              continue;
+            }
+
+            case "loop-detected": {
+              messages.push({
+                role: "system",
+                content:
+                  `[LOOP DETECTOR] You have called "${toolCall.name}" too many times in the last ${recentToolNames.length} tool calls — ` +
+                  `this pattern indicates you are stuck in a loop. ` +
+                  `STOP calling this tool. Synthesize what you have already observed and write your final answer now. ` +
+                  `Do NOT call any more tools. Append [DONE] to your response.`,
+              });
+              shouldBreakLoop = true;
+              loopBrokenEarly = true;
+              continue;
+            }
+
+            case "missing": {
+              missingToolName = toolCall.name;
+              toolResult = `Tool "${toolCall.name}" is not available in the current toolkit.`;
+              log.tool.warn(
+                `Tool not found: ${toolCall.name} — triggering gap detection`,
+              );
+              messages.push({
+                role: "tool",
+                content: toolResult,
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+              });
+              continue;
+            }
+
+            case "no-registry": {
+              messages.push({
+                role: "tool",
+                content: `Error: ToolRegistry not provided, cannot execute ${toolCall.name}`,
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+              });
+              continue;
+            }
+
+            case "execute": {
+              const execResult = executionResults.get(toolCall.id);
+              if (!execResult) continue;
+
+              toolResult = execResult.result;
+              const isHardFailure = execResult.isHardFailure;
+
+              if (isHardFailure) {
+                log.tool.toolResult(toolCall.name, toolResult, false);
+                if (context.onProgress) {
+                  await context.onProgress(
+                    `❌ **Tool failed:** \`${toolCall.name}\``,
+                  );
+                }
+              } else {
+                log.tool.toolResult(toolCall.name, toolResult, true);
+                if (context.onProgress) {
+                  await context.onProgress(
+                    `✅ **Tool finished:** \`${toolCall.name}\``,
+                  );
+                }
+              }
+
+              const isSoftFailure =
+                !isHardFailure && isFailureResult(toolResult);
+              const isAnyFailure = isHardFailure || isSoftFailure;
+
+              toolsUsed.push(toolCall.name);
+              if (context.capabilityLedger) {
+                context.capabilityLedger
+                  .recordUsage(toolCall.name, !isAnyFailure)
+                  .catch(() => {});
+              }
+
+              if (isAnyFailure) {
+                context.attemptLog?.record(
+                  toolCall.name,
+                  toolCall.arguments,
+                  isHardFailure ? "hard-fail" : "soft-fail",
+                  toolResult,
+                );
+
+                toolFailStreak[toolCall.name] =
+                  (toolFailStreak[toolCall.name] ?? 0) + 1;
+                const streak = toolFailStreak[toolCall.name];
+
+                const hasHint = toolResult.includes("[SYSTEM DIAGNOSTIC HINT:");
+                const hintNote = hasHint
+                  ? `\n⚠️ THE RESULT ABOVE CONTAINS A [SYSTEM DIAGNOSTIC HINT] — THIS IS CRITICAL. ` +
+                    `Read the hint carefully. It tells you exactly what went wrong and what tool or approach to use instead. ` +
+                    `You MUST follow it. Do not repeat the same action that produced this hint.`
+                  : "";
+
+                const errorClass = classifyToolError(toolResult);
+                const errorClassNote =
+                  errorClass === "NON-RETRYABLE"
+                    ? `\n⛔ ERROR CLASS: [NON-RETRYABLE] — This failure will repeat regardless of how you retry it. ` +
+                      `Do NOT call "${toolCall.name}" again with any variation of these arguments. ` +
+                      `Switch tools or approach entirely, or tell the user it cannot be done in this environment.`
+                    : `\n♻️ ERROR CLASS: [TRANSIENT] — This may be a temporary issue (network, rate-limit). ` +
+                      `Try a different tool or approach rather than retrying the same call immediately.`;
+
+                const analysisPrompt =
+                  `[SYSTEM OVERRIDE: ERROR ANALYSIS REQUIRED — failure #${streak}]\n` +
+                  `Tool: "${toolCall.name}"\n` +
+                  `Result: ${isSoftFailure ? "returned non-zero exit code or diagnostic hint (soft failure)" : "threw an exception (hard failure)"}\n` +
+                  errorClassNote +
+                  "\n\n" +
+                  `You MUST step back and reason through this before your next action:\n` +
+                  `1. Read the full tool result above — the error is described there.\n` +
+                  `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
+                  `3. Do NOT retry the same command with the same arguments.\n` +
+                  `4. If the tool requires something unavailable here (e.g. curl in a no-network sandbox), ` +
+                  `USE A DIFFERENT TOOL (e.g. google_search for web search, web_crawl for URL fetching).\n` +
+                  hintNote +
+                  "\n\n" +
+                  (streak >= MAX_TOOL_FAIL_STREAK
+                    ? `🛑 CRITICAL: This tool has failed ${streak} consecutive times. ` +
+                      `DO NOT call "${toolCall.name}" again under any circumstances. ` +
+                      `Switch to a completely different approach or tool NOW.`
+                    : `Choose a different approach for your next tool call.`);
+
+                log.engine.warn(
+                  `Tool "${toolCall.name}" ${isSoftFailure ? "soft-failed" : "hard-failed"} (streak: ${streak}) — injecting self-healing directive`,
+                );
+
+                messages.push({
+                  role: "tool",
+                  content: toolResult,
+                  toolCallId: toolCall.id,
+                  name: toolCall.name,
+                });
+                messages.push({ role: "system", content: analysisPrompt });
+
+                if (streak >= MAX_TOOL_FAIL_STREAK + 1) {
+                  log.engine.warn(
+                    `LLM ignored error analysis ${streak}x for "${toolCall.name}" — breaking ReAct loop`,
+                  );
+                  shouldBreakLoop = true;
+                  loopBrokenEarly = true;
+                }
+
+                globalConsecutiveFailures++;
+              } else {
+                context.attemptLog?.record(
+                  toolCall.name,
+                  toolCall.arguments,
+                  "success",
+                  toolResult,
+                );
+                toolFailStreak[toolCall.name] = 0;
+                globalConsecutiveFailures = 0;
+
+                messages.push({
+                  role: "tool",
+                  content: toolResult,
+                  toolCallId: toolCall.id,
+                  name: toolCall.name,
+                });
+              }
+              continue;
+            }
+          }
         }
 
         if (shouldBreakLoop) break;
@@ -612,19 +827,63 @@ ${userMessage}
           }
         }
 
-        // Continue the loop
+        // Continue the loop — use streaming when available
         log.engine.llmRequest(optimalModel, messages);
-        response = await currentProvider.chatWithTools(
-          messages,
-          tools,
-          optimalModel,
-        );
+        if (currentProvider.chatWithToolsStream && context.onStreamEvent) {
+          response = await consumeStream(
+            currentProvider.chatWithToolsStream(messages, tools, optimalModel),
+            context.onStreamEvent,
+          );
+        } else {
+          response = await currentProvider.chatWithTools(
+            messages,
+            tools,
+            optimalModel,
+          );
+        }
         log.engine.llmResponse(
           optimalModel,
           response.content,
           response.toolCalls,
           response.usage,
         );
+      }
+
+      // ── Empty content recovery ──────────────────────────────────────
+      // Some models (especially local ones) return empty content after tool
+      // execution — the model "finished" but forgot to write a final answer.
+      // If the loop ended normally (not exhausted) but content is empty,
+      // nudge the model to synthesize its answer.
+      if (
+        !loopBrokenEarly &&
+        iterations > 0 &&
+        iterations < MAX_TOOL_ITERATIONS &&
+        !(response.content ?? "").trim()
+      ) {
+        log.engine.warn(
+          `Model returned empty content after ${iterations} tool iteration(s) — requesting synthesis`,
+        );
+        messages.push({
+          role: "system",
+          content:
+            `You have completed the tool calls. Now write your final response to the user. ` +
+            `Summarize what you did and the results. Do NOT call any more tools. Append [DONE] at the end.`,
+        });
+        try {
+          const synthResponse = await currentProvider.chat(
+            messages,
+            optimalModel,
+          );
+          const synthContent = (synthResponse.content ?? "").trim();
+          if (synthContent) {
+            response = {
+              ...synthResponse,
+              content: stripDoneSignal(synthContent),
+            };
+          }
+        } catch {
+          // Ignore — fall through to exhaustion check
+        }
       }
 
       // ── Exhaustion check ──────────────────────────────────────────
@@ -661,28 +920,32 @@ ${userMessage}
         };
 
         messages.push(exhaustionPrompt);
+        const fallbackContent =
+          `I've tried ${iterations} different approaches and hit a wall each time.\n\n` +
+          `**What I attempted:** ${toolSummary}\n\n` +
+          `**Your options:**\n` +
+          `a) Give me more details or a different angle to try\n` +
+          `b) We try a completely different strategy — tell me what matters most\n` +
+          `c) This task may not be possible in this environment\n\n` +
+          `Which would you like?\n${EXHAUSTION_MARKER}`;
         try {
           const exhaustionResponse = await currentProvider.chat(
             messages,
             optimalModel,
           );
+          const content = (exhaustionResponse.content ?? "").trim();
           // Tag the content so the gateway can track this as a stuck response
           response = {
             ...exhaustionResponse,
-            content: exhaustionResponse.content + `\n${EXHAUSTION_MARKER}`,
+            content: content
+              ? content + `\n${EXHAUSTION_MARKER}`
+              : fallbackContent,
           };
         } catch {
           // If even this fails, surface a hard-coded fallback
           response = {
             ...response,
-            content:
-              `I've tried ${iterations} different approaches and hit a wall each time.\n\n` +
-              `**What I attempted:** ${toolSummary}\n\n` +
-              `**Your options:**\n` +
-              `a) Give me more details or a different angle to try\n` +
-              `b) We try a completely different strategy — tell me what matters most\n` +
-              `c) This task may not be possible in this environment\n\n` +
-              `Which would you like?\n${EXHAUSTION_MARKER}`,
+            content: fallbackContent,
           };
         }
       }
@@ -992,7 +1255,8 @@ ${userMessage}
         // Group tools by category for better understanding
         const toolGuides: Record<string, string[]> = {
           "Web & Browser": [
-            "web_fetch - Get content from a URL",
+            "google_search - Search the web for current information",
+            "web_crawl - Get content from a URL",
             "web_search - Search the web",
             "browser - Full browser automation",
           ],
@@ -1030,13 +1294,16 @@ ${userMessage}
           "- Don't repeat the same tool call with same arguments\n" +
           "- When done, append [DONE] to return immediately\n";
 
-        // Emphasize self-improvement capability
+        // Self-improvement — strict criteria to prevent over-synthesis
         prompt +=
-          "\n**Self-Improvement (Your Superpower):**\n" +
-          "- If you need a tool that doesn't exist → output [CAPABILITY_GAP: what you need]\n" +
-          "- The system will automatically BUILD that tool for you\n" +
-          "- You can then use your new tool to complete the task\n" +
-          '- This makes you infinitely extensible — you never have to say "I can\'t"\n';
+          "\n**Self-Improvement (last resort only):**\n" +
+          "- ONLY emit [CAPABILITY_GAP: what you need] if ALL of these are true:\n" +
+          "  1. The request requires a SYSTEM ACTION (file I/O, network, OS control, hardware)\n" +
+          "  2. None of the available tools can accomplish it even with shell commands\n" +
+          "  3. You already attempted to solve it with existing tools and failed\n" +
+          "- DO NOT emit [CAPABILITY_GAP: ...] for: facts, explanations, summaries, analysis,\n" +
+          "  conversational replies, tasks solvable with run_shell_command, or tasks where\n" +
+          "  you simply lack knowledge (use google_search or web_crawl instead).\n";
       }
     }
 
@@ -1050,5 +1317,135 @@ ${userMessage}
     prompt += `\nApply challenge mode (${dna.evolvedTraits.challengeLevel}) and verbosity (${dna.evolvedTraits.verbosity}) at all times.\n`;
 
     return prompt;
+  }
+
+  /**
+   * Plan-then-execute mode for complex multi-step tasks.
+   * Decomposes the task into steps, executes each with its own ReAct loop,
+   * and aggregates results into a final response.
+   */
+  async runWithPlan(
+    userMessage: string,
+    context: EngineContext,
+  ): Promise<EngineResponse> {
+    const { TaskPlanner } = await import("./planner.js");
+    const planner = new TaskPlanner(context.provider);
+
+    const tools = context.toolRegistry?.getDefinitions() ?? [];
+    const plan = await planner.createPlan(userMessage, tools, undefined);
+
+    log.engine.info(
+      `[Planner] Created plan: "${plan.goal}" (${plan.steps.length} steps, complexity: ${plan.estimatedComplexity})`,
+    );
+
+    if (context.onProgress) {
+      await context.onProgress(
+        `📋 **Plan created** (${plan.steps.length} steps): ${plan.goal}`,
+      );
+    }
+
+    // If planner thinks it's simple or only 1 step, just run normally
+    if (plan.steps.length <= 1) {
+      return this.run(userMessage, context);
+    }
+
+    const allToolsUsed: string[] = [];
+    const allNewMessages: ChatMessage[] = [];
+    let lastResponse: EngineResponse | undefined;
+
+    for (const step of plan.steps) {
+      // Check dependencies are complete
+      const depsComplete = step.dependsOn.every(
+        (depId) => plan.steps.find((s) => s.id === depId)?.status === "done",
+      );
+      if (!depsComplete) {
+        step.status = "failed";
+        step.result = "Dependencies not met";
+        continue;
+      }
+
+      step.status = "running";
+      if (context.onProgress) {
+        await context.onProgress(
+          `⏳ **Step ${step.id}/${plan.steps.length}:** ${step.description}`,
+        );
+      }
+
+      // Build step-specific context with plan overview
+      const planContext = planner.formatPlanContext(plan);
+      const stepMessage =
+        `[TASK PLAN — Step ${step.id}/${plan.steps.length}]\n` +
+        `${planContext}\n\n` +
+        `CURRENT STEP: ${step.description}\n` +
+        `Focus ONLY on completing this step. When done, provide the result.`;
+
+      try {
+        const stepContext: EngineContext = {
+          ...context,
+          sessionHistory: [
+            { role: "system", content: stepMessage },
+            ...allNewMessages.slice(-6), // Keep recent context from prior steps
+          ],
+          skipGapDetection: true,
+          isolatedTask: true,
+        };
+
+        const stepResponse = await this.run(step.description, stepContext);
+        step.status = "done";
+        step.result = stepResponse.content.slice(0, 500);
+
+        allToolsUsed.push(...stepResponse.toolsUsed);
+        allNewMessages.push(...stepResponse.newMessages);
+        lastResponse = stepResponse;
+
+        if (context.onProgress) {
+          await context.onProgress(`✅ **Step ${step.id} complete**`);
+        }
+      } catch (err) {
+        step.status = "failed";
+        step.result = err instanceof Error ? err.message : String(err);
+        log.engine.warn(`[Planner] Step ${step.id} failed: ${step.result}`);
+      }
+    }
+
+    // Final synthesis: combine all step results into a cohesive response
+    const completedSteps = plan.steps.filter((s) => s.status === "done");
+    if (completedSteps.length === 0 && lastResponse) {
+      return lastResponse;
+    }
+
+    const summaryPrompt =
+      `You executed a multi-step plan for the user. Here are the results:\n\n` +
+      `Original request: ${userMessage}\n\n` +
+      plan.steps
+        .map(
+          (s) =>
+            `Step ${s.id} (${s.status}): ${s.description}\n  Result: ${s.result ?? "n/a"}`,
+        )
+        .join("\n\n") +
+      `\n\nProvide a clear, cohesive summary of what was accomplished. If any steps failed, mention what couldn't be completed.`;
+
+    const synthResponse = await context.provider.chat(
+      [
+        { role: "system", content: "Synthesize multi-step task results concisely." },
+        { role: "user", content: summaryPrompt },
+      ],
+    );
+
+    return {
+      content: synthResponse.content,
+      owlName: context.owl.persona.name,
+      owlEmoji: context.owl.persona.emoji,
+      challenged: false,
+      toolsUsed: [...new Set(allToolsUsed)],
+      modelUsed: synthResponse.model ?? "unknown",
+      newMessages: allNewMessages,
+      usage: synthResponse.usage
+        ? {
+            promptTokens: synthResponse.usage.promptTokens,
+            completionTokens: synthResponse.usage.completionTokens,
+          }
+        : undefined,
+    };
   }
 }

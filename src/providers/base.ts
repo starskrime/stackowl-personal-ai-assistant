@@ -53,6 +53,15 @@ export interface StreamChunk {
     done: boolean;
 }
 
+// ─── Streaming Events (for streaming tool calls) ────────────────
+
+export type StreamEvent =
+    | { type: 'text_delta'; content: string }
+    | { type: 'tool_start'; toolCallId: string; toolName: string }
+    | { type: 'tool_args_delta'; toolCallId: string; argsDelta: string }
+    | { type: 'tool_end'; toolCallId: string; toolName: string; arguments: Record<string, unknown> }
+    | { type: 'done'; usage?: TokenUsage };
+
 export interface TokenUsage {
     promptTokens: number;
     completionTokens: number;
@@ -111,6 +120,18 @@ export interface ModelProvider {
         model?: string,
         options?: ChatOptions
     ): AsyncGenerator<StreamChunk>;
+
+    /**
+     * Stream a chat completion with tools, yielding fine-grained events.
+     * Optional — providers that support it enable real-time streaming to channels.
+     * Falls back to synchronous chatWithTools() when not implemented.
+     */
+    chatWithToolsStream?(
+        messages: ChatMessage[],
+        tools: ToolDefinition[],
+        model?: string,
+        options?: ChatOptions
+    ): AsyncGenerator<StreamEvent>;
 
     /**
      * Generate an embedding vector for the given text.

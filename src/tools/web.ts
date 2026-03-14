@@ -1,103 +1,121 @@
 /**
- * StackOwl — Web Crawl Tool (Crawlee-powered)
+ * StackOwl — Web Crawl Tool (Simple HTTP Fetch)
  *
- * Fetches and cleans text from any URL using Crawlee's CheerioCrawler.
- * Uses got-scraping under the hood for real browser-like headers + redirect handling.
+ * Fetches and cleans text from any URL using native Node.js fetch.
+ * Simple and fast - no browser needed.
  */
 
-import type { ToolImplementation, ToolContext } from './registry.js';
-import puppeteer from 'puppeteer';
+import type { ToolImplementation, ToolContext } from "./registry.js";
 
 export const WebCrawlTool: ToolImplementation = {
-    definition: {
-        name: 'web_crawl',
-        description: 'Fetch and read the spatial/semantic content of any webpage. Uses a headless browser to extract the Accessibility Tree, showing you exact buttons, links, and inputs.',
-        parameters: {
-            type: 'object',
-            properties: {
-                url: {
-                    type: 'string',
-                    description: 'Full URL to fetch (e.g. https://example.com/article)',
-                }
-            },
-            required: ['url'],
+  definition: {
+    name: "web_crawl",
+    description:
+      "Fetch and read the content of any webpage. Returns the page title and text content. Use this to get information from any URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Full URL to fetch (e.g. https://example.com/article)",
         },
+      },
+      required: ["url"],
     },
+  },
 
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
-        const url = args['url'] as string;
-        if (!url?.startsWith('http')) throw new Error('A valid http/https URL is required');
+  async execute(
+    args: Record<string, unknown>,
+    _context: ToolContext,
+  ): Promise<string> {
+    let url = args["url"] as string;
+    if (!url) throw new Error("URL is required");
 
-        let browser;
-        try {
-            browser = await puppeteer.launch({
-                headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox']
-            });
-            const page = await browser.newPage();
+    // Validate URL
+    try {
+      const parsedUrl = new URL(url);
+      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+        throw new Error("Only http:// and https:// URLs are supported");
+      }
+      url = parsedUrl.toString();
+    } catch (e) {
+      throw new Error(`Invalid URL: ${url}`);
+    }
 
-            // Set a realistic viewport and user agent
-            await page.setViewport({ width: 1280, height: 800 });
-            await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-            // Wait for network idle to ensure SPAs/React apps finish rendering
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+        },
+      });
 
-            // Extract the Accessibility Tree
-            const snapshot = await page.accessibility.snapshot();
+      clearTimeout(timeoutId);
 
-            if (!snapshot) {
-                return `Failed to extract accessibility tree from ${url}. Page might be completely empty or inaccessible.`;
-            }
+      if (!response.ok) {
+        return `Failed to fetch ${url}: HTTP ${response.status} ${response.statusText}`;
+      }
 
-            const pageTitle = await page.title();
+      const contentType = response.headers.get("content-type") || "";
 
-            // Helper to recursively format the AXTree into a readable string
-            function formatNode(node: any, depth: number = 0): string {
-                let result = '';
-                const indent = '  '.repeat(depth);
+      // Check if it's HTML
+      if (!contentType.includes("text/html")) {
+        return `Content type is ${contentType}, but only HTML pages are supported. URL: ${url}`;
+      }
 
-                // Only include nodes that are semantically meaningful or have text
-                const isMeaningful = node.role !== 'generic' && node.role !== 'RootWebArea';
-                const hasText = node.name && node.name.trim() !== '';
+      const html = await response.text();
 
-                if (isMeaningful || hasText) {
-                    const role = node.role ? `[${node.role}]` : '';
-                    const name = node.name ? ` ${node.name}` : '';
-                    const val = node.value ? ` (Value: ${node.value})` : '';
-                    const state = node.checked !== undefined ? ` (Checked: ${node.checked})` : '';
-                    const disabled = node.disabled ? ` (DISABLED)` : '';
+      // Extract title
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].trim() : "Untitled";
 
-                    if (role || name) {
-                        result += `${indent}${role}${name}${val}${state}${disabled}\n`;
-                    }
-                }
+      // Simple HTML to text conversion
+      let text = html
+        // Remove script and style tags with their content
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        // Remove HTML comments
+        .replace(/<!--[\s\S]*?-->/g, "")
+        // Replace block elements with newlines
+        .replace(/<\/(p|div|h[1-6]|li|tr|br)>/gi, "\n")
+        .replace(/<br\s*\/?>/gi, "\n")
+        // Remove all remaining HTML tags
+        .replace(/<[^>]+>/g, "")
+        // Decode HTML entities
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        // Clean up whitespace
+        .replace(/[\r\n]+/g, "\n")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n[ \t]+/g, "\n")
+        .trim();
 
-                // Increase depth for children only if this node was meaningful
-                const nextDepth = (isMeaningful || hasText) ? depth + 1 : depth;
+      // Limit text length
+      const MAX_TEXT = 25000;
+      if (text.length > MAX_TEXT) {
+        text = text.slice(0, MAX_TEXT) + "\n\n... [truncated]";
+      }
 
-                if (node.children) {
-                    for (const child of node.children) {
-                        result += formatNode(child, nextDepth);
-                    }
-                }
-
-                return result;
-            }
-
-            const treeString = formatNode(snapshot);
-
-            const MAX = 20000; // AX Trees are token efficient, we can allow more text
-            const truncated = treeString.length > MAX
-                ? treeString.slice(0, MAX) + `\n\n... [truncated — ${treeString.length - MAX} chars omitted]`
-                : treeString;
-
-            return `### ${pageTitle || url}\n\n${truncated}`;
-
-        } catch (err) {
-            throw new Error(`Browser fetch failed: ${err instanceof Error ? err.message : String(err)}`);
-        } finally {
-            if (browser) await browser.close();
+      return `### ${title}\n\n${url}\n\n${text}`;
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.name === "AbortError") {
+          return `Timeout: The request to ${url} took too long (30s)`;
         }
-    },
+        return `Error fetching ${url}: ${error.message}`;
+      }
+      return `Error fetching ${url}: Unknown error`;
+    }
+  },
 };

@@ -107,7 +107,7 @@ Use this when you need current information, facts, or web resources.`,
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
 
-      // If API fails, suggest using browser tool instead
+      // If API fails, suggest using google_search tool instead
       if (
         msg.includes("422") ||
         msg.includes("401") ||
@@ -115,9 +115,8 @@ Use this when you need current information, facts, or web resources.`,
       ) {
         return (
           `ERROR: Search API not available (${msg}).\n\n` +
-          `Use the 'browser' tool instead for web search:\n` +
-          `1. browser action="navigate" url="https://duckduckgo.com/?q=${encodeURIComponent(query)}"\n` +
-          `2. browser action="snapshot" to get results`
+          `Use the 'google_search' tool instead for web search:\n` +
+          `google_search query="${query}"`
         );
       }
 
@@ -186,11 +185,13 @@ Use this when you need current information, facts, or web resources.`,
     query: string,
     count: number,
   ): Promise<SearchResult[]> {
-    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&b=${count}`;
 
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; StackOwl/1.0)",
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html",
       },
     });
 
@@ -199,34 +200,38 @@ Use this when you need current information, facts, or web resources.`,
     }
 
     const html = await response.text();
-
-    // Simple HTML parsing to extract results
     const results: SearchResult[] = [];
-    const regex =
-      /<a class="result__a" href="([^"]+)"[^>]*>([^<]+)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+
+    // Parse results from HTML - same regex as working search.ts
+    const resultRegex =
+      /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
 
     let match;
-    let i = 0;
-    while ((match = regex.exec(html)) !== null && i < count) {
-      results.push({
-        title: match[2].trim(),
-        url: match[1],
-        snippet: match[3].replace(/<[^>]+>/g, "").trim(),
-      });
-      i++;
-    }
+    while (
+      (match = resultRegex.exec(html)) !== null &&
+      results.length < count
+    ) {
+      let url = match[1];
 
-    // Fallback: simpler regex if above doesn't work
-    if (results.length === 0) {
-      const simpleRegex =
-        /<a class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g;
-      while ((match = simpleRegex.exec(html)) !== null && i < count) {
+      // Decode DuckDuckGo redirect URL
+      if (url.includes("uddg=")) {
+        const uddgMatch = url.match(/uddg=([^&]+)/);
+        if (uddgMatch) {
+          url = decodeURIComponent(uddgMatch[1]);
+        }
+      } else if (url.startsWith("//")) {
+        url = "https:" + url;
+      }
+
+      const title = match[2].replace(/<[^>]+>/g, "").trim();
+      const snippet = match[3].replace(/<[^>]+>/g, "").trim();
+
+      if (title && url && url.startsWith("http")) {
         results.push({
-          title: match[2].trim(),
-          url: match[1],
-          snippet: "",
+          title,
+          url,
+          snippet: snippet || "",
         });
-        i++;
       }
     }
 

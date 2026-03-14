@@ -10,6 +10,13 @@ import type { ToolImplementation, ToolContext } from "../../tools/registry.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+// Use installed Chrome if available (fixes arm64 Node on Mac Silicon issue)
+const chromePath =
+  "/Users/bakirtalibov/.cache/puppeteer/chrome/mac-146.0.7680.31/chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
+if (existsSync(chromePath)) {
+  process.env.PUPPETEER_EXECUTABLE_PATH = chromePath;
+}
+
 interface BrowserProfile {
   id: string;
   browser: Browser;
@@ -151,6 +158,7 @@ Examples:
 
     const browser = await puppeteer.launch({
       headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
       args: [
         `--remote-debugging-port=${port}`,
         "--no-sandbox",
@@ -187,6 +195,16 @@ Examples:
   }
 
   private async handleNavigate(profile: string, url: string): Promise<string> {
+    // Validate and sanitize URL
+    try {
+      const parsedUrl = new URL(url);
+      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+        return `ERROR: Invalid protocol. Use http:// or https://`;
+      }
+      url = parsedUrl.toString();
+    } catch {
+      return `ERROR: Invalid URL format: ${url}`;
+    }
     const p = this.profiles.get(profile);
     if (!p) {
       return JSON.stringify({

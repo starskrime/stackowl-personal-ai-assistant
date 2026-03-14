@@ -43,6 +43,12 @@ export interface GatewayCallbacks {
   onFile?: (filePath: string, caption?: string) => Promise<void>;
   /** Called when tool synthesis needs npm deps — adapter decides how to prompt user */
   askInstall?: (deps: string[]) => Promise<boolean>;
+  /**
+   * Called with fine-grained streaming events during model generation.
+   * Enables real-time text streaming and live tool status in channels.
+   * If not provided, the engine falls back to onProgress for status updates.
+   */
+  onStreamEvent?: (event: StreamEvent) => Promise<void>;
 }
 
 // ─── Outgoing ────────────────────────────────────────────────────
@@ -100,7 +106,7 @@ export interface ChannelAdapter {
  * All dependencies the OwlGateway needs.
  * Passed once at construction time.
  */
-import type { ModelProvider } from "../providers/base.js";
+import type { ModelProvider, StreamEvent } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { ToolRegistry } from "../tools/registry.js";

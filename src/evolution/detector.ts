@@ -22,14 +22,26 @@ export interface CapabilityGap {
 const STRUCTURED_MARKER = /\[CAPABILITY_GAP:\s*([^\]]+)\]/i;
 
 // Cheap Unicode-aware pre-filter — avoids running the classifier on every message.
-// Catches ASCII and curly-quote variants. Only needs one of these to be present.
+// Intentionally narrow: only phrases that signal a TECHNICAL capability limit, not
+// emotional language ("I'm sorry") or knowledge gaps ("I don't have data on X").
+// False positives here trigger an expensive LLM classifier call and potentially
+// unnecessary skill synthesis — keep this list tight.
 const REFUSAL_SIGNALS = [
-    "can't", "cannot", "can\u2019t",       // can't / can't
-    "unable to",
-    "don't have", "don\u2019t have",        // don't have / don't have
-    "i lack", "i\u2019m sorry", "i'm sorry",
-    "not able to", "not equipped",
-    "beyond my", "outside my",
+    "i cannot perform",
+    "i am unable to perform",
+    "unable to execute",
+    "unable to access",
+    "unable to control",
+    "unable to connect",
+    "i lack the ability",
+    "not equipped to",
+    "no tool available",
+    "no capability to",
+    "beyond my capabilities",
+    "outside my current capabilities",
+    "don\u2019t have access to",    // don't have access to (curly quote)
+    "don't have access to",         // don't have access to (straight quote)
+    "do not have access to",
 ];
 
 export class GapDetector {
