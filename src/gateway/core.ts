@@ -22,6 +22,7 @@ import { shouldUsePlanner } from "../engine/planner.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
+import { SkillTracker } from "../skills/tracker.js";
 import { log } from "../logger.js";
 import { MemoryConsolidator } from "../memory/consolidator.js";
 import { PreferenceDetector } from "../preferences/detector.js";
@@ -116,12 +117,22 @@ export class OwlGateway {
     // Initialize skill injector if skills are enabled
     if (ctx.skillsLoader) {
       const registry = ctx.skillsLoader.getRegistry();
-      this.skillInjector = new SkillContextInjector(registry, {
-        maxSkills: 3,
-        autoSearchClawHub: true,
-        clawHubTargetDir:
-          ctx.config.skills?.directories?.[0] || "./workspace/skills",
-      });
+
+      // Initialize skill tracker for usage analytics
+      const skillTracker = new SkillTracker(ctx.cwd ?? process.cwd());
+      skillTracker.load().catch(() => {}); // Non-blocking load
+
+      this.skillInjector = new SkillContextInjector(
+        registry,
+        {
+          maxSkills: 3,
+          autoSearchClawHub: true,
+          clawHubTargetDir:
+            ctx.config.skills?.directories?.[0] || "./workspace/skills",
+        },
+        ctx.provider, // Pass provider for semantic routing + LLM disambiguation
+        skillTracker,
+      );
 
       // Optionally enable ClawHub search
       if (process.env.CLAWHUB_API_URL) {
@@ -133,7 +144,7 @@ export class OwlGateway {
       }
 
       log.engine.info(
-        `Skill injector initialized with ${registry.listEnabled().length} skills`,
+        `Skill injector initialized with ${registry.listEnabled().length} skills (BM25 + usage tracking)`,
       );
     }
   }
@@ -369,15 +380,13 @@ export class OwlGateway {
 
     log.engine.incoming(message.channelId, message.text);
 
-    // Dynamic skill injection - find relevant skills for this message
+    // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
     let dynamicSkillsContext = "";
     if (this.skillInjector) {
-      const relevantSkills = this.skillInjector.getRelevantSkills(text);
+      const relevantSkills = await this.skillInjector.getRelevantSkills(text);
       if (relevantSkills.length > 0) {
-        dynamicSkillsContext = "\n## Relevant Skills for This Request\n";
-        for (const skill of relevantSkills) {
-          dynamicSkillsContext += `\n<skill name="${skill.name}">\n${skill.instructions}\n</skill>\n`;
-        }
+        // Use the injector's composition-aware formatter
+        dynamicSkillsContext = await this.skillInjector.injectIntoContext(text);
         log.engine.info(
           `Dynamic skill injection: ${relevantSkills.map((s) => s.name).join(", ")}`,
         );
@@ -966,6 +975,8 @@ export class OwlGateway {
       memoryContext: this.ctx.memoryContext,
       preferencesContext: preferencesContext || undefined,
       skillsContext: finalSkillsContext || undefined,
+      skillsRegistry: this.ctx.skillsLoader?.getRegistry(),
+      skillTracker: this.skillInjector?.getTracker(),
       isolatedTask: isolatedTask,
       attemptLog,
       onProgress: callbacks.onProgress,

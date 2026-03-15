@@ -118,6 +118,63 @@ check_prerequisites() {
     log_error "Create it manually or copy from stackowl.config.example.json"
     exit 1
   fi
+
+  # ── Python & Scrapling (anti-bot web scraping) ──
+  install_scrapling
+}
+
+install_scrapling() {
+  if ! command -v python3 &> /dev/null; then
+    log_warn "Python 3 not found — scrapling_fetch tool will be unavailable."
+    log_dim  "Install Python 3.8+ to enable anti-bot web scraping."
+    return
+  fi
+
+  # Check if scrapling is already installed
+  if python3 -c "import scrapling" 2>/dev/null; then
+    log_info "Scrapling already installed"
+  else
+    log_step "Installing Scrapling (anti-bot web scraping)..."
+    pip install "scrapling[all]" 2>&1 | tail -3
+    if python3 -c "import scrapling" 2>/dev/null; then
+      log_info "Scrapling installed successfully"
+    else
+      log_warn "Scrapling installation failed — scrapling_fetch tool will be unavailable."
+      log_dim  "Try manually: pip install scrapling[all]"
+      return
+    fi
+  fi
+
+  # Check for missing dependencies that scrapling needs
+  local MISSING_DEPS=""
+
+  python3 -c "import curl_cffi" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS curl_cffi"
+  python3 -c "import browserforge" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS browserforge"
+  python3 -c "import playwright" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS playwright"
+  python3 -c "import patchright" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS patchright"
+  python3 -c "import msgspec" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS msgspec"
+
+  if [ -n "$MISSING_DEPS" ]; then
+    log_step "Installing Scrapling dependencies:$MISSING_DEPS"
+    pip install $MISSING_DEPS 2>&1 | tail -3
+  fi
+
+  # Install browser binaries for stealth/dynamic modes
+  if ! python3 -c "
+import patchright
+from pathlib import Path
+import os
+cache = Path.home() / 'Library' / 'Caches' / 'ms-playwright'
+if not cache.exists():
+    cache = Path.home() / '.cache' / 'ms-playwright'
+has_chromium = any('chromium' in str(p) for p in cache.iterdir()) if cache.exists() else False
+exit(0 if has_chromium else 1)
+" 2>/dev/null; then
+    log_step "Installing browser for Scrapling stealth mode..."
+    python3 -m patchright install chromium 2>&1 | tail -3
+  fi
+
+  log_info "Scrapling ready (basic + stealth + dynamic modes)"
 }
 
 # ─── Launch Mode Selection ───────────────────────────────────────

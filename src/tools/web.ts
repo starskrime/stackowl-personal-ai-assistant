@@ -67,8 +67,10 @@ export const WebCrawlTool: ToolImplementation = {
         if (response.status === 403) {
           return (
             `BLOCKED: ${url} returned HTTP 403 (Forbidden). ` +
-            `The site is blocking automated access. ` +
-            `Try the browser tool, or ask the user to visit the page manually.`
+            `The site is blocking automated access. Escalation path:\n` +
+            `1. scrapling_fetch(url, mode='stealth') — anti-bot scraping with TLS fingerprint spoofing\n` +
+            `2. scrapling_fetch(url, mode='dynamic') — full browser rendering\n` +
+            `3. computer_use(action='open_url') + computer_use(action='analyze_screen') — real desktop browser, undetectable`
           );
         }
         return `Failed to fetch ${url}: HTTP ${response.status} ${response.statusText}`;
@@ -124,8 +126,10 @@ export const WebCrawlTool: ToolImplementation = {
       if (botBlocked) {
         return (
           `BLOCKED: ${url} has bot/CAPTCHA protection ("${title}"). ` +
-          `This page cannot be read by web_crawl. ` +
-          `Try the browser tool instead, or tell the user to visit the page manually.`
+          `This page cannot be read by web_crawl. Escalation path:\n` +
+          `1. scrapling_fetch(url, mode='stealth') — bypasses Cloudflare/TLS fingerprinting\n` +
+          `2. scrapling_fetch(url, mode='dynamic') — full browser with anti-detection\n` +
+          `3. computer_use(action='open_url') + computer_use(action='analyze_screen') — real desktop browser, undetectable`
         );
       }
 

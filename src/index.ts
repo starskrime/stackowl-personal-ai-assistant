@@ -54,6 +54,8 @@ import {
 } from "./tools/data/index.js";
 // ── Computer Use ──
 import { ComputerUseTool } from "./tools/computer-use/index.js";
+// ── Anti-bot Web Scraping ──
+import { ScraplingTool } from "./tools/web-scrapling.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -186,6 +188,8 @@ async function bootstrap() {
     FileOrganizeTool,
     // ── Computer Use (Desktop Automation) ──
     ComputerUseTool,
+    // ── Anti-bot Web Scraping ──
+    ScraplingTool,
   ]);
 
   // Initialize session store

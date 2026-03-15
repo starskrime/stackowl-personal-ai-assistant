@@ -2,12 +2,22 @@
  * StackOwl — Skill Context Injector
  *
  * Dynamically injects relevant skills into LLM context based on user input.
- * Can also automatically search ClawHub for missing skills.
+ * Uses IntentRouter (BM25 + usage-weighted re-ranking + LLM disambiguation)
+ * instead of primitive keyword matching.
+ *
+ * Also handles:
+ *   - Skill composition (dependency resolution via SkillComposer)
+ *   - Usage tracking (selection events via SkillTracker)
+ *   - ClawHub remote skill search (when no local skills match)
  */
 
 import chalk from "chalk";
+import type { ModelProvider } from "../providers/base.js";
 import { SkillsRegistry } from "./registry.js";
-import { ClawHubClient, SkillSelector } from "./clawhub.js";
+import { ClawHubClient } from "./clawhub.js";
+import { IntentRouter } from "./intent-router.js";
+import { SkillTracker } from "./tracker.js";
+import { SkillComposer } from "./composer.js";
 import type { Skill } from "./types.js";
 
 export interface SkillContextOptions {
@@ -21,17 +31,20 @@ export interface SkillContextOptions {
 
 export class SkillContextInjector {
   private registry: SkillsRegistry;
-  private selector: SkillSelector;
+  private router: IntentRouter;
+  private tracker: SkillTracker;
+  private composer: SkillComposer;
   private clawHub: ClawHubClient | null;
   private options: Required<SkillContextOptions>;
   private recentlySearched: Set<string> = new Set();
-  /** Relevance cache: message prefix → matched skill names. Cleared on refreshSelector(). */
-  private relevanceCache: Map<string, string[]> = new Map();
-  private static readonly CACHE_KEY_LENGTH = 100;
 
-  constructor(registry: SkillsRegistry, options: SkillContextOptions = {}) {
+  constructor(
+    registry: SkillsRegistry,
+    options: SkillContextOptions = {},
+    provider?: ModelProvider,
+    tracker?: SkillTracker,
+  ) {
     this.registry = registry;
-    this.selector = new SkillSelector();
     this.clawHub = null;
     this.options = {
       maxSkills: options.maxSkills ?? 3,
@@ -39,8 +52,14 @@ export class SkillContextInjector {
       clawHubTargetDir: options.clawHubTargetDir ?? "./workspace/skills",
     };
 
-    // Register all loaded skills with the selector
-    this.refreshSelector();
+    // Initialize the tracker (use provided or create a no-op one)
+    this.tracker = tracker ?? new SkillTracker(".");
+
+    // Initialize the semantic router (BM25 + usage weighting + LLM disambiguation)
+    this.router = new IntentRouter(registry, provider, this.tracker);
+
+    // Initialize the composer for skill chaining
+    this.composer = new SkillComposer(registry);
   }
 
   /**
@@ -51,50 +70,43 @@ export class SkillContextInjector {
   }
 
   /**
-   * Refresh the skill selector with current registry contents.
-   * Also clears the relevance cache since the skill set changed.
+   * Get the tracker instance for external usage recording.
    */
-  refreshSelector(): void {
-    this.relevanceCache.clear();
-    this.selector.clear();
-    for (const skill of this.registry.listEnabled()) {
-      this.selector.register({
-        name: skill.name,
-        description: skill.description,
-        instructions: skill.instructions,
-      });
-    }
+  getTracker(): SkillTracker {
+    return this.tracker;
+  }
+
+  /**
+   * Rebuild the BM25 index after skills change.
+   * Call this after loading/unloading skills.
+   */
+  reindex(): void {
+    this.router.reindex();
+    this.router.clearCache();
   }
 
   /**
    * Get relevant skills for a user message.
-   * Results are cached by the first 100 chars of the message to avoid
-   * re-running the full keyword scoring loop on every tool call.
+   * Uses BM25 retrieval + usage-weighted re-ranking + optional LLM disambiguation.
    */
-  getRelevantSkills(userMessage: string): Skill[] {
-    const cacheKey = userMessage.slice(0, SkillContextInjector.CACHE_KEY_LENGTH).toLowerCase();
-    let skillNames = this.relevanceCache.get(cacheKey);
+  async getRelevantSkills(userMessage: string): Promise<Skill[]> {
+    const matches = await this.router.route(userMessage, this.options.maxSkills);
+    const skills = matches.map((m) => m.skill);
 
-    if (!skillNames) {
-      skillNames = this.selector.findRelevant(userMessage, this.options.maxSkills);
-      this.relevanceCache.set(cacheKey, skillNames);
-      // Bound cache size — evict oldest entry when it grows too large
-      if (this.relevanceCache.size > 200) {
-        const firstKey = this.relevanceCache.keys().next().value;
-        if (firstKey !== undefined) this.relevanceCache.delete(firstKey);
-      }
+    // Track selections
+    for (const skill of skills) {
+      this.tracker.recordSelection(skill.name);
     }
 
-    return skillNames
-      .map((name) => this.registry.get(name))
-      .filter((s): s is Skill => s !== undefined);
+    return skills;
   }
 
   /**
    * Inject relevant skills into context.
+   * Resolves skill dependencies and formats as XML for LLM consumption.
    */
-  injectIntoContext(userMessage: string): string {
-    const skills = this.getRelevantSkills(userMessage);
+  async injectIntoContext(userMessage: string): Promise<string> {
+    const skills = await this.getRelevantSkills(userMessage);
 
     if (skills.length === 0) {
       return "";
@@ -103,9 +115,18 @@ export class SkillContextInjector {
     const lines: string[] = ["\n<context_skills>"];
 
     for (const skill of skills) {
-      lines.push(`<skill name="${skill.name}">`);
-      lines.push(skill.instructions);
-      lines.push(`</skill>`);
+      // Resolve composition — check if this skill has dependencies/chains
+      const plan = this.composer.resolve(skill);
+
+      if (plan.totalSkills > 1) {
+        // Multi-skill composition — format as skill chain
+        lines.push(this.composer.formatForContext(plan));
+      } else {
+        // Single skill — standard format
+        lines.push(`<skill name="${skill.name}">`);
+        lines.push(skill.instructions);
+        lines.push(`</skill>`);
+      }
     }
 
     lines.push("</context_skills>\n");
@@ -119,17 +140,17 @@ export class SkillContextInjector {
     injected: string;
     newSkillsInstalled: string[];
   }> {
-    const localSkills = this.getRelevantSkills(userMessage);
+    const localSkills = await this.getRelevantSkills(userMessage);
 
     // If we have relevant local skills, use them
     if (localSkills.length > 0) {
       return {
-        injected: this.injectIntoContext(userMessage),
+        injected: await this.injectIntoContext(userMessage),
         newSkillsInstalled: [],
       };
     }
 
-    // No local skills found - try ClawHub if enabled
+    // No local skills found — try ClawHub if enabled
     if (!this.clawHub || !this.options.autoSearchClawHub) {
       return {
         injected: "",
@@ -196,6 +217,7 @@ export class SkillContextInjector {
 
   /**
    * Format skills for system prompt inclusion.
+   * (Synchronous — lists all skills, not per-message matching)
    */
   formatForSystemPrompt(): string {
     const skills = this.registry.listEnabled();
@@ -211,7 +233,11 @@ export class SkillContextInjector {
 
     for (const skill of skills) {
       const emoji = skill.metadata.openclaw?.emoji || "•";
-      lines.push(`- ${emoji} **${skill.name}**: ${skill.description}`);
+      const usage = skill.usage;
+      const usageHint = usage && usage.selectionCount > 0
+        ? ` (used ${usage.selectionCount}x, ${(usage.successRate * 100).toFixed(0)}% success)`
+        : "";
+      lines.push(`- ${emoji} **${skill.name}**: ${skill.description}${usageHint}`);
     }
 
     lines.push(

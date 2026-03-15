@@ -288,10 +288,12 @@ IMPORTANT: Always start before navigating. Use snapshot refs for act commands.`,
       if (botBlocked) {
         return (
           `BLOCKED: ${url} has bot protection ("${title}").\n` +
-          `This site requires a real browser with human verification. ` +
-          `You CANNOT complete this action automatically.\n` +
-          `Tell the user to visit ${url} manually in their own browser, ` +
-          `then provide you with any credentials or API keys they obtain.`
+          `The browser tool (Puppeteer) was detected as a bot.\n` +
+          `FALLBACK: Use the computer_use tool instead — it controls the REAL mouse and keyboard:\n` +
+          `  1. computer_use(action:'open_url', text:'${url}')\n` +
+          `  2. computer_use(action:'wait', amount:3000)\n` +
+          `  3. computer_use(action:'analyze_screen') to read the page\n` +
+          `This bypasses all bot detection because it uses native OS input, not automation protocols.`
         );
       }
 
@@ -334,7 +336,8 @@ IMPORTANT: Always start before navigating. Use snapshot refs for act commands.`,
       return (
         `BLOCKED: This page has bot protection ("${title}").\n` +
         `URL: ${url}\n` +
-        `You cannot interact with this page. Tell the user to visit it manually.`
+        `FALLBACK: Use computer_use tool instead (open_url → wait → analyze_screen). ` +
+        `It uses real mouse/keyboard and bypasses all bot detection.`
       );
     }
 

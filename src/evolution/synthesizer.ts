@@ -73,19 +73,31 @@ export class ToolSynthesizer {
     _owl: OwlInstance,
     config: StackOwlConfig,
     skillsDir: string,
+    toolDescriptions?: string[],
   ): Promise<SkillSynthesisResult> {
     const platform = process.platform;
+
+    // Build tool list — use full registry if available, otherwise defaults
+    const toolList = toolDescriptions && toolDescriptions.length > 0
+      ? toolDescriptions.map(t => `  - ${t}`).join("\n")
+      : `  - run_shell_command(command): runs any shell command and returns output\n` +
+        `  - read_file(path): reads a file from disk\n` +
+        `  - write_file(path, content): writes content to a file\n` +
+        `  - edit_file(path, old_text, new_text): edit a file by replacing text\n` +
+        `  - web_crawl(url): fetches a URL and returns text content\n` +
+        `  - google_search(query): search Google and return results\n` +
+        `  - scrapling_fetch(url, mode): anti-bot web scraping (modes: basic, stealth, dynamic)\n` +
+        `  - computer_use(action, ...): desktop automation — mouse, keyboard, screenshots, app control\n` +
+        `  - take_screenshot(): capture the screen\n` +
+        `  - send_file(path, caption): send a file to the user`;
 
     const prompt =
       `You are writing a SKILL.md for an AI assistant called StackOwl.\n` +
       `StackOwl runs locally on ${platform} and has access to these tools:\n` +
-      `  - run_shell_command(command): runs any shell command and returns output\n` +
-      `  - read_file(path): reads a file from disk\n` +
-      `  - write_file(path, content): writes content to a file\n` +
-      `  - web_crawl(url): fetches a URL and returns text content\n\n` +
+      `${toolList}\n\n` +
       `The user tried to do: "${gap.userRequest}"\n\n` +
-      `Write a SKILL.md that teaches the LLM how to accomplish this using shell commands and the tools above.\n` +
-      `Use concrete, step-by-step instructions. Include the exact shell commands to use.\n\n` +
+      `Write a SKILL.md that teaches the LLM how to accomplish this using the tools above.\n` +
+      `Use concrete, step-by-step instructions. Include the exact tool calls and shell commands to use.\n\n` +
       `Output ONLY valid SKILL.md content in this exact format:\n` +
       `---\n` +
       `name: skill_name_in_snake_case\n` +
@@ -94,12 +106,16 @@ export class ToolSynthesizer {
       `  emoji: 🔧\n` +
       `---\n\n` +
       `# How to [accomplish the task]\n\n` +
-      `[Step-by-step instructions for the LLM. Be concrete. Include exact shell commands.]\n\n` +
+      `[Step-by-step instructions for the LLM. Be concrete. Include exact tool calls.]\n\n` +
       `## Examples\n` +
-      `[1-2 concrete examples]\n\n` +
+      `[1-2 concrete examples with actual tool invocations]\n\n` +
+      `## Error Handling\n` +
+      `[What to do if a tool fails — include fallback strategies]\n\n` +
       `Rules:\n` +
       `- name must be snake_case, describe the action (e.g. take_screenshot, send_email)\n` +
       `- Instructions must be actionable using the tools listed above\n` +
+      `- PREFER specialized tools over shell commands (e.g. use computer_use for desktop, scrapling_fetch for blocked sites)\n` +
+      `- Include error handling and fallback steps\n` +
       `- No TypeScript, no code generation — pure natural language instructions\n` +
       `- Output ONLY the SKILL.md content, nothing else`;
 

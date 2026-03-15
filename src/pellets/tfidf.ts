@@ -6,7 +6,7 @@
  * ranked retrieval engine that handles field boosting (title > tags > content),
  * stopword removal, and incremental index updates.
  *
- * Designed for 50-200 pellets — fast enough that search feels instant.
+ * Designed for up to 2000 pellets — fast enough that search feels instant.
  */
 
 import { readFile, writeFile, rename } from "node:fs/promises";

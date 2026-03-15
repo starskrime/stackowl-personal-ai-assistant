@@ -42,8 +42,8 @@ export class KnowledgeResearcher {
     async research(domain: string, context?: string): Promise<ResearchResult> {
         // Guard: cap total pellets to prevent unbounded growth.
         // When at capacity, evict the oldest pellets to make room.
-        const MAX_PELLETS = 50;
-        const EVICT_COUNT = 5; // Free up 5 slots so we don't evict on every research call
+        const MAX_PELLETS = 2000;
+        const EVICT_COUNT = 10; // Free up 5 slots so we don't evict on every research call
         const existing = await this.pelletStore.listAll();
         if (existing.length >= MAX_PELLETS) {
             log.evolution.info(

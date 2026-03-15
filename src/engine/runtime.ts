@@ -51,6 +51,8 @@ export interface EngineContext {
   sendFile?: (filePath: string, caption?: string) => Promise<void>;
   /** Skills registry — used by CapabilityNeedAssessor to check coverage before synthesis */
   skillsRegistry?: import("../skills/registry.js").SkillsRegistry;
+  /** Skill usage tracker — records selection, success, failure events */
+  skillTracker?: import("../skills/tracker.js").SkillTracker;
   /** Provider registry to fetch fallback providers dynamically for cross-provider routing */
   providerRegistry?: ProviderRegistry;
   /** When true, isolate this task from previous context - ignore session history */
@@ -400,7 +402,7 @@ ${userMessage}
         `   - Need current info (news, prices, status)? → google_search FIRST, then web_crawl a specific result URL\n` +
         `   - Need to read a specific URL? → web_crawl (fast, text-only) or browser (if site blocks crawlers or needs interaction)\n` +
         `   - Need to interact with a website (fill forms, click buttons)? → browser tool\n` +
-        `   - BLOCKED by bot detection / CAPTCHA / 403? → use computer_use tool instead! It controls the REAL mouse and keyboard like a human, so no website can detect it as a bot. Escalation: web_crawl → browser → computer_use\n` +
+        `   - BLOCKED by bot detection / CAPTCHA / 403? → Escalation: web_crawl → scrapling_fetch (anti-bot, TLS spoofing, Cloudflare bypass) → computer_use (real mouse/keyboard, undetectable)\n` +
         `   - Need to run code, install packages, or do OS tasks? → run_shell_command\n` +
         `   - Need to capture the screen? → take_screenshot or computer_use(action:'screenshot'), then send_file\n` +
         `   - Need to control the desktop (click, type, open apps, drag)? → computer_use\n` +

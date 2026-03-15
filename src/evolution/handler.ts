@@ -37,6 +37,7 @@ import { CapabilityNeedAssessor } from "./assessor.js";
 import { CapabilityLedger } from "./ledger.js";
 import { DynamicToolLoader } from "./loader.js";
 import type { ApprovalCallback } from "./approval.js";
+import type { Skill } from "../skills/types.js";
 import { log } from "../logger.js";
 
 const execAsync = promisify(exec);
@@ -277,7 +278,9 @@ export class EvolutionHandler {
       const toolNames = context.toolRegistry
         ? context.toolRegistry.getDefinitions().map((d) => d.name)
         : [];
-      const existingSkills: any[] = []; // We'll skip the skill assessment since it's not in context
+      const existingSkills: Skill[] = context.skillsRegistry
+        ? context.skillsRegistry.listEnabled()
+        : [];
 
       const assessment = await assessor.assess(
         originalMessage,
@@ -383,12 +386,18 @@ export class EvolutionHandler {
       description: proposal.rationale,
     };
 
+    // Pass full tool descriptions so the skill knows all available tools
+    const toolDescriptions = context.toolRegistry
+      ? context.toolRegistry.getDefinitions().map(d => `${d.name}: ${d.description?.slice(0, 100) ?? ""}`)
+      : undefined;
+
     const skill = await this.synthesizer.generateSkillMd(
       gap,
       context.provider,
       context.owl,
       context.config,
       skillsDir,
+      toolDescriptions,
     );
 
     await progress(

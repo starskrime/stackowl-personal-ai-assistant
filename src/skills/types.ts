@@ -60,6 +60,45 @@ export interface SkillInstall {
   os?: string[];
 }
 
+// ─── Skill Execution Tracking ─────────────────────────────────────
+
+export interface SkillUsageStats {
+  /** Total number of times this skill was selected for injection */
+  selectionCount: number;
+  /** Total number of times execution completed successfully */
+  successCount: number;
+  /** Total number of times execution failed or was abandoned */
+  failureCount: number;
+  /** Average execution duration in milliseconds */
+  avgDurationMs: number;
+  /** ISO timestamp of last use */
+  lastUsedAt: string | null;
+  /** Rolling success rate: successCount / (successCount + failureCount) */
+  successRate: number;
+}
+
+// ─── Skill Composition ────────────────────────────────────────────
+
+export interface SkillDependency {
+  /** Name of the skill this depends on */
+  skillName: string;
+  /** Execution order relative to the parent skill */
+  order: "before" | "after" | "parallel";
+  /** Whether this dependency is required or optional */
+  required: boolean;
+}
+
+export interface SkillComposition {
+  /** Skills this skill depends on */
+  dependencies: SkillDependency[];
+  /** Skills that should chain after this one */
+  chains?: string[];
+  /** Whether this is a composite skill (wraps others) */
+  isComposite: boolean;
+}
+
+// ─── Core Skill Interface ─────────────────────────────────────────
+
 export interface Skill {
   /** Unique identifier */
   name: string;
@@ -79,6 +118,10 @@ export interface Skill {
   requiredEnv?: string[];
   /** Required binaries */
   requiredBins?: string[];
+  /** Usage statistics — populated by SkillTracker */
+  usage?: SkillUsageStats;
+  /** Composition metadata — skill dependencies and chaining */
+  composition?: SkillComposition;
 }
 
 export interface SkillFilter {

@@ -591,3 +591,181 @@ export function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ─── Image to Text Converter Types ───────────────────────────────────────────
+
+export interface ElementBox {
+  element: string;
+  role: string;
+  text?: string;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+}
+
+export interface ScreenshotAnalysis {
+  screen: {
+    resolution: { width: number; height: number };
+    scale: number;
+  };
+  elements: ElementBox[];
+  timestamp: number;
+}
+
+// ─── Terminal-style Render (for debugging/visualization) ─────────
+
+export function renderTerminalGrid(
+  elements: ElementBox[],
+  width: number = 80,
+  height: number = 24,
+): string {
+  const grid: string[][] = Array.from({ length: height }, () =>
+    Array(width).fill(" "),
+  );
+
+  for (const el of elements) {
+    const x = Math.min(Math.floor(el.position.x), width - 1);
+    const y = Math.min(Math.floor(el.position.y), height - 1);
+    const w = Math.min(el.size.width, width - x);
+    const h = Math.min(el.size.height, height - y);
+
+    if (w <= 0 || h <= 0) continue;
+
+    for (let iy = y; iy < y + h && iy < height; iy++) {
+      for (let ix = x; ix < x + w && ix < width; ix++) {
+        grid[iy][ix] = "█";
+      }
+    }
+  }
+
+  return (
+    `Screen: ${width}x${height}\n` + grid.map((row) => row.join("")).join("\n")
+  );
+}
+
+// ─── Box Model String ─────────────────────────────────────────────
+
+export function elementToBoxString(el: ElementBox): string {
+  const pos = el.position;
+  const size = el.size;
+
+  let content = `Element: ${el.element || "unknown"}`;
+  if (el.role) content += ` (role: ${el.role})`;
+  if (el.text) content += ` — "${truncate(el.text, 50)}"`;
+
+  return (
+    `┌${"-".repeat(78)}┐\n` +
+    `│ ${content.padEnd(76)} │\n` +
+    `├${"-".repeat(78)}┤\n` +
+    `│ Position: x=${pos.x.toString().padStart(4)}, y=${pos.y
+      .toString()
+      .padStart(4)}                      │\n` +
+    `│ Size: ${size.width.toString().padStart(4)}x${size.height
+      .toString()
+      .padStart(4)}                               │\n` +
+    `└${"-".repeat(78)}┘`
+  );
+}
+
+function truncate(str: string, maxLen: number): string {
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen - 3) + "...";
+}
+
+// ─── Structured Analysis to Text ──────────────────────────────────
+
+export function analyzeScreenshotToText(analysis: ScreenshotAnalysis): string {
+  const lines: string[] = [];
+
+  lines.push(`SCREEN ANALYSIS`);
+  lines.push(`==============`);
+  lines.push(
+    `Resolution: ${analysis.screen.resolution.width}x${analysis.screen.resolution.height}`,
+  );
+  lines.push(`Scale factor: ${analysis.screen.scale}x`);
+  lines.push(`Elements found: ${analysis.elements.length}`);
+  lines.push(`Timestamp: ${new Date(analysis.timestamp).toISOString()}`);
+  lines.push("");
+
+  if (analysis.elements.length === 0) {
+    lines.push("No UI elements detected.");
+  } else {
+    lines.push(`UI ELEMENTS (${analysis.elements.length})`);
+    lines.push(`---------------------`);
+
+    for (let i = 0; i < analysis.elements.length; i++) {
+      const el = analysis.elements[i];
+      lines.push(`\n[${i + 1}] ${el.role || "element"}`);
+      if (el.text) {
+        lines.push(`    Text: "${truncate(el.text, 100)}"`);
+      }
+      lines.push(
+        `    Position: (${analysis.elements[i].position.x}, ${analysis.elements[i].position.y})`,
+      );
+      lines.push(
+        `    Size: ${analysis.elements[i].size.width}x${analysis.elements[i].size.height}`,
+      );
+    }
+  }
+
+  lines.push("\n\nINSTRUCTIONS FOR AI");
+  lines.push("===================");
+  lines.push(
+    "Use this spatial information to understand what's visible on screen.",
+  );
+  lines.push(
+    "You can use computer_use tool to interact with UI elements by coordinate.",
+  );
+  lines.push(
+    "find_elements action can locate specific elements by text/role for precise targeting.",
+  );
+
+  return lines.join("\n");
+}
+
+// ─── Image File to Text Conversion (for screenshots) ─────────────
+
+export interface ScreenshotMetadata {
+  path: string;
+  filename: string;
+  sizeBytes: number;
+}
+
+export function extractScreenshotMetadata(
+  imagePath: string,
+): ScreenshotMetadata {
+  const { existsSync, statSync } = require("node:fs");
+  const { basename, resolve } = require("node:path");
+
+  if (!existsSync(imagePath)) {
+    throw new Error(`Image file not found: ${imagePath}`);
+  }
+
+  const stat = statSync(imagePath);
+  return {
+    path: resolve(imagePath),
+    filename: basename(imagePath),
+    sizeBytes: stat.size,
+  };
+}
+
+export function formatScreenshotForLLM(
+  metadata: ScreenshotMetadata,
+  analysis?: ScreenshotAnalysis,
+): string {
+  const { sizeBytes } = metadata;
+  const sizeKB = (sizeBytes / 1024).toFixed(1);
+
+  let content =
+    `SCREENSHOT CAPTURED\n` +
+    `==================\n` +
+    `File: ${metadata.filename}\n` +
+    `Location: ${metadata.path}\n` +
+    `Size: ${sizeKB} KB\n`;
+
+  if (analysis) {
+    content += `\n${analyzeScreenshotToText(analysis)}\n`;
+  } else {
+    content += `\n(Element analysis not available. Use analyze_screen action in computer_use tool for UI details.)\n`;
+  }
+
+  return content;
+}
