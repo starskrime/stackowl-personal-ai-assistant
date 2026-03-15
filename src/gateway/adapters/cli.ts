@@ -295,11 +295,14 @@ export class CLIAdapter implements ChannelAdapter {
         return async (event: StreamEvent) => {
             switch (event.type) {
                 case 'text_delta': {
+                    // Strip internal [DONE] signal
+                    const chunk = event.content.replace(/\[DONE\]/g, '');
+                    if (!chunk) break;
                     if (!headerPrinted) {
                         process.stdout.write('\n' + chalk.yellow(`${owl.persona.emoji} ${owl.persona.name}: `));
                         headerPrinted = true;
                     }
-                    process.stdout.write(event.content);
+                    process.stdout.write(chunk);
                     break;
                 }
                 case 'tool_start': {

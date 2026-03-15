@@ -197,6 +197,14 @@ export class TelegramAdapter implements ChannelAdapter {
                     },
                     {
                         onProgress: async (msg: string) => {
+                            // Route tool status and skill usage into the stream message (edit-in-place)
+                            // instead of sending separate messages for each event.
+                            const isToolStatus = /^[⚙✅❌].*\b(?:Running|Tool finished|Tool failed)\b/.test(msg);
+                            const isSkillUsage = /\bUsing skill:\b/.test(msg);
+                            if (isToolStatus || isSkillUsage) {
+                                streamCtx.pushToolStatus(msg);
+                                return;
+                            }
                             try {
                                 const html = this.escHtml(msg)
                                     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
@@ -304,16 +312,23 @@ export class TelegramAdapter implements ChannelAdapter {
      * gateway returns, the caller compares this against the final response to
      * decide whether `sendResponse` is needed.
      */
-    private createStreamHandler(ctx: Context): { handler: (event: StreamEvent) => Promise<void>; status: { streamedContent: string } } {
+    private createStreamHandler(ctx: Context): {
+        handler: (event: StreamEvent) => Promise<void>;
+        status: { streamedContent: string };
+        /** Push a tool status line into the streaming message (edit-in-place). */
+        pushToolStatus: (msg: string) => void;
+    } {
         const chatId = ctx.chat?.id;
         const status = { streamedContent: '' };
-        if (!chatId) return { handler: async () => {}, status };
+        if (!chatId) return { handler: async () => {}, status, pushToolStatus: () => {} };
 
         let messageId: number | null = null;
         let displayText = '';   // Full text shown in Telegram (includes tool status)
         let pureContent = '';   // Only text_delta content (no tool noise)
         let lastEditTime = 0;
         let pendingEdit: ReturnType<typeof setTimeout> | null = null;
+        let hasToolStatus = false; // Track if we've shown tool status lines
+        let contentStarted = false; // Track if actual content has started
         const THROTTLE_MS = 1000;
 
         const flushEdit = async () => {
@@ -334,8 +349,17 @@ export class TelegramAdapter implements ChannelAdapter {
         const handler = async (event: StreamEvent) => {
             switch (event.type) {
                 case 'text_delta': {
-                    displayText += event.content;
-                    pureContent += event.content;
+                    // Strip internal [DONE] signal — it's an engine marker, not user content
+                    const chunk = event.content.replace(/\[DONE\]/g, '');
+                    if (!chunk) break;
+
+                    // Insert a separator between tool status and response content
+                    if (hasToolStatus && !contentStarted) {
+                        displayText += '\n\n';
+                        contentStarted = true;
+                    }
+                    displayText += chunk;
+                    pureContent += chunk;
 
                     if (!messageId) {
                         // Send initial message
@@ -367,13 +391,12 @@ export class TelegramAdapter implements ChannelAdapter {
                     break;
                 }
                 case 'tool_start': {
-                    displayText += `\n⚙️ Running: ${event.toolName}...`;
-                    await flushEdit();
+                    // Skip — tool execution status is handled by onProgress
+                    // via pushToolStatus to avoid duplicate lines.
                     break;
                 }
                 case 'tool_end': {
-                    displayText += ` ✅`;
-                    await flushEdit();
+                    // Skip — handled by onProgress via pushToolStatus.
                     break;
                 }
                 case 'done': {
@@ -388,7 +411,35 @@ export class TelegramAdapter implements ChannelAdapter {
                 }
             }
         };
-        return { handler, status };
+
+        /**
+         * Push a tool execution status line into the streaming message.
+         * Called from onProgress for tool events so they appear inline
+         * (edit-in-place) instead of as separate Telegram messages.
+         */
+        const pushToolStatus = (msg: string) => {
+            // Clean markdown bold/code for plain display
+            const clean = msg
+                .replace(/\*\*(.+?)\*\*/g, '$1')
+                .replace(/`(.+?)`/g, '$1');
+            displayText += `\n${clean}`;
+            hasToolStatus = true;
+            flushEdit().catch(() => {});
+
+            // If no streaming message exists yet, create one
+            if (!messageId) {
+                this.bot.api.sendMessage(
+                    chatId!,
+                    this.escHtml(displayText) || '...',
+                    { parse_mode: 'HTML' },
+                ).then(sent => {
+                    messageId = sent.message_id;
+                    lastEditTime = Date.now();
+                }).catch(() => {});
+            }
+        };
+
+        return { handler, status, pushToolStatus };
     }
 
     // ─── Response formatting ──────────────────────────────────────

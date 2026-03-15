@@ -432,9 +432,20 @@ export class OwlGateway {
       if (relevantSkills.length > 0) {
         // Use the injector's composition-aware formatter
         dynamicSkillsContext = await this.skillInjector.injectIntoContext(text);
-        log.engine.info(
-          `Dynamic skill injection: ${relevantSkills.map((s) => s.name).join(", ")}`,
-        );
+        const skillNames = relevantSkills.map((s) => s.name);
+        log.engine.info(`Dynamic skill injection: ${skillNames.join(", ")}`);
+
+        // Notify user about skill usage (like tool history)
+        if (callbacks.onProgress) {
+          for (const s of relevantSkills) {
+            const emoji = s.metadata.openclaw?.emoji || '📋';
+            await callbacks.onProgress(
+              `${emoji} **Using skill:** \`${s.name}\` — ${s.description}`,
+            );
+          }
+        }
+      } else {
+        log.engine.info(`[Skills] No skills matched for: "${text.slice(0, 60)}"`);
       }
 
       // Optionally search ClawHub if no local skills match
@@ -1089,7 +1100,7 @@ export class OwlGateway {
         callbacks.askInstall ?? (async (_deps: string[]) => true);
       const onProgress = callbacks.onProgress ?? (async (_msg: string) => {});
 
-      const { response: retryResponse } =
+      const { response: retryResponse, filePath } =
         await this.ctx.evolution!.buildAndRetry(
           proposal,
           message.text,
@@ -1098,6 +1109,23 @@ export class OwlGateway {
           askInstall,
           onProgress,
         );
+
+      // After skill synthesis, reload the new skill into the registry
+      // so it can be matched by the IntentRouter on future requests.
+      if (filePath && this.ctx.skillsLoader) {
+        const registry = this.ctx.skillsLoader.getRegistry();
+        const skillDir = filePath.replace(/\/SKILL\.md$/, '');
+        const parentDir = skillDir.replace(/\/[^/]+$/, '');
+        try {
+          await registry.loadFromDirectory(parentDir);
+          if (this.skillInjector) {
+            this.skillInjector.reindex();
+          }
+          log.evolution.info(`[Skill] Reindexed after synthesis: ${proposal.toolName}`);
+        } catch {
+          // Non-fatal — skill will be picked up on next restart
+        }
+      }
 
       // userAlreadySaved=true: the user message was saved in the normal path before gap was detected
       await this.saveSession(

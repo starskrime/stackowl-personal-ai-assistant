@@ -417,7 +417,9 @@ ${userMessage}
         `6. CAPABILITY GAP: output [CAPABILITY_GAP: <description>] ONLY if the request requires a genuine SYSTEM ACTION ` +
         `(OS-level, hardware, network call to an external service) that no available tool or shell command can perform. ` +
         `Do NOT use this for knowledge gaps, analysis, or tasks solvable with run_shell_command.\n` +
-        `7. NEVER call the same tool with the same arguments twice — the result is already in your context.`;
+        `7. NEVER call the same tool with the same arguments twice — the result is already in your context.\n` +
+        `8. SKILLS FIRST: If a <skill> block is present in your system prompt, it means a learned capability ` +
+        `matches this request. Follow the skill's steps EXACTLY instead of improvising. Skills are optimized playbooks.`;
     }
 
     const messages: ChatMessage[] = [
@@ -998,6 +1000,10 @@ ${userMessage}
     }
     log.engine.separator();
 
+    // Strip internal [DONE] signal from all final outputs — it's an engine-internal
+    // marker and must never leak to channels or users.
+    response = { ...response, content: stripDoneSignal(response.content) };
+
     // 7. Gap detection — tool call attempted but tool doesn't exist
     if (missingToolName && !context.skipGapDetection) {
       log.evolution.warn(`Gap detected (missing tool): ${missingToolName}`);
@@ -1223,7 +1229,16 @@ ${userMessage}
 
     // Skills — injected only when present (always-on + relevant per-message)
     if (skillsContext?.trim()) {
-      prompt += "\n" + skillsContext + "\n";
+      prompt += `
+## Skills — YOUR LEARNED CAPABILITIES
+
+CRITICAL: The skills below are step-by-step playbooks you have already learned for specific tasks.
+When a skill is present here, it means the system has matched it to the user's current request.
+You MUST follow the skill's instructions step-by-step. Do NOT improvise your own approach when
+a matching skill exists — the skill contains tested, optimized steps for this exact task type.
+
+${skillsContext}
+`;
     }
 
     // Persistent memory — cap at 1500 chars to control prompt size
