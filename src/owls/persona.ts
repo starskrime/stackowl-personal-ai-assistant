@@ -55,6 +55,8 @@ export interface EvolutionEntry {
     generation: number;
     timestamp: string;
     mutations: string[];
+    /** 0–1 effectiveness score for A/B testing of mutations */
+    effectiveness?: number;
 }
 
 // ─── Owl Instance (runtime, persona + DNA combined) ──────────────

@@ -229,6 +229,55 @@ Only include patterns with ${this.config.minPatternFrequency}+ occurrences.`;
     }
   }
 
+  /**
+   * Enrich patterns with cross-system signals from a user profile.
+   * Called periodically to boost confidence of patterns that align
+   * with the user's overall behavior profile.
+   */
+  enrichFromProfile(profile: {
+    topics: Record<string, number>;
+    toolUsage: Record<string, number>;
+    hourlyActivity: number[];
+  }): void {
+    for (const pattern of this.patterns.values()) {
+      const actionLower = pattern.action.toLowerCase();
+
+      // Boost confidence if the pattern's action aligns with frequent topics
+      for (const [topic, count] of Object.entries(profile.topics)) {
+        if (actionLower.includes(topic) && count >= 3) {
+          const boost = Math.min(0.1, count * 0.01);
+          pattern.confidence = Math.min(0.95, pattern.confidence + boost);
+        }
+      }
+
+      // Boost confidence if the pattern's skills are frequently used
+      for (const skill of pattern.relatedSkills) {
+        const usage = profile.toolUsage[skill] ?? 0;
+        if (usage >= 3) {
+          const boost = Math.min(0.05, usage * 0.005);
+          pattern.confidence = Math.min(0.95, pattern.confidence + boost);
+        }
+      }
+
+      // Refine time preferences using hourly activity data
+      const totalActivity = profile.hourlyActivity.reduce((s, v) => s + v, 0);
+      if (totalActivity > 20) {
+        const avg = totalActivity / 24;
+        const peakSlots: Set<TimeSlot> = new Set();
+        for (let h = 0; h < 24; h++) {
+          if (profile.hourlyActivity[h] > avg * 1.5) {
+            peakSlots.add(getTimeSlot(h));
+          }
+        }
+        // If the pattern doesn't have time preferences but we know peak times,
+        // use the peak times as a hint
+        if (pattern.timePreference.length === 0 && peakSlots.size > 0) {
+          pattern.timePreference = Array.from(peakSlots);
+        }
+      }
+    }
+  }
+
   private findMatchingPattern(action: string): UserPattern | undefined {
     const lowerAction = action.toLowerCase();
     for (const pattern of this.patterns.values()) {

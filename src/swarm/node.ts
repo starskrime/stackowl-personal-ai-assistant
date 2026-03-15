@@ -1,6 +1,5 @@
 import { createServer, type Server } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { randomUUID } from 'node:crypto';
 import { Logger } from '../logger.js';
 import type {
   SwarmConfig,

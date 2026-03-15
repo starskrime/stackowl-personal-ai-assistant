@@ -123,6 +123,23 @@ import type { PreferenceStore } from "../preferences/store.js";
 import type { SkillsLoader } from "../skills/index.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
 import type { ProviderRegistry } from "../providers/registry.js";
+import type { ContextMesh } from "../ambient/mesh.js";
+import type { TrustChain } from "../trust/chain.js";
+import type { KnowledgeGraph } from "../knowledge/graph.js";
+import type { KnowledgeReasoner } from "../knowledge/reasoner.js";
+import type { TimelineManager } from "../timeline/manager.js";
+import type { CollabSessionManager } from "../collab/session-manager.js";
+import type { CollabFacilitator } from "../collab/facilitator.js";
+import type { PatternAnalyzer } from "../predictive/analyzer.js";
+import type { PredictiveQueue } from "../predictive/queue.js";
+import type { DemoRecorder } from "../forge/recorder.js";
+import type { ForgeSynthesizer } from "../forge/synthesizer.js";
+import type { SkillArena } from "../tournaments/arena.js";
+import type { SwarmCoordinator } from "../swarm/coordinator.js";
+import type { VoicePersona } from "../voice/persona.js";
+import type { VoiceAdapter } from "../voice/adapter.js";
+import type { MicroLearner } from "../learning/micro-learner.js";
+import type { ProactiveAnticipator } from "../learning/anticipator.js";
 
 export interface GatewayContext {
   provider: ModelProvider;
@@ -144,4 +161,23 @@ export interface GatewayContext {
   skillsLoader?: SkillsLoader;
   cwd?: string;
   providerRegistry?: ProviderRegistry;
+
+  // ─── New Feature Modules ──────────────────────────────────────
+  contextMesh?: ContextMesh;
+  trustChain?: TrustChain;
+  knowledgeGraph?: KnowledgeGraph;
+  knowledgeReasoner?: KnowledgeReasoner;
+  timelineManager?: TimelineManager;
+  collabManager?: CollabSessionManager;
+  collabFacilitator?: CollabFacilitator;
+  patternAnalyzer?: PatternAnalyzer;
+  predictiveQueue?: PredictiveQueue;
+  demoRecorder?: DemoRecorder;
+  forgeSynthesizer?: ForgeSynthesizer;
+  skillArena?: SkillArena;
+  swarmCoordinator?: SwarmCoordinator;
+  voicePersona?: VoicePersona;
+  voiceAdapter?: VoiceAdapter;
+  microLearner?: MicroLearner;
+  anticipator?: ProactiveAnticipator;
 }

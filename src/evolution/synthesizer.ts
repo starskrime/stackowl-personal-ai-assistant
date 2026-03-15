@@ -21,6 +21,11 @@ import type { StackOwlConfig } from "../config/loader.js";
 import type { CapabilityGap } from "./detector.js";
 import { SkillCritic } from "../skills/critic.js";
 import { SkillParser } from "../skills/parser.js";
+import { log } from "../logger.js";
+
+const MAX_SYNTHESIS_RETRIES = 3;
+const MIN_QUALITY_THRESHOLD = 0.6;
+const TARGET_QUALITY_THRESHOLD = 0.75;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const SYNTHESIZED_DIR = join(__dirname, "../tools/synthesized");
@@ -55,6 +60,37 @@ export interface ToolProposal {
   owlEmoji: string;
 }
 
+// ─── Tool Name Normalization ─────────────────────────────────────
+// Ensures tool names are generic and reusable, not request-specific.
+// "send_email_via_agentmail" → "email_send"
+// "fetch_weather_from_openweather" → "weather_fetch"
+
+const SERVICE_SPECIFIC_PATTERNS = [
+  /(?:_?via_?\w+)$/i,           // _via_agentmail, _via_slack
+  /(?:_?from_?\w+)$/i,          // _from_openweather, _from_api
+  /(?:_?using_?\w+)$/i,         // _using_curl, _using_puppeteer
+  /(?:_?with_?\w+)$/i,          // _with_selenium
+  /(?:_?on_?\w+)$/i,            // _on_telegram (but not "on" alone)
+  /(?:_?through_?\w+)$/i,       // _through_api
+];
+
+function normalizeToolName(rawName: string): string {
+  let name = rawName.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+  // Strip service-specific suffixes
+  for (const pattern of SERVICE_SPECIFIC_PATTERNS) {
+    name = name.replace(pattern, '');
+  }
+
+  // Remove consecutive underscores and trailing underscores
+  name = name.replace(/_+/g, '_').replace(/^_|_$/g, '');
+
+  // If name is too short after cleanup, keep original
+  if (name.length < 3) return rawName.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+  return name;
+}
+
 // ─── Synthesizer ─────────────────────────────────────────────────
 
 export class ToolSynthesizer {
@@ -74,6 +110,7 @@ export class ToolSynthesizer {
     config: StackOwlConfig,
     skillsDir: string,
     toolDescriptions?: string[],
+    synthesisModel?: string,
   ): Promise<SkillSynthesisResult> {
     const platform = process.platform;
 
@@ -96,11 +133,18 @@ export class ToolSynthesizer {
       `StackOwl runs locally on ${platform} and has access to these tools:\n` +
       `${toolList}\n\n` +
       `The user tried to do: "${gap.userRequest}"\n\n` +
-      `Write a SKILL.md that teaches the LLM how to accomplish this using the tools above.\n` +
+      `Write a SKILL.md that teaches the LLM how to accomplish this GENERAL CAPABILITY using the tools above.\n` +
+      `CRITICAL: The skill must be GENERIC and REUSABLE — it describes a CAPABILITY, not a specific task.\n` +
+      `- The skill name must be a SHORT GENERIC CAPABILITY name — 1 or 2 words max, like a tool name.\n` +
+      `  GOOD names: email, screenshot, phone_call, weather, clipboard, file_convert, web_search\n` +
+      `  BAD names: send_email_to_john, capture_google_screenshot, fetch_weather_from_api, summarize_bbc_article\n` +
+      `- DO NOT include specific email addresses, URLs, names, services, or user-specific details anywhere.\n` +
+      `- The skill describes a REUSABLE CAPABILITY that works for ANY instance of this task type.\n` +
+      `- Examples in the skill must use placeholder values like "recipient@example.com", not real addresses.\n\n` +
       `Use concrete, step-by-step instructions. Include the exact tool calls and shell commands to use.\n\n` +
       `Output ONLY valid SKILL.md content in this exact format:\n` +
       `---\n` +
-      `name: skill_name_in_snake_case\n` +
+      `name: short_generic_name\n` +
       `description: one sentence describing what this skill does\n` +
       `openclaw:\n` +
       `  emoji: 🔧\n` +
@@ -112,56 +156,94 @@ export class ToolSynthesizer {
       `## Error Handling\n` +
       `[What to do if a tool fails — include fallback strategies]\n\n` +
       `Rules:\n` +
-      `- name must be snake_case, describe the action (e.g. take_screenshot, send_email)\n` +
+      `- name MUST be 1-2 words, snake_case, describing the CAPABILITY (like a tool name).\n` +
+      `  GOOD: email, screenshot, phone_call, weather, clipboard, notification\n` +
+      `  BAD:  send_email_via_agentmail, take_and_send_screenshot, find_top_ai_news\n` +
       `- Instructions must be actionable using the tools listed above\n` +
       `- PREFER specialized tools over shell commands (e.g. use computer_use for desktop, scrapling_fetch for blocked sites)\n` +
       `- Include error handling and fallback steps\n` +
       `- No TypeScript, no code generation — pure natural language instructions\n` +
       `- Output ONLY the SKILL.md content, nothing else`;
 
+    const model = synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
     const response = await provider.chat(
       [{ role: "user", content: prompt }],
-      config.defaultModel,
+      model,
     );
 
     let content = response.content.trim();
 
-    // ── Post-synthesis critique pass (Self-Refine, max 1 retry) ──────
+    // ── Post-synthesis quality gate (Self-Refine loop, up to MAX_SYNTHESIS_RETRIES) ──
     const critic = new SkillCritic(provider);
     const parser = new SkillParser();
+    let bestContent = content;
+    let bestScore = 0;
+
     try {
-      const provisionalSkill = parser.parseContent(content, "provisional");
-      const critique = await critic.critique(provisionalSkill);
+      for (let attempt = 0; attempt < MAX_SYNTHESIS_RETRIES; attempt++) {
+        const currentContent = attempt === 0 ? content : bestContent;
+        const provisionalSkill = parser.parseContent(currentContent, "provisional");
+        const critique = await critic.critique(provisionalSkill);
+        const score = critique.overallScore;
 
-      if (critique.overallScore < 0.6) {
-        // Score too low — ask the model to regenerate with critique context
-        const retryPrompt =
-          prompt +
-          `\n\n[QUALITY FEEDBACK — your first draft scored ${critique.overallScore.toFixed(2)}/1.0]\n` +
-          `You MUST address all of the following issues:\n` +
-          `- Name: ${critique.nameClarityScore.feedback}\n` +
-          `- Instructions: ${critique.instructionClarityScore.feedback}\n` +
-          `- Trigger: ${critique.triggerPrecisionScore.feedback}\n` +
-          `Rewrite the SKILL.md now, fixing all issues above.`;
-
-        const retryResponse = await provider.chat(
-          [{ role: "user", content: retryPrompt }],
-          config.defaultModel,
+        log.engine.info(
+          `[SkillSynthesis] Attempt ${attempt + 1}/${MAX_SYNTHESIS_RETRIES}: score=${score.toFixed(2)} (target=${TARGET_QUALITY_THRESHOLD})`,
         );
-        const retryContent = retryResponse.content.trim();
-        if (retryContent.includes("---") && retryContent.includes("name:")) {
-          content = retryContent;
+
+        // Track best version seen
+        if (score > bestScore) {
+          bestScore = score;
+          bestContent = currentContent;
         }
+
+        // Good enough — accept and stop
+        if (score >= TARGET_QUALITY_THRESHOLD) {
+          content = bestContent;
+          break;
+        }
+
+        // Below minimum — retry with critique feedback
+        if (score < MIN_QUALITY_THRESHOLD && attempt < MAX_SYNTHESIS_RETRIES - 1) {
+          const retryPrompt =
+            prompt +
+            `\n\n[QUALITY FEEDBACK — attempt ${attempt + 1} scored ${score.toFixed(2)}/1.0]\n` +
+            `You MUST address ALL of the following issues:\n` +
+            `- Name clarity (${critique.nameClarityScore.score.toFixed(2)}): ${critique.nameClarityScore.feedback}\n` +
+            `- Instructions (${critique.instructionClarityScore.score.toFixed(2)}): ${critique.instructionClarityScore.feedback}\n` +
+            `- Trigger precision (${critique.triggerPrecisionScore.score.toFixed(2)}): ${critique.triggerPrecisionScore.feedback}\n` +
+            `Rewrite the SKILL.md now, fixing all issues above.`;
+
+          const retryResponse = await provider.chat(
+            [{ role: "user", content: retryPrompt }],
+            model,
+          );
+          const retryContent = retryResponse.content.trim();
+          if (retryContent.includes("---") && retryContent.includes("name:")) {
+            bestContent = retryContent;
+          }
+          continue;
+        }
+
+        // Between min and target — accept best so far
+        content = bestContent;
+        break;
       }
-    } catch {
-      // Non-fatal: if critique fails, proceed with original content
+    } catch (err) {
+      log.engine.warn(
+        `[SkillSynthesis] Critique loop failed, using best available content: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      content = bestContent;
     }
 
-    // Extract skill name from frontmatter
+    // Extract skill name from frontmatter and normalize to generic form
     const nameMatch = content.match(/^name:\s*(\S+)/m);
-    const skillName = nameMatch
-      ? nameMatch[1].replace(/[^a-z0-9_]/gi, "_")
-      : "synthesized_skill";
+    const rawName = nameMatch ? nameMatch[1] : "synthesized_skill";
+    const skillName = normalizeToolName(rawName);
+
+    // Update the frontmatter if name was normalized
+    if (skillName !== rawName && nameMatch) {
+      content = content.replace(/^(name:\s*)\S+/m, `$1${skillName}`);
+    }
 
     // Write to skills directory
     const skillDir = join(skillsDir, skillName);
@@ -186,6 +268,7 @@ export class ToolSynthesizer {
     provider: ModelProvider,
     owl: OwlInstance,
     config: StackOwlConfig,
+    synthesisModel?: string,
   ): Promise<ToolProposal> {
     const platform = process.platform; // 'darwin' | 'linux' | 'win32'
 
@@ -218,18 +301,22 @@ export class ToolSynthesizer {
       `  "safetyNote": "What external systems this touches: filesystem / network / screen / none"\n` +
       `}\n\n` +
       `Additional rules:\n` +
-      `- toolName must be snake_case and describe the ACTION (not 'processor' or 'handler')\n` +
+      `- toolName MUST be 1-2 words max, snake_case, describing the CAPABILITY (like a tool name).\n` +
+      `  GOOD: email, screenshot, phone_call, weather, clipboard, notification\n` +
+      `  BAD: send_email_via_agentmail, fetch_weather_from_openweather, gmail_send_message\n` +
       `- Keep it minimal — solve only what the user asked for\n` +
       `- If no npm packages are needed, set dependencies to []\n` +
       `- Output ONLY the JSON object, no markdown fences`;
 
+    const model = synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
     const response = await provider.chat(
       [{ role: "user", content: prompt }],
-      config.defaultModel,
+      model,
     );
 
     const spec = this.parseJson(response.content);
-    const toolName = (spec.toolName as string | undefined) ?? "custom_tool";
+    const rawToolName = (spec.toolName as string | undefined) ?? "custom_tool";
+    const toolName = normalizeToolName(rawToolName);
     const fileName = `${toolName}.ts`;
 
     return {
@@ -261,6 +348,7 @@ export class ToolSynthesizer {
     _owl: OwlInstance,
     config: StackOwlConfig,
     previousError?: string,
+    synthesisModel?: string,
   ): Promise<string> {
     const schemaProperties = proposal.parameters.reduce(
       (acc, p) => {
@@ -353,9 +441,10 @@ export class ToolSynthesizer {
       `- Implement cross-platform detection to adapt behavior at runtime\n` +
       `- Output ONLY the TypeScript file content, no explanation, no markdown fences`;
 
+    const implModel = synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
     const response = await provider.chat(
       [{ role: "user", content: prompt }],
-      config.defaultModel,
+      implModel,
     );
 
     // Extract raw code — strip markdown fences if present

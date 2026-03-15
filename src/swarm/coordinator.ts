@@ -193,7 +193,7 @@ export class SwarmCoordinator {
 
     const effectiveTimeout = timeoutMs ?? this.config.taskTimeoutMs;
 
-    return new Promise<SwarmTask>((resolve, reject) => {
+    return new Promise<SwarmTask>((resolve) => {
       const timeout = setTimeout(() => {
         task.status = 'failed';
         task.error = 'Task timed out';

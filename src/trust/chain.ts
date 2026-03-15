@@ -263,6 +263,10 @@ export class TrustChain {
     }
   }
 
+  async save(): Promise<void> {
+    this.persist();
+  }
+
   private debouncedSave(): void {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.persist(), 5_000);

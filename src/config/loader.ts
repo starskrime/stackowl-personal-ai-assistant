@@ -54,6 +54,17 @@ export interface StackOwlConfig {
       enabled: boolean;
     };
   };
+  /**
+   * Tool/skill synthesis configuration.
+   * Controls which provider and model are used for generating new tools.
+   * By default uses Anthropic Claude Sonnet 4.6 for highest quality synthesis.
+   */
+  synthesis?: {
+    /** Provider name to use for synthesis (must be registered in providers). Default: 'anthropic' */
+    provider: string;
+    /** Model to use for synthesis. Default: 'claude-sonnet-4-5-20241022' */
+    model: string;
+  };
   /** MCP server connections */
   mcp?: {
     servers: Array<{
@@ -146,6 +157,10 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   engine: {
     maxToolIterations: 15,
   },
+  synthesis: {
+    provider: "anthropic",
+    model: "claude-sonnet-4-5-20241022",
+  },
 };
 
 // ─── Loader ──────────────────────────────────────────────────────
@@ -210,11 +225,112 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         ...DEFAULT_CONFIG.engine,
         ...(userConfig.engine || {}),
       },
+      synthesis: {
+        ...DEFAULT_CONFIG.synthesis!,
+        ...(userConfig.synthesis || {}),
+      },
     };
+
+    // Runtime validation
+    const errors = validateConfig(config);
+    if (errors.length > 0) {
+      console.warn(`[Config] Validation warnings:\n  ${errors.join('\n  ')}`);
+    }
 
     return config;
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     throw new Error(`[Config] Failed to load ${configPath}: ${msg}`);
   }
+}
+
+// ─── Runtime Validation ───────────────────────────────────────────
+
+function validateConfig(config: StackOwlConfig): string[] {
+  const errors: string[] = [];
+
+  // Required fields
+  if (!config.defaultProvider || typeof config.defaultProvider !== 'string') {
+    errors.push('defaultProvider must be a non-empty string');
+  }
+  if (!config.defaultModel || typeof config.defaultModel !== 'string') {
+    errors.push('defaultModel must be a non-empty string');
+  }
+
+  // Provider validation
+  if (!config.providers || typeof config.providers !== 'object') {
+    errors.push('providers must be an object');
+  } else {
+    if (config.defaultProvider && !config.providers[config.defaultProvider]) {
+      errors.push(`defaultProvider "${config.defaultProvider}" not found in providers`);
+    }
+    for (const [name, entry] of Object.entries(config.providers)) {
+      if (entry.baseUrl && typeof entry.baseUrl !== 'string') {
+        errors.push(`providers.${name}.baseUrl must be a string`);
+      }
+      if (entry.baseUrl && !entry.baseUrl.startsWith('http')) {
+        errors.push(`providers.${name}.baseUrl must start with http:// or https://`);
+      }
+    }
+  }
+
+  // Gateway
+  if (config.gateway) {
+    if (config.gateway.port && (config.gateway.port < 1 || config.gateway.port > 65535)) {
+      errors.push(`gateway.port must be between 1 and 65535 (got ${config.gateway.port})`);
+    }
+    if (config.gateway.rateLimit) {
+      if (config.gateway.rateLimit.maxPerMinute < 1) {
+        errors.push('gateway.rateLimit.maxPerMinute must be >= 1');
+      }
+      if (config.gateway.rateLimit.maxPerHour < 1) {
+        errors.push('gateway.rateLimit.maxPerHour must be >= 1');
+      }
+    }
+  }
+
+  // Parliament
+  if (config.parliament) {
+    if (config.parliament.maxRounds < 1 || config.parliament.maxRounds > 10) {
+      errors.push(`parliament.maxRounds should be 1-10 (got ${config.parliament.maxRounds})`);
+    }
+    if (config.parliament.maxOwls < 1 || config.parliament.maxOwls > 20) {
+      errors.push(`parliament.maxOwls should be 1-20 (got ${config.parliament.maxOwls})`);
+    }
+  }
+
+  // Engine
+  if (config.engine) {
+    if (config.engine.maxToolIterations !== undefined && config.engine.maxToolIterations < 1) {
+      errors.push('engine.maxToolIterations must be >= 1');
+    }
+    if (config.engine.maxToolIterations !== undefined && config.engine.maxToolIterations > 50) {
+      errors.push(`engine.maxToolIterations=${config.engine.maxToolIterations} is very high — consider <= 30`);
+    }
+    if (config.engine.maxContextTokens !== undefined && config.engine.maxContextTokens < 1000) {
+      errors.push('engine.maxContextTokens must be >= 1000');
+    }
+  }
+
+  // Owl DNA
+  if (config.owlDna) {
+    if (config.owlDna.evolutionBatchSize < 1) {
+      errors.push('owlDna.evolutionBatchSize must be >= 1');
+    }
+    if (config.owlDna.decayRatePerWeek < 0 || config.owlDna.decayRatePerWeek > 1) {
+      errors.push('owlDna.decayRatePerWeek must be between 0 and 1');
+    }
+  }
+
+  // Skills
+  if (config.skills?.enabled && (!config.skills.directories || config.skills.directories.length === 0)) {
+    errors.push('skills.enabled=true but no directories configured');
+  }
+
+  // Smart routing
+  if (config.smartRouting?.enabled && (!config.smartRouting.availableModels || config.smartRouting.availableModels.length === 0)) {
+    errors.push('smartRouting.enabled=true but no availableModels configured');
+  }
+
+  return errors;
 }

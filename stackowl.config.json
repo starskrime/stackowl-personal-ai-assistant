@@ -6,7 +6,8 @@
       "defaultEmbeddingModel": "gpt-oss:120b"
     },
     "anthropic": {
-      "defaultModel": "claude-3-5-sonnet-latest"
+      "apiKey": "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",
+      "defaultModel": "claude-sonnet-4-6"
     }
   },
   "defaultProvider": "ollama",
@@ -34,9 +35,9 @@
     "enabled": true
   },
   "smartRouting": {
-    "enabled": true,
+    "enabled": false,
     "fallbackProvider": "anthropic",
-    "fallbackModel": "claude-3-5-sonnet-latest"
+    "fallbackModel": "claude-sonnet-4-6"
   },
   "skills": {
     "enabled": true,
@@ -45,5 +46,9 @@
     ],
     "watch": true,
     "watchDebounceMs": 250
+  },
+  "synthesis": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6"
   }
 }

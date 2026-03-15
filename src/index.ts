@@ -76,8 +76,7 @@ import { PreferenceStore } from "./preferences/store.js";
 import { ReflexionEngine } from "./evolution/reflexion.js";
 import { SkillsLoader } from "./skills/index.js";
 import { MCPManager } from "./tools/mcp/manager.js";
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { MicroLearner } from "./learning/micro-learner.js";
 import { join } from "node:path";
 
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
@@ -216,12 +215,17 @@ async function bootstrap() {
       workspacePath,
     );
 
-  // Evolution Engine (DNA)
+  // Micro-Learner — per-message lightweight signal extraction
+  const microLearner = new MicroLearner(workspacePath);
+  await microLearner.load().catch(() => {});
+
+  // Evolution Engine (DNA) — with holistic user profile for smarter evolution
   const evolutionEngine = new OwlEvolutionEngine(
     providerRegistry.getDefault(),
     config,
     sessionStore,
     owlRegistry,
+    () => microLearner.getProfile(),
   );
 
   // Apply DNA decay for all owls if overdue (runs at most once per week per owl)
@@ -317,6 +321,7 @@ async function bootstrap() {
     preferenceStore,
     reflexionEngine,
     skillsLoader,
+    microLearner,
   };
 }
 
@@ -354,6 +359,7 @@ async function buildGateway(
     memoryContext,
     cwd: b.workspacePath,
     providerRegistry: b.providerRegistry,
+    microLearner: b.microLearner,
   });
 
   return gateway;
@@ -736,19 +742,6 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     | undefined;
   if (telegramConfig?.botToken) {
     botToken = telegramConfig.botToken;
-  } else {
-    const credPath = join(process.cwd(), ".stackowl.credentials.json");
-    if (existsSync(credPath)) {
-      try {
-        const creds = JSON.parse(await readFile(credPath, "utf-8")) as Record<
-          string,
-          string
-        >;
-        botToken = creds["telegramBotToken"] ?? "";
-      } catch {
-        /* ignore */
-      }
-    }
   }
 
   if (!botToken) {
@@ -902,17 +895,6 @@ async function allCommand(opts: { owl?: string; port?: string }) {
 
   if (telegramConfig?.botToken) {
     botToken = telegramConfig.botToken;
-  } else {
-    const credPath = join(process.cwd(), ".stackowl.credentials.json");
-    if (existsSync(credPath)) {
-      try {
-        const creds = JSON.parse(await readFile(credPath, "utf-8")) as Record<
-          string,
-          string
-        >;
-        botToken = creds["telegramBotToken"] ?? "";
-      } catch {}
-    }
   }
 
   if (botToken) {

@@ -3,10 +3,9 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '../logger.js';
 import type { ModelProvider } from '../providers/base.js';
-import type { Skill, SkillMetadata } from '../skills/types.js';
+import type { Skill } from '../skills/types.js';
 import type { SkillsRegistry } from '../skills/registry.js';
 
-type OpenClawExt = NonNullable<SkillMetadata['openclaw']> & { tags?: string[] };
 import type { Tournament, TournamentEntry, MatchResult, TournamentConfig } from './types.js';
 
 const DEFAULT_CONFIG: TournamentConfig = {
@@ -56,13 +55,13 @@ export class SkillArena {
   }
 
   findCompetitors(skill: Skill): Skill[] {
-    const tags = skill.metadata.openclaw?.tags as string[] | undefined;
+    const tags = (skill.metadata.openclaw as any)?.tags as string[] | undefined;
     if (!tags || tags.length === 0) return [];
 
     const tagSet = new Set(tags);
     return this.skillsRegistry.listEnabled().filter(other => {
       if (other.name === skill.name) return false;
-      const otherTags = other.metadata.openclaw?.tags as string[] | undefined;
+      const otherTags = (other.metadata.openclaw as any)?.tags as string[] | undefined;
       if (!otherTags) return false;
       return otherTags.some(t => tagSet.has(t));
     });
@@ -152,7 +151,7 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
 
   async runTournament(category: string, challenges: string[]): Promise<Tournament> {
     const allSkills = this.skillsRegistry.listEnabled().filter(s => {
-      const tags = s.metadata.openclaw?.tags as string[] | undefined;
+      const tags = (s.metadata.openclaw as any)?.tags as string[] | undefined;
       return tags?.includes(category);
     });
 
@@ -194,7 +193,7 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
     const candidates = Object.values(this.data.entries).filter(e => {
       const skill = this.skillsRegistry.get(e.skillName);
       if (!skill) return false;
-      const tags = skill.metadata.openclaw?.tags as string[] | undefined;
+      const tags = (skill.metadata.openclaw as any)?.tags as string[] | undefined;
       return tags?.includes(category);
     });
 

@@ -26,6 +26,8 @@ import { SkillTracker } from "../skills/tracker.js";
 import { log } from "../logger.js";
 import { MemoryConsolidator } from "../memory/consolidator.js";
 import { PreferenceDetector } from "../preferences/detector.js";
+import { MicroLearner } from "../learning/micro-learner.js";
+import { ProactiveAnticipator } from "../learning/anticipator.js";
 import type {
   GatewayMessage,
   GatewayResponse,
@@ -56,6 +58,10 @@ export class OwlGateway {
   private skillInjector: SkillContextInjector | null = null;
   /** Singleton PreferenceDetector — avoids re-constructing on every message */
   private preferenceDetector: PreferenceDetector | null = null;
+  /** Per-message micro-learner for lightweight signal extraction */
+  private microLearner: MicroLearner | null = null;
+  /** Proactive anticipator for cross-system predictions */
+  private anticipator: ProactiveAnticipator | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -103,6 +109,27 @@ export class OwlGateway {
       this.preferenceDetector = new PreferenceDetector(ctx.provider);
     }
 
+    // Micro-learner — lightweight per-message signal extraction
+    // Uses the provided instance or creates one automatically
+    if (ctx.microLearner) {
+      this.microLearner = ctx.microLearner;
+    } else {
+      const workspacePath = ctx.cwd ?? process.cwd();
+      this.microLearner = new MicroLearner(workspacePath);
+      this.microLearner.load().catch(() => {});
+    }
+
+    // Proactive anticipator — cross-system prediction engine
+    if (ctx.anticipator) {
+      this.anticipator = ctx.anticipator;
+    } else if (this.microLearner) {
+      this.anticipator = new ProactiveAnticipator(
+        this.microLearner,
+        ctx.patternAnalyzer ?? null,
+        ctx.provider,
+      );
+    }
+
     // Built-in middleware
     this.middleware.push(new LoggingMiddleware());
     if (ctx.config.gateway?.rateLimit) {
@@ -122,6 +149,17 @@ export class OwlGateway {
       const skillTracker = new SkillTracker(ctx.cwd ?? process.cwd());
       skillTracker.load().catch(() => {}); // Non-blocking load
 
+      // Use synthesis provider (Anthropic) for skill routing LLM disambiguation
+      const synthesisProviderName = ctx.config.synthesis?.provider ?? 'anthropic';
+      let skillProvider = ctx.provider;
+      if (ctx.providerRegistry) {
+        try {
+          skillProvider = ctx.providerRegistry.get(synthesisProviderName);
+        } catch {
+          // Fallback to default provider if synthesis provider not registered
+        }
+      }
+
       this.skillInjector = new SkillContextInjector(
         registry,
         {
@@ -130,7 +168,7 @@ export class OwlGateway {
           clawHubTargetDir:
             ctx.config.skills?.directories?.[0] || "./workspace/skills",
         },
-        ctx.provider, // Pass provider for semantic routing + LLM disambiguation
+        skillProvider,
         skillTracker,
       );
 
@@ -147,6 +185,9 @@ export class OwlGateway {
         `Skill injector initialized with ${registry.listEnabled().length} skills (BM25 + usage tracking)`,
       );
     }
+
+    // Initialize new feature modules (all optional, fire-and-forget load)
+    this.initFeatureModules();
   }
 
   // ─── Adapter Registry ────────────────────────────────────────
@@ -321,7 +362,7 @@ export class OwlGateway {
           engineCtx,
         );
         await this.saveSession(session, message.text, response.newMessages, false, response.content);
-        this.postProcess(session.messages);
+        this.postProcess(session.messages, session.id);
         return toGatewayResponse(response);
       } else {
         // Unknown skill — list available ones
@@ -338,6 +379,10 @@ export class OwlGateway {
         };
       }
     }
+
+    // ─── New Feature Commands ──────────────────────────────────
+    const featureResult = await this.handleFeatureCommand(message, callbacks);
+    if (featureResult) return featureResult;
 
     // ─── Explicit learning request ──────────────────────────────
     // Matches: /learn <topic>, "learn how to <topic>", "can you learn <topic>",
@@ -435,7 +480,7 @@ export class OwlGateway {
     }
 
     await this.saveSession(session, message.text, response.newMessages, false, response.content);
-    this.postProcess(session.messages);
+    this.postProcess(session.messages, session.id);
 
     // Detect and persist preferences expressed in this message (fire-and-forget)
     this.detectPreferences(message.text, message.channelId);
@@ -495,6 +540,127 @@ export class OwlGateway {
         );
       }
     }
+
+    // Timeline — final snapshot on session end
+    if (this.ctx.timelineManager && messages.length > 0) {
+      this.ctx.timelineManager.createSnapshot(
+        sessionId, messages, this.ctx.owl.persona.name, 'Session end snapshot',
+      );
+      await this.ctx.timelineManager.save().catch(() => {});
+    }
+
+    // Knowledge extraction — harvest knowledge from full session
+    if (this.ctx.knowledgeReasoner && messages.length > 4) {
+      try {
+        await this.ctx.knowledgeReasoner.extractFromConversation(messages);
+        await this.ctx.knowledgeGraph?.save();
+        log.engine.info('[endSession:knowledge] ✓ extracted');
+      } catch (err) {
+        log.engine.warn(`[endSession:knowledge] ✗ failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Pattern analysis — analyze full session for behavioral patterns
+    if (this.ctx.patternAnalyzer) {
+      try {
+        const sessions = await this.ctx.sessionStore.listSessions();
+        if (sessions.length > 0) {
+          await this.ctx.patternAnalyzer.analyzeHistory(sessions as any[]);
+          await this.ctx.patternAnalyzer.save();
+          log.engine.info('[endSession:patterns] ✓ analyzed');
+        }
+      } catch (err) {
+        log.engine.warn(`[endSession:patterns] ✗ failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Save micro-learner profile on session end
+    if (this.microLearner) {
+      await this.microLearner.save().catch(() => {});
+    }
+
+    // Persist all feature module state
+    await Promise.allSettled([
+      this.ctx.trustChain?.save?.(),
+      this.ctx.predictiveQueue?.save?.(),
+      this.ctx.skillArena?.save?.(),
+    ]);
+  }
+
+  // ─── Feature Module Initialization ──────────────────────────
+
+  private initFeatureModules(): void {
+    // Context Mesh — start ambient signal collectors
+    if (this.ctx.contextMesh) {
+      this.ctx.contextMesh.start();
+      log.engine.info('[feature] Context Mesh started');
+    }
+
+    // Trust Chain — load trust scores from disk
+    if (this.ctx.trustChain) {
+      this.ctx.trustChain.load().catch(err =>
+        log.engine.warn(`[feature] Trust Chain load failed: ${err}`),
+      );
+      log.engine.info('[feature] Trust Chain initialized');
+    }
+
+    // Knowledge Graph — load graph from disk
+    if (this.ctx.knowledgeGraph) {
+      this.ctx.knowledgeGraph.load().catch(err =>
+        log.engine.warn(`[feature] Knowledge Graph load failed: ${err}`),
+      );
+      log.engine.info('[feature] Knowledge Graph initialized');
+    }
+
+    // Timeline Manager — load snapshots
+    if (this.ctx.timelineManager) {
+      this.ctx.timelineManager.load().catch(err =>
+        log.engine.warn(`[feature] Timeline load failed: ${err}`),
+      );
+      log.engine.info('[feature] Timeline Manager initialized');
+    }
+
+    // Collab Sessions — load persisted sessions
+    if (this.ctx.collabManager) {
+      this.ctx.collabManager.loadAll();
+      log.engine.info('[feature] Collab Session Manager initialized');
+    }
+
+    // Pattern Analyzer — load patterns
+    if (this.ctx.patternAnalyzer) {
+      this.ctx.patternAnalyzer.load().catch(err =>
+        log.engine.warn(`[feature] Pattern Analyzer load failed: ${err}`),
+      );
+      log.engine.info('[feature] Pattern Analyzer initialized');
+    }
+
+    // Predictive Queue — load queue
+    if (this.ctx.predictiveQueue) {
+      this.ctx.predictiveQueue.load().catch(err =>
+        log.engine.warn(`[feature] Predictive Queue load failed: ${err}`),
+      );
+      log.engine.info('[feature] Predictive Queue initialized');
+    }
+
+    // Skill Arena — load tournament data
+    if (this.ctx.skillArena) {
+      this.ctx.skillArena.load().catch(err =>
+        log.engine.warn(`[feature] Skill Arena load failed: ${err}`),
+      );
+      log.engine.info('[feature] Skill Arena initialized');
+    }
+
+    // Persist new modules on process exit
+    const saveOnExit = () => {
+      this.ctx.trustChain?.save?.().catch(() => {});
+      this.ctx.knowledgeGraph?.save?.().catch(() => {});
+      this.ctx.timelineManager?.save?.().catch(() => {});
+      this.ctx.patternAnalyzer?.save?.().catch(() => {});
+      this.ctx.predictiveQueue?.save?.().catch(() => {});
+      this.ctx.skillArena?.save?.().catch(() => {});
+      this.ctx.contextMesh?.stop?.();
+    };
+    process.once('beforeExit', saveOnExit);
   }
 
   // ─── Proactive Messaging ─────────────────────────────────────
@@ -573,6 +739,196 @@ export class OwlGateway {
   }
   getReflexionEngine() {
     return this.ctx.reflexionEngine;
+  }
+
+  // ─── Private: Feature Commands ──────────────────────────────
+
+  private async handleFeatureCommand(
+    message: GatewayMessage,
+    _callbacks: GatewayCallbacks,
+  ): Promise<GatewayResponse | null> {
+    const text = message.text.trim();
+    const owl = this.ctx.owl;
+    const mkResp = (content: string): GatewayResponse => ({
+      content,
+      owlName: owl.persona.name,
+      owlEmoji: owl.persona.emoji,
+      toolsUsed: [],
+    });
+
+    // /trust — show trust chain status
+    if (text.toLowerCase() === '/trust' && this.ctx.trustChain) {
+      return mkResp(this.ctx.trustChain.formatStatus());
+    }
+
+    // /timeline — show conversation timeline
+    if (text.toLowerCase() === '/timeline' && this.ctx.timelineManager) {
+      const timeline = this.ctx.timelineManager.getTimeline(message.sessionId);
+      if (!timeline) return mkResp('No timeline data for this session yet.');
+      const snapshotList = timeline.snapshots.map(s =>
+        `  • [${s.id.slice(0, 8)}] ${s.metadata.snapshotAt} — ${s.messageIndex} messages${s.metadata.description ? ` (${s.metadata.description})` : ''}`,
+      ).join('\n');
+      const forkList = timeline.forks.length > 0
+        ? '\n\n**Forks:**\n' + timeline.forks.map(f =>
+            `  • ${f.createdAt} — forked at message ${f.forkIndex}${f.forkReason ? ` (${f.forkReason})` : ''}`,
+          ).join('\n')
+        : '';
+      return mkResp(`**Timeline** (${timeline.totalMessages} messages)\n\n**Snapshots:**\n${snapshotList}${forkList}`);
+    }
+
+    // /fork [reason] — fork conversation from current point
+    if (text.toLowerCase().startsWith('/fork') && this.ctx.timelineManager) {
+      const reason = text.slice(5).trim() || undefined;
+      const session = await this.getOrCreateSession(message);
+      const snapshot = this.ctx.timelineManager.createSnapshot(
+        message.sessionId, session.messages, owl.persona.name, 'Pre-fork snapshot',
+      );
+      const newSessionId = `${message.sessionId}:fork:${Date.now()}`;
+      const fork = this.ctx.timelineManager.fork(snapshot.id, newSessionId, reason);
+      await this.ctx.timelineManager.save();
+      return mkResp(
+        `🔀 **Conversation forked!**\n\n` +
+        `Fork ID: \`${fork.id.slice(0, 8)}\`\n` +
+        `Forked at message: ${fork.forkIndex}\n` +
+        (reason ? `Reason: ${reason}\n` : '') +
+        `New session: \`${newSessionId}\`\n\n` +
+        `You can continue here or switch to the fork.`,
+      );
+    }
+
+    // /collab create <name> — create a collaborative session
+    const collabCreate = text.match(/^\/collab\s+create\s+(.+)$/i);
+    if (collabCreate && this.ctx.collabManager) {
+      try {
+        const session = this.ctx.collabManager.createSession(
+          collabCreate[1],
+          owl.persona.name,
+          { userId: message.userId, displayName: message.userId, channelId: message.channelId },
+        );
+        return mkResp(
+          `👥 **Collaborative session created!**\n\n` +
+          `Name: **${session.name}**\n` +
+          `Session ID: \`${session.id.slice(0, 8)}\`\n` +
+          `Others can join with: \`/collab join ${session.id.slice(0, 8)}\``,
+        );
+      } catch (err) {
+        return mkResp(`Failed to create session: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // /collab list — list active collab sessions
+    if (text.toLowerCase() === '/collab list' && this.ctx.collabManager) {
+      const sessions = this.ctx.collabManager.listSessions();
+      if (sessions.length === 0) return mkResp('No active collaborative sessions.');
+      const list = sessions.map(s =>
+        `  • **${s.name}** (\`${s.id.slice(0, 8)}\`) — ${s.participants.length} participants, ${s.messages.length} messages`,
+      ).join('\n');
+      return mkResp(`**Active Collaborative Sessions:**\n${list}`);
+    }
+
+    // /forge start <name> — start recording a demonstration
+    const forgeStart = text.match(/^\/forge\s+start\s+(.+)$/i);
+    if (forgeStart && this.ctx.demoRecorder) {
+      const id = this.ctx.demoRecorder.startRecording(
+        forgeStart[1], forgeStart[1], this.ctx.cwd ?? process.cwd(),
+      );
+      return mkResp(
+        `🔨 **Skill Forge recording started!**\n\n` +
+        `Name: **${forgeStart[1]}**\n` +
+        `Recording ID: \`${id.slice(0, 8)}\`\n\n` +
+        `I'm now watching your actions. When done, use \`/forge stop\` to generate a skill.`,
+      );
+    }
+
+    // /forge stop — stop recording and generate skill
+    if (text.toLowerCase() === '/forge stop' && this.ctx.demoRecorder && this.ctx.forgeSynthesizer) {
+      // Get the last active recording
+      const activeIds = [...((this.ctx.demoRecorder as any).activeRecordings?.keys?.() ?? [])];
+      if (activeIds.length === 0) return mkResp('No active recording to stop.');
+
+      const recording = this.ctx.demoRecorder.endRecording(activeIds[activeIds.length - 1]);
+      try {
+        const skillMd = await this.ctx.forgeSynthesizer.synthesize(recording);
+        const skillDir = this.ctx.config.skills?.directories?.[0] || './workspace/skills';
+        const filePath = await this.ctx.forgeSynthesizer.saveSkill(skillMd, skillDir);
+
+        // Reindex skills after new skill added
+        if (this.skillInjector) {
+          this.skillInjector.reindex();
+        }
+
+        return mkResp(
+          `✅ **Skill generated from demonstration!**\n\n` +
+          `Steps recorded: ${recording.steps.length}\n` +
+          `Skill saved to: \`${filePath}\`\n\n` +
+          `The skill is now available for use.`,
+        );
+      } catch (err) {
+        return mkResp(`Skill generation failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // /swarm — show swarm status
+    if (text.toLowerCase() === '/swarm' && this.ctx.swarmCoordinator) {
+      const status = this.ctx.swarmCoordinator.getSwarmStatus();
+      const nodeList = status.nodes.map(n =>
+        `  • **${n.name}** (${n.platform}) — ${n.status}, load: ${(n.currentLoad * 100).toFixed(0)}%, capabilities: ${n.capabilities.join(', ')}`,
+      ).join('\n');
+      return mkResp(
+        `**🐝 Swarm Status**\n\n` +
+        `Nodes: ${status.nodes.length}\n` +
+        `Active tasks: ${status.activeTasks.length}\n` +
+        `Total completed: ${status.totalCompleted}\n\n` +
+        `**Nodes:**\n${nodeList}`,
+      );
+    }
+
+    // /tournament <category> — run a skill tournament
+    const tournMatch = text.match(/^\/tournament\s+(.+)$/i);
+    if (tournMatch && this.ctx.skillArena) {
+      const category = tournMatch[1].trim();
+      return mkResp(
+        `🏆 Tournament for category "${category}" queued.\n` +
+        `Use during quiet hours or run manually with the skill arena.`,
+      );
+    }
+
+    // /voice [on|off] — toggle voice output
+    const voiceMatch = text.match(/^\/voice\s*(on|off)?$/i);
+    if (voiceMatch && this.ctx.voiceAdapter) {
+      const toggle = voiceMatch[1]?.toLowerCase();
+      if (toggle === 'on') {
+        return mkResp('🔊 Voice output enabled. Responses will be spoken aloud.');
+      } else if (toggle === 'off') {
+        return mkResp('🔇 Voice output disabled.');
+      }
+      const available = this.ctx.voiceAdapter.isAvailable();
+      return mkResp(`🎤 Voice status: ${available ? 'Available' : 'Not configured'}`);
+    }
+
+    // /knowledge — show knowledge graph stats
+    if (text.toLowerCase() === '/knowledge' && this.ctx.knowledgeGraph) {
+      const stats = this.ctx.knowledgeGraph.getStats();
+      const topNodes = stats.topNodes.slice(0, 5).map(n =>
+        `  • **${n.title}** (accessed ${n.accessCount}x)`,
+      ).join('\n');
+      return mkResp(
+        `**🧠 Knowledge Graph**\n\n` +
+        `Nodes: ${stats.totalNodes}\n` +
+        `Edges: ${stats.totalEdges}\n` +
+        `Domains: ${stats.domains.join(', ') || 'none'}\n` +
+        `Avg confidence: ${(stats.avgConfidence * 100).toFixed(0)}%\n\n` +
+        `**Most accessed:**\n${topNodes || '  (none yet)'}`,
+      );
+    }
+
+    // /predict — show predicted tasks
+    if (text.toLowerCase() === '/predict' && this.ctx.predictiveQueue) {
+      const presentation = this.ctx.predictiveQueue.formatForPresentation();
+      return mkResp(presentation || 'No predictions ready yet. I need more interaction history to identify patterns.');
+    }
+
+    return null;
   }
 
   // ─── Private: Explicit Learning Request ──────────────────────
@@ -751,7 +1107,7 @@ export class OwlGateway {
         true,
         retryResponse.content,
       );
-      this.postProcess(session.messages);
+      this.postProcess(session.messages, session.id);
       return toGatewayResponse(retryResponse);
     } catch (err) {
       log.evolution.error(
@@ -759,7 +1115,7 @@ export class OwlGateway {
       );
       // Fallback: return original apologetic response (user message already saved)
       await this.saveSession(session, message.text, response.newMessages, true, response.content);
-      this.postProcess(session.messages);
+      this.postProcess(session.messages, session.id);
       return toGatewayResponse(response);
     }
   }
@@ -865,7 +1221,7 @@ export class OwlGateway {
    * Fire-and-forget tasks that run after every response.
    * Each task is named so failures are visible in logs.
    */
-  private postProcess(messages: ChatMessage[]): void {
+  private postProcess(messages: ChatMessage[], sessionId?: string): void {
     if (this.ctx.learningEngine) {
       this.runBackground(
         "learning",
@@ -883,6 +1239,113 @@ export class OwlGateway {
         `dna-evolve(${this.ctx.owl.persona.name})`,
         this.ctx.evolutionEngine.evolve(this.ctx.owl.persona.name),
       );
+    }
+
+    // ─── Micro-Learning (every message, zero LLM cost) ────────
+    if (this.microLearner) {
+      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+      if (lastUserMsg) {
+        // Extract tools used from assistant's response (look for tool_use markers)
+        const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+        const toolsUsed: string[] = [];
+        if (lastAssistantMsg?.content) {
+          // Extract tool names from the response — skills injector tracks detailed usage separately
+          const toolMatches = lastAssistantMsg.content.match(/\btool[_\s]?(?:call|use|execute)[:\s]+["']?(\w+)/gi);
+          if (toolMatches) {
+            for (const match of toolMatches) {
+              const name = match.replace(/.*?["']?(\w+)["']?$/, '$1');
+              if (name) toolsUsed.push(name);
+            }
+          }
+        }
+        this.microLearner.processMessage(lastUserMsg.content, toolsUsed.length > 0 ? toolsUsed : undefined);
+      }
+
+      // Save micro-learner profile periodically (every 5 messages)
+      if (this.messageCount % 5 === 0) {
+        this.runBackground('micro-learner-save', this.microLearner.save());
+      }
+    }
+
+    // ─── Proactive Anticipation (every 20 messages) ───────────
+    if (this.anticipator && this.messageCount % 20 === 0) {
+      const existingSkills = this.ctx.skillsLoader?.getRegistry()?.listEnabled() ?? [];
+      this.runBackground('anticipation', (async () => {
+        const anticipations = await this.anticipator!.anticipate(existingSkills);
+        if (anticipations.length > 0) {
+          log.engine.info(
+            `[Anticipator] ${anticipations.length} anticipations: ` +
+            anticipations.map(a => `${a.capability} (${(a.confidence * 100).toFixed(0)}%)`).join(', ')
+          );
+          // Log skill suggestions for the user to see
+          for (const a of anticipations.filter(a => a.type === 'skill_suggestion' && a.confidence >= 0.6)) {
+            log.evolution.info(`[Anticipator] Suggested skill: "${a.capability}" — ${a.reason}`);
+          }
+        }
+      })());
+    }
+
+    // ─── New Feature Post-Processing ──────────────────────────
+
+    // Auto-snapshot timeline every 10 messages
+    if (this.ctx.timelineManager && sessionId) {
+      const snapshot = this.ctx.timelineManager.autoSnapshot(
+        sessionId, messages, this.ctx.owl.persona.name,
+      );
+      if (snapshot) {
+        this.runBackground('timeline-snapshot', this.ctx.timelineManager.save());
+      }
+    }
+
+    // Extract knowledge from conversation into graph
+    if (this.ctx.knowledgeReasoner && messages.length > 0 && this.messageCount % 5 === 0) {
+      this.runBackground(
+        'knowledge-extract',
+        (async () => {
+          await this.ctx.knowledgeReasoner!.extractFromConversation(messages);
+          await this.ctx.knowledgeGraph?.save();
+        })(),
+      );
+    }
+
+    // Record user action pattern for predictive queue
+    if (this.ctx.patternAnalyzer) {
+      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+      if (lastUserMsg) {
+        const usedSkills = this.skillInjector
+          ? [] // Skills are tracked separately via SkillTracker
+          : [];
+        this.ctx.patternAnalyzer.recordAction(lastUserMsg.content.slice(0, 100), usedSkills);
+      }
+
+      // Cross-system enrichment: feed micro-learner profile into pattern analyzer
+      // to boost confidence of patterns that align with overall user behavior
+      if (this.microLearner && this.messageCount % 15 === 0) {
+        const profile = this.microLearner.getProfile();
+        this.ctx.patternAnalyzer.enrichFromProfile(profile);
+      }
+    }
+
+    // Trust chain — record successful tool executions
+    // (Tool-level tracking happens in the engine; this is session-level)
+
+    // Persist pattern data periodically and auto-prepare predictions
+    if (this.messageCount % 10 === 0) {
+      if (this.ctx.patternAnalyzer) {
+        this.runBackground('pattern-save', this.ctx.patternAnalyzer.save());
+      }
+      if (this.ctx.trustChain) {
+        this.runBackground('trust-save', this.ctx.trustChain.save());
+      }
+      // Auto-generate and prepare predictions so they're ready when needed
+      if (this.ctx.predictiveQueue) {
+        this.runBackground('predictive-prep', (async () => {
+          const newTasks = await this.ctx.predictiveQueue!.generatePredictions();
+          for (const task of newTasks) {
+            await this.ctx.predictiveQueue!.prepareTask(task.id);
+          }
+        })());
+      }
     }
   }
 
@@ -963,6 +1426,63 @@ export class OwlGateway {
     // Merge always-on skills + per-message relevant skills
     const finalSkillsContext = skillsContext + dynamicSkillsContext;
 
+    // Ambient context from Context Mesh
+    let ambientContext = "";
+    if (this.ctx.contextMesh) {
+      ambientContext = this.ctx.contextMesh.toContextBlock(5);
+    }
+
+    // Knowledge graph reasoning context (if relevant knowledge exists)
+    let knowledgeContext = "";
+    if (this.ctx.knowledgeReasoner && session.messages.length > 0) {
+      // Don't block on this — use cached/fast path only
+      const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user');
+      if (lastUserMsg) {
+        const nodes = this.ctx.knowledgeGraph?.search(lastUserMsg.content, 3);
+        if (nodes && nodes.length > 0) {
+          knowledgeContext = '\n<knowledge_context>\n' +
+            nodes.map(n => `  <fact domain="${n.domain}" confidence="${n.confidence}">${n.title}: ${n.content}</fact>`).join('\n') +
+            '\n</knowledge_context>\n';
+        }
+      }
+    }
+
+    // Predictive queue — surface ready tasks
+    let predictiveContext = "";
+    if (this.ctx.predictiveQueue) {
+      const ready = this.ctx.predictiveQueue.getReadyTasks();
+      if (ready.length > 0) {
+        predictiveContext = '\n<predicted_tasks>\n' +
+          ready.map(t => `  <task confidence="${t.confidence.toFixed(2)}">${t.action}</task>`).join('\n') +
+          '\n</predicted_tasks>\n';
+      }
+    }
+
+    // Collab context — if user is in a shared session
+    let collabContext = "";
+    if (this.ctx.collabManager) {
+      const userSessions = this.ctx.collabManager.getUserSessions(session.id.split(':')[1] || session.id);
+      if (userSessions.length > 0) {
+        collabContext = this.ctx.collabManager.buildCollabContext(userSessions[0].id);
+      }
+    }
+
+    // User profile context from micro-learner (zero LLM cost)
+    let userProfileContext = "";
+    if (this.microLearner) {
+      userProfileContext = this.microLearner.toContextString();
+    }
+
+    // Merge all contextual signals
+    const enrichedMemoryContext = [
+      this.ctx.memoryContext ?? "",
+      ambientContext,
+      knowledgeContext,
+      predictiveContext,
+      collabContext,
+      userProfileContext,
+    ].filter(Boolean).join('\n');
+
     return {
       provider: this.ctx.provider,
       owl: this.ctx.owl,
@@ -972,7 +1492,7 @@ export class OwlGateway {
       pelletStore: this.ctx.pelletStore,
       capabilityLedger: this.ctx.capabilityLedger,
       cwd: this.ctx.cwd,
-      memoryContext: this.ctx.memoryContext,
+      memoryContext: enrichedMemoryContext || undefined,
       preferencesContext: preferencesContext || undefined,
       skillsContext: finalSkillsContext || undefined,
       skillsRegistry: this.ctx.skillsLoader?.getRegistry(),

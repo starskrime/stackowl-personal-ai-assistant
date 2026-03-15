@@ -5,12 +5,6 @@ import type { KnowledgeEdge, ReasoningChain, ReasoningStep, EdgeType } from './t
 
 const log = new Logger('REASONER');
 
-interface Session {
-  id: string;
-  messages: { role: string; content: string }[];
-  metadata: { owlName: string; startedAt: number; lastUpdatedAt: number; title?: string };
-}
-
 interface ExtractedFact {
   title: string;
   content: string;
@@ -108,12 +102,13 @@ Build a step-by-step reasoning chain using these nodes. Output JSON only, no oth
           const relevantEdge = edges.find(e =>
             parsed.steps.some(s => s.nodeId === e.from || s.nodeId === e.to)
           );
-          return {
+          const result: ReasoningStep = {
             nodeId: step.nodeId,
             nodeTitle: node.title,
-            edgeType: relevantEdge?.type,
             contribution: step.contribution,
           };
+          if (relevantEdge) result.edgeType = relevantEdge.type;
+          return result;
         })
         .filter((s): s is ReasoningStep => s !== null);
 
