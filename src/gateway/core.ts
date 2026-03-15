@@ -309,7 +309,7 @@ export class OwlGateway {
           skillArgs || skill.description,
           engineCtx,
         );
-        await this.saveSession(session, message.text, response.newMessages);
+        await this.saveSession(session, message.text, response.newMessages, false, response.content);
         this.postProcess(session.messages);
         return toGatewayResponse(response);
       } else {
@@ -425,7 +425,7 @@ export class OwlGateway {
       );
     }
 
-    await this.saveSession(session, message.text, response.newMessages);
+    await this.saveSession(session, message.text, response.newMessages, false, response.content);
     this.postProcess(session.messages);
 
     // Detect and persist preferences expressed in this message (fire-and-forget)
@@ -648,9 +648,19 @@ export class OwlGateway {
       const result = await researcher.research(topic);
       await graphManager.save();
 
-      const pelletSummary = result.pellets.length > 0
-        ? result.pellets.map(p => `  - **${p.title}**`).join('\n')
-        : '  (no pellets created)';
+      if (result.pellets.length === 0) {
+        return {
+          content:
+            `${owl.persona.emoji} I wasn't able to produce any useful knowledge about **${topic}**. ` +
+            `This might be because the topic is too broad or my research didn't yield actionable results.\n\n` +
+            `Try being more specific — e.g. instead of "emails", try "sending emails via SMTP in Node.js".`,
+          owlName: owl.persona.name,
+          owlEmoji: owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
+
+      const pelletSummary = result.pellets.map(p => `  - **${p.title}**`).join('\n');
 
       const relatedSummary = result.relatedTopics.length > 0
         ? `\n\n**Related topics discovered:** ${result.relatedTopics.join(', ')}`
@@ -730,6 +740,7 @@ export class OwlGateway {
         message.text,
         retryResponse.newMessages,
         true,
+        retryResponse.content,
       );
       this.postProcess(session.messages);
       return toGatewayResponse(retryResponse);
@@ -738,7 +749,7 @@ export class OwlGateway {
         `Gap handling failed: ${err instanceof Error ? err.message : err}`,
       );
       // Fallback: return original apologetic response (user message already saved)
-      await this.saveSession(session, message.text, response.newMessages, true);
+      await this.saveSession(session, message.text, response.newMessages, true, response.content);
       this.postProcess(session.messages);
       return toGatewayResponse(response);
     }
@@ -772,6 +783,7 @@ export class OwlGateway {
     userText: string,
     newMessages: ChatMessage[],
     userAlreadySaved = false,
+    finalContent?: string,
   ): Promise<void> {
     // Guard: only append the user turn if it wasn't already saved
     // (capability gap retry path calls saveSession twice for the same user message)
@@ -780,6 +792,13 @@ export class OwlGateway {
     }
     for (const msg of newMessages) {
       session.messages.push(msg);
+    }
+
+    // Always append the final assistant response so session history
+    // includes what was actually sent to the user (newMessages only
+    // contains intermediate ReAct loop messages with empty content).
+    if (finalContent?.trim()) {
+      session.messages.push({ role: "assistant", content: finalContent });
     }
 
     // Trim to avoid unbounded growth

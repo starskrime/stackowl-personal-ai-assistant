@@ -17,14 +17,18 @@ export const GoogleSearchTool: ToolImplementation = {
   definition: {
     name: "google_search",
     description:
-      "Search the web and return the top results. Use this to find current news, research topics, or look up anything on the web.",
+      "Search the web for information. Returns titles, URLs, and snippets. " +
+      "Use this as your FIRST step when you need current/real-time information " +
+      "(news, prices, flight status, weather, etc.) or to find URLs to read with web_crawl. " +
+      "Do NOT search for the same query twice — rephrase or try web_crawl on a specific URL instead. " +
+      "After 2 searches on the same topic, STOP and use the results you already have.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            'The search query (e.g. "latest AI news", "TypeScript best practices 2025")',
+            'A specific, targeted search query. Be precise — "THY83J flight status DFW arrival" is better than "Turkish Airlines flight"',
         },
         num: {
           type: "number",

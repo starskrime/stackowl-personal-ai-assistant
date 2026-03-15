@@ -23,6 +23,37 @@ import { SessionStore } from "./memory/store.js";
 import { OrchestrateTasksTool } from "./tools/orchestrate.js";
 import { SummonParliamentTool } from "./tools/parliament.js";
 import { PatchTool } from "./tools/toolsmith.js";
+import { ScreenshotTool } from "./tools/screenshot.js";
+// ── macOS native tools ──
+import {
+  AppleCalendarTool, AppleRemindersTool, AppleContactsTool,
+  AppleNotesTool, AppleMailTool, SystemInfoTool, NotificationTool,
+  ClipboardTool, FocusModeTool, SpotlightSearchTool, TextToSpeechTool,
+} from "./tools/macos/index.js";
+// ── Utility tools ──
+import {
+  CalculatorTool, TimerTool, WeatherTool, CurrencyConverterTool,
+  PasswordGeneratorTool, JSONTransformTool, ProcessManagerTool,
+  DailyBriefingTool, HabitTrackerTool, ExpenseTrackerTool, QuickCaptureTool,
+} from "./tools/utils/index.js";
+// ── Web utility tools ──
+import {
+  WebMonitorTool, LinkPreviewTool, RSSFeedTool,
+} from "./tools/web-utils/index.js";
+// ── Dev tools ──
+import {
+  DockerTool, GitTool, APITesterTool, NetworkScanTool, CronJobTool,
+} from "./tools/dev/index.js";
+// ── Creative tools ──
+import {
+  MermaidDiagramTool, MarkdownRenderTool, ImageGenerationTool, SpeechToTextTool,
+} from "./tools/creative/index.js";
+// ── Data tools ──
+import {
+  SpreadsheetTool, DataVisualizationTool, FileEncryptTool, FileOrganizeTool,
+} from "./tools/data/index.js";
+// ── Computer Use ──
+import { ComputerUseTool } from "./tools/computer-use/index.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -79,33 +110,82 @@ async function bootstrap() {
   const { MemorySearchTool, MemoryGetTool } =
     await import("./compat/tools/memory.js");
   const { CronTool } = await import("./compat/tools/cron.js");
+  const { BrowserTool } = await import("./compat/tools/browser.js");
   toolRegistry.registerAll([
+    // ── Core tools ──
     ShellTool,
     ReadFileTool,
     WriteFileTool,
     EditFileTool,
-    OrchestrateTasksTool,
-    SendFileTool,
+    // ── Web & search ──
     GoogleSearchTool,
     WebCrawlTool,
-    new SummonParliamentTool(),
-    PatchTool,
-    // OpenCLAW-compatible tools - BrowserTool disabled (requires Chrome)
-    // Use google_search and web_crawl instead for web access
-    // new BrowserTool(workspacePath),
     new WebSearchTool(
       "brave",
       process.env.BRAVE_API_KEY || process.env.WEB_SEARCH_API_KEY,
     ),
-    // Session tools
+    new BrowserTool(workspacePath),
+    // ── Media & files ──
+    SendFileTool,
+    ScreenshotTool,
+    // ── Cognitive ──
+    new SummonParliamentTool(),
+    OrchestrateTasksTool,
+    // ── Memory & sessions ──
+    new MemorySearchTool(workspacePath),
+    new MemoryGetTool(workspacePath),
     new SessionsListTool(workspacePath),
     new SessionsHistoryTool(workspacePath),
     new SessionStatusTool(),
-    // Memory tools
-    new MemorySearchTool(workspacePath),
-    new MemoryGetTool(workspacePath),
-    // Cron tool
+    // ── System ──
     new CronTool(workspacePath),
+    PatchTool,
+    // ── macOS Native ──
+    AppleCalendarTool,
+    AppleRemindersTool,
+    AppleContactsTool,
+    AppleNotesTool,
+    AppleMailTool,
+    SystemInfoTool,
+    NotificationTool,
+    ClipboardTool,
+    FocusModeTool,
+    SpotlightSearchTool,
+    TextToSpeechTool,
+    // ── Utilities ──
+    CalculatorTool,
+    TimerTool,
+    WeatherTool,
+    CurrencyConverterTool,
+    PasswordGeneratorTool,
+    JSONTransformTool,
+    ProcessManagerTool,
+    DailyBriefingTool,
+    HabitTrackerTool,
+    ExpenseTrackerTool,
+    QuickCaptureTool,
+    // ── Web Utils ──
+    WebMonitorTool,
+    LinkPreviewTool,
+    RSSFeedTool,
+    // ── Dev ──
+    DockerTool,
+    GitTool,
+    APITesterTool,
+    NetworkScanTool,
+    CronJobTool,
+    // ── Creative ──
+    MermaidDiagramTool,
+    MarkdownRenderTool,
+    ImageGenerationTool,
+    SpeechToTextTool,
+    // ── Data ──
+    SpreadsheetTool,
+    DataVisualizationTool,
+    FileEncryptTool,
+    FileOrganizeTool,
+    // ── Computer Use (Desktop Automation) ──
+    ComputerUseTool,
   ]);
 
   // Initialize session store

@@ -40,14 +40,21 @@ export class KnowledgeResearcher {
      *  4. Update knowledge graph with new depth + frontier topics
      */
     async research(domain: string, context?: string): Promise<ResearchResult> {
-        // Guard: cap total pellets to prevent unbounded growth
+        // Guard: cap total pellets to prevent unbounded growth.
+        // When at capacity, evict the oldest pellets to make room.
         const MAX_PELLETS = 50;
+        const EVICT_COUNT = 5; // Free up 5 slots so we don't evict on every research call
         const existing = await this.pelletStore.listAll();
         if (existing.length >= MAX_PELLETS) {
-            log.evolution.warn(
-                `Self-study: pellet store at capacity (${existing.length}/${MAX_PELLETS}) — skipping research for "${domain}"`,
+            log.evolution.info(
+                `Self-study: pellet store at capacity (${existing.length}/${MAX_PELLETS}) — evicting ${EVICT_COUNT} oldest pellets to make room`,
             );
-            return { domain, pellets: [], relatedTopics: [] };
+            // listAll() returns sorted by most recent first, so oldest are at the end
+            const toEvict = existing.slice(-EVICT_COUNT);
+            for (const pellet of toEvict) {
+                await this.pelletStore.delete(pellet.id);
+                log.evolution.debug(`  evicted: "${pellet.title}" (${pellet.generatedAt})`);
+            }
         }
 
         log.evolution.evolve(`Self-study: researching "${domain}"...`);

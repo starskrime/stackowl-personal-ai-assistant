@@ -11,13 +11,17 @@ export const WebCrawlTool: ToolImplementation = {
   definition: {
     name: "web_crawl",
     description:
-      "Fetch and read the content of any webpage. Returns the page title and text content. Use this to get information from any URL.",
+      "Fetch and extract text content from a specific URL. Use this AFTER google_search " +
+      "to read a page you found, or when you already know the exact URL. " +
+      "Returns cleaned text (no HTML). Good for: articles, documentation, API docs, data pages. " +
+      "NOT for interactive sites (forms, SPAs, login-gated pages) — use the browser tool for those. " +
+      "Limit: 25KB text. Some sites block crawlers — if you get empty/blocked results, try a different URL.",
     parameters: {
       type: "object",
       properties: {
         url: {
           type: "string",
-          description: "Full URL to fetch (e.g. https://example.com/article)",
+          description: "Full URL to fetch (e.g. https://example.com/article). Must start with http:// or https://",
         },
       },
       required: ["url"],
@@ -60,6 +64,13 @@ export const WebCrawlTool: ToolImplementation = {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        if (response.status === 403) {
+          return (
+            `BLOCKED: ${url} returned HTTP 403 (Forbidden). ` +
+            `The site is blocking automated access. ` +
+            `Try the browser tool, or ask the user to visit the page manually.`
+          );
+        }
         return `Failed to fetch ${url}: HTTP ${response.status} ${response.statusText}`;
       }
 
@@ -100,6 +111,23 @@ export const WebCrawlTool: ToolImplementation = {
         .replace(/[ \t]+\n/g, "\n")
         .replace(/\n[ \t]+/g, "\n")
         .trim();
+
+      // Detect bot protection / challenge pages
+      const botBlocked =
+        title.includes("Security Checkpoint") ||
+        title.includes("Just a moment") ||
+        title.includes("Attention Required") ||
+        text.includes("Verify you are human") ||
+        text.includes("verifying your browser") ||
+        text.includes("Enable JavaScript and cookies to continue") ||
+        (text.length < 200 && text.includes("Checking your browser"));
+      if (botBlocked) {
+        return (
+          `BLOCKED: ${url} has bot/CAPTCHA protection ("${title}"). ` +
+          `This page cannot be read by web_crawl. ` +
+          `Try the browser tool instead, or tell the user to visit the page manually.`
+        );
+      }
 
       // Limit text length
       const MAX_TEXT = 25000;

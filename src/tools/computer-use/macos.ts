@@ -1,0 +1,504 @@
+/**
+ * StackOwl — macOS Desktop Controller
+ *
+ * Zero-dependency native desktop automation using JXA (JavaScript for Automation)
+ * with CoreGraphics CGEvent API for mouse and System Events for keyboard.
+ *
+ * Requires: macOS Accessibility permissions (System Settings → Privacy → Accessibility)
+ */
+
+import { exec, spawn } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
+const TIMEOUT = 15_000;
+
+// ─── Key Code Map ────────────────────────────────────────────────────────────
+
+export const KEY_CODES: Record<string, number> = {
+  // Control keys
+  enter: 36, return: 36, tab: 48, space: 49,
+  backspace: 51, delete: 117, escape: 53, esc: 53,
+
+  // Navigation
+  up: 126, down: 125, left: 123, right: 124,
+  home: 115, end: 119, pageup: 116, pagedown: 121,
+
+  // F-keys
+  f1: 122, f2: 120, f3: 99, f4: 118, f5: 96, f6: 97,
+  f7: 98, f8: 100, f9: 101, f10: 109, f11: 103, f12: 111,
+
+  // Punctuation (useful for combos)
+  minus: 27, equals: 24, leftbracket: 33, rightbracket: 30,
+  semicolon: 41, quote: 39, comma: 43, period: 47, slash: 44,
+  backslash: 42, grave: 50,
+};
+
+// Letters a-z
+for (let i = 0; i < 26; i++) {
+  const letter = String.fromCharCode(97 + i);
+  // macOS virtual key codes for letters (QWERTY layout)
+  const codes = [0,11,8,2,14,3,5,4,34,38,40,37,46,45,31,35,12,15,1,17,32,9,13,7,16,6];
+  KEY_CODES[letter] = codes[i];
+}
+
+// Digits 0-9
+const digitCodes = [29,18,19,20,21,23,22,26,28,25];
+for (let i = 0; i <= 9; i++) {
+  KEY_CODES[String(i)] = digitCodes[i];
+}
+
+// Modifier name → JXA modifier string
+const MODIFIER_MAP: Record<string, string> = {
+  cmd: "command down", command: "command down", meta: "command down",
+  shift: "shift down",
+  alt: "option down", option: "option down", opt: "option down",
+  ctrl: "control down", control: "control down",
+};
+
+// ─── JXA Execution Helper ────────────────────────────────────────────────────
+
+/**
+ * Execute JXA (JavaScript for Automation) via stdin pipe to osascript.
+ * Using stdin avoids all shell quoting/escaping issues.
+ */
+async function jxa(script: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("osascript", ["-l", "JavaScript"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: TIMEOUT,
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("close", (code) => {
+      if (code !== 0) reject(new Error(stderr.trim() || `osascript exited with code ${code}`));
+      else resolve(stdout.trim());
+    });
+    proc.on("error", reject);
+    proc.stdin.write(script);
+    proc.stdin.end();
+  });
+}
+
+/**
+ * Execute AppleScript via stdin pipe.
+ */
+async function applescript(script: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("osascript", [], {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: TIMEOUT,
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("close", (code) => {
+      if (code !== 0) reject(new Error(stderr.trim() || `osascript exited with code ${code}`));
+      else resolve(stdout.trim());
+    });
+    proc.on("error", reject);
+    proc.stdin.write(script);
+    proc.stdin.end();
+  });
+}
+
+// ─── Screen ──────────────────────────────────────────────────────────────────
+
+export interface ScreenDimensions {
+  width: number;
+  height: number;
+  scaleFactor: number;
+}
+
+export async function getScreenSize(): Promise<ScreenDimensions> {
+  const result = await jxa(`
+    ObjC.import('AppKit');
+    var s = $.NSScreen.mainScreen;
+    var f = s.frame;
+    var b = s.backingScaleFactor;
+    JSON.stringify({width: f.size.width, height: f.size.height, scaleFactor: b});
+  `);
+  return JSON.parse(result);
+}
+
+// ─── Cursor ──────────────────────────────────────────────────────────────────
+
+export interface CursorPosition {
+  x: number;
+  y: number;
+}
+
+export async function getCursorPosition(): Promise<CursorPosition> {
+  const result = await jxa(`
+    ObjC.import('CoreGraphics');
+    var e = $.CGEventCreate(null);
+    var p = $.CGEventGetLocation(e);
+    JSON.stringify({x: p.x, y: p.y});
+  `);
+  return JSON.parse(result);
+}
+
+// ─── Mouse ───────────────────────────────────────────────────────────────────
+
+type MouseButton = "left" | "right" | "middle";
+
+function getMouseEventTypes(button: MouseButton) {
+  switch (button) {
+    case "right":
+      return { down: "$.kCGEventRightMouseDown", up: "$.kCGEventRightMouseUp", btn: "1" };
+    case "middle":
+      return { down: "$.kCGEventOtherMouseDown", up: "$.kCGEventOtherMouseUp", btn: "2" };
+    default:
+      return { down: "$.kCGEventLeftMouseDown", up: "$.kCGEventLeftMouseUp", btn: "0" };
+  }
+}
+
+export async function mouseMove(x: number, y: number): Promise<void> {
+  await jxa(`
+    ObjC.import('CoreGraphics');
+    var e = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, {x:${x},y:${y}}, 0);
+    $.CGEventPost($.kCGHIDEventTap, e);
+    true;
+  `);
+}
+
+export async function mouseMoveSmooth(
+  toX: number,
+  toY: number,
+  steps = 25,
+  durationMs = 300,
+): Promise<void> {
+  // Get current position, then animate
+  const from = await getCursorPosition();
+  const delayPerStep = durationMs / steps;
+
+  // Build all movement steps as a single JXA script for performance
+  const stepScript = Array.from({ length: steps + 1 }, (_, i) => {
+    const t = i / steps;
+    // Ease-in-out cubic for natural movement
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const x = Math.round(from.x + (toX - from.x) * ease);
+    const y = Math.round(from.y + (toY - from.y) * ease);
+    return `
+      e = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, {x:${x},y:${y}}, 0);
+      $.CGEventPost($.kCGHIDEventTap, e);
+      d = $.NSDate.dateWithTimeIntervalSinceNow(${delayPerStep / 1000});
+      $.NSRunLoop.currentRunLoop.runUntilDate(d);
+    `;
+  }).join("\n");
+
+  await jxa(`
+    ObjC.import('CoreGraphics');
+    ObjC.import('Foundation');
+    var e, d;
+    ${stepScript}
+    true;
+  `);
+}
+
+export async function mouseClick(
+  x: number,
+  y: number,
+  button: MouseButton = "left",
+  clickCount = 1,
+): Promise<void> {
+  const ev = getMouseEventTypes(button);
+
+  // Build click sequence (supports single, double, triple click)
+  const clicks = Array.from({ length: clickCount }, (_, i) => `
+    down = $.CGEventCreateMouseEvent(null, ${ev.down}, pt, ${ev.btn});
+    $.CGEventSetIntegerValueField(down, $.kCGMouseEventClickState, ${i + 1});
+    $.CGEventPost($.kCGHIDEventTap, down);
+    up = $.CGEventCreateMouseEvent(null, ${ev.up}, pt, ${ev.btn});
+    $.CGEventSetIntegerValueField(up, $.kCGMouseEventClickState, ${i + 1});
+    $.CGEventPost($.kCGHIDEventTap, up);
+  `).join("\n");
+
+  await jxa(`
+    ObjC.import('CoreGraphics');
+    var pt = {x:${x},y:${y}};
+    var move = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, 0);
+    $.CGEventPost($.kCGHIDEventTap, move);
+    var down, up;
+    ${clicks}
+    true;
+  `);
+}
+
+export async function mouseDrag(
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  steps = 20,
+  durationMs = 400,
+): Promise<void> {
+  const delayPerStep = durationMs / steps;
+
+  const dragSteps = Array.from({ length: steps + 1 }, (_, i) => {
+    const t = i / steps;
+    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const x = Math.round(fromX + (toX - fromX) * ease);
+    const y = Math.round(fromY + (toY - fromY) * ease);
+    return `
+      e = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDragged, {x:${x},y:${y}}, 0);
+      $.CGEventPost($.kCGHIDEventTap, e);
+      d = $.NSDate.dateWithTimeIntervalSinceNow(${delayPerStep / 1000});
+      $.NSRunLoop.currentRunLoop.runUntilDate(d);
+    `;
+  }).join("\n");
+
+  await jxa(`
+    ObjC.import('CoreGraphics');
+    ObjC.import('Foundation');
+    var e, d;
+    var down = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, {x:${fromX},y:${fromY}}, 0);
+    $.CGEventPost($.kCGHIDEventTap, down);
+    ${dragSteps}
+    var up = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, {x:${toX},y:${toY}}, 0);
+    $.CGEventPost($.kCGHIDEventTap, up);
+    true;
+  `);
+}
+
+// ─── Scroll ──────────────────────────────────────────────────────────────────
+
+export async function scroll(
+  direction: "up" | "down" | "left" | "right",
+  amount = 3,
+): Promise<void> {
+  // CGEventCreateScrollWheelEvent: wheel1=vertical, wheel2=horizontal
+  let wheel1 = 0;
+  let wheel2 = 0;
+  switch (direction) {
+    case "up": wheel1 = amount; break;
+    case "down": wheel1 = -amount; break;
+    case "left": wheel2 = amount; break;
+    case "right": wheel2 = -amount; break;
+  }
+
+  await jxa(`
+    ObjC.import('CoreGraphics');
+    var e = $.CGEventCreateScrollWheelEvent(null, 0, 2, ${wheel1}, ${wheel2});
+    $.CGEventPost($.kCGHIDEventTap, e);
+    true;
+  `);
+}
+
+// ─── Keyboard ────────────────────────────────────────────────────────────────
+
+export async function typeText(text: string, delayMs = 0): Promise<void> {
+  // Escape text for JXA string
+  const escaped = text
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+
+  if (delayMs > 0) {
+    // Type character by character with delay (more human-like)
+    const chars = Array.from(text);
+    const charScript = chars.map(c => {
+      const ce = c.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+      return `
+        SE.keystroke('${ce}');
+        d = $.NSDate.dateWithTimeIntervalSinceNow(${delayMs / 1000});
+        $.NSRunLoop.currentRunLoop.runUntilDate(d);
+      `;
+    }).join("\n");
+
+    await jxa(`
+      ObjC.import('Foundation');
+      var SE = Application('System Events');
+      var d;
+      ${charScript}
+      true;
+    `);
+  } else {
+    await jxa(`
+      var SE = Application('System Events');
+      SE.keystroke('${escaped}');
+      true;
+    `);
+  }
+}
+
+export async function pressKey(
+  key: string,
+  modifiers: string[] = [],
+): Promise<void> {
+  // Resolve key name to keycode
+  const keyLower = key.toLowerCase();
+  const keyCode = KEY_CODES[keyLower];
+
+  if (keyCode === undefined) {
+    // If it's a single character, use keystroke instead
+    if (key.length === 1) {
+      const modStr = modifiers
+        .map(m => MODIFIER_MAP[m.toLowerCase()])
+        .filter(Boolean);
+
+      if (modStr.length > 0) {
+        const using = modStr.length === 1
+          ? `{using: '${modStr[0]}'}`
+          : `{using: [${modStr.map(m => `'${m}'`).join(", ")}]}`;
+        await jxa(`
+          var SE = Application('System Events');
+          SE.keystroke('${key}', ${using});
+          true;
+        `);
+      } else {
+        await jxa(`
+          var SE = Application('System Events');
+          SE.keystroke('${key}');
+          true;
+        `);
+      }
+      return;
+    }
+    throw new Error(`Unknown key: "${key}". Use key names like: enter, tab, escape, up, down, f1, a, b, etc.`);
+  }
+
+  const modStr = modifiers
+    .map(m => MODIFIER_MAP[m.toLowerCase()])
+    .filter(Boolean);
+
+  if (modStr.length > 0) {
+    const using = modStr.length === 1
+      ? `{using: '${modStr[0]}'}`
+      : `{using: [${modStr.map(m => `'${m}'`).join(", ")}]}`;
+    await jxa(`
+      var SE = Application('System Events');
+      SE.keyCode(${keyCode}, ${using});
+      true;
+    `);
+  } else {
+    await jxa(`
+      var SE = Application('System Events');
+      SE.keyCode(${keyCode});
+      true;
+    `);
+  }
+}
+
+export async function hotkey(combo: string): Promise<void> {
+  // Parse combo like "cmd+shift+s", "ctrl+c", "alt+tab"
+  const parts = combo.toLowerCase().split("+").map(p => p.trim());
+  const key = parts.pop()!;
+  const modifiers = parts;
+  await pressKey(key, modifiers);
+}
+
+// ─── Application Control ────────────────────────────────────────────────────
+
+export async function openApp(appName: string): Promise<void> {
+  const escaped = appName.replace(/"/g, "\\\"");
+  await applescript(`tell application "${escaped}" to activate`);
+}
+
+export async function openUrl(url: string): Promise<void> {
+  const escaped = url.replace(/"/g, "\\\"");
+  await applescript(`open location "${escaped}"`);
+}
+
+export async function getFrontApp(): Promise<string> {
+  const result = await jxa(`
+    var app = Application('System Events');
+    var front = app.processes.whose({frontmost: true})[0];
+    front.name();
+  `);
+  return result;
+}
+
+// ─── Screenshot ──────────────────────────────────────────────────────────────
+
+export async function screenshot(
+  outputPath: string,
+  region?: { x: number; y: number; width: number; height: number },
+): Promise<void> {
+  const regionFlag = region
+    ? `-R ${region.x},${region.y},${region.width},${region.height}`
+    : "";
+  await execAsync(
+    `screencapture -x ${regionFlag} "${outputPath}"`,
+    { timeout: TIMEOUT },
+  );
+}
+
+// ─── UI Element Discovery (Accessibility API) ───────────────────────────────
+
+export interface UIElement {
+  role: string;
+  title: string;
+  description: string;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+}
+
+export async function findUIElements(
+  appName: string,
+  searchText?: string,
+  role?: string,
+  maxDepth = 5,
+): Promise<UIElement[]> {
+  const escaped = appName.replace(/"/g, '\\"');
+
+  const result = await jxa(`
+    var SE = Application('System Events');
+    var proc = SE.processes.byName('${escaped}');
+    var results = [];
+    var searchText = ${searchText ? `'${searchText.replace(/'/g, "\\'")}'` : "null"};
+    var targetRole = ${role ? `'${role}'` : "null"};
+    var maxDepth = ${maxDepth};
+
+    function scan(el, depth) {
+      if (depth > maxDepth || results.length >= 30) return;
+      try {
+        var r = el.role();
+        var t = '';
+        try { t = el.title() || ''; } catch(e) {}
+        var d = '';
+        try { d = el.description() || ''; } catch(e) {}
+        var match = true;
+        if (searchText) {
+          var combined = (t + ' ' + d).toLowerCase();
+          match = combined.indexOf(searchText.toLowerCase()) >= 0;
+        }
+        if (targetRole && r !== targetRole) match = false;
+        if (match && (t || d)) {
+          var pos = {x: 0, y: 0};
+          var sz = {width: 0, height: 0};
+          try { var p = el.position(); pos = {x: p[0], y: p[1]}; } catch(e) {}
+          try { var s = el.size(); sz = {width: s[0], height: s[1]}; } catch(e) {}
+          results.push({role: r, title: t, description: d, position: pos, size: sz});
+        }
+        var children = el.uiElements();
+        for (var i = 0; i < children.length; i++) {
+          scan(children[i], depth + 1);
+        }
+      } catch(e) {}
+    }
+
+    var wins = proc.windows();
+    for (var w = 0; w < wins.length && w < 3; w++) {
+      scan(wins[w], 0);
+    }
+    JSON.stringify(results);
+  `);
+
+  try {
+    return JSON.parse(result);
+  } catch {
+    return [];
+  }
+}
+
+// ─── Wait Helper ─────────────────────────────────────────────────────────────
+
+export function wait(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}

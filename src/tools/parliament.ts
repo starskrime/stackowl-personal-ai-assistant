@@ -4,7 +4,7 @@ import { ParliamentOrchestrator } from '../parliament/orchestrator.js';
 export class SummonParliamentTool implements ToolImplementation {
     definition = {
         name: 'summon_parliament',
-        description: 'Summon a Parliament of specialist AI agents (owls) to debate, analyze, or solve a complex topic. Use this when you need multiple perspectives, deep architectural review, or specialized knowledge outside your immediate domain. The orchestrator will conduct a multi-round debate and return the final synthesized verdict and transcript.',
+        description: 'Summon multiple specialist AI agents for a structured debate on a complex topic. Use ONLY for high-stakes decisions requiring multiple perspectives (architecture reviews, strategy decisions, complex tradeoffs). NOT for simple questions, web searches, or tasks you can handle alone. Runs 3 debate rounds — slow and expensive.',
         parameters: {
             type: 'object',
             properties: {

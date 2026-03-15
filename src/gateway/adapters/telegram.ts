@@ -180,6 +180,9 @@ export class TelegramAdapter implements ChannelAdapter {
 
             await ctx.api.sendChatAction(ctx.chat.id, 'typing');
 
+            // Reset heartbeat suppression — user is active
+            this.pinger?.notifyUserActivity();
+
             log.telegram.incoming(`user:${userId}`, text);
 
             try {
@@ -233,9 +236,15 @@ export class TelegramAdapter implements ChannelAdapter {
                 );
 
                 // Only send the final response if streaming didn't already deliver it.
-                // When streaming is active, the user sees the answer build up in real-time
-                // via editMessageText — sending it again would duplicate the message.
-                if (!streamCtx.status.delivered) {
+                // Compare streamed content against the final response — if they differ
+                // (e.g. exhaustion handler generated a new response after streaming),
+                // the user needs to see the new content.
+                const streamed = streamCtx.status.streamedContent;
+                const finalContent = response.content.trim();
+                const streamedFinal = streamed.trim();
+                const alreadyDelivered = streamedFinal.length > 0
+                    && finalContent.startsWith(streamedFinal.slice(0, 100));
+                if (!alreadyDelivered) {
                     await this.sendResponse(ctx, response);
                 }
 
@@ -287,32 +296,33 @@ export class TelegramAdapter implements ChannelAdapter {
     // ─── Streaming (edit-in-place) ──────────────────────────────────
 
     /**
-     * Create a StreamEvent handler for edit-in-place streaming.
-     * Sends an initial message on the first text_delta, then throttles
-     * edits to max 1/second to stay within Telegram rate limits.
-     */
-    /**
      * Creates a stream handler and returns both the handler function and a
      * status object that tracks whether streaming successfully delivered content.
+     *
+     * `status.streamedContent` holds the text that was actually streamed to the
+     * user (text_delta only — tool status messages are NOT counted). After the
+     * gateway returns, the caller compares this against the final response to
+     * decide whether `sendResponse` is needed.
      */
-    private createStreamHandler(ctx: Context): { handler: (event: StreamEvent) => Promise<void>; status: { delivered: boolean } } {
+    private createStreamHandler(ctx: Context): { handler: (event: StreamEvent) => Promise<void>; status: { streamedContent: string } } {
         const chatId = ctx.chat?.id;
-        const status = { delivered: false };
+        const status = { streamedContent: '' };
         if (!chatId) return { handler: async () => {}, status };
 
         let messageId: number | null = null;
-        let accumulated = '';
+        let displayText = '';   // Full text shown in Telegram (includes tool status)
+        let pureContent = '';   // Only text_delta content (no tool noise)
         let lastEditTime = 0;
         let pendingEdit: ReturnType<typeof setTimeout> | null = null;
         const THROTTLE_MS = 1000;
 
         const flushEdit = async () => {
-            if (!messageId || !accumulated) return;
+            if (!messageId || !displayText) return;
             try {
                 await this.bot.api.editMessageText(
                     chatId,
                     messageId,
-                    this.escHtml(accumulated),
+                    this.escHtml(displayText),
                     { parse_mode: 'HTML' },
                 );
                 lastEditTime = Date.now();
@@ -324,14 +334,15 @@ export class TelegramAdapter implements ChannelAdapter {
         const handler = async (event: StreamEvent) => {
             switch (event.type) {
                 case 'text_delta': {
-                    accumulated += event.content;
+                    displayText += event.content;
+                    pureContent += event.content;
 
                     if (!messageId) {
                         // Send initial message
                         try {
                             const sent = await this.bot.api.sendMessage(
                                 chatId,
-                                this.escHtml(accumulated) || '...',
+                                this.escHtml(displayText) || '...',
                                 { parse_mode: 'HTML' },
                             );
                             messageId = sent.message_id;
@@ -356,12 +367,12 @@ export class TelegramAdapter implements ChannelAdapter {
                     break;
                 }
                 case 'tool_start': {
-                    accumulated += `\n⚙️ Running: ${event.toolName}...`;
+                    displayText += `\n⚙️ Running: ${event.toolName}...`;
                     await flushEdit();
                     break;
                 }
                 case 'tool_end': {
-                    accumulated += ` ✅`;
+                    displayText += ` ✅`;
                     await flushEdit();
                     break;
                 }
@@ -369,9 +380,9 @@ export class TelegramAdapter implements ChannelAdapter {
                     // Final flush to ensure all accumulated text is shown
                     if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
                     await flushEdit();
-                    // Mark that streaming successfully delivered content
-                    if (messageId && accumulated.length > 0) {
-                        status.delivered = true;
+                    // Record what text_delta content was streamed (not tool status noise)
+                    if (messageId && pureContent.length > 0) {
+                        status.streamedContent = pureContent;
                     }
                     break;
                 }

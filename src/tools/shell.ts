@@ -171,7 +171,11 @@ export const ShellTool: ToolImplementation = {
   definition: {
     name: "run_shell_command",
     description:
-      "Execute a shell command in an isolated Alpine Linux sandbox with FULL INTERNET ACCESS. Use this to safely run code, evaluate logic, process files, and fetch URLs from the internet. You CAN use curl, wget, and other network commands directly. To install a missing package, chain apk add before your command in the same shell invocation.",
+      "Execute a shell command on the host machine. Use for: running code/scripts, " +
+      "processing files, system tasks (screenshots via 'screencapture', clipboard, notifications), " +
+      "installing packages, or any OS-level operation. " +
+      "Has full internet access — curl, wget, node, python all available. " +
+      "30-second timeout. For reading/writing files, prefer read_file/write_file tools instead.",
     parameters: {
       type: "object",
       properties: {

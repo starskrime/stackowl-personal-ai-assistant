@@ -84,6 +84,10 @@ const DEFAULT_PING_CONFIG: PingConfig = {
 // Minimum time between ANY two pings (prevents spam even with short intervals)
 const MIN_PING_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
+// Stop sending check-ins after this many unanswered pings.
+// Resets when the user sends a message (via notifyUserActivity).
+const MAX_UNANSWERED_PINGS = 2;
+
 // ─── Proactive Pinger ────────────────────────────────────────────
 
 export class ProactivePinger {
@@ -97,6 +101,7 @@ export class ProactivePinger {
     private lastSelfStudyDate: string = '';
     private lastDreamTime: number = 0;
     private lastSkillEvolutionDate: string = '';
+    private unansweredPings: number = 0;
 
     constructor(context: PingContext, config?: Partial<PingConfig>) {
         this.config = { ...DEFAULT_PING_CONFIG, ...config };
@@ -178,6 +183,14 @@ export class ProactivePinger {
     }
 
     /**
+     * Call when the user sends a message. Resets the unanswered ping counter
+     * so check-ins resume after the user re-engages.
+     */
+    notifyUserActivity(): void {
+        this.unansweredPings = 0;
+    }
+
+    /**
      * Stop all proactive pinging.
      */
     stop(): void {
@@ -233,6 +246,9 @@ export class ProactivePinger {
      */
     private async maybeCheckIn(): Promise<void> {
         if (this.isQuietHours()) return;
+
+        // Suppress check-ins if user hasn't responded to recent pings
+        if (this.unansweredPings >= MAX_UNANSWERED_PINGS) return;
 
         const now = Date.now();
 
@@ -508,6 +524,7 @@ export class ProactivePinger {
 
             await this.context.sendToUser(response.content);
             this.lastPingTime = Date.now();
+            this.unansweredPings++;
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.error(`[ProactivePinger] Failed to generate ping: ${msg}`);

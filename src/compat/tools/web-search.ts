@@ -56,13 +56,7 @@ export class WebSearchTool implements ToolImplementation {
 
   definition = {
     name: "web_search",
-    description: `Search the web for information. Returns title, URL, and snippet for each result.
-
-Examples:
-- web_search query="latest AI news" - Search the web
-- web_search query="how to use Docker" count=5 - Get 5 results
-
-Use this when you need current information, facts, or web resources.`,
+    description: `Search the web using Brave Search (premium) with DuckDuckGo fallback. Identical purpose to google_search — use EITHER one, not both. Returns title, URL, and snippet. Results are cached for 15 minutes. After 2 searches on the same topic, STOP searching and work with results you have.`,
     parameters: {
       type: "object" as const,
       properties: {

@@ -392,17 +392,30 @@ ${userMessage}
     if (toolRegistry && toolRegistry.getDefinitions().length > 0) {
       finalUserMessage +=
         `\n\n[SYSTEM DIRECTIVE — ReAct Rules]\n` +
-        `1. USE TOOLS only when you genuinely need information you do not already have ` +
-        `(e.g. reading a file, running code, fetching a URL). ` +
-        `Do NOT use tools to verify or double-check answers you are already confident in.\n` +
-        `2. ANSWER DIRECTLY if the question is factual, conversational, or answerable from context/memory. ` +
+        `1. ANSWER DIRECTLY if the question is factual, conversational, or answerable from context/memory. ` +
         `Do not use a tool just because tools are available.\n` +
-        `3. SIGNAL COMPLETION: when your response is the final answer, append [DONE] at the very end. ` +
+        `2. USE TOOLS only when you genuinely need information you do not already have. ` +
+        `Do NOT use tools to verify or double-check answers you are already confident in.\n` +
+        `3. TOOL SELECTION GUIDE:\n` +
+        `   - Need current info (news, prices, status)? → google_search FIRST, then web_crawl a specific result URL\n` +
+        `   - Need to read a specific URL? → web_crawl (fast, text-only) or browser (if site blocks crawlers or needs interaction)\n` +
+        `   - Need to interact with a website (fill forms, click buttons)? → browser tool\n` +
+        `   - BLOCKED by bot detection / CAPTCHA / 403? → use computer_use tool instead! It controls the REAL mouse and keyboard like a human, so no website can detect it as a bot. Escalation: web_crawl → browser → computer_use\n` +
+        `   - Need to run code, install packages, or do OS tasks? → run_shell_command\n` +
+        `   - Need to capture the screen? → take_screenshot or computer_use(action:'screenshot'), then send_file\n` +
+        `   - Need to control the desktop (click, type, open apps, drag)? → computer_use\n` +
+        `   - Need math calculations? → calculator (accurate, no guessing)\n` +
+        `   - Need weather, time, calendar, reminders? → use the dedicated tools (weather, apple_calendar, apple_reminders)\n` +
+        `   - Need user context from past sessions? → memory_search\n` +
+        `   - google_search and web_search are equivalent — use ONE, never both for the same query\n` +
+        `4. SEARCH DISCIPLINE: After 2 searches on the same topic, STOP and synthesize an answer from what you have. ` +
+        `Rephrase your query instead of repeating similar searches. If web_crawl returns blocked/empty content, try a DIFFERENT URL.\n` +
+        `5. SIGNAL COMPLETION: when your response is the final answer, append [DONE] at the very end. ` +
         `The engine will drop any pending tool calls and return your answer immediately.\n` +
-        `4. CAPABILITY GAP: output [CAPABILITY_GAP: <description>] ONLY if the request requires a genuine SYSTEM ACTION ` +
+        `6. CAPABILITY GAP: output [CAPABILITY_GAP: <description>] ONLY if the request requires a genuine SYSTEM ACTION ` +
         `(OS-level, hardware, network call to an external service) that no available tool or shell command can perform. ` +
         `Do NOT use this for knowledge gaps, analysis, or tasks solvable with run_shell_command.\n` +
-        `5. NEVER call the same tool with the same arguments twice — the result is already in your context.`;
+        `7. NEVER call the same tool with the same arguments twice — the result is already in your context.`;
     }
 
     const messages: ChatMessage[] = [
@@ -428,12 +441,15 @@ ${userMessage}
       // skip execution and inject a hint — the result is already in context.
       const seenToolCalls = new Set<string>();
 
-      // Sliding-window loop detector — track the last N tool names called.
-      // Even if args differ slightly, calling the same tool > TOOL_WINDOW_MAX_REPEATS
-      // times in a short window means the model is stuck. Inject a forced stop.
+      // Sliding-window loop detector — track the last N tool calls.
+      // The duplicate-call guard (seenToolCalls) already catches exact repeats.
+      // This detector catches the model cycling through slight arg variations
+      // of the same tool. We use a higher threshold (6) because legitimate
+      // multi-source searches (e.g. flight tracking across 4–5 websites) need
+      // room to breathe.
       const recentToolNames: string[] = [];
-      const TOOL_WINDOW_SIZE = 10;
-      const TOOL_WINDOW_MAX_REPEATS = 3;
+      const TOOL_WINDOW_SIZE = 12;
+      const TOOL_WINDOW_MAX_REPEATS = 6;
 
       // ReAct loop with tools — use streaming when available
       log.engine.llmRequest(optimalModel, messages);

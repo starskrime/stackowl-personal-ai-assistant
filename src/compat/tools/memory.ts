@@ -33,13 +33,7 @@ export class MemorySearchTool {
 
   definition = {
     name: "memory_search",
-    description: `Search through your long-term memory and past conversations.
-
-Examples:
-- memory_search query="user preferences": Search memory for user preferences
-- memory_search query="project details" limit=10: Get 10 relevant memories
-
-Use this to recall facts, preferences, or context from previous sessions.`,
+    description: `Search your long-term memory for facts, preferences, and context from past conversations. Use this when the user references something from a previous session, asks "do you remember...", or when you need context about the user's preferences/projects. Do NOT use for greetings or simple questions.`,
     parameters: {
       type: "object" as const,
       properties: {
