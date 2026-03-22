@@ -5,6 +5,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { log } from '../logger.js';
+import { webFetch } from '../browser/smart-fetch.js';
 import type { ModelProvider } from '../providers/base.js';
 import type { OwlInstance } from '../owls/persona.js';
 import type { StackOwlConfig } from '../config/loader.js';
@@ -249,10 +250,12 @@ export class KnowledgeSynthesizer {
 
   private async crawlUrl(url: string): Promise<string | null> {
     try {
-      const response = await fetch(url, { headers: { 'User-Agent': 'StackOwl/1.0' }, signal: AbortSignal.timeout(10000) });
-      if (!response.ok) return null;
-      const html = await response.text();
-      return html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 5000);
+      const result = await webFetch(url, { maxLength: 5000, timeout: 15000 });
+      if (result.blocked) {
+        log.evolution.warn(`[Synthesizer] Blocked (${result.blockType}) fetching ${url}`);
+        return null;
+      }
+      return result.text || null;
     } catch (err) {
       log.evolution.warn(`[Synthesizer] Crawl failed for ${url}: ${err instanceof Error ? err.message : err}`);
       return null;

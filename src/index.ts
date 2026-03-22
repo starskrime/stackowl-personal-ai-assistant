@@ -105,6 +105,8 @@ import { TimeCapsuleTool } from "./tools/capsule.js";
 import { ConstellationMiner } from "./constellations/miner.js";
 import { SocraticEngine } from "./socratic/engine.js";
 import { join } from "node:path";
+// ── Persistent Browser Pool ──
+import { BrowserPool, initSmartFetch } from "./browser/index.js";
 // ── New Feature Modules (Phase 1-3) ──
 import { InfraProfileStore, InfraDetector } from "./infra/index.js";
 import { ConnectorResolver } from "./connectors/index.js";
@@ -125,6 +127,21 @@ async function bootstrap() {
 
   // Initialize file-based session log (overwrites on each restart)
   initFileLog(workspacePath);
+
+  // Initialize persistent browser pool (warm Chromium instances with stealth)
+  let browserPool: BrowserPool | undefined;
+  if (config.browser?.enabled !== false) {
+    browserPool = new BrowserPool({
+      poolSize: config.browser?.poolSize ?? 2,
+      warmUp: config.browser?.warmUp ?? true,
+      stealthMode: config.browser?.stealthMode ?? true,
+      userDataDir: resolve(workspacePath, '.browser-data'),
+      proxy: config.browser?.proxy,
+      headless: config.browser?.headless ?? true,
+    });
+    await browserPool.init();
+    initSmartFetch(browserPool);
+  }
 
   // Initialize provider registry
   const providerRegistry = new ProviderRegistry();
@@ -485,6 +502,7 @@ async function bootstrap() {
     workflowStore,
     workflowExecutor,
     healthChecker,
+    browserPool,
   };
 }
 
@@ -712,6 +730,7 @@ async function chatCommand(owlName?: string) {
   process.on("SIGINT", async () => {
     b.perchManager.stopAll();
     adapter.stop();
+    await b.browserPool?.shutdown();
     process.exit(0);
   });
 
@@ -1171,10 +1190,11 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   perch.addPerch(new FilePerch(b.workspacePath));
   await perch.startAll();
 
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down..."));
     perch.stopAll();
     adapter.stop();
+    await b.browserPool?.shutdown();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
@@ -1253,10 +1273,11 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
   perch.addPerch(new FilePerch(b.workspacePath));
   await perch.startAll();
 
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down..."));
     perch.stopAll();
     adapter.stop();
+    await b.browserPool?.shutdown();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
@@ -1405,10 +1426,11 @@ async function allCommand(opts: { owl?: string; port?: string }) {
   perch.addPerch(new FilePerch(b.workspacePath));
   await perch.startAll();
 
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down all channels..."));
     perch.stopAll();
     cliAdapter.stop();
+    await b.browserPool?.shutdown();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

@@ -154,6 +154,21 @@ export interface StackOwlConfig {
     /** Enable automated weekly council sessions. Default: true */
     enabled?: boolean;
   };
+  /** Persistent browser pool for anti-bot web fetching */
+  browser?: {
+    /** Number of warm browser instances. Default: 2. Each uses ~100-200MB RAM. */
+    poolSize?: number;
+    /** Visit benign sites on startup to build cookie/fingerprint baseline. Default: true */
+    warmUp?: boolean;
+    /** Apply stealth patches (webdriver, webgl, etc). Default: true */
+    stealthMode?: boolean;
+    /** Proxy URL (e.g. 'http://proxy:8080'). */
+    proxy?: string;
+    /** Run headless. Default: true */
+    headless?: boolean;
+    /** Enable the browser pool. Default: true */
+    enabled?: boolean;
+  };
   /** Telegram bot configuration */
   telegram?: {
     botToken: string;

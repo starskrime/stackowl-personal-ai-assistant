@@ -251,9 +251,10 @@ export class TelegramAdapter implements ChannelAdapter {
                 // the user needs to see the new content.
                 const streamed = streamCtx.status.streamedContent;
                 const finalContent = response.content.trim();
-                const streamedFinal = streamed.trim();
-                const alreadyDelivered = streamedFinal.length > 0
-                    && finalContent.startsWith(streamedFinal.slice(0, 100));
+                const streamedFinal = streamed.replace(/\[DONE\]/g, '').trim();
+                const compareLen = Math.min(100, streamedFinal.length, finalContent.length);
+                const alreadyDelivered = compareLen > 0
+                    && finalContent.slice(0, compareLen) === streamedFinal.slice(0, compareLen);
                 if (!alreadyDelivered) {
                     await this.sendResponse(ctx, response);
                 }
@@ -402,6 +403,11 @@ export class TelegramAdapter implements ChannelAdapter {
                     break;
                 }
                 case 'done': {
+                    // Strip [DONE] from display text — it may have been split across
+                    // multiple text_delta chunks, bypassing the per-chunk regex.
+                    displayText = displayText.replace(/\[DONE\]/g, '').trimEnd();
+                    pureContent = pureContent.replace(/\[DONE\]/g, '').trimEnd();
+
                     // Final flush to ensure all accumulated text is shown
                     if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
                     await flushEdit();
