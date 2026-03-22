@@ -9,3 +9,6 @@ export { ClipboardTool } from "./clipboard.js";
 export { FocusModeTool } from "./focus-mode.js";
 export { SpotlightSearchTool } from "./spotlight.js";
 export { TextToSpeechTool } from "./text-to-speech.js";
+export { SystemControlsTool } from "./system-controls.js";
+export { MusicControlTool } from "./music-control.js";
+export { IMessageTool } from "./imessage.js";

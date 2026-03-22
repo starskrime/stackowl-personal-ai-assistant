@@ -18,7 +18,6 @@ import type { ChatMessage } from "../providers/base.js";
 import type { Session } from "../memory/store.js";
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
-import { shouldUsePlanner } from "../engine/planner.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
@@ -28,6 +27,8 @@ import { MemoryConsolidator } from "../memory/consolidator.js";
 import { PreferenceDetector } from "../preferences/detector.js";
 import { MicroLearner } from "../learning/micro-learner.js";
 import { ProactiveAnticipator } from "../learning/anticipator.js";
+import { classifyStrategy } from "../orchestrator/classifier.js";
+import { TaskOrchestrator } from "../orchestrator/orchestrator.js";
 import type {
   GatewayMessage,
   GatewayResponse,
@@ -37,6 +38,11 @@ import type {
 } from "./types.js";
 import type { GatewayMiddleware, MiddlewareContext } from "./middleware.js";
 import { RateLimitMiddleware, LoggingMiddleware } from "./middleware.js";
+import { getReadyMessages } from "../tools/utils/timer.js";
+import { PostProcessor } from "./handlers/post-processor.js";
+import { ContextBuilder } from "./handlers/context-builder.js";
+import { SessionManager } from "./handlers/session-manager.js";
+import { TaskQueue } from "../queue/task-queue.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -54,7 +60,6 @@ export class OwlGateway {
   private engine: OwlEngine;
   private adapters: Map<string, ChannelAdapter> = new Map();
   private sessions: Map<string, SessionCache> = new Map();
-  private messageCount = 0;
   private skillInjector: SkillContextInjector | null = null;
   /** Singleton PreferenceDetector — avoids re-constructing on every message */
   private preferenceDetector: PreferenceDetector | null = null;
@@ -62,6 +67,20 @@ export class OwlGateway {
   private microLearner: MicroLearner | null = null;
   /** Proactive anticipator for cross-system predictions */
   private anticipator: ProactiveAnticipator | null = null;
+  /** Lazy-initialized task orchestrator for multi-strategy execution */
+  private taskOrchestrator: TaskOrchestrator | null = null;
+  /** Track last active channel + user for scheduled message delivery */
+  private lastActiveChannel: string | null = null;
+  private lastActiveUserId: string | null = null;
+  /** Timer tick interval for scheduled message delivery */
+  private timerTickInterval: NodeJS.Timeout | null = null;
+
+  // ─── Extracted Handlers (Improvement #4) ───────────────────
+  private postProcessor: PostProcessor;
+  private contextBuilder: ContextBuilder;
+  /** Extracted session manager — used by new code paths, old inline code migrating incrementally */
+  sessionManager: SessionManager;
+  private taskQueue: TaskQueue;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -90,6 +109,16 @@ export class OwlGateway {
 
   constructor(private ctx: GatewayContext) {
     this.engine = new OwlEngine();
+
+    // Initialize task queue (Improvement #2)
+    this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
+
+    // Initialize session manager (Improvement #4)
+    this.sessionManager = new SessionManager(
+      ctx.sessionStore,
+      ctx.owl.persona.name,
+      ctx.eventBus ?? null,
+    );
 
     // Ensure DNA is persisted on process exit.
     // Without this, any mutations from the current session are lost when the
@@ -129,6 +158,18 @@ export class OwlGateway {
         ctx.provider,
       );
     }
+
+    // Initialize extracted handlers (Improvement #4)
+    // ContextBuilder is initialized after skillInjector below
+    this.postProcessor = new PostProcessor(
+      ctx,
+      this.taskQueue,
+      ctx.eventBus ?? null,
+      this.microLearner,
+      this.anticipator,
+      ctx.costTracker ?? null,
+    );
+    this.contextBuilder = new ContextBuilder(ctx, this.microLearner, null);
 
     // Built-in middleware
     this.middleware.push(new LoggingMiddleware());
@@ -201,6 +242,20 @@ export class OwlGateway {
   use(mw: GatewayMiddleware): void {
     this.middleware.push(mw);
     log.engine.info(`Middleware registered: ${mw.name}`);
+  }
+
+  /** Lazy-init the task orchestrator (reuses existing registries). */
+  private getOrchestrator(): TaskOrchestrator {
+    if (!this.taskOrchestrator) {
+      this.taskOrchestrator = new TaskOrchestrator(
+        this.ctx.owlRegistry,
+        this.ctx.provider,
+        this.ctx.config,
+        this.ctx.pelletStore!,
+        this.ctx.toolRegistry,
+      );
+    }
+    return this.taskOrchestrator;
   }
 
   // ─── Main Entry Point ────────────────────────────────────────
@@ -423,6 +478,10 @@ export class OwlGateway {
       }
     }
 
+    // Track last active channel/user for scheduled message delivery
+    this.lastActiveChannel = message.channelId;
+    this.lastActiveUserId = message.userId;
+
     log.engine.incoming(message.channelId, message.text);
 
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
@@ -465,6 +524,22 @@ export class OwlGateway {
       text = `${freshStartDirective}\n\nUser request: ${text}`;
     }
 
+    // ─── Strategy Classification & Orchestrated Execution ─────
+    // Single LLM call replaces both parliament detection and planner routing
+    const strategy = await classifyStrategy(
+      message.text,
+      this.ctx.owlRegistry.listOwls(),
+      this.ctx.toolRegistry?.getDefinitions().map(t => t.name) ?? [],
+      session.messages.slice(-6),
+      this.ctx.provider,
+    );
+
+    if (callbacks.onProgress && !['DIRECT', 'STANDARD'].includes(strategy.strategy)) {
+      await callbacks.onProgress(
+        `🎯 **Strategy: ${strategy.strategy}** — ${strategy.reasoning}`,
+      );
+    }
+
     const engineCtx = this.buildEngineContext(
       session,
       callbacks,
@@ -472,12 +547,26 @@ export class OwlGateway {
       isIsolatedTask,
       this.attemptLogs.get(message.sessionId),
     );
-    // Use planner for complex multi-step tasks when enabled
-    const planningEnabled = this.ctx.config.engine?.planning?.enabled ?? false;
-    const response =
-      planningEnabled && shouldUsePlanner(text)
-        ? await this.engine.runWithPlan(text, engineCtx)
-        : await this.engine.run(text, engineCtx);
+
+    const orchestrator = this.getOrchestrator();
+    const orchResult = await orchestrator.executeWithFallback(
+      strategy,
+      text,
+      engineCtx,
+      callbacks,
+    );
+
+    // Convert OrchestrationResult to EngineResponse for standard post-processing
+    const response: EngineResponse = {
+      content: orchResult.content,
+      owlName: orchResult.owlName,
+      owlEmoji: orchResult.owlEmoji,
+      challenged: false,
+      toolsUsed: orchResult.toolsUsed,
+      modelUsed: '',
+      newMessages: [],
+      usage: orchResult.usage,
+    };
 
     // Capability gap detected — try to synthesize the missing tool and retry
     if (response.pendingCapabilityGap && this.ctx.evolution) {
@@ -661,8 +750,15 @@ export class OwlGateway {
       log.engine.info('[feature] Skill Arena initialized');
     }
 
+    // Scheduled message delivery tick — polls every 5 seconds for due timers
+    this.timerTickInterval = setInterval(() => {
+      this.deliverScheduledMessages();
+    }, 5_000);
+    log.engine.info('[feature] Scheduled message delivery tick started (5s)');
+
     // Persist new modules on process exit
     const saveOnExit = () => {
+      if (this.timerTickInterval) clearInterval(this.timerTickInterval);
       this.ctx.trustChain?.save?.().catch(() => {});
       this.ctx.knowledgeGraph?.save?.().catch(() => {});
       this.ctx.timelineManager?.save?.().catch(() => {});
@@ -713,6 +809,39 @@ export class OwlGateway {
             `Broadcast failed on ${adapter.id}: ${err instanceof Error ? err.message : err}`,
           ),
         );
+    }
+  }
+
+  // ─── Scheduled Message Delivery ─────────────────────────────
+
+  /**
+   * Poll for scheduled messages (from set_timer tool) and deliver them
+   * through the last active channel. Runs every 5 seconds.
+   */
+  private deliverScheduledMessages(): void {
+    const ready = getReadyMessages();
+    if (ready.length === 0) return;
+
+    for (const msg of ready) {
+      const channelId = msg.channelId || this.lastActiveChannel;
+      const userId = msg.userId || this.lastActiveUserId;
+
+      if (channelId && userId) {
+        this.sendProactive(channelId, userId, msg.message).catch(err =>
+          log.engine.warn(
+            `[Timer] Failed to deliver scheduled message "${msg.id}": ${err instanceof Error ? err.message : err}`,
+          ),
+        );
+        log.engine.info(`[Timer] Delivered "${msg.id}" to ${channelId}:${userId}`);
+      } else {
+        // No channel info — broadcast to all
+        this.broadcastProactive(msg.message).catch(err =>
+          log.engine.warn(
+            `[Timer] Failed to broadcast scheduled message "${msg.id}": ${err instanceof Error ? err.message : err}`,
+          ),
+        );
+        log.engine.info(`[Timer] Broadcast "${msg.id}" to all channels`);
+      }
     }
   }
 
@@ -939,8 +1068,85 @@ export class OwlGateway {
       return mkResp(presentation || 'No predictions ready yet. I need more interaction history to identify patterns.');
     }
 
+    // /echo-check — run echo chamber analysis
+    if (text.toLowerCase() === '/echo-check' && this.ctx.echoChamberDetector) {
+      const analysis = await this.ctx.echoChamberDetector.analyze();
+      if (analysis.detections.length === 0) {
+        return mkResp(`**Echo Chamber Check** (${analysis.sessionCount} sessions)\n\n${analysis.overallAssessment}`);
+      }
+      const detectionList = analysis.detections.map(d =>
+        `  - **${d.bias.replace(/_/g, ' ')}** (${(d.confidence * 100).toFixed(0)}%): ${d.evidence}`,
+      ).join('\n');
+      return mkResp(
+        `**Echo Chamber Check** (${analysis.sessionCount} sessions)\n\n` +
+        `${analysis.overallAssessment}\n\n**Patterns:**\n${detectionList}`,
+      );
+    }
+
+    // /journal [weekly|monthly] — generate or view growth journal
+    const journalMatch = text.match(/^\/journal(?:\s+(weekly|monthly))?$/i);
+    if (journalMatch && this.ctx.journalGenerator) {
+      const period = (journalMatch[1] as 'weekly' | 'monthly') || 'weekly';
+      const entry = await this.ctx.journalGenerator.generate(period);
+      return mkResp(entry.narrative);
+    }
+
+    // /quests — list active quests
+    if (text.toLowerCase() === '/quests' && this.ctx.questManager) {
+      const quests = await this.ctx.questManager.list();
+      if (quests.length === 0) return mkResp('No active quests. Ask me to create one on any topic!');
+      const list = quests.map(q => {
+        const done = q.milestones.filter(m => m.completed).length;
+        return `  - **${q.title}** [${q.status}] — ${done}/${q.milestones.length} milestones`;
+      }).join('\n');
+      return mkResp(`**Your Quests:**\n${list}`);
+    }
+
+    // /capsules — list time capsules
+    if (text.toLowerCase() === '/capsules' && this.ctx.capsuleManager) {
+      const capsules = await this.ctx.capsuleManager.list();
+      if (capsules.length === 0) return mkResp('No time capsules. Ask me to create one!');
+      const list = capsules.map(c => {
+        const icon = c.status === 'sealed' ? '\uD83D\uDD12' : '\uD83D\uDCEC';
+        return `  ${icon} **${c.id}** [${c.status}] — created ${new Date(c.createdAt).toLocaleDateString()}`;
+      }).join('\n');
+      return mkResp(`**Time Capsules:**\n${list}`);
+    }
+
+    // /constellations — show discovered patterns
+    if (text.toLowerCase() === '/constellations' && this.ctx.constellationMiner) {
+      const constellations = await this.ctx.constellationMiner.list();
+      if (constellations.length === 0) return mkResp('No constellations discovered yet. I need more pellets to find patterns.');
+      const list = constellations.slice(0, 5).map(c =>
+        this.ctx.constellationMiner!.format(c),
+      ).join('\n\n---\n\n');
+      return mkResp(`**Discovered Constellations:**\n\n${list}`);
+    }
+
+    // /socratic [mode|off] — toggle Socratic mode
+    const socraticMatch = text.match(/^\/socratic(?:\s+(pure|guided|reflective|devils_advocate|off))?$/i);
+    if (socraticMatch && this.ctx.socraticEngine) {
+      const mode = socraticMatch[1]?.toLowerCase();
+      if (mode === 'off') {
+        const ended = this.ctx.socraticEngine.deactivate(message.sessionId);
+        if (ended) {
+          return mkResp(`Socratic mode **deactivated** after ${ended.exchangeCount} exchanges.`);
+        }
+        return mkResp('Socratic mode was not active.');
+      }
+      const subMode = (mode as any) || 'guided';
+      this.ctx.socraticEngine.activate(message.sessionId, subMode);
+      return mkResp(
+        `Socratic mode **activated** (${subMode}).\n\n` +
+        `I will now respond primarily with questions to help you think deeper.\n` +
+        `Use \`/socratic off\` to return to normal mode.`,
+      );
+    }
+
     return null;
   }
+
+  // ─── Private: Auto-Parliament ────────────────────────────────
 
   // ─── Private: Explicit Learning Request ──────────────────────
 
@@ -1232,149 +1438,19 @@ export class OwlGateway {
   // ─── Private: Post-processing ────────────────────────────────
 
   /**
-   * Run a named background task. Logs both start and success/failure so
-   * every subsystem is observable — no silent failures.
+   * Run a named background task via the task queue.
+   * Legacy method — new code should use taskQueue.enqueue() directly.
    */
   private runBackground(name: string, task: Promise<unknown>): void {
-    task.then(
-      () => log.engine.info(`[bg:${name}] ✓ completed`),
-      (err) =>
-        log.engine.warn(
-          `[bg:${name}] ✗ failed: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-    );
+    this.taskQueue.enqueue(name, () => task);
   }
 
   /**
    * Fire-and-forget tasks that run after every response.
-   * Each task is named so failures are visible in logs.
+   * Delegates to the extracted PostProcessor (Improvement #4).
    */
   private postProcess(messages: ChatMessage[], sessionId?: string): void {
-    if (this.ctx.learningEngine) {
-      this.runBackground(
-        "learning",
-        this.ctx.learningEngine.processConversation(messages),
-      );
-    }
-
-    this.messageCount++;
-    const evolutionInterval = this.ctx.config.owlDna?.evolutionBatchSize ?? 10;
-    if (
-      this.messageCount % evolutionInterval === 0 &&
-      this.ctx.evolutionEngine
-    ) {
-      this.runBackground(
-        `dna-evolve(${this.ctx.owl.persona.name})`,
-        this.ctx.evolutionEngine.evolve(this.ctx.owl.persona.name),
-      );
-    }
-
-    // ─── Micro-Learning (every message, zero LLM cost) ────────
-    if (this.microLearner) {
-      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-      if (lastUserMsg) {
-        // Extract tools used from assistant's response (look for tool_use markers)
-        const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
-        const toolsUsed: string[] = [];
-        if (lastAssistantMsg?.content) {
-          // Extract tool names from the response — skills injector tracks detailed usage separately
-          const toolMatches = lastAssistantMsg.content.match(/\btool[_\s]?(?:call|use|execute)[:\s]+["']?(\w+)/gi);
-          if (toolMatches) {
-            for (const match of toolMatches) {
-              const name = match.replace(/.*?["']?(\w+)["']?$/, '$1');
-              if (name) toolsUsed.push(name);
-            }
-          }
-        }
-        this.microLearner.processMessage(lastUserMsg.content, toolsUsed.length > 0 ? toolsUsed : undefined);
-      }
-
-      // Save micro-learner profile periodically (every 5 messages)
-      if (this.messageCount % 5 === 0) {
-        this.runBackground('micro-learner-save', this.microLearner.save());
-      }
-    }
-
-    // ─── Proactive Anticipation (every 20 messages) ───────────
-    if (this.anticipator && this.messageCount % 20 === 0) {
-      const existingSkills = this.ctx.skillsLoader?.getRegistry()?.listEnabled() ?? [];
-      this.runBackground('anticipation', (async () => {
-        const anticipations = await this.anticipator!.anticipate(existingSkills);
-        if (anticipations.length > 0) {
-          log.engine.info(
-            `[Anticipator] ${anticipations.length} anticipations: ` +
-            anticipations.map(a => `${a.capability} (${(a.confidence * 100).toFixed(0)}%)`).join(', ')
-          );
-          // Log skill suggestions for the user to see
-          for (const a of anticipations.filter(a => a.type === 'skill_suggestion' && a.confidence >= 0.6)) {
-            log.evolution.info(`[Anticipator] Suggested skill: "${a.capability}" — ${a.reason}`);
-          }
-        }
-      })());
-    }
-
-    // ─── New Feature Post-Processing ──────────────────────────
-
-    // Auto-snapshot timeline every 10 messages
-    if (this.ctx.timelineManager && sessionId) {
-      const snapshot = this.ctx.timelineManager.autoSnapshot(
-        sessionId, messages, this.ctx.owl.persona.name,
-      );
-      if (snapshot) {
-        this.runBackground('timeline-snapshot', this.ctx.timelineManager.save());
-      }
-    }
-
-    // Extract knowledge from conversation into graph
-    if (this.ctx.knowledgeReasoner && messages.length > 0 && this.messageCount % 5 === 0) {
-      this.runBackground(
-        'knowledge-extract',
-        (async () => {
-          await this.ctx.knowledgeReasoner!.extractFromConversation(messages);
-          await this.ctx.knowledgeGraph?.save();
-        })(),
-      );
-    }
-
-    // Record user action pattern for predictive queue
-    if (this.ctx.patternAnalyzer) {
-      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-      if (lastUserMsg) {
-        const usedSkills = this.skillInjector
-          ? [] // Skills are tracked separately via SkillTracker
-          : [];
-        this.ctx.patternAnalyzer.recordAction(lastUserMsg.content.slice(0, 100), usedSkills);
-      }
-
-      // Cross-system enrichment: feed micro-learner profile into pattern analyzer
-      // to boost confidence of patterns that align with overall user behavior
-      if (this.microLearner && this.messageCount % 15 === 0) {
-        const profile = this.microLearner.getProfile();
-        this.ctx.patternAnalyzer.enrichFromProfile(profile);
-      }
-    }
-
-    // Trust chain — record successful tool executions
-    // (Tool-level tracking happens in the engine; this is session-level)
-
-    // Persist pattern data periodically and auto-prepare predictions
-    if (this.messageCount % 10 === 0) {
-      if (this.ctx.patternAnalyzer) {
-        this.runBackground('pattern-save', this.ctx.patternAnalyzer.save());
-      }
-      if (this.ctx.trustChain) {
-        this.runBackground('trust-save', this.ctx.trustChain.save());
-      }
-      // Auto-generate and prepare predictions so they're ready when needed
-      if (this.ctx.predictiveQueue) {
-        this.runBackground('predictive-prep', (async () => {
-          const newTasks = await this.ctx.predictiveQueue!.generatePredictions();
-          for (const task of newTasks) {
-            await this.ctx.predictiveQueue!.prepareTask(task.id);
-          }
-        })());
-      }
-    }
+    this.postProcessor.process(messages, sessionId);
   }
 
   // ─── Private: Engine Context ─────────────────────────────────
@@ -1421,6 +1497,10 @@ export class OwlGateway {
     return null;
   }
 
+  /**
+   * Build the EngineContext for a ReAct loop invocation.
+   * Delegates to the extracted ContextBuilder (Improvement #4).
+   */
   private buildEngineContext(
     session: Session,
     callbacks: GatewayCallbacks,
@@ -1428,110 +1508,13 @@ export class OwlGateway {
     isolatedTask: boolean = false,
     attemptLog?: import("../memory/attempt-log.js").AttemptLog,
   ): EngineContext {
-    const preferencesContext =
-      this.ctx.preferenceStore?.toContextString() ?? "";
-
-    // Always-include skills: inject full XML instructions (not just names)
-    // These are skills marked `openclaw.always: true` — always present in context.
-    // Relevant skills (per-message) are injected in handle() as dynamicSkillsContext.
-    let skillsContext = "";
-    if (this.ctx.skillsLoader) {
-      const registry = this.ctx.skillsLoader.getRegistry();
-      const alwaysSkills = registry
-        .listEnabled()
-        .filter((s) => s.metadata.openclaw?.always === true);
-      if (alwaysSkills.length > 0) {
-        skillsContext =
-          "\n## Always-Available Skills\n" +
-          alwaysSkills
-            .map(
-              (s) => `\n<skill name="${s.name}">\n${s.instructions}\n</skill>`,
-            )
-            .join("\n");
-      }
-    }
-
-    // Merge always-on skills + per-message relevant skills
-    const finalSkillsContext = skillsContext + dynamicSkillsContext;
-
-    // Ambient context from Context Mesh
-    let ambientContext = "";
-    if (this.ctx.contextMesh) {
-      ambientContext = this.ctx.contextMesh.toContextBlock(5);
-    }
-
-    // Knowledge graph reasoning context (if relevant knowledge exists)
-    let knowledgeContext = "";
-    if (this.ctx.knowledgeReasoner && session.messages.length > 0) {
-      // Don't block on this — use cached/fast path only
-      const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user');
-      if (lastUserMsg) {
-        const nodes = this.ctx.knowledgeGraph?.search(lastUserMsg.content, 3);
-        if (nodes && nodes.length > 0) {
-          knowledgeContext = '\n<knowledge_context>\n' +
-            nodes.map(n => `  <fact domain="${n.domain}" confidence="${n.confidence}">${n.title}: ${n.content}</fact>`).join('\n') +
-            '\n</knowledge_context>\n';
-        }
-      }
-    }
-
-    // Predictive queue — surface ready tasks
-    let predictiveContext = "";
-    if (this.ctx.predictiveQueue) {
-      const ready = this.ctx.predictiveQueue.getReadyTasks();
-      if (ready.length > 0) {
-        predictiveContext = '\n<predicted_tasks>\n' +
-          ready.map(t => `  <task confidence="${t.confidence.toFixed(2)}">${t.action}</task>`).join('\n') +
-          '\n</predicted_tasks>\n';
-      }
-    }
-
-    // Collab context — if user is in a shared session
-    let collabContext = "";
-    if (this.ctx.collabManager) {
-      const userSessions = this.ctx.collabManager.getUserSessions(session.id.split(':')[1] || session.id);
-      if (userSessions.length > 0) {
-        collabContext = this.ctx.collabManager.buildCollabContext(userSessions[0].id);
-      }
-    }
-
-    // User profile context from micro-learner (zero LLM cost)
-    let userProfileContext = "";
-    if (this.microLearner) {
-      userProfileContext = this.microLearner.toContextString();
-    }
-
-    // Merge all contextual signals
-    const enrichedMemoryContext = [
-      this.ctx.memoryContext ?? "",
-      ambientContext,
-      knowledgeContext,
-      predictiveContext,
-      collabContext,
-      userProfileContext,
-    ].filter(Boolean).join('\n');
-
-    return {
-      provider: this.ctx.provider,
-      owl: this.ctx.owl,
-      sessionHistory: session.messages,
-      config: this.ctx.config,
-      toolRegistry: this.ctx.toolRegistry,
-      pelletStore: this.ctx.pelletStore,
-      capabilityLedger: this.ctx.capabilityLedger,
-      cwd: this.ctx.cwd,
-      memoryContext: enrichedMemoryContext || undefined,
-      preferencesContext: preferencesContext || undefined,
-      skillsContext: finalSkillsContext || undefined,
-      skillsRegistry: this.ctx.skillsLoader?.getRegistry(),
-      skillTracker: this.skillInjector?.getTracker(),
-      isolatedTask: isolatedTask,
+    return this.contextBuilder.build(
+      session,
+      callbacks,
+      dynamicSkillsContext,
+      isolatedTask,
       attemptLog,
-      onProgress: callbacks.onProgress,
-      onStreamEvent: callbacks.onStreamEvent,
-      sendFile: callbacks.onFile,
-      providerRegistry: this.ctx.providerRegistry,
-    };
+    );
   }
 
   /** Fire-and-forget: detect preference statements and persist them. */

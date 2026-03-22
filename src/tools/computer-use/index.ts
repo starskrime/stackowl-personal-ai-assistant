@@ -2,13 +2,20 @@
  * StackOwl — Computer Use Tool
  *
  * Full desktop automation: mouse, keyboard, screenshots, app control,
- * and UI element discovery. Zero external dependencies — uses native
- * macOS JXA (CoreGraphics + System Events) under the hood.
+ * UI element discovery, multi-step planning, workflow recipes, and
+ * screen state diffing.
  *
  * Workflow:
- *   1. screenshot → see what's on screen
- *   2. find_elements / click / type → interact
- *   3. screenshot → verify result
+ *   1. analyze_screen → see what's on screen as text with [ref:N] coordinates
+ *   2. click / type / key → interact with UI elements
+ *   3. analyze_screen → verify result
+ *
+ * Advanced:
+ *   - plan_and_execute → AI plans multi-step sequence, executes with verification
+ *   - screen_diff → compare before/after states to detect changes
+ *   - wait_for_element → poll until a target element appears
+ *   - analyze_region → read only a specific area of the screen
+ *   - list_recipes / save_recipe → manage reusable workflows
  *
  * Requires macOS Accessibility permissions.
  */
@@ -17,23 +24,46 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import * as mac from "./macos.js";
-import { readScreen, formatScreenAsText, formatScreenMinimal } from "./screen-reader.js";
+import {
+  readScreen,
+  readScreenRegion,
+  waitForElement,
+  formatScreenAsText,
+  formatScreenMinimal,
+} from "./screen-reader.js";
+import { diffScreenStates } from "./screen-diff.js";
+import { RecipeStore } from "./recipes.js";
+import { ActionPlanner } from "./planner.js";
+import type { ScreenState } from "./screen-reader.js";
 
 export { readScreen, formatScreenAsText, formatScreenMinimal } from "./screen-reader.js";
+export { readScreenRegion, waitForElement } from "./screen-reader.js";
+export { diffScreenStates } from "./screen-diff.js";
+export { RecipeStore } from "./recipes.js";
+export { ActionPlanner } from "./planner.js";
 export type { ScreenState, ScreenElement } from "./screen-reader.js";
+export type { ScreenDiff } from "./screen-diff.js";
+export type { Recipe, RecipeStep } from "./recipes.js";
+
+// ─── Shared state for screen diffing ────────────────────────────────────────
+
+let lastScreenState: ScreenState | null = null;
+
+// ─── Tool Definition ─────────────────────────────────────────────────────────
 
 export const ComputerUseTool: ToolImplementation = {
   definition: {
     name: "computer_use",
     description:
       "Control the computer like a human — move mouse, click, type, press keys, scroll, " +
-      "open apps/URLs, drag, and read what's on screen. " +
+      "open apps/URLs, drag, read what's on screen, plan multi-step workflows, and learn from successful sequences. " +
       "BEST FOR: any desktop interaction, filling forms, web browsing (bypasses ALL bot detection), " +
       "automating repetitive tasks. " +
       "WORKFLOW: analyze_screen → read text output with [ref:N] click coordinates → click/type → analyze_screen to verify. " +
+      "ADVANCED: Use plan_and_execute for multi-step tasks — it plans, executes with verification, and saves as a reusable recipe. " +
+      "Use screen_diff to see what changed. Use wait_for_element to wait for UI to load. " +
       "analyze_screen returns a TEXT description of everything visible (buttons, links, text fields, content) " +
       "with coordinates — NO vision model needed, works with any text model. " +
-      "Use this as FALLBACK when web_crawl or browser get blocked by bot detection. " +
       "Requires macOS Accessibility permissions.",
     parameters: {
       type: "object",
@@ -42,15 +72,18 @@ export const ComputerUseTool: ToolImplementation = {
           type: "string",
           description:
             "Action to perform. One of: " +
-            "screenshot, analyze_screen, " +
+            "screenshot, analyze_screen, analyze_region, screen_diff, " +
             "click, double_click, right_click, " +
             "move, move_smooth, drag, scroll, " +
             "type, key, hotkey, " +
             "open_app, open_url, front_app, " +
-            "find_elements, cursor_position, screen_size, wait. " +
+            "find_elements, wait_for_element, cursor_position, screen_size, wait, " +
+            "plan_and_execute, list_recipes. " +
             "PREFER analyze_screen over screenshot — it returns a text description of everything " +
             "on screen (buttons, text fields, links with click coordinates) without needing vision. " +
-            "Use screenshot only when you need the actual image file to send to the user.",
+            "Use plan_and_execute for complex multi-step tasks (opens app, navigates, fills forms, etc.). " +
+            "Use screen_diff after an action to see what changed. " +
+            "Use wait_for_element when you need to wait for a page/dialog to load.",
         },
         x: {
           type: "number",
@@ -71,7 +104,9 @@ export const ComputerUseTool: ToolImplementation = {
         text: {
           type: "string",
           description:
-            "Text to type (for type action), app name (for open_app), URL (for open_url), or search text (for find_elements)",
+            "Text to type (for type action), app name (for open_app), URL (for open_url), " +
+            "search text (for find_elements/wait_for_element), " +
+            "or task description (for plan_and_execute)",
         },
         key: {
           type: "string",
@@ -90,22 +125,23 @@ export const ComputerUseTool: ToolImplementation = {
         },
         amount: {
           type: "number",
-          description: "Scroll amount (default 3) or wait duration in ms",
+          description: "Scroll amount (default 3), wait duration in ms, or timeout for wait_for_element (default 10000)",
         },
         region: {
           type: "string",
           description:
-            'Screenshot region as JSON: \'{"x":0,"y":0,"width":500,"height":300}\'. Omit for full screen.',
+            'Region as JSON: \'{"x":0,"y":0,"width":500,"height":300}\'. ' +
+            "Used by screenshot (capture region) and analyze_region (read region only).",
         },
         app_name: {
           type: "string",
           description:
-            "Application name for find_elements (searches UI of that app)",
+            "Application name for find_elements, analyze_screen, wait_for_element (scope to that app)",
         },
         role: {
           type: "string",
           description:
-            "UI element role filter for find_elements (e.g., AXButton, AXTextField, AXLink)",
+            "UI element role filter for find_elements/wait_for_element (e.g., AXButton, AXTextField, AXLink)",
         },
         human_like: {
           type: "boolean",
@@ -149,14 +185,14 @@ export const ComputerUseTool: ToolImplementation = {
             return "Screenshot failed — file not created. Ensure macOS screencapture is available.";
           }
 
-          // Auto-include text analysis of the screen so the model can
-          // understand what's visible even without vision capabilities
+          // Auto-include text analysis of the screen
           let textAnalysis = "";
           try {
             const state = await readScreen();
+            lastScreenState = state;
             textAnalysis = "\n\n--- SCREEN CONTENT (text) ---\n" + formatScreenAsText(state);
           } catch {
-            // Accessibility might not be available — still return the screenshot
+            // Accessibility might not be available
           }
 
           const dims = await mac.getScreenSize();
@@ -171,14 +207,150 @@ export const ComputerUseTool: ToolImplementation = {
         // ── Analyze Screen (text-only — no image needed) ────────────
         case "analyze_screen": {
           const appName = args.app_name as string | undefined;
-          const minimal = args.human_like as boolean; // reuse param for "minimal" mode
+          const minimal = args.human_like as boolean;
           const state = await readScreen(appName);
+          lastScreenState = state;
 
           const text = minimal
             ? formatScreenMinimal(state)
             : formatScreenAsText(state);
 
           return text;
+        }
+
+        // ── Analyze Region (focused read) ─────────────────────────
+        case "analyze_region": {
+          const regionStr = args.region as string;
+          if (!regionStr) return "Error: analyze_region requires region parameter as JSON.";
+          const region = JSON.parse(regionStr) as {
+            x: number; y: number; width: number; height: number;
+          };
+          const appName = args.app_name as string | undefined;
+          const state = await readScreenRegion(region, appName);
+          const text = formatScreenAsText(state);
+          return `Region (${region.x},${region.y} ${region.width}x${region.height}):\n${text}`;
+        }
+
+        // ── Screen Diff ───────────────────────────────────────────
+        case "screen_diff": {
+          const currentState = await readScreen(args.app_name as string | undefined);
+          if (!lastScreenState) {
+            lastScreenState = currentState;
+            return "No previous screen state to compare. This is the first read — future screen_diff calls will show changes.";
+          }
+          const diff = diffScreenStates(lastScreenState, currentState);
+          lastScreenState = currentState;
+          return diff.hasChanges
+            ? `CHANGES DETECTED:\n${diff.summary}`
+            : "No visible changes since last screen read.";
+        }
+
+        // ── Wait For Element ──────────────────────────────────────
+        case "wait_for_element": {
+          const searchText = args.text as string;
+          const role = args.role as string | undefined;
+          const appName = args.app_name as string | undefined;
+          const timeout = (args.amount as number) || 10_000;
+
+          if (!searchText && !role) {
+            return "Error: wait_for_element requires text and/or role parameter.";
+          }
+
+          const found = await waitForElement(
+            { text: searchText, role, app: appName },
+            timeout,
+          );
+
+          if (found) {
+            const cx = Math.round(found.position.x + found.size.width / 2);
+            const cy = Math.round(found.position.y + found.size.height / 2);
+            return (
+              `Element found: ${found.role} "${found.label}"` +
+              (found.value ? ` = "${found.value}"` : '') +
+              ` @ (${cx}, ${cy})\n` +
+              `Click coordinates: (${cx}, ${cy})`
+            );
+          }
+          return `Element not found within ${timeout}ms.${searchText ? ` Searched for: "${searchText}"` : ''}${role ? ` Role: ${role}` : ''}`;
+        }
+
+        // ── Plan and Execute ──────────────────────────────────────
+        case "plan_and_execute": {
+          const task = args.text as string;
+          if (!task) return "Error: plan_and_execute requires text parameter with task description.";
+
+          // Get provider from engine context
+          const provider = context.engineContext?.provider;
+          if (!provider) {
+            return "Error: plan_and_execute requires a model provider (not available in current context).";
+          }
+
+          const cwd = context.cwd || process.cwd();
+          const recipeStore = new RecipeStore(cwd);
+          await recipeStore.init();
+          const planner = new ActionPlanner(provider, recipeStore);
+
+          // Read current screen
+          const currentScreen = await readScreen();
+          lastScreenState = currentScreen;
+
+          // Plan
+          const plan = await planner.plan(task, currentScreen);
+          if (plan.steps.length === 0) {
+            return `Could not plan steps for: "${task}"\nReason: ${plan.reasoning}\nTry breaking the task into individual actions.`;
+          }
+
+          // Execute with verification
+          const onProgress = context.engineContext?.onProgress;
+          const result = await planner.execute(
+            plan,
+            async (act, actArgs) => {
+              // Re-enter this tool's execute for each step
+              return await ComputerUseTool.execute(
+                { action: act, ...actArgs },
+                context,
+              );
+            },
+            onProgress,
+          );
+
+          // Save as recipe on success
+          if (result.success && result.completedSteps.length >= 2) {
+            const frontApp = await mac.getFrontApp();
+            planner.saveAsRecipe(
+              task,
+              [frontApp],
+              result.completedSteps,
+              [],
+            );
+          }
+
+          // Build response
+          const lines: string[] = [];
+          lines.push(`Task: "${task}"`);
+          lines.push(`Plan: ${plan.reasoning}`);
+          lines.push(`Result: ${result.success ? 'SUCCESS' : 'FAILED'} (${result.stepsCompleted}/${result.totalSteps} steps)`);
+          if (result.error) lines.push(`Error: ${result.error}`);
+          if (result.screenChanges) lines.push(`Screen: ${result.screenChanges}`);
+          if (result.success && result.completedSteps.length >= 2) {
+            lines.push(`Recipe saved for future reuse.`);
+          }
+
+          return lines.join('\n');
+        }
+
+        // ── List Recipes ──────────────────────────────────────────
+        case "list_recipes": {
+          const cwd = context.cwd || process.cwd();
+          const recipeStore = new RecipeStore(cwd);
+          await recipeStore.init();
+          const recipes = recipeStore.listAll();
+          if (recipes.length === 0) {
+            return "No saved recipes. Use plan_and_execute to create workflows — successful ones are saved automatically.";
+          }
+          return recipes.map(r =>
+            `- "${r.task}" (${r.steps.length} steps, used ${r.successCount}x, apps: ${r.apps.join(', ')})`
+          ).join('\n');
         }
 
         // ── Mouse Click ─────────────────────────────────────────────
@@ -360,7 +532,9 @@ export const ComputerUseTool: ToolImplementation = {
             `  Mouse: click, double_click, right_click, move, move_smooth, drag, scroll\n` +
             `  Keyboard: type, key, hotkey\n` +
             `  Apps: open_app, open_url, front_app\n` +
-            `  Vision: screenshot, find_elements, cursor_position, screen_size\n` +
+            `  Screen: screenshot, analyze_screen, analyze_region, screen_diff\n` +
+            `  Elements: find_elements, wait_for_element, cursor_position, screen_size\n` +
+            `  Automation: plan_and_execute, list_recipes\n` +
             `  Utility: wait`
           );
       }

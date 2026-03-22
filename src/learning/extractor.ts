@@ -14,6 +14,7 @@
  */
 
 import type { ChatMessage, ModelProvider } from '../providers/base.js';
+import { log } from '../logger.js';
 
 export interface ConversationInsights {
     /** Specific topics that came up (e.g., "flight tracking", "Telegram bot rate limits") */
@@ -94,6 +95,8 @@ export class ConversationExtractor {
             `- Return [] for any list with nothing relevant`;
 
         try {
+            log.evolution.info(`[Extractor] Analyzing ${messages.length} messages for learning signals...`);
+
             const response = await this.provider.chat([
                 { role: 'system', content: 'You are a learning analyst. Output only valid JSON.' },
                 { role: 'user', content: prompt },
@@ -111,13 +114,24 @@ export class ConversationExtractor {
             }
 
             const parsed = JSON.parse(jsonStr);
-            return {
+            const result = {
                 topics:            Array.isArray(parsed.topics)            ? parsed.topics.slice(0, 5)   : [],
                 domains:           Array.isArray(parsed.domains)           ? parsed.domains.slice(0, 4)  : [],
                 knowledgeGaps:     Array.isArray(parsed.knowledgeGaps)     ? parsed.knowledgeGaps.slice(0, 4)  : [],
                 researchQuestions: Array.isArray(parsed.researchQuestions) ? parsed.researchQuestions.slice(0, 4) : [],
             };
-        } catch {
+
+            log.evolution.info(
+                `[Extractor] Found: ${result.topics.length} topics [${result.topics.join(', ')}], ` +
+                `${result.domains.length} domains [${result.domains.join(', ')}], ` +
+                `${result.knowledgeGaps.length} gaps [${result.knowledgeGaps.join(', ')}]`,
+            );
+
+            return result;
+        } catch (err) {
+            log.evolution.warn(
+                `[Extractor] Failed to extract insights: ${err instanceof Error ? err.message : String(err)}`,
+            );
             return { topics: [], domains: [], knowledgeGaps: [], researchQuestions: [] };
         }
     }

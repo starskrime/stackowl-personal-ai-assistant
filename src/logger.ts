@@ -302,6 +302,7 @@ export class Logger {
 
 export const log = {
     telegram:  new Logger('TELEGRAM'),
+    slack:     new Logger('SLACK'),
     cli:       new Logger('CLI'),
     engine:    new Logger('ENGINE'),
     tool:      new Logger('TOOL'),

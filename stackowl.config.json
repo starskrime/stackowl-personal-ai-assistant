@@ -34,6 +34,11 @@
     "botToken": "8328644901:AAH7YAQWI-ACfUzcvnK8kqzbc6fNRIAQL9A",
     "enabled": true
   },
+  "slack": {
+    "botToken": "xoxb-10719055879717-10722591700018-IkDHooYtTxSz79QW6VP5OPcI",
+    "appToken": "xapp-1-A0AN2QHFDDE-10716216447795-67ec54e96be49be4014d40454840aa3b8c7a249ee483846d1905af092570e1f8",
+    "signingSecret": "8e1b921f68588d2fa41afc6a2835ccbf"
+  },
   "smartRouting": {
     "enabled": false,
     "fallbackProvider": "anthropic",

@@ -1,5 +1,6 @@
 import type { ToolImplementation, ToolContext, ToolDefinition } from './registry.js';
 import { ParliamentOrchestrator } from '../parliament/orchestrator.js';
+import type { ParliamentCallbacks } from '../parliament/protocol.js';
 
 export class SummonParliamentTool implements ToolImplementation {
     definition = {
@@ -34,7 +35,6 @@ export class SummonParliamentTool implements ToolImplementation {
         }
 
         // Gather participants automatically from the registry
-        // We pick top ones to ensure a good debate, falling back to all available if few exist
         const preferredScns = ['Noctua', 'Archimedes', 'Scrooge', 'Socrates'];
         const participants = preferredScns
             .map(name => owlRegistry.get(name))
@@ -49,17 +49,49 @@ export class SummonParliamentTool implements ToolImplementation {
             participants.push(...allOwls.slice(0, 4));
         }
 
-        try {
-            const orchestrator = new ParliamentOrchestrator(provider, config, pelletStore);
+        // Build streaming callbacks from engine context onProgress
+        const onProgress = context.engineContext.onProgress;
+        const callbacks: ParliamentCallbacks | undefined = onProgress
+            ? {
+                onRoundStart: async (round, phase) => {
+                    const labels: Record<string, string> = {
+                        round1_position: '📢 Round 1: Initial Positions',
+                        round2_challenge: '⚔️ Round 2: Cross-Examination',
+                        round3_synthesis: '🔮 Round 3: Synthesis',
+                    };
+                    await onProgress(`\n🏛️ **Parliament** — ${labels[phase] || `Round ${round}`}`);
+                },
+                onPositionReady: async (position) => {
+                    await onProgress(
+                        `${position.owlEmoji} **${position.owlName}** [${position.position}]: ${position.argument}`,
+                    );
+                },
+                onChallengeReady: async (challenge) => {
+                    await onProgress(
+                        `⚔️ **${challenge.owlName}** challenges ${challenge.targetOwl}: ${challenge.challengeContent}`,
+                    );
+                },
+                onSynthesisReady: async (synthesis, verdict) => {
+                    await onProgress(
+                        `📋 **Verdict: [${verdict}]**\n${synthesis}`,
+                    );
+                },
+            }
+            : undefined;
 
-            // Convene the parliament silently in the background
+        try {
+            const orchestrator = new ParliamentOrchestrator(
+                provider, config, pelletStore,
+                context.engineContext.toolRegistry,
+            );
+
             const session = await orchestrator.convene({
                 topic,
                 participants,
                 contextMessages: context.engineContext.sessionHistory || [],
+                callbacks,
             });
 
-            // Return the formatted markdown transcript so the calling Owl can read it and synthesize an answer to the user
             return orchestrator.formatSessionMarkdown(session);
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);

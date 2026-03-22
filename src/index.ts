@@ -20,6 +20,12 @@ import { GoogleSearchTool } from "./tools/search.js";
 import { WebCrawlTool } from "./tools/web.js";
 import { MemoryConsolidator } from "./memory/consolidator.js";
 import { SessionStore } from "./memory/store.js";
+import { StackOwlEventBus } from "./events/index.js";
+import { TaskQueue } from "./queue/index.js";
+import { CostTracker } from "./costs/index.js";
+import { DefaultAgentRegistry } from "./agents/index.js";
+import { RateLimiter } from "./ratelimit/index.js";
+import type { RateLimitRule } from "./ratelimit/index.js";
 import { OrchestrateTasksTool } from "./tools/orchestrate.js";
 import { SummonParliamentTool } from "./tools/parliament.js";
 import { PatchTool } from "./tools/toolsmith.js";
@@ -29,16 +35,19 @@ import {
   AppleCalendarTool, AppleRemindersTool, AppleContactsTool,
   AppleNotesTool, AppleMailTool, SystemInfoTool, NotificationTool,
   ClipboardTool, FocusModeTool, SpotlightSearchTool, TextToSpeechTool,
+  SystemControlsTool, MusicControlTool, IMessageTool,
 } from "./tools/macos/index.js";
 // ── Utility tools ──
 import {
   CalculatorTool, TimerTool, WeatherTool, CurrencyConverterTool,
   PasswordGeneratorTool, JSONTransformTool, ProcessManagerTool,
   DailyBriefingTool, HabitTrackerTool, ExpenseTrackerTool, QuickCaptureTool,
+  TranslatorTool, UnitConverterTool, QRCodeTool,
 } from "./tools/utils/index.js";
 // ── Web utility tools ──
 import {
   WebMonitorTool, LinkPreviewTool, RSSFeedTool,
+  YouTubeSearchTool, BookmarkManagerTool,
 } from "./tools/web-utils/index.js";
 // ── Dev tools ──
 import {
@@ -51,6 +60,7 @@ import {
 // ── Data tools ──
 import {
   SpreadsheetTool, DataVisualizationTool, FileEncryptTool, FileOrganizeTool,
+  ArchiveTool, PDFReaderTool, OCRTool,
 } from "./tools/data/index.js";
 // ── Computer Use ──
 import { ComputerUseTool } from "./tools/computer-use/index.js";
@@ -71,13 +81,36 @@ import { FilePerch } from "./perch/file-perch.js";
 import { StackOwlServer } from "./server/index.js";
 import { OwlGateway } from "./gateway/core.js";
 import { TelegramAdapter } from "./gateway/adapters/telegram.js";
+import { SlackAdapter } from "./gateway/adapters/slack.js";
 import { CLIAdapter } from "./gateway/adapters/cli.js";
 import { PreferenceStore } from "./preferences/store.js";
 import { ReflexionEngine } from "./evolution/reflexion.js";
 import { SkillsLoader } from "./skills/index.js";
 import { MCPManager } from "./tools/mcp/manager.js";
 import { MicroLearner } from "./learning/micro-learner.js";
+import { MemorySearcher } from "./memory-threads/searcher.js";
+import { RecallMemoryTool } from "./tools/recall.js";
+import { EchoChamberDetector } from "./echo-chamber/detector.js";
+import { EchoCheckTool } from "./tools/echo-check.js";
+import { JournalGenerator } from "./growth-journal/generator.js";
+import { GrowthJournalTool } from "./tools/journal.js";
+import { QuestManager } from "./quests/manager.js";
+import { QuestTool } from "./tools/quest.js";
+import { CapsuleManager } from "./capsules/manager.js";
+import { TimeCapsuleTool } from "./tools/capsule.js";
+import { ConstellationMiner } from "./constellations/miner.js";
+import { SocraticEngine } from "./socratic/engine.js";
 import { join } from "node:path";
+// ── New Feature Modules (Phase 1-3) ──
+import { InfraProfileStore, InfraDetector } from "./infra/index.js";
+import { ConnectorResolver } from "./connectors/index.js";
+import { WorkflowChainStore, WorkflowExecutor, RunbookMiner } from "./workflows/index.js";
+import { HealthChecker } from "./monitoring/index.js";
+import { AutoConfigDetector } from "./infra/auto-config.js";
+import { CrossAppPlanner } from "./orchestrator/cross-app.js";
+import { createWorkflowTool } from "./tools/workflow.js";
+import { createMonitorTool } from "./tools/monitor.js";
+import { createConnectorTool } from "./tools/connector.js";
 
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
 
@@ -153,6 +186,9 @@ async function bootstrap() {
     FocusModeTool,
     SpotlightSearchTool,
     TextToSpeechTool,
+    SystemControlsTool,
+    MusicControlTool,
+    IMessageTool,
     // ── Utilities ──
     CalculatorTool,
     TimerTool,
@@ -165,10 +201,15 @@ async function bootstrap() {
     HabitTrackerTool,
     ExpenseTrackerTool,
     QuickCaptureTool,
+    TranslatorTool,
+    UnitConverterTool,
+    QRCodeTool,
     // ── Web Utils ──
     WebMonitorTool,
     LinkPreviewTool,
     RSSFeedTool,
+    YouTubeSearchTool,
+    BookmarkManagerTool,
     // ── Dev ──
     DockerTool,
     GitTool,
@@ -185,22 +226,38 @@ async function bootstrap() {
     DataVisualizationTool,
     FileEncryptTool,
     FileOrganizeTool,
+    ArchiveTool,
+    PDFReaderTool,
+    OCRTool,
     // ── Computer Use (Desktop Automation) ──
     ComputerUseTool,
     // ── Anti-bot Web Scraping ──
     ScraplingTool,
+    // ── Memory & Recall ──
+    new RecallMemoryTool(),
+    // ── Growth & Wisdom ──
+    new EchoCheckTool(),
+    new GrowthJournalTool(),
+    new QuestTool(),
+    new TimeCapsuleTool(),
   ]);
 
   // Initialize session store
   const sessionStore = new SessionStore(workspacePath);
   await sessionStore.init();
 
-  // Initialize pellet store
+  // Initialize pellet store (with AI-powered deduplication)
   const pelletStore = new PelletStore(
     workspacePath,
     providerRegistry.getDefault(),
+    config.pellets?.dedup,
   );
   await pelletStore.init();
+
+  // Build knowledge graph in background (non-blocking)
+  pelletStore.buildGraph().catch(err =>
+    console.warn(`[PelletGraph] Build failed (non-fatal): ${err instanceof Error ? err.message : err}`),
+  );
 
   // Learning Engine — instantiated here so bootstrap can share it across CLI + Telegram
   // (actual owl binding happens after owl selection, so we expose a factory)
@@ -213,11 +270,60 @@ async function bootstrap() {
       config,
       pelletStore,
       workspacePath,
+      providerRegistry,
     );
 
   // Micro-Learner — per-message lightweight signal extraction
   const microLearner = new MicroLearner(workspacePath);
   await microLearner.load().catch(() => {});
+
+  // Memory Searcher — cross-system recall for conversational threads
+  const memorySearcher = new MemorySearcher(
+    pelletStore,
+    sessionStore,
+    workspacePath,
+    providerRegistry.getDefault(),
+  );
+  await memorySearcher.loadIndex().catch(() => {});
+
+  // Echo Chamber Detector — bias analysis on conversation history
+  const echoChamberDetector = new EchoChamberDetector(
+    sessionStore,
+    providerRegistry.getDefault(),
+    workspacePath,
+  );
+  await echoChamberDetector.load().catch(() => {});
+
+  // Growth Journal Generator
+  const journalGenerator = new JournalGenerator(
+    pelletStore,
+    sessionStore,
+    providerRegistry.getDefault(),
+    workspacePath,
+  );
+
+  // Quest Manager — gamified learning
+  const questManager = new QuestManager(
+    providerRegistry.getDefault(),
+    pelletStore,
+    workspacePath,
+  );
+
+  // Capsule Manager — time capsules
+  const capsuleManager = new CapsuleManager(
+    providerRegistry.getDefault(),
+    workspacePath,
+  );
+
+  // Constellation Miner — cross-pellet pattern discovery
+  const constellationMiner = new ConstellationMiner(
+    providerRegistry.getDefault(),
+    pelletStore,
+    workspacePath,
+  );
+
+  // Socratic Engine — per-session question-only mode
+  const socraticEngine = new SocraticEngine();
 
   // Evolution Engine (DNA) — with holistic user profile for smarter evolution
   const evolutionEngine = new OwlEvolutionEngine(
@@ -267,6 +373,32 @@ async function bootstrap() {
     });
     console.log(chalk.dim(`  [Loaded ${skillsCount} skills]`));
   }
+
+  // ── Infrastructure Profile ──
+  const infraProfile = new InfraProfileStore(workspacePath);
+  await infraProfile.load().catch(() => {});
+  const infraDetector = new InfraDetector(infraProfile);
+
+  // ── App Connectors ──
+  const connectorResolver = new ConnectorResolver(workspacePath);
+  await connectorResolver.load().catch(() => {});
+
+  // ── Workflow Chains ──
+  const workflowStore = new WorkflowChainStore(workspacePath);
+  await workflowStore.load().catch(() => {});
+
+  // ── Health Monitoring ──
+  const healthChecker = new HealthChecker(workspacePath);
+  await healthChecker.load().catch(() => {});
+
+  // Register new tools
+  const defaultProvider = providerRegistry.getDefault();
+  const workflowExecutor = new WorkflowExecutor(toolRegistry, defaultProvider, workspacePath);
+  toolRegistry.registerAll([
+    createWorkflowTool(workflowStore, workflowExecutor),
+    createMonitorTool(healthChecker),
+    createConnectorTool(connectorResolver),
+  ]);
 
   // Load tool permissions from config
   if (config.tools?.permissions) {
@@ -322,6 +454,19 @@ async function bootstrap() {
     reflexionEngine,
     skillsLoader,
     microLearner,
+    memorySearcher,
+    echoChamberDetector,
+    journalGenerator,
+    questManager,
+    capsuleManager,
+    constellationMiner,
+    socraticEngine,
+    infraProfile,
+    infraDetector,
+    connectorResolver,
+    workflowStore,
+    workflowExecutor,
+    healthChecker,
   };
 }
 
@@ -338,6 +483,103 @@ async function buildGateway(
   if (memoryContext) {
     console.log(chalk.dim("  [Memory loaded from previous sessions]"));
   }
+
+  // ─── New Infrastructure (Improvements #1-7) ──────────────────
+  const eventBus = new StackOwlEventBus();
+  const taskQueue = new TaskQueue(b.config.queue);
+
+  // Cost tracker
+  let costTracker: CostTracker | undefined;
+  if (b.config.costs?.enabled !== false) {
+    const costPath = resolve(b.workspacePath, "cost_tracking.json");
+    costTracker = new CostTracker(b.config.costs?.budget, costPath);
+    await costTracker.load();
+  }
+
+  // Agent registry (empty — agents register themselves later)
+  const agentRegistry = new DefaultAgentRegistry();
+
+  // Rate limiter
+  const rules: RateLimitRule[] = [];
+  if (b.config.gateway?.rateLimit) {
+    rules.push({
+      name: "session-minute",
+      maxRequests: b.config.gateway.rateLimit.maxPerMinute,
+      windowMs: 60_000,
+    });
+    rules.push({
+      name: "session-hour",
+      maxRequests: b.config.gateway.rateLimit.maxPerHour,
+      windowMs: 3_600_000,
+    });
+  }
+  if (b.config.rateLimiting?.perProvider) {
+    for (const [prov, limit] of Object.entries(b.config.rateLimiting.perProvider)) {
+      rules.push({
+        name: `provider-${prov}-minute`,
+        maxRequests: limit.maxPerMinute,
+        windowMs: 60_000,
+      });
+      if (limit.maxPerHour) {
+        rules.push({
+          name: `provider-${prov}-hour`,
+          maxRequests: limit.maxPerHour,
+          windowMs: 3_600_000,
+        });
+      }
+    }
+  }
+  const rateLimiter = rules.length > 0 ? new RateLimiter(rules) : undefined;
+
+  // ─── Plugin System ──────────────────────────────────────────
+  const { ServiceRegistry } = await import("./plugins/services.js");
+  const { HookPipeline } = await import("./plugins/hook-pipeline.js");
+  const { PluginRegistry } = await import("./plugins/registry.js");
+  const { PluginLifecycleManager } = await import("./plugins/lifecycle.js");
+
+  const serviceRegistry = new ServiceRegistry();
+  const hookPipeline = new HookPipeline();
+  const pluginRegistry = new PluginRegistry();
+  const pluginLifecycle = new PluginLifecycleManager(
+    pluginRegistry, serviceRegistry, hookPipeline, b.toolRegistry, eventBus,
+  );
+
+  // Load plugins from configured directories
+  if (b.config.plugins?.directories) {
+    for (const dir of b.config.plugins.directories) {
+      const resolvedDir = resolve(b.workspacePath, "..", dir);
+      await pluginLifecycle.loadAll(resolvedDir);
+    }
+    await pluginLifecycle.startAll();
+  }
+
+  // ─── Hot Reload Manager ────────────────────────────────────
+  const { HotReloadManager } = await import("./reload/manager.js");
+  const hotReloadManager = new HotReloadManager(eventBus, b.config.skills?.watchDebounceMs ?? 250);
+
+  // ─── ACP Router ────────────────────────────────────────────
+  const { ACPRouter } = await import("./acp/router.js");
+  const { SessionBridgeFactory } = await import("./acp/bridge.js");
+  const bridgeFactory = new SessionBridgeFactory(b.sessionStore);
+  const acpRouter = new ACPRouter(agentRegistry, eventBus, bridgeFactory);
+
+  // ─── New Feature Modules ──────────────────────────────────────
+  const autoConfigDetector = new AutoConfigDetector(b.infraProfile, b.connectorResolver);
+  const runbookMiner = new RunbookMiner(b.workflowStore, provider);
+  const crossAppPlanner = new CrossAppPlanner(provider, b.toolRegistry, b.workspacePath);
+
+  // Connect connector presets to MCP manager
+  const connectorMcpConfigs = b.connectorResolver.resolveToMcpConfigs();
+  if (connectorMcpConfigs.length > 0) {
+    const mcpManager = new MCPManager();
+    const mcpCount = await mcpManager.connectAll(connectorMcpConfigs, b.toolRegistry);
+    if (mcpCount > 0) {
+      console.log(chalk.dim(`  [Connectors: ${mcpCount} tool(s) from ${connectorMcpConfigs.length} app connector(s)]`));
+    }
+  }
+
+  // Start health monitoring
+  b.healthChecker.startAll();
 
   const gateway = new OwlGateway({
     provider,
@@ -360,6 +602,34 @@ async function buildGateway(
     cwd: b.workspacePath,
     providerRegistry: b.providerRegistry,
     microLearner: b.microLearner,
+    memorySearcher: b.memorySearcher,
+    echoChamberDetector: b.echoChamberDetector,
+    journalGenerator: b.journalGenerator,
+    questManager: b.questManager,
+    capsuleManager: b.capsuleManager,
+    constellationMiner: b.constellationMiner,
+    socraticEngine: b.socraticEngine,
+    // New infrastructure
+    eventBus,
+    taskQueue,
+    costTracker,
+    agentRegistry,
+    rateLimiter,
+    // Plugin, Reload & ACP
+    pluginRegistry,
+    serviceRegistry,
+    hookPipeline,
+    hotReloadManager,
+    acpRouter,
+    // Feature modules
+    infraProfile: b.infraProfile,
+    infraDetector: b.infraDetector,
+    connectorResolver: b.connectorResolver,
+    workflowStore: b.workflowStore,
+    healthChecker: b.healthChecker,
+    autoConfigDetector,
+    runbookMiner,
+    crossAppPlanner,
   });
 
   return gateway;
@@ -422,7 +692,7 @@ async function parliamentCommand(topic?: string) {
     process.exit(1);
   }
 
-  const { providerRegistry, owlRegistry, config, pelletStore } =
+  const { providerRegistry, owlRegistry, config, pelletStore, toolRegistry } =
     await bootstrap();
   const provider = providerRegistry.getDefault();
 
@@ -455,6 +725,7 @@ async function parliamentCommand(topic?: string) {
     provider,
     config,
     pelletStore,
+    toolRegistry,
   );
 
   try {
@@ -523,8 +794,80 @@ async function statusCommand() {
 
 // ─── Pellets Command ───────────────────────────────────────────────
 
-async function pelletsCommand(opts: { search?: string; read?: string }) {
+async function pelletsCommand(opts: {
+  search?: string;
+  read?: string;
+  dedup?: boolean;
+  dryRun?: boolean;
+  graph?: boolean;
+  related?: string;
+}) {
   const { pelletStore } = await bootstrap();
+
+  // ─── Bulk Dedup ────────────────────────────────────────────────
+  if (opts.dedup) {
+    const { bulkDedup } = await import('./pellets/bulk-dedup.js');
+    console.log(chalk.cyan(
+      opts.dryRun
+        ? '🔍 Running bulk dedup DRY RUN (no changes will be made)...\n'
+        : '🧹 Running bulk dedup (duplicates will be merged/removed)...\n',
+    ));
+    const stats = await bulkDedup(
+      pelletStore,
+      pelletStore.getDeduplicator(),
+      { dryRun: opts.dryRun },
+    );
+    console.log('\n' + chalk.bold('Results:'));
+    console.log(`  Total pellets:  ${stats.total}`);
+    console.log(`  Checked:        ${stats.checked}`);
+    console.log(chalk.green(`  Kept:           ${stats.kept}`));
+    console.log(chalk.yellow(`  Skipped:        ${stats.skipped}`));
+    console.log(chalk.cyan(`  Merged:         ${stats.merged}`));
+    console.log(chalk.magenta(`  Superseded:     ${stats.superseded}`));
+    if (stats.errors > 0) console.log(chalk.red(`  Errors:         ${stats.errors}`));
+    return;
+  }
+
+  // ─── Knowledge Graph ─────────────────────────────────────────
+  if (opts.graph) {
+    console.log(chalk.cyan('🕸️  Building knowledge graph...\n'));
+    const graph = await pelletStore.buildGraph();
+    const stats = graph.getStats();
+    console.log(chalk.bold('Graph Stats:'));
+    console.log(`  Nodes (pellets): ${stats.nodes}`);
+    console.log(`  Edges (links):   ${stats.edges}`);
+    console.log(`  Clusters:        ${stats.clusters}`);
+    console.log(`  Avg degree:      ${stats.avgDegree}`);
+
+    const clusters = graph.getClusters();
+    if (clusters.length > 0) {
+      console.log(chalk.bold('\nTop Knowledge Clusters:'));
+      for (const cluster of clusters.slice(0, 10)) {
+        console.log(
+          `  [${cluster.size} pellets] ${chalk.cyan(cluster.topTags.join(', '))}`,
+        );
+      }
+    }
+    return;
+  }
+
+  // ─── Find Related ────────────────────────────────────────────
+  if (opts.related) {
+    console.log(chalk.cyan(`🔗 Finding pellets related to "${opts.related}"...\n`));
+    const graph = await pelletStore.buildGraph();
+    const related = graph.findRelatedByQuery(opts.related, 10);
+    if (related.length === 0) {
+      console.log(chalk.dim('No related pellets found.'));
+      return;
+    }
+    for (const r of related) {
+      console.log(
+        `${chalk.bold(r.title)} ${chalk.dim(`(${r.id})`)}` +
+        ` — weight: ${r.weight.toFixed(1)}, hops: ${r.hops}, via: ${r.sources.join(', ')}`,
+      );
+    }
+    return;
+  }
 
   if (opts.read) {
     // Read a specific pellet
@@ -735,14 +1078,7 @@ async function evolveCommand(owlName: string) {
 async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   const b = await bootstrap();
 
-  // Read bot token
-  let botToken = "";
-  const telegramConfig = (b.config as any)["telegram"] as
-    | { botToken?: string }
-    | undefined;
-  if (telegramConfig?.botToken) {
-    botToken = telegramConfig.botToken;
-  }
+  const botToken = b.config.telegram?.botToken ?? "";
 
   if (!botToken) {
     console.error(chalk.red("❌ Telegram bot token not found."));
@@ -811,21 +1147,95 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   }
 }
 
+// ─── Slack Command ───────────────────────────────────────────────
+
+async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
+  const b = await bootstrap();
+
+  const slackConfig = b.config.slack;
+  if (!slackConfig?.botToken || !slackConfig?.appToken) {
+    console.error(chalk.red("❌ Slack credentials not found."));
+    console.log(
+      chalk.dim(
+        '  Set "slack.botToken" (xoxb-...) and "slack.appToken" (xapp-...) in stackowl.config.json',
+      ),
+    );
+    console.log(
+      chalk.dim(
+        '  See: https://api.slack.com/start/quickstart',
+      ),
+    );
+    process.exit(1);
+  }
+
+  const owl = opts.owl
+    ? b.owlRegistry.get(opts.owl)
+    : b.owlRegistry.getDefault();
+  if (!owl) {
+    console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
+    process.exit(1);
+  }
+
+  const provider = b.providerRegistry.getDefault();
+  if (!(await provider.healthCheck())) {
+    console.error(
+      chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`),
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.green(`✓ Provider: ${provider.name}`) +
+      chalk.dim(` (model: ${b.config.defaultModel})`),
+  );
+  console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
+  console.log(chalk.green(`✓ Channel: 💬 Slack`));
+
+  const gateway = await buildGateway(b, owl);
+  const adapter = new SlackAdapter(gateway, {
+    botToken: slackConfig.botToken,
+    appToken: slackConfig.appToken,
+    signingSecret: slackConfig.signingSecret,
+    allowedChannels: slackConfig.allowedChannels,
+    port: slackConfig.port,
+    channelIdsPath: join(b.workspacePath, "known_slack_channels.json"),
+  });
+  gateway.register(adapter);
+
+  // Perch: broadcast through gateway
+  const perch = new PerchManager(
+    provider,
+    b.config,
+    b.owlRegistry,
+    (msg: string) => gateway.broadcastProactive(msg),
+  );
+  perch.addPerch(new FilePerch(b.workspacePath));
+  await perch.startAll();
+
+  const shutdown = () => {
+    console.log(chalk.dim("\n🦉 Shutting down..."));
+    perch.stopAll();
+    adapter.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  await adapter.start();
+
+  if (opts.withCli) {
+    console.log(chalk.dim("\n💬 Slack running. CLI also active.\n"));
+    await chatCommand(opts.owl);
+  }
+}
+
 // ─── Web Command ─────────────────────────────────────────────────
 
-async function webCommand(port?: string) {
+async function webCommand(port?: string, owlName?: string) {
   const resolvedPort = port ? parseInt(port, 10) : 3000;
 
-  const {
-    config,
-    providerRegistry,
-    owlRegistry,
-    pelletStore,
-    sessionStore,
-    toolRegistry,
-    workspacePath,
-  } = await bootstrap();
-  const provider = providerRegistry.getDefault();
+  const b = await bootstrap();
+  const provider = b.providerRegistry.getDefault();
 
   // Health check
   const healthy = await provider.healthCheck();
@@ -836,14 +1246,27 @@ async function webCommand(port?: string) {
     process.exit(1);
   }
 
+  const owl = owlName ? b.owlRegistry.get(owlName) : b.owlRegistry.getDefault();
+  if (!owl) {
+    console.error(chalk.red(`❌ Owl "${owlName}" not found.`));
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.green(`✓ Provider: ${provider.name}`) +
+      chalk.dim(` (model: ${b.config.defaultModel})`),
+  );
+  console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
+  console.log(chalk.green(`✓ Channel: 🌐 WebSocket Control Plane`));
+
+  const gateway = await buildGateway(b, owl);
+
   const server = new StackOwlServer(
-    config,
-    provider,
-    owlRegistry,
-    pelletStore,
-    sessionStore,
-    toolRegistry,
-    workspacePath,
+    b.config,
+    gateway,
+    b.owlRegistry,
+    b.pelletStore,
+    b.sessionStore,
     resolvedPort,
   );
 
@@ -853,18 +1276,9 @@ async function webCommand(port?: string) {
 // ─── All Command ─────────────────────────────────────────────────
 
 async function allCommand(opts: { owl?: string; port?: string }) {
-  // 1. Start Web Server
   const resolvedPort = opts.port ? parseInt(opts.port, 10) : 3000;
-  const {
-    config,
-    providerRegistry,
-    owlRegistry,
-    pelletStore,
-    sessionStore,
-    toolRegistry,
-    workspacePath,
-  } = await bootstrap();
-  const provider = providerRegistry.getDefault();
+  const b = await bootstrap();
+  const provider = b.providerRegistry.getDefault();
 
   const healthy = await provider.healthCheck();
   if (!healthy) {
@@ -874,36 +1288,92 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     process.exit(1);
   }
 
+  const owl = opts.owl ? b.owlRegistry.get(opts.owl) : b.owlRegistry.getDefault();
+  if (!owl) {
+    console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.green(`✓ Provider: ${provider.name}`) +
+      chalk.dim(` (model: ${b.config.defaultModel})`),
+  );
+  console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
+
+  // 1. Build Gateway (shared across all channels)
+  const gateway = await buildGateway(b, owl);
+
+  // 2. Start Web Server with WebSocket Control Plane
   const server = new StackOwlServer(
-    config,
-    provider,
-    owlRegistry,
-    pelletStore,
-    sessionStore,
-    toolRegistry,
-    workspacePath,
+    b.config,
+    gateway,
+    b.owlRegistry,
+    b.pelletStore,
+    b.sessionStore,
     resolvedPort,
   );
   await server.start();
+  console.log(chalk.green(`✓ Channel: 🌐 WebSocket Control Plane (port ${resolvedPort})`));
 
-  // 2. Check for Telegram
-  let botToken = "";
-  const configAny = config as unknown as Record<string, unknown>;
-  const telegramConfig = configAny["telegram"] as
-    | { botToken?: string; enabled?: boolean }
-    | undefined;
-
-  if (telegramConfig?.botToken) {
-    botToken = telegramConfig.botToken;
+  // 3. Check for Slack (start before Telegram — Telegram's bot.start() blocks)
+  if (b.config.slack?.botToken && b.config.slack?.appToken) {
+    try {
+      const slackAdapter = new SlackAdapter(gateway, {
+        botToken: b.config.slack.botToken,
+        appToken: b.config.slack.appToken,
+        signingSecret: b.config.slack.signingSecret,
+        allowedChannels: b.config.slack.allowedChannels,
+        port: b.config.slack.port,
+        channelIdsPath: join(b.workspacePath, "known_slack_channels.json"),
+      });
+      gateway.register(slackAdapter);
+      await slackAdapter.start();
+      console.log(chalk.green(`✓ Channel: 💬 Slack`));
+    } catch (err) {
+      console.error(chalk.red(`✗ Slack failed to start: ${err instanceof Error ? err.message : err}`));
+    }
   }
 
-  if (botToken) {
-    // Start Telegram and then CLI
-    await telegramCommand({ owl: opts.owl, withCli: true });
-  } else {
-    // No telegram, just start CLI directly
-    await chatCommand(opts.owl);
+  // 4. Check for Telegram
+  // Note: grammY's bot.start() blocks forever (long-polling), so we start it
+  // without await. The onStart callback confirms it's running.
+  if (b.config.telegram?.botToken) {
+    const telegramAdapter = new TelegramAdapter(gateway, {
+      botToken: b.config.telegram.botToken,
+      allowedUserIds: b.config.telegram.allowedUserIds,
+      chatIdsPath: join(b.workspacePath, "known_chat_ids.json"),
+    });
+    gateway.register(telegramAdapter);
+    telegramAdapter.start().catch(err => {
+      console.error(chalk.red(`✗ Telegram failed: ${err instanceof Error ? err.message : err}`));
+    });
+    console.log(chalk.green(`✓ Channel: 📱 Telegram`));
   }
+
+  // 5. Start CLI adapter
+  const cliAdapter = new CLIAdapter(gateway);
+  gateway.register(cliAdapter);
+
+  // Perch: broadcast through gateway
+  const perch = new PerchManager(
+    provider,
+    b.config,
+    b.owlRegistry,
+    (msg: string) => gateway.broadcastProactive(msg),
+  );
+  perch.addPerch(new FilePerch(b.workspacePath));
+  await perch.startAll();
+
+  const shutdown = () => {
+    console.log(chalk.dim("\n🦉 Shutting down all channels..."));
+    perch.stopAll();
+    cliAdapter.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  await cliAdapter.start();
 }
 
 // ─── CLI Setup ───────────────────────────────────────────────────
@@ -931,6 +1401,15 @@ program
   });
 
 program
+  .command("slack")
+  .description("Start Slack bot channel")
+  .option("-o, --owl <name>", "Owl persona to use")
+  .option("--with-cli", "Also start CLI chat alongside Slack")
+  .action(async (opts: { owl?: string; withCli?: boolean }) => {
+    await slackCommand(opts);
+  });
+
+program
   .command("parliament [topic]")
   .description("Convene a Parliament of owls to debate a complex topic")
   .action((topic) => {
@@ -952,6 +1431,10 @@ program
   .description("Manage and search Knowledge Pellets")
   .option("-s, --search <query>", "Search pellets by keyword or tag")
   .option("-r, --read <id>", "Read the full content of a specific pellet")
+  .option("--dedup", "Run bulk deduplication on all pellets")
+  .option("--dry-run", "Preview dedup without making changes (use with --dedup)")
+  .option("--graph", "Build and display knowledge graph stats")
+  .option("--related <query>", "Find pellets related to a topic via graph traversal")
   .action((opts) => {
     pelletsCommand(opts).catch((err) => {
       console.error(chalk.red(`Fatal error: ${err.message}`));
@@ -971,10 +1454,11 @@ program
 
 program
   .command("web")
-  .description("Start the StackOwl Web UI Server")
+  .description("Start the StackOwl WebSocket Control Plane server")
   .option("-p, --port <number>", "Port to listen on", "3000")
+  .option("-o, --owl <name>", "Owl persona to use")
   .action((opts) => {
-    webCommand(opts.port).catch((err) => {
+    webCommand(opts.port, opts.owl).catch((err) => {
       console.error(chalk.red(`Fatal error: ${err.message}`));
       process.exit(1);
     });

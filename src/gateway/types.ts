@@ -63,6 +63,8 @@ export interface GatewayResponse {
   owlEmoji: string;
   toolsUsed: string[];
   usage?: { promptTokens: number; completionTokens: number };
+  /** Estimated cost for this response (populated when cost tracking is enabled) */
+  estimatedCostUsd?: number;
 }
 
 // ─── Channel Adapter Interface ───────────────────────────────────
@@ -140,6 +142,16 @@ import type { VoicePersona } from "../voice/persona.js";
 import type { VoiceAdapter } from "../voice/adapter.js";
 import type { MicroLearner } from "../learning/micro-learner.js";
 import type { ProactiveAnticipator } from "../learning/anticipator.js";
+import type { EventBus } from "../events/bus.js";
+import type { TaskQueue } from "../queue/task-queue.js";
+import type { CostTracker } from "../costs/tracker.js";
+import type { AgentRegistry } from "../agents/types.js";
+import type { RateLimiter } from "../ratelimit/limiter.js";
+import type { PluginRegistry } from "../plugins/registry.js";
+import type { ServiceRegistry } from "../plugins/services.js";
+import type { HookPipeline } from "../plugins/hook-pipeline.js";
+import type { HotReloadManager } from "../reload/manager.js";
+import type { ACPRouter } from "../acp/router.js";
 
 export interface GatewayContext {
   provider: ModelProvider;
@@ -180,4 +192,35 @@ export interface GatewayContext {
   voiceAdapter?: VoiceAdapter;
   microLearner?: MicroLearner;
   anticipator?: ProactiveAnticipator;
+  memorySearcher?: import('../memory-threads/searcher.js').MemorySearcher;
+  echoChamberDetector?: import('../echo-chamber/detector.js').EchoChamberDetector;
+  journalGenerator?: import('../growth-journal/generator.js').JournalGenerator;
+  questManager?: import('../quests/manager.js').QuestManager;
+  capsuleManager?: import('../capsules/manager.js').CapsuleManager;
+  constellationMiner?: import('../constellations/miner.js').ConstellationMiner;
+  socraticEngine?: import('../socratic/engine.js').SocraticEngine;
+
+  // ─── Architecture Improvements ─────────────────────────────
+  eventBus?: EventBus;
+  taskQueue?: TaskQueue;
+  costTracker?: CostTracker;
+  agentRegistry?: AgentRegistry;
+  rateLimiter?: RateLimiter;
+
+  // ─── Plugin, Reload & ACP ─────────────────────────────────
+  pluginRegistry?: PluginRegistry;
+  serviceRegistry?: ServiceRegistry;
+  hookPipeline?: HookPipeline;
+  hotReloadManager?: HotReloadManager;
+  acpRouter?: ACPRouter;
+
+  // ─── Feature Modules (Phase 1-3) ──────────────────────────
+  infraProfile?: import('../infra/profile.js').InfraProfileStore;
+  infraDetector?: import('../infra/detector.js').InfraDetector;
+  connectorResolver?: import('../connectors/resolver.js').ConnectorResolver;
+  workflowStore?: import('../workflows/chain.js').WorkflowChainStore;
+  healthChecker?: import('../monitoring/checker.js').HealthChecker;
+  autoConfigDetector?: import('../infra/auto-config.js').AutoConfigDetector;
+  runbookMiner?: import('../workflows/runbook-miner.js').RunbookMiner;
+  crossAppPlanner?: import('../orchestrator/cross-app.js').CrossAppPlanner;
 }

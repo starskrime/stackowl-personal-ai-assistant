@@ -62,11 +62,23 @@ json_read() {
 }
 
 has_telegram() {
-  # Returns 0 (true) if stackowl.config.json has telegram.enabled = true
+  # Returns 0 (true) if stackowl.config.json has telegram.botToken set
   node -e "
     try {
       const c = JSON.parse(require('fs').readFileSync('$CONFIG_FILE', 'utf8'));
-      process.exit(c.telegram && c.telegram.enabled ? 0 : 1);
+      process.exit(c.telegram && c.telegram.botToken && !c.telegram.botToken.includes('YOUR') ? 0 : 1);
+    } catch { process.exit(1); }
+  " 2>/dev/null
+}
+
+has_slack() {
+  # Returns 0 (true) if stackowl.config.json has slack.botToken and slack.appToken set
+  node -e "
+    try {
+      const c = JSON.parse(require('fs').readFileSync('$CONFIG_FILE', 'utf8'));
+      const ok = c.slack && c.slack.botToken && c.slack.appToken
+        && !c.slack.botToken.includes('YOUR') && !c.slack.appToken.includes('YOUR');
+      process.exit(ok ? 0 : 1);
     } catch { process.exit(1); }
   " 2>/dev/null
 }
@@ -183,13 +195,38 @@ select_launch_mode() {
   echo ""
   log_step "How do you want to run StackOwl?"
   echo ""
+
+  local HAS_TG=false
+  local HAS_SL=false
+  has_telegram && HAS_TG=true
+  has_slack && HAS_SL=true
+
   echo -e "  ${BOLD}1)${RESET} 💻 CLI only"
 
-  if has_telegram; then
+  if $HAS_TG && $HAS_SL; then
+    echo -e "  ${BOLD}2)${RESET} 📱 Telegram only"
+    echo -e "  ${BOLD}3)${RESET} 💬 Slack only"
+    echo -e "  ${BOLD}4)${RESET} 🌐 Web UI"
+    echo -e "  ${BOLD}5)${RESET} 🚀 All (CLI + Telegram + Slack + Web)"
+    echo ""
+    while true; do
+      read -rp "$(echo -e "${CYAN}Enter choice [1-5]:${RESET} ")" ch
+      case "$ch" in
+        1) LAUNCH_MODE="chat"; break ;;
+        2) LAUNCH_MODE="telegram"; break ;;
+        3) LAUNCH_MODE="slack"; break ;;
+        4) LAUNCH_MODE="web"; break ;;
+        5) LAUNCH_MODE="all"; break ;;
+        *) log_error "Invalid choice. Enter 1-5." ;;
+      esac
+    done
+  elif $HAS_TG; then
     echo -e "  ${BOLD}2)${RESET} 📱 Telegram only"
     echo -e "  ${BOLD}3)${RESET} 💻+📱 CLI + Telegram"
     echo -e "  ${BOLD}4)${RESET} 🌐 Web UI"
     echo -e "  ${BOLD}5)${RESET} 🚀 All (CLI + Telegram + Web)"
+    echo ""
+    log_dim "Slack not configured — add slack.botToken + slack.appToken to enable it."
     echo ""
     while true; do
       read -rp "$(echo -e "${CYAN}Enter choice [1-5]:${RESET} ")" ch
@@ -202,11 +239,30 @@ select_launch_mode() {
         *) log_error "Invalid choice. Enter 1-5." ;;
       esac
     done
+  elif $HAS_SL; then
+    echo -e "  ${BOLD}2)${RESET} 💬 Slack only"
+    echo -e "  ${BOLD}3)${RESET} 💻+💬 CLI + Slack"
+    echo -e "  ${BOLD}4)${RESET} 🌐 Web UI"
+    echo -e "  ${BOLD}5)${RESET} 🚀 All (CLI + Slack + Web)"
+    echo ""
+    log_dim "Telegram not configured — add telegram.botToken to enable it."
+    echo ""
+    while true; do
+      read -rp "$(echo -e "${CYAN}Enter choice [1-5]:${RESET} ")" ch
+      case "$ch" in
+        1) LAUNCH_MODE="chat"; break ;;
+        2) LAUNCH_MODE="slack"; break ;;
+        3) LAUNCH_MODE="slack --with-cli"; break ;;
+        4) LAUNCH_MODE="web"; break ;;
+        5) LAUNCH_MODE="all"; break ;;
+        *) log_error "Invalid choice. Enter 1-5." ;;
+      esac
+    done
   else
     echo -e "  ${BOLD}2)${RESET} 🌐 Web UI"
     echo -e "  ${BOLD}3)${RESET} 🚀 All (CLI + Web)"
     echo ""
-    log_dim "Telegram not configured in stackowl.config.json — add telegram.botToken to enable it."
+    log_dim "Telegram/Slack not configured — add tokens to stackowl.config.json to enable them."
     echo ""
     while true; do
       read -rp "$(echo -e "${CYAN}Enter choice [1-3]:${RESET} ")" ch

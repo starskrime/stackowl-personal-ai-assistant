@@ -129,6 +129,14 @@ export class ToolRegistry {
     }
 
     /**
+     * Get tools by source (e.g. 'plugin', 'mcp', 'synthesized', 'builtin').
+     * Used for plugin cleanup on unload.
+     */
+    getBySource(source: string): ToolImplementation[] {
+        return Array.from(this.tools.values()).filter(t => t.source === source);
+    }
+
+    /**
      * Execute a tool by name with arguments.
      * Validates args against schema, checks permissions, truncates long results.
      */

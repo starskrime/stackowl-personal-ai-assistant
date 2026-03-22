@@ -12,6 +12,7 @@
  */
 
 import { Bot, InputFile, type Context } from 'grammy';
+import { autoRetry } from '@grammyjs/auto-retry';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
@@ -57,6 +58,7 @@ export class TelegramAdapter implements ChannelAdapter {
             throw new Error('[TelegramAdapter] Bot token is required.');
         }
         this.bot = new Bot(config.botToken);
+        this.bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 300 }));
         this.chatIdsPath = config.chatIdsPath ?? join(process.cwd(), 'workspace', 'known_chat_ids.json');
         this.setupHandlers();
     }

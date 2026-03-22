@@ -1,0 +1,99 @@
+/**
+ * StackOwl — Workflow Tool
+ *
+ * Exposes workflow chain operations to the LLM engine.
+ * Allows owls to list, run, and create workflows.
+ */
+
+import type { ToolImplementation, ToolContext } from "./registry.js";
+import type { WorkflowChainStore } from "../workflows/chain.js";
+import type { WorkflowExecutor } from "../workflows/executor.js";
+
+export function createWorkflowTool(
+  chainStore: WorkflowChainStore,
+  executor: WorkflowExecutor,
+): ToolImplementation {
+  return {
+    definition: {
+      name: "workflow",
+      description:
+        "Manage and execute automation workflows. Actions: list, run, info. " +
+        "Use 'list' to see available workflows, 'info' to get details, " +
+        "'run' to execute a workflow with parameters.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "run", "info"],
+            description: "The action to perform",
+          },
+          workflowId: {
+            type: "string",
+            description: "Workflow ID (required for run and info)",
+          },
+          params: {
+            type: "object",
+            description: "Parameters for workflow execution (for run action)",
+          },
+        },
+        required: ["action"],
+      },
+    },
+    category: "cognitive",
+    source: "builtin",
+    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+      const action = args.action as string;
+
+      switch (action) {
+        case "list": {
+          const workflows = chainStore.list();
+          if (workflows.length === 0) return "No workflows defined yet.";
+          return workflows
+            .map(w => `- **${w.name}** (${w.id}): ${w.description} [${w.tags.join(", ")}] — run ${w.runCount}x`)
+            .join("\n");
+        }
+
+        case "info": {
+          const id = args.workflowId as string;
+          if (!id) return "Error: workflowId is required for info action";
+          const wf = chainStore.get(id);
+          if (!wf) return `Workflow "${id}" not found.`;
+          return [
+            `**${wf.name}** (${wf.id})`,
+            `Description: ${wf.description}`,
+            `Source: ${wf.source}`,
+            `Triggers: ${wf.triggers.join(", ")}`,
+            `Parameters: ${wf.parameters.map(p => `${p.name} (${p.type}${p.required ? ", required" : ""})`).join(", ") || "none"}`,
+            `Steps: ${wf.steps.length}`,
+            ...wf.steps.map((s, i) => `  ${i + 1}. ${s.name} (${s.type})`),
+            `Run count: ${wf.runCount}`,
+          ].join("\n");
+        }
+
+        case "run": {
+          const id = args.workflowId as string;
+          if (!id) return "Error: workflowId is required for run action";
+          const wf = chainStore.get(id);
+          if (!wf) return `Workflow "${id}" not found.`;
+
+          const params = (args.params as Record<string, unknown>) ?? {};
+          const result = await executor.execute(wf, params);
+
+          const lines = [`Workflow "${wf.name}" ${result.status}`];
+          for (const sr of result.stepResults) {
+            lines.push(`  ${sr.stepId}: ${sr.status}${sr.error ? ` — ${sr.error}` : ""}`);
+            if (sr.output && typeof sr.output === "string") {
+              lines.push(`    Output: ${(sr.output as string).slice(0, 200)}`);
+            }
+          }
+          if (result.error) lines.push(`Error: ${result.error}`);
+          return lines.join("\n");
+        }
+
+        default:
+          return `Unknown action: ${action}. Use list, run, or info.`;
+      }
+    },
+  };
+}

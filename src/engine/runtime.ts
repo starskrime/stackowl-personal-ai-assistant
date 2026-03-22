@@ -70,6 +70,16 @@ export interface EngineContext {
    * here as they arrive. Channels use this for edit-in-place streaming.
    */
   onStreamEvent?: (event: StreamEvent) => Promise<void>;
+  /** Memory thread searcher for conversational recall */
+  memorySearcher?: import('../memory-threads/searcher.js').MemorySearcher;
+  /** Echo chamber detector for bias analysis */
+  echoChamberDetector?: import('../echo-chamber/detector.js').EchoChamberDetector;
+  /** Growth journal generator */
+  journalGenerator?: import('../growth-journal/generator.js').JournalGenerator;
+  /** Quest manager for gamified learning */
+  questManager?: import('../quests/manager.js').QuestManager;
+  /** Time capsule manager */
+  capsuleManager?: import('../capsules/manager.js').CapsuleManager;
 }
 
 export interface PendingCapabilityGap {
@@ -323,26 +333,57 @@ export class OwlEngine {
       attemptLogBlock,
     );
 
+    // 2b. Sanitize history — remove references to tools that no longer exist.
+    // Stale tool calls from defunct tools poison the context and confuse local models.
+    const currentToolDefs = toolRegistry?.getDefinitions();
+    const validToolNames = currentToolDefs
+      ? new Set(currentToolDefs.map((t) => t.name))
+      : new Set<string>();
+    const sanitizedHistory = toolRegistry
+      ? sessionHistory.filter((msg) => {
+          // Keep non-tool messages
+          if (msg.role !== "tool" && msg.role !== "assistant") return true;
+          // Drop assistant messages that ONLY contain calls to missing tools
+          if (msg.role === "assistant" && msg.toolCalls?.length) {
+            const allStale = msg.toolCalls.every(
+              (tc) => !validToolNames.has(tc.name),
+            );
+            if (allStale && !msg.content?.trim()) return false;
+          }
+          // Drop tool result messages for missing tools
+          if (msg.role === "tool" && msg.name && !validToolNames.has(msg.name)) {
+            return false;
+          }
+          return true;
+        })
+      : sessionHistory;
+
+    if (sanitizedHistory.length < sessionHistory.length) {
+      log.engine.info(
+        `Sanitized history: removed ${sessionHistory.length - sanitizedHistory.length} stale tool messages`,
+      );
+    }
+
     // 3. Compress history if too long to prevent context drift on local models
     // If isolatedTask is true, only use the last 2 messages (recent context only)
-    let historyToUse = sessionHistory;
-    if (context.isolatedTask && sessionHistory.length > 2) {
+    let historyToUse = sanitizedHistory;
+    if (context.isolatedTask && sanitizedHistory.length > 2) {
       // For isolated tasks, only use last 2 messages to prevent context bleeding
-      historyToUse = sessionHistory.slice(-2);
+      historyToUse = sanitizedHistory.slice(-2);
       log.engine.info(
-        `Task isolated: using only last ${historyToUse.length} messages instead of ${sessionHistory.length}`,
+        `Task isolated: using only last ${historyToUse.length} messages instead of ${sanitizedHistory.length}`,
       );
     } else {
       const maxTokens = config.engine?.maxContextTokens ?? 8000;
       const keepRecent = config.engine?.contextKeepRecent ?? 10;
-      const estTokens = estimateTokens(sessionHistory);
+      const estTokens = estimateTokens(sanitizedHistory);
       const needsCompression =
-        sessionHistory.length > CONTEXT_WINDOW_THRESHOLD || estTokens > maxTokens;
+        sanitizedHistory.length > CONTEXT_WINDOW_THRESHOLD || estTokens > maxTokens;
 
       if (needsCompression) {
         // Two-tier: keep last N messages verbatim, compress the rest
-        const recentMessages = sessionHistory.slice(-keepRecent);
-        const olderMessages = sessionHistory.slice(0, -keepRecent);
+        const recentMessages = sanitizedHistory.slice(-keepRecent);
+        const olderMessages = sanitizedHistory.slice(0, -keepRecent);
 
         if (olderMessages.length > 0) {
           const compressionFallback = new Promise<ChatMessage[]>((resolve) =>
@@ -358,7 +399,7 @@ export class OwlEngine {
           historyToUse = recentMessages;
         }
         log.engine.info(
-          `Context compressed: ${sessionHistory.length} msgs (~${estTokens} tokens) → ${historyToUse.length} msgs`,
+          `Context compressed: ${sanitizedHistory.length} msgs (~${estTokens} tokens) → ${historyToUse.length} msgs`,
         );
       }
     }
@@ -1004,6 +1045,38 @@ ${userMessage}
     // marker and must never leak to channels or users.
     response = { ...response, content: stripDoneSignal(response.content) };
 
+    // Safety net: if the model returned empty content, retry once with a MINIMAL
+    // context and an explicit no-tools directive. Common with local models that
+    // produce tool-call tokens Ollama can't parse, or get overwhelmed by large context.
+    if (!response.content.trim()) {
+      log.engine.warn(
+        `Empty response from model (${iterations} iterations, ${toolsUsed.length} tools used) — ` +
+        `retrying with minimal context as plain chat`,
+      );
+      try {
+        const minimalMessages: ChatMessage[] = [
+          {
+            role: "system",
+            content:
+              `You are ${owl.persona.name}, a helpful AI assistant. ` +
+              `Answer the user's question directly using your knowledge. ` +
+              `Do NOT output JSON, tool calls, or code blocks — just write a natural language answer. ` +
+              `If you don't have current information, say so honestly and share what you do know.`,
+          },
+          { role: "user", content: userMessage },
+        ];
+        const plainResponse = await currentProvider.chat(minimalMessages, optimalModel);
+        const plainContent = (plainResponse.content ?? "")
+          .replace(/<\/?(think|reasoning)>/gi, "")
+          .trim();
+        if (plainContent) {
+          response = { ...plainResponse, content: plainContent };
+        }
+      } catch {
+        // Ignore — fall through to whatever we had
+      }
+    }
+
     // 7. Gap detection — tool call attempted but tool doesn't exist
     if (missingToolName && !context.skipGapDetection) {
       log.evolution.warn(`Gap detected (missing tool): ${missingToolName}`);
@@ -1260,7 +1333,7 @@ ${skillsContext}
     // Hard limit prevents context explosion when pellet store is large.
     if (pelletStore && userMessage) {
       try {
-        const top = (await pelletStore.search(userMessage)).slice(0, 3);
+        const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(0, 3);
         if (top.length > 0) {
           prompt += "\n## Relevant Past Knowledge\n";
           for (const pellet of top) {

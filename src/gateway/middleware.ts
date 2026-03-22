@@ -6,6 +6,7 @@
  */
 
 import type { GatewayMessage, GatewayResponse } from "./types.js";
+import type { HookPipeline } from "../plugins/hook-pipeline.js";
 import { log } from "../logger.js";
 
 export interface MiddlewareContext {
@@ -132,5 +133,59 @@ export class LoggingMiddleware implements GatewayMiddleware {
         `elapsed=${elapsed}ms`,
     );
     return response;
+  }
+}
+
+// ─── Plugin Hook Middleware ──────────────────────────────────
+
+/**
+ * Bridges the plugin HookPipeline into the gateway middleware pipeline.
+ * Executes beforeEngine/afterEngine hooks from all registered plugins.
+ */
+export class PluginHookMiddleware implements GatewayMiddleware {
+  readonly name = "plugin-hooks";
+
+  constructor(private hookPipeline: HookPipeline) {}
+
+  async before(
+    message: GatewayMessage,
+    ctx: MiddlewareContext,
+  ): Promise<GatewayResponse | null> {
+    if (!this.hookPipeline.has("beforeEngine")) return null;
+
+    try {
+      return await this.hookPipeline.executeBefore<GatewayResponse>(
+        "beforeEngine",
+        message,
+        ctx,
+      );
+    } catch (err) {
+      log.engine.warn(
+        `[PluginHookMiddleware] beforeEngine error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  async after(
+    message: GatewayMessage,
+    response: GatewayResponse,
+    ctx: MiddlewareContext,
+  ): Promise<GatewayResponse> {
+    if (!this.hookPipeline.has("afterEngine")) return response;
+
+    try {
+      return await this.hookPipeline.executeAfter<GatewayResponse>(
+        "afterEngine",
+        response,
+        message,
+        ctx,
+      );
+    } catch (err) {
+      log.engine.warn(
+        `[PluginHookMiddleware] afterEngine error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return response;
+    }
   }
 }

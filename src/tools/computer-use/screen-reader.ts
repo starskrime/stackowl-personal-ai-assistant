@@ -112,7 +112,7 @@ export async function readScreen(appName?: string): Promise<ScreenState> {
     } catch(e) {}
 
     var refCounter = 0;
-    var maxElements = 200; // Cap to prevent explosion on complex UIs
+    var maxElements = 500; // Raised cap — smarter pruning keeps output useful
     var totalElements = 0;
 
     var INTERACTIVE = {
@@ -342,6 +342,111 @@ function flattenInteractive(elements: ScreenElement[], lines: string[]): void {
 
     if (el.children) flattenInteractive(el.children, lines);
   }
+}
+
+// ─── Focused Screen Reader ───────────────────────────────────────────────────
+
+/**
+ * Read only a specific region of the screen.
+ * Filters elements by bounding box — useful for reading just a dialog,
+ * toolbar, or sidebar without the noise of the full UI.
+ */
+export async function readScreenRegion(
+  region: { x: number; y: number; width: number; height: number },
+  appName?: string,
+): Promise<ScreenState> {
+  const full = await readScreen(appName);
+  const filtered = filterByRegion(full.elements, region);
+  // Re-number interactive refs
+  let ref = 0;
+  renumberRefs(filtered, () => ++ref);
+  return {
+    ...full,
+    elements: filtered,
+    interactiveCount: ref,
+  };
+}
+
+function filterByRegion(
+  elements: ScreenElement[],
+  region: { x: number; y: number; width: number; height: number },
+): ScreenElement[] {
+  const result: ScreenElement[] = [];
+  for (const el of elements) {
+    const cx = el.position.x + el.size.width / 2;
+    const cy = el.position.y + el.size.height / 2;
+    const inRegion =
+      cx >= region.x &&
+      cx <= region.x + region.width &&
+      cy >= region.y &&
+      cy <= region.y + region.height;
+
+    if (inRegion || (el.children && el.children.length > 0)) {
+      const childFiltered = el.children ? filterByRegion(el.children, region) : [];
+      if (inRegion || childFiltered.length > 0) {
+        result.push({
+          ...el,
+          children: childFiltered.length > 0 ? childFiltered : undefined,
+        });
+      }
+    }
+  }
+  return result;
+}
+
+function renumberRefs(elements: ScreenElement[], nextRef: () => number): void {
+  for (const el of elements) {
+    if (el.interactable) {
+      el.ref = nextRef();
+    }
+    if (el.children) renumberRefs(el.children, nextRef);
+  }
+}
+
+/**
+ * Wait for a specific element to appear on screen.
+ * Polls every `intervalMs` until an element matching the criteria is found
+ * or `timeoutMs` is exceeded.
+ */
+export async function waitForElement(
+  criteria: { text?: string; role?: string; app?: string },
+  timeoutMs = 10_000,
+  intervalMs = 500,
+): Promise<ScreenElement | null> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const state = await readScreen(criteria.app);
+      const found = findElement(state.elements, criteria);
+      if (found) return found;
+    } catch {
+      // AX read failed — retry
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  return null;
+}
+
+function findElement(
+  elements: ScreenElement[],
+  criteria: { text?: string; role?: string },
+): ScreenElement | null {
+  for (const el of elements) {
+    const matchesRole = !criteria.role || el.role === criteria.role;
+    const matchesText =
+      !criteria.text ||
+      (el.label && el.label.toLowerCase().includes(criteria.text.toLowerCase())) ||
+      (el.value && el.value.toLowerCase().includes(criteria.text.toLowerCase()));
+
+    if (matchesRole && matchesText) return el;
+
+    if (el.children) {
+      const found = findElement(el.children, criteria);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────

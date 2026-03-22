@@ -211,6 +211,23 @@ export class TfIdfEngine {
     return results.slice(0, limit);
   }
 
+  /**
+   * Compute BM25 self-score for a document against its own content.
+   * Used by PelletDeduplicator to normalize similarity into a 0-1 range.
+   *
+   * Temporarily indexes the document, queries it, then removes it —
+   * the real index is left unchanged.
+   */
+  selfScore(fields: { title: string; tags: string; content: string }): number {
+    const tempId = `__self_score_${Date.now()}`;
+    this.addDocument(tempId, fields);
+    const query = `${fields.title} ${fields.content.slice(0, 200)}`;
+    const results = this.search(query, 1);
+    const score = results.find((r) => r.id === tempId)?.score ?? 0;
+    this.removeDocument(tempId);
+    return score;
+  }
+
   // ─── Private ────────────────────────────────────────────────────
 
   private idf(term: string): number {

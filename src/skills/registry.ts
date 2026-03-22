@@ -24,6 +24,13 @@ export class SkillsRegistry {
   }
 
   /**
+   * Remove a skill by name.
+   */
+  unregister(name: string): boolean {
+    return this.skills.delete(name.toLowerCase());
+  }
+
+  /**
    * Get a skill by name.
    */
   get(name: string): Skill | undefined {

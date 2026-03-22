@@ -20,6 +20,16 @@ import {
 import { existsSync } from "node:fs";
 import matter from "gray-matter";
 import { TfIdfEngine } from "./tfidf.js";
+import type { ModelProvider } from "../providers/base.js";
+import {
+  PelletDeduplicator,
+  type DedupConfig,
+  type DedupResult,
+} from "./dedup.js";
+import { PelletGraph } from "./graph.js";
+import { log } from "../logger.js";
+
+export type { DedupResult, DedupConfig };
 
 export interface Pellet {
   id: string; // The filename (without .md)
@@ -30,11 +40,20 @@ export interface Pellet {
   tags: string[];
   content: string; // The raw markdown body
   version: number;
+  // ─── Dedup tracking fields (optional) ─────────────────────────
+  /** ID of the pellet this one replaced */
+  supersedes?: string;
+  /** IDs of pellets that were merged into this one */
+  mergedFrom?: string[];
+  /** ISO timestamp of last merge */
+  lastMergedAt?: string;
 }
 
 export class PelletStore {
   private pelletsDir: string;
   private tfidf: TfIdfEngine;
+  private deduplicator: PelletDeduplicator;
+  private graph: PelletGraph | null = null;
 
   /** In-memory cache for listAll() — avoids readdir + readFile on every search() call */
   private listAllCache: Pellet[] | null = null;
@@ -43,11 +62,32 @@ export class PelletStore {
 
   /**
    * @param workspacePath  Root workspace directory (pellets live in `<workspace>/pellets/`)
-   * @param _provider      Kept for backward compatibility — no longer used for embeddings
+   * @param provider       Used for LLM-powered dedup merge decisions
+   * @param dedupConfig    Dedup configuration overrides
    */
-  constructor(workspacePath: string, _provider?: unknown) {
+  constructor(
+    workspacePath: string,
+    provider?: ModelProvider,
+    dedupConfig?: Partial<DedupConfig>,
+  ) {
     this.pelletsDir = join(workspacePath, "pellets");
     this.tfidf = new TfIdfEngine(join(this.pelletsDir, "tfidf_index.json"));
+    this.deduplicator = new PelletDeduplicator(
+      this.tfidf,
+      (id) => this.get(id),
+      provider ?? undefined,
+      dedupConfig,
+    );
+  }
+
+  /** Expose deduplicator for bulk dedup operations */
+  getDeduplicator(): PelletDeduplicator {
+    return this.deduplicator;
+  }
+
+  /** Expose TF-IDF engine for graph building */
+  getTfIdf(): TfIdfEngine {
+    return this.tfidf;
   }
 
   /** Ensure the pellets directory exists and load the search index */
@@ -81,12 +121,93 @@ export class PelletStore {
   }
 
   /**
-   * Save a pellet to disk and update the search index.
+   * Save a pellet to disk with smart deduplication.
+   *
+   * Before writing, checks for semantically similar existing pellets.
+   * The AI model decides whether to create, merge, supersede, or skip.
+   *
+   * @param opts.skipDedup  Bypass dedup for migrations/bulk imports/tests
+   * @returns The dedup decision that was applied
    */
-  async save(pellet: Pellet): Promise<void> {
+  async save(
+    pellet: Pellet,
+    opts?: { skipDedup?: boolean },
+  ): Promise<DedupResult> {
     await this.init();
 
-    const frontmatter = {
+    // ─── Deduplication check ──────────────────────────────────────
+    if (!opts?.skipDedup) {
+      const decision = await this.deduplicator.evaluate(pellet);
+
+      switch (decision.verdict) {
+        case "SKIP":
+          log.engine.info(
+            `[PelletStore] SKIP: "${pellet.title.slice(0, 60)}" — ${decision.reasoning}`,
+          );
+          return decision;
+
+        case "MERGE": {
+          const existing = decision.targetPelletId
+            ? await this.get(decision.targetPelletId)
+            : null;
+          if (existing) {
+            // Update the existing pellet with merged content
+            existing.content = decision.mergedContent || existing.content;
+            existing.title = decision.mergedTitle || existing.title;
+            existing.tags = decision.mergedTags || [
+              ...new Set([...existing.tags, ...pellet.tags]),
+            ];
+            existing.owls = [...new Set([...existing.owls, ...pellet.owls])];
+            existing.version = (existing.version || 1) + 1;
+            existing.mergedFrom = [
+              ...(existing.mergedFrom || []),
+              pellet.id,
+            ];
+            existing.lastMergedAt = new Date().toISOString();
+
+            await this.writePellet(existing);
+            log.engine.info(
+              `[PelletStore] MERGE: "${pellet.title.slice(0, 50)}" → "${existing.id}" (v${existing.version})`,
+            );
+            return decision;
+          }
+          // Existing pellet gone — fall through to create
+          break;
+        }
+
+        case "SUPERSEDE": {
+          // Write new pellet with supersedes reference
+          pellet.supersedes = decision.targetPelletId;
+          await this.writePellet(pellet);
+
+          // Delete the old pellet
+          if (decision.targetPelletId) {
+            await this.delete(decision.targetPelletId);
+          }
+          log.engine.info(
+            `[PelletStore] SUPERSEDE: "${pellet.title.slice(0, 50)}" replaces "${decision.targetPelletId}"`,
+          );
+          return decision;
+        }
+
+        case "CREATE":
+        default:
+          // Fall through to normal write
+          break;
+      }
+    }
+
+    // ─── Normal write ─────────────────────────────────────────────
+    await this.writePellet(pellet);
+    return { verdict: "CREATE", reasoning: "new pellet" };
+  }
+
+  /**
+   * Write a pellet to disk and update the TF-IDF index.
+   * Internal method — use save() for the public API with dedup.
+   */
+  private async writePellet(pellet: Pellet): Promise<void> {
+    const frontmatter: Record<string, unknown> = {
       title: pellet.title,
       generated_at: pellet.generatedAt,
       source: pellet.source,
@@ -94,6 +215,12 @@ export class PelletStore {
       tags: pellet.tags,
       version: pellet.version,
     };
+
+    // Include dedup tracking fields when present
+    if (pellet.supersedes) frontmatter.supersedes = pellet.supersedes;
+    if (pellet.mergedFrom?.length)
+      frontmatter.merged_from = pellet.mergedFrom;
+    if (pellet.lastMergedAt) frontmatter.last_merged_at = pellet.lastMergedAt;
 
     const raw = matter.stringify(pellet.content, frontmatter);
     const mdPath = join(this.pelletsDir, `${pellet.id}.tmp.md`);
@@ -113,6 +240,11 @@ export class PelletStore {
       content: pellet.content,
     });
     await this.tfidf.persist();
+
+    // Update graph incrementally if built
+    if (this.graph?.isBuilt()) {
+      this.graph.addPellet(pellet);
+    }
   }
 
   /**
@@ -126,7 +258,7 @@ export class PelletStore {
       const raw = await readFile(mdPath, "utf-8");
       const { data, content } = matter(raw);
 
-      return {
+      const pellet: Pellet = {
         id,
         title: data.title || id,
         generatedAt: data.generated_at || new Date().toISOString(),
@@ -136,6 +268,14 @@ export class PelletStore {
         version: data.version || 1,
         content: content.trim(),
       };
+
+      // Dedup tracking fields (optional, backward-compatible)
+      if (data.supersedes) pellet.supersedes = data.supersedes;
+      if (Array.isArray(data.merged_from))
+        pellet.mergedFrom = data.merged_from;
+      if (data.last_merged_at) pellet.lastMergedAt = data.last_merged_at;
+
+      return pellet;
     } catch (error) {
       console.error(`[PelletStore] Failed to read pellet ${id}:`, error);
       return null;
@@ -194,6 +334,11 @@ export class PelletStore {
       this.listAllCache = null; // Invalidate cache
       this.tfidf.removeDocument(id);
       await this.tfidf.persist();
+
+      // Update graph incrementally if built
+      if (this.graph?.isBuilt()) {
+        this.graph.removePellet(id);
+      }
       return true;
     }
     return false;
@@ -216,5 +361,69 @@ export class PelletStore {
     return results
       .map((r) => pelletMap.get(r.id))
       .filter((p): p is Pellet => p !== undefined);
+  }
+
+  // ─── Knowledge Graph Integration ────────────────────────────────
+
+  /**
+   * Build the in-memory knowledge graph linking pellets together.
+   * Call once at startup; subsequent save/delete calls update it incrementally.
+   */
+  async buildGraph(): Promise<PelletGraph> {
+    if (this.graph?.isBuilt()) return this.graph;
+
+    this.graph = new PelletGraph(this, this.tfidf);
+    await this.graph.build();
+    return this.graph;
+  }
+
+  /**
+   * Get the knowledge graph (builds it if not yet built).
+   */
+  async getGraph(): Promise<PelletGraph> {
+    if (this.graph?.isBuilt()) return this.graph;
+    return this.buildGraph();
+  }
+
+  /**
+   * Find related pellets using graph traversal.
+   * Falls back to BM25 search if graph is not built.
+   */
+  async findRelated(pelletId: string, limit = 10): Promise<Pellet[]> {
+    if (!this.graph?.isBuilt()) {
+      // Fallback: use BM25 search with pellet title
+      const pellet = await this.get(pelletId);
+      if (!pellet) return [];
+      return this.search(pellet.title);
+    }
+
+    const related = this.graph.findRelated(pelletId, 2, limit);
+    const pellets: Pellet[] = [];
+    for (const r of related) {
+      const pellet = await this.get(r.id);
+      if (pellet) pellets.push(pellet);
+    }
+    return pellets;
+  }
+
+  /**
+   * Search with graph-enhanced results — BM25 matches + their graph neighbors.
+   */
+  async searchWithGraph(query: string, limit = 15): Promise<Pellet[]> {
+    if (!this.graph?.isBuilt()) {
+      return this.search(query);
+    }
+
+    const graphResults = this.graph.findRelatedByQuery(query, limit);
+    const pellets: Pellet[] = [];
+    const seen = new Set<string>();
+
+    for (const r of graphResults) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      const pellet = await this.get(r.id);
+      if (pellet) pellets.push(pellet);
+    }
+    return pellets;
   }
 }

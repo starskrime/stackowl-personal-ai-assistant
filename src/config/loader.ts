@@ -99,6 +99,72 @@ export interface StackOwlConfig {
     enabled: boolean;
     debugOutput?: boolean;
   };
+  pellets?: {
+    dedup?: {
+      enabled?: boolean;
+      similarityThreshold?: number;
+      skipThreshold?: number;
+      useLlm?: boolean;
+      maxCandidates?: number;
+    };
+  };
+  /** Storage backend configuration */
+  storage?: {
+    /** 'file' (default) or 'sqlite' */
+    backend: "file" | "sqlite";
+    /** Path to SQLite database (only for sqlite backend) */
+    sqlitePath?: string;
+  };
+  /** Cost tracking and budget enforcement */
+  costs?: {
+    enabled: boolean;
+    budget?: {
+      maxDailyUsd?: number;
+      maxMonthlyUsd?: number;
+      maxPerRequestTokens?: number;
+      warnAtPercent?: number;
+    };
+  };
+  /** Task queue configuration */
+  queue?: {
+    /** Max parallel background tasks. Default: 3 */
+    concurrency?: number;
+    /** Max queued tasks before dropping. Default: 100 */
+    maxQueueSize?: number;
+  };
+  /** Rate limiting configuration (extends gateway.rateLimit) */
+  rateLimiting?: {
+    /** Per-provider rate limits */
+    perProvider?: Record<string, {
+      maxPerMinute: number;
+      maxPerHour?: number;
+    }>;
+  };
+  /** Plugin system configuration */
+  plugins?: {
+    /** Directories to scan for plugins */
+    directories: string[];
+    /** Auto-discover new plugins on startup */
+    autoDiscover: boolean;
+  };
+  /** Telegram bot configuration */
+  telegram?: {
+    botToken: string;
+    allowedUserIds?: number[];
+  };
+  /** Slack integration configuration */
+  slack?: {
+    /** Bot token (xoxb-...) — from Slack App → OAuth & Permissions */
+    botToken: string;
+    /** App-level token (xapp-...) — from Slack App → Basic Information → App-Level Tokens */
+    appToken: string;
+    /** Signing secret — from Slack App → Basic Information */
+    signingSecret?: string;
+    /** Restrict bot to specific channel IDs */
+    allowedChannels?: string[];
+    /** HTTP port for non-socket-mode. Default: 3078 */
+    port?: number;
+  };
 }
 
 export interface ProviderConfigEntry {

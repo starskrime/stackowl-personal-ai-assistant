@@ -18,6 +18,7 @@ import type {
   EmbeddingResponse,
   ProviderConfig,
 } from "./base.js";
+import { log } from "../logger.js";
 
 // ─── Message Conversion ─────────────────────────────────────────
 
@@ -126,32 +127,45 @@ export class OllamaNativeProvider implements ModelProvider {
     model?: string,
     options?: ChatOptions,
   ): Promise<ChatResponse> {
-    const response = await this.client.chat({
-      model: model ?? this.defaultModel,
-      messages: toOllamaMessages(messages) as any,
-      tools: toOllamaTools(tools) as any,
-      stream: false,
-      options: {
-        temperature: options?.temperature,
-        top_p: options?.topP,
-        num_predict: options?.maxTokens,
-      },
-    });
+    try {
+      const response = await this.client.chat({
+        model: model ?? this.defaultModel,
+        messages: toOllamaMessages(messages) as any,
+        tools: toOllamaTools(tools) as any,
+        stream: false,
+        options: {
+          temperature: options?.temperature,
+          top_p: options?.topP,
+          num_predict: options?.maxTokens,
+        },
+      });
 
-    const toolCalls = extractToolCalls(response.message);
+      const toolCalls = extractToolCalls(response.message);
 
-    return {
-      content: response.message?.content ?? "",
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      model: model ?? this.defaultModel,
-      finishReason: toolCalls.length > 0 ? "tool_calls" : "stop",
-      usage: {
-        promptTokens: response.prompt_eval_count ?? 0,
-        completionTokens: response.eval_count ?? 0,
-        totalTokens:
-          (response.prompt_eval_count ?? 0) + (response.eval_count ?? 0),
-      },
-    };
+      return {
+        content: response.message?.content ?? "",
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        model: model ?? this.defaultModel,
+        finishReason: toolCalls.length > 0 ? "tool_calls" : "stop",
+        usage: {
+          promptTokens: response.prompt_eval_count ?? 0,
+          completionTokens: response.eval_count ?? 0,
+          totalTokens:
+            (response.prompt_eval_count ?? 0) + (response.eval_count ?? 0),
+        },
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Ollama's Go backend fails to parse malformed tool call JSON from the model.
+      // Retry without tools so the model responds with plain text instead of crashing.
+      if (msg.includes("error parsing tool call") || msg.includes("invalid character")) {
+        log.engine.warn(
+          `[Ollama] Tool call parse error — retrying without tools: ${msg.slice(0, 120)}`,
+        );
+        return this.chat(messages, model, options);
+      }
+      throw err;
+    }
   }
 
   async *chatWithToolsStream(
@@ -160,17 +174,38 @@ export class OllamaNativeProvider implements ModelProvider {
     model?: string,
     options?: ChatOptions,
   ): AsyncGenerator<StreamEvent> {
-    const stream = await this.client.chat({
-      model: model ?? this.defaultModel,
-      messages: toOllamaMessages(messages) as any,
-      tools: toOllamaTools(tools) as any,
-      stream: true,
-      options: {
-        temperature: options?.temperature,
-        top_p: options?.topP,
-        num_predict: options?.maxTokens,
-      },
-    });
+    let stream: any;
+    try {
+      stream = await this.client.chat({
+        model: model ?? this.defaultModel,
+        messages: toOllamaMessages(messages) as any,
+        tools: toOllamaTools(tools) as any,
+        stream: true,
+        options: {
+          temperature: options?.temperature,
+          top_p: options?.topP,
+          num_predict: options?.maxTokens,
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("error parsing tool call") || msg.includes("invalid character")) {
+        log.engine.warn(
+          `[Ollama] Tool call parse error in stream — falling back to plain chat: ${msg.slice(0, 120)}`,
+        );
+        // Fall back to non-tool streaming, converting StreamChunk → StreamEvent
+        for await (const chunk of this.chatStream(messages, model, options)) {
+          if (chunk.content) {
+            yield { type: "text_delta" as const, content: chunk.content };
+          }
+          if (chunk.done) {
+            yield { type: "done" as const, usage: undefined };
+          }
+        }
+        return;
+      }
+      throw err;
+    }
 
     // Ollama streams text deltas; tool calls arrive in the final chunk
     // We accumulate tool calls and emit them at the end
