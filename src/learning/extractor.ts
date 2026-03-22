@@ -25,6 +25,8 @@ export interface ConversationInsights {
     knowledgeGaps: string[];
     /** Concrete questions worth researching to improve future answers */
     researchQuestions: string[];
+    /** When these insights were extracted */
+    timestamp?: string;
 }
 
 export class ConversationExtractor {

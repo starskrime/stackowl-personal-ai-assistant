@@ -23,6 +23,7 @@ import type { AttemptLog } from "../memory/attempt-log.js";
 import { ModelRouter } from "./router.js";
 import { GapDetector } from "../evolution/detector.js";
 import { log } from "../logger.js";
+import type { OwlInnerLife, InnerMonologue } from "../owls/inner-life.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -80,6 +81,8 @@ export interface EngineContext {
   questManager?: import('../quests/manager.js').QuestManager;
   /** Time capsule manager */
   capsuleManager?: import('../capsules/manager.js').CapsuleManager;
+  /** Owl's inner life — desires, mood, opinions, inner monologue */
+  innerLife?: OwlInnerLife;
 }
 
 export interface PendingCapabilityGap {
@@ -316,6 +319,19 @@ export class OwlEngine {
 
     log.engine.model(optimalModel);
 
+    // 1b. Inner Monologue — the owl thinks about the message through its personality
+    let innerMonologue: InnerMonologue | undefined;
+    if (context.innerLife) {
+      try {
+        innerMonologue = await context.innerLife.think(userMessage, sessionHistory);
+        log.engine.info(
+          `[InnerLife] ${owl.persona.name} thinks: "${innerMonologue.thoughts.slice(0, 100)}..." → ${innerMonologue.responseIntent.slice(0, 80)}`,
+        );
+      } catch (err) {
+        log.engine.warn(`[InnerLife] Monologue failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
     // 2. Build system prompt (async — may inject pellets + memory + skills)
     // Signal new turn to attempt log BEFORE building the prompt so the injected
     // block reflects the correct current turn number.
@@ -331,6 +347,8 @@ export class OwlEngine {
       context.preferencesContext,
       context.skillsContext,
       attemptLogBlock,
+      context.innerLife,
+      innerMonologue,
     );
 
     // 2b. Sanitize history — remove references to tools that no longer exist.
@@ -1229,6 +1247,8 @@ ${userMessage}
     preferencesContext?: string,
     skillsContext?: string,
     attemptLogBlock?: string,
+    innerLife?: OwlInnerLife,
+    innerMonologue?: InnerMonologue,
   ): Promise<string> {
     const { persona, dna } = owl;
 
@@ -1293,6 +1313,19 @@ ${userMessage}
       for (const [domain, score] of topExpertise) {
         prompt += `- ${domain}: ${Math.round(score * 100)}%\n`;
       }
+    }
+
+    // Inner Life — owl's persistent inner state (mood, desires, opinions)
+    if (innerLife) {
+      const innerStateCtx = innerLife.toContextString();
+      if (innerStateCtx) {
+        prompt += "\n" + innerStateCtx + "\n";
+      }
+    }
+
+    // Inner Monologue — the owl's private thoughts on this specific message
+    if (innerMonologue && innerLife) {
+      prompt += "\n" + innerLife.monologueToDirective(innerMonologue) + "\n";
     }
 
     // User preferences from PreferenceStore — inject only when present

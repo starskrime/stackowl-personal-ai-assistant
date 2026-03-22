@@ -118,6 +118,8 @@ import type { CapabilityLedger } from "../evolution/ledger.js";
 import type { EvolutionHandler } from "../evolution/handler.js";
 import type { OwlEvolutionEngine } from "../owls/evolution.js";
 import type { LearningEngine } from "../learning/self-study.js";
+import type { LearningOrchestrator } from "../learning/orchestrator.js";
+import type { OwlInnerLife } from "../owls/inner-life.js";
 import type { InstinctRegistry } from "../instincts/registry.js";
 import type { InstinctEngine } from "../instincts/engine.js";
 import type { OwlRegistry } from "../owls/registry.js";
@@ -165,6 +167,8 @@ export interface GatewayContext {
   evolution?: EvolutionHandler;
   evolutionEngine?: OwlEvolutionEngine;
   learningEngine?: LearningEngine;
+  learningOrchestrator?: LearningOrchestrator;
+  innerLife?: OwlInnerLife;
   instinctRegistry?: InstinctRegistry;
   instinctEngine?: InstinctEngine;
   memoryContext?: string;
@@ -223,4 +227,5 @@ export interface GatewayContext {
   autoConfigDetector?: import('../infra/auto-config.js').AutoConfigDetector;
   runbookMiner?: import('../workflows/runbook-miner.js').RunbookMiner;
   crossAppPlanner?: import('../orchestrator/cross-app.js').CrossAppPlanner;
+  knowledgeCouncil?: import('../parliament/knowledge-council.js').KnowledgeCouncil;
 }

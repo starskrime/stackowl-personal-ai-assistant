@@ -76,11 +76,36 @@ export class PostProcessor {
       );
     }
 
-    // Learning engine
-    if (this.ctx.learningEngine) {
+    // Learning — prefer new orchestrator (TopicFusion + Synthesis), fallback to legacy
+    if (this.ctx.learningOrchestrator) {
+      this.taskQueue.enqueue(
+        "learning-orchestrator",
+        async () => {
+          const cycle = await this.ctx.learningOrchestrator!.processConversation(messages);
+          if (cycle.error) {
+            log.engine.warn(
+              `[PostProcessor:learning] Orchestrator error: ${cycle.error}`,
+            );
+          } else if (cycle.synthesisReport) {
+            const r = cycle.synthesisReport;
+            log.engine.info(
+              `[PostProcessor:learning] ${r.pelletsCreated} pellets from ${r.successful}/${r.totalTopics} topics ` +
+              `(${r.failed} failed) in ${r.durationMs}ms`,
+            );
+          } else {
+            log.engine.info(
+              `[PostProcessor:learning] Completed — ${cycle.topicsPrioritized} topics prioritized, no synthesis needed`,
+            );
+          }
+        },
+      );
+    } else if (this.ctx.learningEngine) {
       this.taskQueue.enqueue(
         "learning",
-        () => this.ctx.learningEngine!.processConversation(messages),
+        async () => {
+          await this.ctx.learningEngine!.processConversation(messages);
+          log.engine.info("[PostProcessor:learning] Legacy engine completed");
+        },
       );
     }
 

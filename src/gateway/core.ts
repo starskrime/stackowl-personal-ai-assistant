@@ -24,6 +24,7 @@ import { ClawHubClient } from "../skills/clawhub.js";
 import { SkillTracker } from "../skills/tracker.js";
 import { log } from "../logger.js";
 import { MemoryConsolidator } from "../memory/consolidator.js";
+import { MemoryReflexionEngine } from "../memory/reflexion.js";
 import { PreferenceDetector } from "../preferences/detector.js";
 import { MicroLearner } from "../learning/micro-learner.js";
 import { ProactiveAnticipator } from "../learning/anticipator.js";
@@ -615,14 +616,55 @@ export class OwlGateway {
       );
     }
 
-    // Reactive learning
-    if (this.ctx.learningEngine) {
+    // Reactive learning (new orchestrator if available, fallback to legacy)
+    if (this.ctx.learningOrchestrator) {
+      try {
+        const cycle = await this.ctx.learningOrchestrator.processConversation(messages);
+        log.engine.info(
+          `[endSession:learning] ✓ orchestrator completed — ${cycle.topicsPrioritized} topics, ` +
+          `${cycle.synthesisReport?.pelletsCreated ?? 0} pellets`,
+        );
+      } catch (err) {
+        log.engine.warn(
+          `[endSession:learning] ✗ orchestrator failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    } else if (this.ctx.learningEngine) {
       try {
         await this.ctx.learningEngine.processConversation(messages);
         log.engine.info("[endSession:learning] ✓ completed");
       } catch (err) {
         log.engine.warn(
           `[endSession:learning] ✗ failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    // Reflexion-based memory consolidation (structured JSON, replaces append-only memory.md)
+    if (this.ctx.learningOrchestrator) {
+      try {
+        const reflexion = new MemoryReflexionEngine(
+          this.ctx.cwd ?? process.cwd(),
+          this.ctx.provider,
+          this.ctx.owl,
+        );
+        await reflexion.consolidate(messages, sessionId);
+        log.engine.info("[endSession:reflexion] ✓ memory consolidated");
+      } catch (err) {
+        log.engine.warn(
+          `[endSession:reflexion] ✗ failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    // Inner Life reflection — the owl thinks about its session
+    if (this.ctx.innerLife) {
+      try {
+        await this.ctx.innerLife.reflect();
+        log.engine.info("[endSession:innerLife] ✓ reflection completed");
+      } catch (err) {
+        log.engine.warn(
+          `[endSession:innerLife] ✗ reflection failed: ${err instanceof Error ? err.message : err}`,
         );
       }
     }
@@ -676,15 +718,25 @@ export class OwlGateway {
 
     // Save micro-learner profile on session end
     if (this.microLearner) {
-      await this.microLearner.save().catch(() => {});
+      await this.microLearner.save().catch((err) => {
+        log.engine.warn(`[endSession] Micro-learner save failed: ${err instanceof Error ? err.message : err}`);
+      });
     }
 
     // Persist all feature module state
-    await Promise.allSettled([
+    const saveResults = await Promise.allSettled([
       this.ctx.trustChain?.save?.(),
       this.ctx.predictiveQueue?.save?.(),
       this.ctx.skillArena?.save?.(),
     ]);
+    for (const [i, result] of saveResults.entries()) {
+      if (result.status === "rejected") {
+        const names = ["trustChain", "predictiveQueue", "skillArena"];
+        log.engine.warn(
+          `[endSession] ${names[i]} save failed: ${result.reason instanceof Error ? result.reason.message : result.reason}`,
+        );
+      }
+    }
   }
 
   // ─── Feature Module Initialization ──────────────────────────
@@ -870,6 +922,9 @@ export class OwlGateway {
   }
   getLearningEngine() {
     return this.ctx.learningEngine;
+  }
+  getLearningOrchestrator() {
+    return this.ctx.learningOrchestrator;
   }
   getCapabilityLedger() {
     return this.ctx.capabilityLedger;
@@ -1143,6 +1198,28 @@ export class OwlGateway {
       );
     }
 
+    // /council [topic1, topic2, ...] — convene a Knowledge Council
+    if (text.toLowerCase().startsWith('/council') && this.ctx.knowledgeCouncil) {
+      const topicsArg = text.slice(8).trim();
+      const topics = topicsArg
+        ? topicsArg.split(',').map(t => t.trim()).filter(Boolean)
+        : undefined;
+
+      try {
+        const session = await this.ctx.knowledgeCouncil.convene(topics, _callbacks.onProgress);
+        return mkResp(session.summary ?? 'Knowledge Council session complete.');
+      } catch (err) {
+        return mkResp(
+          `Failed to convene Knowledge Council: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    // /council-history — show past council sessions
+    if (text.toLowerCase() === '/council-history' && this.ctx.knowledgeCouncil) {
+      return mkResp(this.ctx.knowledgeCouncil.getHistorySummary());
+    }
+
     return null;
   }
 
@@ -1167,7 +1244,7 @@ export class OwlGateway {
     message: GatewayMessage,
     callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse | null> {
-    if (!this.ctx.learningEngine) return null;
+    if (!this.ctx.learningEngine && !this.ctx.learningOrchestrator) return null;
 
     const text = message.text.trim();
 
@@ -1213,6 +1290,42 @@ export class OwlGateway {
     );
 
     try {
+      // Use new LearningOrchestrator if available (TopicFusion + multi-pipeline synthesis)
+      if (this.ctx.learningOrchestrator) {
+        const cycle = await this.ctx.learningOrchestrator.learnTopic(topic, true);
+
+        if (!cycle.success || (cycle.synthesisReport?.pelletsCreated ?? 0) === 0) {
+          return {
+            content:
+              `${owl.persona.emoji} I wasn't able to produce any useful knowledge about **${topic}**. ` +
+              `This might be because the topic is too broad or my research didn't yield actionable results.\n\n` +
+              `Try being more specific — e.g. instead of "emails", try "sending emails via SMTP in Node.js".`,
+            owlName: owl.persona.name,
+            owlEmoji: owl.persona.emoji,
+            toolsUsed: [],
+          };
+        }
+
+        const report = cycle.synthesisReport!;
+        const pipelineSummary = Object.entries(report.byPipeline)
+          .map(([p, n]) => `${p}: ${n}`)
+          .join(', ');
+
+        await callbacks.onProgress?.(`✅ Self-study complete!`);
+
+        return {
+          content:
+            `${owl.persona.emoji} I've studied **${topic}** and created ${report.pelletsCreated} knowledge pellet(s):\n\n` +
+            `  - Pipelines used: ${pipelineSummary}\n` +
+            `  - Duration: ${Math.round(report.durationMs / 1000)}s\n\n` +
+            `This knowledge is now saved and will be automatically used in future conversations about this topic.`,
+          owlName: owl.persona.name,
+          owlEmoji: owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
+
+      // Fallback to legacy KnowledgeResearcher
       const { KnowledgeResearcher } = await import('../learning/researcher.js');
       const { KnowledgeGraphManager } = await import('../learning/knowledge-graph.js');
 

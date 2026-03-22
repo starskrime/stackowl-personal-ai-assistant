@@ -152,6 +152,7 @@ export class ContextBuilder {
       journalGenerator: this.ctx.journalGenerator,
       questManager: this.ctx.questManager,
       capsuleManager: this.ctx.capsuleManager,
+      innerLife: this.ctx.innerLife,
     };
   }
 }

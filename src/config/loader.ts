@@ -147,6 +147,13 @@ export interface StackOwlConfig {
     /** Auto-discover new plugins on startup */
     autoDiscover: boolean;
   };
+  /** Knowledge Council configuration */
+  council?: {
+    /** Days between automated council sessions. Default: 7 */
+    intervalDays?: number;
+    /** Enable automated weekly council sessions. Default: true */
+    enabled?: boolean;
+  };
   /** Telegram bot configuration */
   telegram?: {
     botToken: string;

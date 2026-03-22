@@ -115,15 +115,24 @@ export class TaskQueue {
       const task = this.queue.shift()!;
       this.active++;
 
+      const startMs = Date.now();
       task
         .execute()
         .then(() => {
           this.stats.completed++;
+          const elapsed = Date.now() - startMs;
+          if (elapsed > 5000) {
+            log.engine.info(`[TaskQueue] Task "${task.name}" completed in ${elapsed}ms`);
+          }
         })
         .catch((err) => {
           this.stats.failed++;
-          log.engine.warn(
-            `[TaskQueue] Task "${task.name}" failed: ${err instanceof Error ? err.message : String(err)}`,
+          const elapsed = Date.now() - startMs;
+          const errMsg = err instanceof Error
+            ? `${err.message}\n${err.stack ?? ""}`
+            : String(err);
+          log.engine.error(
+            `[TaskQueue] Task "${task.name}" FAILED after ${elapsed}ms:\n${errMsg}`,
           );
         })
         .finally(() => {

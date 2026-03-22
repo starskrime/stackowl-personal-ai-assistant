@@ -70,6 +70,10 @@ import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
 import { LearningEngine } from "./learning/self-study.js";
+import { LearningOrchestrator } from "./learning/orchestrator.js";
+import { MemoryReflexionEngine } from "./memory/reflexion.js";
+import { OwlInnerLife } from "./owls/inner-life.js";
+import { KnowledgeCouncil } from "./parliament/knowledge-council.js";
 import { ToolSynthesizer } from "./evolution/synthesizer.js";
 import { CapabilityLedger } from "./evolution/ledger.js";
 import { DynamicToolLoader } from "./evolution/loader.js";
@@ -273,6 +277,19 @@ async function bootstrap() {
       providerRegistry,
     );
 
+  // Learning Orchestrator — new unified learning system (TopicFusion + Synthesis + Reflexion)
+  const learningOrchestratorFactory = (
+    owl: import("./owls/persona.js").OwlInstance,
+  ) =>
+    new LearningOrchestrator(
+      providerRegistry.getDefault(),
+      owl,
+      config,
+      pelletStore,
+      workspacePath,
+      providerRegistry,
+    );
+
   // Micro-Learner — per-message lightweight signal extraction
   const microLearner = new MicroLearner(workspacePath);
   await microLearner.load().catch(() => {});
@@ -450,6 +467,7 @@ async function bootstrap() {
     ledger,
     loader,
     learningEngineFactory,
+    learningOrchestratorFactory,
     preferenceStore,
     reflexionEngine,
     skillsLoader,
@@ -483,6 +501,26 @@ async function buildGateway(
   if (memoryContext) {
     console.log(chalk.dim("  [Memory loaded from previous sessions]"));
   }
+
+  // Load reflexion-based structured memory (supplements append-only memory.md)
+  let reflexionContext = "";
+  try {
+    const reflexion = new MemoryReflexionEngine(b.workspacePath, provider, owl);
+    reflexionContext = await reflexion.getForSystemPrompt();
+    if (reflexionContext) {
+      console.log(chalk.dim("  [Reflexion memory loaded]"));
+    }
+  } catch { /* non-blocking — first run will have no reflexion data */ }
+
+  // Owl Inner Life — persistent desires, mood, opinions, inner monologue
+  const innerLife = new OwlInnerLife(provider, owl, b.workspacePath);
+  await innerLife.load().catch(() => {});
+  console.log(chalk.dim(`  [Inner Life loaded for ${owl.persona.name}]`));
+
+  // Knowledge Council — group learning & peer review sessions
+  const knowledgeCouncil = new KnowledgeCouncil(
+    provider, b.owlRegistry, b.config, b.pelletStore, b.workspacePath, b.providerRegistry,
+  );
 
   // ─── New Infrastructure (Improvements #1-7) ──────────────────
   const eventBus = new StackOwlEventBus();
@@ -593,12 +631,14 @@ async function buildGateway(
     evolution: b.evolution,
     evolutionEngine: b.evolutionEngine,
     learningEngine: b.learningEngineFactory(owl),
+    learningOrchestrator: b.learningOrchestratorFactory(owl),
+    innerLife,
     instinctRegistry: b.instinctRegistry,
     instinctEngine: b.instinctEngine,
     preferenceStore: b.preferenceStore,
     reflexionEngine: b.reflexionEngine,
     skillsLoader: b.skillsLoader,
-    memoryContext,
+    memoryContext: [memoryContext, reflexionContext].filter(Boolean).join("\n") || undefined,
     cwd: b.workspacePath,
     providerRegistry: b.providerRegistry,
     microLearner: b.microLearner,
@@ -630,6 +670,7 @@ async function buildGateway(
     autoConfigDetector,
     runbookMiner,
     crossAppPlanner,
+    knowledgeCouncil,
   });
 
   return gateway;

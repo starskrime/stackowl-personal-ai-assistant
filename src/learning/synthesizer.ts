@@ -1,0 +1,439 @@
+/**
+ * StackOwl — Knowledge Synthesizer
+ * Multi-pipeline synthesis engine.
+ */
+
+import { v4 as uuidv4 } from 'uuid';
+import { log } from '../logger.js';
+import type { ModelProvider } from '../providers/base.js';
+import type { OwlInstance } from '../owls/persona.js';
+import type { StackOwlConfig } from '../config/loader.js';
+import type { PelletStore, Pellet } from '../pellets/store.js';
+import { KnowledgeGraphManager } from './knowledge-graph.js';
+import type { SynthesisStrategy, FusedTopic } from './topic-fusion.js';
+
+export interface SynthesisContext {
+  topic: FusedTopic;
+  recentMessages?: string[];
+  existingPellets?: Pellet[];
+  userExplicitRequest?: boolean;
+}
+
+export interface SynthesisResult {
+  pipeline: SynthesisStrategy;
+  topic: string;
+  pellets: Pellet[];
+  relatedTopics: string[];
+  sources: string[];
+  confidence: number;
+  learnedAt: string;
+  durationMs: number;
+  success: boolean;
+  error?: string;
+}
+
+export interface SynthesisReport {
+  totalTopics: number;
+  successful: number;
+  failed: number;
+  pelletsCreated: number;
+  byPipeline: Record<string, number>;
+  durationMs: number;
+}
+
+const MAX_PELLETS = 2000;
+const EVICT_COUNT = 10;
+const Q_AND_A_QUESTIONS = 3;
+const WEB_RESEARCH_MAX_URLS = 5;
+
+export class KnowledgeSynthesizer {
+  private graphManager: KnowledgeGraphManager;
+
+  constructor(
+    private provider: ModelProvider,
+    private owl: OwlInstance,
+    _config: StackOwlConfig,
+    private pelletStore: PelletStore,
+    workspacePath: string,
+  ) {
+    this.graphManager = new KnowledgeGraphManager(workspacePath);
+  }
+
+  async synthesize(topics: FusedTopic[], context?: SynthesisContext['recentMessages']): Promise<SynthesisReport> {
+    const startTime = Date.now();
+    await this.graphManager.load();
+
+    const report: SynthesisReport = {
+      totalTopics: topics.length,
+      successful: 0,
+      failed: 0,
+      pelletsCreated: 0,
+      byPipeline: {},
+      durationMs: 0,
+    };
+
+    for (const topic of topics) {
+      if (topic.synthesisStrategy === 'quick_lookup' && !topic.priorityOverride && topic.urgency < 20) {
+        continue;
+      }
+
+      try {
+        const result = await this.synthesizeSingle({ topic, recentMessages: context });
+        if (result.success) {
+          report.successful++;
+          report.pelletsCreated += result.pellets.length;
+        } else {
+          report.failed++;
+        }
+        report.byPipeline[result.pipeline] = (report.byPipeline[result.pipeline] || 0) + 1;
+        this.graphManager.recordStudy(topic.normalizedName, result.pellets.length, result.relatedTopics);
+      } catch (err) {
+        report.failed++;
+        log.evolution.warn(
+          `[Synthesizer] Failed for "${topic.displayName}" (strategy: ${topic.synthesisStrategy}): ` +
+          `${err instanceof Error ? `${err.message}\n${err.stack}` : err}`,
+        );
+      }
+    }
+
+    await this.graphManager.save();
+    report.durationMs = Date.now() - startTime;
+
+    // Always log the outcome — success or failure
+    if (report.failed > 0 || report.pelletsCreated === 0) {
+      log.evolution.warn(
+        `[Synthesizer] Completed: ${report.successful}/${report.totalTopics} succeeded, ` +
+        `${report.failed} failed, ${report.pelletsCreated} pellets in ${report.durationMs}ms` +
+        (report.pelletsCreated === 0 ? ' — NO PELLETS CREATED' : ''),
+      );
+    } else {
+      log.evolution.info(
+        `[Synthesizer] Completed: ${report.pelletsCreated} pellets from ${report.successful} topics in ${report.durationMs}ms`,
+      );
+    }
+
+    return report;
+  }
+
+  async synthesizeSingle(ctx: SynthesisContext): Promise<SynthesisResult> {
+    const startTime = Date.now();
+    const { topic } = ctx;
+    let result: SynthesisResult;
+
+    switch (topic.synthesisStrategy) {
+      case 'deep_research': result = await this.runDeepResearch(topic); break;
+      case 'web_research': result = await this.runWebResearch(topic); break;
+      case 'document_digest': result = await this.runDocumentDigest(topic); break;
+      case 'repo_analysis': result = await this.runRepoAnalysis(topic); break;
+      case 'q_and_a': result = await this.runQAndA(topic); break;
+      case 'quick_lookup': result = await this.runQuickLookup(topic); break;
+      default: result = await this.runQAndA(topic);
+    }
+
+    result.durationMs = Date.now() - startTime;
+    return result;
+  }
+
+  private async runQAndA(topic: FusedTopic): Promise<SynthesisResult> {
+    const pellets: Pellet[] = [];
+    const allRelatedTopics: string[] = [];
+    await this.ensureCapacity(EVICT_COUNT);
+    const questions = await this.generateQuestions(topic);
+
+    for (const question of questions.slice(0, Q_AND_A_QUESTIONS)) {
+      try {
+        const { pellet, relatedTopics } = await this.answerAndStore(topic, question);
+        pellets.push(pellet);
+        allRelatedTopics.push(...relatedTopics);
+      } catch (err) {
+        log.evolution.warn(`  Q&A failed for: ${question.slice(0, 50)}`);
+      }
+    }
+
+    return {
+      pipeline: 'q_and_a',
+      topic: topic.displayName,
+      pellets,
+      relatedTopics: [...new Set(allRelatedTopics)].slice(0, 6),
+      sources: [],
+      confidence: pellets.length > 0 ? 0.7 + (pellets.length * 0.05) : 0,
+      learnedAt: new Date().toISOString(),
+      durationMs: 0,
+      success: pellets.length > 0,
+    };
+  }
+
+  private async generateQuestions(topic: FusedTopic): Promise<string[]> {
+    const context = topic.originalSignals.join('; ');
+    const prompt = `Generate ${Q_AND_A_QUESTIONS} targeted questions about "${topic.displayName}".\n\nContext: ${context || 'No prior context.'}\n\nRules: Focus on HOW to do it. Be specific. Return ONLY a JSON array of strings.`;
+
+    try {
+      const response = await this.provider.chat([
+        { role: 'system', content: 'You are a research question generator. Output only valid JSON.' },
+        { role: 'user', content: prompt },
+      ]);
+      const questions = this.parseJsonArray(response.content);
+      if (questions.length > 0) return questions;
+    } catch (err) {
+      log.evolution.warn(`[Synthesizer] Question generation failed for "${topic.displayName}": ${err instanceof Error ? err.message : err}`);
+    }
+
+    return [
+      `How can an AI assistant help with ${topic.displayName}?`,
+      `What are common requests related to ${topic.displayName}?`,
+      `What commands/APIs should an AI assistant know for ${topic.displayName}?`,
+    ];
+  }
+
+  private async answerAndStore(topic: FusedTopic, question: string): Promise<{ pellet: Pellet; relatedTopics: string[] }> {
+    const prompt = `Question: "${question}"\n\nWrite a concise knowledge card (max 150 words).\n\n**Answer:**\n**How to do it:**\n**Example:**\n\nEnd with: RELATED_JSON: ["topic1", "topic2", "topic3"]`;
+    const response = await this.provider.chat([
+      { role: 'system', content: `You are ${this.owl.persona.name}, generating knowledge cards.` },
+      { role: 'user', content: prompt },
+    ], undefined, { temperature: 0.2 });
+
+    const relatedTopics = this.extractRelatedJson(response.content);
+    const cleanContent = response.content.replace(/RELATED_JSON:\s*\[[\s\S]*?\]\s*/g, '').trim();
+    const pellet = this.createPellet(topic, question, cleanContent);
+    await this.pelletStore.save(pellet);
+    return { pellet, relatedTopics };
+  }
+
+  private async runWebResearch(topic: FusedTopic): Promise<SynthesisResult> {
+    const pellets: Pellet[] = [];
+    const sources: string[] = [];
+    await this.ensureCapacity(EVICT_COUNT * 2);
+    const urls = await this.findRelevantUrls(topic);
+
+    if (urls.length === 0) return this.runQAndA(topic);
+
+    for (const url of urls.slice(0, WEB_RESEARCH_MAX_URLS)) {
+      try {
+        const content = await this.crawlUrl(url);
+        if (content) {
+          const extractedPellets = await this.synthesizeFromContent(topic, content, url);
+          pellets.push(...extractedPellets);
+          sources.push(url);
+        }
+      } catch (err) {
+        log.evolution.warn(`[Synthesizer] Failed to crawl ${url}: ${err}`);
+      }
+    }
+
+    return {
+      pipeline: 'web_research',
+      topic: topic.displayName,
+      pellets,
+      relatedTopics: [],
+      sources,
+      confidence: pellets.length > 0 ? 0.85 : 0,
+      learnedAt: new Date().toISOString(),
+      durationMs: 0,
+      success: pellets.length > 0,
+    };
+  }
+
+  private async findRelevantUrls(topic: FusedTopic): Promise<string[]> {
+    const prompt = `Find ${WEB_RESEARCH_MAX_URLS} most relevant URLs about "${topic.displayName}". Return ONLY a JSON array of URL strings.`;
+    try {
+      const response = await this.provider.chat([
+        { role: 'system', content: 'You are a research assistant. Output only valid JSON.' },
+        { role: 'user', content: prompt },
+      ]);
+      return this.parseJsonArray(response.content).filter(u => u.startsWith('http'));
+    } catch (err) {
+      log.evolution.warn(`[Synthesizer] URL discovery failed for "${topic.displayName}": ${err instanceof Error ? err.message : err}`);
+      return [];
+    }
+  }
+
+  private async crawlUrl(url: string): Promise<string | null> {
+    try {
+      const response = await fetch(url, { headers: { 'User-Agent': 'StackOwl/1.0' }, signal: AbortSignal.timeout(10000) });
+      if (!response.ok) return null;
+      const html = await response.text();
+      return html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 5000);
+    } catch (err) {
+      log.evolution.warn(`[Synthesizer] Crawl failed for ${url}: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
+  private async synthesizeFromContent(topic: FusedTopic, content: string, source: string): Promise<Pellet[]> {
+    const pellets: Pellet[] = [];
+    const prompt = `Based on this content from ${source}, extract 2-3 key points about "${topic.displayName}". Return a JSON array of objects with "key_point" and "how_to".`;
+    try {
+      const response = await this.provider.chat([
+        { role: 'system', content: 'You are a knowledge extraction assistant.' },
+        { role: 'user', content: `${prompt}\n\nContent:\n${content.slice(0, 3000)}` },
+      ]);
+      const extracted = JSON.parse(this.parseJsonArray(response.content)[0] || '[]');
+      for (const item of extracted) {
+        const pellet = this.createPellet(topic, item.key_point || topic.displayName, `${item.key_point || ''}\n\n${item.how_to || ''}`);
+        pellets.push(pellet);
+        await this.pelletStore.save(pellet);
+      }
+    } catch (err) {
+      log.evolution.warn(`[Synthesizer] Content extraction failed for ${source}: ${err instanceof Error ? err.message : err}`);
+      const pellet = this.createPellet(topic, `Learnings from ${source}`, content.slice(0, 500));
+      pellets.push(pellet);
+      await this.pelletStore.save(pellet);
+    }
+    return pellets;
+  }
+
+  private async runDocumentDigest(topic: FusedTopic): Promise<SynthesisResult> {
+    const pellets: Pellet[] = [];
+    const sources: string[] = [];
+    const docPaths = ['./docs/README.md', './README.md'];
+
+    for (const path of docPaths) {
+      try {
+        const { readFile } = await import('node:fs/promises');
+        const content = await readFile(path, 'utf-8').catch(() => null);
+        if (content) {
+          const pellet = this.createPellet(topic, `Document: ${path}`, content.slice(0, 500));
+          pellets.push(pellet);
+          await this.pelletStore.save(pellet);
+          sources.push(path);
+        }
+      } catch (err) {
+        log.evolution.warn(`[Synthesizer] Document read failed for ${path}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    if (pellets.length === 0) return this.runWebResearch(topic);
+
+    return {
+      pipeline: 'document_digest',
+      topic: topic.displayName,
+      pellets,
+      relatedTopics: [],
+      sources,
+      confidence: 0.9,
+      learnedAt: new Date().toISOString(),
+      durationMs: 0,
+      success: pellets.length > 0,
+    };
+  }
+
+  private async runRepoAnalysis(topic: FusedTopic): Promise<SynthesisResult> {
+    const pellets: Pellet[] = [];
+    const sources: string[] = [];
+
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const pkg = JSON.parse(await readFile('./package.json', 'utf-8').catch(() => '{}'));
+      const deps = Object.keys(pkg.dependencies || {});
+      if (deps.length > 0) {
+        const pellet = this.createPellet(topic, 'Project dependencies', `Dependencies: ${deps.join(', ')}`);
+        pellets.push(pellet);
+        await this.pelletStore.save(pellet);
+        sources.push('./package.json');
+      }
+    } catch (err) {
+      log.evolution.warn(`[Synthesizer] Repo analysis failed: ${err instanceof Error ? err.message : err}`);
+    }
+
+    return {
+      pipeline: 'repo_analysis',
+      topic: topic.displayName,
+      pellets,
+      relatedTopics: [],
+      sources,
+      confidence: pellets.length > 0 ? 0.85 : 0,
+      learnedAt: new Date().toISOString(),
+      durationMs: 0,
+      success: pellets.length > 0,
+    };
+  }
+
+  private async runQuickLookup(topic: FusedTopic): Promise<SynthesisResult> {
+    const prompt = `Give ONE sentence answer about "${topic.displayName}". Be practical. Return ONLY the sentence.`;
+    try {
+      const response = await this.provider.chat([
+        { role: 'system', content: 'Be concise. One sentence only.' },
+        { role: 'user', content: prompt },
+      ]);
+      const pellet = this.createPellet(topic, topic.displayName, response.content.trim());
+      await this.pelletStore.save(pellet);
+      return { pipeline: 'quick_lookup', topic: topic.displayName, pellets: [pellet], relatedTopics: [], sources: [], confidence: 0.5, learnedAt: new Date().toISOString(), durationMs: 0, success: true };
+    } catch (err) {
+      return { pipeline: 'quick_lookup', topic: topic.displayName, pellets: [], relatedTopics: [], sources: [], confidence: 0, learnedAt: new Date().toISOString(), durationMs: 0, success: false, error: String(err) };
+    }
+  }
+
+  private async runDeepResearch(topic: FusedTopic): Promise<SynthesisResult> {
+    log.evolution.evolve(`[Synthesizer] Deep research: ${topic.displayName}`);
+    const [qResult, webResult] = await Promise.allSettled([
+      this.runQAndA(topic),
+      this.runWebResearch(topic).catch(() => ({ 
+          pipeline: 'web_research', 
+          topic: topic.displayName, 
+          pellets: [], 
+          relatedTopics: [], 
+          sources: [], 
+          confidence: 0, 
+          learnedAt: new Date().toISOString(), 
+          durationMs: 0, 
+          success: false 
+        } as SynthesisResult)),
+    ]);
+
+    const allPellets = [
+      ...(qResult.status === 'fulfilled' ? qResult.value.pellets : []),
+      ...(webResult.status === 'fulfilled' ? webResult.value.pellets : []),
+    ];
+    const sources = webResult.status === 'fulfilled' ? webResult.value.sources : [];
+
+    return {
+      pipeline: 'deep_research',
+      topic: topic.displayName,
+      pellets: allPellets,
+      relatedTopics: [],
+      sources,
+      confidence: allPellets.length > 0 ? 0.9 : 0,
+      learnedAt: new Date().toISOString(),
+      durationMs: 0,
+      success: allPellets.length > 0,
+    };
+  }
+
+  private createPellet(topic: FusedTopic, title: string, content: string): Pellet {
+    const slug = `learn-${topic.normalizedName.slice(0, 20)}-${uuidv4().substring(0, 6)}`;
+    return { id: slug, title: title.slice(0, 200), generatedAt: new Date().toISOString(), source: `synthesizer:${topic.normalizedName}:${topic.synthesisStrategy}`, owls: [this.owl.persona.name], tags: [topic.normalizedName, topic.synthesisStrategy, ...topic.sourceSignals], version: 1, content: content.slice(0, 2000) };
+  }
+
+  private async ensureCapacity(needSpace: number): Promise<void> {
+    const existing = await this.pelletStore.listAll();
+    if (existing.length + needSpace > MAX_PELLETS) {
+      for (const pellet of existing.slice(-needSpace)) {
+        await this.pelletStore.delete(pellet.id);
+      }
+    }
+  }
+
+  private parseJsonArray(content: string): string[] {
+    try {
+      const cleaned = content.trim().replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
+      if (cleaned.startsWith('[')) return JSON.parse(cleaned);
+      const match = cleaned.match(/\[[\s\S]*\]/);
+      return match ? JSON.parse(match[0]) : [];
+    } catch (err) {
+      log.evolution.warn(`[Synthesizer] JSON parse failed: ${err instanceof Error ? err.message : err}`);
+      return [];
+    }
+  }
+
+  private extractRelatedJson(content: string): string[] {
+    const match = content.match(/RELATED_JSON:\s*(\[[\s\S]*?\])/);
+    if (!match) return [];
+    try {
+      const p = JSON.parse(match[1]);
+      return Array.isArray(p) ? p.filter((t: unknown) => typeof t === 'string') : [];
+    } catch (err) {
+      log.evolution.warn(`[Synthesizer] Related JSON parse failed: ${err instanceof Error ? err.message : err}`);
+      return [];
+    }
+  }
+}

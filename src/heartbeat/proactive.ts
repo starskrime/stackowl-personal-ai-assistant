@@ -14,6 +14,7 @@ import { ToolPruner } from '../evolution/pruner.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { CapabilityLedger } from '../evolution/ledger.js';
 import type { LearningEngine } from '../learning/self-study.js';
+import type { LearningOrchestrator } from '../learning/orchestrator.js';
 import type { PreferenceStore } from '../preferences/store.js';
 import type { ReflexionEngine } from '../evolution/reflexion.js';
 import { SkillEvolver } from '../skills/evolver.js';
@@ -51,6 +52,8 @@ export interface PingContext {
     userId?: string;
     /** Learning engine for proactive self-study sessions */
     learningEngine?: LearningEngine;
+    /** New unified learning orchestrator (TopicFusion + Synthesis + Reflexion) */
+    learningOrchestrator?: LearningOrchestrator;
     /** User preference store — used to check dynamic quiet hours */
     preferenceStore?: PreferenceStore;
     /** Reflexion engine for extracting rules from past failures */
@@ -61,6 +64,10 @@ export interface PingContext {
     skillsDir?: string;
     /** Session store used by PatternMiner to read conversation history */
     sessionStore?: SessionStore;
+    /** Knowledge Council for automated group learning sessions */
+    knowledgeCouncil?: import('../parliament/knowledge-council.js').KnowledgeCouncil;
+    /** Owl registry for council sessions */
+    owlRegistry?: import('../owls/registry.js').OwlRegistry;
 }
 
 export type PingType =
@@ -157,6 +164,14 @@ export class ProactivePinger {
             });
         }, 60 * 1000);
         this.timers.push(selfStudyTimer);
+
+        // 🏛️ Knowledge Council — automated group learning sessions
+        const councilTimer = setInterval(() => {
+            this.maybeKnowledgeCouncil().catch((err) => {
+                console.error('[ProactivePinger] Knowledge Council error:', err);
+            });
+        }, 60 * 1000);
+        this.timers.push(councilTimer);
 
         // 🧠 Idle-Time Dreaming (Reflexion) timer
         const dreamTimer = setInterval(() => {
@@ -395,7 +410,7 @@ export class ProactivePinger {
      * No message is sent to the user; knowledge is stored as Pellets.
      */
     private async maybeSelfStudy(): Promise<void> {
-        if (!this.context.learningEngine) return;
+        if (!this.context.learningEngine && !this.context.learningOrchestrator) return;
 
         const now = new Date();
         const hour = now.getHours();
@@ -410,17 +425,70 @@ export class ProactivePinger {
 
         try {
             console.log('[ProactivePinger] 🧠 Starting overnight self-study session...');
-            const result = await this.context.learningEngine.runStudySession(4);
 
-            if (result.studied.length > 0) {
-                console.log(
-                    `[ProactivePinger] ✓ Self-study done: studied [${result.studied.join(', ')}], ` +
-                    `${result.pelletsCreated} pellets created, ` +
-                    `${result.newFrontierTopics.length} new topics discovered`
-                );
+            // Use new orchestrator if available
+            if (this.context.learningOrchestrator) {
+                const cycle = await this.context.learningOrchestrator.runProactiveSession();
+                if (cycle.synthesisReport) {
+                    console.log(
+                        `[ProactivePinger] ✓ Self-study (orchestrator) done: ` +
+                        `${cycle.topicsPrioritized} topics, ` +
+                        `${cycle.synthesisReport.pelletsCreated} pellets created`
+                    );
+                }
+            } else {
+                const result = await this.context.learningEngine!.runStudySession(4);
+                if (result.studied.length > 0) {
+                    console.log(
+                        `[ProactivePinger] ✓ Self-study done: studied [${result.studied.join(', ')}], ` +
+                        `${result.pelletsCreated} pellets created, ` +
+                        `${result.newFrontierTopics.length} new topics discovered`
+                    );
+                }
             }
         } catch (err) {
             console.error('[ProactivePinger] Self-study session failed:', err);
+        }
+    }
+
+    /**
+     * Knowledge Council — owls learn independently, then brainstorm and validate.
+     * Runs weekly during quiet hours (3 AM on Sundays by default).
+     */
+    private lastCouncilDate = '';
+    private async maybeKnowledgeCouncil(): Promise<void> {
+        if (!this.context.knowledgeCouncil) return;
+
+        const now = new Date();
+        const hour = now.getHours();
+        const day = now.getDay(); // 0 = Sunday
+        const dateKey = now.toISOString().split('T')[0];
+
+        // Run at 3 AM on Sundays (or configured day), once per week
+        if (hour !== 3 || day !== 0) return;
+        if (this.lastCouncilDate === dateKey) return;
+        if (!this.context.knowledgeCouncil.shouldConvene()) return;
+
+        this.lastCouncilDate = dateKey;
+
+        try {
+            console.log('[ProactivePinger] 🏛️ Starting Knowledge Council session...');
+            const session = await this.context.knowledgeCouncil.convene(
+                undefined,
+                async (msg) => {
+                    console.log(`[KnowledgeCouncil] ${msg}`);
+                    // Send progress to user if available
+                    await this.context.sendToUser(msg).catch(() => {});
+                },
+            );
+
+            if (session.pelletsCreated > 0) {
+                await this.context.sendToUser(
+                    `🏛️ **Knowledge Council Report**\n\n${session.summary ?? 'Session complete.'}`,
+                ).catch(() => {});
+            }
+        } catch (err) {
+            console.error('[ProactivePinger] Knowledge Council failed:', err);
         }
     }
 

@@ -19,6 +19,7 @@ import type { StackOwlConfig } from '../config/loader.js';
 import { EvolutionHandler, type ToolProposal } from '../evolution/handler.js';
 import type { CapabilityLedger } from '../evolution/ledger.js';
 import type { LearningEngine } from '../learning/self-study.js';
+import type { LearningOrchestrator } from '../learning/orchestrator.js';
 import type { PreferenceStore } from '../preferences/store.js';
 import { PreferenceDetector } from '../preferences/detector.js';
 import { AttemptLogRegistry } from '../memory/attempt-log.js';
@@ -38,6 +39,7 @@ export interface TelegramChannelConfig {
     evolution?: EvolutionHandler;
     capabilityLedger?: CapabilityLedger;
     learningEngine?: LearningEngine;
+    learningOrchestrator?: LearningOrchestrator;
     preferenceStore?: PreferenceStore;
     /** When true, show token usage after each response (default: false) */
     showTokenUsage?: boolean;
@@ -509,7 +511,11 @@ export class TelegramChannel {
                 await this.config.sessionStore.saveSession(userSession.session);
 
                 // Reactive learning — fire-and-forget after saving session
-                if (this.config.learningEngine) {
+                if (this.config.learningOrchestrator) {
+                    this.config.learningOrchestrator
+                        .processConversation(userSession.session.messages)
+                        .catch(err => log.telegram.warn(`Learning (orchestrator) failed: ${err instanceof Error ? err.message : err}`));
+                } else if (this.config.learningEngine) {
                     this.config.learningEngine
                         .processConversation(userSession.session.messages)
                         .catch(err => log.telegram.warn(`Learning failed: ${err instanceof Error ? err.message : err}`));
