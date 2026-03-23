@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import matter from "gray-matter";
 import YAML from "yaml";
-import type { Skill, SkillMetadata } from "./types.js";
+import type { Skill, SkillMetadata, SkillParameter, SkillStep } from "./types.js";
 
 export class SkillParser {
   /**
@@ -43,6 +43,9 @@ export class SkillParser {
     const requiredEnv = this.extractRequiredEnv(metadata);
     const requiredBins = this.extractRequiredBins(metadata);
 
+    const parameters = this.parseParameters(data);
+    const steps = this.parseSteps(data);
+
     return {
       name: data.name,
       description: data.description,
@@ -52,6 +55,8 @@ export class SkillParser {
       enabled: true,
       requiredEnv,
       requiredBins,
+      ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
+      ...(steps.length > 0 ? { steps } : {}),
     };
   }
 
@@ -105,6 +110,75 @@ export class SkillParser {
     }
 
     return metadata;
+  }
+
+  /**
+   * Parse structured execution parameters from frontmatter.
+   */
+  private parseParameters(data: Record<string, unknown>): Record<string, SkillParameter> {
+    const params: Record<string, SkillParameter> = {};
+    if (!data.parameters || typeof data.parameters !== 'object') return params;
+
+    for (const [key, val] of Object.entries(data.parameters as Record<string, unknown>)) {
+      if (!val || typeof val !== 'object') continue;
+      const v = val as Record<string, unknown>;
+      if (!v.type || !v.description) continue;
+      params[key] = {
+        type: String(v.type) as SkillParameter['type'],
+        description: String(v.description),
+        required: v.required !== false,
+        ...(v.default !== undefined ? { default: v.default } : {}),
+      };
+    }
+    return params;
+  }
+
+  /**
+   * Parse structured execution steps from frontmatter.
+   */
+  private parseSteps(data: Record<string, unknown>): SkillStep[] {
+    if (!Array.isArray(data.steps)) return [];
+
+    const stepIds = new Set<string>();
+    const steps: SkillStep[] = [];
+
+    for (const raw of data.steps) {
+      if (!raw || typeof raw !== 'object' || !raw.id) continue;
+      const s = raw as Record<string, unknown>;
+      const id = String(s.id);
+      if (stepIds.has(id)) continue; // skip duplicate ids
+      stepIds.add(id);
+
+      const step: SkillStep = { id };
+
+      if (s.tool) {
+        step.tool = String(s.tool);
+        step.type = 'tool';
+      } else if (s.type === 'llm') {
+        step.type = 'llm';
+      }
+
+      if (s.args && typeof s.args === 'object') {
+        step.args = s.args as Record<string, unknown>;
+      }
+      if (s.prompt) step.prompt = String(s.prompt);
+      if (Array.isArray(s.depends_on)) step.depends_on = s.depends_on.map(String);
+      if (Array.isArray(s.inputs)) step.inputs = s.inputs.map(String);
+      if (s.on_failure) step.on_failure = String(s.on_failure);
+      if (typeof s.timeout_ms === 'number') step.timeout_ms = s.timeout_ms;
+      if (s.optional === true) step.optional = true;
+
+      steps.push(step);
+    }
+
+    // Validate on_failure references
+    for (const step of steps) {
+      if (step.on_failure && !stepIds.has(step.on_failure)) {
+        step.on_failure = undefined; // invalid reference, clear it
+      }
+    }
+
+    return steps;
   }
 
   /**

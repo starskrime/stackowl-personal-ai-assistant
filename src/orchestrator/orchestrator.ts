@@ -25,6 +25,7 @@ import type {
   SubTask,
 } from './types.js';
 import { log } from '../logger.js';
+import { SwarmBlackboard } from '../swarm/blackboard.js';
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -442,16 +443,22 @@ export class TaskOrchestrator {
       );
     }
 
-    // Run all subtasks in parallel
+    // Create shared blackboard for inter-agent communication
+    const blackboard = new SwarmBlackboard();
+
+    // Run all subtasks in parallel with blackboard access
     const results = await Promise.allSettled(
       subtasks.map(async (task) => {
         const owl = this.resolveOwl(task.assignedOwl) ?? baseContext.owl;
 
+        // Inject blackboard context into the prompt
+        const sharedContext = blackboard.toSummary();
         const focusedPrompt =
           `[SWARM TASK] You are ${owl.persona.name} (${owl.persona.type}). ` +
           `Focus exclusively on this subtask:\n\n` +
           `${task.description}\n\n` +
           `Original user request for context: "${userMessage}"\n\n` +
+          (sharedContext ? `Shared context from other agents:\n${sharedContext}\n\n` : '') +
           `Provide your specialist analysis. Be thorough but concise.`;
 
         const ctx: EngineContext = {
@@ -463,6 +470,13 @@ export class TaskOrchestrator {
         };
 
         const response = await this.engine.run(focusedPrompt, ctx);
+
+        // Write result to blackboard for other agents to see
+        blackboard.write(
+          `step_${task.id}_result`,
+          response.content.slice(0, 500),
+          owl.persona.name,
+        );
 
         if (callbacks.onProgress) {
           await callbacks.onProgress(
@@ -520,7 +534,11 @@ export class TaskOrchestrator {
       completedResults.map(r =>
         `--- ${r.owlName}'s analysis ---\n${r.content}`,
       ).join('\n\n') +
+      `\n\nShared blackboard context from execution:\n${blackboard.toSummary()}` +
       `\n\nSynthesize these into a clear, unified answer. Credit each specialist's contribution where relevant.`;
+
+    // Clean up blackboard
+    blackboard.clear();
 
     if (callbacks.onProgress) {
       await callbacks.onProgress('🔮 Synthesizing results from all specialists...');

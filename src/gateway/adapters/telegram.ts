@@ -219,11 +219,18 @@ export class TelegramAdapter implements ChannelAdapter {
                         },
                         onFile: async (filePath: string, caption?: string) => {
                             const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
-                            const ext = extname(filePath).toLowerCase();
+                            // Parse extension from URL or path
+                            const urlObj = filePath.startsWith('http') ? new URL(filePath) : null;
+                            const pathname = urlObj ? urlObj.pathname : filePath;
+                            const ext = extname(pathname).toLowerCase();
+                            
+                            const isUrl = filePath.startsWith('http://') || filePath.startsWith('https://');
+                            const payload: any = isUrl ? filePath : new InputFile(filePath);
+
                             if (IMAGE_EXTS.has(ext)) {
-                                await ctx.replyWithPhoto(new InputFile(filePath), caption ? { caption } : {});
+                                await ctx.replyWithPhoto(payload, caption ? { caption } : {});
                             } else {
-                                await ctx.replyWithDocument(new InputFile(filePath), caption ? { caption } : {});
+                                await ctx.replyWithDocument(payload, caption ? { caption } : {});
                             }
                         },
                         askInstall: async (deps: string[]) => {

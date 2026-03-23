@@ -108,7 +108,7 @@ export class OwlGateway {
    */
   private attemptLogs = new AttemptLogRegistry();
 
-  constructor(private ctx: GatewayContext) {
+  constructor(public ctx: GatewayContext) {
     this.engine = new OwlEngine();
 
     // Initialize task queue (Improvement #2)
@@ -205,13 +205,15 @@ export class OwlGateway {
       this.skillInjector = new SkillContextInjector(
         registry,
         {
-          maxSkills: 3,
+          maxSkills: 5,
           autoSearchClawHub: true,
           clawHubTargetDir:
             ctx.config.skills?.directories?.[0] || "./workspace/skills",
         },
         skillProvider,
         skillTracker,
+        ctx.toolRegistry,
+        ctx.cwd ?? process.cwd(),
       );
 
       // Optionally enable ClawHub search
@@ -401,6 +403,31 @@ export class OwlGateway {
       const skill = registry.get(skillName);
       if (skill) {
         log.engine.info(`Explicit skill invocation: ${skill.name}`);
+
+        // Structured skills — execute directly via executor
+        if (this.skillInjector?.canExecuteStructured(skill)) {
+          const emoji = skill.metadata.openclaw?.emoji || '⚡';
+          if (callbacks.onProgress) {
+            await callbacks.onProgress(
+              `${emoji} **Executing skill:** \`${skill.name}\``,
+            );
+          }
+          const result = await this.skillInjector.executeStructuredSkill(
+            skill, skillArgs || skill.description, callbacks.onProgress,
+          );
+          await this.saveSession(session, message.text, [], false, result.finalOutput);
+          this.postProcess(session.messages, session.id);
+          return {
+            content: result.finalOutput,
+            owlName: this.ctx.owl.persona.name,
+            owlEmoji: this.ctx.owl.persona.emoji,
+            toolsUsed: result.stepResults
+              .filter(s => s.status === 'success')
+              .map(s => s.stepId),
+          };
+        }
+
+        // Unstructured skills — inject as prompt directive (existing path)
         const skillDirective =
           `[SKILL INVOKED: ${skill.name}]\n` +
           `The user has explicitly requested this skill. Follow its instructions exactly.\n\n` +
@@ -490,7 +517,36 @@ export class OwlGateway {
     if (this.skillInjector) {
       const relevantSkills = await this.skillInjector.getRelevantSkills(text);
       if (relevantSkills.length > 0) {
-        // Use the injector's composition-aware formatter
+        // Check if top skill is structured — execute directly instead of prompt injection
+        const topSkill = relevantSkills[0];
+        if (this.skillInjector.canExecuteStructured(topSkill)) {
+          log.engine.info(`Structured skill execution: ${topSkill.name}`);
+          const emoji = topSkill.metadata.openclaw?.emoji || '⚡';
+          if (callbacks.onProgress) {
+            await callbacks.onProgress(
+              `${emoji} **Executing skill:** \`${topSkill.name}\` — ${topSkill.description}`,
+            );
+          }
+
+          const result = await this.skillInjector.executeStructuredSkill(
+            topSkill, message.text, callbacks.onProgress,
+          );
+
+          // Save to session and return directly — no ReAct loop needed
+          await this.saveSession(session, message.text, [], false, result.finalOutput);
+          this.postProcess(session.messages, session.id);
+
+          return {
+            content: result.finalOutput,
+            owlName: this.ctx.owl.persona.name,
+            owlEmoji: this.ctx.owl.persona.emoji,
+            toolsUsed: result.stepResults
+              .filter(s => s.status === 'success')
+              .map(s => s.stepId),
+          };
+        }
+
+        // Unstructured skills — inject as context XML (existing path)
         dynamicSkillsContext = await this.skillInjector.injectIntoContext(text);
         const skillNames = relevantSkills.map((s) => s.name);
         log.engine.info(`Dynamic skill injection: ${skillNames.join(", ")}`);

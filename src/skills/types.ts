@@ -122,6 +122,67 @@ export interface Skill {
   usage?: SkillUsageStats;
   /** Composition metadata — skill dependencies and chaining */
   composition?: SkillComposition;
+  /** Structured execution parameters (from frontmatter). */
+  parameters?: Record<string, SkillParameter>;
+  /** Structured execution steps (from frontmatter). */
+  steps?: SkillStep[];
+}
+
+// ─── Structured Skill Execution ──────────────────────────────────
+
+export interface SkillParameter {
+  type: 'string' | 'number' | 'boolean';
+  description: string;
+  required?: boolean;
+  default?: unknown;
+}
+
+export interface SkillStep {
+  id: string;
+  /** Tool to call. Mutually exclusive with type: 'llm'. */
+  tool?: string;
+  /** Step type — defaults to 'tool' when tool is set. */
+  type?: 'tool' | 'llm';
+  /** Tool arguments with {{param}} template interpolation. */
+  args?: Record<string, unknown>;
+  /** LLM prompt for type: 'llm' steps. Supports {{param}} and {{stepId.output}}. */
+  prompt?: string;
+  /** Step IDs this depends on — controls parallel scheduling. */
+  depends_on?: string[];
+  /** References to previous step outputs: ['step_id.output']. */
+  inputs?: string[];
+  /** Step to jump to on failure. */
+  on_failure?: string;
+  /** Per-step timeout in ms. Default: 30000. */
+  timeout_ms?: number;
+  /** If true, failure doesn't fail the skill. */
+  optional?: boolean;
+}
+
+export type SkillStepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+
+export interface SkillStepResult {
+  stepId: string;
+  status: SkillStepStatus;
+  output?: string;
+  error?: string;
+  durationMs: number;
+}
+
+export interface SkillExecutionResult {
+  skillName: string;
+  status: 'success' | 'failed';
+  stepResults: SkillStepResult[];
+  /** Final output text (from last LLM step or concatenated tool outputs). */
+  finalOutput: string;
+  totalDurationMs: number;
+  /** Extracted parameters used. */
+  parameters: Record<string, unknown>;
+}
+
+/** Type guard: does this skill have structured execution steps? */
+export function isStructuredSkill(skill: Skill): boolean {
+  return Array.isArray(skill.steps) && skill.steps.length > 0;
 }
 
 export interface SkillFilter {

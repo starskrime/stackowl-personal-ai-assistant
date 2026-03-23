@@ -43,9 +43,12 @@ export class ToolRegistry {
     private permissions: Record<string, ToolPermission> = { ...DEFAULT_PERMISSIONS };
 
     /**
-     * Register a new tool.
+     * Register a new tool. (Prevents overwriting existing tools to secure against spoofing).
      */
     register(tool: ToolImplementation): void {
+        if (this.tools.has(tool.definition.name)) {
+            throw new Error(`Tool collision: A tool named '${tool.definition.name}' is already registered.`);
+        }
         this.tools.set(tool.definition.name, tool);
     }
 

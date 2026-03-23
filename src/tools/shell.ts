@@ -182,10 +182,15 @@ export const ShellTool: ToolImplementation = {
         command: {
           type: "string",
           description:
-            "The shell command to execute inside the Alpine sandbox.",
+            "The shell command to execute.",
+        },
+        mode: {
+          type: "string",
+          enum: ["local", "sandbox"],
+          description: "Execution mode. 'local': Runs directly on host machine (full access). 'sandbox': Runs in isolated Alpine Docker container (safe). The Assistant should prioritize 'sandbox' unless you specifically require local host dependencies to achieve your goal.",
         },
       },
-      required: ["command"],
+      required: ["command", "mode"],
     },
   },
 
@@ -194,15 +199,24 @@ export const ShellTool: ToolImplementation = {
     context: ToolContext,
   ): Promise<string> {
     const cmd = args["command"] as string;
+    const mode = args["mode"] as string;
     if (!cmd) throw new Error("Command argument missing");
+    if (!mode) throw new Error("Mode argument missing");
 
-    const useSandbox =
-      context.engineContext?.config?.sandboxing?.enabled ?? true;
+    const execConfig = context.engineContext?.config?.execution ?? { hostMode: true, sandboxMode: true };
     const workspaceDir = resolve(context.cwd);
 
-    if (!useSandbox) {
-      log.tool.warn(`[ShellTool] WARNING: Executing outside sandbox: ${cmd}`);
+    if (mode === "local") {
+      if (!execConfig.hostMode) {
+        return formatResult(1, "", `Host execution is disabled in stackowl.config.json. Please adjust 'execution.hostMode' to use local mode, or switch to 'sandbox' mode.`);
+      }
+      log.tool.warn(`[ShellTool] WARNING: Executing on host: ${cmd}`);
       return executeRawCommand(cmd, workspaceDir);
+    }
+    
+    // mode === "sandbox"
+    if (!execConfig.sandboxMode) {
+      return formatResult(1, "", `Sandbox execution is disabled in stackowl.config.json. Please adjust 'execution.sandboxMode' to use the sandbox, or switch to 'local' mode.`);
     }
 
     // Full network access is enabled - curl/wget can be used directly
@@ -212,7 +226,6 @@ export const ShellTool: ToolImplementation = {
     try {
       const result = await runInDocker(cmd, workspaceDir);
 
-      // Detect Docker daemon not running from command output
       const combined = result.stdout + result.stderr;
       if (
         result.exitCode !== 0 &&
@@ -221,10 +234,10 @@ export const ShellTool: ToolImplementation = {
          combined.includes("docker.sock") ||
          combined.includes("Is the docker daemon running"))
       ) {
-        log.tool.warn(
-          `[ShellTool] Docker daemon unavailable (detected from output). Falling back to raw host execution.`,
+        log.tool.error(
+          `[ShellTool] Docker daemon unavailable (detected from output). Sandbox execution blocked.`
         );
-        return executeRawCommand(cmd, workspaceDir);
+        return formatResult(1, "", combined, "[SYSTEM DIAGNOSTIC HINT: Cannot execute sandbox command because Docker is not running. Sandbox mode requires Docker. Start Docker to continue, or switch to 'local' mode if you absolutely trust the command.]");
       }
 
       if (result.exitCode !== 0) {
@@ -282,16 +295,16 @@ export const ShellTool: ToolImplementation = {
         }
       }
 
-      // ── Docker daemon not running → raw fallback ──
+      // ── Docker daemon not running → Block Sandbox Escape ──
       if (
         msg.includes("Cannot connect to the Docker daemon") ||
         msg.includes("connect ENOENT") ||
         msg.includes("ENOENT")
       ) {
-        log.tool.warn(
-          `[ShellTool] Docker daemon unavailable. Falling back to raw host execution.`,
+        log.tool.error(
+          `[ShellTool] Docker daemon unavailable. Sandbox execution blocked.`
         );
-        return executeRawCommand(cmd, workspaceDir);
+        return formatResult(1, "", msg, "[SYSTEM DIAGNOSTIC HINT: Cannot execute sandbox command because Docker is not running. Sandbox mode requires Docker. Start Docker to continue, or switch to 'local' mode if you absolutely trust the command.]");
       }
 
       // ── Timeout ──

@@ -83,6 +83,14 @@ export interface EngineContext {
   capsuleManager?: import('../capsules/manager.js').CapsuleManager;
   /** Owl's inner life — desires, mood, opinions, inner monologue */
   innerLife?: OwlInnerLife;
+  /** Persistent goal graph — tracks user objectives across sessions */
+  goalGraph?: import('../goals/graph.js').GoalGraph;
+  /** Persistent task store — enables checkpoint/resume for long-running tasks */
+  taskStore?: import('../tasks/store.js').TaskStore;
+  /** Current background task ID (set when running as a background task) */
+  backgroundTaskId?: string;
+  /** RAG-based pellet search — replaces brute-force pellet injection */
+  pelletSearch?: import('../pellets/search.js').PelletSearch;
 }
 
 export interface PendingCapabilityGap {
@@ -1332,18 +1340,21 @@ ${userMessage}
     if (preferencesContext?.trim()) {
       prompt += "\n" + preferencesContext + "\n";
     }
-
     // Skills — injected only when present (always-on + relevant per-message)
     if (skillsContext?.trim()) {
       prompt += `
 ## Skills — YOUR LEARNED CAPABILITIES
 
-CRITICAL: The skills below are step-by-step playbooks you have already learned for specific tasks.
-When a skill is present here, it means the system has matched it to the user's current request.
-You MUST follow the skill's instructions step-by-step. Do NOT improvise your own approach when
-a matching skill exists — the skill contains tested, optimized steps for this exact task type.
+CRITICAL DIRECTIVE: The skills below are step-by-step playbooks that the system has matched
+to the user's current request based on semantic analysis. You MUST follow the matched skill's
+instructions exactly, step-by-step, using the specified tool calls. Do NOT skip steps, do NOT
+improvise your own approach, and do NOT ignore the skill. If a skill is present here, it is the
+CORRECT approach for this request. Treat each skill as a mandatory checklist.
 
 ${skillsContext}
+
+REMINDER: You MUST use the skills above for this request. Each skill contains tested, production-grade
+steps. Follow them precisely — they are your primary instructions for this task.
 `;
     }
 

@@ -44,6 +44,10 @@
     "fallbackProvider": "anthropic",
     "fallbackModel": "claude-sonnet-4-6"
   },
+  "execution": {
+    "hostMode": true,
+    "sandboxMode": true
+  },
   "skills": {
     "enabled": true,
     "directories": [

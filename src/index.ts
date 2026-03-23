@@ -395,15 +395,22 @@ async function bootstrap() {
   const instinctEngine = new InstinctEngine();
 
   // Skills (OpenCLAW-compatible)
+  // Always include built-in defaults + any user-configured directories
   const skillsLoader = new SkillsLoader();
-  if (config.skills?.enabled && config.skills.directories?.length > 0) {
-    const skillsDirs = config.skills.directories.map((d) =>
+  {
+    const builtInSkillsDir = resolve(
+      new URL(".", import.meta.url).pathname,
+      "skills/defaults",
+    );
+    const userDirs = (config.skills?.directories ?? []).map((d) =>
       resolve(basePath, d),
     );
+    // Built-in defaults first, then user overrides (user skills take precedence)
+    const allSkillsDirs = [builtInSkillsDir, ...userDirs];
     const skillsCount = await skillsLoader.load({
-      directories: skillsDirs,
-      watch: config.skills.watch ?? false,
-      watchDebounceMs: config.skills.watchDebounceMs ?? 250,
+      directories: allSkillsDirs,
+      watch: config.skills?.watch ?? false,
+      watchDebounceMs: config.skills?.watchDebounceMs ?? 250,
     });
     console.log(chalk.dim(`  [Loaded ${skillsCount} skills]`));
   }
@@ -427,7 +434,7 @@ async function bootstrap() {
 
   // Register new tools
   const defaultProvider = providerRegistry.getDefault();
-  const workflowExecutor = new WorkflowExecutor(toolRegistry, defaultProvider, workspacePath);
+  const workflowExecutor = new WorkflowExecutor(toolRegistry, defaultProvider, workspacePath, owlRegistry, config);
   toolRegistry.registerAll([
     createWorkflowTool(workflowStore, workflowExecutor),
     createMonitorTool(healthChecker),

@@ -13,12 +13,17 @@
 
 import chalk from "chalk";
 import type { ModelProvider } from "../providers/base.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import { SkillsRegistry } from "./registry.js";
 import { ClawHubClient } from "./clawhub.js";
 import { IntentRouter } from "./intent-router.js";
 import { SkillTracker } from "./tracker.js";
 import { SkillComposer } from "./composer.js";
-import type { Skill } from "./types.js";
+import { SkillExecutor } from "./executor.js";
+import { SkillParamExtractor } from "./param-extractor.js";
+import { isStructuredSkill } from "./types.js";
+import type { Skill, SkillExecutionResult } from "./types.js";
+import { log } from "../logger.js";
 
 export interface SkillContextOptions {
   /** Maximum skills to inject per message */
@@ -34,6 +39,8 @@ export class SkillContextInjector {
   private router: IntentRouter;
   private tracker: SkillTracker;
   private composer: SkillComposer;
+  private executor: SkillExecutor | null = null;
+  private paramExtractor: SkillParamExtractor | null = null;
   private clawHub: ClawHubClient | null;
   private options: Required<SkillContextOptions>;
   private recentlySearched: Set<string> = new Set();
@@ -43,6 +50,8 @@ export class SkillContextInjector {
     options: SkillContextOptions = {},
     provider?: ModelProvider,
     tracker?: SkillTracker,
+    toolRegistry?: ToolRegistry,
+    cwd?: string,
   ) {
     this.registry = registry;
     this.clawHub = null;
@@ -60,6 +69,12 @@ export class SkillContextInjector {
 
     // Initialize the composer for skill chaining
     this.composer = new SkillComposer(registry);
+
+    // Initialize the structured skill executor (requires tool registry)
+    if (provider && toolRegistry && cwd) {
+      this.executor = new SkillExecutor(toolRegistry, provider, cwd);
+      this.paramExtractor = new SkillParamExtractor(provider);
+    }
   }
 
   /**
@@ -74,6 +89,73 @@ export class SkillContextInjector {
    */
   getTracker(): SkillTracker {
     return this.tracker;
+  }
+
+  /**
+   * Check if a skill should use the structured executor.
+   */
+  canExecuteStructured(skill: Skill): boolean {
+    return isStructuredSkill(skill) && this.executor !== null;
+  }
+
+  /**
+   * Execute a structured skill directly — bypasses prompt injection.
+   * The engine drives execution, not the LLM.
+   */
+  async executeStructuredSkill(
+    skill: Skill,
+    userMessage: string,
+    onProgress?: (msg: string) => Promise<void>,
+  ): Promise<SkillExecutionResult> {
+    if (!this.executor || !this.paramExtractor) {
+      throw new Error('Structured skill executor not initialized (missing toolRegistry or provider)');
+    }
+
+    const startTime = Date.now();
+
+    // Extract parameters from user message
+    let parameters: Record<string, unknown> = {};
+    if (skill.parameters && Object.keys(skill.parameters).length > 0) {
+      try {
+        parameters = await this.paramExtractor.extract(userMessage, skill.parameters);
+        log.engine.info(
+          `[SkillExecutor] Extracted params for "${skill.name}": ` +
+          `${JSON.stringify(parameters)}`,
+        );
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        this.tracker.recordFailure(skill.name, Date.now() - startTime);
+        return {
+          skillName: skill.name,
+          status: 'failed',
+          stepResults: [],
+          finalOutput: `Failed to extract parameters: ${errorMsg}`,
+          totalDurationMs: Date.now() - startTime,
+          parameters: {},
+        };
+      }
+    }
+
+    // Map progress to gateway format
+    const progressAdapter = onProgress
+      ? async (stepId: string, status: string, detail?: string) => {
+          const emoji = status === 'running' ? '⏳' : status === 'success' ? '✅' : '❌';
+          await onProgress(`${emoji} **Step ${stepId}:** ${detail || status}`);
+        }
+      : undefined;
+
+    // Execute
+    const result = await this.executor.execute(skill, parameters, progressAdapter);
+
+    // Track
+    const durationMs = Date.now() - startTime;
+    if (result.status === 'success') {
+      this.tracker.recordSuccess(skill.name, durationMs);
+    } else {
+      this.tracker.recordFailure(skill.name, durationMs);
+    }
+
+    return result;
   }
 
   /**

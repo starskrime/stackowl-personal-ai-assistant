@@ -178,6 +178,7 @@ export class StackOwlEventBus implements EventBus {
   emit<T extends EventType>(type: T, payload: EventPayloads[T]): void {
     try {
       this.emitter.emit(type, payload);
+      this.emitter.emit("*", { type, payload });
     } catch (err) {
       log.engine.warn(
         `[EventBus] Error emitting "${type}": ${err instanceof Error ? err.message : String(err)}`,

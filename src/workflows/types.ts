@@ -8,14 +8,14 @@
 
 // ─── Step Types ──────────────────────────────────────────────
 
-export type StepType = "tool" | "llm" | "condition" | "parallel" | "wait";
+export type StepType = "tool" | "llm" | "agent" | "condition" | "parallel" | "wait";
 
 export interface WorkflowStep {
   id: string;
   name: string;
   type: StepType;
   /** Step-specific configuration */
-  config: ToolStepConfig | LlmStepConfig | ConditionStepConfig | ParallelStepConfig | WaitStepConfig;
+  config: ToolStepConfig | LlmStepConfig | AgentStepConfig | ConditionStepConfig | ParallelStepConfig | WaitStepConfig;
   /** Steps that must complete before this one */
   dependsOn?: string[];
   /** Max retries on failure. Default: 0 */
@@ -36,6 +36,18 @@ export interface ToolStepConfig {
 export interface LlmStepConfig {
   prompt: string;
   /** Extract structured data from LLM response */
+  extractAs?: "json" | "text" | "list";
+}
+
+export interface AgentStepConfig {
+  prompt: string;
+  /** Name of the specific Owl to execute this step */
+  owlName?: string;
+  /** Role to find a matching Owl if specific name is not provided (e.g. 'coder') */
+  owlRole?: string;
+  /** Whether the Owl can use tools during execution */
+  useTools?: boolean;
+  /** Extract structured data from Agent response */
   extractAs?: "json" | "text" | "list";
 }
 

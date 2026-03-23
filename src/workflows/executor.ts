@@ -12,20 +12,30 @@ import type {
   StepResult,
   ToolStepConfig,
   LlmStepConfig,
+  AgentStepConfig,
   ConditionStepConfig,
   ParallelStepConfig,
   WaitStepConfig,
 } from "./types.js";
 import type { ToolRegistry, ToolContext } from "../tools/registry.js";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
+import type { OwlRegistry } from "../owls/registry.js";
+import type { StackOwlConfig } from "../config/loader.js";
+import { OwlEngine } from "../engine/runtime.js";
 import { log } from "../logger.js";
 
 export class WorkflowExecutor {
+  private engine: OwlEngine;
+
   constructor(
     private toolRegistry: ToolRegistry | undefined,
     private provider: ModelProvider,
     private defaultCwd: string,
-  ) {}
+    private owlRegistry?: OwlRegistry,
+    private config?: StackOwlConfig,
+  ) {
+    this.engine = new OwlEngine();
+  }
 
   /**
    * Execute a workflow definition with given parameters.
@@ -156,6 +166,8 @@ export class WorkflowExecutor {
           return this.runToolStep(step.config as ToolStepConfig, context);
         case "llm":
           return this.runLlmStep(step.config as LlmStepConfig, context);
+        case "agent":
+          return this.runAgentStep(step.config as AgentStepConfig, context);
         case "condition":
           return this.runConditionStep(step.config as ConditionStepConfig, context);
         case "parallel":
@@ -226,6 +238,68 @@ export class WorkflowExecutor {
     return text;
   }
 
+  private async runAgentStep(config: AgentStepConfig, context: ExecutionContext): Promise<unknown> {
+    if (!this.owlRegistry || !this.config) {
+      throw new Error("OwlRegistry and Config are required for agent steps.");
+    }
+
+    let prompt = config.prompt || (config as any).message || (config as any).task || "Follow your instructions.";
+    const varPattern = /\{\{([^}]+)\}\}/g;
+    let match: RegExpExecArray | null;
+    if (config.prompt) {
+      while ((match = varPattern.exec(config.prompt)) !== null) {
+        const ref = match[1].trim();
+        const value = context.resolve(ref);
+        if (value !== undefined) {
+          prompt = prompt.replace(match[0], String(value));
+        }
+      }
+    }
+
+    let owl = this.owlRegistry.getDefault();
+    const desiredOwlName = config.owlName || (config as any).agent_id || (config as any).agent;
+    const desiredOwlRole = config.owlRole || (config as any).role || desiredOwlName;
+
+    if (desiredOwlName) {
+      const found = this.owlRegistry.get(desiredOwlName);
+      if (found) owl = found;
+      else if (desiredOwlRole) {
+        const roleStr = desiredOwlRole.toLowerCase();
+        const allOwls = this.owlRegistry.listOwls();
+        const foundRole = allOwls.find(o => 
+          (o.persona.type && o.persona.type.toLowerCase().includes(roleStr)) ||
+          (o.persona.name && o.persona.name.toLowerCase() === roleStr)
+        );
+        if (foundRole) owl = foundRole;
+      }
+    } else if (desiredOwlRole) {
+      const roleStr = desiredOwlRole.toLowerCase();
+      const allOwls = this.owlRegistry.listOwls();
+      const found = allOwls.find(o => 
+        (o.persona.type && o.persona.type.toLowerCase().includes(roleStr)) ||
+        (o.persona.name && o.persona.name.toLowerCase() === roleStr)
+      );
+      if (found) owl = found;
+    }
+
+    const response = await this.engine.run(prompt, {
+      provider: this.provider,
+      owl,
+      config: this.config,
+      toolRegistry: config.useTools ? this.toolRegistry : undefined,
+      sessionHistory: [],
+    });
+
+    const text = response.content;
+    if (config.extractAs === "json") {
+      try { return JSON.parse(text); } catch { return text; }
+    }
+    if (config.extractAs === "list") {
+      return text.split("\n").filter((l: string) => l.trim().length > 0);
+    }
+    return text;
+  }
+
   private runConditionStep(config: ConditionStepConfig, context: ExecutionContext): string {
     // Simple expression evaluation: "stepId.output === 'value'"
     let expr = config.expression;
@@ -288,10 +362,9 @@ export class WorkflowExecutor {
       });
 
       if (wave.length === 0) {
-        // Circular dependency — force remaining into one wave
-        log.engine.warn("[WorkflowExecutor] Circular dependency detected, forcing remaining steps");
-        waves.push(remaining.splice(0));
-        break;
+        // Circular dependency — fail securely instead of silently running unresolved steps
+        log.engine.error("[WorkflowExecutor] Circular dependency detected among remaining steps");
+        throw new Error("Workflow resolution failed: Circular or missing dependencies detected");
       }
 
       waves.push(wave);

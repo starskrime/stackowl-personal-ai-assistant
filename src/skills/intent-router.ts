@@ -45,7 +45,7 @@ export class IntentRouter {
   private static readonly CACHE_KEY_LEN = 100;
   private static readonly MAX_CACHE = 200;
   private static readonly AMBIGUITY_THRESHOLD = 0.15; // 15% score difference = ambiguous
-  private static readonly MIN_SCORE = 0.15; // minimum BM25 score to consider (lowered to catch short skill names)
+  private static readonly MIN_SCORE = 0.10; // minimum BM25 score to consider
 
   constructor(
     registry: SkillsRegistry,

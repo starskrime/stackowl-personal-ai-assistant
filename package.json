@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && cp -r src/owls/defaults dist/owls/defaults",
+    "build": "tsc && cp -r src/owls/defaults dist/owls/defaults && cp -r src/skills/defaults dist/skills/defaults",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",

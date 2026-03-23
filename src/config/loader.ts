@@ -99,6 +99,10 @@ export interface StackOwlConfig {
     enabled: boolean;
     debugOutput?: boolean;
   };
+  execution?: {
+    hostMode: boolean;
+    sandboxMode: boolean;
+  };
   pellets?: {
     dedup?: {
       enabled?: boolean;
@@ -242,6 +246,10 @@ const DEFAULT_CONFIG: StackOwlConfig = {
     enabled: true,
     debugOutput: false,
   },
+  execution: {
+    hostMode: true,
+    sandboxMode: true,
+  },
   engine: {
     maxToolIterations: 15,
   },
@@ -309,6 +317,10 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         ...DEFAULT_CONFIG.sandboxing!,
         ...(userConfig.sandboxing || {}),
       } as NonNullable<StackOwlConfig["sandboxing"]>,
+      execution: {
+        ...DEFAULT_CONFIG.execution!,
+        ...(userConfig.execution || {}),
+      } as NonNullable<StackOwlConfig["execution"]>,
       engine: {
         ...DEFAULT_CONFIG.engine,
         ...(userConfig.engine || {}),

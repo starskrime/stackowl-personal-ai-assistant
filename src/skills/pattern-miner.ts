@@ -29,6 +29,8 @@ import type { SessionStore } from '../memory/store.js';
 import type { StackOwlConfig } from '../config/loader.js';
 import type { SkillsRegistry } from './registry.js';
 import { SkillParser } from './parser.js';
+import { ConfigContextBuilder } from './config-context.js';
+import type { ToolRegistry } from '../tools/registry.js';
 import { log } from '../logger.js';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -71,13 +73,17 @@ const MAX_SESSIONS_TO_SCAN = 10;
 
 export class PatternMiner {
   private parser: SkillParser;
+  private configContext: ConfigContextBuilder;
 
   constructor(
     private provider: ModelProvider,
     private sessionStore: SessionStore,
     private config: StackOwlConfig,
+    toolRegistry?: ToolRegistry,
+    skillsRegistry?: SkillsRegistry,
   ) {
     this.parser = new SkillParser();
+    this.configContext = new ConfigContextBuilder(config, toolRegistry, skillsRegistry);
   }
 
   /**
@@ -290,6 +296,7 @@ export class PatternMiner {
       `Tool sequences used successfully:\n${exampleToolSequences}\n\n` +
       `Write a SKILL.md that teaches the LLM to handle this class of requests.\n` +
       `The skill name must capture what the USER wants, not which tools are used.\n\n` +
+      `${this.configContext.toPromptBlock()}\n\n` +
       `Output ONLY valid SKILL.md content:\n` +
       `---\n` +
       `name: verb_noun_skill_name\n` +

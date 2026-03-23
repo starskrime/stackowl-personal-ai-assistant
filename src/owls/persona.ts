@@ -37,8 +37,18 @@ export interface OwlDNA {
         verbosity: 'verbose' | 'balanced' | 'concise';
         humor: number;       // 0-1
         formality: number;   // 0-1
+        /** How often to volunteer information unprompted (0=never, 1=always) */
+        proactivity: number;
+        /** Whether to attempt uncertain tool calls or play safe */
+        riskTolerance: 'cautious' | 'moderate' | 'aggressive';
+        /** Show examples vs give direct answers */
+        teachingStyle: 'examples' | 'direct' | 'adaptive';
+        /** Do it myself vs ask the user for approval */
+        delegationPreference: 'autonomous' | 'collaborative' | 'confirmatory';
     };
     expertiseGrowth: Record<string, number>;
+    /** Per-domain confidence: how assertive to be about recommendations in each topic */
+    domainConfidence: Record<string, number>;
 
     interactionStats: {
         totalConversations: number;
@@ -81,8 +91,13 @@ export function createDefaultDNA(owlName: string, challengeLevel: ChallengeLevel
             verbosity: 'balanced',
             humor: 0.3,
             formality: 0.5,
+            proactivity: 0.5,
+            riskTolerance: 'moderate',
+            teachingStyle: 'adaptive',
+            delegationPreference: 'collaborative',
         },
         expertiseGrowth: {},
+        domainConfidence: {},
         interactionStats: {
             totalConversations: 0,
             adviceAcceptedRate: 0.5,

@@ -40,6 +40,7 @@ interface ConnectedClient {
   lastActivity: number;
   messageCount: number;
   isAdmin: boolean;
+  subscriptions: Set<string>;
 }
 
 /**
@@ -163,6 +164,25 @@ export class StackOwlServer {
     this.setupMiddleware();
     this.setupRESTRoutes();
     this.setupWebSocket();
+    this.setupEventBusHook();
+  }
+
+  // ─── Event Bus Hook ──────────────────────────────────────────
+
+  private setupEventBusHook(): void {
+    const eventBus = this.gateway.ctx.eventBus;
+    if (eventBus) {
+      eventBus.on("*" as any, (eventData: { type: string; payload: unknown }) => {
+        const { type, payload } = eventData;
+        const msg = JSON.stringify({ type: "event", event: type, payload });
+        for (const client of this.adapter.getClients().values()) {
+          if ((client.subscriptions.has(type) || client.subscriptions.has("*")) && client.ws.readyState === client.ws.OPEN) {
+            client.ws.send(msg);
+          }
+        }
+      });
+      log.engine.info("[ControlPlane] Subscribed to global EventBus for Pub/Sub");
+    }
   }
 
   // ─── Express Middleware ────────────────────────────────────────
@@ -332,6 +352,7 @@ export class StackOwlServer {
         lastActivity: Date.now(),
         messageCount: 0,
         isAdmin,
+        subscriptions: new Set(),
       };
 
       this.adapter.addClient(client);
@@ -351,6 +372,9 @@ export class StackOwlServer {
       ws.on("message", async (raw) => {
         try {
           const data = JSON.parse(raw.toString());
+          if (typeof data !== "object" || data === null || Array.isArray(data)) {
+            throw new Error("Invalid payload: expected JSON object.");
+          }
           client.lastActivity = Date.now();
 
           switch (data.type) {
@@ -367,6 +391,26 @@ export class StackOwlServer {
                 await this.handleAdminCommand(client, data);
               } else {
                 this.send(ws, { type: "error", message: "Not authorized for admin commands." });
+              }
+              break;
+
+            case "subscribe":
+              if (data.event && typeof data.event === "string") {
+                client.subscriptions.add(data.event);
+                this.send(ws, { type: "subscribed", event: data.event });
+                log.engine.info(`[ControlPlane] Client ${client.id} subscribed to ${data.event}`);
+              } else {
+                this.send(ws, { type: "error", message: "subscribe requires 'event' string" });
+              }
+              break;
+
+            case "unsubscribe":
+              if (data.event && typeof data.event === "string") {
+                client.subscriptions.delete(data.event);
+                this.send(ws, { type: "unsubscribed", event: data.event });
+                log.engine.info(`[ControlPlane] Client ${client.id} unsubscribed from ${data.event}`);
+              } else {
+                this.send(ws, { type: "error", message: "unsubscribe requires 'event' string" });
               }
               break;
 
