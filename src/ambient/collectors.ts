@@ -1,11 +1,16 @@
-import { execSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { Logger } from '../logger.js';
-import type { ContextSignal, SignalCollector, SignalPriority, SignalSource } from './types.js';
+import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { Logger } from "../logger.js";
+import type {
+  ContextSignal,
+  SignalCollector,
+  SignalPriority,
+  SignalSource,
+} from "./types.js";
 
-const log = new Logger('AMBIENT');
+const log = new Logger("AMBIENT");
 
 function makeSignal(
   source: SignalSource,
@@ -28,37 +33,39 @@ function makeSignal(
 }
 
 export class GitStatusCollector implements SignalCollector {
-  readonly source: SignalSource = 'git';
+  readonly source: SignalSource = "git";
   readonly intervalMs = 60_000;
 
   constructor(private workspacePath: string) {}
 
   async collect(): Promise<ContextSignal[]> {
     try {
-      const statusRaw = execSync('git status --porcelain', {
+      const statusRaw = execSync("git status --porcelain", {
         cwd: this.workspacePath,
-        encoding: 'utf-8',
+        encoding: "utf-8",
         timeout: 10_000,
       }).trim();
 
-      const logRaw = execSync('git log --oneline -3', {
+      const logRaw = execSync("git log --oneline -3", {
         cwd: this.workspacePath,
-        encoding: 'utf-8',
+        encoding: "utf-8",
         timeout: 10_000,
       }).trim();
 
       const signals: ContextSignal[] = [];
-      const changedFiles = statusRaw ? statusRaw.split('\n').filter(Boolean) : [];
+      const changedFiles = statusRaw
+        ? statusRaw.split("\n").filter(Boolean)
+        : [];
       const fileCount = changedFiles.length;
 
       if (fileCount > 0) {
-        const priority: SignalPriority = fileCount > 5 ? 'medium' : 'low';
-        const summary = changedFiles.slice(0, 10).join('\n');
+        const priority: SignalPriority = fileCount > 5 ? "medium" : "low";
+        const summary = changedFiles.slice(0, 10).join("\n");
         signals.push(
           makeSignal(
-            'git',
+            "git",
             priority,
-            `${fileCount} uncommitted file${fileCount === 1 ? '' : 's'}`,
+            `${fileCount} uncommitted file${fileCount === 1 ? "" : "s"}`,
             summary,
             90_000,
             { fileCount, files: changedFiles.slice(0, 20) },
@@ -68,7 +75,7 @@ export class GitStatusCollector implements SignalCollector {
 
       if (logRaw) {
         signals.push(
-          makeSignal('git', 'low', 'Recent commits', logRaw, 90_000),
+          makeSignal("git", "low", "Recent commits", logRaw, 90_000),
         );
       }
 
@@ -81,7 +88,7 @@ export class GitStatusCollector implements SignalCollector {
 }
 
 export class TimeContextCollector implements SignalCollector {
-  readonly source: SignalSource = 'time_of_day';
+  readonly source: SignalSource = "time_of_day";
   readonly intervalMs = 300_000;
 
   async collect(): Promise<ContextSignal[]> {
@@ -92,21 +99,33 @@ export class TimeContextCollector implements SignalCollector {
       const isWeekend = day === 0 || day === 6;
 
       let period: string;
-      if (hour >= 5 && hour < 12) period = 'morning';
-      else if (hour >= 12 && hour < 17) period = 'afternoon';
-      else if (hour >= 17 && hour < 21) period = 'evening';
-      else period = 'night';
+      if (hour >= 5 && hour < 12) period = "morning";
+      else if (hour >= 12 && hour < 17) period = "afternoon";
+      else if (hour >= 17 && hour < 21) period = "evening";
+      else period = "night";
 
-      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayNames = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+      ];
       const dayName = dayNames[day];
-      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      const dayType = isWeekend ? 'weekend' : 'weekday';
+      const timeStr = now.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+      const dayType = isWeekend ? "weekend" : "weekday";
 
       const title = `${dayName} ${period}, ${timeStr}`;
       const content = `${dayName} ${period} (${dayType}), ${timeStr}. Hour ${hour}.`;
 
       return [
-        makeSignal('time_of_day', 'low', title, content, 360_000, {
+        makeSignal("time_of_day", "low", title, content, 360_000, {
           hour,
           period,
           dayName,
@@ -121,30 +140,45 @@ export class TimeContextCollector implements SignalCollector {
 }
 
 export class SystemCollector implements SignalCollector {
-  readonly source: SignalSource = 'system';
+  readonly source: SignalSource = "system";
   readonly intervalMs = 300_000;
 
   async collect(): Promise<ContextSignal[]> {
     try {
       const signals: ContextSignal[] = [];
 
-      const uptimeRaw = execSync('uptime', { encoding: 'utf-8', timeout: 5_000 }).trim();
+      const uptimeRaw = execSync("uptime", {
+        encoding: "utf-8",
+        timeout: 5_000,
+      }).trim();
       signals.push(
-        makeSignal('system', 'low', 'System uptime', uptimeRaw, 360_000),
+        makeSignal("system", "low", "System uptime", uptimeRaw, 360_000),
       );
 
-      const dfRaw = execSync('df -h /', { encoding: 'utf-8', timeout: 5_000 }).trim();
-      const dfLines = dfRaw.split('\n');
+      const dfRaw = execSync("df -h /", {
+        encoding: "utf-8",
+        timeout: 5_000,
+      }).trim();
+      const dfLines = dfRaw.split("\n");
       if (dfLines.length >= 2) {
         const parts = dfLines[1].split(/\s+/);
-        const usageStr = parts.find(p => p.endsWith('%'));
-        const usagePercent = usageStr ? parseInt(usageStr.replace('%', ''), 10) : 0;
-        const priority: SignalPriority = usagePercent > 90 ? 'high' : 'low';
+        const usageStr = parts.find((p) => p.endsWith("%"));
+        const usagePercent = usageStr
+          ? parseInt(usageStr.replace("%", ""), 10)
+          : 0;
+        const priority: SignalPriority = usagePercent > 90 ? "high" : "low";
 
         signals.push(
-          makeSignal('system', priority, `Disk usage: ${usageStr || 'unknown'}`, dfLines[1], 360_000, {
-            usagePercent,
-          }),
+          makeSignal(
+            "system",
+            priority,
+            `Disk usage: ${usageStr || "unknown"}`,
+            dfLines[1],
+            360_000,
+            {
+              usagePercent,
+            },
+          ),
         );
       }
 
@@ -157,7 +191,7 @@ export class SystemCollector implements SignalCollector {
 }
 
 export class ActiveFileCollector implements SignalCollector {
-  readonly source: SignalSource = 'active_file';
+  readonly source: SignalSource = "active_file";
   readonly intervalMs = 30_000;
 
   constructor(private workspacePath: string) {}
@@ -165,16 +199,20 @@ export class ActiveFileCollector implements SignalCollector {
   async collect(): Promise<ContextSignal[]> {
     try {
       const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-      const recentFiles = this.findRecentFiles(this.workspacePath, fiveMinAgo, 3);
+      const recentFiles = this.findRecentFiles(
+        this.workspacePath,
+        fiveMinAgo,
+        3,
+      );
 
       if (recentFiles.length === 0) return [];
 
-      const fileList = recentFiles.map(f => f.path).join('\n');
+      const fileList = recentFiles.map((f) => f.path).join("\n");
       return [
         makeSignal(
-          'active_file',
-          'low',
-          `${recentFiles.length} recently modified file${recentFiles.length === 1 ? '' : 's'}`,
+          "active_file",
+          "low",
+          `${recentFiles.length} recently modified file${recentFiles.length === 1 ? "" : "s"}`,
           fileList,
           45_000,
           { files: recentFiles },
@@ -199,7 +237,11 @@ export class ActiveFileCollector implements SignalCollector {
     try {
       const entries = readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist') {
+        if (
+          entry.name.startsWith(".") ||
+          entry.name === "node_modules" ||
+          entry.name === "dist"
+        ) {
           continue;
         }
 
@@ -212,7 +254,9 @@ export class ActiveFileCollector implements SignalCollector {
               results.push({ path: fullPath, mtime: stat.mtimeMs });
             }
           } else if (entry.isDirectory()) {
-            results.push(...this.findRecentFiles(fullPath, since, maxDepth, depth + 1));
+            results.push(
+              ...this.findRecentFiles(fullPath, since, maxDepth, depth + 1),
+            );
           }
         } catch {
           // Skip inaccessible files
@@ -227,24 +271,28 @@ export class ActiveFileCollector implements SignalCollector {
 }
 
 export class ClipboardCollector implements SignalCollector {
-  readonly source: SignalSource = 'clipboard';
+  readonly source: SignalSource = "clipboard";
   readonly intervalMs = 10_000;
-  private lastContent = '';
+  private lastContent = "";
 
   async collect(): Promise<ContextSignal[]> {
     try {
-      if (process.platform !== 'darwin') return [];
+      if (process.platform !== "darwin") return [];
 
-      const content = execSync('pbpaste', { encoding: 'utf-8', timeout: 3_000 });
+      const content = execSync("pbpaste", {
+        encoding: "utf-8",
+        timeout: 3_000,
+      });
       const trimmed = content.trim();
 
       if (!trimmed || trimmed === this.lastContent) return [];
 
       this.lastContent = trimmed;
-      const preview = trimmed.length > 200 ? trimmed.slice(0, 200) + '...' : trimmed;
+      const preview =
+        trimmed.length > 200 ? trimmed.slice(0, 200) + "..." : trimmed;
 
       return [
-        makeSignal('clipboard', 'low', 'Clipboard updated', preview, 30_000, {
+        makeSignal("clipboard", "low", "Clipboard updated", preview, 30_000, {
           length: trimmed.length,
         }),
       ];

@@ -18,15 +18,24 @@ export class ServiceRegistry {
   /**
    * Register a service implementation from a plugin.
    */
-  provide<T>(serviceName: string, providerPlugin: string, implementation: T): void {
+  provide<T>(
+    serviceName: string,
+    providerPlugin: string,
+    implementation: T,
+  ): void {
     if (this.services.has(serviceName)) {
       const existing = this.services.get(serviceName)!;
       log.engine.warn(
         `[ServiceRegistry] Service "${serviceName}" already provided by "${existing.provider}", overwriting with "${providerPlugin}"`,
       );
     }
-    this.services.set(serviceName, { provider: providerPlugin, implementation });
-    log.engine.info(`[ServiceRegistry] "${providerPlugin}" provides service "${serviceName}"`);
+    this.services.set(serviceName, {
+      provider: providerPlugin,
+      implementation,
+    });
+    log.engine.info(
+      `[ServiceRegistry] "${providerPlugin}" provides service "${serviceName}"`,
+    );
   }
 
   /**
@@ -63,7 +72,9 @@ export class ServiceRegistry {
       }
     }
     if (removed > 0) {
-      log.engine.info(`[ServiceRegistry] Removed ${removed} services from "${pluginName}"`);
+      log.engine.info(
+        `[ServiceRegistry] Removed ${removed} services from "${pluginName}"`,
+      );
     }
     return removed;
   }

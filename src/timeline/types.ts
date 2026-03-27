@@ -1,5 +1,5 @@
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool' | string;
+  role: "system" | "user" | "assistant" | "tool" | string;
   content: string;
 }
 
@@ -35,10 +35,10 @@ export interface TimelineView {
 }
 
 export interface ReplayOptions {
-  speed: 'instant' | 'normal' | 'slow';
+  speed: "instant" | "normal" | "slow";
   fromIndex?: number;
   toIndex?: number;
-  filter?: 'all' | 'user_only' | 'assistant_only';
+  filter?: "all" | "user_only" | "assistant_only";
 }
 
 export interface ReplayMessage {

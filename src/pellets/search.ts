@@ -14,8 +14,8 @@
  * when the pellet corpus exceeds ~1000 items.
  */
 
-import type { PelletStore } from './store.js';
-import { log } from '../logger.js';
+import type { PelletStore } from "./store.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ interface ScoredPellet {
 interface PelletAttribution {
   pelletId: string;
   usedInSession: string;
-  userRating?: 'positive' | 'negative' | 'neutral';
+  userRating?: "positive" | "negative" | "neutral";
   timestamp: number;
 }
 
@@ -37,9 +37,9 @@ interface PelletAttribution {
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter(t => t.length > 2);
+    .filter((t) => t.length > 2);
 }
 
 function termFrequency(tokens: string[]): Map<string, number> {
@@ -55,7 +55,10 @@ function termFrequency(tokens: string[]): Map<string, number> {
   return tf;
 }
 
-function cosineSimilarity(a: Map<string, number>, b: Map<string, number>): number {
+function cosineSimilarity(
+  a: Map<string, number>,
+  b: Map<string, number>,
+): number {
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;
@@ -89,7 +92,11 @@ export class PelletSearch {
    * @param topK - Maximum number of pellets to return (default: 5)
    * @param minScore - Minimum relevance score to include (default: 0.05)
    */
-  async search(query: string, topK: number = 5, minScore: number = 0.05): Promise<ScoredPellet[]> {
+  async search(
+    query: string,
+    topK: number = 5,
+    minScore: number = 0.05,
+  ): Promise<ScoredPellet[]> {
     const allPellets = await this.loadAllPellets();
     if (allPellets.length === 0) return [];
 
@@ -141,14 +148,14 @@ export class PelletSearch {
 
     // Filter and sort
     const results = scored
-      .filter(p => p.score >= minScore)
+      .filter((p) => p.score >= minScore)
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
 
     if (results.length > 0) {
       log.engine.info(
         `[PelletSearch] Retrieved ${results.length}/${allPellets.length} pellets ` +
-        `(top score: ${results[0].score.toFixed(3)}, threshold: ${minScore})`,
+          `(top score: ${results[0].score.toFixed(3)}, threshold: ${minScore})`,
       );
     }
 
@@ -160,14 +167,14 @@ export class PelletSearch {
    */
   async getRelevantContext(query: string, topK: number = 5): Promise<string> {
     const results = await this.search(query, topK);
-    if (results.length === 0) return '';
+    if (results.length === 0) return "";
 
-    const lines = ['<relevant_knowledge>'];
+    const lines = ["<relevant_knowledge>"];
     for (const pellet of results) {
       lines.push(`[${pellet.domain}] ${pellet.content}`);
     }
-    lines.push('</relevant_knowledge>');
-    return lines.join('\n');
+    lines.push("</relevant_knowledge>");
+    return lines.join("\n");
   }
 
   // ─── Attribution / Feedback Loop ───────────────────────────────
@@ -186,7 +193,10 @@ export class PelletSearch {
   /**
    * Record user feedback on a session (used to learn which pellets help).
    */
-  recordFeedback(sessionId: string, rating: 'positive' | 'negative' | 'neutral'): void {
+  recordFeedback(
+    sessionId: string,
+    rating: "positive" | "negative" | "neutral",
+  ): void {
     for (const attr of this.attributions) {
       if (attr.usedInSession === sessionId) {
         attr.userRating = rating;
@@ -200,18 +210,20 @@ export class PelletSearch {
    */
   getEffectivePellets(): string[] {
     return this.attributions
-      .filter(a => a.userRating === 'positive')
-      .map(a => a.pelletId);
+      .filter((a) => a.userRating === "positive")
+      .map((a) => a.pelletId);
   }
 
   // ─── Private ───────────────────────────────────────────────────
 
-  private async loadAllPellets(): Promise<Array<{ content: string; domain: string }>> {
+  private async loadAllPellets(): Promise<
+    Array<{ content: string; domain: string }>
+  > {
     try {
       const pellets = await this.pelletStore.listAll();
-      return pellets.map(p => ({
-        content: p.content ?? '',
-        domain: p.tags?.[0] ?? 'general',
+      return pellets.map((p) => ({
+        content: p.content ?? "",
+        domain: p.tags?.[0] ?? "general",
       }));
     } catch {
       return [];

@@ -48,7 +48,7 @@ export function getReadyMessages(): ScheduledMessage[] {
  * Get count of pending (unfired) scheduled messages.
  */
 export function getPendingCount(): number {
-  return scheduledMessages.filter(m => !m.fired).length;
+  return scheduledMessages.filter((m) => !m.fired).length;
 }
 
 // ─── Timer Tool ─────────────────────────────────────────────────
@@ -103,7 +103,9 @@ export const TimerTool: ToolImplementation = {
       const minutes = Math.floor(duration / 60);
       const seconds = duration % 60;
       const timeStr =
-        minutes > 0 ? `${minutes}m${seconds > 0 ? ` ${seconds}s` : ""}` : `${seconds}s`;
+        minutes > 0
+          ? `${minutes}m${seconds > 0 ? ` ${seconds}s` : ""}`
+          : `${seconds}s`;
 
       const fireAt = Date.now() + duration * 1000;
       const fireTime = new Date(fireAt).toLocaleTimeString();
@@ -131,7 +133,11 @@ export const TimerTool: ToolImplementation = {
           { timeout: 15000 },
           () => {},
         );
-        exec("afplay /System/Library/Sounds/Glass.aiff", { timeout: 15000 }, () => {});
+        exec(
+          "afplay /System/Library/Sounds/Glass.aiff",
+          { timeout: 15000 },
+          () => {},
+        );
       }, duration * 1000);
 
       return (

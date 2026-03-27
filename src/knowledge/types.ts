@@ -1,4 +1,11 @@
-export type EdgeType = 'supports' | 'contradicts' | 'extends' | 'supersedes' | 'related' | 'requires' | 'caused_by';
+export type EdgeType =
+  | "supports"
+  | "contradicts"
+  | "extends"
+  | "supersedes"
+  | "related"
+  | "requires"
+  | "caused_by";
 
 export interface KnowledgeNode {
   id: string;
@@ -10,6 +17,7 @@ export interface KnowledgeNode {
   createdAt: string;
   updatedAt: string;
   accessCount: number;
+  embedding?: number[];
 }
 
 export interface KnowledgeEdge {

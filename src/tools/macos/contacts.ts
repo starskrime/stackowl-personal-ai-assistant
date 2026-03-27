@@ -5,45 +5,48 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 function escapeForShell(str: string): string {
-    return str.replace(/'/g, "'\\''");
+  return str.replace(/'/g, "'\\''");
 }
 
 export const AppleContactsTool: ToolImplementation = {
-    definition: {
-        name: "apple_contacts",
-        description:
-            "Search macOS Contacts for people by name, email, or phone number.",
-        parameters: {
-            type: "object",
-            properties: {
-                action: {
-                    type: "string",
-                    enum: ["search"],
-                    description: "Action to perform: search for a contact.",
-                },
-                query: {
-                    type: "string",
-                    description: "Name, email, or phone number to search for.",
-                },
-            },
-            required: ["action", "query"],
+  definition: {
+    name: "apple_contacts",
+    description:
+      "Search macOS Contacts for people by name, email, or phone number.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["search"],
+          description: "Action to perform: search for a contact.",
         },
+        query: {
+          type: "string",
+          description: "Name, email, or phone number to search for.",
+        },
+      },
+      required: ["action", "query"],
     },
+  },
 
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
-        const action = args.action as string;
-        const query = args.query as string;
+  async execute(
+    args: Record<string, unknown>,
+    _context: ToolContext,
+  ): Promise<string> {
+    const action = args.action as string;
+    const query = args.query as string;
 
-        if (action !== "search") {
-            return `Error: Unknown action "${action}". Use "search".`;
-        }
+    if (action !== "search") {
+      return `Error: Unknown action "${action}". Use "search".`;
+    }
 
-        if (!query) {
-            return "Error: 'search' action requires a query parameter.";
-        }
+    if (!query) {
+      return "Error: 'search' action requires a query parameter.";
+    }
 
-        try {
-            const script = `
+    try {
+      const script = `
 tell application "Contacts"
     set searchTerm to "${escapeForShell(query)}"
     set output to ""
@@ -89,11 +92,14 @@ tell application "Contacts"
     end if
     return output
 end tell`;
-            const { stdout } = await execAsync(`osascript -e '${escapeForShell(script)}'`, { timeout: 15000 });
-            return stdout.trim() || `No contacts found matching "${query}".`;
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            return `Error searching Contacts: ${msg}`;
-        }
-    },
+      const { stdout } = await execAsync(
+        `osascript -e '${escapeForShell(script)}'`,
+        { timeout: 15000 },
+      );
+      return stdout.trim() || `No contacts found matching "${query}".`;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return `Error searching Contacts: ${msg}`;
+    }
+  },
 };

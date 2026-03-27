@@ -32,11 +32,14 @@ export class ACPRouter {
   private agentHandlers = new Map<string, RegisteredHandler[]>(); // agentId → handlers
   private capabilities = new Map<string, ACPCapability[]>(); // agentId → capabilities
   private backpressure: ACPBackpressure;
-  private pendingRequests = new Map<string, {
-    resolve: (value: unknown) => void;
-    reject: (err: Error) => void;
-    timeout: NodeJS.Timeout;
-  }>();
+  private pendingRequests = new Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (err: Error) => void;
+      timeout: NodeJS.Timeout;
+    }
+  >();
 
   constructor(
     _agentRegistry: AgentRegistry,
@@ -180,7 +183,12 @@ export class ACPRouter {
   async sendToCapability<T>(
     capability: string,
     payload: T,
-    options?: { from?: string; channel?: string; prefer?: string; exclude?: string[] },
+    options?: {
+      from?: string;
+      channel?: string;
+      prefer?: string;
+      exclude?: string[];
+    },
   ): Promise<{ agentId: string; status: DeliveryStatus }> {
     // Find agents with this capability
     const candidates: Array<{ agentId: string; priority: number }> = [];
@@ -241,7 +249,11 @@ export class ACPRouter {
     return new Promise<TOut>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(messageId);
-        reject(new Error(`ACP request to ${to}/${channel} timed out after ${timeoutMs}ms`));
+        reject(
+          new Error(
+            `ACP request to ${to}/${channel} timed out after ${timeoutMs}ms`,
+          ),
+        );
       }, timeoutMs);
 
       this.pendingRequests.set(messageId, {
@@ -313,7 +325,10 @@ export class ACPRouter {
   /**
    * List all registered capabilities.
    */
-  listCapabilities(): Array<{ agentId: string; capabilities: ACPCapability[] }> {
+  listCapabilities(): Array<{
+    agentId: string;
+    capabilities: ACPCapability[];
+  }> {
     return [...this.capabilities.entries()].map(([agentId, caps]) => ({
       agentId,
       capabilities: caps,

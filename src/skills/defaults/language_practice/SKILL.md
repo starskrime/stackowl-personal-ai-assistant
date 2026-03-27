@@ -4,9 +4,13 @@ description: Practice a foreign language with vocabulary drills, sentence constr
 openclaw:
   emoji: "🗣️"
 ---
+
 # Language Practice
+
 Practice a foreign language.
+
 ## Steps
+
 1. **Identify the language** and user's level (beginner, intermediate, advanced).
 2. **Choose exercise type:**
    - **Vocabulary drill:** Present word → ask for translation
@@ -22,13 +26,18 @@ Practice a foreign language.
    ```bash
    run_shell_command("echo '$(date +%Y-%m-%d),<language>,<score>' >> ~/stackowl_language_log.csv")
    ```
+
 ## Examples
+
 ### Spanish vocabulary drill
+
 ```
 Word: "house"
 Your answer: ___
 Correct: "casa" ✅
 ```
+
 ## Error Handling
+
 - **Unknown language:** Ask user to specify from supported languages.
 - **No previous sessions:** Start with beginner-level basics.

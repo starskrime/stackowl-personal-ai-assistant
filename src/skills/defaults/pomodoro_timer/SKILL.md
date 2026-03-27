@@ -17,11 +17,13 @@ Run a Pomodoro focus session with notifications.
    - Break duration (default: 5 minutes)
 
 2. **Start the work timer:**
+
    ```bash
    run_shell_command("(sleep 1500 && osascript -e 'display notification \"Work session complete! Time for a break.\" with title \"🍅 Pomodoro\" sound name \"Glass\"') &")
    ```
 
 3. **Notify the user** that the Pomodoro session has started with the end time:
+
    ```bash
    run_shell_command("date -v+25M '+%H:%M'")
    ```
@@ -34,11 +36,13 @@ Run a Pomodoro focus session with notifications.
 ## Examples
 
 ### Standard 25/5 Pomodoro
+
 ```bash
 run_shell_command("(sleep 1500 && osascript -e 'display notification \"Time for a break!\" with title \"🍅 Pomodoro\" sound name \"Glass\"') &")
 ```
 
 ### Long 50/10 session
+
 ```bash
 run_shell_command("(sleep 3000 && osascript -e 'display notification \"Long session done!\" with title \"🍅 Pomodoro\" sound name \"Glass\"') &")
 ```

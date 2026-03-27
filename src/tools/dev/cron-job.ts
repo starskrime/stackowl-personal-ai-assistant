@@ -47,7 +47,9 @@ export const CronJobTool: ToolImplementation = {
       switch (action) {
         case "list": {
           try {
-            const { stdout } = await execAsync("crontab -l", { timeout: TIMEOUT_MS });
+            const { stdout } = await execAsync("crontab -l", {
+              timeout: TIMEOUT_MS,
+            });
             const lines = stdout.trim();
             if (!lines) return "Crontab is empty.";
             const numbered = lines
@@ -57,13 +59,15 @@ export const CronJobTool: ToolImplementation = {
             return `Current crontab:\n${numbered}`;
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            if (msg.includes("no crontab")) return "No crontab exists for the current user.";
+            if (msg.includes("no crontab"))
+              return "No crontab exists for the current user.";
             return `Error listing crontab: ${msg}`;
           }
         }
 
         case "add": {
-          if (!schedule) return "Error: schedule is required for the add action.";
+          if (!schedule)
+            return "Error: schedule is required for the add action.";
           if (!command) return "Error: command is required for the add action.";
 
           const newEntry = `${schedule} ${command}`;
@@ -71,7 +75,9 @@ export const CronJobTool: ToolImplementation = {
           // Get existing crontab (may be empty)
           let existing = "";
           try {
-            const { stdout } = await execAsync("crontab -l", { timeout: TIMEOUT_MS });
+            const { stdout } = await execAsync("crontab -l", {
+              timeout: TIMEOUT_MS,
+            });
             existing = stdout.trimEnd();
           } catch {
             // No existing crontab, that's fine
@@ -80,19 +86,25 @@ export const CronJobTool: ToolImplementation = {
           const updated = existing ? `${existing}\n${newEntry}` : newEntry;
 
           // Use printf to pipe into crontab
-          await execAsync(`printf '%s\\n' '${updated.replace(/'/g, "'\\''")}' | crontab -`, {
-            timeout: TIMEOUT_MS,
-          });
+          await execAsync(
+            `printf '%s\\n' '${updated.replace(/'/g, "'\\''")}' | crontab -`,
+            {
+              timeout: TIMEOUT_MS,
+            },
+          );
 
           return `Added cron job: ${newEntry}`;
         }
 
         case "remove": {
-          if (lineNumber === undefined) return "Error: line_number is required for the remove action.";
+          if (lineNumber === undefined)
+            return "Error: line_number is required for the remove action.";
 
           let existing: string;
           try {
-            const { stdout } = await execAsync("crontab -l", { timeout: TIMEOUT_MS });
+            const { stdout } = await execAsync("crontab -l", {
+              timeout: TIMEOUT_MS,
+            });
             existing = stdout.trimEnd();
           } catch {
             return "No crontab exists — nothing to remove.";
@@ -112,9 +124,12 @@ export const CronJobTool: ToolImplementation = {
           }
 
           const updated = lines.join("\n");
-          await execAsync(`printf '%s\\n' '${updated.replace(/'/g, "'\\''")}' | crontab -`, {
-            timeout: TIMEOUT_MS,
-          });
+          await execAsync(
+            `printf '%s\\n' '${updated.replace(/'/g, "'\\''")}' | crontab -`,
+            {
+              timeout: TIMEOUT_MS,
+            },
+          );
 
           return `Removed line ${lineNumber}: "${removed}"`;
         }

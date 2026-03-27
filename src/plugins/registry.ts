@@ -5,7 +5,12 @@
  * Topological sort ensures plugins load after their dependencies.
  */
 
-import type { ManagedPlugin, PluginManifest, PluginInstance, PluginState } from "./types.js";
+import type {
+  ManagedPlugin,
+  PluginManifest,
+  PluginInstance,
+  PluginState,
+} from "./types.js";
 import type { PluginSandbox } from "./sandbox.js";
 import { log } from "../logger.js";
 
@@ -22,7 +27,9 @@ export class PluginRegistry {
     pluginDir: string,
   ): void {
     if (this.plugins.has(manifest.name)) {
-      log.engine.warn(`[PluginRegistry] Plugin "${manifest.name}" already registered, replacing`);
+      log.engine.warn(
+        `[PluginRegistry] Plugin "${manifest.name}" already registered, replacing`,
+      );
     }
     this.plugins.set(manifest.name, {
       manifest,

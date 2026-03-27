@@ -22,6 +22,8 @@ export interface StackOwlConfig {
       maxPerMinute: number;
       maxPerHour: number;
     };
+    /** Suppress internal reasoning/thinking messages from being sent to channels. Default: true. */
+    suppressThinkingMessages?: boolean;
   };
   parliament: {
     maxRounds: number;
@@ -79,6 +81,10 @@ export interface StackOwlConfig {
   /** Tool permission gating by category */
   tools?: {
     permissions?: Record<string, "allowed" | "prompt" | "denied">;
+    /** Enable per-turn intent routing for tool selection. Default: true */
+    enableIntentRouting?: boolean;
+    /** Max tools to pass to the model per turn when intent routing is enabled. Default: 8 */
+    maxToolsRouting?: number;
   };
   smartRouting?: {
     enabled: boolean;
@@ -139,10 +145,13 @@ export interface StackOwlConfig {
   /** Rate limiting configuration (extends gateway.rateLimit) */
   rateLimiting?: {
     /** Per-provider rate limits */
-    perProvider?: Record<string, {
-      maxPerMinute: number;
-      maxPerHour?: number;
-    }>;
+    perProvider?: Record<
+      string,
+      {
+        maxPerMinute: number;
+        maxPerHour?: number;
+      }
+    >;
   };
   /** Plugin system configuration */
   plugins?: {
@@ -156,6 +165,17 @@ export interface StackOwlConfig {
     /** Days between automated council sessions. Default: 7 */
     intervalDays?: number;
     /** Enable automated weekly council sessions. Default: true */
+    enabled?: boolean;
+  };
+  /** Cognitive Loop configuration — self-improvement engine */
+  cognition?: {
+    /** Interval between cognitive ticks in minutes. Default: 15 */
+    tickIntervalMinutes?: number;
+    /** Minimum idle minutes before background learning. Default: 5 */
+    minIdleMinutes?: number;
+    /** Maximum actions per day to prevent runaway costs. Default: 20 */
+    maxActionsPerDay?: number;
+    /** Enable/disable the loop. Default: true */
     enabled?: boolean;
   };
   /** Persistent browser pool for anti-bot web fetching */
@@ -216,6 +236,7 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   gateway: {
     port: 3077,
     host: "127.0.0.1",
+    suppressThinkingMessages: true,
   },
   parliament: {
     maxRounds: 3,
@@ -241,6 +262,10 @@ const DEFAULT_CONFIG: StackOwlConfig = {
     directories: [],
     watch: false,
     watchDebounceMs: 250,
+  },
+  tools: {
+    enableIntentRouting: true,
+    maxToolsRouting: 8,
   },
   sandboxing: {
     enabled: true,
@@ -313,6 +338,10 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         ...DEFAULT_CONFIG.skills!,
         ...(userConfig.skills || {}),
       } as NonNullable<StackOwlConfig["skills"]>,
+      tools: {
+        ...DEFAULT_CONFIG.tools!,
+        ...(userConfig.tools || {}),
+      } as NonNullable<StackOwlConfig["tools"]>,
       sandboxing: {
         ...DEFAULT_CONFIG.sandboxing!,
         ...(userConfig.sandboxing || {}),
@@ -334,7 +363,7 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
     // Runtime validation
     const errors = validateConfig(config);
     if (errors.length > 0) {
-      console.warn(`[Config] Validation warnings:\n  ${errors.join('\n  ')}`);
+      console.warn(`[Config] Validation warnings:\n  ${errors.join("\n  ")}`);
     }
 
     return config;
@@ -350,41 +379,50 @@ function validateConfig(config: StackOwlConfig): string[] {
   const errors: string[] = [];
 
   // Required fields
-  if (!config.defaultProvider || typeof config.defaultProvider !== 'string') {
-    errors.push('defaultProvider must be a non-empty string');
+  if (!config.defaultProvider || typeof config.defaultProvider !== "string") {
+    errors.push("defaultProvider must be a non-empty string");
   }
-  if (!config.defaultModel || typeof config.defaultModel !== 'string') {
-    errors.push('defaultModel must be a non-empty string');
+  if (!config.defaultModel || typeof config.defaultModel !== "string") {
+    errors.push("defaultModel must be a non-empty string");
   }
 
   // Provider validation
-  if (!config.providers || typeof config.providers !== 'object') {
-    errors.push('providers must be an object');
+  if (!config.providers || typeof config.providers !== "object") {
+    errors.push("providers must be an object");
   } else {
     if (config.defaultProvider && !config.providers[config.defaultProvider]) {
-      errors.push(`defaultProvider "${config.defaultProvider}" not found in providers`);
+      errors.push(
+        `defaultProvider "${config.defaultProvider}" not found in providers`,
+      );
     }
     for (const [name, entry] of Object.entries(config.providers)) {
-      if (entry.baseUrl && typeof entry.baseUrl !== 'string') {
+      if (entry.baseUrl && typeof entry.baseUrl !== "string") {
         errors.push(`providers.${name}.baseUrl must be a string`);
       }
-      if (entry.baseUrl && !entry.baseUrl.startsWith('http')) {
-        errors.push(`providers.${name}.baseUrl must start with http:// or https://`);
+      if (entry.baseUrl && !entry.baseUrl.startsWith("http")) {
+        errors.push(
+          `providers.${name}.baseUrl must start with http:// or https://`,
+        );
       }
     }
   }
 
   // Gateway
   if (config.gateway) {
-    if (config.gateway.port && (config.gateway.port < 1 || config.gateway.port > 65535)) {
-      errors.push(`gateway.port must be between 1 and 65535 (got ${config.gateway.port})`);
+    if (
+      config.gateway.port &&
+      (config.gateway.port < 1 || config.gateway.port > 65535)
+    ) {
+      errors.push(
+        `gateway.port must be between 1 and 65535 (got ${config.gateway.port})`,
+      );
     }
     if (config.gateway.rateLimit) {
       if (config.gateway.rateLimit.maxPerMinute < 1) {
-        errors.push('gateway.rateLimit.maxPerMinute must be >= 1');
+        errors.push("gateway.rateLimit.maxPerMinute must be >= 1");
       }
       if (config.gateway.rateLimit.maxPerHour < 1) {
-        errors.push('gateway.rateLimit.maxPerHour must be >= 1');
+        errors.push("gateway.rateLimit.maxPerHour must be >= 1");
       }
     }
   }
@@ -392,44 +430,69 @@ function validateConfig(config: StackOwlConfig): string[] {
   // Parliament
   if (config.parliament) {
     if (config.parliament.maxRounds < 1 || config.parliament.maxRounds > 10) {
-      errors.push(`parliament.maxRounds should be 1-10 (got ${config.parliament.maxRounds})`);
+      errors.push(
+        `parliament.maxRounds should be 1-10 (got ${config.parliament.maxRounds})`,
+      );
     }
     if (config.parliament.maxOwls < 1 || config.parliament.maxOwls > 20) {
-      errors.push(`parliament.maxOwls should be 1-20 (got ${config.parliament.maxOwls})`);
+      errors.push(
+        `parliament.maxOwls should be 1-20 (got ${config.parliament.maxOwls})`,
+      );
     }
   }
 
   // Engine
   if (config.engine) {
-    if (config.engine.maxToolIterations !== undefined && config.engine.maxToolIterations < 1) {
-      errors.push('engine.maxToolIterations must be >= 1');
+    if (
+      config.engine.maxToolIterations !== undefined &&
+      config.engine.maxToolIterations < 1
+    ) {
+      errors.push("engine.maxToolIterations must be >= 1");
     }
-    if (config.engine.maxToolIterations !== undefined && config.engine.maxToolIterations > 50) {
-      errors.push(`engine.maxToolIterations=${config.engine.maxToolIterations} is very high — consider <= 30`);
+    if (
+      config.engine.maxToolIterations !== undefined &&
+      config.engine.maxToolIterations > 50
+    ) {
+      errors.push(
+        `engine.maxToolIterations=${config.engine.maxToolIterations} is very high — consider <= 30`,
+      );
     }
-    if (config.engine.maxContextTokens !== undefined && config.engine.maxContextTokens < 1000) {
-      errors.push('engine.maxContextTokens must be >= 1000');
+    if (
+      config.engine.maxContextTokens !== undefined &&
+      config.engine.maxContextTokens < 1000
+    ) {
+      errors.push("engine.maxContextTokens must be >= 1000");
     }
   }
 
   // Owl DNA
   if (config.owlDna) {
     if (config.owlDna.evolutionBatchSize < 1) {
-      errors.push('owlDna.evolutionBatchSize must be >= 1');
+      errors.push("owlDna.evolutionBatchSize must be >= 1");
     }
-    if (config.owlDna.decayRatePerWeek < 0 || config.owlDna.decayRatePerWeek > 1) {
-      errors.push('owlDna.decayRatePerWeek must be between 0 and 1');
+    if (
+      config.owlDna.decayRatePerWeek < 0 ||
+      config.owlDna.decayRatePerWeek > 1
+    ) {
+      errors.push("owlDna.decayRatePerWeek must be between 0 and 1");
     }
   }
 
   // Skills
-  if (config.skills?.enabled && (!config.skills.directories || config.skills.directories.length === 0)) {
-    errors.push('skills.enabled=true but no directories configured');
+  if (
+    config.skills?.enabled &&
+    (!config.skills.directories || config.skills.directories.length === 0)
+  ) {
+    errors.push("skills.enabled=true but no directories configured");
   }
 
   // Smart routing
-  if (config.smartRouting?.enabled && (!config.smartRouting.availableModels || config.smartRouting.availableModels.length === 0)) {
-    errors.push('smartRouting.enabled=true but no availableModels configured');
+  if (
+    config.smartRouting?.enabled &&
+    (!config.smartRouting.availableModels ||
+      config.smartRouting.availableModels.length === 0)
+  ) {
+    errors.push("smartRouting.enabled=true but no availableModels configured");
   }
 
   return errors;

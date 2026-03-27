@@ -36,7 +36,11 @@ import { RecipeStore } from "./recipes.js";
 import { ActionPlanner } from "./planner.js";
 import type { ScreenState } from "./screen-reader.js";
 
-export { readScreen, formatScreenAsText, formatScreenMinimal } from "./screen-reader.js";
+export {
+  readScreen,
+  formatScreenAsText,
+  formatScreenMinimal,
+} from "./screen-reader.js";
 export { readScreenRegion, waitForElement } from "./screen-reader.js";
 export { diffScreenStates } from "./screen-diff.js";
 export { RecipeStore } from "./recipes.js";
@@ -125,7 +129,8 @@ export const ComputerUseTool: ToolImplementation = {
         },
         amount: {
           type: "number",
-          description: "Scroll amount (default 3), wait duration in ms, or timeout for wait_for_element (default 10000)",
+          description:
+            "Scroll amount (default 3), wait duration in ms, or timeout for wait_for_element (default 10000)",
         },
         region: {
           type: "string",
@@ -190,7 +195,8 @@ export const ComputerUseTool: ToolImplementation = {
           try {
             const state = await readScreen();
             lastScreenState = state;
-            textAnalysis = "\n\n--- SCREEN CONTENT (text) ---\n" + formatScreenAsText(state);
+            textAnalysis =
+              "\n\n--- SCREEN CONTENT (text) ---\n" + formatScreenAsText(state);
           } catch {
             // Accessibility might not be available
           }
@@ -221,9 +227,13 @@ export const ComputerUseTool: ToolImplementation = {
         // ── Analyze Region (focused read) ─────────────────────────
         case "analyze_region": {
           const regionStr = args.region as string;
-          if (!regionStr) return "Error: analyze_region requires region parameter as JSON.";
+          if (!regionStr)
+            return "Error: analyze_region requires region parameter as JSON.";
           const region = JSON.parse(regionStr) as {
-            x: number; y: number; width: number; height: number;
+            x: number;
+            y: number;
+            width: number;
+            height: number;
           };
           const appName = args.app_name as string | undefined;
           const state = await readScreenRegion(region, appName);
@@ -233,7 +243,9 @@ export const ComputerUseTool: ToolImplementation = {
 
         // ── Screen Diff ───────────────────────────────────────────
         case "screen_diff": {
-          const currentState = await readScreen(args.app_name as string | undefined);
+          const currentState = await readScreen(
+            args.app_name as string | undefined,
+          );
           if (!lastScreenState) {
             lastScreenState = currentState;
             return "No previous screen state to compare. This is the first read — future screen_diff calls will show changes.";
@@ -266,18 +278,19 @@ export const ComputerUseTool: ToolImplementation = {
             const cy = Math.round(found.position.y + found.size.height / 2);
             return (
               `Element found: ${found.role} "${found.label}"` +
-              (found.value ? ` = "${found.value}"` : '') +
+              (found.value ? ` = "${found.value}"` : "") +
               ` @ (${cx}, ${cy})\n` +
               `Click coordinates: (${cx}, ${cy})`
             );
           }
-          return `Element not found within ${timeout}ms.${searchText ? ` Searched for: "${searchText}"` : ''}${role ? ` Role: ${role}` : ''}`;
+          return `Element not found within ${timeout}ms.${searchText ? ` Searched for: "${searchText}"` : ""}${role ? ` Role: ${role}` : ""}`;
         }
 
         // ── Plan and Execute ──────────────────────────────────────
         case "plan_and_execute": {
           const task = args.text as string;
-          if (!task) return "Error: plan_and_execute requires text parameter with task description.";
+          if (!task)
+            return "Error: plan_and_execute requires text parameter with task description.";
 
           // Get provider from engine context
           const provider = context.engineContext?.provider;
@@ -317,26 +330,24 @@ export const ComputerUseTool: ToolImplementation = {
           // Save as recipe on success
           if (result.success && result.completedSteps.length >= 2) {
             const frontApp = await mac.getFrontApp();
-            planner.saveAsRecipe(
-              task,
-              [frontApp],
-              result.completedSteps,
-              [],
-            );
+            planner.saveAsRecipe(task, [frontApp], result.completedSteps, []);
           }
 
           // Build response
           const lines: string[] = [];
           lines.push(`Task: "${task}"`);
           lines.push(`Plan: ${plan.reasoning}`);
-          lines.push(`Result: ${result.success ? 'SUCCESS' : 'FAILED'} (${result.stepsCompleted}/${result.totalSteps} steps)`);
+          lines.push(
+            `Result: ${result.success ? "SUCCESS" : "FAILED"} (${result.stepsCompleted}/${result.totalSteps} steps)`,
+          );
           if (result.error) lines.push(`Error: ${result.error}`);
-          if (result.screenChanges) lines.push(`Screen: ${result.screenChanges}`);
+          if (result.screenChanges)
+            lines.push(`Screen: ${result.screenChanges}`);
           if (result.success && result.completedSteps.length >= 2) {
             lines.push(`Recipe saved for future reuse.`);
           }
 
-          return lines.join('\n');
+          return lines.join("\n");
         }
 
         // ── List Recipes ──────────────────────────────────────────
@@ -348,9 +359,12 @@ export const ComputerUseTool: ToolImplementation = {
           if (recipes.length === 0) {
             return "No saved recipes. Use plan_and_execute to create workflows — successful ones are saved automatically.";
           }
-          return recipes.map(r =>
-            `- "${r.task}" (${r.steps.length} steps, used ${r.successCount}x, apps: ${r.apps.join(', ')})`
-          ).join('\n');
+          return recipes
+            .map(
+              (r) =>
+                `- "${r.task}" (${r.steps.length} steps, used ${r.successCount}x, apps: ${r.apps.join(", ")})`,
+            )
+            .join("\n");
         }
 
         // ── Mouse Click ─────────────────────────────────────────────

@@ -10,7 +10,12 @@
 
 // ─── Task & Result ──────────────────────────────────────────────
 
-export type AgentStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
+export type AgentStatus =
+  | "idle"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface AgentTask {
   id: string;

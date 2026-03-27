@@ -8,7 +8,12 @@
 
 // ─── Reloadable Module Kinds ───────────────────────────────────
 
-export type ReloadableKind = "tool" | "skill" | "plugin" | "config" | "connector";
+export type ReloadableKind =
+  | "tool"
+  | "skill"
+  | "plugin"
+  | "config"
+  | "connector";
 
 // ─── Reloadable Module Interface ───────────────────────────────
 

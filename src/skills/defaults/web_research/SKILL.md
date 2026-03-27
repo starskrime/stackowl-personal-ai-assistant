@@ -4,9 +4,13 @@ description: Perform deep multi-source research on a topic using web search, art
 openclaw:
   emoji: "🔬"
 ---
+
 # Web Research
+
 Conduct comprehensive research on a topic.
+
 ## Steps
+
 1. **Run multiple targeted searches:**
    ```
    web_search query="<topic> overview"
@@ -24,13 +28,18 @@ Conduct comprehensive research on a topic.
    - Different perspectives
    - Sources with URLs
 4. **Present** to the user.
+
 ## Examples
+
 ### Research a technology
+
 ```
 web_search query="WebAssembly use cases 2026"
 web_crawl url="<top_result_url>"
 ```
+
 ## Error Handling
+
 - **No results:** Broaden the query or try different search terms.
 - **Paywalled articles:** Use `scrapling_fetch` or find alternative sources.
 - **Contradictory sources:** Note the disagreement and present both perspectives.

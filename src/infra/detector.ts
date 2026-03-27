@@ -11,9 +11,17 @@ import type { InfraService } from "./types.js";
 import { log } from "../logger.js";
 
 // Pattern-based detection — zero LLM cost
-const SERVICE_PATTERNS: Array<{ pattern: RegExp; type: InfraService["type"]; provider?: string }> = [
+const SERVICE_PATTERNS: Array<{
+  pattern: RegExp;
+  type: InfraService["type"];
+  provider?: string;
+}> = [
   // Databases
-  { pattern: /\b(?:postgres(?:ql)?|pg)\b/i, type: "database", provider: undefined },
+  {
+    pattern: /\b(?:postgres(?:ql)?|pg)\b/i,
+    type: "database",
+    provider: undefined,
+  },
   { pattern: /\bmysql\b/i, type: "database" },
   { pattern: /\bmongo(?:db)?\b/i, type: "database" },
   { pattern: /\bredis\b/i, type: "cache" },
@@ -26,7 +34,11 @@ const SERVICE_PATTERNS: Array<{ pattern: RegExp; type: InfraService["type"]; pro
   { pattern: /\bkafka\b/i, type: "queue" },
   { pattern: /\bsqs\b/i, type: "queue", provider: "aws" },
   // Cloud
-  { pattern: /\b(?:aws|amazon web services)\b/i, type: "other", provider: "aws" },
+  {
+    pattern: /\b(?:aws|amazon web services)\b/i,
+    type: "other",
+    provider: "aws",
+  },
   { pattern: /\b(?:gcp|google cloud)\b/i, type: "other", provider: "gcp" },
   { pattern: /\bazure\b/i, type: "other", provider: "azure" },
   { pattern: /\bvercel\b/i, type: "other", provider: "vercel" },
@@ -141,7 +153,9 @@ export class InfraDetector {
     }
 
     if (detected > 0) {
-      log.engine.info(`[InfraDetector] Detected ${detected} infrastructure mentions`);
+      log.engine.info(
+        `[InfraDetector] Detected ${detected} infrastructure mentions`,
+      );
     }
   }
 }

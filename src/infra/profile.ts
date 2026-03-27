@@ -7,7 +7,12 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
-import type { InfraProfile, InfraService, InfraConnection, InfraEnvironment } from "./types.js";
+import type {
+  InfraProfile,
+  InfraService,
+  InfraConnection,
+  InfraEnvironment,
+} from "./types.js";
 import { log } from "../logger.js";
 
 const EMPTY_PROFILE: InfraProfile = {
@@ -31,7 +36,9 @@ export class InfraProfileStore {
       if (existsSync(this.filePath)) {
         const raw = await readFile(this.filePath, "utf-8");
         this.profile = JSON.parse(raw);
-        log.engine.info(`[InfraProfile] Loaded ${this.profile.metadata.totalServices} services`);
+        log.engine.info(
+          `[InfraProfile] Loaded ${this.profile.metadata.totalServices} services`,
+        );
       }
     } catch (err) {
       log.engine.warn(`[InfraProfile] Failed to load: ${err}`);
@@ -45,11 +52,19 @@ export class InfraProfileStore {
       const dir = dirname(this.filePath);
       if (!existsSync(dir)) await mkdir(dir, { recursive: true });
       this.profile.lastUpdated = Date.now();
-      this.profile.metadata.totalServices = this.profile.environments
-        .reduce((sum, env) => sum + env.services.length, 0);
-      await writeFile(this.filePath, JSON.stringify(this.profile, null, 2), "utf-8");
+      this.profile.metadata.totalServices = this.profile.environments.reduce(
+        (sum, env) => sum + env.services.length,
+        0,
+      );
+      await writeFile(
+        this.filePath,
+        JSON.stringify(this.profile, null, 2),
+        "utf-8",
+      );
       this.dirty = false;
-      log.engine.info(`[InfraProfile] Saved ${this.profile.metadata.totalServices} services`);
+      log.engine.info(
+        `[InfraProfile] Saved ${this.profile.metadata.totalServices} services`,
+      );
     } catch (err) {
       log.engine.warn(`[InfraProfile] Failed to save: ${err}`);
     }
@@ -60,11 +75,11 @@ export class InfraProfileStore {
   }
 
   getEnvironment(name: string): InfraEnvironment | undefined {
-    return this.profile.environments.find(e => e.name === name);
+    return this.profile.environments.find((e) => e.name === name);
   }
 
   getOrCreateEnvironment(name: string): InfraEnvironment {
-    let env = this.profile.environments.find(e => e.name === name);
+    let env = this.profile.environments.find((e) => e.name === name);
     if (!env) {
       env = { name, services: [], connections: [] };
       this.profile.environments.push(env);
@@ -73,9 +88,12 @@ export class InfraProfileStore {
     return env;
   }
 
-  addService(envName: string, service: Omit<InfraService, "discoveredAt" | "lastMentioned">): InfraService {
+  addService(
+    envName: string,
+    service: Omit<InfraService, "discoveredAt" | "lastMentioned">,
+  ): InfraService {
     const env = this.getOrCreateEnvironment(envName);
-    const existing = env.services.find(s => s.name === service.name);
+    const existing = env.services.find((s) => s.name === service.name);
     if (existing) {
       Object.assign(existing, service, { lastMentioned: Date.now() });
       this.dirty = true;
@@ -94,7 +112,10 @@ export class InfraProfileStore {
   addConnection(envName: string, connection: InfraConnection): void {
     const env = this.getOrCreateEnvironment(envName);
     const exists = env.connections.some(
-      c => c.from === connection.from && c.to === connection.to && c.type === connection.type
+      (c) =>
+        c.from === connection.from &&
+        c.to === connection.to &&
+        c.type === connection.type,
     );
     if (!exists) {
       env.connections.push(connection);
@@ -114,7 +135,9 @@ export class InfraProfileStore {
     return results;
   }
 
-  findByType(type: InfraService["type"]): Array<{ env: string; service: InfraService }> {
+  findByType(
+    type: InfraService["type"],
+  ): Array<{ env: string; service: InfraService }> {
     const results: Array<{ env: string; service: InfraService }> = [];
     for (const env of this.profile.environments) {
       for (const svc of env.services) {

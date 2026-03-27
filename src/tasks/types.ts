@@ -8,12 +8,12 @@
 // ─── Status ──────────────────────────────────────────────────────
 
 export type TaskStatus =
-  | 'pending'      // queued but not started
-  | 'running'      // actively executing (ReAct loop in progress)
-  | 'paused'       // waiting for user input or approval
-  | 'completed'    // finished successfully
-  | 'failed'       // terminal failure
-  | 'cancelled';   // user or system cancelled
+  | "pending" // queued but not started
+  | "running" // actively executing (ReAct loop in progress)
+  | "paused" // waiting for user input or approval
+  | "completed" // finished successfully
+  | "failed" // terminal failure
+  | "cancelled"; // user or system cancelled
 
 // ─── Checkpoint ──────────────────────────────────────────────────
 
@@ -78,10 +78,10 @@ export interface Task {
 // ─── Task Events ─────────────────────────────────────────────────
 
 export type TaskEvent =
-  | { type: 'task:created'; task: Task }
-  | { type: 'task:started'; taskId: string }
-  | { type: 'task:progress'; taskId: string; message: string; percent: number }
-  | { type: 'task:checkpoint'; taskId: string; checkpoint: TaskCheckpoint }
-  | { type: 'task:completed'; taskId: string; result: string }
-  | { type: 'task:failed'; taskId: string; error: string }
-  | { type: 'task:cancelled'; taskId: string };
+  | { type: "task:created"; task: Task }
+  | { type: "task:started"; taskId: string }
+  | { type: "task:progress"; taskId: string; message: string; percent: number }
+  | { type: "task:checkpoint"; taskId: string; checkpoint: TaskCheckpoint }
+  | { type: "task:completed"; taskId: string; result: string }
+  | { type: "task:failed"; taskId: string; error: string }
+  | { type: "task:cancelled"; taskId: string };

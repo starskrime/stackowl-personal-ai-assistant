@@ -4,9 +4,13 @@ description: Connect to remote servers via SSH, manage SSH keys, and execute rem
 openclaw:
   emoji: "🔑"
 ---
+
 # SSH Connect
+
 Manage SSH connections and keys.
+
 ## Steps
+
 1. **Connect to server:**
    ```bash
    run_shell_command("ssh <user>@<host>")
@@ -23,12 +27,17 @@ Manage SSH connections and keys.
    ```bash
    run_shell_command("ssh-copy-id <user>@<host>")
    ```
+
 ## Examples
+
 ### Run remote command
+
 ```bash
 run_shell_command("ssh user@server.com 'uptime && df -h'")
 ```
+
 ## Error Handling
+
 - **Connection refused:** Check if SSH is running on the host (port 22).
 - **Permission denied:** Key may not be authorized; use `ssh-copy-id`.
 - **Host key verification:** Accept on first connect or check `~/.ssh/known_hosts`.

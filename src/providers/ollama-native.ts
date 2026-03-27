@@ -48,9 +48,7 @@ function toOllamaMessages(messages: ChatMessage[]): OllamaMessage[] {
   });
 }
 
-function toOllamaTools(
-  tools: ToolDefinition[],
-): Array<{
+function toOllamaTools(tools: ToolDefinition[]): Array<{
   type: "function";
   function: { name: string; description: string; parameters: unknown };
 }> {
@@ -158,7 +156,10 @@ export class OllamaNativeProvider implements ModelProvider {
       const msg = err instanceof Error ? err.message : String(err);
       // Ollama's Go backend fails to parse malformed tool call JSON from the model.
       // Retry without tools so the model responds with plain text instead of crashing.
-      if (msg.includes("error parsing tool call") || msg.includes("invalid character")) {
+      if (
+        msg.includes("error parsing tool call") ||
+        msg.includes("invalid character")
+      ) {
         log.engine.warn(
           `[Ollama] Tool call parse error — retrying without tools: ${msg.slice(0, 120)}`,
         );
@@ -189,7 +190,10 @@ export class OllamaNativeProvider implements ModelProvider {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("error parsing tool call") || msg.includes("invalid character")) {
+      if (
+        msg.includes("error parsing tool call") ||
+        msg.includes("invalid character")
+      ) {
         log.engine.warn(
           `[Ollama] Tool call parse error in stream — falling back to plain chat: ${msg.slice(0, 120)}`,
         );
@@ -244,8 +248,7 @@ export class OllamaNativeProvider implements ModelProvider {
             promptTokens: lastChunk.prompt_eval_count ?? 0,
             completionTokens: lastChunk.eval_count ?? 0,
             totalTokens:
-              (lastChunk.prompt_eval_count ?? 0) +
-              (lastChunk.eval_count ?? 0),
+              (lastChunk.prompt_eval_count ?? 0) + (lastChunk.eval_count ?? 0),
           }
         : undefined,
     };

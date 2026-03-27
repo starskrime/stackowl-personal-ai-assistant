@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { Logger } from '../logger.js';
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { Logger } from "../logger.js";
 import type {
   ChatMessage,
   TimelineSnapshot,
@@ -9,9 +9,9 @@ import type {
   TimelineView,
   ReplayOptions,
   ReplayMessage,
-} from './types.js';
+} from "./types.js";
 
-const log = new Logger('TIMELINE');
+const log = new Logger("TIMELINE");
 
 const AUTO_SNAPSHOT_INTERVAL = 10; // messages between auto-snapshots
 const DEFAULT_MAX_PER_SESSION = 20;
@@ -27,18 +27,20 @@ export class TimelineManager {
   private filePath: string;
 
   constructor(private workspacePath: string) {
-    this.filePath = join(workspacePath, 'timelines.json');
+    this.filePath = join(workspacePath, "timelines.json");
   }
 
   async load(): Promise<void> {
     if (!existsSync(this.filePath)) return;
 
     try {
-      const raw = readFileSync(this.filePath, 'utf-8');
+      const raw = readFileSync(this.filePath, "utf-8");
       const data = JSON.parse(raw) as TimelineData;
       for (const s of data.snapshots) this.snapshots.set(s.id, s);
       for (const f of data.forks) this.forks.set(f.id, f);
-      log.info(`Loaded ${this.snapshots.size} snapshots, ${this.forks.size} forks`);
+      log.info(
+        `Loaded ${this.snapshots.size} snapshots, ${this.forks.size} forks`,
+      );
     } catch (err) {
       log.warn(`Failed to load timeline data: ${err}`);
     }
@@ -63,7 +65,9 @@ export class TimelineManager {
     };
 
     this.snapshots.set(snapshot.id, snapshot);
-    log.info(`Snapshot created: ${snapshot.id} (session ${sessionId}, ${messages.length} msgs)`);
+    log.info(
+      `Snapshot created: ${snapshot.id} (session ${sessionId}, ${messages.length} msgs)`,
+    );
     return snapshot;
   }
 
@@ -80,7 +84,12 @@ export class TimelineManager {
       }
     }
 
-    return this.createSnapshot(sessionId, messages, owlName, `Auto-snapshot at message ${messages.length}`);
+    return this.createSnapshot(
+      sessionId,
+      messages,
+      owlName,
+      `Auto-snapshot at message ${messages.length}`,
+    );
   }
 
   fork(snapshotId: string, newSessionId: string, reason?: string): SessionFork {
@@ -100,7 +109,9 @@ export class TimelineManager {
     };
 
     this.forks.set(fork.id, fork);
-    log.info(`Session forked: ${snapshot.sessionId} → ${newSessionId} at index ${snapshot.messageIndex}`);
+    log.info(
+      `Session forked: ${snapshot.sessionId} → ${newSessionId} at index ${snapshot.messageIndex}`,
+    );
     return fork;
   }
 
@@ -111,17 +122,20 @@ export class TimelineManager {
     if (snapshots.length === 0 && forks.length === 0) return null;
 
     const allTimes = [
-      ...snapshots.map(s => s.metadata.snapshotAt),
-      ...forks.map(f => f.createdAt),
+      ...snapshots.map((s) => s.metadata.snapshotAt),
+      ...forks.map((f) => f.createdAt),
     ];
 
     return {
       sessionId,
       snapshots,
       forks,
-      totalMessages: snapshots.length > 0 ? snapshots[snapshots.length - 1].messageIndex : 0,
-      created: allTimes.length > 0 ? allTimes.sort()[0] : new Date().toISOString(),
-      lastActivity: allTimes.length > 0 ? allTimes.sort().pop()! : new Date().toISOString(),
+      totalMessages:
+        snapshots.length > 0 ? snapshots[snapshots.length - 1].messageIndex : 0,
+      created:
+        allTimes.length > 0 ? allTimes.sort()[0] : new Date().toISOString(),
+      lastActivity:
+        allTimes.length > 0 ? allTimes.sort().pop()! : new Date().toISOString(),
     };
   }
 
@@ -146,7 +160,10 @@ export class TimelineManager {
     return result.sort((a, b) => a.forkIndex - b.forkIndex);
   }
 
-  replay(sessionId: string, options: ReplayOptions = { speed: 'instant' }): ReplayMessage[] {
+  replay(
+    sessionId: string,
+    options: ReplayOptions = { speed: "instant" },
+  ): ReplayMessage[] {
     const snapshots = this.getSnapshots(sessionId);
     if (snapshots.length === 0) return [];
 
@@ -154,15 +171,17 @@ export class TimelineManager {
     const messages = latest.messages;
     const from = options.fromIndex ?? 0;
     const to = options.toIndex ?? messages.length;
-    const filter = options.filter ?? 'all';
+    const filter = options.filter ?? "all";
 
-    const forkIndices = new Set(this.getForks(sessionId).map(f => f.forkIndex));
+    const forkIndices = new Set(
+      this.getForks(sessionId).map((f) => f.forkIndex),
+    );
 
     const result: ReplayMessage[] = [];
     for (let i = from; i < to && i < messages.length; i++) {
       const msg = messages[i];
-      if (filter === 'user_only' && msg.role !== 'user') continue;
-      if (filter === 'assistant_only' && msg.role !== 'assistant') continue;
+      if (filter === "user_only" && msg.role !== "user") continue;
+      if (filter === "assistant_only" && msg.role !== "assistant") continue;
 
       result.push({
         index: i,
@@ -175,7 +194,10 @@ export class TimelineManager {
     return result;
   }
 
-  compare(snapshotIdA: string, snapshotIdB: string): {
+  compare(
+    snapshotIdA: string,
+    snapshotIdB: string,
+  ): {
     divergenceIndex: number;
     messagesOnlyInA: ChatMessage[];
     messagesOnlyInB: ChatMessage[];
@@ -235,7 +257,7 @@ export class TimelineManager {
         snapshots: Array.from(this.snapshots.values()),
         forks: Array.from(this.forks.values()),
       };
-      writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
+      writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
     } catch (err) {
       log.error(`Failed to save timeline data: ${err}`);
     }

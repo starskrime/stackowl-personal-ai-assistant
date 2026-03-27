@@ -23,10 +23,7 @@ function markdownToHtml(md: string): string {
   );
 
   // Inline code
-  html = html.replace(
-    /`([^`]+)`/g,
-    "<code>$1</code>",
-  );
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
 
   // Headers
   html = html.replace(/^######\s+(.+)$/gm, "<h6>$1</h6>");
@@ -42,16 +39,10 @@ function markdownToHtml(md: string): string {
   html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
 
   // Links
-  html = html.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2">$1</a>',
-  );
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
   // Images
-  html = html.replace(
-    /!\[([^\]]*)\]\(([^)]+)\)/g,
-    '<img src="$2" alt="$1" />',
-  );
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
 
   // Unordered lists
   html = html.replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>");

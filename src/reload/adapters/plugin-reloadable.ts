@@ -31,7 +31,9 @@ export class PluginReloadable implements ReloadableModule {
     if (!existsSync(this.filePath)) return false;
 
     try {
-      const raw = await (await import("node:fs/promises")).readFile(this.filePath, "utf-8");
+      const raw = await (
+        await import("node:fs/promises")
+      ).readFile(this.filePath, "utf-8");
       const manifest = JSON.parse(raw);
       return !!manifest.name && !!manifest.version && !!manifest.entryPoint;
     } catch {

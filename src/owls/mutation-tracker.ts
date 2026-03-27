@@ -12,12 +12,12 @@
  *   5. Trend analysis to identify which mutation types work best
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { OwlDNA } from './persona.js';
-import type { OwlRegistry } from './registry.js';
-import { log } from '../logger.js';
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import type { OwlDNA } from "./persona.js";
+import type { OwlRegistry } from "./registry.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ export interface MutationAnalysis {
   oscillations: OscillationDetection;
   bestMutationType: string | null;
   worstMutationType: string | null;
-  recommendedAction: 'proceed' | 'freeze' | 'rollback';
+  recommendedAction: "proceed" | "freeze" | "rollback";
 }
 
 // ─── Tracker ─────────────────────────────────────────────────────
@@ -86,21 +86,21 @@ export class MutationTracker {
     private owlRegistry: OwlRegistry,
     workspacePath: string,
   ) {
-    const trackerDir = join(workspacePath, 'evolution');
-    this.filePath = join(trackerDir, 'mutation-tracker.json');
+    const trackerDir = join(workspacePath, "evolution");
+    this.filePath = join(trackerDir, "mutation-tracker.json");
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────
 
   async init(): Promise<void> {
-    const dir = join(this.filePath, '..');
+    const dir = join(this.filePath, "..");
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
 
     if (existsSync(this.filePath)) {
       try {
-        const raw = await readFile(this.filePath, 'utf-8');
+        const raw = await readFile(this.filePath, "utf-8");
         this.records = JSON.parse(raw);
       } catch (err) {
         log.evolution.warn(`[MutationTracker] Failed to load: ${err}`);
@@ -114,7 +114,11 @@ export class MutationTracker {
     if (this.records.length > MutationTracker.MAX_RECORDS) {
       this.records = this.records.slice(-MutationTracker.MAX_RECORDS);
     }
-    await writeFile(this.filePath, JSON.stringify(this.records, null, 2), 'utf-8');
+    await writeFile(
+      this.filePath,
+      JSON.stringify(this.records, null, 2),
+      "utf-8",
+    );
   }
 
   // ─── Record Mutation ───────────────────────────────────────────
@@ -151,7 +155,7 @@ export class MutationTracker {
     dna: OwlDNA,
     mutations: string[],
   ): Promise<void> {
-    const record = this.records.find(r => r.id === recordId);
+    const record = this.records.find((r) => r.id === recordId);
     if (!record) return;
 
     record.afterSnapshot = this.snapshot(dna);
@@ -159,7 +163,9 @@ export class MutationTracker {
     record.generation = dna.generation;
 
     await this.save();
-    log.evolution.info(`[MutationTracker] Recorded mutation ${recordId}: ${mutations.length} changes`);
+    log.evolution.info(
+      `[MutationTracker] Recorded mutation ${recordId}: ${mutations.length} changes`,
+    );
   }
 
   // ─── Satisfaction Feedback ─────────────────────────────────────
@@ -179,7 +185,12 @@ export class MutationTracker {
     // Find the most recent unresolved mutation for this owl
     const recent = [...this.records]
       .reverse()
-      .find(r => r.owlName === owlName && !r.rolledBack && r.postMutationSatisfaction === null);
+      .find(
+        (r) =>
+          r.owlName === owlName &&
+          !r.rolledBack &&
+          r.postMutationSatisfaction === null,
+      );
 
     if (!recent) {
       return { shouldRollback: false };
@@ -192,7 +203,8 @@ export class MutationTracker {
       recent.postMutationSatisfaction = satisfaction;
     } else {
       recent.postMutationSatisfaction =
-        (recent.postMutationSatisfaction * (recent.sessionsObserved - 1) + satisfaction) /
+        (recent.postMutationSatisfaction * (recent.sessionsObserved - 1) +
+          satisfaction) /
         recent.sessionsObserved;
     }
 
@@ -223,7 +235,7 @@ export class MutationTracker {
    * Roll back a mutation by restoring the before-snapshot DNA state.
    */
   async rollback(owlName: string, recordId: string): Promise<boolean> {
-    const record = this.records.find(r => r.id === recordId);
+    const record = this.records.find((r) => r.id === recordId);
     if (!record || record.rolledBack) return false;
 
     const owl = this.owlRegistry.get(owlName);
@@ -231,8 +243,10 @@ export class MutationTracker {
 
     // Restore pre-mutation state
     const before = record.beforeSnapshot;
-    owl.dna.evolvedTraits.challengeLevel = before.challengeLevel as OwlDNA['evolvedTraits']['challengeLevel'];
-    owl.dna.evolvedTraits.verbosity = before.verbosity as OwlDNA['evolvedTraits']['verbosity'];
+    owl.dna.evolvedTraits.challengeLevel =
+      before.challengeLevel as OwlDNA["evolvedTraits"]["challengeLevel"];
+    owl.dna.evolvedTraits.verbosity =
+      before.verbosity as OwlDNA["evolvedTraits"]["verbosity"];
     owl.dna.evolvedTraits.humor = before.humor;
     owl.dna.evolvedTraits.formality = before.formality;
 
@@ -269,24 +283,36 @@ export class MutationTracker {
    * evolve or freeze.
    */
   analyze(owlName: string): MutationAnalysis {
-    const owlRecords = this.records.filter(r => r.owlName === owlName && !r.rolledBack);
+    const owlRecords = this.records.filter(
+      (r) => r.owlName === owlName && !r.rolledBack,
+    );
 
     if (owlRecords.length < 3) {
       return {
         totalMutations: owlRecords.length,
         avgSatisfaction: 0.5,
-        oscillations: { isOscillating: false, oscillatingTraits: [], recommendation: '' },
+        oscillations: {
+          isOscillating: false,
+          oscillatingTraits: [],
+          recommendation: "",
+        },
         bestMutationType: null,
         worstMutationType: null,
-        recommendedAction: 'proceed',
+        recommendedAction: "proceed",
       };
     }
 
     // Calculate average satisfaction
-    const withSatisfaction = owlRecords.filter(r => r.postMutationSatisfaction !== null);
-    const avgSatisfaction = withSatisfaction.length > 0
-      ? withSatisfaction.reduce((sum, r) => sum + (r.postMutationSatisfaction ?? 0), 0) / withSatisfaction.length
-      : 0.5;
+    const withSatisfaction = owlRecords.filter(
+      (r) => r.postMutationSatisfaction !== null,
+    );
+    const avgSatisfaction =
+      withSatisfaction.length > 0
+        ? withSatisfaction.reduce(
+            (sum, r) => sum + (r.postMutationSatisfaction ?? 0),
+            0,
+          ) / withSatisfaction.length
+        : 0.5;
 
     // Detect oscillation
     const oscillations = this.detectOscillation(owlRecords);
@@ -309,14 +335,20 @@ export class MutationTracker {
 
     for (const [type, scores] of mutationTypes) {
       const avg = scores.reduce((s, v) => s + v, 0) / scores.length;
-      if (avg > bestAvg) { bestAvg = avg; bestType = type; }
-      if (avg < worstAvg) { worstAvg = avg; worstType = type; }
+      if (avg > bestAvg) {
+        bestAvg = avg;
+        bestType = type;
+      }
+      if (avg < worstAvg) {
+        worstAvg = avg;
+        worstType = type;
+      }
     }
 
     // Recommended action
-    let action: MutationAnalysis['recommendedAction'] = 'proceed';
-    if (oscillations.isOscillating) action = 'freeze';
-    if (avgSatisfaction < 0.3) action = 'rollback';
+    let action: MutationAnalysis["recommendedAction"] = "proceed";
+    if (oscillations.isOscillating) action = "freeze";
+    if (avgSatisfaction < 0.3) action = "rollback";
 
     return {
       totalMutations: owlRecords.length,
@@ -344,40 +376,55 @@ export class MutationTracker {
 
   private getBaseline(owlName: string, excludeRecordId: string): number {
     const previous = this.records
-      .filter(r => r.owlName === owlName && r.id !== excludeRecordId && r.postMutationSatisfaction !== null)
+      .filter(
+        (r) =>
+          r.owlName === owlName &&
+          r.id !== excludeRecordId &&
+          r.postMutationSatisfaction !== null,
+      )
       .slice(-MutationTracker.SATISFACTION_WINDOW);
 
     if (previous.length === 0) return 0.5; // Neutral baseline
 
-    return previous.reduce((sum, r) => sum + (r.postMutationSatisfaction ?? 0.5), 0) / previous.length;
+    return (
+      previous.reduce(
+        (sum, r) => sum + (r.postMutationSatisfaction ?? 0.5),
+        0,
+      ) / previous.length
+    );
   }
 
   private detectOscillation(records: MutationRecord[]): OscillationDetection {
     const last5 = records.slice(-5);
     if (last5.length < 3) {
-      return { isOscillating: false, oscillatingTraits: [], recommendation: '' };
+      return {
+        isOscillating: false,
+        oscillatingTraits: [],
+        recommendation: "",
+      };
     }
 
     const oscillating: string[] = [];
 
     // Check challenge level oscillation
-    const challengeLevels = last5.map(r => r.afterSnapshot.challengeLevel);
-    if (this.isFlipping(challengeLevels)) oscillating.push('challengeLevel');
+    const challengeLevels = last5.map((r) => r.afterSnapshot.challengeLevel);
+    if (this.isFlipping(challengeLevels)) oscillating.push("challengeLevel");
 
     // Check verbosity oscillation
-    const verbosities = last5.map(r => r.afterSnapshot.verbosity);
-    if (this.isFlipping(verbosities)) oscillating.push('verbosity');
+    const verbosities = last5.map((r) => r.afterSnapshot.verbosity);
+    if (this.isFlipping(verbosities)) oscillating.push("verbosity");
 
     // Check humor oscillation (continuous value)
-    const humors = last5.map(r => r.afterSnapshot.humor);
-    if (this.isOscillatingNumeric(humors)) oscillating.push('humor');
+    const humors = last5.map((r) => r.afterSnapshot.humor);
+    if (this.isOscillatingNumeric(humors)) oscillating.push("humor");
 
     return {
       isOscillating: oscillating.length > 0,
       oscillatingTraits: oscillating,
-      recommendation: oscillating.length > 0
-        ? `FREEZE these traits for 2 weeks: ${oscillating.join(', ')}. The LLM is flip-flopping — user signals are contradictory.`
-        : '',
+      recommendation:
+        oscillating.length > 0
+          ? `FREEZE these traits for 2 weeks: ${oscillating.join(", ")}. The LLM is flip-flopping — user signals are contradictory.`
+          : "",
     };
   }
 
@@ -407,12 +454,12 @@ export class MutationTracker {
 
   private classifyMutation(mutation: string): string {
     const lower = mutation.toLowerCase();
-    if (lower.includes('verbosity')) return 'verbosity';
-    if (lower.includes('challenge')) return 'challenge';
-    if (lower.includes('preference')) return 'preference';
-    if (lower.includes('expertise')) return 'expertise';
-    if (lower.includes('humor')) return 'humor';
-    if (lower.includes('formality')) return 'formality';
-    return 'other';
+    if (lower.includes("verbosity")) return "verbosity";
+    if (lower.includes("challenge")) return "challenge";
+    if (lower.includes("preference")) return "preference";
+    if (lower.includes("expertise")) return "expertise";
+    if (lower.includes("humor")) return "humor";
+    if (lower.includes("formality")) return "formality";
+    return "other";
   }
 }

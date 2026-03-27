@@ -19,7 +19,8 @@ export const QRCodeTool: ToolImplementation = {
         },
         filename: {
           type: "string",
-          description: "Output filename (without path). Default: qr_<timestamp>.png",
+          description:
+            "Output filename (without path). Default: qr_<timestamp>.png",
         },
         size: {
           type: "number",

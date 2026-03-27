@@ -26,7 +26,11 @@ import type { SessionStore } from "../memory/store.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { ChannelAdapter, GatewayResponse } from "../gateway/types.js";
 import type { StreamEvent } from "../providers/base.js";
-import { makeSessionId, makeMessageId, type OwlGateway } from "../gateway/core.js";
+import {
+  makeSessionId,
+  makeMessageId,
+  type OwlGateway,
+} from "../gateway/core.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
 import { log } from "../logger.js";
 
@@ -113,7 +117,11 @@ class ControlPlaneAdapter implements ChannelAdapter {
   }
 
   async broadcast(response: GatewayResponse): Promise<void> {
-    const msg = JSON.stringify({ type: "broadcast", from: "system", ...response });
+    const msg = JSON.stringify({
+      type: "broadcast",
+      from: "system",
+      ...response,
+    });
     for (const client of this.clients.values()) {
       if (client.ws.readyState === client.ws.OPEN) {
         client.ws.send(msg);
@@ -172,16 +180,25 @@ export class StackOwlServer {
   private setupEventBusHook(): void {
     const eventBus = this.gateway.ctx.eventBus;
     if (eventBus) {
-      eventBus.on("*" as any, (eventData: { type: string; payload: unknown }) => {
-        const { type, payload } = eventData;
-        const msg = JSON.stringify({ type: "event", event: type, payload });
-        for (const client of this.adapter.getClients().values()) {
-          if ((client.subscriptions.has(type) || client.subscriptions.has("*")) && client.ws.readyState === client.ws.OPEN) {
-            client.ws.send(msg);
+      eventBus.on(
+        "*" as any,
+        (eventData: { type: string; payload: unknown }) => {
+          const { type, payload } = eventData;
+          const msg = JSON.stringify({ type: "event", event: type, payload });
+          for (const client of this.adapter.getClients().values()) {
+            if (
+              (client.subscriptions.has(type) ||
+                client.subscriptions.has("*")) &&
+              client.ws.readyState === client.ws.OPEN
+            ) {
+              client.ws.send(msg);
+            }
           }
-        }
-      });
-      log.engine.info("[ControlPlane] Subscribed to global EventBus for Pub/Sub");
+        },
+      );
+      log.engine.info(
+        "[ControlPlane] Subscribed to global EventBus for Pub/Sub",
+      );
     }
   }
 
@@ -206,6 +223,25 @@ export class StackOwlServer {
   // ─── REST Routes ──────────────────────────────────────────────
 
   private setupRESTRoutes(): void {
+    // --- Health Check (K8s/ALB probes) ---
+    this.app.get("/health", (_req, res) => {
+      res
+        .status(200)
+        .json({ status: "ok", timestamp: new Date().toISOString() });
+    });
+
+    this.app.get("/ready", (_req, res) => {
+      const owl = this.gateway.getOwl();
+      const hasOwl = owl && owl.persona.name.length > 0;
+      const connectedClients = this.adapter.getClientCount();
+      res.status(hasOwl ? 200 : 503).json({
+        status: hasOwl ? "ready" : "not_ready",
+        owl: hasOwl ? owl.persona.name : null,
+        connectedClients,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
     // --- System Status ---
     this.app.get("/api/status", (_req, res) => {
       const owl = this.gateway.getOwl();
@@ -304,7 +340,9 @@ export class StackOwlServer {
 
       const provider = this.gateway.getProvider();
       const orchestrator = new ParliamentOrchestrator(
-        provider, this.config, this.pelletStore,
+        provider,
+        this.config,
+        this.pelletStore,
         this.gateway.getToolRegistry(),
       );
 
@@ -318,7 +356,11 @@ export class StackOwlServer {
       }
 
       try {
-        const session = await orchestrator.convene({ topic, participants, contextMessages: [] });
+        const session = await orchestrator.convene({
+          topic,
+          participants,
+          contextMessages: [],
+        });
         res.json({ report: orchestrator.formatSessionMarkdown(session) });
       } catch {
         res.status(500).json({ error: "Parliament session failed" });
@@ -356,7 +398,9 @@ export class StackOwlServer {
       };
 
       this.adapter.addClient(client);
-      log.engine.info(`[ControlPlane] Client connected: ${clientId}${isAdmin ? " (admin)" : ""}`);
+      log.engine.info(
+        `[ControlPlane] Client connected: ${clientId}${isAdmin ? " (admin)" : ""}`,
+      );
 
       // Send welcome
       const owl = this.gateway.getOwl();
@@ -372,7 +416,11 @@ export class StackOwlServer {
       ws.on("message", async (raw) => {
         try {
           const data = JSON.parse(raw.toString());
-          if (typeof data !== "object" || data === null || Array.isArray(data)) {
+          if (
+            typeof data !== "object" ||
+            data === null ||
+            Array.isArray(data)
+          ) {
             throw new Error("Invalid payload: expected JSON object.");
           }
           client.lastActivity = Date.now();
@@ -390,7 +438,10 @@ export class StackOwlServer {
               if (client.isAdmin) {
                 await this.handleAdminCommand(client, data);
               } else {
-                this.send(ws, { type: "error", message: "Not authorized for admin commands." });
+                this.send(ws, {
+                  type: "error",
+                  message: "Not authorized for admin commands.",
+                });
               }
               break;
 
@@ -398,9 +449,14 @@ export class StackOwlServer {
               if (data.event && typeof data.event === "string") {
                 client.subscriptions.add(data.event);
                 this.send(ws, { type: "subscribed", event: data.event });
-                log.engine.info(`[ControlPlane] Client ${client.id} subscribed to ${data.event}`);
+                log.engine.info(
+                  `[ControlPlane] Client ${client.id} subscribed to ${data.event}`,
+                );
               } else {
-                this.send(ws, { type: "error", message: "subscribe requires 'event' string" });
+                this.send(ws, {
+                  type: "error",
+                  message: "subscribe requires 'event' string",
+                });
               }
               break;
 
@@ -408,14 +464,22 @@ export class StackOwlServer {
               if (data.event && typeof data.event === "string") {
                 client.subscriptions.delete(data.event);
                 this.send(ws, { type: "unsubscribed", event: data.event });
-                log.engine.info(`[ControlPlane] Client ${client.id} unsubscribed from ${data.event}`);
+                log.engine.info(
+                  `[ControlPlane] Client ${client.id} unsubscribed from ${data.event}`,
+                );
               } else {
-                this.send(ws, { type: "error", message: "unsubscribe requires 'event' string" });
+                this.send(ws, {
+                  type: "error",
+                  message: "unsubscribe requires 'event' string",
+                });
               }
               break;
 
             default:
-              this.send(ws, { type: "error", message: `Unknown message type: ${data.type}` });
+              this.send(ws, {
+                type: "error",
+                message: `Unknown message type: ${data.type}`,
+              });
           }
         } catch (err) {
           this.send(ws, {
@@ -517,7 +581,11 @@ export class StackOwlServer {
           isAdmin: c.isAdmin,
           isConnected: c.ws.readyState === c.ws.OPEN,
         }));
-        this.send(client.ws, { type: "admin_response", command: "clients", data: clients });
+        this.send(client.ws, {
+          type: "admin_response",
+          command: "clients",
+          data: clients,
+        });
         break;
       }
 
@@ -538,7 +606,10 @@ export class StackOwlServer {
       case "broadcast": {
         const message = data.message as string;
         if (!message) {
-          this.send(client.ws, { type: "error", message: "broadcast requires message" });
+          this.send(client.ws, {
+            type: "error",
+            message: "broadcast requires message",
+          });
           return;
         }
         await this.gateway.broadcastProactive(message);
@@ -553,17 +624,30 @@ export class StackOwlServer {
       case "kick": {
         const targetId = data.clientId as string;
         if (!targetId) {
-          this.send(client.ws, { type: "error", message: "kick requires clientId" });
+          this.send(client.ws, {
+            type: "error",
+            message: "kick requires clientId",
+          });
           return;
         }
         const target = this.adapter.getClient(targetId);
         if (target) {
-          this.send(target.ws, { type: "error", message: "You have been disconnected by an admin." });
+          this.send(target.ws, {
+            type: "error",
+            message: "You have been disconnected by an admin.",
+          });
           target.ws.close();
           this.adapter.removeClient(targetId);
-          this.send(client.ws, { type: "admin_response", command: "kick", data: { kicked: targetId } });
+          this.send(client.ws, {
+            type: "admin_response",
+            command: "kick",
+            data: { kicked: targetId },
+          });
         } else {
-          this.send(client.ws, { type: "error", message: `Client ${targetId} not found.` });
+          this.send(client.ws, {
+            type: "error",
+            message: `Client ${targetId} not found.`,
+          });
         }
         break;
       }
@@ -571,11 +655,18 @@ export class StackOwlServer {
       case "end_session": {
         const sessionId = data.sessionId as string;
         if (!sessionId) {
-          this.send(client.ws, { type: "error", message: "end_session requires sessionId" });
+          this.send(client.ws, {
+            type: "error",
+            message: "end_session requires sessionId",
+          });
           return;
         }
         await this.gateway.endSession(sessionId);
-        this.send(client.ws, { type: "admin_response", command: "end_session", data: { ended: sessionId } });
+        this.send(client.ws, {
+          type: "admin_response",
+          command: "end_session",
+          data: { ended: sessionId },
+        });
         break;
       }
 
@@ -615,7 +706,9 @@ export class StackOwlServer {
   start(): Promise<void> {
     return new Promise((resolve) => {
       this.httpServer.listen(this.port, () => {
-        console.log(`\n🌐 StackOwl Control Plane running at http://localhost:${this.port}`);
+        console.log(
+          `\n🌐 StackOwl Control Plane running at http://localhost:${this.port}`,
+        );
         console.log(`   WebSocket: ws://localhost:${this.port}`);
         console.log(`   REST API:  http://localhost:${this.port}/api/status`);
         resolve();

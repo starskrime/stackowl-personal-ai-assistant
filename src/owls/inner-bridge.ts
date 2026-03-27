@@ -12,10 +12,10 @@
  *   4. Unspoken observations → proactive planner hints
  */
 
-import type { OwlInnerState } from './inner-life.js';
-import type { OwlDNA } from './persona.js';
-import type { OwlRegistry } from './registry.js';
-import { log } from '../logger.js';
+import type { OwlInnerState } from "./inner-life.js";
+import type { OwlDNA } from "./persona.js";
+import type { OwlRegistry } from "./registry.js";
+import { log } from "../logger.js";
 
 // ─── Feedback Result ─────────────────────────────────────────────
 
@@ -45,7 +45,12 @@ export class InnerLifeDNABridge {
     const owl = this.owlRegistry.get(owlName);
     if (!owl) {
       log.evolution.warn(`[InnerLifeBridge] Owl "${owlName}" not found`);
-      return { preferencesUpdated: [], expertiseSignals: [], traitAdjustments: [], proactiveHints: [] };
+      return {
+        preferencesUpdated: [],
+        expertiseSignals: [],
+        traitAdjustments: [],
+        proactiveHints: [],
+      };
     }
 
     const feedback: InnerLifeFeedback = {
@@ -76,9 +81,9 @@ export class InnerLifeDNABridge {
       await this.owlRegistry.saveDNA(owlName);
       log.evolution.info(
         `[InnerLifeBridge] Synced ${owlName}: ` +
-        `${feedback.preferencesUpdated.length} prefs, ` +
-        `${feedback.expertiseSignals.length} expertise, ` +
-        `${feedback.traitAdjustments.length} traits`,
+          `${feedback.preferencesUpdated.length} prefs, ` +
+          `${feedback.expertiseSignals.length} expertise, ` +
+          `${feedback.traitAdjustments.length} traits`,
       );
     }
 
@@ -96,7 +101,10 @@ export class InnerLifeDNABridge {
       if (opinion.confidence < 0.5) continue; // Only strong opinions matter
 
       // Convert opinion to a preference key
-      const prefKey = this.opinionToPreferenceKey(opinion.topic, opinion.stance);
+      const prefKey = this.opinionToPreferenceKey(
+        opinion.topic,
+        opinion.stance,
+      );
       if (!prefKey) continue;
 
       const currentPref = dna.learnedPreferences[prefKey] ?? 0.5;
@@ -155,10 +163,12 @@ export class InnerLifeDNABridge {
     if (mood.intensity < 0.6) return; // Only strong moods affect traits
 
     // Sustained frustration → reduce challenge level
-    if (mood.current === 'frustrated' && mood.intensity > 0.7) {
-      const challengeLevels: Array<OwlDNA['evolvedTraits']['challengeLevel']> =
-        ['low', 'medium', 'high', 'relentless'];
-      const currentIdx = challengeLevels.indexOf(dna.evolvedTraits.challengeLevel);
+    if (mood.current === "frustrated" && mood.intensity > 0.7) {
+      const challengeLevels: Array<OwlDNA["evolvedTraits"]["challengeLevel"]> =
+        ["low", "medium", "high", "relentless"];
+      const currentIdx = challengeLevels.indexOf(
+        dna.evolvedTraits.challengeLevel,
+      );
       if (currentIdx > 0) {
         const newLevel = challengeLevels[currentIdx - 1];
         feedback.traitAdjustments.push(
@@ -169,24 +179,30 @@ export class InnerLifeDNABridge {
     }
 
     // Sustained excitement about a topic → slight verbosity increase
-    if (mood.current === 'excited' && mood.intensity > 0.7) {
-      if (dna.evolvedTraits.verbosity === 'concise') {
+    if (mood.current === "excited" && mood.intensity > 0.7) {
+      if (dna.evolvedTraits.verbosity === "concise") {
         // Don't override — user explicitly wants concise
       } else {
         // Boost humor slightly when excited
-        dna.evolvedTraits.humor = Math.min(0.95, dna.evolvedTraits.humor + 0.05);
+        dna.evolvedTraits.humor = Math.min(
+          0.95,
+          dna.evolvedTraits.humor + 0.05,
+        );
         feedback.traitAdjustments.push(`humor: +0.05 (excited mood)`);
       }
     }
 
     // Contemplative mood → increase formality slightly
-    if (mood.current === 'contemplative' && mood.intensity > 0.6) {
-      dna.evolvedTraits.formality = Math.min(0.95, dna.evolvedTraits.formality + 0.03);
+    if (mood.current === "contemplative" && mood.intensity > 0.6) {
+      dna.evolvedTraits.formality = Math.min(
+        0.95,
+        dna.evolvedTraits.formality + 0.03,
+      );
       feedback.traitAdjustments.push(`formality: +0.03 (contemplative mood)`);
     }
 
     // Playful mood → boost humor
-    if (mood.current === 'playful' && mood.intensity > 0.5) {
+    if (mood.current === "playful" && mood.intensity > 0.5) {
       dna.evolvedTraits.humor = Math.min(0.95, dna.evolvedTraits.humor + 0.05);
       feedback.traitAdjustments.push(`humor: +0.05 (playful mood)`);
     }
@@ -208,13 +224,16 @@ export class InnerLifeDNABridge {
 
   // ─── Helpers ───────────────────────────────────────────────────
 
-  private opinionToPreferenceKey(topic: string, _stance: string): string | null {
+  private opinionToPreferenceKey(
+    topic: string,
+    _stance: string,
+  ): string | null {
     // Normalize topic to a preference key
     const normalized = topic
       .toLowerCase()
-      .replace(/[^a-z0-9_\s]/g, '')
+      .replace(/[^a-z0-9_\s]/g, "")
       .trim()
-      .replace(/\s+/g, '_')
+      .replace(/\s+/g, "_")
       .slice(0, 40);
 
     return normalized.length > 2 ? normalized : null;
@@ -223,39 +242,64 @@ export class InnerLifeDNABridge {
   private isPositiveStance(stance: string): boolean {
     const lower = stance.toLowerCase();
     const positivePatterns = [
-      'good', 'great', 'prefer', 'like', 'love', 'best', 'excellent',
-      'recommend', 'should', 'better', 'effective', 'useful', 'powerful',
+      "good",
+      "great",
+      "prefer",
+      "like",
+      "love",
+      "best",
+      "excellent",
+      "recommend",
+      "should",
+      "better",
+      "effective",
+      "useful",
+      "powerful",
     ];
     const negativePatterns = [
-      'bad', 'avoid', 'dislike', 'hate', 'worst', 'poor', 'terrible',
-      'shouldn\'t', 'overrated', 'waste', 'unnecessary', 'harmful',
+      "bad",
+      "avoid",
+      "dislike",
+      "hate",
+      "worst",
+      "poor",
+      "terrible",
+      "shouldn't",
+      "overrated",
+      "waste",
+      "unnecessary",
+      "harmful",
     ];
 
-    const positiveHits = positivePatterns.filter(p => lower.includes(p)).length;
-    const negativeHits = negativePatterns.filter(p => lower.includes(p)).length;
+    const positiveHits = positivePatterns.filter((p) =>
+      lower.includes(p),
+    ).length;
+    const negativeHits = negativePatterns.filter((p) =>
+      lower.includes(p),
+    ).length;
 
     return positiveHits >= negativeHits;
   }
 
   private extractDomains(text: string): string[] {
     const domainPatterns: Array<[RegExp, string]> = [
-      [/\b(?:typescript|ts)\b/i, 'typescript'],
-      [/\b(?:javascript|js|node)\b/i, 'javascript'],
-      [/\b(?:python|py)\b/i, 'python'],
-      [/\b(?:rust)\b/i, 'rust'],
-      [/\b(?:devops|deploy|ci\/?cd)\b/i, 'devops'],
-      [/\b(?:docker|container)\b/i, 'docker'],
-      [/\b(?:kubernetes|k8s)\b/i, 'kubernetes'],
-      [/\b(?:machine learning|ml|ai|model)\b/i, 'machine_learning'],
-      [/\b(?:data|analytics|dashboard)\b/i, 'data_analysis'],
-      [/\b(?:finance|market|trading|crypto)\b/i, 'finance'],
-      [/\b(?:security|auth|crypto)\b/i, 'security'],
-      [/\b(?:design|ui|ux|frontend)\b/i, 'design'],
-      [/\b(?:database|sql|postgres|mongo)\b/i, 'database'],
-      [/\b(?:api|rest|graphql)\b/i, 'api_design'],
-      [/\b(?:anticipat|predict|proactive)\b/i, 'anticipation'],
-      [/\b(?:understand|learn|knowledge)\b/i, 'learning'],
-      [/\b(?:communicat|trust|relationship)\b/i, 'communication'],
+      [/\b(?:typescript|ts)\b/i, "typescript"],
+      [/\b(?:javascript|js|node)\b/i, "javascript"],
+      [/\b(?:python|py)\b/i, "python"],
+      [/\b(?:rust)\b/i, "rust"],
+      [/\b(?:devops|deploy|ci\/?cd)\b/i, "devops"],
+      [/\b(?:docker|container)\b/i, "docker"],
+      [/\b(?:kubernetes|k8s)\b/i, "kubernetes"],
+      [/\b(?:machine learning|ml|ai|model)\b/i, "machine_learning"],
+      [/\b(?:data|analytics|dashboard)\b/i, "data_analysis"],
+      [/\b(?:finance|market|trading|crypto)\b/i, "finance"],
+      [/\b(?:security|auth|crypto)\b/i, "security"],
+      [/\b(?:design|ui|ux|frontend)\b/i, "design"],
+      [/\b(?:database|sql|postgres|mongo)\b/i, "database"],
+      [/\b(?:api|rest|graphql)\b/i, "api_design"],
+      [/\b(?:anticipat|predict|proactive)\b/i, "anticipation"],
+      [/\b(?:understand|learn|knowledge)\b/i, "learning"],
+      [/\b(?:communicat|trust|relationship)\b/i, "communication"],
     ];
 
     const found: string[] = [];

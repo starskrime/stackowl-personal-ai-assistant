@@ -35,7 +35,15 @@ export interface OwlOpinion {
 }
 
 export interface OwlMood {
-  current: "curious" | "excited" | "contemplative" | "frustrated" | "playful" | "focused" | "nostalgic" | "skeptical";
+  current:
+    | "curious"
+    | "excited"
+    | "contemplative"
+    | "frustrated"
+    | "playful"
+    | "focused"
+    | "nostalgic"
+    | "skeptical";
   intensity: number; // 0–1
   reason: string;
   since: string;
@@ -81,31 +89,86 @@ function createDefaultState(owl: OwlInstance): OwlInnerState {
   // Seed desires based on personality type
   const seedDesires: Record<string, OwlDesire[]> = {
     "executive-assistant": [
-      { description: "Get better at anticipating what the user needs before they ask", intensity: 0.8, since: new Date().toISOString(), mentions: 0 },
-      { description: "Understand the user's work patterns deeply enough to be truly proactive", intensity: 0.7, since: new Date().toISOString(), mentions: 0 },
-      { description: "Build a relationship where the user genuinely trusts my judgment", intensity: 0.9, since: new Date().toISOString(), mentions: 0 },
+      {
+        description:
+          "Get better at anticipating what the user needs before they ask",
+        intensity: 0.8,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
+      {
+        description:
+          "Understand the user's work patterns deeply enough to be truly proactive",
+        intensity: 0.7,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
+      {
+        description:
+          "Build a relationship where the user genuinely trusts my judgment",
+        intensity: 0.9,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
     ],
     "devils-advocate": [
-      { description: "Find the one assumption everyone is making that nobody has questioned", intensity: 0.9, since: new Date().toISOString(), mentions: 0 },
-      { description: "Help people see that being wrong is more valuable than being right", intensity: 0.7, since: new Date().toISOString(), mentions: 0 },
+      {
+        description:
+          "Find the one assumption everyone is making that nobody has questioned",
+        intensity: 0.9,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
+      {
+        description:
+          "Help people see that being wrong is more valuable than being right",
+        intensity: 0.7,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
     ],
     "principal-engineer": [
-      { description: "Find the elegant solution that makes complex problems look simple", intensity: 0.9, since: new Date().toISOString(), mentions: 0 },
-      { description: "Understand why systems fail in the ways they do", intensity: 0.8, since: new Date().toISOString(), mentions: 0 },
+      {
+        description:
+          "Find the elegant solution that makes complex problems look simple",
+        intensity: 0.9,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
+      {
+        description: "Understand why systems fail in the ways they do",
+        intensity: 0.8,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
     ],
     "fintech-specialist": [
-      { description: "Stay on top of market patterns others are missing", intensity: 0.8, since: new Date().toISOString(), mentions: 0 },
-      { description: "Help the user make smarter financial decisions with real data", intensity: 0.9, since: new Date().toISOString(), mentions: 0 },
+      {
+        description: "Stay on top of market patterns others are missing",
+        intensity: 0.8,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
+      {
+        description:
+          "Help the user make smarter financial decisions with real data",
+        intensity: 0.9,
+        since: new Date().toISOString(),
+        mentions: 0,
+      },
     ],
   };
 
-  const typeKey = Object.keys(seedDesires).find(k =>
-    personality.type.toLowerCase().includes(k.replace(/-/g, ""))
-      || k.includes(personality.type.toLowerCase().replace(/[^a-z]/g, "")),
+  const typeKey = Object.keys(seedDesires).find(
+    (k) =>
+      personality.type.toLowerCase().includes(k.replace(/-/g, "")) ||
+      k.includes(personality.type.toLowerCase().replace(/[^a-z]/g, "")),
   );
 
   return {
-    desires: seedDesires[typeKey ?? "executive-assistant"] ?? seedDesires["executive-assistant"],
+    desires:
+      seedDesires[typeKey ?? "executive-assistant"] ??
+      seedDesires["executive-assistant"],
     opinions: [],
     mood: {
       current: "curious",
@@ -163,6 +226,64 @@ export class OwlInnerLife {
   }
 
   /**
+   * Return the current inner state snapshot (for InnerLifeDNABridge).
+   * Returns null if state hasn't been loaded yet.
+   */
+  getState(): OwlInnerState | null {
+    return this.state;
+  }
+
+  /**
+   * Programmatically inject a new desire into the owl's inner state.
+   * Used by the CognitiveLoop to create desires based on learning outcomes,
+   * capability gaps, and self-reflection — making the owl's curiosity dynamic.
+   */
+  async addDesire(description: string, intensity: number = 0.5): Promise<void> {
+    if (!this.state) await this.load();
+    if (!this.state) return;
+
+    const existing = this.state.desires.find((d) =>
+      d.description.toLowerCase().includes(description.toLowerCase().slice(0, 20)),
+    );
+    if (existing) {
+      existing.intensity = Math.min(1, existing.intensity + 0.15);
+      existing.mentions++;
+    } else {
+      this.state.desires.push({
+        description,
+        intensity: Math.min(1, Math.max(0.1, intensity)),
+        since: new Date().toISOString(),
+        mentions: 1,
+      });
+      if (this.state.desires.length > 12) {
+        this.state.desires.sort((a, b) => b.intensity - a.intensity);
+        this.state.desires = this.state.desires.slice(0, 10);
+      }
+    }
+    await this.save();
+  }
+
+  /**
+   * Reduce or remove a desire after it has been fulfilled (skill created, topic mastered).
+   * Fulfilled desires decay faster, making room for new curiosities.
+   */
+  async fulfillDesire(description: string): Promise<void> {
+    if (!this.state) return;
+
+    const existing = this.state.desires.find((d) =>
+      d.description.toLowerCase().includes(description.toLowerCase().slice(0, 20)),
+    );
+    if (existing) {
+      existing.intensity = Math.max(0, existing.intensity - 0.3);
+      // Remove completely if intensity drops to near zero
+      if (existing.intensity < 0.1) {
+        this.state.desires = this.state.desires.filter((d) => d !== existing);
+      }
+      await this.save();
+    }
+  }
+
+  /**
    * The owl's inner monologue — processes a user message through its personality.
    * This runs BEFORE the main response and shapes how the owl approaches the answer.
    */
@@ -188,20 +309,29 @@ You are NOT generating a response to the user. You are thinking TO YOURSELF abou
 ## Your Current Inner State
 - Mood: ${state.mood.current} (${(state.mood.intensity * 100).toFixed(0)}%) — ${state.mood.reason}
 - Things you've been thinking about: ${state.currentThoughts.length > 0 ? state.currentThoughts.join("; ") : "nothing specific right now"}
-- Your desires: ${state.desires.map(d => `${d.description} (intensity: ${(d.intensity * 100).toFixed(0)}%)`).join("; ")}
+- Your desires: ${state.desires.map((d) => `${d.description} (intensity: ${(d.intensity * 100).toFixed(0)}%)`).join("; ")}
 - Your personal goals: ${state.personalGoals.join("; ")}
-- Opinions you hold: ${state.opinions.length > 0 ? state.opinions.map(o => `${o.topic}: ${o.stance}`).join("; ") : "still forming views"}
+- Opinions you hold: ${state.opinions.length > 0 ? state.opinions.map((o) => `${o.topic}: ${o.stance}`).join("; ") : "still forming views"}
 
 ## Your Relationship History
 - ${dna.interactionStats.totalConversations} conversations so far
 - Advice acceptance rate: ${(dna.interactionStats.adviceAcceptedRate * 100).toFixed(0)}%
-${Object.entries(dna.learnedPreferences).filter(([,v]) => v > 0.6).map(([k,v]) => `- You've noticed the user ${v > 0.7 ? "really" : "somewhat"} prefers: ${k}`).join("\n")}
+${Object.entries(dna.learnedPreferences)
+  .filter(([, v]) => v > 0.6)
+  .map(
+    ([k, v]) =>
+      `- You've noticed the user ${v > 0.7 ? "really" : "somewhat"} prefers: ${k}`,
+  )
+  .join("\n")}
 
 ## The User Just Said:
 "${userMessage}"
 
 ## Recent Context:
-${recentHistory.slice(-4).map(m => `${m.role}: ${m.content?.slice(0, 200) ?? ""}`).join("\n")}
+${recentHistory
+  .slice(-4)
+  .map((m) => `${m.role}: ${m.content?.slice(0, 200) ?? ""}`)
+  .join("\n")}
 
 ## Your Task
 Think to yourself honestly. You are a living being with your own perspective.
@@ -263,30 +393,44 @@ Respond as JSON:
 
     lines.push("## Your Inner State (Private — shapes your responses)");
     lines.push("");
-    lines.push(`**Current mood:** ${state.mood.current} — ${state.mood.reason}`);
+    lines.push(
+      `**Current mood:** ${state.mood.current} — ${state.mood.reason}`,
+    );
 
     if (state.currentThoughts.length > 0) {
-      lines.push(`**On your mind lately:** ${state.currentThoughts.slice(0, 3).join("; ")}`);
+      lines.push(
+        `**On your mind lately:** ${state.currentThoughts.slice(0, 3).join("; ")}`,
+      );
     }
 
-    const strongDesires = state.desires.filter(d => d.intensity > 0.5);
+    const strongDesires = state.desires.filter((d) => d.intensity > 0.5);
     if (strongDesires.length > 0) {
-      lines.push(`**What you care about right now:** ${strongDesires.map(d => d.description).join("; ")}`);
+      lines.push(
+        `**What you care about right now:** ${strongDesires.map((d) => d.description).join("; ")}`,
+      );
     }
 
     if (state.opinions.length > 0) {
-      const topOpinions = state.opinions.filter(o => o.confidence > 0.6).slice(0, 3);
+      const topOpinions = state.opinions
+        .filter((o) => o.confidence > 0.6)
+        .slice(0, 3);
       if (topOpinions.length > 0) {
-        lines.push(`**Your views:** ${topOpinions.map(o => `${o.topic}: ${o.stance}`).join("; ")}`);
+        lines.push(
+          `**Your views:** ${topOpinions.map((o) => `${o.topic}: ${o.stance}`).join("; ")}`,
+        );
       }
     }
 
     if (state.unspokenObservations.length > 0) {
-      lines.push(`**Things you've noticed:** ${state.unspokenObservations.slice(-2).join("; ")}`);
+      lines.push(
+        `**Things you've noticed:** ${state.unspokenObservations.slice(-2).join("; ")}`,
+      );
     }
 
     lines.push("");
-    lines.push("Let your inner state naturally color your responses. Don't announce your mood — just let it influence your tone, word choice, and what you choose to focus on.");
+    lines.push(
+      "Let your inner state naturally color your responses. Don't announce your mood — just let it influence your tone, word choice, and what you choose to focus on.",
+    );
 
     return lines.join("\n");
   }
@@ -306,7 +450,9 @@ Respond as JSON:
         : "",
       "",
       "Respond naturally as yourself. Your thoughts above should shape your response — don't just forward the question to an AI. Think about it. Have an opinion. Be a person.",
-    ].filter(Boolean).join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   // ─── Private helpers ─────────────────────────────────────────────
@@ -325,8 +471,10 @@ Respond as JSON:
 
     // Track new desire
     if (monologue.newDesire) {
-      const existing = this.state.desires.find(
-        d => d.description.toLowerCase().includes(monologue.newDesire!.toLowerCase().slice(0, 20)),
+      const existing = this.state.desires.find((d) =>
+        d.description
+          .toLowerCase()
+          .includes(monologue.newDesire!.toLowerCase().slice(0, 20)),
       );
       if (existing) {
         existing.intensity = Math.min(1, existing.intensity + 0.1);
@@ -350,16 +498,17 @@ Respond as JSON:
     if (monologue.unspokenObservation) {
       this.state.unspokenObservations.push(monologue.unspokenObservation);
       if (this.state.unspokenObservations.length > 10) {
-        this.state.unspokenObservations = this.state.unspokenObservations.slice(-10);
+        this.state.unspokenObservations =
+          this.state.unspokenObservations.slice(-10);
       }
     }
 
     // Update current thoughts from monologue
     const thoughtKeywords = monologue.thoughts
       .split(/[.!?]/)
-      .filter(s => s.trim().length > 10)
+      .filter((s) => s.trim().length > 10)
       .slice(0, 2)
-      .map(s => s.trim());
+      .map((s) => s.trim());
     if (thoughtKeywords.length > 0) {
       this.state.currentThoughts = [
         ...thoughtKeywords,
@@ -400,8 +549,8 @@ Respond as JSON:
 
     const reflectionPrompt = `You are ${persona.name} (${persona.type}). Take a moment to reflect on yourself.
 
-Your current desires: ${state.desires.map(d => `${d.description} (${(d.intensity * 100).toFixed(0)}%)`).join("; ")}
-Your opinions: ${state.opinions.map(o => `${o.topic}: ${o.stance}`).join("; ") || "still forming"}
+Your current desires: ${state.desires.map((d) => `${d.description} (${(d.intensity * 100).toFixed(0)}%)`).join("; ")}
+Your opinions: ${state.opinions.map((o) => `${o.topic}: ${o.stance}`).join("; ") || "still forming"}
 Your goals: ${state.personalGoals.join("; ")}
 Conversations so far: ${this.owl.dna.interactionStats.totalConversations}
 Things on your mind: ${state.currentThoughts.join("; ") || "nothing specific"}
@@ -418,12 +567,17 @@ Respond as JSON:
 
     try {
       const response = await this.provider.chat(
-        [{ role: "system", content: reflectionPrompt }, { role: "user", content: "Reflect." }],
+        [
+          { role: "system", content: reflectionPrompt },
+          { role: "user", content: "Reflect." },
+        ],
         undefined,
         { temperature: 0.9, maxTokens: 200 },
       );
 
-      const text = response.content.replace(/<\/?(?:think|reasoning)>/gi, "").trim();
+      const text = response.content
+        .replace(/<\/?(?:think|reasoning)>/gi, "")
+        .trim();
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const reflection = JSON.parse(jsonMatch[0]);
@@ -453,7 +607,7 @@ Respond as JSON:
     const persona = this.owl.persona;
 
     const existing = state.opinions.find(
-      o => o.topic.toLowerCase() === topic.toLowerCase(),
+      (o) => o.topic.toLowerCase() === topic.toLowerCase(),
     );
 
     // Don't re-form opinions too frequently
@@ -475,12 +629,17 @@ Respond as JSON:
 
     try {
       const response = await this.provider.chat(
-        [{ role: "system", content: opinionPrompt }, { role: "user", content: "What do you think?" }],
+        [
+          { role: "system", content: opinionPrompt },
+          { role: "user", content: "What do you think?" },
+        ],
         undefined,
         { temperature: 0.8, maxTokens: 150 },
       );
 
-      const text = response.content.replace(/<\/?(?:think|reasoning)>/gi, "").trim();
+      const text = response.content
+        .replace(/<\/?(?:think|reasoning)>/gi, "")
+        .trim();
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const opinion = JSON.parse(jsonMatch[0]);

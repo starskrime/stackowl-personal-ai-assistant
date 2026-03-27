@@ -5,12 +5,12 @@
  * that trigger on date, condition, or event.
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { TimeCapsule, CapsuleTrigger } from './types.js';
-import { join } from 'node:path';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
-import { existsSync, mkdirSync } from 'node:fs';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { TimeCapsule, CapsuleTrigger } from "./types.js";
+import { join } from "node:path";
+import { readFile, writeFile, readdir } from "node:fs/promises";
+import { existsSync, mkdirSync } from "node:fs";
+import { log } from "../logger.js";
 
 export class CapsuleManager {
   private provider: ModelProvider;
@@ -18,8 +18,9 @@ export class CapsuleManager {
 
   constructor(provider: ModelProvider, workspacePath: string) {
     this.provider = provider;
-    this.capsuleDir = join(workspacePath, 'capsules');
-    if (!existsSync(this.capsuleDir)) mkdirSync(this.capsuleDir, { recursive: true });
+    this.capsuleDir = join(workspacePath, "capsules");
+    if (!existsSync(this.capsuleDir))
+      mkdirSync(this.capsuleDir, { recursive: true });
   }
 
   /**
@@ -36,7 +37,7 @@ export class CapsuleManager {
       message,
       contextSnapshot,
       trigger,
-      status: 'sealed',
+      status: "sealed",
       createdAt: new Date().toISOString(),
       owlName,
     };
@@ -48,22 +49,25 @@ export class CapsuleManager {
   /**
    * List all capsules, optionally filtered by status.
    */
-  async list(status?: TimeCapsule['status']): Promise<TimeCapsule[]> {
+  async list(status?: TimeCapsule["status"]): Promise<TimeCapsule[]> {
     if (!existsSync(this.capsuleDir)) return [];
     const files = await readdir(this.capsuleDir);
     const capsules: TimeCapsule[] = [];
 
     for (const file of files) {
-      if (!file.endsWith('.json')) continue;
+      if (!file.endsWith(".json")) continue;
       try {
-        const data = await readFile(join(this.capsuleDir, file), 'utf-8');
+        const data = await readFile(join(this.capsuleDir, file), "utf-8");
         const capsule: TimeCapsule = JSON.parse(data);
         if (!status || capsule.status === status) capsules.push(capsule);
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
 
-    return capsules.sort((a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    return capsules.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
   }
 
@@ -72,14 +76,14 @@ export class CapsuleManager {
    * Returns delivered capsules.
    */
   async checkDelivery(): Promise<TimeCapsule[]> {
-    const sealed = await this.list('sealed');
+    const sealed = await this.list("sealed");
     const delivered: TimeCapsule[] = [];
     const now = new Date();
 
     for (const capsule of sealed) {
       const shouldDeliver = await this.evaluateTrigger(capsule.trigger, now);
       if (shouldDeliver) {
-        capsule.status = 'delivered';
+        capsule.status = "delivered";
         capsule.deliveredAt = now.toISOString();
         await this.save(capsule);
         delivered.push(capsule);
@@ -96,15 +100,15 @@ export class CapsuleManager {
     const createdDate = new Date(capsule.createdAt).toLocaleDateString();
     const parts: string[] = [
       `**Time Capsule from ${createdDate}**`,
-      '',
+      "",
       capsule.message,
     ];
 
     if (capsule.contextSnapshot) {
-      parts.push('', `*Context when sealed:* ${capsule.contextSnapshot}`);
+      parts.push("", `*Context when sealed:* ${capsule.contextSnapshot}`);
     }
 
-    return parts.join('\n');
+    return parts.join("\n");
   }
 
   /**
@@ -113,9 +117,9 @@ export class CapsuleManager {
   async open(id: string): Promise<TimeCapsule | null> {
     const capsule = await this.get(id);
     if (!capsule) return null;
-    if (capsule.status === 'delivered') return capsule;
+    if (capsule.status === "delivered") return capsule;
 
-    capsule.status = 'delivered';
+    capsule.status = "delivered";
     capsule.deliveredAt = new Date().toISOString();
     await this.save(capsule);
     return capsule;
@@ -127,24 +131,27 @@ export class CapsuleManager {
     const path = join(this.capsuleDir, `${id}.json`);
     if (!existsSync(path)) return null;
     try {
-      const data = await readFile(path, 'utf-8');
+      const data = await readFile(path, "utf-8");
       return JSON.parse(data);
     } catch {
       return null;
     }
   }
 
-  private async evaluateTrigger(trigger: CapsuleTrigger, now: Date): Promise<boolean> {
+  private async evaluateTrigger(
+    trigger: CapsuleTrigger,
+    now: Date,
+  ): Promise<boolean> {
     switch (trigger.type) {
-      case 'date':
+      case "date":
         if (!trigger.date) return false;
         return now >= new Date(trigger.date);
 
-      case 'condition':
+      case "condition":
         if (!trigger.condition) return false;
         return this.evaluateCondition(trigger.condition);
 
-      case 'event':
+      case "event":
         // Event triggers are checked externally via deliverOnEvent()
         return false;
 
@@ -156,17 +163,19 @@ export class CapsuleManager {
   private async evaluateCondition(condition: string): Promise<boolean> {
     try {
       const resp = await this.provider.chat(
-        [{
-          role: 'user',
-          content:
-            `Evaluate whether this condition is likely met right now (${new Date().toLocaleDateString()}):\n\n` +
-            `Condition: "${condition}"\n\n` +
-            `Respond with ONLY "yes" or "no".`,
-        }],
+        [
+          {
+            role: "user",
+            content:
+              `Evaluate whether this condition is likely met right now (${new Date().toLocaleDateString()}):\n\n` +
+              `Condition: "${condition}"\n\n` +
+              `Respond with ONLY "yes" or "no".`,
+          },
+        ],
         undefined,
         { temperature: 0, maxTokens: 10 },
       );
-      return resp.content.trim().toLowerCase().startsWith('yes');
+      return resp.content.trim().toLowerCase().startsWith("yes");
     } catch {
       return false;
     }
@@ -176,12 +185,15 @@ export class CapsuleManager {
    * Deliver capsules that match a specific event.
    */
   async deliverOnEvent(eventName: string): Promise<TimeCapsule[]> {
-    const sealed = await this.list('sealed');
+    const sealed = await this.list("sealed");
     const delivered: TimeCapsule[] = [];
 
     for (const capsule of sealed) {
-      if (capsule.trigger.type === 'event' && capsule.trigger.event === eventName) {
-        capsule.status = 'delivered';
+      if (
+        capsule.trigger.type === "event" &&
+        capsule.trigger.event === eventName
+      ) {
+        capsule.status = "delivered";
         capsule.deliveredAt = new Date().toISOString();
         await this.save(capsule);
         delivered.push(capsule);

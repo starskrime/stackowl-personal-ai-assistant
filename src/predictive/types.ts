@@ -1,5 +1,17 @@
-export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
-export type TimeSlot = 'early_morning' | 'morning' | 'afternoon' | 'evening' | 'night';
+export type DayOfWeek =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+export type TimeSlot =
+  | "early_morning"
+  | "morning"
+  | "afternoon"
+  | "evening"
+  | "night";
 
 export interface UserPattern {
   id: string;
@@ -19,7 +31,13 @@ export interface PredictedTask {
   predictedTime: string;
   confidence: number;
   source: string;
-  status: 'queued' | 'preparing' | 'ready' | 'presented' | 'accepted' | 'dismissed';
+  status:
+    | "queued"
+    | "preparing"
+    | "ready"
+    | "presented"
+    | "accepted"
+    | "dismissed";
   preparedContent?: string;
   relatedSkills: string[];
 }

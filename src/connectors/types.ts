@@ -12,7 +12,15 @@ export interface ConnectorPreset {
   /** What this connector does */
   description: string;
   /** Category for grouping */
-  category: "cloud" | "database" | "monitoring" | "ci" | "vcs" | "communication" | "infra" | "custom";
+  category:
+    | "cloud"
+    | "database"
+    | "monitoring"
+    | "ci"
+    | "vcs"
+    | "communication"
+    | "infra"
+    | "custom";
   /** MCP transport type */
   transport: "stdio" | "sse";
   /** Command to run (stdio) */

@@ -5,9 +5,13 @@ openclaw:
   emoji: "📶"
   os: [darwin]
 ---
+
 # WiFi Manager
+
 Manage WiFi connections on macOS.
+
 ## Steps
+
 1. **Show current connection:**
    ```bash
    run_shell_command("networksetup -getairportnetwork en0")
@@ -24,12 +28,17 @@ Manage WiFi connections on macOS.
    ```bash
    run_shell_command("networksetup -setairportpower en0 off && networksetup -setairportpower en0 on")
    ```
+
 ## Examples
+
 ### Check current WiFi
+
 ```bash
 run_shell_command("networksetup -getairportnetwork en0")
 ```
+
 ## Error Handling
+
 - **WiFi off:** Turn on with `networksetup -setairportpower en0 on`.
 - **Wrong password:** Inform user and ask to retry.
 - **No networks found:** Check if WiFi hardware is enabled.

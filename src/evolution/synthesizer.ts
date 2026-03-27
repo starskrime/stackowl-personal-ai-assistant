@@ -66,27 +66,34 @@ export interface ToolProposal {
 // "fetch_weather_from_openweather" → "weather_fetch"
 
 const SERVICE_SPECIFIC_PATTERNS = [
-  /(?:_?via_?\w+)$/i,           // _via_agentmail, _via_slack
-  /(?:_?from_?\w+)$/i,          // _from_openweather, _from_api
-  /(?:_?using_?\w+)$/i,         // _using_curl, _using_puppeteer
-  /(?:_?with_?\w+)$/i,          // _with_selenium
-  /(?:_?on_?\w+)$/i,            // _on_telegram (but not "on" alone)
-  /(?:_?through_?\w+)$/i,       // _through_api
+  /(?:_?via_?\w+)$/i, // _via_agentmail, _via_slack
+  /(?:_?from_?\w+)$/i, // _from_openweather, _from_api
+  /(?:_?using_?\w+)$/i, // _using_curl, _using_puppeteer
+  /(?:_?with_?\w+)$/i, // _with_selenium
+  /(?:_?on_?\w+)$/i, // _on_telegram (but not "on" alone)
+  /(?:_?through_?\w+)$/i, // _through_api
 ];
 
 function normalizeToolName(rawName: string): string {
-  let name = rawName.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  let name = rawName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_");
 
   // Strip service-specific suffixes
   for (const pattern of SERVICE_SPECIFIC_PATTERNS) {
-    name = name.replace(pattern, '');
+    name = name.replace(pattern, "");
   }
 
   // Remove consecutive underscores and trailing underscores
-  name = name.replace(/_+/g, '_').replace(/^_|_$/g, '');
+  name = name.replace(/_+/g, "_").replace(/^_|_$/g, "");
 
   // If name is too short after cleanup, keep original
-  if (name.length < 3) return rawName.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  if (name.length < 3)
+    return rawName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_");
 
   return name;
 }
@@ -115,18 +122,19 @@ export class ToolSynthesizer {
     const platform = process.platform;
 
     // Build tool list — use full registry if available, otherwise defaults
-    const toolList = toolDescriptions && toolDescriptions.length > 0
-      ? toolDescriptions.map(t => `  - ${t}`).join("\n")
-      : `  - run_shell_command(command): runs any shell command and returns output\n` +
-        `  - read_file(path): reads a file from disk\n` +
-        `  - write_file(path, content): writes content to a file\n` +
-        `  - edit_file(path, old_text, new_text): edit a file by replacing text\n` +
-        `  - web_crawl(url): fetches a URL and returns text content\n` +
-        `  - google_search(query): search Google and return results\n` +
-        `  - scrapling_fetch(url, mode): anti-bot web scraping (modes: basic, stealth, dynamic)\n` +
-        `  - computer_use(action, ...): desktop automation — mouse, keyboard, screenshots, app control\n` +
-        `  - take_screenshot(): capture the screen\n` +
-        `  - send_file(path, caption): send a file to the user`;
+    const toolList =
+      toolDescriptions && toolDescriptions.length > 0
+        ? toolDescriptions.map((t) => `  - ${t}`).join("\n")
+        : `  - run_shell_command(command): runs any shell command and returns output\n` +
+          `  - read_file(path): reads a file from disk\n` +
+          `  - write_file(path, content): writes content to a file\n` +
+          `  - edit_file(path, old_text, new_text): edit a file by replacing text\n` +
+          `  - web_crawl(url): fetches a URL and returns text content\n` +
+          `  - google_search(query): search Google and return results\n` +
+          `  - scrapling_fetch(url, mode): anti-bot web scraping (modes: basic, stealth, dynamic)\n` +
+          `  - computer_use(action, ...): desktop automation — mouse, keyboard, screenshots, app control\n` +
+          `  - take_screenshot(): capture the screen\n` +
+          `  - send_file(path, caption): send a file to the user`;
 
     const prompt =
       `You are writing a SKILL.md for an AI assistant called StackOwl.\n` +
@@ -165,7 +173,8 @@ export class ToolSynthesizer {
       `- No TypeScript, no code generation — pure natural language instructions\n` +
       `- Output ONLY the SKILL.md content, nothing else`;
 
-    const model = synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
+    const model =
+      synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
     const response = await provider.chat(
       [{ role: "user", content: prompt }],
       model,
@@ -182,7 +191,10 @@ export class ToolSynthesizer {
     try {
       for (let attempt = 0; attempt < MAX_SYNTHESIS_RETRIES; attempt++) {
         const currentContent = attempt === 0 ? content : bestContent;
-        const provisionalSkill = parser.parseContent(currentContent, "provisional");
+        const provisionalSkill = parser.parseContent(
+          currentContent,
+          "provisional",
+        );
         const critique = await critic.critique(provisionalSkill);
         const score = critique.overallScore;
 
@@ -203,7 +215,10 @@ export class ToolSynthesizer {
         }
 
         // Below minimum — retry with critique feedback
-        if (score < MIN_QUALITY_THRESHOLD && attempt < MAX_SYNTHESIS_RETRIES - 1) {
+        if (
+          score < MIN_QUALITY_THRESHOLD &&
+          attempt < MAX_SYNTHESIS_RETRIES - 1
+        ) {
           const retryPrompt =
             prompt +
             `\n\n[QUALITY FEEDBACK — attempt ${attempt + 1} scored ${score.toFixed(2)}/1.0]\n` +
@@ -308,7 +323,8 @@ export class ToolSynthesizer {
       `- If no npm packages are needed, set dependencies to []\n` +
       `- Output ONLY the JSON object, no markdown fences`;
 
-    const model = synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
+    const model =
+      synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
     const response = await provider.chat(
       [{ role: "user", content: prompt }],
       model,
@@ -441,7 +457,8 @@ export class ToolSynthesizer {
       `- Implement cross-platform detection to adapt behavior at runtime\n` +
       `- Output ONLY the TypeScript file content, no explanation, no markdown fences`;
 
-    const implModel = synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
+    const implModel =
+      synthesisModel ?? config.synthesis?.model ?? config.defaultModel;
     const response = await provider.chat(
       [{ role: "user", content: prompt }],
       implModel,

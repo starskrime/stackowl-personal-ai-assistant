@@ -22,9 +22,9 @@
  *   Stage 2: send_email (chained after)
  */
 
-import type { Skill, SkillDependency, SkillComposition } from './types.js';
-import type { SkillsRegistry } from './registry.js';
-import { Logger } from '../logger.js';
+import type { Skill, SkillDependency, SkillComposition } from "./types.js";
+import type { SkillsRegistry } from "./registry.js";
+import { Logger } from "../logger.js";
 
 // ─── Composition Types ───────────────────────────────────────────
 
@@ -45,7 +45,7 @@ export interface CompositionStage {
 // ─── Composer ────────────────────────────────────────────────────
 
 export class SkillComposer {
-  private logger = new Logger('COMPOSER');
+  private logger = new Logger("COMPOSER");
 
   constructor(private registry: SkillsRegistry) {}
 
@@ -60,7 +60,7 @@ export class SkillComposer {
     // No composition metadata — single-stage plan
     if (!composition || !composition.isComposite) {
       return {
-        stages: [{ order: 0, skills: [primarySkill], label: 'primary' }],
+        stages: [{ order: 0, skills: [primarySkill], label: "primary" }],
         totalSkills: 1,
         primarySkill: primarySkill.name,
       };
@@ -72,10 +72,10 @@ export class SkillComposer {
     const cycle = this.detectCycle(primarySkill.name, visited, path);
     if (cycle) {
       this.logger.warn(
-        `Circular dependency detected: ${cycle.join(' -> ')}. Falling back to single-stage plan.`
+        `Circular dependency detected: ${cycle.join(" -> ")}. Falling back to single-stage plan.`,
       );
       return {
-        stages: [{ order: 0, skills: [primarySkill], label: 'primary' }],
+        stages: [{ order: 0, skills: [primarySkill], label: "primary" }],
         totalSkills: 1,
         primarySkill: primarySkill.name,
       };
@@ -85,28 +85,46 @@ export class SkillComposer {
     let stageOrder = 0;
 
     // Stage: 'before' dependencies (run in parallel)
-    const beforeDeps = composition.dependencies.filter(d => d.order === 'before');
+    const beforeDeps = composition.dependencies.filter(
+      (d) => d.order === "before",
+    );
     if (beforeDeps.length > 0) {
       const beforeSkills = this.resolveSkills(beforeDeps);
       if (beforeSkills.length > 0) {
-        stages.push({ order: stageOrder++, skills: beforeSkills, label: 'dependencies' });
+        stages.push({
+          order: stageOrder++,
+          skills: beforeSkills,
+          label: "dependencies",
+        });
       }
     }
 
     // Stage: 'parallel' dependencies run alongside the primary skill
-    const parallelDeps = composition.dependencies.filter(d => d.order === 'parallel');
+    const parallelDeps = composition.dependencies.filter(
+      (d) => d.order === "parallel",
+    );
     const parallelSkills = this.resolveSkills(parallelDeps);
 
     // Stage: primary skill (+ any parallel deps)
     const primaryStageSkills = [...parallelSkills, primarySkill];
-    stages.push({ order: stageOrder++, skills: primaryStageSkills, label: 'primary' });
+    stages.push({
+      order: stageOrder++,
+      skills: primaryStageSkills,
+      label: "primary",
+    });
 
     // Stage: 'after' dependencies
-    const afterDeps = composition.dependencies.filter(d => d.order === 'after');
+    const afterDeps = composition.dependencies.filter(
+      (d) => d.order === "after",
+    );
     if (afterDeps.length > 0) {
       const afterSkills = this.resolveSkills(afterDeps);
       if (afterSkills.length > 0) {
-        stages.push({ order: stageOrder++, skills: afterSkills, label: 'chains' });
+        stages.push({
+          order: stageOrder++,
+          skills: afterSkills,
+          label: "chains",
+        });
       }
     }
 
@@ -116,17 +134,25 @@ export class SkillComposer {
       for (const chainName of composition.chains) {
         const skill = this.registry.get(chainName);
         if (!skill) {
-          this.logger.warn(`Chained skill "${chainName}" not found in registry, skipping.`);
+          this.logger.warn(
+            `Chained skill "${chainName}" not found in registry, skipping.`,
+          );
           continue;
         }
         if (!skill.enabled) {
-          this.logger.warn(`Chained skill "${chainName}" is disabled, skipping.`);
+          this.logger.warn(
+            `Chained skill "${chainName}" is disabled, skipping.`,
+          );
           continue;
         }
         chainSkills.push(skill);
       }
       if (chainSkills.length > 0) {
-        stages.push({ order: stageOrder++, skills: chainSkills, label: 'chains' });
+        stages.push({
+          order: stageOrder++,
+          skills: chainSkills,
+          label: "chains",
+        });
       }
     }
 
@@ -148,12 +174,12 @@ export class SkillComposer {
     if (plan.stages.length === 1 && plan.totalSkills === 1) {
       const skill = plan.stages[0].skills[0];
       return [
-        '<skill>',
+        "<skill>",
         `<name>${skill.name}</name>`,
         `<description>${skill.description}</description>`,
         `<instructions>${skill.instructions}</instructions>`,
-        '</skill>',
-      ].join('\n');
+        "</skill>",
+      ].join("\n");
     }
 
     // Multi-stage: return <skill-chain> with ordered stages
@@ -173,8 +199,8 @@ export class SkillComposer {
       lines.push(`  </stage>`);
     }
 
-    lines.push('</skill-chain>');
-    return lines.join('\n');
+    lines.push("</skill-chain>");
+    return lines.join("\n");
   }
 
   /**
@@ -202,7 +228,10 @@ export class SkillComposer {
     const depends = openclaw.depends;
     const chains = openclaw.chains;
 
-    if ((!depends || depends.length === 0) && (!chains || chains.length === 0)) {
+    if (
+      (!depends || depends.length === 0) &&
+      (!chains || chains.length === 0)
+    ) {
       return null;
     }
 
@@ -212,7 +241,7 @@ export class SkillComposer {
       for (const depName of depends) {
         dependencies.push({
           skillName: depName,
-          order: 'before',
+          order: "before",
           required: true,
         });
       }
@@ -221,7 +250,8 @@ export class SkillComposer {
     return {
       dependencies,
       chains: chains ?? undefined,
-      isComposite: dependencies.length > 0 || (chains != null && chains.length > 0),
+      isComposite:
+        dependencies.length > 0 || (chains != null && chains.length > 0),
     };
   }
 
@@ -236,13 +266,13 @@ export class SkillComposer {
       const skill = this.registry.get(dep.skillName);
       if (!skill) {
         this.logger.warn(
-          `Dependency "${dep.skillName}" not found in registry, skipping.`
+          `Dependency "${dep.skillName}" not found in registry, skipping.`,
         );
         continue;
       }
       if (!skill.enabled) {
         this.logger.warn(
-          `Dependency "${dep.skillName}" is disabled, skipping.`
+          `Dependency "${dep.skillName}" is disabled, skipping.`,
         );
         continue;
       }
@@ -259,7 +289,7 @@ export class SkillComposer {
   private detectCycle(
     startSkill: string,
     visited: Set<string>,
-    path: Set<string>
+    path: Set<string>,
   ): string[] | null {
     if (path.has(startSkill)) {
       // Found a cycle — reconstruct path

@@ -45,10 +45,13 @@ interface MCPTool {
 export class MCPClient {
   private process: ChildProcess | null = null;
   private requestId = 0;
-  private pending = new Map<number, {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-  }>();
+  private pending = new Map<
+    number,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+    }
+  >();
   private buffer = "";
   private connected = false;
   private discoveredTools: MCPTool[] = [];
@@ -70,7 +73,9 @@ export class MCPClient {
     if (this.config.transport === "stdio") {
       await this.connectStdio();
     } else {
-      throw new Error(`MCP transport "${this.config.transport}" not yet supported. Use "stdio".`);
+      throw new Error(
+        `MCP transport "${this.config.transport}" not yet supported. Use "stdio".`,
+      );
     }
 
     // Initialize handshake
@@ -91,7 +96,9 @@ export class MCPClient {
    * Discover available tools from the MCP server.
    */
   async listTools(): Promise<MCPTool[]> {
-    const result = await this.sendRequest("tools/list", {}) as { tools: MCPTool[] };
+    const result = (await this.sendRequest("tools/list", {})) as {
+      tools: MCPTool[];
+    };
     this.discoveredTools = result.tools ?? [];
     return this.discoveredTools;
   }
@@ -100,10 +107,10 @@ export class MCPClient {
    * Call a tool on the MCP server.
    */
   async callTool(name: string, args: Record<string, unknown>): Promise<string> {
-    const result = await this.sendRequest("tools/call", {
+    const result = (await this.sendRequest("tools/call", {
       name,
       arguments: args,
-    }) as { content: Array<{ type: string; text?: string }> };
+    })) as { content: Array<{ type: string; text?: string }> };
 
     // Extract text content from the response
     const textParts = (result.content ?? [])
@@ -123,7 +130,10 @@ export class MCPClient {
       const definition: ToolDefinition = {
         name: prefixedName,
         description: mcpTool.description ?? `MCP tool: ${mcpTool.name}`,
-        parameters: (mcpTool.inputSchema ?? { type: "object", properties: {} }) as ToolDefinition["parameters"],
+        parameters: (mcpTool.inputSchema ?? {
+          type: "object",
+          properties: {},
+        }) as ToolDefinition["parameters"],
       };
 
       const client = this;
@@ -133,7 +143,10 @@ export class MCPClient {
         definition,
         category: "mcp" as const,
         source: "mcp",
-        async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+        async execute(
+          args: Record<string, unknown>,
+          _context: ToolContext,
+        ): Promise<string> {
           return client.callTool(originalName, args);
         },
       };
@@ -176,21 +189,43 @@ export class MCPClient {
     });
 
     this.process.stderr!.on("data", (data: Buffer) => {
-      log.engine.warn(`[MCP:${this.config.name}:stderr] ${data.toString().trim()}`);
+      log.engine.warn(
+        `[MCP:${this.config.name}:stderr] ${data.toString().trim()}`,
+      );
     });
 
     this.process.on("exit", (code) => {
-      log.engine.warn(`[MCP:${this.config.name}] Process exited with code ${code}`);
+      log.engine.warn(
+        `[MCP:${this.config.name}] Process exited with code ${code}`,
+      );
       this.connected = false;
     });
 
     // Wait a moment for process to start
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => resolve(), 2000);
+      const timeout = setTimeout(() => {
+        if (!this.connected) {
+          reject(
+            new Error(
+              `MCP server "${this.config.name}" failed to connect within 2000ms`,
+            ),
+          );
+        } else {
+          resolve();
+        }
+      }, 2000);
       this.process!.on("error", (err) => {
         clearTimeout(timeout);
-        reject(new Error(`Failed to start MCP server "${this.config.name}": ${err.message}`));
+        reject(
+          new Error(
+            `Failed to start MCP server "${this.config.name}": ${err.message}`,
+          ),
+        );
       });
+      if (this.connected) {
+        clearTimeout(timeout);
+        resolve();
+      }
     });
   }
 
@@ -219,7 +254,10 @@ export class MCPClient {
     }
   }
 
-  private sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private sendRequest(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
     const id = ++this.requestId;
     const request: MCPRequest = { jsonrpc: "2.0", id, method, params };
 
@@ -232,15 +270,24 @@ export class MCPClient {
       }, 30000);
 
       this.pending.set(id, {
-        resolve: (value) => { clearTimeout(timeout); resolve(value); },
-        reject: (error) => { clearTimeout(timeout); reject(error); },
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
       });
 
       this.process?.stdin?.write(JSON.stringify(request) + "\n");
     });
   }
 
-  private sendNotification(method: string, params: Record<string, unknown>): void {
+  private sendNotification(
+    method: string,
+    params: Record<string, unknown>,
+  ): void {
     const notification = { jsonrpc: "2.0", method, params };
     this.process?.stdin?.write(JSON.stringify(notification) + "\n");
   }

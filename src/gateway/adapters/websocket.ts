@@ -113,8 +113,8 @@ export class WebSocketAdapter implements ChannelAdapter {
     text: string,
     customSessionId?: string,
   ): Promise<void> {
-    const sessionId =
-      customSessionId || makeSessionId(this.id, userId);
+    const sessionId = customSessionId || makeSessionId(this.id, userId);
+    this.gateway.getCognitiveLoop()?.notifyUserActivity();
 
     const response = await this.gateway.handle(
       {
@@ -137,9 +137,7 @@ export class WebSocketAdapter implements ChannelAdapter {
         },
         onFile: async (filePath: string, caption?: string) => {
           if (ws.readyState === ws.OPEN) {
-            ws.send(
-              JSON.stringify({ type: "file", path: filePath, caption }),
-            );
+            ws.send(JSON.stringify({ type: "file", path: filePath, caption }));
           }
         },
       },

@@ -13,11 +13,11 @@
  *   - Runtime wiring errors surface clearly at startup
  */
 
-import { log } from '../logger.js';
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
-type Lifetime = 'singleton' | 'transient';
+type Lifetime = "singleton" | "transient";
 
 interface ServiceDescriptor<T = unknown> {
   name: string;
@@ -49,13 +49,15 @@ export class Container {
     },
   ): this {
     if (this.descriptors.has(name)) {
-      log.engine.warn(`[Container] Overwriting existing registration: "${name}"`);
+      log.engine.warn(
+        `[Container] Overwriting existing registration: "${name}"`,
+      );
     }
 
     this.descriptors.set(name, {
       name,
       factory: factory as (container: Container) => unknown | Promise<unknown>,
-      lifetime: options?.lifetime ?? 'singleton',
+      lifetime: options?.lifetime ?? "singleton",
       dependsOn: options?.dependsOn ?? [],
       tags: options?.tags ?? [],
     });
@@ -70,7 +72,7 @@ export class Container {
     this.descriptors.set(name, {
       name,
       factory: () => instance,
-      lifetime: 'singleton',
+      lifetime: "singleton",
       dependsOn: [],
       tags: tags ?? [],
     });
@@ -88,7 +90,7 @@ export class Container {
     }
 
     // Singleton already created
-    if (descriptor.lifetime === 'singleton' && this.singletons.has(name)) {
+    if (descriptor.lifetime === "singleton" && this.singletons.has(name)) {
       return this.singletons.get(name) as T;
     }
 
@@ -96,7 +98,7 @@ export class Container {
     if (this.resolving.has(name)) {
       throw new Error(
         `[Container] Circular dependency detected: "${name}" is already being resolved. ` +
-        `Resolution stack: [${[...this.resolving].join(' → ')} → ${name}]`,
+          `Resolution stack: [${[...this.resolving].join(" → ")} → ${name}]`,
       );
     }
 
@@ -104,7 +106,7 @@ export class Container {
     try {
       const instance = await descriptor.factory(this);
 
-      if (descriptor.lifetime === 'singleton') {
+      if (descriptor.lifetime === "singleton") {
         this.singletons.set(name, instance);
       }
 
@@ -135,9 +137,11 @@ export class Container {
     try {
       const result = descriptor.factory(this);
       if (result instanceof Promise) {
-        throw new Error(`[Container] Service "${name}" has async factory — use resolve() instead of resolveSync().`);
+        throw new Error(
+          `[Container] Service "${name}" has async factory — use resolve() instead of resolveSync().`,
+        );
       }
-      if (descriptor.lifetime === 'singleton') {
+      if (descriptor.lifetime === "singleton") {
         this.singletons.set(name, result);
       }
       return result as T;
@@ -157,7 +161,9 @@ export class Container {
    * Get all services tagged with a specific tag.
    */
   async resolveByTag<T>(tag: string): Promise<T[]> {
-    const matching = [...this.descriptors.values()].filter(d => d.tags.includes(tag));
+    const matching = [...this.descriptors.values()].filter((d) =>
+      d.tags.includes(tag),
+    );
     const results: T[] = [];
     for (const desc of matching) {
       results.push(await this.resolve<T>(desc.name));
@@ -175,7 +181,9 @@ export class Container {
     for (const [name, desc] of this.descriptors) {
       for (const dep of desc.dependsOn) {
         if (!this.descriptors.has(dep)) {
-          errors.push(`Service "${name}" depends on "${dep}" which is not registered.`);
+          errors.push(
+            `Service "${name}" depends on "${dep}" which is not registered.`,
+          );
         }
       }
     }
@@ -191,12 +199,12 @@ export class Container {
     const errors = this.validate();
     if (errors.length > 0) {
       throw new Error(
-        `[Container] Dependency validation failed:\n${errors.map(e => `  - ${e}`).join('\n')}`,
+        `[Container] Dependency validation failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
       );
     }
 
     for (const [name, desc] of this.descriptors) {
-      if (desc.lifetime === 'singleton' && !this.singletons.has(name)) {
+      if (desc.lifetime === "singleton" && !this.singletons.has(name)) {
         try {
           await this.resolve(name);
         } catch (err) {
@@ -208,14 +216,21 @@ export class Container {
       }
     }
 
-    log.engine.info(`[Container] All ${this.singletons.size} singleton services initialized.`);
+    log.engine.info(
+      `[Container] All ${this.singletons.size} singleton services initialized.`,
+    );
   }
 
   /**
    * List all registered services (for diagnostics).
    */
-  listServices(): Array<{ name: string; lifetime: Lifetime; tags: string[]; initialized: boolean }> {
-    return [...this.descriptors.values()].map(d => ({
+  listServices(): Array<{
+    name: string;
+    lifetime: Lifetime;
+    tags: string[];
+    initialized: boolean;
+  }> {
+    return [...this.descriptors.values()].map((d) => ({
       name: d.name,
       lifetime: d.lifetime,
       tags: d.tags,
@@ -228,11 +243,13 @@ export class Container {
    */
   async dispose(): Promise<void> {
     for (const [name, instance] of this.singletons) {
-      if (instance && typeof (instance as any).dispose === 'function') {
+      if (instance && typeof (instance as any).dispose === "function") {
         try {
           await (instance as any).dispose();
         } catch (err) {
-          log.engine.warn(`[Container] Error disposing "${name}": ${err instanceof Error ? err.message : err}`);
+          log.engine.warn(
+            `[Container] Error disposing "${name}": ${err instanceof Error ? err.message : err}`,
+          );
         }
       }
     }

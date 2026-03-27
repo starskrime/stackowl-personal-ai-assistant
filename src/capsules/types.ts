@@ -4,8 +4,8 @@
  * Future-self messaging: date/condition/event-triggered messages delivered by heartbeat.
  */
 
-export type TriggerType = 'date' | 'condition' | 'event';
-export type CapsuleStatus = 'sealed' | 'delivered' | 'expired';
+export type TriggerType = "date" | "condition" | "event";
+export type CapsuleStatus = "sealed" | "delivered" | "expired";
 
 export interface CapsuleTrigger {
   type: TriggerType;

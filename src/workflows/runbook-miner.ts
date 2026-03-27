@@ -53,7 +53,9 @@ export class RunbookMiner {
       const msg = messages[i];
       if (typeof msg.content !== "string") continue;
 
-      const isDebugRelated = DEBUG_INDICATORS.some(p => p.test(msg.content as string));
+      const isDebugRelated = DEBUG_INDICATORS.some((p) =>
+        p.test(msg.content as string),
+      );
 
       if (isDebugRelated) {
         if (!currentSession) {
@@ -97,7 +99,10 @@ export class RunbookMiner {
     }
 
     // Close any open session
-    if (currentSession && currentSession.messages.length >= this.minSessionLength) {
+    if (
+      currentSession &&
+      currentSession.messages.length >= this.minSessionLength
+    ) {
       sessions.push(currentSession);
     }
 
@@ -112,7 +117,9 @@ export class RunbookMiner {
     const sessions = this.detectDebugSessions(messages);
     if (sessions.length === 0) return [];
 
-    log.engine.info(`[RunbookMiner] Found ${sessions.length} debug session(s), synthesizing workflows`);
+    log.engine.info(
+      `[RunbookMiner] Found ${sessions.length} debug session(s), synthesizing workflows`,
+    );
 
     const workflows: WorkflowDefinition[] = [];
 
@@ -125,7 +132,9 @@ export class RunbookMiner {
           if (!existing) {
             await this.chainStore.save(workflow);
             workflows.push(workflow);
-            log.engine.info(`[RunbookMiner] Created workflow: ${workflow.name}`);
+            log.engine.info(
+              `[RunbookMiner] Created workflow: ${workflow.name}`,
+            );
           }
         }
       } catch (err) {
@@ -136,9 +145,14 @@ export class RunbookMiner {
     return workflows;
   }
 
-  private async synthesizeWorkflow(session: DebugSession): Promise<WorkflowDefinition | null> {
+  private async synthesizeWorkflow(
+    session: DebugSession,
+  ): Promise<WorkflowDefinition | null> {
     const transcript = session.messages
-      .map(m => `${m.role}: ${typeof m.content === "string" ? m.content.slice(0, 300) : "[non-text]"}`)
+      .map(
+        (m) =>
+          `${m.role}: ${typeof m.content === "string" ? m.content.slice(0, 300) : "[non-text]"}`,
+      )
       .join("\n");
 
     const prompt = `Analyze this debugging session and extract a reusable runbook workflow.
@@ -171,9 +185,9 @@ Return ONLY valid JSON with this structure:
 
 If the session is too vague to extract a useful runbook, return {"skip": true}.`;
 
-    const chatResponse = await this.provider.chat(
-      [{ role: "user", content: prompt }],
-    );
+    const chatResponse = await this.provider.chat([
+      { role: "user", content: prompt },
+    ]);
     const response = chatResponse.content;
 
     try {
@@ -189,12 +203,14 @@ If the session is too vague to extract a useful runbook, return {"skip": true}.`
         name: parsed.name,
         description: parsed.description,
         triggers: parsed.triggers ?? [],
-        parameters: (parsed.parameters ?? []).map((p: Record<string, unknown>) => ({
-          name: p.name,
-          description: p.description ?? "",
-          type: p.type ?? "string",
-          required: p.required ?? false,
-        })),
+        parameters: (parsed.parameters ?? []).map(
+          (p: Record<string, unknown>) => ({
+            name: p.name,
+            description: p.description ?? "",
+            type: p.type ?? "string",
+            required: p.required ?? false,
+          }),
+        ),
         steps: (parsed.steps ?? []).map((s: Record<string, unknown>) => ({
           id: s.id ?? `step-${Math.random().toString(36).slice(2, 6)}`,
           name: s.name ?? "unnamed",

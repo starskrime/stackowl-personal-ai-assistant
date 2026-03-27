@@ -4,7 +4,7 @@
  * Cross-pellet pattern mining: thematic links, contradictions, knowledge gaps.
  */
 
-export type ConstellationType = 'theme' | 'contradiction' | 'gap' | 'evolution';
+export type ConstellationType = "theme" | "contradiction" | "gap" | "evolution";
 
 export interface ConstellationLink {
   pelletId: string;

@@ -19,8 +19,7 @@ export const JSONTransformTool: ToolImplementation = {
         },
         jpath: {
           type: "string",
-          description:
-            'Path for extract operation, e.g. "data.users[0].name"',
+          description: 'Path for extract operation, e.g. "data.users[0].name"',
         },
       },
       required: ["data", "operation"],
@@ -88,7 +87,11 @@ export const JSONTransformTool: ToolImplementation = {
               const val = obj[h];
               const str = val === null || val === undefined ? "" : String(val);
               // Escape CSV values containing commas or quotes
-              if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+              if (
+                str.includes(",") ||
+                str.includes('"') ||
+                str.includes("\n")
+              ) {
                 return `"${str.replace(/"/g, '""')}"`;
               }
               return str;

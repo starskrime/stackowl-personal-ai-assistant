@@ -1,10 +1,7 @@
 import { exec } from "node:child_process";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
-function execPromise(
-  cmd: string,
-  timeout = 15000,
-): Promise<string> {
+function execPromise(cmd: string, timeout = 15000): Promise<string> {
   return new Promise((resolve, reject) => {
     exec(cmd, { timeout }, (error, stdout, stderr) => {
       if (error) {

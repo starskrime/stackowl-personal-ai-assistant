@@ -129,7 +129,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
   {
     id: "ssh",
     name: "SSH Server",
-    description: "Connect to remote servers via SSH for debugging and management",
+    description:
+      "Connect to remote servers via SSH for debugging and management",
     category: "infra",
     transport: "stdio",
     command: "npx",
@@ -141,14 +142,16 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
 ];
 
 export function getPreset(id: string): ConnectorPreset | undefined {
-  return CONNECTOR_PRESETS.find(p => p.id === id);
+  return CONNECTOR_PRESETS.find((p) => p.id === id);
 }
 
-export function listPresets(category?: ConnectorPreset["category"]): ConnectorPreset[] {
-  if (category) return CONNECTOR_PRESETS.filter(p => p.category === category);
+export function listPresets(
+  category?: ConnectorPreset["category"],
+): ConnectorPreset[] {
+  if (category) return CONNECTOR_PRESETS.filter((p) => p.category === category);
   return [...CONNECTOR_PRESETS];
 }
 
 export function listCategories(): string[] {
-  return [...new Set(CONNECTOR_PRESETS.map(p => p.category))];
+  return [...new Set(CONNECTOR_PRESETS.map((p) => p.category))];
 }

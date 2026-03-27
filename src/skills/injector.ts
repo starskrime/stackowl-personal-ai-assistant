@@ -16,7 +16,7 @@ import type { ModelProvider } from "../providers/base.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { SkillsRegistry } from "./registry.js";
 import { ClawHubClient } from "./clawhub.js";
-import { IntentRouter } from "./intent-router.js";
+import { IntentRouter, type IntentMatch } from "./intent-router.js";
 import { SkillTracker } from "./tracker.js";
 import { SkillComposer } from "./composer.js";
 import { SkillExecutor } from "./executor.js";
@@ -108,7 +108,9 @@ export class SkillContextInjector {
     onProgress?: (msg: string) => Promise<void>,
   ): Promise<SkillExecutionResult> {
     if (!this.executor || !this.paramExtractor) {
-      throw new Error('Structured skill executor not initialized (missing toolRegistry or provider)');
+      throw new Error(
+        "Structured skill executor not initialized (missing toolRegistry or provider)",
+      );
     }
 
     const startTime = Date.now();
@@ -117,17 +119,20 @@ export class SkillContextInjector {
     let parameters: Record<string, unknown> = {};
     if (skill.parameters && Object.keys(skill.parameters).length > 0) {
       try {
-        parameters = await this.paramExtractor.extract(userMessage, skill.parameters);
+        parameters = await this.paramExtractor.extract(
+          userMessage,
+          skill.parameters,
+        );
         log.engine.info(
           `[SkillExecutor] Extracted params for "${skill.name}": ` +
-          `${JSON.stringify(parameters)}`,
+            `${JSON.stringify(parameters)}`,
         );
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         this.tracker.recordFailure(skill.name, Date.now() - startTime);
         return {
           skillName: skill.name,
-          status: 'failed',
+          status: "failed",
           stepResults: [],
           finalOutput: `Failed to extract parameters: ${errorMsg}`,
           totalDurationMs: Date.now() - startTime,
@@ -139,17 +144,22 @@ export class SkillContextInjector {
     // Map progress to gateway format
     const progressAdapter = onProgress
       ? async (stepId: string, status: string, detail?: string) => {
-          const emoji = status === 'running' ? '⏳' : status === 'success' ? '✅' : '❌';
+          const emoji =
+            status === "running" ? "⏳" : status === "success" ? "✅" : "❌";
           await onProgress(`${emoji} **Step ${stepId}:** ${detail || status}`);
         }
       : undefined;
 
     // Execute
-    const result = await this.executor.execute(skill, parameters, progressAdapter);
+    const result = await this.executor.execute(
+      skill,
+      parameters,
+      progressAdapter,
+    );
 
     // Track
     const durationMs = Date.now() - startTime;
-    if (result.status === 'success') {
+    if (result.status === "success") {
       this.tracker.recordSuccess(skill.name, durationMs);
     } else {
       this.tracker.recordFailure(skill.name, durationMs);
@@ -172,15 +182,26 @@ export class SkillContextInjector {
    * Uses BM25 retrieval + usage-weighted re-ranking + optional LLM disambiguation.
    */
   async getRelevantSkills(userMessage: string): Promise<Skill[]> {
-    const matches = await this.router.route(userMessage, this.options.maxSkills);
-    const skills = matches.map((m) => m.skill);
+    const matches = await this.getRelevantMatches(userMessage);
+    return matches.map((m) => m.skill);
+  }
+
+  /**
+   * Get relevant skills with their match scores.
+   * Useful for gating structured execution on confidence.
+   */
+  async getRelevantMatches(userMessage: string): Promise<IntentMatch[]> {
+    const matches = await this.router.route(
+      userMessage,
+      this.options.maxSkills,
+    );
 
     // Track selections
-    for (const skill of skills) {
-      this.tracker.recordSelection(skill.name);
+    for (const m of matches) {
+      this.tracker.recordSelection(m.skill.name);
     }
 
-    return skills;
+    return matches;
   }
 
   /**
@@ -316,10 +337,13 @@ export class SkillContextInjector {
     for (const skill of skills) {
       const emoji = skill.metadata.openclaw?.emoji || "•";
       const usage = skill.usage;
-      const usageHint = usage && usage.selectionCount > 0
-        ? ` (used ${usage.selectionCount}x, ${(usage.successRate * 100).toFixed(0)}% success)`
-        : "";
-      lines.push(`- ${emoji} **${skill.name}**: ${skill.description}${usageHint}`);
+      const usageHint =
+        usage && usage.selectionCount > 0
+          ? ` (used ${usage.selectionCount}x, ${(usage.successRate * 100).toFixed(0)}% success)`
+          : "";
+      lines.push(
+        `- ${emoji} **${skill.name}**: ${skill.description}${usageHint}`,
+      );
     }
 
     lines.push(

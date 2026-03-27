@@ -74,10 +74,8 @@ export const WeatherTool: ToolImplementation = {
           const minF = day.mintempF;
           const hourly = day.hourly as Record<string, unknown>[];
           const dayDesc = hourly?.[4]
-            ? (
-                (hourly[4].weatherDesc as Record<string, unknown>[])?.[0]
-                  ?.value ?? "Unknown"
-              )
+            ? ((hourly[4].weatherDesc as Record<string, unknown>[])?.[0]
+                ?.value ?? "Unknown")
             : "Unknown";
           result += `  ${date}: ${dayDesc}, ${minC}–${maxC}°C / ${minF}–${maxF}°F\n`;
         }

@@ -23,16 +23,89 @@ export interface ConceptIndex {
 // ─── Extraction ─────────────────────────────────────────────────
 
 const STOPWORDS = new Set([
-  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'shall', 'can', 'need', 'must', 'not',
-  'and', 'or', 'but', 'if', 'then', 'else', 'when', 'how', 'what',
-  'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'here',
-  'there', 'where', 'why', 'all', 'each', 'every', 'both', 'few',
-  'more', 'most', 'some', 'any', 'no', 'only', 'own', 'same', 'so',
-  'than', 'too', 'very', 'just', 'also', 'still', 'already', 'about',
-  'new', 'old', 'first', 'last', 'next', 'many', 'much', 'well',
-  'answer', 'example', 'related', 'json', 'topic', 'knowledge',
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "need",
+  "must",
+  "not",
+  "and",
+  "or",
+  "but",
+  "if",
+  "then",
+  "else",
+  "when",
+  "how",
+  "what",
+  "which",
+  "who",
+  "whom",
+  "this",
+  "that",
+  "these",
+  "those",
+  "here",
+  "there",
+  "where",
+  "why",
+  "all",
+  "each",
+  "every",
+  "both",
+  "few",
+  "more",
+  "most",
+  "some",
+  "any",
+  "no",
+  "only",
+  "own",
+  "same",
+  "so",
+  "than",
+  "too",
+  "very",
+  "just",
+  "also",
+  "still",
+  "already",
+  "about",
+  "new",
+  "old",
+  "first",
+  "last",
+  "next",
+  "many",
+  "much",
+  "well",
+  "answer",
+  "example",
+  "related",
+  "json",
+  "topic",
+  "knowledge",
 ]);
 
 /**
@@ -58,7 +131,7 @@ export function extractConcepts(
   const titleWords = title
     .toLowerCase()
     .split(/[^a-z0-9-]+/)
-    .filter(w => w.length >= 3 && !STOPWORDS.has(w));
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
   for (const w of titleWords) {
     concepts.add(w);
   }
@@ -67,7 +140,10 @@ export function extractConcepts(
   const headerRe = /^#{1,4}\s+(.+)$/gm;
   let match: RegExpExecArray | null;
   while ((match = headerRe.exec(content)) !== null) {
-    const heading = match[1].trim().toLowerCase().replace(/[^a-z0-9 -]/g, '');
+    const heading = match[1]
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9 -]/g, "");
     if (heading.length >= 3) {
       concepts.add(heading);
       // Also add individual words from the heading

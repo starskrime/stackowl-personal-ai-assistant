@@ -12,17 +12,21 @@ Create, switch, list, and delete git branches.
 ## Steps
 
 1. **List existing branches:**
+
    ```bash
    run_shell_command("git branch -a")
    ```
 
 2. **Create a new branch:**
+
    ```bash
    run_shell_command("git checkout -b <branch_name>")
    ```
+
    Enforce naming: `<type>/<description>` (e.g., `feature/add-auth`, `fix/login-bug`)
 
 3. **Switch branches:**
+
    ```bash
    run_shell_command("git checkout <branch_name>")
    ```
@@ -35,11 +39,13 @@ Create, switch, list, and delete git branches.
 ## Examples
 
 ### Create feature branch
+
 ```bash
 run_shell_command("git checkout -b feature/add-notifications")
 ```
 
 ### List all branches
+
 ```bash
 run_shell_command("git branch -a --sort=-committerdate")
 ```

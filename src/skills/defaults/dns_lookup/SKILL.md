@@ -4,9 +4,13 @@ description: Perform DNS lookups to resolve domain names, check MX records, NS r
 openclaw:
   emoji: "🌐"
 ---
+
 # DNS Lookup
+
 Perform DNS record lookups.
+
 ## Steps
+
 1. **A record (IP address):**
    ```bash
    run_shell_command("dig +short <domain> A")
@@ -27,11 +31,16 @@ Perform DNS record lookups.
    ```bash
    run_shell_command("dig +short <domain> CNAME")
    ```
+
 ## Examples
+
 ### Full DNS lookup
+
 ```bash
 run_shell_command("dig <domain> ANY +noall +answer")
 ```
+
 ## Error Handling
+
 - **Domain not found:** NXDOMAIN response — check spelling.
 - **dig not available:** Fall back to `nslookup <domain>`.

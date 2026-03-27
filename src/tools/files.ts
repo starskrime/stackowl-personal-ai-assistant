@@ -7,7 +7,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { resolve, isAbsolute, sep } from "node:path";
+import { resolve, isAbsolute, sep, normalize } from "node:path";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 
 // ─── Sandbox Helper ───────────────────────────────────────────────
@@ -65,7 +65,10 @@ export const ReadFileTool: ToolImplementation = {
     if (!filePath) throw new Error("Path argument missing");
 
     const cwd = context.cwd || process.cwd();
-    const resolved = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+    const normalizedInput = normalize(filePath);
+    const resolved = isAbsolute(normalizedInput)
+      ? normalizedInput
+      : resolve(cwd, normalizedInput);
     assertWithinSandbox(resolved, cwd);
 
     try {
@@ -123,7 +126,10 @@ export const WriteFileTool: ToolImplementation = {
     if (content === undefined) throw new Error("Content argument missing");
 
     const cwd = context.cwd || process.cwd();
-    const resolved = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+    const normalizedInput = normalize(filePath);
+    const resolved = isAbsolute(normalizedInput)
+      ? normalizedInput
+      : resolve(cwd, normalizedInput);
     assertWithinSandbox(resolved, cwd);
 
     try {
@@ -180,7 +186,10 @@ export const EditFileTool: ToolImplementation = {
     if (newString === undefined) throw new Error("new_string argument missing");
 
     const cwd = context.cwd || process.cwd();
-    const resolved = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+    const normalizedInput = normalize(filePath);
+    const resolved = isAbsolute(normalizedInput)
+      ? normalizedInput
+      : resolve(cwd, normalizedInput);
     assertWithinSandbox(resolved, cwd);
 
     try {

@@ -11,7 +11,11 @@
  * but this log is always injected fresh and is never compressed away.
  */
 
-export type AttemptOutcome = 'success' | 'soft-fail' | 'hard-fail' | 'duplicate-blocked';
+export type AttemptOutcome =
+  | "success"
+  | "soft-fail"
+  | "hard-fail"
+  | "duplicate-blocked";
 
 export interface Attempt {
   /** Which user turn this happened in (1 = first message, 2 = second, etc.) */
@@ -24,7 +28,7 @@ export interface Attempt {
   resultSummary: string;
 }
 
-const MAX_ATTEMPTS = 40;   // cap so injection doesn't grow unboundedly
+const MAX_ATTEMPTS = 40; // cap so injection doesn't grow unboundedly
 const MAX_RESULT_CHARS = 180;
 const MAX_ARGS_CHARS = 80;
 
@@ -45,14 +49,18 @@ export class AttemptLog {
     result: string,
   ): void {
     // Summarise args: prefer 'command', 'url', 'query', 'path' fields which are most meaningful
-    const argValue =
-      (args['command'] ?? args['url'] ?? args['query'] ?? args['path'] ??
-       args['prompt'] ?? args['text'] ?? JSON.stringify(args)) as string;
+    const argValue = (args["command"] ??
+      args["url"] ??
+      args["query"] ??
+      args["path"] ??
+      args["prompt"] ??
+      args["text"] ??
+      JSON.stringify(args)) as string;
     const argsSummary = String(argValue).slice(0, MAX_ARGS_CHARS);
 
     // Strip control markers from result summary so they don't confuse the model
     const cleaned = result
-      .replace(/\[SYSTEM[^\]]*\]/g, '')
+      .replace(/\[SYSTEM[^\]]*\]/g, "")
       .replace(/EXIT_CODE:\s*\d+/g, (m) => m.trim())
       .trim();
     const resultSummary = cleaned.slice(0, MAX_RESULT_CHARS);
@@ -86,18 +94,18 @@ export class AttemptLog {
    *   Turn 2: run_shell_command("python3 script.py") → FAILED (python3 not in Alpine)
    */
   toPromptBlock(): string {
-    if (this.attempts.length === 0) return '';
+    if (this.attempts.length === 0) return "";
 
     const OUTCOME_LABEL: Record<AttemptOutcome, string> = {
-      'success':           '✓ SUCCESS',
-      'soft-fail':         '✗ FAILED',
-      'hard-fail':         '✗ ERROR',
-      'duplicate-blocked': '⊘ SKIPPED (already tried)',
+      success: "✓ SUCCESS",
+      "soft-fail": "✗ FAILED",
+      "hard-fail": "✗ ERROR",
+      "duplicate-blocked": "⊘ SKIPPED (already tried)",
     };
 
-    const lines = this.attempts.map(a => {
+    const lines = this.attempts.map((a) => {
       const label = OUTCOME_LABEL[a.outcome];
-      const detail = a.outcome !== 'success' ? ` — ${a.resultSummary}` : '';
+      const detail = a.outcome !== "success" ? ` — ${a.resultSummary}` : "";
       return `  Turn ${a.turn}: ${a.toolName}("${a.argsSummary}") → ${label}${detail}`;
     });
 
@@ -106,7 +114,7 @@ export class AttemptLog {
       `The following tool calls were made in earlier turns. ` +
       `Before planning your next action, read this list carefully — ` +
       `do NOT repeat any approach marked FAILED or SKIPPED.\n\n` +
-      lines.join('\n') +
+      lines.join("\n") +
       `\n\nIf every reasonable approach has been tried and failed, say so directly and ask the user for guidance.`
     );
   }

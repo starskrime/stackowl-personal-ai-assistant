@@ -12,10 +12,10 @@
  * takes the most obvious path without considering alternatives.
  */
 
-import type { ModelProvider, ChatMessage } from '../providers/base.js';
-import type { OwlDNA } from '../owls/persona.js';
-import type { DNADecisions } from '../owls/decision-layer.js';
-import { log } from '../logger.js';
+import type { ModelProvider, ChatMessage } from "../providers/base.js";
+import type { OwlDNA } from "../owls/persona.js";
+import type { DNADecisions } from "../owls/decision-layer.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -88,7 +88,7 @@ export class CreativeThinking {
         triggered: false,
         approaches: [],
         selected: null,
-        directive: '',
+        directive: "",
         durationMs: Date.now() - startTime,
       };
     }
@@ -101,7 +101,7 @@ export class CreativeThinking {
       );
 
       // Score each approach against the user's DNA preferences
-      const scored = approaches.map(a => ({
+      const scored = approaches.map((a) => ({
         ...a,
         alignmentScore: this.scoreAlignment(a, dna, decisions),
       }));
@@ -113,7 +113,7 @@ export class CreativeThinking {
       const directive = this.buildDirective(scored, selected);
 
       log.engine.info(
-        `[Creative] Generated ${scored.length} approaches for "${userMessage.slice(0, 50)}..." — selected: "${selected?.name ?? 'none'}"`,
+        `[Creative] Generated ${scored.length} approaches for "${userMessage.slice(0, 50)}..." — selected: "${selected?.name ?? "none"}"`,
       );
 
       return {
@@ -124,12 +124,14 @@ export class CreativeThinking {
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
-      log.engine.warn(`[Creative] Exploration failed: ${err instanceof Error ? err.message : String(err)}`);
+      log.engine.warn(
+        `[Creative] Exploration failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return {
         triggered: false,
         approaches: [],
         selected: null,
-        directive: '',
+        directive: "",
         durationMs: Date.now() - startTime,
       };
     }
@@ -137,10 +139,7 @@ export class CreativeThinking {
 
   // ─── Should Explore ────────────────────────────────────────────
 
-  private shouldExplore(
-    userMessage: string,
-    decisions: DNADecisions,
-  ): boolean {
+  private shouldExplore(userMessage: string, decisions: DNADecisions): boolean {
     // Skip for very short or simple messages
     if (userMessage.length < 30) return false;
 
@@ -153,7 +152,7 @@ export class CreativeThinking {
     if (decisions.maxResponseTokens < 500) return false;
 
     // Check complexity patterns
-    const matches = COMPLEXITY_PATTERNS.filter(p => p.test(userMessage));
+    const matches = COMPLEXITY_PATTERNS.filter((p) => p.test(userMessage));
     return matches.length >= 1;
   }
 
@@ -166,13 +165,13 @@ export class CreativeThinking {
   ): Promise<CreativeApproach[]> {
     const context = recentHistory
       .slice(-4)
-      .map(m => `${m.role}: ${(m.content ?? '').slice(0, 200)}`)
-      .join('\n');
+      .map((m) => `${m.role}: ${(m.content ?? "").slice(0, 200)}`)
+      .join("\n");
 
     const expertise = Object.entries(dna.expertiseGrowth)
       .filter(([, s]) => s > 0.3)
       .map(([d]) => d)
-      .join(', ');
+      .join(", ");
 
     const prompt = `Given this user request, generate exactly 3 different APPROACHES to solve it.
 Each approach should be meaningfully different — not just variations of the same idea.
@@ -182,7 +181,7 @@ USER REQUEST: "${userMessage}"
 RECENT CONTEXT:
 ${context}
 
-YOUR EXPERTISE: ${expertise || 'general'}
+YOUR EXPERTISE: ${expertise || "general"}
 
 For each approach, provide:
 1. A short name (2-4 words)
@@ -198,28 +197,35 @@ Return ONLY valid JSON array:
 
     const response = await this.provider.chat(
       [
-        { role: 'system', content: 'You are a creative problem-solving module. Output only valid JSON.' },
-        { role: 'user', content: prompt },
+        {
+          role: "system",
+          content:
+            "You are a creative problem-solving module. Output only valid JSON.",
+        },
+        { role: "user", content: prompt },
       ],
       undefined,
       { temperature: 0.9, maxTokens: 600 },
     );
 
     let jsonStr = response.content.trim();
-    if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
+    if (jsonStr.startsWith("```")) {
+      jsonStr = jsonStr
+        .replace(/^```json?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
     }
 
     const parsed = JSON.parse(jsonStr);
     if (!Array.isArray(parsed)) return [];
 
     return parsed.slice(0, 3).map((item: Record<string, unknown>) => ({
-      name: String(item.name ?? '').slice(0, 50),
-      description: String(item.description ?? '').slice(0, 200),
+      name: String(item.name ?? "").slice(0, 50),
+      description: String(item.description ?? "").slice(0, 200),
       tools: Array.isArray(item.tools) ? item.tools.map(String) : [],
       complexity: Math.max(1, Math.min(5, Number(item.complexity ?? 3))),
       alignmentScore: 0,
-      differentiator: String(item.differentiator ?? '').slice(0, 150),
+      differentiator: String(item.differentiator ?? "").slice(0, 150),
     }));
   }
 
@@ -242,16 +248,20 @@ Return ONLY valid JSON array:
     }
 
     // Match complexity to risk tolerance
-    if (decisions.riskTolerance === 'cautious' && approach.complexity <= 2) score += 0.1;
-    if (decisions.riskTolerance === 'aggressive' && approach.complexity >= 3) score += 0.1;
-    if (decisions.riskTolerance === 'moderate') score += 0.05; // Neutral bonus
+    if (decisions.riskTolerance === "cautious" && approach.complexity <= 2)
+      score += 0.1;
+    if (decisions.riskTolerance === "aggressive" && approach.complexity >= 3)
+      score += 0.1;
+    if (decisions.riskTolerance === "moderate") score += 0.05; // Neutral bonus
 
     // Concise users prefer simpler approaches
-    if (dna.evolvedTraits.verbosity === 'concise' && approach.complexity <= 2) score += 0.1;
+    if (dna.evolvedTraits.verbosity === "concise" && approach.complexity <= 2)
+      score += 0.1;
 
     // High challenge users prefer thorough approaches
     if (
-      (dna.evolvedTraits.challengeLevel === 'high' || dna.evolvedTraits.challengeLevel === 'relentless') &&
+      (dna.evolvedTraits.challengeLevel === "high" ||
+        dna.evolvedTraits.challengeLevel === "relentless") &&
       approach.complexity >= 3
     ) {
       score += 0.1;
@@ -266,31 +276,33 @@ Return ONLY valid JSON array:
     approaches: CreativeApproach[],
     selected: CreativeApproach | null,
   ): string {
-    if (!selected || approaches.length === 0) return '';
+    if (!selected || approaches.length === 0) return "";
 
     const lines: string[] = [
-      '## Creative Exploration (your thinking module explored alternatives)',
-      '',
+      "## Creative Exploration (your thinking module explored alternatives)",
+      "",
     ];
 
     if (approaches.length > 1) {
-      lines.push('Alternative approaches considered:');
+      lines.push("Alternative approaches considered:");
       for (const a of approaches) {
-        const marker = a.name === selected.name ? '→' : '  ';
-        lines.push(`${marker} **${a.name}** (alignment: ${(a.alignmentScore * 100).toFixed(0)}%): ${a.description}`);
+        const marker = a.name === selected.name ? "→" : "  ";
+        lines.push(
+          `${marker} **${a.name}** (alignment: ${(a.alignmentScore * 100).toFixed(0)}%): ${a.description}`,
+        );
       }
-      lines.push('');
+      lines.push("");
     }
 
     lines.push(`**Selected approach:** ${selected.name}`);
     lines.push(`Reason: ${selected.differentiator}`);
-    lines.push(`Use tools: ${selected.tools.join(', ')}`);
-    lines.push('');
+    lines.push(`Use tools: ${selected.tools.join(", ")}`);
+    lines.push("");
     lines.push(
-      'Follow this approach, but stay flexible. If the selected approach hits a wall, ' +
-      'pivot to one of the alternatives above.'
+      "Follow this approach, but stay flexible. If the selected approach hits a wall, " +
+        "pivot to one of the alternatives above.",
     );
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 }

@@ -43,6 +43,7 @@ import { getReadyMessages } from "../tools/utils/timer.js";
 import { PostProcessor } from "./handlers/post-processor.js";
 import { ContextBuilder } from "./handlers/context-builder.js";
 import { SessionManager } from "./handlers/session-manager.js";
+import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
 import { TaskQueue } from "../queue/task-queue.js";
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -130,9 +131,15 @@ export class OwlGateway {
         ctx.owlRegistry.saveDNA(owl.persona.name).catch(() => {});
       }
     };
-    process.once('exit', saveDNAOnExit);
-    process.once('SIGINT', () => { saveDNAOnExit(); process.exit(0); });
-    process.once('SIGTERM', () => { saveDNAOnExit(); process.exit(0); });
+    process.once("exit", saveDNAOnExit);
+    process.once("SIGINT", () => {
+      saveDNAOnExit();
+      process.exit(0);
+    });
+    process.once("SIGTERM", () => {
+      saveDNAOnExit();
+      process.exit(0);
+    });
 
     // Preference detector — created once if preference store is configured
     if (ctx.preferenceStore) {
@@ -162,20 +169,28 @@ export class OwlGateway {
 
     // Initialize extracted handlers (Improvement #4)
     // ContextBuilder is initialized after skillInjector below
+    // InnerLifeDNABridge — connects inner life state to DNA mutations
+    const innerLifeBridge = ctx.owlRegistry
+      ? new InnerLifeDNABridge(ctx.owlRegistry)
+      : null;
+
     this.postProcessor = new PostProcessor(
       ctx,
       this.taskQueue,
       ctx.eventBus ?? null,
-      this.microLearner,
+      ctx.selfLearningCoordinator ?? null,
       this.anticipator,
       ctx.costTracker ?? null,
+      innerLifeBridge,
     );
     this.contextBuilder = new ContextBuilder(ctx, this.microLearner, null);
 
     // Built-in middleware
     this.middleware.push(new LoggingMiddleware());
     if (ctx.config.gateway?.rateLimit) {
-      this.middleware.push(new RateLimitMiddleware(ctx.config.gateway.rateLimit));
+      this.middleware.push(
+        new RateLimitMiddleware(ctx.config.gateway.rateLimit),
+      );
     }
 
     // Evict stale sessions from memory every 30 minutes.
@@ -192,7 +207,8 @@ export class OwlGateway {
       skillTracker.load().catch(() => {}); // Non-blocking load
 
       // Use synthesis provider (Anthropic) for skill routing LLM disambiguation
-      const synthesisProviderName = ctx.config.synthesis?.provider ?? 'anthropic';
+      const synthesisProviderName =
+        ctx.config.synthesis?.provider ?? "anthropic";
       let skillProvider = ctx.provider;
       if (ctx.providerRegistry) {
         try {
@@ -274,7 +290,13 @@ export class OwlGateway {
     message: GatewayMessage,
     callbacks: GatewayCallbacks = {},
   ): Promise<GatewayResponse> {
-    const laneKey = message.sessionId;
+    if (!message.sessionId || message.sessionId.length > 256) {
+      throw new Error("Invalid session ID");
+    }
+    if (!message.channelId || message.channelId.length > 64) {
+      throw new Error("Invalid channel ID");
+    }
+    const laneKey = `${message.channelId}:${message.sessionId}`;
     const prev = this.lanes.get(laneKey) ?? Promise.resolve();
     const next = prev.then(async () => {
       const response = await this.handleInLane(message, callbacks);
@@ -406,24 +428,32 @@ export class OwlGateway {
 
         // Structured skills — execute directly via executor
         if (this.skillInjector?.canExecuteStructured(skill)) {
-          const emoji = skill.metadata.openclaw?.emoji || '⚡';
+          const emoji = skill.metadata.openclaw?.emoji || "⚡";
           if (callbacks.onProgress) {
             await callbacks.onProgress(
               `${emoji} **Executing skill:** \`${skill.name}\``,
             );
           }
           const result = await this.skillInjector.executeStructuredSkill(
-            skill, skillArgs || skill.description, callbacks.onProgress,
+            skill,
+            skillArgs || skill.description,
+            callbacks.onProgress,
           );
-          await this.saveSession(session, message.text, [], false, result.finalOutput);
+          await this.saveSession(
+            session,
+            message.text,
+            [],
+            false,
+            result.finalOutput,
+          );
           this.postProcess(session.messages, session.id);
           return {
             content: result.finalOutput,
             owlName: this.ctx.owl.persona.name,
             owlEmoji: this.ctx.owl.persona.emoji,
             toolsUsed: result.stepResults
-              .filter(s => s.status === 'success')
-              .map(s => s.stepId),
+              .filter((s) => s.status === "success")
+              .map((s) => s.stepId),
           };
         }
 
@@ -433,7 +463,7 @@ export class OwlGateway {
           `The user has explicitly requested this skill. Follow its instructions exactly.\n\n` +
           `<skill name="${skill.name}">\n${skill.instructions}\n</skill>\n\n` +
           (skillArgs ? `User arguments: ${skillArgs}` : "");
-        const engineCtx = this.buildEngineContext(
+        const engineCtx = await this.buildEngineContext(
           session,
           callbacks,
           skillDirective,
@@ -444,7 +474,13 @@ export class OwlGateway {
           skillArgs || skill.description,
           engineCtx,
         );
-        await this.saveSession(session, message.text, response.newMessages, false, response.content);
+        await this.saveSession(
+          session,
+          message.text,
+          response.newMessages,
+          false,
+          response.content,
+        );
         this.postProcess(session.messages, session.id);
         return toGatewayResponse(response);
       } else {
@@ -515,13 +551,19 @@ export class OwlGateway {
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
     let dynamicSkillsContext = "";
     if (this.skillInjector) {
-      const relevantSkills = await this.skillInjector.getRelevantSkills(text);
-      if (relevantSkills.length > 0) {
-        // Check if top skill is structured — execute directly instead of prompt injection
-        const topSkill = relevantSkills[0];
-        if (this.skillInjector.canExecuteStructured(topSkill)) {
+      const relevantMatches =
+        await this.skillInjector.getRelevantMatches(text);
+      const relevantSkills = relevantMatches.map((m) => m.skill);
+      if (relevantMatches.length > 0) {
+        // Check if top skill is structured AND high confidence — execute directly
+        const topMatch = relevantMatches[0];
+        const topSkill = topMatch.skill;
+        if (
+          this.skillInjector.canExecuteStructured(topSkill) &&
+          topMatch.score >= 0.5
+        ) {
           log.engine.info(`Structured skill execution: ${topSkill.name}`);
-          const emoji = topSkill.metadata.openclaw?.emoji || '⚡';
+          const emoji = topSkill.metadata.openclaw?.emoji || "⚡";
           if (callbacks.onProgress) {
             await callbacks.onProgress(
               `${emoji} **Executing skill:** \`${topSkill.name}\` — ${topSkill.description}`,
@@ -529,11 +571,19 @@ export class OwlGateway {
           }
 
           const result = await this.skillInjector.executeStructuredSkill(
-            topSkill, message.text, callbacks.onProgress,
+            topSkill,
+            message.text,
+            callbacks.onProgress,
           );
 
           // Save to session and return directly — no ReAct loop needed
-          await this.saveSession(session, message.text, [], false, result.finalOutput);
+          await this.saveSession(
+            session,
+            message.text,
+            [],
+            false,
+            result.finalOutput,
+          );
           this.postProcess(session.messages, session.id);
 
           return {
@@ -541,8 +591,8 @@ export class OwlGateway {
             owlName: this.ctx.owl.persona.name,
             owlEmoji: this.ctx.owl.persona.emoji,
             toolsUsed: result.stepResults
-              .filter(s => s.status === 'success')
-              .map(s => s.stepId),
+              .filter((s) => s.status === "success")
+              .map((s) => s.stepId),
           };
         }
 
@@ -554,14 +604,16 @@ export class OwlGateway {
         // Notify user about skill usage (like tool history)
         if (callbacks.onProgress) {
           for (const s of relevantSkills) {
-            const emoji = s.metadata.openclaw?.emoji || '📋';
+            const emoji = s.metadata.openclaw?.emoji || "📋";
             await callbacks.onProgress(
               `${emoji} **Using skill:** \`${s.name}\` — ${s.description}`,
             );
           }
         }
       } else {
-        log.engine.info(`[Skills] No skills matched for: "${text.slice(0, 60)}"`);
+        log.engine.info(
+          `[Skills] No skills matched for: "${text.slice(0, 60)}"`,
+        );
       }
 
       // Optionally search ClawHub if no local skills match
@@ -586,18 +638,21 @@ export class OwlGateway {
     const strategy = await classifyStrategy(
       message.text,
       this.ctx.owlRegistry.listOwls(),
-      this.ctx.toolRegistry?.getDefinitions().map(t => t.name) ?? [],
+      this.ctx.toolRegistry?.getAllDefinitions().map((t) => t.name) ?? [],
       session.messages.slice(-6),
       this.ctx.provider,
     );
 
-    if (callbacks.onProgress && !['DIRECT', 'STANDARD'].includes(strategy.strategy)) {
+    if (
+      callbacks.onProgress &&
+      !["DIRECT", "STANDARD"].includes(strategy.strategy)
+    ) {
       await callbacks.onProgress(
         `🎯 **Strategy: ${strategy.strategy}** — ${strategy.reasoning}`,
       );
     }
 
-    const engineCtx = this.buildEngineContext(
+    const engineCtx = await this.buildEngineContext(
       session,
       callbacks,
       dynamicSkillsContext,
@@ -620,7 +675,7 @@ export class OwlGateway {
       owlEmoji: orchResult.owlEmoji,
       challenged: false,
       toolsUsed: orchResult.toolsUsed,
-      modelUsed: '',
+      modelUsed: "",
       newMessages: [],
       usage: orchResult.usage,
     };
@@ -636,11 +691,23 @@ export class OwlGateway {
       );
     }
 
-    await this.saveSession(session, message.text, response.newMessages, false, response.content);
+    await this.saveSession(
+      session,
+      message.text,
+      response.newMessages,
+      false,
+      response.content,
+    );
     this.postProcess(session.messages, session.id);
 
     // Detect and persist preferences expressed in this message (fire-and-forget)
     this.detectPreferences(message.text, message.channelId);
+
+    // Track intent state based on this exchange (fire-and-forget)
+    this.trackIntent(message.sessionId, message.text, response.content);
+
+    // Record behavioral signals for preference inference (fire-and-forget)
+    this.analyzeBehavior(message.text, message.channelId);
 
     return toGatewayResponse(response);
   }
@@ -675,10 +742,11 @@ export class OwlGateway {
     // Reactive learning (new orchestrator if available, fallback to legacy)
     if (this.ctx.learningOrchestrator) {
       try {
-        const cycle = await this.ctx.learningOrchestrator.processConversation(messages);
+        const cycle =
+          await this.ctx.learningOrchestrator.processConversation(messages);
         log.engine.info(
           `[endSession:learning] ✓ orchestrator completed — ${cycle.topicsPrioritized} topics, ` +
-          `${cycle.synthesisReport?.pelletsCreated ?? 0} pellets`,
+            `${cycle.synthesisReport?.pelletsCreated ?? 0} pellets`,
         );
       } catch (err) {
         log.engine.warn(
@@ -742,7 +810,10 @@ export class OwlGateway {
     // Timeline — final snapshot on session end
     if (this.ctx.timelineManager && messages.length > 0) {
       this.ctx.timelineManager.createSnapshot(
-        sessionId, messages, this.ctx.owl.persona.name, 'Session end snapshot',
+        sessionId,
+        messages,
+        this.ctx.owl.persona.name,
+        "Session end snapshot",
       );
       await this.ctx.timelineManager.save().catch(() => {});
     }
@@ -752,9 +823,11 @@ export class OwlGateway {
       try {
         await this.ctx.knowledgeReasoner.extractFromConversation(messages);
         await this.ctx.knowledgeGraph?.save();
-        log.engine.info('[endSession:knowledge] ✓ extracted');
+        log.engine.info("[endSession:knowledge] ✓ extracted");
       } catch (err) {
-        log.engine.warn(`[endSession:knowledge] ✗ failed: ${err instanceof Error ? err.message : err}`);
+        log.engine.warn(
+          `[endSession:knowledge] ✗ failed: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
 
@@ -765,17 +838,21 @@ export class OwlGateway {
         if (sessions.length > 0) {
           await this.ctx.patternAnalyzer.analyzeHistory(sessions as any[]);
           await this.ctx.patternAnalyzer.save();
-          log.engine.info('[endSession:patterns] ✓ analyzed');
+          log.engine.info("[endSession:patterns] ✓ analyzed");
         }
       } catch (err) {
-        log.engine.warn(`[endSession:patterns] ✗ failed: ${err instanceof Error ? err.message : err}`);
+        log.engine.warn(
+          `[endSession:patterns] ✗ failed: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
 
     // Save micro-learner profile on session end
     if (this.microLearner) {
       await this.microLearner.save().catch((err) => {
-        log.engine.warn(`[endSession] Micro-learner save failed: ${err instanceof Error ? err.message : err}`);
+        log.engine.warn(
+          `[endSession] Micro-learner save failed: ${err instanceof Error ? err.message : err}`,
+        );
       });
     }
 
@@ -801,68 +878,80 @@ export class OwlGateway {
     // Context Mesh — start ambient signal collectors
     if (this.ctx.contextMesh) {
       this.ctx.contextMesh.start();
-      log.engine.info('[feature] Context Mesh started');
+      log.engine.info("[feature] Context Mesh started");
     }
 
     // Trust Chain — load trust scores from disk
     if (this.ctx.trustChain) {
-      this.ctx.trustChain.load().catch(err =>
-        log.engine.warn(`[feature] Trust Chain load failed: ${err}`),
-      );
-      log.engine.info('[feature] Trust Chain initialized');
+      this.ctx.trustChain
+        .load()
+        .catch((err) =>
+          log.engine.warn(`[feature] Trust Chain load failed: ${err}`),
+        );
+      log.engine.info("[feature] Trust Chain initialized");
     }
 
     // Knowledge Graph — load graph from disk
     if (this.ctx.knowledgeGraph) {
-      this.ctx.knowledgeGraph.load().catch(err =>
-        log.engine.warn(`[feature] Knowledge Graph load failed: ${err}`),
-      );
-      log.engine.info('[feature] Knowledge Graph initialized');
+      this.ctx.knowledgeGraph
+        .load()
+        .catch((err) =>
+          log.engine.warn(`[feature] Knowledge Graph load failed: ${err}`),
+        );
+      log.engine.info("[feature] Knowledge Graph initialized");
     }
 
     // Timeline Manager — load snapshots
     if (this.ctx.timelineManager) {
-      this.ctx.timelineManager.load().catch(err =>
-        log.engine.warn(`[feature] Timeline load failed: ${err}`),
-      );
-      log.engine.info('[feature] Timeline Manager initialized');
+      this.ctx.timelineManager
+        .load()
+        .catch((err) =>
+          log.engine.warn(`[feature] Timeline load failed: ${err}`),
+        );
+      log.engine.info("[feature] Timeline Manager initialized");
     }
 
     // Collab Sessions — load persisted sessions
     if (this.ctx.collabManager) {
       this.ctx.collabManager.loadAll();
-      log.engine.info('[feature] Collab Session Manager initialized');
+      log.engine.info("[feature] Collab Session Manager initialized");
     }
 
     // Pattern Analyzer — load patterns
     if (this.ctx.patternAnalyzer) {
-      this.ctx.patternAnalyzer.load().catch(err =>
-        log.engine.warn(`[feature] Pattern Analyzer load failed: ${err}`),
-      );
-      log.engine.info('[feature] Pattern Analyzer initialized');
+      this.ctx.patternAnalyzer
+        .load()
+        .catch((err) =>
+          log.engine.warn(`[feature] Pattern Analyzer load failed: ${err}`),
+        );
+      log.engine.info("[feature] Pattern Analyzer initialized");
     }
 
     // Predictive Queue — load queue
     if (this.ctx.predictiveQueue) {
-      this.ctx.predictiveQueue.load().catch(err =>
-        log.engine.warn(`[feature] Predictive Queue load failed: ${err}`),
-      );
-      log.engine.info('[feature] Predictive Queue initialized');
+      this.ctx.predictiveQueue
+        .load()
+        .catch((err) =>
+          log.engine.warn(`[feature] Predictive Queue load failed: ${err}`),
+        );
+      log.engine.info("[feature] Predictive Queue initialized");
     }
 
     // Skill Arena — load tournament data
     if (this.ctx.skillArena) {
-      this.ctx.skillArena.load().catch(err =>
-        log.engine.warn(`[feature] Skill Arena load failed: ${err}`),
-      );
-      log.engine.info('[feature] Skill Arena initialized');
+      this.ctx.skillArena
+        .load()
+        .catch((err) =>
+          log.engine.warn(`[feature] Skill Arena load failed: ${err}`),
+        );
+      log.engine.info("[feature] Skill Arena initialized");
     }
 
     // Scheduled message delivery tick — polls every 5 seconds for due timers
     this.timerTickInterval = setInterval(() => {
       this.deliverScheduledMessages();
     }, 5_000);
-    log.engine.info('[feature] Scheduled message delivery tick started (5s)');
+    log.engine.info("[feature] Scheduled message delivery tick started (5s)");
 
     // Persist new modules on process exit
     const saveOnExit = () => {
@@ -875,7 +964,7 @@ export class OwlGateway {
       this.ctx.skillArena?.save?.().catch(() => {});
       this.ctx.contextMesh?.stop?.();
     };
-    process.once('beforeExit', saveOnExit);
+    process.once("beforeExit", saveOnExit);
   }
 
   // ─── Proactive Messaging ─────────────────────────────────────
@@ -935,15 +1024,17 @@ export class OwlGateway {
       const userId = msg.userId || this.lastActiveUserId;
 
       if (channelId && userId) {
-        this.sendProactive(channelId, userId, msg.message).catch(err =>
+        this.sendProactive(channelId, userId, msg.message).catch((err) =>
           log.engine.warn(
             `[Timer] Failed to deliver scheduled message "${msg.id}": ${err instanceof Error ? err.message : err}`,
           ),
         );
-        log.engine.info(`[Timer] Delivered "${msg.id}" to ${channelId}:${userId}`);
+        log.engine.info(
+          `[Timer] Delivered "${msg.id}" to ${channelId}:${userId}`,
+        );
       } else {
         // No channel info — broadcast to all
-        this.broadcastProactive(msg.message).catch(err =>
+        this.broadcastProactive(msg.message).catch((err) =>
           log.engine.warn(
             `[Timer] Failed to broadcast scheduled message "${msg.id}": ${err instanceof Error ? err.message : err}`,
           ),
@@ -991,6 +1082,55 @@ export class OwlGateway {
   getReflexionEngine() {
     return this.ctx.reflexionEngine;
   }
+  getIntentStateMachine() {
+    return this.ctx.intentStateMachine;
+  }
+  getCommitmentTracker() {
+    return this.ctx.commitmentTracker;
+  }
+  getGoalGraph() {
+    return this.ctx.goalGraph;
+  }
+  getProactiveLoop() {
+    return this.ctx.proactiveLoop;
+  }
+  getSessionStore() {
+    return this.ctx.sessionStore;
+  }
+  getKnowledgeCouncil() {
+    return this.ctx.knowledgeCouncil;
+  }
+  getCwd() {
+    return this.ctx.cwd;
+  }
+  getCognitiveLoop() {
+    return this.ctx.cognitiveLoop;
+  }
+
+  /**
+   * Get pending commitments that are due for follow-up.
+   * Called by ProactivePinger to send commitment follow-ups.
+   */
+  getDueCommitments(): Array<{
+    id: string;
+    message: string;
+    intentId: string;
+  }> {
+    const ct = this.ctx.commitmentTracker;
+    if (!ct) return [];
+    return ct.getDue().map((c) => ({
+      id: c.id,
+      message: c.followUpMessage,
+      intentId: c.intentId,
+    }));
+  }
+
+  /**
+   * Mark a commitment as acknowledged by the user.
+   */
+  acknowledgeCommitment(commitmentId: string): void {
+    this.ctx.commitmentTracker?.markAcknowledged(commitmentId);
+  }
 
   // ─── Private: Feature Commands ──────────────────────────────
 
@@ -1008,42 +1148,59 @@ export class OwlGateway {
     });
 
     // /trust — show trust chain status
-    if (text.toLowerCase() === '/trust' && this.ctx.trustChain) {
+    if (text.toLowerCase() === "/trust" && this.ctx.trustChain) {
       return mkResp(this.ctx.trustChain.formatStatus());
     }
 
     // /timeline — show conversation timeline
-    if (text.toLowerCase() === '/timeline' && this.ctx.timelineManager) {
+    if (text.toLowerCase() === "/timeline" && this.ctx.timelineManager) {
       const timeline = this.ctx.timelineManager.getTimeline(message.sessionId);
-      if (!timeline) return mkResp('No timeline data for this session yet.');
-      const snapshotList = timeline.snapshots.map(s =>
-        `  • [${s.id.slice(0, 8)}] ${s.metadata.snapshotAt} — ${s.messageIndex} messages${s.metadata.description ? ` (${s.metadata.description})` : ''}`,
-      ).join('\n');
-      const forkList = timeline.forks.length > 0
-        ? '\n\n**Forks:**\n' + timeline.forks.map(f =>
-            `  • ${f.createdAt} — forked at message ${f.forkIndex}${f.forkReason ? ` (${f.forkReason})` : ''}`,
-          ).join('\n')
-        : '';
-      return mkResp(`**Timeline** (${timeline.totalMessages} messages)\n\n**Snapshots:**\n${snapshotList}${forkList}`);
+      if (!timeline) return mkResp("No timeline data for this session yet.");
+      const snapshotList = timeline.snapshots
+        .map(
+          (s) =>
+            `  • [${s.id.slice(0, 8)}] ${s.metadata.snapshotAt} — ${s.messageIndex} messages${s.metadata.description ? ` (${s.metadata.description})` : ""}`,
+        )
+        .join("\n");
+      const forkList =
+        timeline.forks.length > 0
+          ? "\n\n**Forks:**\n" +
+            timeline.forks
+              .map(
+                (f) =>
+                  `  • ${f.createdAt} — forked at message ${f.forkIndex}${f.forkReason ? ` (${f.forkReason})` : ""}`,
+              )
+              .join("\n")
+          : "";
+      return mkResp(
+        `**Timeline** (${timeline.totalMessages} messages)\n\n**Snapshots:**\n${snapshotList}${forkList}`,
+      );
     }
 
     // /fork [reason] — fork conversation from current point
-    if (text.toLowerCase().startsWith('/fork') && this.ctx.timelineManager) {
+    if (text.toLowerCase().startsWith("/fork") && this.ctx.timelineManager) {
       const reason = text.slice(5).trim() || undefined;
       const session = await this.getOrCreateSession(message);
       const snapshot = this.ctx.timelineManager.createSnapshot(
-        message.sessionId, session.messages, owl.persona.name, 'Pre-fork snapshot',
+        message.sessionId,
+        session.messages,
+        owl.persona.name,
+        "Pre-fork snapshot",
       );
       const newSessionId = `${message.sessionId}:fork:${Date.now()}`;
-      const fork = this.ctx.timelineManager.fork(snapshot.id, newSessionId, reason);
+      const fork = this.ctx.timelineManager.fork(
+        snapshot.id,
+        newSessionId,
+        reason,
+      );
       await this.ctx.timelineManager.save();
       return mkResp(
         `🔀 **Conversation forked!**\n\n` +
-        `Fork ID: \`${fork.id.slice(0, 8)}\`\n` +
-        `Forked at message: ${fork.forkIndex}\n` +
-        (reason ? `Reason: ${reason}\n` : '') +
-        `New session: \`${newSessionId}\`\n\n` +
-        `You can continue here or switch to the fork.`,
+          `Fork ID: \`${fork.id.slice(0, 8)}\`\n` +
+          `Forked at message: ${fork.forkIndex}\n` +
+          (reason ? `Reason: ${reason}\n` : "") +
+          `New session: \`${newSessionId}\`\n\n` +
+          `You can continue here or switch to the fork.`,
       );
     }
 
@@ -1054,26 +1211,36 @@ export class OwlGateway {
         const session = this.ctx.collabManager.createSession(
           collabCreate[1],
           owl.persona.name,
-          { userId: message.userId, displayName: message.userId, channelId: message.channelId },
+          {
+            userId: message.userId,
+            displayName: message.userId,
+            channelId: message.channelId,
+          },
         );
         return mkResp(
           `👥 **Collaborative session created!**\n\n` +
-          `Name: **${session.name}**\n` +
-          `Session ID: \`${session.id.slice(0, 8)}\`\n` +
-          `Others can join with: \`/collab join ${session.id.slice(0, 8)}\``,
+            `Name: **${session.name}**\n` +
+            `Session ID: \`${session.id.slice(0, 8)}\`\n` +
+            `Others can join with: \`/collab join ${session.id.slice(0, 8)}\``,
         );
       } catch (err) {
-        return mkResp(`Failed to create session: ${err instanceof Error ? err.message : err}`);
+        return mkResp(
+          `Failed to create session: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
 
     // /collab list — list active collab sessions
-    if (text.toLowerCase() === '/collab list' && this.ctx.collabManager) {
+    if (text.toLowerCase() === "/collab list" && this.ctx.collabManager) {
       const sessions = this.ctx.collabManager.listSessions();
-      if (sessions.length === 0) return mkResp('No active collaborative sessions.');
-      const list = sessions.map(s =>
-        `  • **${s.name}** (\`${s.id.slice(0, 8)}\`) — ${s.participants.length} participants, ${s.messages.length} messages`,
-      ).join('\n');
+      if (sessions.length === 0)
+        return mkResp("No active collaborative sessions.");
+      const list = sessions
+        .map(
+          (s) =>
+            `  • **${s.name}** (\`${s.id.slice(0, 8)}\`) — ${s.participants.length} participants, ${s.messages.length} messages`,
+        )
+        .join("\n");
       return mkResp(`**Active Collaborative Sessions:**\n${list}`);
     }
 
@@ -1081,27 +1248,41 @@ export class OwlGateway {
     const forgeStart = text.match(/^\/forge\s+start\s+(.+)$/i);
     if (forgeStart && this.ctx.demoRecorder) {
       const id = this.ctx.demoRecorder.startRecording(
-        forgeStart[1], forgeStart[1], this.ctx.cwd ?? process.cwd(),
+        forgeStart[1],
+        forgeStart[1],
+        this.ctx.cwd ?? process.cwd(),
       );
       return mkResp(
         `🔨 **Skill Forge recording started!**\n\n` +
-        `Name: **${forgeStart[1]}**\n` +
-        `Recording ID: \`${id.slice(0, 8)}\`\n\n` +
-        `I'm now watching your actions. When done, use \`/forge stop\` to generate a skill.`,
+          `Name: **${forgeStart[1]}**\n` +
+          `Recording ID: \`${id.slice(0, 8)}\`\n\n` +
+          `I'm now watching your actions. When done, use \`/forge stop\` to generate a skill.`,
       );
     }
 
     // /forge stop — stop recording and generate skill
-    if (text.toLowerCase() === '/forge stop' && this.ctx.demoRecorder && this.ctx.forgeSynthesizer) {
+    if (
+      text.toLowerCase() === "/forge stop" &&
+      this.ctx.demoRecorder &&
+      this.ctx.forgeSynthesizer
+    ) {
       // Get the last active recording
-      const activeIds = [...((this.ctx.demoRecorder as any).activeRecordings?.keys?.() ?? [])];
-      if (activeIds.length === 0) return mkResp('No active recording to stop.');
+      const activeIds = [
+        ...((this.ctx.demoRecorder as any).activeRecordings?.keys?.() ?? []),
+      ];
+      if (activeIds.length === 0) return mkResp("No active recording to stop.");
 
-      const recording = this.ctx.demoRecorder.endRecording(activeIds[activeIds.length - 1]);
+      const recording = this.ctx.demoRecorder.endRecording(
+        activeIds[activeIds.length - 1],
+      );
       try {
         const skillMd = await this.ctx.forgeSynthesizer.synthesize(recording);
-        const skillDir = this.ctx.config.skills?.directories?.[0] || './workspace/skills';
-        const filePath = await this.ctx.forgeSynthesizer.saveSkill(skillMd, skillDir);
+        const skillDir =
+          this.ctx.config.skills?.directories?.[0] || "./workspace/skills";
+        const filePath = await this.ctx.forgeSynthesizer.saveSkill(
+          skillMd,
+          skillDir,
+        );
 
         // Reindex skills after new skill added
         if (this.skillInjector) {
@@ -1110,27 +1291,32 @@ export class OwlGateway {
 
         return mkResp(
           `✅ **Skill generated from demonstration!**\n\n` +
-          `Steps recorded: ${recording.steps.length}\n` +
-          `Skill saved to: \`${filePath}\`\n\n` +
-          `The skill is now available for use.`,
+            `Steps recorded: ${recording.steps.length}\n` +
+            `Skill saved to: \`${filePath}\`\n\n` +
+            `The skill is now available for use.`,
         );
       } catch (err) {
-        return mkResp(`Skill generation failed: ${err instanceof Error ? err.message : err}`);
+        return mkResp(
+          `Skill generation failed: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
 
     // /swarm — show swarm status
-    if (text.toLowerCase() === '/swarm' && this.ctx.swarmCoordinator) {
+    if (text.toLowerCase() === "/swarm" && this.ctx.swarmCoordinator) {
       const status = this.ctx.swarmCoordinator.getSwarmStatus();
-      const nodeList = status.nodes.map(n =>
-        `  • **${n.name}** (${n.platform}) — ${n.status}, load: ${(n.currentLoad * 100).toFixed(0)}%, capabilities: ${n.capabilities.join(', ')}`,
-      ).join('\n');
+      const nodeList = status.nodes
+        .map(
+          (n) =>
+            `  • **${n.name}** (${n.platform}) — ${n.status}, load: ${(n.currentLoad * 100).toFixed(0)}%, capabilities: ${n.capabilities.join(", ")}`,
+        )
+        .join("\n");
       return mkResp(
         `**🐝 Swarm Status**\n\n` +
-        `Nodes: ${status.nodes.length}\n` +
-        `Active tasks: ${status.activeTasks.length}\n` +
-        `Total completed: ${status.totalCompleted}\n\n` +
-        `**Nodes:**\n${nodeList}`,
+          `Nodes: ${status.nodes.length}\n` +
+          `Active tasks: ${status.activeTasks.length}\n` +
+          `Total completed: ${status.totalCompleted}\n\n` +
+          `**Nodes:**\n${nodeList}`,
       );
     }
 
@@ -1140,7 +1326,7 @@ export class OwlGateway {
       const category = tournMatch[1].trim();
       return mkResp(
         `🏆 Tournament for category "${category}" queued.\n` +
-        `Use during quiet hours or run manually with the skill arena.`,
+          `Use during quiet hours or run manually with the skill arena.`,
       );
     }
 
@@ -1148,122 +1334,161 @@ export class OwlGateway {
     const voiceMatch = text.match(/^\/voice\s*(on|off)?$/i);
     if (voiceMatch && this.ctx.voiceAdapter) {
       const toggle = voiceMatch[1]?.toLowerCase();
-      if (toggle === 'on') {
-        return mkResp('🔊 Voice output enabled. Responses will be spoken aloud.');
-      } else if (toggle === 'off') {
-        return mkResp('🔇 Voice output disabled.');
+      if (toggle === "on") {
+        return mkResp(
+          "🔊 Voice output enabled. Responses will be spoken aloud.",
+        );
+      } else if (toggle === "off") {
+        return mkResp("🔇 Voice output disabled.");
       }
       const available = this.ctx.voiceAdapter.isAvailable();
-      return mkResp(`🎤 Voice status: ${available ? 'Available' : 'Not configured'}`);
+      return mkResp(
+        `🎤 Voice status: ${available ? "Available" : "Not configured"}`,
+      );
     }
 
     // /knowledge — show knowledge graph stats
-    if (text.toLowerCase() === '/knowledge' && this.ctx.knowledgeGraph) {
+    if (text.toLowerCase() === "/knowledge" && this.ctx.knowledgeGraph) {
       const stats = this.ctx.knowledgeGraph.getStats();
-      const topNodes = stats.topNodes.slice(0, 5).map(n =>
-        `  • **${n.title}** (accessed ${n.accessCount}x)`,
-      ).join('\n');
+      const topNodes = stats.topNodes
+        .slice(0, 5)
+        .map((n) => `  • **${n.title}** (accessed ${n.accessCount}x)`)
+        .join("\n");
       return mkResp(
         `**🧠 Knowledge Graph**\n\n` +
-        `Nodes: ${stats.totalNodes}\n` +
-        `Edges: ${stats.totalEdges}\n` +
-        `Domains: ${stats.domains.join(', ') || 'none'}\n` +
-        `Avg confidence: ${(stats.avgConfidence * 100).toFixed(0)}%\n\n` +
-        `**Most accessed:**\n${topNodes || '  (none yet)'}`,
+          `Nodes: ${stats.totalNodes}\n` +
+          `Edges: ${stats.totalEdges}\n` +
+          `Domains: ${stats.domains.join(", ") || "none"}\n` +
+          `Avg confidence: ${(stats.avgConfidence * 100).toFixed(0)}%\n\n` +
+          `**Most accessed:**\n${topNodes || "  (none yet)"}`,
       );
     }
 
     // /predict — show predicted tasks
-    if (text.toLowerCase() === '/predict' && this.ctx.predictiveQueue) {
+    if (text.toLowerCase() === "/predict" && this.ctx.predictiveQueue) {
       const presentation = this.ctx.predictiveQueue.formatForPresentation();
-      return mkResp(presentation || 'No predictions ready yet. I need more interaction history to identify patterns.');
+      return mkResp(
+        presentation ||
+          "No predictions ready yet. I need more interaction history to identify patterns.",
+      );
     }
 
     // /echo-check — run echo chamber analysis
-    if (text.toLowerCase() === '/echo-check' && this.ctx.echoChamberDetector) {
+    if (text.toLowerCase() === "/echo-check" && this.ctx.echoChamberDetector) {
       const analysis = await this.ctx.echoChamberDetector.analyze();
       if (analysis.detections.length === 0) {
-        return mkResp(`**Echo Chamber Check** (${analysis.sessionCount} sessions)\n\n${analysis.overallAssessment}`);
+        return mkResp(
+          `**Echo Chamber Check** (${analysis.sessionCount} sessions)\n\n${analysis.overallAssessment}`,
+        );
       }
-      const detectionList = analysis.detections.map(d =>
-        `  - **${d.bias.replace(/_/g, ' ')}** (${(d.confidence * 100).toFixed(0)}%): ${d.evidence}`,
-      ).join('\n');
+      const detectionList = analysis.detections
+        .map(
+          (d) =>
+            `  - **${d.bias.replace(/_/g, " ")}** (${(d.confidence * 100).toFixed(0)}%): ${d.evidence}`,
+        )
+        .join("\n");
       return mkResp(
         `**Echo Chamber Check** (${analysis.sessionCount} sessions)\n\n` +
-        `${analysis.overallAssessment}\n\n**Patterns:**\n${detectionList}`,
+          `${analysis.overallAssessment}\n\n**Patterns:**\n${detectionList}`,
       );
     }
 
     // /journal [weekly|monthly] — generate or view growth journal
     const journalMatch = text.match(/^\/journal(?:\s+(weekly|monthly))?$/i);
     if (journalMatch && this.ctx.journalGenerator) {
-      const period = (journalMatch[1] as 'weekly' | 'monthly') || 'weekly';
+      const period = (journalMatch[1] as "weekly" | "monthly") || "weekly";
       const entry = await this.ctx.journalGenerator.generate(period);
       return mkResp(entry.narrative);
     }
 
     // /quests — list active quests
-    if (text.toLowerCase() === '/quests' && this.ctx.questManager) {
+    if (text.toLowerCase() === "/quests" && this.ctx.questManager) {
       const quests = await this.ctx.questManager.list();
-      if (quests.length === 0) return mkResp('No active quests. Ask me to create one on any topic!');
-      const list = quests.map(q => {
-        const done = q.milestones.filter(m => m.completed).length;
-        return `  - **${q.title}** [${q.status}] — ${done}/${q.milestones.length} milestones`;
-      }).join('\n');
+      if (quests.length === 0)
+        return mkResp("No active quests. Ask me to create one on any topic!");
+      const list = quests
+        .map((q) => {
+          const done = q.milestones.filter((m) => m.completed).length;
+          return `  - **${q.title}** [${q.status}] — ${done}/${q.milestones.length} milestones`;
+        })
+        .join("\n");
       return mkResp(`**Your Quests:**\n${list}`);
     }
 
     // /capsules — list time capsules
-    if (text.toLowerCase() === '/capsules' && this.ctx.capsuleManager) {
+    if (text.toLowerCase() === "/capsules" && this.ctx.capsuleManager) {
       const capsules = await this.ctx.capsuleManager.list();
-      if (capsules.length === 0) return mkResp('No time capsules. Ask me to create one!');
-      const list = capsules.map(c => {
-        const icon = c.status === 'sealed' ? '\uD83D\uDD12' : '\uD83D\uDCEC';
-        return `  ${icon} **${c.id}** [${c.status}] — created ${new Date(c.createdAt).toLocaleDateString()}`;
-      }).join('\n');
+      if (capsules.length === 0)
+        return mkResp("No time capsules. Ask me to create one!");
+      const list = capsules
+        .map((c) => {
+          const icon = c.status === "sealed" ? "\uD83D\uDD12" : "\uD83D\uDCEC";
+          return `  ${icon} **${c.id}** [${c.status}] — created ${new Date(c.createdAt).toLocaleDateString()}`;
+        })
+        .join("\n");
       return mkResp(`**Time Capsules:**\n${list}`);
     }
 
     // /constellations — show discovered patterns
-    if (text.toLowerCase() === '/constellations' && this.ctx.constellationMiner) {
+    if (
+      text.toLowerCase() === "/constellations" &&
+      this.ctx.constellationMiner
+    ) {
       const constellations = await this.ctx.constellationMiner.list();
-      if (constellations.length === 0) return mkResp('No constellations discovered yet. I need more pellets to find patterns.');
-      const list = constellations.slice(0, 5).map(c =>
-        this.ctx.constellationMiner!.format(c),
-      ).join('\n\n---\n\n');
+      if (constellations.length === 0)
+        return mkResp(
+          "No constellations discovered yet. I need more pellets to find patterns.",
+        );
+      const list = constellations
+        .slice(0, 5)
+        .map((c) => this.ctx.constellationMiner!.format(c))
+        .join("\n\n---\n\n");
       return mkResp(`**Discovered Constellations:**\n\n${list}`);
     }
 
     // /socratic [mode|off] — toggle Socratic mode
-    const socraticMatch = text.match(/^\/socratic(?:\s+(pure|guided|reflective|devils_advocate|off))?$/i);
+    const socraticMatch = text.match(
+      /^\/socratic(?:\s+(pure|guided|reflective|devils_advocate|off))?$/i,
+    );
     if (socraticMatch && this.ctx.socraticEngine) {
       const mode = socraticMatch[1]?.toLowerCase();
-      if (mode === 'off') {
+      if (mode === "off") {
         const ended = this.ctx.socraticEngine.deactivate(message.sessionId);
         if (ended) {
-          return mkResp(`Socratic mode **deactivated** after ${ended.exchangeCount} exchanges.`);
+          return mkResp(
+            `Socratic mode **deactivated** after ${ended.exchangeCount} exchanges.`,
+          );
         }
-        return mkResp('Socratic mode was not active.');
+        return mkResp("Socratic mode was not active.");
       }
-      const subMode = (mode as any) || 'guided';
+      const subMode = (mode as any) || "guided";
       this.ctx.socraticEngine.activate(message.sessionId, subMode);
       return mkResp(
         `Socratic mode **activated** (${subMode}).\n\n` +
-        `I will now respond primarily with questions to help you think deeper.\n` +
-        `Use \`/socratic off\` to return to normal mode.`,
+          `I will now respond primarily with questions to help you think deeper.\n` +
+          `Use \`/socratic off\` to return to normal mode.`,
       );
     }
 
     // /council [topic1, topic2, ...] — convene a Knowledge Council
-    if (text.toLowerCase().startsWith('/council') && this.ctx.knowledgeCouncil) {
+    if (
+      text.toLowerCase().startsWith("/council") &&
+      this.ctx.knowledgeCouncil
+    ) {
       const topicsArg = text.slice(8).trim();
       const topics = topicsArg
-        ? topicsArg.split(',').map(t => t.trim()).filter(Boolean)
+        ? topicsArg
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
         : undefined;
 
       try {
-        const session = await this.ctx.knowledgeCouncil.convene(topics, _callbacks.onProgress);
-        return mkResp(session.summary ?? 'Knowledge Council session complete.');
+        const session = await this.ctx.knowledgeCouncil.convene(
+          topics,
+          _callbacks.onProgress,
+        );
+        return mkResp(session.summary ?? "Knowledge Council session complete.");
       } catch (err) {
         return mkResp(
           `Failed to convene Knowledge Council: ${err instanceof Error ? err.message : err}`,
@@ -1272,7 +1497,10 @@ export class OwlGateway {
     }
 
     // /council-history — show past council sessions
-    if (text.toLowerCase() === '/council-history' && this.ctx.knowledgeCouncil) {
+    if (
+      text.toLowerCase() === "/council-history" &&
+      this.ctx.knowledgeCouncil
+    ) {
       return mkResp(this.ctx.knowledgeCouncil.getHistorySummary());
     }
 
@@ -1338,9 +1566,7 @@ export class OwlGateway {
   ): Promise<GatewayResponse> {
     const owl = this.ctx.owl;
 
-    await callbacks.onProgress?.(
-      `🧠 Starting self-study on: **${topic}**`,
-    );
+    await callbacks.onProgress?.(`🧠 Starting self-study on: **${topic}**`);
     await callbacks.onProgress?.(
       `📚 Researching and creating knowledge pellets...`,
     );
@@ -1348,9 +1574,15 @@ export class OwlGateway {
     try {
       // Use new LearningOrchestrator if available (TopicFusion + multi-pipeline synthesis)
       if (this.ctx.learningOrchestrator) {
-        const cycle = await this.ctx.learningOrchestrator.learnTopic(topic, true);
+        const cycle = await this.ctx.learningOrchestrator.learnTopic(
+          topic,
+          true,
+        );
 
-        if (!cycle.success || (cycle.synthesisReport?.pelletsCreated ?? 0) === 0) {
+        if (
+          !cycle.success ||
+          (cycle.synthesisReport?.pelletsCreated ?? 0) === 0
+        ) {
           return {
             content:
               `${owl.persona.emoji} I wasn't able to produce any useful knowledge about **${topic}**. ` +
@@ -1365,7 +1597,7 @@ export class OwlGateway {
         const report = cycle.synthesisReport!;
         const pipelineSummary = Object.entries(report.byPipeline)
           .map(([p, n]) => `${p}: ${n}`)
-          .join(', ');
+          .join(", ");
 
         await callbacks.onProgress?.(`✅ Self-study complete!`);
 
@@ -1382,10 +1614,13 @@ export class OwlGateway {
       }
 
       // Fallback to legacy KnowledgeResearcher
-      const { KnowledgeResearcher } = await import('../learning/researcher.js');
-      const { KnowledgeGraphManager } = await import('../learning/knowledge-graph.js');
+      const { KnowledgeResearcher } = await import("../learning/researcher.js");
+      const { KnowledgeGraphManager } =
+        await import("../learning/knowledge-graph.js");
 
-      const graphManager = new KnowledgeGraphManager(this.ctx.cwd ?? process.cwd());
+      const graphManager = new KnowledgeGraphManager(
+        this.ctx.cwd ?? process.cwd(),
+      );
       await graphManager.load();
 
       const researcher = new KnowledgeResearcher(
@@ -1411,11 +1646,14 @@ export class OwlGateway {
         };
       }
 
-      const pelletSummary = result.pellets.map(p => `  - **${p.title}**`).join('\n');
+      const pelletSummary = result.pellets
+        .map((p) => `  - **${p.title}**`)
+        .join("\n");
 
-      const relatedSummary = result.relatedTopics.length > 0
-        ? `\n\n**Related topics discovered:** ${result.relatedTopics.join(', ')}`
-        : '';
+      const relatedSummary =
+        result.relatedTopics.length > 0
+          ? `\n\n**Related topics discovered:** ${result.relatedTopics.join(", ")}`
+          : "";
 
       await callbacks.onProgress?.(`✅ Self-study complete!`);
 
@@ -1489,14 +1727,16 @@ export class OwlGateway {
       // so it can be matched by the IntentRouter on future requests.
       if (filePath && this.ctx.skillsLoader) {
         const registry = this.ctx.skillsLoader.getRegistry();
-        const skillDir = filePath.replace(/\/SKILL\.md$/, '');
-        const parentDir = skillDir.replace(/\/[^/]+$/, '');
+        const skillDir = filePath.replace(/\/SKILL\.md$/, "");
+        const parentDir = skillDir.replace(/\/[^/]+$/, "");
         try {
           await registry.loadFromDirectory(parentDir);
           if (this.skillInjector) {
             this.skillInjector.reindex();
           }
-          log.evolution.info(`[Skill] Reindexed after synthesis: ${proposal.toolName}`);
+          log.evolution.info(
+            `[Skill] Reindexed after synthesis: ${proposal.toolName}`,
+          );
         } catch {
           // Non-fatal — skill will be picked up on next restart
         }
@@ -1517,7 +1757,13 @@ export class OwlGateway {
         `Gap handling failed: ${err instanceof Error ? err.message : err}`,
       );
       // Fallback: return original apologetic response (user message already saved)
-      await this.saveSession(session, message.text, response.newMessages, true, response.content);
+      await this.saveSession(
+        session,
+        message.text,
+        response.newMessages,
+        true,
+        response.content,
+      );
       this.postProcess(session.messages, session.id);
       return toGatewayResponse(response);
     }
@@ -1553,33 +1799,31 @@ export class OwlGateway {
     userAlreadySaved = false,
     finalContent?: string,
   ): Promise<void> {
-    // Guard: only append the user turn if it wasn't already saved
-    // (capability gap retry path calls saveSession twice for the same user message)
-    if (!userAlreadySaved) {
-      session.messages.push({ role: "user", content: userText });
+    const snapshot = session.messages.slice();
+    try {
+      if (!userAlreadySaved) {
+        session.messages.push({ role: "user", content: userText });
+      }
+      for (const msg of newMessages) {
+        session.messages.push(msg);
+      }
+      if (finalContent?.trim()) {
+        session.messages.push({ role: "assistant", content: finalContent });
+      }
+      if (session.messages.length > MAX_SESSION_HISTORY) {
+        session.messages = session.messages.slice(-MAX_SESSION_HISTORY);
+      }
+      await this.ctx.sessionStore.saveSession(session);
+      const key = session.id;
+      const cached = this.sessions.get(key);
+      if (cached) cached.lastActivity = Date.now();
+    } catch (err) {
+      session.messages = snapshot;
+      log.engine.error(
+        `[Session] Save failed, rolled back: ${err instanceof Error ? err.message : err}`,
+      );
+      throw err;
     }
-    for (const msg of newMessages) {
-      session.messages.push(msg);
-    }
-
-    // Always append the final assistant response so session history
-    // includes what was actually sent to the user (newMessages only
-    // contains intermediate ReAct loop messages with empty content).
-    if (finalContent?.trim()) {
-      session.messages.push({ role: "assistant", content: finalContent });
-    }
-
-    // Trim to avoid unbounded growth
-    if (session.messages.length > MAX_SESSION_HISTORY) {
-      session.messages = session.messages.slice(-MAX_SESSION_HISTORY);
-    }
-
-    await this.ctx.sessionStore.saveSession(session);
-
-    // Update cache timestamp
-    const key = session.id;
-    const cached = this.sessions.get(key);
-    if (cached) cached.lastActivity = Date.now();
   }
 
   // ─── Private: Session Cache Eviction ─────────────────────────
@@ -1670,13 +1914,13 @@ export class OwlGateway {
    * Build the EngineContext for a ReAct loop invocation.
    * Delegates to the extracted ContextBuilder (Improvement #4).
    */
-  private buildEngineContext(
+  private async buildEngineContext(
     session: Session,
     callbacks: GatewayCallbacks,
     dynamicSkillsContext: string = "",
     isolatedTask: boolean = false,
     attemptLog?: import("../memory/attempt-log.js").AttemptLog,
-  ): EngineContext {
+  ): Promise<EngineContext> {
     return this.contextBuilder.build(
       session,
       callbacks,
@@ -1691,8 +1935,204 @@ export class OwlGateway {
     if (!this.ctx.preferenceStore || !this.preferenceDetector) return;
     this.runBackground(
       "preference-detect",
-      this.preferenceDetector.detect(userMessage, this.ctx.preferenceStore, channelId),
+      this.preferenceDetector.detect(
+        userMessage,
+        this.ctx.preferenceStore,
+        channelId,
+      ),
     );
+  }
+
+  /** Fire-and-forget: record behavioral signals for inferred preferences. */
+  private analyzeBehavior(userMessage: string, channelId: string): void {
+    const pm = this.ctx.preferenceModel;
+    if (!pm) return;
+    this.runBackground(
+      "preference-infer",
+      (async () => {
+        try {
+          pm.analyzeMessage(userMessage, channelId);
+          await pm.save();
+        } catch (err) {
+          log.engine.warn(
+            `[PreferenceModel] analyzeBehavior failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      })(),
+    );
+  }
+
+  /** Fire-and-forget: track intent state based on user message and owl response. */
+  private trackIntent(
+    sessionId: string,
+    userMessage: string,
+    owlResponse: string,
+  ): void {
+    const intentSM = this.ctx.intentStateMachine;
+    if (!intentSM) return;
+
+    this.runBackground(
+      "intent-track",
+      (async () => {
+        try {
+          const existingIntent = intentSM.getActiveForSession(sessionId);
+
+          // Classify what the user is asking for
+          const intentType = this.classifyIntentType(userMessage);
+
+          // If this looks like a task-type message and we don't have an active intent, create one
+          if (!existingIntent && intentType === "task") {
+            const intent = intentSM.create({
+              rawQuery: userMessage,
+              description: this.summarizeIntent(userMessage),
+              type: intentType,
+              sessionId,
+            });
+            intentSM.transition(intent.id, "in_progress");
+            log.engine.info(
+              `[IntentSM] Created new intent from task: "${intent.description}"`,
+            );
+            return;
+          }
+
+          // If there's an active intent, update it based on the owl's response
+          if (existingIntent) {
+            intentSM.touch(existingIntent.id);
+
+            // Detect completion signals
+            const completionSignals = [
+              "完成了",
+              "done",
+              "finished",
+              "completed",
+              "success",
+              "已经",
+              "办好",
+              "搞定",
+              "没问题了",
+            ];
+            const looksLikeCompletion = completionSignals.some((s) =>
+              owlResponse.toLowerCase().includes(s),
+            );
+            if (
+              looksLikeCompletion &&
+              existingIntent.status === "in_progress"
+            ) {
+              intentSM.transition(existingIntent.id, "completed");
+              log.engine.info(
+                `[IntentSM] Intent auto-completed: "${existingIntent.description}"`,
+              );
+              return;
+            }
+
+            // Detect commitment language in owl's response
+            const commitmentPatterns = [
+              {
+                pattern:
+                  /(?:我会|我会帮|我会|I'll|I will).{0,30}(?:提醒|告诉|检查|给你|给你看|通知|发给你)/i,
+                type: "deadline" as const,
+              },
+              {
+                pattern:
+                  /(?:稍后|等一下|回头|晚点|later|soon|afterwards).{0,20}(?:再说|再|再说)/i,
+                type: "time_delay" as const,
+              },
+              {
+                pattern: /(?:如果|when|if).{0,30}(?:有|的话|available)/i,
+                type: "context_change" as const,
+              },
+            ];
+
+            for (const { pattern, type } of commitmentPatterns) {
+              if (pattern.test(owlResponse)) {
+                // Extract a rough deadline (default: 24 hours from now for time-based commitments)
+                const deadline =
+                  type === "deadline"
+                    ? Date.now() + 24 * 60 * 60 * 1000
+                    : undefined;
+
+                const statement = this.extractCommitmentStatement(owlResponse);
+                const followUpMsg = `Hey, just checking — did ${this.extractCommitmentContext(owlResponse)}?`;
+
+                // Track in intent state machine
+                intentSM.addCommitment(existingIntent.id, {
+                  statement,
+                  madeAt: Date.now(),
+                  deadline,
+                  followUpMessage: followUpMsg,
+                  triggerType: type,
+                });
+
+                // Also track in commitment tracker for deadline monitoring
+                const ct = this.ctx.commitmentTracker;
+                if (ct && deadline) {
+                  ct.track({
+                    intentId: existingIntent.id,
+                    sessionId,
+                    statement,
+                    deadline,
+                    followUpMessage: followUpMsg,
+                    context: existingIntent.description,
+                  });
+                }
+
+                log.engine.info(
+                  `[IntentSM] Commitment detected and tracked for follow-up: "${statement.slice(0, 50)}"`,
+                );
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          log.engine.warn(
+            `[IntentSM] trackIntent failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      })(),
+    );
+  }
+
+  private classifyIntentType(
+    message: string,
+  ): import("../intent/types.js").IntentType {
+    const lower = message.toLowerCase();
+    if (
+      /^(帮我|帮我做|帮我|帮我安排|帮我预订|帮我订|帮我查|can you|help me|book|order|schedule|find|search|check|帮我问一下)/.test(
+        lower,
+      ) ||
+      (/[吗\?]/.test(message) === false &&
+        /^(帮我|帮我做|can you|could you|please|帮我安排)/.test(lower))
+    ) {
+      return "task";
+    }
+    if (/[吗\?]|what is|how do|why|when|where|who is/.test(lower))
+      return "question";
+    return "exploration";
+  }
+
+  private summarizeIntent(message: string): string {
+    // Simple truncation for now — could use LLM for better summarization
+    return message.length > 80 ? message.slice(0, 77) + "..." : message;
+  }
+
+  private extractCommitmentStatement(response: string): string {
+    // Extract the relevant sentence containing commitment language
+    const sentences = response.split(/[。！？.!?]/);
+    for (const s of sentences) {
+      if (/我会|I'll|I will|我会帮|我会检查|我会提醒/.test(s)) {
+        return s.trim().slice(0, 200);
+      }
+    }
+    return response.slice(0, 200);
+  }
+
+  private extractCommitmentContext(response: string): string {
+    // Try to extract what the commitment was about
+    const match = response.match(
+      /(?:关于|关于|regarding|about|something|that).{0,50}/i,
+    );
+    if (match) return match[0].trim();
+    return "that thing I said I'd follow up on";
   }
 }
 

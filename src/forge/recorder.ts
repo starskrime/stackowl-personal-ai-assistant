@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
-import { Logger } from '../logger.js';
-import type { DemoRecording, DemoStep, ForgeConfig } from './types.js';
+import { randomUUID } from "node:crypto";
+import { Logger } from "../logger.js";
+import type { DemoRecording, DemoStep, ForgeConfig } from "./types.js";
 
 const DEFAULT_CONFIG: ForgeConfig = {
   maxSteps: 50,
@@ -8,7 +8,7 @@ const DEFAULT_CONFIG: ForgeConfig = {
   autoGenerateSkill: true,
 };
 
-const logger = new Logger('FORGE');
+const logger = new Logger("FORGE");
 
 export class DemoRecorder {
   private config: ForgeConfig;
@@ -35,7 +35,10 @@ export class DemoRecorder {
     return id;
   }
 
-  recordStep(recordingId: string, step: Omit<DemoStep, 'order' | 'timestamp'>): void {
+  recordStep(
+    recordingId: string,
+    step: Omit<DemoStep, "order" | "timestamp">,
+  ): void {
     const recording = this.active.get(recordingId);
     if (!recording) {
       logger.warn(`No active recording found for ID ${recordingId}`);
@@ -43,7 +46,9 @@ export class DemoRecorder {
     }
 
     if (recording.steps.length >= this.config.maxSteps) {
-      logger.warn(`Recording "${recording.name}" reached max steps (${this.config.maxSteps}), ignoring new step`);
+      logger.warn(
+        `Recording "${recording.name}" reached max steps (${this.config.maxSteps}), ignoring new step`,
+      );
       return;
     }
 
@@ -57,7 +62,9 @@ export class DemoRecorder {
     };
 
     recording.steps.push(fullStep);
-    logger.debug(`Recorded step ${fullStep.order} (${step.type}: ${step.action})`);
+    logger.debug(
+      `Recorded step ${fullStep.order} (${step.type}: ${step.action})`,
+    );
   }
 
   endRecording(recordingId: string): DemoRecording {
@@ -69,7 +76,9 @@ export class DemoRecorder {
     recording.completedAt = Date.now();
     this.active.delete(recordingId);
     this.completed.push(recording);
-    logger.info(`Completed recording "${recording.name}" with ${recording.steps.length} step(s)`);
+    logger.info(
+      `Completed recording "${recording.name}" with ${recording.steps.length} step(s)`,
+    );
     return recording;
   }
 
@@ -78,7 +87,11 @@ export class DemoRecorder {
   }
 
   getRecording(recordingId: string): DemoRecording | null {
-    return this.active.get(recordingId) ?? this.completed.find(r => r.id === recordingId) ?? null;
+    return (
+      this.active.get(recordingId) ??
+      this.completed.find((r) => r.id === recordingId) ??
+      null
+    );
   }
 
   listRecordings(): DemoRecording[] {

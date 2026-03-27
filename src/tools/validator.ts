@@ -38,15 +38,11 @@ export function validateToolArgs(
 
     if (expectedType === "integer") {
       if (typeof value !== "number" || !Number.isInteger(value)) {
-        violations.push(
-          `Field "${key}" expected integer, got ${actualType}`,
-        );
+        violations.push(`Field "${key}" expected integer, got ${actualType}`);
       }
     } else if (expectedType === "number") {
       if (typeof value !== "number") {
-        violations.push(
-          `Field "${key}" expected number, got ${actualType}`,
-        );
+        violations.push(`Field "${key}" expected number, got ${actualType}`);
       }
     } else if (expectedType !== actualType) {
       violations.push(

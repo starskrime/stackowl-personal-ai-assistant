@@ -7,7 +7,7 @@
  * Supports:
  *   - ollama         → OllamaNativeProvider (local models)
  *   - anthropic      → AnthropicNativeProvider (Claude API)
- *   - openai-compatible → OpenAICompatProvider (OpenRouter, Together, LMStudio, vLLM, Groq, etc.)
+ *   - openai-compatible → OpenAICompatProvider (OpenRouter, Together, LMStudio, vLLM, Groq, DeepSeek, MiniMax, etc.)
  *
  * Auto-detection: if the provider name is unknown, tries heuristics
  * based on baseUrl and apiKey to pick the right driver.
@@ -17,6 +17,7 @@ import type { ModelProvider, ProviderConfig } from "./base.js";
 import { OllamaNativeProvider } from "./ollama-native.js";
 import { AnthropicNativeProvider } from "./anthropic-native.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
+import { MiniMaxProvider } from "./minimax.js";
 
 type ProviderFactory = (config: ProviderConfig) => ModelProvider;
 
@@ -55,6 +56,7 @@ const BUILT_IN_FACTORIES: Record<string, ProviderFactory> = {
       name: "lmstudio",
       baseUrl: config.baseUrl ?? "http://127.0.0.1:1234/v1",
     }),
+  minimax: (config) => new MiniMaxProvider(config),
 };
 
 /**
@@ -97,6 +99,11 @@ function detectFactory(config: ProviderConfig): ProviderFactory | null {
   // LMStudio detection: common ports
   if (url.includes(":1234")) {
     return BUILT_IN_FACTORIES.lmstudio;
+  }
+
+  // MiniMax detection (both .com and .io domains)
+  if (url.includes("minimax.io") || url.includes("minimaxi.com")) {
+    return BUILT_IN_FACTORIES.minimax;
   }
 
   // If a baseUrl is set but not recognized, assume OpenAI-compatible

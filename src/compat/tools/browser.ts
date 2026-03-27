@@ -17,7 +17,12 @@
  *   - Device emulation
  */
 
-import puppeteer, { type Browser, type Page, type CDPSession, type HTTPRequest } from "puppeteer";
+import puppeteer, {
+  type Browser,
+  type Page,
+  type CDPSession,
+  type HTTPRequest,
+} from "puppeteer";
 import type { ToolImplementation, ToolContext } from "../../tools/registry.js";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -27,22 +32,43 @@ import { log } from "../../logger.js";
 
 function findChrome(): string | undefined {
   const candidates = [
-    ...((() => {
+    ...(() => {
       try {
-        const base = join(process.env.HOME || "", ".cache", "puppeteer", "chrome");
+        const base = join(
+          process.env.HOME || "",
+          ".cache",
+          "puppeteer",
+          "chrome",
+        );
         if (!existsSync(base)) return [];
         const { readdirSync } = require("node:fs");
         return readdirSync(base)
           .sort()
           .reverse()
           .flatMap((ver: string) => [
-            join(base, ver, "chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
-            join(base, ver, "chrome-mac-x64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
+            join(
+              base,
+              ver,
+              "chrome-mac-arm64",
+              "Google Chrome for Testing.app",
+              "Contents",
+              "MacOS",
+              "Google Chrome for Testing",
+            ),
+            join(
+              base,
+              ver,
+              "chrome-mac-x64",
+              "Google Chrome for Testing.app",
+              "Contents",
+              "MacOS",
+              "Google Chrome for Testing",
+            ),
           ]);
       } catch {
         return [];
       }
-    })()),
+    })(),
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   ];
   return candidates.find((p) => existsSync(p));
@@ -84,7 +110,8 @@ interface InterceptRule {
 
 const MAX_LOG_ENTRIES = 200;
 const NAV_TIMEOUT = 30_000;
-const ELEMENT_SELECTOR = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="tab"]';
+const ELEMENT_SELECTOR =
+  'a, button, input, select, textarea, [role="button"], [role="link"], [role="tab"]';
 
 // ─── Tool ───────────────────────────────────────────────────────
 
@@ -147,21 +174,52 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
           description: "Action to perform",
         },
         url: { type: "string", description: "URL for navigate/tab_new" },
-        ref: { type: "string", description: "Element ref number from snapshot (for act)" },
-        act: { type: "string", description: "Interaction type: click, type, press, fill, hover, select" },
-        value: { type: "string", description: "Text value for type/fill/press/cookies_set/storage_set" },
+        ref: {
+          type: "string",
+          description: "Element ref number from snapshot (for act)",
+        },
+        act: {
+          type: "string",
+          description:
+            "Interaction type: click, type, press, fill, hover, select",
+        },
+        value: {
+          type: "string",
+          description: "Text value for type/fill/press/cookies_set/storage_set",
+        },
         script: { type: "string", description: "JavaScript code for execute" },
-        selector: { type: "string", description: "CSS selector for query/wait_for/screenshot" },
-        attribute: { type: "string", description: "Element attribute for query (default: textContent)" },
-        filter: { type: "string", description: "Filter for network_log/console_log" },
-        pattern: { type: "string", description: "URL pattern for intercept rules" },
-        interceptAction: { type: "string", description: "Intercept action: block or modify" },
-        headers: { type: "string", description: "JSON headers for intercept modify" },
+        selector: {
+          type: "string",
+          description: "CSS selector for query/wait_for/screenshot",
+        },
+        attribute: {
+          type: "string",
+          description: "Element attribute for query (default: textContent)",
+        },
+        filter: {
+          type: "string",
+          description: "Filter for network_log/console_log",
+        },
+        pattern: {
+          type: "string",
+          description: "URL pattern for intercept rules",
+        },
+        interceptAction: {
+          type: "string",
+          description: "Intercept action: block or modify",
+        },
+        headers: {
+          type: "string",
+          description: "JSON headers for intercept modify",
+        },
         name: { type: "string", description: "Cookie name" },
         domain: { type: "string", description: "Cookie domain" },
         path: { type: "string", description: "Cookie path or PDF output path" },
         key: { type: "string", description: "Storage key" },
-        storageType: { type: "string", description: "Storage type: local (default) or session" },
+        storageType: {
+          type: "string",
+          description: "Storage type: local (default) or session",
+        },
         id: { type: "string", description: "Tab ID" },
         timeout: { type: "number", description: "Timeout in ms" },
         fullPage: { type: "boolean", description: "Full page screenshot" },
@@ -173,64 +231,112 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     },
   };
 
-  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
+  async execute(
+    args: Record<string, unknown>,
+    context: ToolContext,
+  ): Promise<string> {
     const action = args.action as string;
 
     try {
       switch (action) {
         // ── Core actions ──
-        case "start":       return await this.handleStart();
+        case "start":
+          return await this.handleStart();
         case "stop":
-        case "close":       return await this.handleStop();
-        case "status":      return this.handleStatus();
+        case "close":
+          return await this.handleStop();
+        case "status":
+          return this.handleStatus();
         case "navigate":
-        case "open":        return await this.handleNavigate(args.url as string);
-        case "snapshot":    return await this.handleSnapshot();
-        case "act":         return await this.handleAct(args);
-        case "screenshot":  return await this.handleScreenshot(args, context);
+        case "open":
+          return await this.handleNavigate(args.url as string);
+        case "snapshot":
+          return await this.handleSnapshot();
+        case "act":
+          return await this.handleAct(args);
+        case "screenshot":
+          return await this.handleScreenshot(args, context);
 
         // ── CDP: JavaScript ──
-        case "execute":     return await this.handleExecute(args.script as string);
-        case "query":       return await this.handleQuery(args.selector as string, args.attribute as string);
+        case "execute":
+          return await this.handleExecute(args.script as string);
+        case "query":
+          return await this.handleQuery(
+            args.selector as string,
+            args.attribute as string,
+          );
 
         // ── CDP: Network ──
-        case "network_log":    return this.handleNetworkLog(args.filter as string);
-        case "network_clear":  return this.handleNetworkClear();
-        case "intercept_add":  return await this.handleInterceptAdd(args);
-        case "intercept_remove": return this.handleInterceptRemove(args.pattern as string);
-        case "intercept_list": return this.handleInterceptList();
+        case "network_log":
+          return this.handleNetworkLog(args.filter as string);
+        case "network_clear":
+          return this.handleNetworkClear();
+        case "intercept_add":
+          return await this.handleInterceptAdd(args);
+        case "intercept_remove":
+          return this.handleInterceptRemove(args.pattern as string);
+        case "intercept_list":
+          return this.handleInterceptList();
 
         // ── CDP: Console ──
-        case "console_log":   return this.handleConsoleLog(args.filter as string);
-        case "console_clear": return this.handleConsoleClear();
+        case "console_log":
+          return this.handleConsoleLog(args.filter as string);
+        case "console_clear":
+          return this.handleConsoleClear();
 
         // ── CDP: Cookies ──
-        case "cookies_get":   return await this.handleCookiesGet(args.domain as string);
-        case "cookies_set":   return await this.handleCookiesSet(args);
-        case "cookies_clear": return await this.handleCookiesClear(args.domain as string);
+        case "cookies_get":
+          return await this.handleCookiesGet(args.domain as string);
+        case "cookies_set":
+          return await this.handleCookiesSet(args);
+        case "cookies_clear":
+          return await this.handleCookiesClear(args.domain as string);
 
         // ── CDP: Storage ──
-        case "storage_get":   return await this.handleStorageGet(args.key as string, args.storageType as string);
-        case "storage_set":   return await this.handleStorageSet(args.key as string, args.value as string, args.storageType as string);
-        case "storage_clear": return await this.handleStorageClear(args.storageType as string);
+        case "storage_get":
+          return await this.handleStorageGet(
+            args.key as string,
+            args.storageType as string,
+          );
+        case "storage_set":
+          return await this.handleStorageSet(
+            args.key as string,
+            args.value as string,
+            args.storageType as string,
+          );
+        case "storage_clear":
+          return await this.handleStorageClear(args.storageType as string);
 
         // ── CDP: Tabs ──
-        case "tab_new":    return await this.handleTabNew(args.url as string);
-        case "tab_switch": return await this.handleTabSwitch(args.id as string);
-        case "tab_close":  return await this.handleTabClose(args.id as string);
-        case "tab_list":   return this.handleTabList();
+        case "tab_new":
+          return await this.handleTabNew(args.url as string);
+        case "tab_switch":
+          return await this.handleTabSwitch(args.id as string);
+        case "tab_close":
+          return await this.handleTabClose(args.id as string);
+        case "tab_list":
+          return this.handleTabList();
 
         // ── CDP: Export & Perf ──
-        case "pdf":         return await this.handlePDF(args.path as string, context);
-        case "performance": return await this.handlePerformance();
+        case "pdf":
+          return await this.handlePDF(args.path as string, context);
+        case "performance":
+          return await this.handlePerformance();
 
         // ── CDP: Wait ──
-        case "wait_for":         return await this.handleWaitFor(args.selector as string, args.timeout as number);
-        case "wait_for_network": return await this.handleWaitForNetwork(args.timeout as number);
+        case "wait_for":
+          return await this.handleWaitFor(
+            args.selector as string,
+            args.timeout as number,
+          );
+        case "wait_for_network":
+          return await this.handleWaitForNetwork(args.timeout as number);
 
         // ── CDP: Emulation ──
-        case "emulate":      return await this.handleEmulate(args.device as string);
-        case "set_viewport": return await this.handleSetViewport(args);
+        case "emulate":
+          return await this.handleEmulate(args.device as string);
+        case "set_viewport":
+          return await this.handleSetViewport(args);
 
         default:
           return `ERROR: Unknown action "${action}".`;
@@ -239,8 +345,13 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       const msg = error instanceof Error ? error.message : String(error);
 
       // Auto-recover from stale profile lock
-      if (action === "start" && (msg.includes("already running") || msg.includes("SingletonLock"))) {
-        log.tool.warn("[Browser] Stale lock detected — cleaning up and retrying");
+      if (
+        action === "start" &&
+        (msg.includes("already running") || msg.includes("SingletonLock"))
+      ) {
+        log.tool.warn(
+          "[Browser] Stale lock detected — cleaning up and retrying",
+        );
         await this.cleanProfileDir();
         return await this.handleStart();
       }
@@ -254,7 +365,8 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
   // ═══════════════════════════════════════════════════════════════
 
   private handleStatus(): string {
-    if (!this.session) return "Browser is not running. Use action=start to launch it.";
+    if (!this.session)
+      return "Browser is not running. Use action=start to launch it.";
     const page = this.getActivePage();
     const tabCount = this.session.pages.size;
     return `Browser is running. Active page: ${page?.url() ?? "about:blank"} (${tabCount} tab${tabCount !== 1 ? "s" : ""})`;
@@ -266,12 +378,18 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       return `Browser already running. Current page: ${page?.url() ?? "about:blank"}`;
     }
 
-    const userDataDir = join(this.workspacePath, ".browser-profiles", "default");
+    const userDataDir = join(
+      this.workspacePath,
+      ".browser-profiles",
+      "default",
+    );
     if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
     await this.cleanProfileDir();
 
     const execPath = findChrome();
-    log.tool.info(`[Browser] Launching Chrome${execPath ? ` from ${execPath}` : " (bundled)"}`);
+    log.tool.info(
+      `[Browser] Launching Chrome${execPath ? ` from ${execPath}` : " (bundled)"}`,
+    );
 
     const browser = await puppeteer.launch({
       headless: true,
@@ -313,7 +431,11 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
 
   private async handleStop(): Promise<string> {
     if (!this.session) return "Browser was not running.";
-    try { await this.session.browser.close(); } catch { /* already closed */ }
+    try {
+      await this.session.browser.close();
+    } catch {
+      /* already closed */
+    }
     this.session = null;
     return "Browser stopped.";
   }
@@ -333,11 +455,16 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     }
 
     try {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT,
+      });
       await new Promise((r) => setTimeout(r, 1500));
 
       const title = await page.title();
-      const bodyText = await page.evaluate(() => (document.body?.innerText || "").slice(0, 500));
+      const bodyText = await page.evaluate(() =>
+        (document.body?.innerText || "").slice(0, 500),
+      );
 
       const botBlocked =
         title.includes("Security Checkpoint") ||
@@ -372,17 +499,25 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     const page = this.requirePage();
 
     try {
-      await page.waitForFunction(() => document.readyState === "complete", { timeout: 5000 });
-    } catch { /* streaming OK */ }
+      await page.waitForFunction(() => document.readyState === "complete", {
+        timeout: 5000,
+      });
+    } catch {
+      /* streaming OK */
+    }
 
     const url = page.url();
     const title = await page.title();
 
     // Bot detection on snapshot
-    const quickCheck = await page.evaluate(() => (document.body?.innerText || "").slice(0, 300));
+    const quickCheck = await page.evaluate(() =>
+      (document.body?.innerText || "").slice(0, 300),
+    );
     if (
-      title.includes("Security Checkpoint") || title.includes("Just a moment") ||
-      quickCheck.includes("verifying your browser") || quickCheck.includes("Verify you are human")
+      title.includes("Security Checkpoint") ||
+      title.includes("Just a moment") ||
+      quickCheck.includes("verifying your browser") ||
+      quickCheck.includes("Verify you are human")
     ) {
       return (
         `BLOCKED: Bot protection ("${title}").\n` +
@@ -391,16 +526,28 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     }
 
     const pageText = await page.evaluate(() => {
-      document.querySelectorAll("script, style, noscript, svg, iframe, nav").forEach((el) => el.remove());
+      document
+        .querySelectorAll("script, style, noscript, svg, iframe, nav")
+        .forEach((el) => el.remove());
       const body = document.body;
       if (!body) return "(empty page)";
       return (body.innerText || body.textContent || "")
-        .replace(/[\r\n]+/g, "\n").replace(/[ \t]+/g, " ").trim().slice(0, 8000);
+        .replace(/[\r\n]+/g, "\n")
+        .replace(/[ \t]+/g, " ")
+        .trim()
+        .slice(0, 8000);
     });
 
     const elements = await page.evaluate((sel: string) => {
       const all = Array.from(document.querySelectorAll(sel));
-      const results: Array<{ ref: number; tag: string; type: string; text: string; placeholder: string; name: string }> = [];
+      const results: Array<{
+        ref: number;
+        tag: string;
+        type: string;
+        text: string;
+        placeholder: string;
+        name: string;
+      }> = [];
       for (let i = 0; i < all.length && results.length < 60; i++) {
         const el = all[i];
         const rect = el.getBoundingClientRect();
@@ -408,9 +555,15 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
         const tag = el.tagName.toLowerCase();
         const inputEl = el as HTMLInputElement;
         results.push({
-          ref: i + 1, tag,
+          ref: i + 1,
+          tag,
           type: inputEl.type || "",
-          text: ((el.textContent || "").trim().slice(0, 80)) || inputEl.placeholder || inputEl.name || el.getAttribute("aria-label") || "(unlabeled)",
+          text:
+            (el.textContent || "").trim().slice(0, 80) ||
+            inputEl.placeholder ||
+            inputEl.name ||
+            el.getAttribute("aria-label") ||
+            "(unlabeled)",
           placeholder: inputEl.placeholder || "",
           name: inputEl.name || el.getAttribute("aria-label") || "",
         });
@@ -421,20 +574,28 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     const lines: string[] = [`## Page: ${title}`, `URL: ${url}\n`];
 
     if (pageText) {
-      const truncText = pageText.length > 4000 ? pageText.slice(0, 4000) + "\n...[truncated]" : pageText;
+      const truncText =
+        pageText.length > 4000
+          ? pageText.slice(0, 4000) + "\n...[truncated]"
+          : pageText;
       lines.push(`### Content\n${truncText}\n`);
     }
 
     if (elements.length > 0) {
-      lines.push(`### Interactive Elements\nUse ref numbers with action=act:\n`);
+      lines.push(
+        `### Interactive Elements\nUse ref numbers with action=act:\n`,
+      );
       for (const el of elements) {
         const label =
           el.tag === "input" || el.tag === "textarea"
             ? `[${el.tag} type=${el.type}] "${el.placeholder || el.name || el.text}"`
-            : el.tag === "a" ? `[link] "${el.text}"`
-            : el.tag === "button" ? `[button] "${el.text}"`
-            : el.tag === "select" ? `[dropdown] "${el.name || el.text}"`
-            : `[${el.tag}] "${el.text}"`;
+            : el.tag === "a"
+              ? `[link] "${el.text}"`
+              : el.tag === "button"
+                ? `[button] "${el.text}"`
+                : el.tag === "select"
+                  ? `[dropdown] "${el.name || el.text}"`
+                  : `[${el.tag}] "${el.text}"`;
         lines.push(`  [ref:${el.ref}] ${label}`);
       }
     } else {
@@ -450,20 +611,30 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     const ref = args.ref as string;
     const value = (args.value as string) || "";
 
-    if (!ref) return "ERROR: ref parameter is required. Use snapshot to get element refs.";
+    if (!ref)
+      return "ERROR: ref parameter is required. Use snapshot to get element refs.";
     const refNum = parseInt(String(ref).replace(/\D/g, ""), 10);
     if (isNaN(refNum) || refNum < 1) return `ERROR: Invalid ref "${ref}".`;
 
     switch (actType) {
       case "click": {
-        const navP = page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 5000 }).catch(() => null);
-        const found = await page.evaluate((sel: string, idx: number) => {
-          const el = document.querySelectorAll(sel)[idx - 1] as HTMLElement | undefined;
-          if (!el) return false;
-          el.click();
-          return true;
-        }, ELEMENT_SELECTOR, refNum);
-        if (!found) return `ERROR: Element ref ${refNum} not found. Run snapshot again.`;
+        const navP = page
+          .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 5000 })
+          .catch(() => null);
+        const found = await page.evaluate(
+          (sel: string, idx: number) => {
+            const el = document.querySelectorAll(sel)[idx - 1] as
+              | HTMLElement
+              | undefined;
+            if (!el) return false;
+            el.click();
+            return true;
+          },
+          ELEMENT_SELECTOR,
+          refNum,
+        );
+        if (!found)
+          return `ERROR: Element ref ${refNum} not found. Run snapshot again.`;
         await navP;
         await new Promise((r) => setTimeout(r, 500));
         return `Clicked [ref:${refNum}]. Page: ${page.url()}\nUse snapshot to see updated content.`;
@@ -471,13 +642,23 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
 
       case "type": {
         if (!value) return "ERROR: value required for type.";
-        const focused = await page.evaluate((sel: string, idx: number) => {
-          const el = document.querySelectorAll(sel)[idx - 1] as HTMLElement | undefined;
-          if (!el) return false;
-          el.focus();
-          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.select();
-          return true;
-        }, ELEMENT_SELECTOR, refNum);
+        const focused = await page.evaluate(
+          (sel: string, idx: number) => {
+            const el = document.querySelectorAll(sel)[idx - 1] as
+              | HTMLElement
+              | undefined;
+            if (!el) return false;
+            el.focus();
+            if (
+              el instanceof HTMLInputElement ||
+              el instanceof HTMLTextAreaElement
+            )
+              el.select();
+            return true;
+          },
+          ELEMENT_SELECTOR,
+          refNum,
+        );
         if (!focused) return `ERROR: Element ref ${refNum} not found.`;
         await page.keyboard.type(value, { delay: 20 });
         return `Typed "${value}" into [ref:${refNum}].`;
@@ -485,23 +666,36 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
 
       case "fill": {
         if (!value) return "ERROR: value required for fill.";
-        const filled = await page.evaluate((sel: string, idx: number, val: string) => {
-          const el = document.querySelectorAll(sel)[idx - 1] as HTMLInputElement | undefined;
-          if (!el) return false;
-          el.value = val;
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          return true;
-        }, ELEMENT_SELECTOR, refNum, value);
+        const filled = await page.evaluate(
+          (sel: string, idx: number, val: string) => {
+            const el = document.querySelectorAll(sel)[idx - 1] as
+              | HTMLInputElement
+              | undefined;
+            if (!el) return false;
+            el.value = val;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          },
+          ELEMENT_SELECTOR,
+          refNum,
+          value,
+        );
         if (!filled) return `ERROR: Element ref ${refNum} not found.`;
         return `Filled [ref:${refNum}] with "${value}".`;
       }
 
       case "press": {
         const key = value || "Enter";
-        const navP = key === "Enter"
-          ? page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
-          : null;
+        const navP =
+          key === "Enter"
+            ? page
+                .waitForNavigation({
+                  waitUntil: "domcontentloaded",
+                  timeout: 10000,
+                })
+                .catch(() => null)
+            : null;
         await page.keyboard.press(key as any);
         if (navP) await navP;
         await new Promise((r) => setTimeout(r, 1000));
@@ -509,25 +703,38 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       }
 
       case "hover": {
-        const ok = await page.evaluate((sel: string, idx: number) => {
-          const el = document.querySelectorAll(sel)[idx - 1] as HTMLElement | undefined;
-          if (!el) return false;
-          el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-          return true;
-        }, ELEMENT_SELECTOR, refNum);
+        const ok = await page.evaluate(
+          (sel: string, idx: number) => {
+            const el = document.querySelectorAll(sel)[idx - 1] as
+              | HTMLElement
+              | undefined;
+            if (!el) return false;
+            el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+            return true;
+          },
+          ELEMENT_SELECTOR,
+          refNum,
+        );
         if (!ok) return `ERROR: Element ref ${refNum} not found.`;
         return `Hovered over [ref:${refNum}].`;
       }
 
       case "select": {
         if (!value) return "ERROR: value required for select.";
-        const ok = await page.evaluate((sel: string, idx: number, val: string) => {
-          const el = document.querySelectorAll(sel)[idx - 1] as HTMLSelectElement | undefined;
-          if (!el) return false;
-          el.value = val;
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          return true;
-        }, ELEMENT_SELECTOR, refNum, value);
+        const ok = await page.evaluate(
+          (sel: string, idx: number, val: string) => {
+            const el = document.querySelectorAll(sel)[idx - 1] as
+              | HTMLSelectElement
+              | undefined;
+            if (!el) return false;
+            el.value = val;
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          },
+          ELEMENT_SELECTOR,
+          refNum,
+          value,
+        );
         if (!ok) return `ERROR: Element ref ${refNum} not found.`;
         return `Selected "${value}" in [ref:${refNum}].`;
       }
@@ -537,7 +744,10 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     }
   }
 
-  private async handleScreenshot(args: Record<string, unknown>, context: ToolContext): Promise<string> {
+  private async handleScreenshot(
+    args: Record<string, unknown>,
+    context: ToolContext,
+  ): Promise<string> {
     const page = this.requirePage();
     const dir = join(context?.cwd || this.workspacePath, "screenshots");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -551,7 +761,10 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       if (!element) return `ERROR: Element "${selector}" not found.`;
       await element.screenshot({ path: filepath });
     } else {
-      await page.screenshot({ path: filepath, fullPage: args.fullPage === true });
+      await page.screenshot({
+        path: filepath,
+        fullPage: args.fullPage === true,
+      });
     }
 
     return `Screenshot saved: ${filepath}\nUse send_file to deliver it to the user.`;
@@ -569,7 +782,8 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       try {
         const fn = new Function(code);
         const res = fn();
-        if (res instanceof Promise) return "ERROR: Async not supported. Wrap in page.evaluate.";
+        if (res instanceof Promise)
+          return "ERROR: Async not supported. Wrap in page.evaluate.";
         if (res === undefined) return "(undefined)";
         if (res === null) return "(null)";
         if (typeof res === "object") return JSON.stringify(res, null, 2);
@@ -583,27 +797,38 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     return s.length > 5000 ? s.slice(0, 5000) + "\n...[truncated]" : s;
   }
 
-  private async handleQuery(selector: string, attribute?: string): Promise<string> {
+  private async handleQuery(
+    selector: string,
+    attribute?: string,
+  ): Promise<string> {
     if (!selector) return "ERROR: selector is required.";
     const page = this.requirePage();
     const attr = attribute || "textContent";
 
-    const results = await page.evaluate((sel: string, a: string) => {
-      const out: Array<{ i: number; tag: string; val: string }> = [];
-      document.querySelectorAll(sel).forEach((el, i) => {
-        if (i >= 50) return;
-        let val: string;
-        if (a === "textContent") val = (el.textContent || "").trim().slice(0, 200);
-        else if (a === "innerHTML") val = (el.innerHTML || "").slice(0, 500);
-        else if (a === "outerHTML") val = (el.outerHTML || "").slice(0, 500);
-        else val = el.getAttribute(a) || "";
-        out.push({ i, tag: el.tagName.toLowerCase(), val });
-      });
-      return out;
-    }, selector, attr);
+    const results = await page.evaluate(
+      (sel: string, a: string) => {
+        const out: Array<{ i: number; tag: string; val: string }> = [];
+        document.querySelectorAll(sel).forEach((el, i) => {
+          if (i >= 50) return;
+          let val: string;
+          if (a === "textContent")
+            val = (el.textContent || "").trim().slice(0, 200);
+          else if (a === "innerHTML") val = (el.innerHTML || "").slice(0, 500);
+          else if (a === "outerHTML") val = (el.outerHTML || "").slice(0, 500);
+          else val = el.getAttribute(a) || "";
+          out.push({ i, tag: el.tagName.toLowerCase(), val });
+        });
+        return out;
+      },
+      selector,
+      attr,
+    );
 
     if (results.length === 0) return `No elements matching "${selector}".`;
-    return `Found ${results.length} element(s):\n` + results.map((r) => `[${r.i}] <${r.tag}> ${r.val}`).join("\n");
+    return (
+      `Found ${results.length} element(s):\n` +
+      results.map((r) => `[${r.i}] <${r.tag}> ${r.val}`).join("\n")
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -615,12 +840,26 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     let entries = this.session.networkLog;
     if (filter) {
       const f = filter.toLowerCase();
-      entries = entries.filter((e) => e.url.toLowerCase().includes(f) || (e.type || "").toLowerCase().includes(f));
+      entries = entries.filter(
+        (e) =>
+          e.url.toLowerCase().includes(f) ||
+          (e.type || "").toLowerCase().includes(f),
+      );
     }
-    if (entries.length === 0) return "No network requests" + (filter ? ` matching "${filter}"` : "") + ".";
+    if (entries.length === 0)
+      return (
+        "No network requests" + (filter ? ` matching "${filter}"` : "") + "."
+      );
     const recent = entries.slice(-30);
-    return `Network (${entries.length} total, last ${recent.length}):\n` +
-      recent.map((e) => `${e.method} [${e.status ?? "?"}] ${e.url.slice(0, 120)} (${e.type || "?"})`).join("\n");
+    return (
+      `Network (${entries.length} total, last ${recent.length}):\n` +
+      recent
+        .map(
+          (e) =>
+            `${e.method} [${e.status ?? "?"}] ${e.url.slice(0, 120)} (${e.type || "?"})`,
+        )
+        .join("\n")
+    );
   }
 
   private handleNetworkClear(): string {
@@ -629,16 +868,22 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     return "Network log cleared.";
   }
 
-  private async handleInterceptAdd(args: Record<string, unknown>): Promise<string> {
+  private async handleInterceptAdd(
+    args: Record<string, unknown>,
+  ): Promise<string> {
     const page = this.requirePage();
     const pattern = args.pattern as string;
     if (!pattern) return "ERROR: pattern is required.";
-    const iAction = (args.interceptAction as string) === "modify" ? "modify" : "block";
+    const iAction =
+      (args.interceptAction as string) === "modify" ? "modify" : "block";
 
     let headers: Record<string, string> | undefined;
     if (iAction === "modify" && args.headers) {
-      try { headers = JSON.parse(args.headers as string); }
-      catch { return "ERROR: headers must be valid JSON."; }
+      try {
+        headers = JSON.parse(args.headers as string);
+      } catch {
+        return "ERROR: headers must be valid JSON.";
+      }
     }
 
     this.session!.interceptRules.push({ pattern, action: iAction, headers });
@@ -646,11 +891,22 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     if (!this.session!.interceptEnabled) {
       await page.setRequestInterception(true);
       page.on("request", (request: HTTPRequest) => {
-        if (!this.session) { request.continue(); return; }
+        if (!this.session) {
+          request.continue();
+          return;
+        }
         for (const r of this.session.interceptRules) {
           if (this.matchGlob(request.url(), r.pattern)) {
-            if (r.action === "block") { request.abort("blockedbyclient"); return; }
-            if (r.action === "modify" && r.headers) { request.continue({ headers: { ...request.headers(), ...r.headers } }); return; }
+            if (r.action === "block") {
+              request.abort("blockedbyclient");
+              return;
+            }
+            if (r.action === "modify" && r.headers) {
+              request.continue({
+                headers: { ...request.headers(), ...r.headers },
+              });
+              return;
+            }
           }
         }
         request.continue();
@@ -658,24 +914,38 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       this.session!.interceptEnabled = true;
     }
 
-    return `Intercept: ${iAction} "${pattern}"` + (headers ? ` headers: ${JSON.stringify(headers)}` : "");
+    return (
+      `Intercept: ${iAction} "${pattern}"` +
+      (headers ? ` headers: ${JSON.stringify(headers)}` : "")
+    );
   }
 
   private handleInterceptRemove(pattern: string): string {
     if (!this.session) return this.notStartedMsg();
     if (!pattern) return "ERROR: pattern is required.";
     const before = this.session.interceptRules.length;
-    this.session.interceptRules = this.session.interceptRules.filter((r) => r.pattern !== pattern);
+    this.session.interceptRules = this.session.interceptRules.filter(
+      (r) => r.pattern !== pattern,
+    );
     const removed = before - this.session.interceptRules.length;
-    return removed > 0 ? `Removed ${removed} rule(s) for "${pattern}".` : `No rule for "${pattern}".`;
+    return removed > 0
+      ? `Removed ${removed} rule(s) for "${pattern}".`
+      : `No rule for "${pattern}".`;
   }
 
   private handleInterceptList(): string {
     if (!this.session) return this.notStartedMsg();
     if (this.session.interceptRules.length === 0) return "No intercept rules.";
-    return "Intercept rules:\n" + this.session.interceptRules.map(
-      (r) => `  ${r.action.toUpperCase()} "${r.pattern}"` + (r.headers ? ` ${JSON.stringify(r.headers)}` : ""),
-    ).join("\n");
+    return (
+      "Intercept rules:\n" +
+      this.session.interceptRules
+        .map(
+          (r) =>
+            `  ${r.action.toUpperCase()} "${r.pattern}"` +
+            (r.headers ? ` ${JSON.stringify(r.headers)}` : ""),
+        )
+        .join("\n")
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -687,12 +957,19 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     let entries = this.session.consoleLog;
     if (filter) {
       const f = filter.toLowerCase();
-      entries = entries.filter((e) => e.text.toLowerCase().includes(f) || e.type.includes(f));
+      entries = entries.filter(
+        (e) => e.text.toLowerCase().includes(f) || e.type.includes(f),
+      );
     }
-    if (entries.length === 0) return "No console output" + (filter ? ` matching "${filter}"` : "") + ".";
+    if (entries.length === 0)
+      return (
+        "No console output" + (filter ? ` matching "${filter}"` : "") + "."
+      );
     const recent = entries.slice(-30);
-    return `Console (${entries.length} total, last ${recent.length}):\n` +
-      recent.map((e) => `[${e.type}] ${e.text.slice(0, 200)}`).join("\n");
+    return (
+      `Console (${entries.length} total, last ${recent.length}):\n` +
+      recent.map((e) => `[${e.type}] ${e.text.slice(0, 200)}`).join("\n")
+    );
   }
 
   private handleConsoleClear(): string {
@@ -709,19 +986,31 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     const page = this.requirePage();
     let cookies = await page.cookies();
     if (domain) cookies = cookies.filter((c) => c.domain.includes(domain));
-    if (cookies.length === 0) return "No cookies" + (domain ? ` for "${domain}"` : "") + ".";
-    return `Cookies (${cookies.length}):\n` + cookies.slice(0, 30).map(
-      (c) => `  ${c.name}=${c.value.slice(0, 50)}${c.value.length > 50 ? "..." : ""} (${c.domain})`,
-    ).join("\n");
+    if (cookies.length === 0)
+      return "No cookies" + (domain ? ` for "${domain}"` : "") + ".";
+    return (
+      `Cookies (${cookies.length}):\n` +
+      cookies
+        .slice(0, 30)
+        .map(
+          (c) =>
+            `  ${c.name}=${c.value.slice(0, 50)}${c.value.length > 50 ? "..." : ""} (${c.domain})`,
+        )
+        .join("\n")
+    );
   }
 
-  private async handleCookiesSet(args: Record<string, unknown>): Promise<string> {
+  private async handleCookiesSet(
+    args: Record<string, unknown>,
+  ): Promise<string> {
     const page = this.requirePage();
     const name = args.name as string;
     const value = args.value as string;
     if (!name || !value) return "ERROR: name and value required.";
     await page.setCookie({
-      name, value, url: page.url(),
+      name,
+      value,
+      url: page.url(),
       domain: (args.domain as string) || undefined,
       path: (args.path as string) || "/",
     });
@@ -731,7 +1020,9 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
   private async handleCookiesClear(domain?: string): Promise<string> {
     const page = this.requirePage();
     const cookies = await page.cookies();
-    const toDelete = domain ? cookies.filter((c) => c.domain.includes(domain)) : cookies;
+    const toDelete = domain
+      ? cookies.filter((c) => c.domain.includes(domain))
+      : cookies;
     for (const c of toDelete) await page.deleteCookie(c);
     return `Cleared ${toDelete.length} cookie(s).`;
   }
@@ -744,16 +1035,29 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     if (!key) return "ERROR: key is required.";
     const page = this.requirePage();
     const st = type === "session" ? "sessionStorage" : "localStorage";
-    const val = await page.evaluate((k: string, s: string) => (window as any)[s]?.getItem(k), key, st);
+    const val = await page.evaluate(
+      (k: string, s: string) => (window as any)[s]?.getItem(k),
+      key,
+      st,
+    );
     if (val === null || val === undefined) return `${st}["${key}"] not set.`;
     return `${st}["${key}"] = ${String(val).slice(0, 2000)}`;
   }
 
-  private async handleStorageSet(key: string, value: string, type?: string): Promise<string> {
+  private async handleStorageSet(
+    key: string,
+    value: string,
+    type?: string,
+  ): Promise<string> {
     if (!key || value === undefined) return "ERROR: key and value required.";
     const page = this.requirePage();
     const st = type === "session" ? "sessionStorage" : "localStorage";
-    await page.evaluate((k: string, v: string, s: string) => (window as any)[s]?.setItem(k, v), key, value, st);
+    await page.evaluate(
+      (k: string, v: string, s: string) => (window as any)[s]?.setItem(k, v),
+      key,
+      value,
+      st,
+    );
     return `${st}["${key}"] set.`;
   }
 
@@ -775,7 +1079,11 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     this.session.pages.set(pageId, page);
     this.session.activePageId = pageId;
     await this.setupCDP(page);
-    if (url) await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    if (url)
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT,
+      });
     return `New tab: ${pageId}` + (url ? ` → ${url}` : "");
   }
 
@@ -804,23 +1112,36 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
 
   private handleTabList(): string {
     if (!this.session) return this.notStartedMsg();
-    return `Tabs (${this.session.pages.size}):\n` +
-      [...this.session.pages.entries()].map(([id, p]) =>
-        `  ${id}${id === this.session!.activePageId ? " (active)" : ""}: ${p.url()}`,
-      ).join("\n");
+    return (
+      `Tabs (${this.session.pages.size}):\n` +
+      [...this.session.pages.entries()]
+        .map(
+          ([id, p]) =>
+            `  ${id}${id === this.session!.activePageId ? " (active)" : ""}: ${p.url()}`,
+        )
+        .join("\n")
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════
   // CDP: PDF & PERFORMANCE
   // ═══════════════════════════════════════════════════════════════
 
-  private async handlePDF(outputPath?: string, context?: ToolContext): Promise<string> {
+  private async handlePDF(
+    outputPath?: string,
+    context?: ToolContext,
+  ): Promise<string> {
     const page = this.requirePage();
     const dir = join(context?.cwd || this.workspacePath, "exports");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const filename = outputPath || `page_${Date.now()}.pdf`;
     const fullPath = filename.startsWith("/") ? filename : join(dir, filename);
-    await page.pdf({ path: fullPath, format: "A4", printBackground: true, margin: { top: "1cm", right: "1cm", bottom: "1cm", left: "1cm" } });
+    await page.pdf({
+      path: fullPath,
+      format: "A4",
+      printBackground: true,
+      margin: { top: "1cm", right: "1cm", bottom: "1cm", left: "1cm" },
+    });
     return `PDF saved: ${fullPath}`;
   }
 
@@ -828,7 +1149,9 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     const page = this.requirePage();
     const metrics = await page.metrics();
     const perf = await page.evaluate(() => {
-      const t = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+      const t = performance.getEntriesByType("navigation")[0] as
+        | PerformanceNavigationTiming
+        | undefined;
       if (!t) return null;
       return {
         dns: Math.round(t.domainLookupEnd - t.domainLookupStart),
@@ -842,17 +1165,28 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
 
     const lines: string[] = ["**Performance:**"];
     if (perf) {
-      lines.push(`DNS: ${perf.dns}ms | TCP: ${perf.tcp}ms | TTFB: ${perf.ttfb}ms`);
-      lines.push(`DOM loaded: ${perf.domLoaded}ms | Full: ${perf.fullLoad}ms | Elements: ${perf.domCount}`);
+      lines.push(
+        `DNS: ${perf.dns}ms | TCP: ${perf.tcp}ms | TTFB: ${perf.ttfb}ms`,
+      );
+      lines.push(
+        `DOM loaded: ${perf.domLoaded}ms | Full: ${perf.fullLoad}ms | Elements: ${perf.domCount}`,
+      );
     }
-    lines.push(`JS heap: ${((metrics.JSHeapUsedSize || 0) / 1024 / 1024).toFixed(1)}MB / ${((metrics.JSHeapTotalSize || 0) / 1024 / 1024).toFixed(1)}MB`);
-    lines.push(`Nodes: ${metrics.Nodes || 0} | Listeners: ${metrics.JSEventListeners || 0}`);
+    lines.push(
+      `JS heap: ${((metrics.JSHeapUsedSize || 0) / 1024 / 1024).toFixed(1)}MB / ${((metrics.JSHeapTotalSize || 0) / 1024 / 1024).toFixed(1)}MB`,
+    );
+    lines.push(
+      `Nodes: ${metrics.Nodes || 0} | Listeners: ${metrics.JSEventListeners || 0}`,
+    );
 
     const net = this.session?.networkLog || [];
     if (net.length > 0) {
       const types = new Map<string, number>();
-      for (const e of net) types.set(e.type || "other", (types.get(e.type || "other") || 0) + 1);
-      lines.push(`Network: ${net.length} requests — ${[...types.entries()].map(([t, c]) => `${t}(${c})`).join(", ")}`);
+      for (const e of net)
+        types.set(e.type || "other", (types.get(e.type || "other") || 0) + 1);
+      lines.push(
+        `Network: ${net.length} requests — ${[...types.entries()].map(([t, c]) => `${t}(${c})`).join(", ")}`,
+      );
     }
     return lines.join("\n");
   }
@@ -861,7 +1195,10 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
   // CDP: WAIT
   // ═══════════════════════════════════════════════════════════════
 
-  private async handleWaitFor(selector: string, timeout?: number): Promise<string> {
+  private async handleWaitFor(
+    selector: string,
+    timeout?: number,
+  ): Promise<string> {
     if (!selector) return "ERROR: selector required.";
     const page = this.requirePage();
     try {
@@ -898,11 +1235,17 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     return `Emulating: ${device} (${d.viewport.width}x${d.viewport.height})`;
   }
 
-  private async handleSetViewport(args: Record<string, unknown>): Promise<string> {
+  private async handleSetViewport(
+    args: Record<string, unknown>,
+  ): Promise<string> {
     const page = this.requirePage();
     const w = (args.width as number) || 1280;
     const h = (args.height as number) || 800;
-    await page.setViewport({ width: w, height: h, deviceScaleFactor: (args.deviceScaleFactor as number) || 1 });
+    await page.setViewport({
+      width: w,
+      height: h,
+      deviceScaleFactor: (args.deviceScaleFactor as number) || 1,
+    });
     return `Viewport: ${w}x${h}`;
   }
 
@@ -920,16 +1263,25 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       if (!this.session) return;
       const req = response.request();
       this.session.networkLog.push({
-        timestamp: Date.now(), method: req.method(), url: req.url(),
-        status: response.status(), type: req.resourceType(),
+        timestamp: Date.now(),
+        method: req.method(),
+        url: req.url(),
+        status: response.status(),
+        type: req.resourceType(),
       });
-      if (this.session.networkLog.length > MAX_LOG_ENTRIES) this.session.networkLog.shift();
+      if (this.session.networkLog.length > MAX_LOG_ENTRIES)
+        this.session.networkLog.shift();
     });
 
     page.on("console", (msg) => {
       if (!this.session) return;
-      this.session.consoleLog.push({ timestamp: Date.now(), type: msg.type(), text: msg.text() });
-      if (this.session.consoleLog.length > MAX_LOG_ENTRIES) this.session.consoleLog.shift();
+      this.session.consoleLog.push({
+        timestamp: Date.now(),
+        type: msg.type(),
+        text: msg.text(),
+      });
+      if (this.session.consoleLog.length > MAX_LOG_ENTRIES)
+        this.session.consoleLog.shift();
     });
   }
 
@@ -938,7 +1290,8 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
   }
 
   private requirePage(): Page {
-    if (!this.session) throw new Error("Browser not started. Use action=start first.");
+    if (!this.session)
+      throw new Error("Browser not started. Use action=start first.");
     const page = this.session.pages.get(this.session.activePageId);
     if (!page) throw new Error("No active tab. Use tab_new to create one.");
     return page;
@@ -950,14 +1303,25 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
 
   private async cleanProfileDir(): Promise<void> {
     const dir = join(this.workspacePath, ".browser-profiles", "default");
-    for (const lock of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+    for (const lock of [
+      "SingletonLock",
+      "SingletonSocket",
+      "SingletonCookie",
+    ]) {
       const p = join(dir, lock);
-      try { if (existsSync(p)) rmSync(p, { force: true }); } catch { /* non-fatal */ }
+      try {
+        if (existsSync(p)) rmSync(p, { force: true });
+      } catch {
+        /* non-fatal */
+      }
     }
   }
 
   private matchGlob(url: string, pattern: string): boolean {
-    const regex = new RegExp("^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$", "i");
+    const regex = new RegExp(
+      "^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$",
+      "i",
+    );
     return regex.test(url);
   }
 

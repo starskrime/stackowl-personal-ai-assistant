@@ -1,139 +1,215 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>StackOwl — Personal AI Assistant</title>
-    <link rel="stylesheet" href="styles.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-</head>
-<body>
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
     <div class="app-container">
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <div class="brand">
-                <span class="logo">🦉</span>
-                <h1>StackOwl</h1>
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="logo">🦉</span>
+          <h1>StackOwl</h1>
+        </div>
+
+        <nav class="tabs">
+          <button class="tab-btn active" data-target="chat-view">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+              ></path>
+            </svg>
+            Chat
+          </button>
+          <button class="tab-btn" data-target="pellets-view">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path
+                d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"
+              ></path>
+            </svg>
+            Pellets
+          </button>
+          <button class="tab-btn" id="btn-parliament">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            Parliament
+          </button>
+        </nav>
+
+        <div class="owls-section">
+          <h3>Active Owl</h3>
+          <div id="owls-list" class="owls-list">
+            <div class="loading">Loading owls...</div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="content-area">
+        <!-- Chat View -->
+        <section id="chat-view" class="view active">
+          <header class="view-header">
+            <div class="active-owl-info">
+              <span id="header-owl-emoji" class="active-emoji">🦉</span>
+              <div>
+                <h2 id="header-owl-name">Noctua</h2>
+                <p id="header-owl-type" class="subtitle">Executive Assistant</p>
+              </div>
+            </div>
+          </header>
+
+          <div class="chat-history" id="chat-history">
+            <div class="message system">
+              <div class="message-content">
+                <p>
+                  <b>System:</b> StackOwl initialized. Select an owl from the
+                  sidebar to begin.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-input-area">
+            <textarea
+              id="chat-input"
+              placeholder="Ask your owl..."
+              rows="1"
+            ></textarea>
+            <button id="btn-send" class="btn-primary">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        <!-- Pellets View -->
+        <section id="pellets-view" class="view">
+          <header class="view-header pellets-header">
+            <h2>Knowledge Pellets</h2>
+            <div class="search-bar">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input
+                type="text"
+                id="pellets-search"
+                placeholder="Semantic search past knowledge..."
+              />
+            </div>
+          </header>
+
+          <div class="pellets-grid" id="pellets-grid">
+            <div class="loading">Loading pellets...</div>
+          </div>
+
+          <!-- Expanded Pellet Modal Overlay -->
+          <div id="pellet-modal" class="modal-overlay hidden">
+            <div class="modal-content pellet-reader">
+              <header>
+                <h2 id="reader-title">Pellet Title</h2>
+                <button class="btn-close" id="btn-close-pellet">×</button>
+              </header>
+              <div class="reader-meta">
+                <span id="reader-date">May 10</span> •
+                <span id="reader-owls">Noctua</span>
+                <div id="reader-tags" class="tags"></div>
+              </div>
+              <div id="reader-body" class="markdown-body"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Parliament Modal -->
+        <div id="parliament-modal" class="modal-overlay hidden">
+          <div class="modal-content parliament-builder">
+            <header>
+              <h2>Summon Parliament</h2>
+              <button class="btn-close" id="btn-close-parliament">×</button>
+            </header>
+            <div class="form-group">
+              <label>What complex topic needs debate?</label>
+              <textarea
+                id="parliament-topic"
+                rows="3"
+                placeholder="e.g. Should we migrate our backend from Node.js to Rust?"
+              ></textarea>
+            </div>
+            <div class="form-group">
+              <label>Select Participants (Min 2)</label>
+              <div id="parliament-owls" class="parliament-owls-grid">
+                <!-- Filled dynamically -->
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button class="btn-secondary" id="btn-cancel-parliament">
+                Cancel
+              </button>
+              <button class="btn-primary" id="btn-start-parliament">
+                Convene Parliament
+              </button>
             </div>
 
-            <nav class="tabs">
-                <button class="tab-btn active" data-target="chat-view">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                    Chat
-                </button>
-                <button class="tab-btn" data-target="pellets-view">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
-                    Pellets
-                </button>
-                <button class="tab-btn" id="btn-parliament">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                    Parliament
-                </button>
-            </nav>
-
-            <div class="owls-section">
-                <h3>Active Owl</h3>
-                <div id="owls-list" class="owls-list">
-                    <div class="loading">Loading owls...</div>
-                </div>
+            <div id="parliament-loading" class="hidden parliament-loading">
+              <div class="spinner"></div>
+              <p>The Owls are deliberating... This may take a few minutes.</p>
             </div>
-        </aside>
-
-        <!-- Main Content -->
-        <main class="content-area">
-            
-            <!-- Chat View -->
-            <section id="chat-view" class="view active">
-                <header class="view-header">
-                    <div class="active-owl-info">
-                        <span id="header-owl-emoji" class="active-emoji">🦉</span>
-                        <div>
-                            <h2 id="header-owl-name">Noctua</h2>
-                            <p id="header-owl-type" class="subtitle">Executive Assistant</p>
-                        </div>
-                    </div>
-                </header>
-
-                <div class="chat-history" id="chat-history">
-                    <div class="message system">
-                        <div class="message-content">
-                            <p><b>System:</b> StackOwl initialized. Select an owl from the sidebar to begin.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="chat-input-area">
-                    <textarea id="chat-input" placeholder="Ask your owl..." rows="1"></textarea>
-                    <button id="btn-send" class="btn-primary">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                    </button>
-                </div>
-            </section>
-
-            <!-- Pellets View -->
-            <section id="pellets-view" class="view">
-                <header class="view-header pellets-header">
-                    <h2>Knowledge Pellets</h2>
-                    <div class="search-bar">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                        <input type="text" id="pellets-search" placeholder="Semantic search past knowledge...">
-                    </div>
-                </header>
-
-                <div class="pellets-grid" id="pellets-grid">
-                    <div class="loading">Loading pellets...</div>
-                </div>
-
-                <!-- Expanded Pellet Modal Overlay -->
-                <div id="pellet-modal" class="modal-overlay hidden">
-                    <div class="modal-content pellet-reader">
-                        <header>
-                            <h2 id="reader-title">Pellet Title</h2>
-                            <button class="btn-close" id="btn-close-pellet">×</button>
-                        </header>
-                        <div class="reader-meta">
-                            <span id="reader-date">May 10</span> • <span id="reader-owls">Noctua</span>
-                            <div id="reader-tags" class="tags"></div>
-                        </div>
-                        <div id="reader-body" class="markdown-body"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Parliament Modal -->
-            <div id="parliament-modal" class="modal-overlay hidden">
-                <div class="modal-content parliament-builder">
-                    <header>
-                        <h2>Summon Parliament</h2>
-                        <button class="btn-close" id="btn-close-parliament">×</button>
-                    </header>
-                    <div class="form-group">
-                        <label>What complex topic needs debate?</label>
-                        <textarea id="parliament-topic" rows="3" placeholder="e.g. Should we migrate our backend from Node.js to Rust?"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label>Select Participants (Min 2)</label>
-                        <div id="parliament-owls" class="parliament-owls-grid">
-                            <!-- Filled dynamically -->
-                        </div>
-                    </div>
-                    <div class="modal-actions">
-                        <button class="btn-secondary" id="btn-cancel-parliament">Cancel</button>
-                        <button class="btn-primary" id="btn-start-parliament">Convene Parliament</button>
-                    </div>
-
-                    <div id="parliament-loading" class="hidden parliament-loading">
-                        <div class="spinner"></div>
-                        <p>The Owls are deliberating... This may take a few minutes.</p>
-                    </div>
-                </div>
-            </div>
-
-        </main>
+          </div>
+        </div>
+      </main>
     </div>
 
     <!-- Required for rendering markdown -> HTML easily in browser -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="app.js"></script>
-</body>
+  </body>
 </html>

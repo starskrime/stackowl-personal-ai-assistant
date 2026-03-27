@@ -15,10 +15,14 @@
  * message ordering (FIFO). This runner handles detached execution.
  */
 
-import type { Task } from './types.js';
-import type { TaskStore } from './store.js';
-import type { OwlEngine, EngineContext, EngineResponse } from '../engine/runtime.js';
-import { log } from '../logger.js';
+import type { Task } from "./types.js";
+import type { TaskStore } from "./store.js";
+import type {
+  OwlEngine,
+  EngineContext,
+  EngineResponse,
+} from "../engine/runtime.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -74,7 +78,7 @@ export class BackgroundTaskRunner {
     if (!this.canAccept(meta.userId)) {
       throw new Error(
         `Too many background tasks running (max ${BackgroundTaskRunner.MAX_PER_USER}). ` +
-        `Wait for active tasks to complete.`,
+          `Wait for active tasks to complete.`,
       );
     }
 
@@ -91,7 +95,13 @@ export class BackgroundTaskRunner {
     const abortController = new AbortController();
 
     // Fork execution into a detached promise
-    const promise = this.executeInBackground(task, userMessage, context, callbacks, abortController.signal);
+    const promise = this.executeInBackground(
+      task,
+      userMessage,
+      context,
+      callbacks,
+      abortController.signal,
+    );
 
     this.running.set(task.id, { task, promise, abortController });
 
@@ -101,10 +111,12 @@ export class BackgroundTaskRunner {
     });
 
     // Notify start
-    await this.store.updateStatus(task.id, 'running');
+    await this.store.updateStatus(task.id, "running");
     if (callbacks.onStart) {
       await callbacks.onStart(task).catch((err: unknown) => {
-        log.engine.warn(`[BackgroundRunner] onStart failed: ${err instanceof Error ? err.message : err}`);
+        log.engine.warn(
+          `[BackgroundRunner] onStart failed: ${err instanceof Error ? err.message : err}`,
+        );
       });
     }
 
@@ -119,7 +131,7 @@ export class BackgroundTaskRunner {
     if (!running) return false;
 
     running.abortController.abort();
-    await this.store.updateStatus(taskId, 'cancelled');
+    await this.store.updateStatus(taskId, "cancelled");
     this.running.delete(taskId);
     return true;
   }
@@ -144,25 +156,37 @@ export class BackgroundTaskRunner {
 
     for (const task of resumable) {
       try {
-        log.engine.info(`[BackgroundRunner] Resuming interrupted task: ${task.id}`);
+        log.engine.info(
+          `[BackgroundRunner] Resuming interrupted task: ${task.id}`,
+        );
         const context = contextFactory(task);
         const abortController = new AbortController();
 
-        const promise = this.executeInBackground(task, task.userMessage, context, callbacks, abortController.signal);
+        const promise = this.executeInBackground(
+          task,
+          task.userMessage,
+          context,
+          callbacks,
+          abortController.signal,
+        );
         this.running.set(task.id, { task, promise, abortController });
         promise.finally(() => this.running.delete(task.id));
 
         resumed++;
       } catch (err) {
-        log.engine.error(`[BackgroundRunner] Failed to resume task ${task.id}: ${err instanceof Error ? err.message : err}`);
-        await this.store.updateStatus(task.id, 'failed', {
+        log.engine.error(
+          `[BackgroundRunner] Failed to resume task ${task.id}: ${err instanceof Error ? err.message : err}`,
+        );
+        await this.store.updateStatus(task.id, "failed", {
           error: `Resume failed: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
     }
 
     if (resumed > 0) {
-      log.engine.info(`[BackgroundRunner] Resumed ${resumed} interrupted task(s)`);
+      log.engine.info(
+        `[BackgroundRunner] Resumed ${resumed} interrupted task(s)`,
+      );
     }
 
     return resumed;
@@ -202,14 +226,16 @@ export class BackgroundTaskRunner {
       }
 
       // Mark completed
-      await this.store.updateStatus(task.id, 'completed', {
+      await this.store.updateStatus(task.id, "completed", {
         result: response.content,
         toolsUsed: response.toolsUsed,
       });
 
       if (callbacks.onComplete) {
         await callbacks.onComplete(task, response).catch((err: unknown) => {
-          log.engine.warn(`[BackgroundRunner] onComplete failed: ${err instanceof Error ? err.message : err}`);
+          log.engine.warn(
+            `[BackgroundRunner] onComplete failed: ${err instanceof Error ? err.message : err}`,
+          );
         });
       }
 
@@ -218,9 +244,11 @@ export class BackgroundTaskRunner {
       if (signal.aborted) return null;
 
       const errorMsg = err instanceof Error ? err.message : String(err);
-      log.engine.error(`[BackgroundRunner] Task ${task.id} failed: ${errorMsg}`);
+      log.engine.error(
+        `[BackgroundRunner] Task ${task.id} failed: ${errorMsg}`,
+      );
 
-      await this.store.updateStatus(task.id, 'failed', { error: errorMsg });
+      await this.store.updateStatus(task.id, "failed", { error: errorMsg });
 
       if (callbacks.onFail) {
         await callbacks.onFail(task, errorMsg).catch(() => {});

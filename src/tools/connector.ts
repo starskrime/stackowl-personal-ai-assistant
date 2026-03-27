@@ -7,9 +7,15 @@
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import type { ConnectorResolver } from "../connectors/resolver.js";
-import { listPresets, listCategories, getPreset } from "../connectors/presets.js";
+import {
+  listPresets,
+  listCategories,
+  getPreset,
+} from "../connectors/presets.js";
 
-export function createConnectorTool(resolver: ConnectorResolver): ToolImplementation {
+export function createConnectorTool(
+  resolver: ConnectorResolver,
+): ToolImplementation {
   return {
     definition: {
       name: "connector",
@@ -31,7 +37,8 @@ export function createConnectorTool(resolver: ConnectorResolver): ToolImplementa
           },
           env: {
             type: "object",
-            description: "Environment variables for the connector (for connect action)",
+            description:
+              "Environment variables for the connector (for connect action)",
           },
           category: {
             type: "string",
@@ -43,7 +50,10 @@ export function createConnectorTool(resolver: ConnectorResolver): ToolImplementa
     },
     category: "network",
     source: "builtin",
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+    async execute(
+      args: Record<string, unknown>,
+      _context: ToolContext,
+    ): Promise<string> {
       const action = args.action as string;
 
       switch (action) {
@@ -53,14 +63,17 @@ export function createConnectorTool(resolver: ConnectorResolver): ToolImplementa
             ? listPresets(category as Parameters<typeof listPresets>[0])
             : listPresets();
 
-          if (presets.length === 0) return "No presets available for this category.";
+          if (presets.length === 0)
+            return "No presets available for this category.";
 
           const categories = listCategories();
-          const lines = [`Available connectors (${presets.length}) — categories: ${categories.join(", ")}\n`];
+          const lines = [
+            `Available connectors (${presets.length}) — categories: ${categories.join(", ")}\n`,
+          ];
           for (const p of presets) {
             lines.push(
               `${p.icon} **${p.name}** (\`${p.id}\`) — ${p.description}` +
-              `\n  Requires: ${p.requiredEnv.join(", ") || "nothing"}`
+                `\n  Requires: ${p.requiredEnv.join(", ") || "nothing"}`,
             );
           }
           return lines.join("\n");
@@ -70,9 +83,14 @@ export function createConnectorTool(resolver: ConnectorResolver): ToolImplementa
           const instances = resolver.getInstances();
           if (instances.length === 0) return "No connectors configured yet.";
           return instances
-            .map(i => {
+            .map((i) => {
               const preset = getPreset(i.presetId);
-              const health = i.healthy === undefined ? "unchecked" : i.healthy ? "healthy" : "unhealthy";
+              const health =
+                i.healthy === undefined
+                  ? "unchecked"
+                  : i.healthy
+                    ? "healthy"
+                    : "unhealthy";
               return `${preset?.icon ?? "🔌"} **${i.name}** (${i.presetId}) — ${i.enabled ? "enabled" : "disabled"} — ${health}`;
             })
             .join("\n");
@@ -80,13 +98,15 @@ export function createConnectorTool(resolver: ConnectorResolver): ToolImplementa
 
         case "connect": {
           const presetId = args.presetId as string;
-          if (!presetId) return "Error: presetId is required. Use 'presets' to see available options.";
+          if (!presetId)
+            return "Error: presetId is required. Use 'presets' to see available options.";
           const env = (args.env as Record<string, string>) ?? {};
 
           const preset = getPreset(presetId);
-          if (!preset) return `Unknown preset: ${presetId}. Use 'presets' to see available options.`;
+          if (!preset)
+            return `Unknown preset: ${presetId}. Use 'presets' to see available options.`;
 
-          const missing = preset.requiredEnv.filter(k => !env[k]);
+          const missing = preset.requiredEnv.filter((k) => !env[k]);
           if (missing.length > 0) {
             return `Missing required credentials: ${missing.join(", ")}.\nPlease provide them in the 'env' parameter.`;
           }
@@ -110,7 +130,7 @@ export function createConnectorTool(resolver: ConnectorResolver): ToolImplementa
           const instances = resolver.getEnabledInstances();
           if (instances.length === 0) return "No active connectors.";
           return instances
-            .map(i => {
+            .map((i) => {
               const preset = getPreset(i.presetId);
               const lastCheck = i.lastHealthCheck
                 ? new Date(i.lastHealthCheck).toLocaleString()

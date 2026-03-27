@@ -148,12 +148,16 @@ export class ClawHubClient {
   }
 
   /**
-   * Extract zip file - simplified version.
-   * For full extraction, use the CLI: unzip skill.zip
+   * Extract zip file using system unzip command.
    */
-  private async extractZip(zipPath: string, _targetDir: string): Promise<void> {
-    console.log(chalk.yellow(`⚠️  Downloaded to ${zipPath}`));
-    console.log(chalk.dim(`To extract: unzip ${zipPath} -d <target-dir>`));
+  private async extractZip(zipPath: string, targetDir: string): Promise<void> {
+    const { execSync } = await import("child_process");
+    try {
+      execSync(`unzip -o "${zipPath}" -d "${targetDir}"`, { stdio: "pipe" });
+    } catch (err: any) {
+      const msg = err.stderr?.toString() ?? err.message;
+      throw new Error(`Zip extraction failed: ${msg}`);
+    }
   }
 
   /**

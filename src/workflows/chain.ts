@@ -32,7 +32,9 @@ export class WorkflowChainStore {
           log.engine.warn(`[WorkflowChain] Failed to load ${file}: ${err}`);
         }
       }
-      log.engine.info(`[WorkflowChain] Loaded ${this.workflows.size} workflows`);
+      log.engine.info(
+        `[WorkflowChain] Loaded ${this.workflows.size} workflows`,
+      );
     } catch (err) {
       log.engine.warn(`[WorkflowChain] Failed to load directory: ${err}`);
     }
@@ -60,7 +62,7 @@ export class WorkflowChainStore {
   }
 
   listByTag(tag: string): WorkflowDefinition[] {
-    return this.list().filter(w => w.tags.includes(tag));
+    return this.list().filter((w) => w.tags.includes(tag));
   }
 
   /**

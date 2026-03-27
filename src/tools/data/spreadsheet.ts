@@ -41,7 +41,11 @@ async function saveSpreadsheet(
   name: string,
   data: SpreadsheetData,
 ): Promise<void> {
-  await writeFile(resolve(dir, `${name}.json`), JSON.stringify(data, null, 2), "utf-8");
+  await writeFile(
+    resolve(dir, `${name}.json`),
+    JSON.stringify(data, null, 2),
+    "utf-8",
+  );
 }
 
 export const SpreadsheetTool: ToolImplementation = {
@@ -113,7 +117,8 @@ export const SpreadsheetTool: ToolImplementation = {
       switch (action) {
         case "create": {
           const headersStr = args["headers"] as string;
-          if (!headersStr) return "Error: 'headers' parameter is required for create action.";
+          if (!headersStr)
+            return "Error: 'headers' parameter is required for create action.";
           let headers: string[];
           try {
             headers = JSON.parse(headersStr);
@@ -131,7 +136,8 @@ export const SpreadsheetTool: ToolImplementation = {
 
         case "add_row": {
           const valuesStr = args["values"] as string;
-          if (!valuesStr) return "Error: 'values' parameter is required for add_row action.";
+          if (!valuesStr)
+            return "Error: 'values' parameter is required for add_row action.";
           let values: string[];
           try {
             values = JSON.parse(valuesStr);
@@ -190,7 +196,8 @@ export const SpreadsheetTool: ToolImplementation = {
                 return false;
             }
           });
-          if (matches.length === 0) return `No rows matched query: ${column} ${operator} ${value}`;
+          if (matches.length === 0)
+            return `No rows matched query: ${column} ${operator} ${value}`;
           const header = sheet.headers.join(" | ");
           const separator = sheet.headers.map(() => "---").join(" | ");
           const rowLines = matches.map((r) => r.join(" | "));

@@ -14,6 +14,7 @@ Translate text between languages using web search for translation.
 1. **Identify source and target languages** from user request.
 
 2. **Perform translation using web search:**
+
    ```
    web_search query="translate '<text>' from <source_language> to <target_language>"
    ```
@@ -29,11 +30,13 @@ Translate text between languages using web search for translation.
 ## Examples
 
 ### English to Spanish
+
 ```
 web_search query="translate 'Good morning, how are you?' to Spanish"
 ```
 
 ### Detect language and translate
+
 ```
 web_search query="translate '你好世界' to English"
 ```

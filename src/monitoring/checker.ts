@@ -37,7 +37,9 @@ export class HealthChecker {
       if (existsSync(this.filePath)) {
         const raw = await readFile(this.filePath, "utf-8");
         this.state = JSON.parse(raw);
-        log.engine.info(`[HealthChecker] Loaded ${this.state.checks.length} check(s)`);
+        log.engine.info(
+          `[HealthChecker] Loaded ${this.state.checks.length} check(s)`,
+        );
       }
     } catch (err) {
       log.engine.warn(`[HealthChecker] Failed to load state: ${err}`);
@@ -50,7 +52,11 @@ export class HealthChecker {
       if (!existsSync(dir)) await mkdir(dir, { recursive: true });
       // Keep only last 100 alerts
       this.state.alerts = this.state.alerts.slice(-100);
-      await writeFile(this.filePath, JSON.stringify(this.state, null, 2), "utf-8");
+      await writeFile(
+        this.filePath,
+        JSON.stringify(this.state, null, 2),
+        "utf-8",
+      );
     } catch (err) {
       log.engine.warn(`[HealthChecker] Failed to save state: ${err}`);
     }
@@ -67,7 +73,7 @@ export class HealthChecker {
    * Add a health check and start monitoring.
    */
   addCheck(check: HealthCheck): void {
-    const existing = this.state.checks.findIndex(c => c.id === check.id);
+    const existing = this.state.checks.findIndex((c) => c.id === check.id);
     if (existing >= 0) {
       this.state.checks[existing] = check;
     } else {
@@ -81,7 +87,7 @@ export class HealthChecker {
 
   removeCheck(id: string): void {
     this.stopCheck(id);
-    this.state.checks = this.state.checks.filter(c => c.id !== id);
+    this.state.checks = this.state.checks.filter((c) => c.id !== id);
     delete this.state.lastResults[id];
     delete this.state.consecutiveFailures[id];
   }
@@ -168,7 +174,10 @@ export class HealthChecker {
     this.processResult(check, result);
   }
 
-  private async checkHttp(check: HealthCheck, start: number): Promise<CheckResult> {
+  private async checkHttp(
+    check: HealthCheck,
+    start: number,
+  ): Promise<CheckResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), check.timeoutMs);
 
@@ -178,7 +187,11 @@ export class HealthChecker {
         method: "HEAD",
       });
 
-      const status: CheckStatus = response.ok ? "healthy" : response.status >= 500 ? "down" : "degraded";
+      const status: CheckStatus = response.ok
+        ? "healthy"
+        : response.status >= 500
+          ? "down"
+          : "degraded";
       return {
         checkId: check.id,
         status,
@@ -191,12 +204,15 @@ export class HealthChecker {
     }
   }
 
-  private async checkTcp(check: HealthCheck, start: number): Promise<CheckResult> {
+  private async checkTcp(
+    check: HealthCheck,
+    start: number,
+  ): Promise<CheckResult> {
     const { createConnection } = await import("node:net");
     const [host, portStr] = check.target.split(":");
     const port = parseInt(portStr, 10);
 
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const socket = createConnection({ host, port, timeout: check.timeoutMs });
 
       socket.on("connect", () => {
@@ -233,7 +249,10 @@ export class HealthChecker {
     });
   }
 
-  private async checkDns(check: HealthCheck, start: number): Promise<CheckResult> {
+  private async checkDns(
+    check: HealthCheck,
+    start: number,
+  ): Promise<CheckResult> {
     const { promises: dns } = await import("node:dns");
     try {
       await dns.resolve(check.target);
@@ -254,7 +273,10 @@ export class HealthChecker {
     }
   }
 
-  private async checkCommand(check: HealthCheck, start: number): Promise<CheckResult> {
+  private async checkCommand(
+    check: HealthCheck,
+    start: number,
+  ): Promise<CheckResult> {
     const { exec } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const execAsync = promisify(exec);
@@ -284,7 +306,8 @@ export class HealthChecker {
 
     if (result.status === "healthy") {
       // Reset failure counter
-      const wasDown = (this.state.consecutiveFailures[check.id] ?? 0) >= check.failThreshold;
+      const wasDown =
+        (this.state.consecutiveFailures[check.id] ?? 0) >= check.failThreshold;
       this.state.consecutiveFailures[check.id] = 0;
 
       if (wasDown && previousResult) {
@@ -320,7 +343,9 @@ export class HealthChecker {
         };
         this.state.alerts.push(alert);
         this.onAlert?.(alert);
-        log.engine.warn(`[HealthChecker] ALERT: ${check.name} is ${result.status}`);
+        log.engine.warn(
+          `[HealthChecker] ALERT: ${check.name} is ${result.status}`,
+        );
       }
     }
   }
@@ -334,11 +359,11 @@ export class HealthChecker {
   }
 
   getActiveAlerts(): Alert[] {
-    return this.state.alerts.filter(a => !a.acknowledged);
+    return this.state.alerts.filter((a) => !a.acknowledged);
   }
 
   acknowledgeAlert(alertId: string): void {
-    const alert = this.state.alerts.find(a => a.id === alertId);
+    const alert = this.state.alerts.find((a) => a.id === alertId);
     if (alert) alert.acknowledged = true;
   }
 
@@ -349,8 +374,10 @@ export class HealthChecker {
 
     const lines = ["## Active Alerts"];
     for (const alert of active) {
-      const check = this.state.checks.find(c => c.id === alert.checkId);
-      lines.push(`- [${alert.severity.toUpperCase()}] ${check?.name ?? alert.checkId}: ${alert.message}`);
+      const check = this.state.checks.find((c) => c.id === alert.checkId);
+      lines.push(
+        `- [${alert.severity.toUpperCase()}] ${check?.name ?? alert.checkId}: ${alert.message}`,
+      );
     }
     return lines.join("\n");
   }

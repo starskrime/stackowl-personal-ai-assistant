@@ -41,8 +41,39 @@ export class RateLimitMiddleware implements GatewayMiddleware {
   readonly name = "rate-limit";
   private minuteWindow: Map<string, number[]> = new Map();
   private hourWindow: Map<string, number[]> = new Map();
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
-  constructor(private config: RateLimitConfig) {}
+  constructor(private config: RateLimitConfig) {
+    this.cleanupTimer = setInterval(() => {
+      this.cleanup();
+    }, 60_000);
+    this.cleanupTimer.unref?.();
+  }
+
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+
+  private cleanup(): void {
+    const now = Date.now();
+    const minuteCutoff = now - 120_000;
+    const hourCutoff = now - 3_600_000;
+
+    for (const [key, hits] of this.minuteWindow) {
+      const filtered = hits.filter((t) => t > minuteCutoff);
+      if (filtered.length === 0) this.minuteWindow.delete(key);
+      else this.minuteWindow.set(key, filtered);
+    }
+
+    for (const [key, hits] of this.hourWindow) {
+      const filtered = hits.filter((t) => t > hourCutoff);
+      if (filtered.length === 0) this.hourWindow.delete(key);
+      else this.hourWindow.set(key, filtered);
+    }
+  }
 
   async before(
     _message: GatewayMessage,
@@ -106,10 +137,7 @@ export class LoggingMiddleware implements GatewayMiddleware {
   readonly name = "logging";
   private startTimes: Map<string, number> = new Map();
 
-  async before(
-    message: GatewayMessage,
-    ctx: MiddlewareContext,
-  ): Promise<null> {
+  async before(message: GatewayMessage, ctx: MiddlewareContext): Promise<null> {
     this.startTimes.set(ctx.sessionId + message.id, Date.now());
     log.engine.info(
       `[mw:log] IN  channel=${ctx.channelId} session=${ctx.sessionId} len=${message.text.length}`,

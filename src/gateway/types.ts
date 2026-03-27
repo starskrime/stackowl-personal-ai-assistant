@@ -49,6 +49,12 @@ export interface GatewayCallbacks {
    * If not provided, the engine falls back to onProgress for status updates.
    */
   onStreamEvent?: (event: StreamEvent) => Promise<void>;
+  /**
+   * When true, suppress internal reasoning/thinking messages from being
+   * delivered to the user (e.g. _Thinking..._ output from the ReAct loop).
+   * The user only sees final answers, not intermediate reasoning traces.
+   */
+  suppressThinking?: boolean;
 }
 
 // ─── Outgoing ────────────────────────────────────────────────────
@@ -154,6 +160,17 @@ import type { ServiceRegistry } from "../plugins/services.js";
 import type { HookPipeline } from "../plugins/hook-pipeline.js";
 import type { HotReloadManager } from "../reload/manager.js";
 import type { ACPRouter } from "../acp/router.js";
+import type { IntentStateMachine, CommitmentTracker } from "../intent/index.js";
+import type { ProactiveIntentionLoop } from "../intent/proactive-loop.js";
+import type { GoalGraph } from "../goals/graph.js";
+import type { UserPreferenceModel } from "../preferences/model.js";
+import type { WorkingContextManager } from "../memory/working-context.js";
+import type { EpisodicMemory } from "../memory/episodic.js";
+import type { SelfLearningCoordinator } from "../learning/coordinator.js";
+import type { FactStore } from "../memory/fact-store.js";
+import type { FactExtractor } from "../memory/fact-extractor.js";
+import type { MemoryRetriever } from "../memory/memory-retriever.js";
+import type { MemoryFeedback } from "../memory/memory-feedback.js";
 
 export interface GatewayContext {
   provider: ModelProvider;
@@ -196,13 +213,19 @@ export interface GatewayContext {
   voiceAdapter?: VoiceAdapter;
   microLearner?: MicroLearner;
   anticipator?: ProactiveAnticipator;
-  memorySearcher?: import('../memory-threads/searcher.js').MemorySearcher;
-  echoChamberDetector?: import('../echo-chamber/detector.js').EchoChamberDetector;
-  journalGenerator?: import('../growth-journal/generator.js').JournalGenerator;
-  questManager?: import('../quests/manager.js').QuestManager;
-  capsuleManager?: import('../capsules/manager.js').CapsuleManager;
-  constellationMiner?: import('../constellations/miner.js').ConstellationMiner;
-  socraticEngine?: import('../socratic/engine.js').SocraticEngine;
+  memorySearcher?: import("../memory-threads/searcher.js").MemorySearcher;
+  echoChamberDetector?: import("../echo-chamber/detector.js").EchoChamberDetector;
+  journalGenerator?: import("../growth-journal/generator.js").JournalGenerator;
+  questManager?: import("../quests/manager.js").QuestManager;
+  capsuleManager?: import("../capsules/manager.js").CapsuleManager;
+  constellationMiner?: import("../constellations/miner.js").ConstellationMiner;
+  socraticEngine?: import("../socratic/engine.js").SocraticEngine;
+
+  // ─── Mem0-Inspired Memory Layer (Phase M1-M6) ────────────────
+  factStore?: FactStore;
+  factExtractor?: FactExtractor;
+  memoryRetriever?: MemoryRetriever;
+  memoryFeedback?: MemoryFeedback;
 
   // ─── Architecture Improvements ─────────────────────────────
   eventBus?: EventBus;
@@ -210,6 +233,7 @@ export interface GatewayContext {
   costTracker?: CostTracker;
   agentRegistry?: AgentRegistry;
   rateLimiter?: RateLimiter;
+  selfLearningCoordinator?: SelfLearningCoordinator;
 
   // ─── Plugin, Reload & ACP ─────────────────────────────────
   pluginRegistry?: PluginRegistry;
@@ -218,14 +242,24 @@ export interface GatewayContext {
   hotReloadManager?: HotReloadManager;
   acpRouter?: ACPRouter;
 
+  // ─── Cognitive Loop (Self-Improvement) ──────────────────────
+  cognitiveLoop?: import("../cognition/loop.js").CognitiveLoop;
+
   // ─── Feature Modules (Phase 1-3) ──────────────────────────
-  infraProfile?: import('../infra/profile.js').InfraProfileStore;
-  infraDetector?: import('../infra/detector.js').InfraDetector;
-  connectorResolver?: import('../connectors/resolver.js').ConnectorResolver;
-  workflowStore?: import('../workflows/chain.js').WorkflowChainStore;
-  healthChecker?: import('../monitoring/checker.js').HealthChecker;
-  autoConfigDetector?: import('../infra/auto-config.js').AutoConfigDetector;
-  runbookMiner?: import('../workflows/runbook-miner.js').RunbookMiner;
-  crossAppPlanner?: import('../orchestrator/cross-app.js').CrossAppPlanner;
-  knowledgeCouncil?: import('../parliament/knowledge-council.js').KnowledgeCouncil;
+  infraProfile?: import("../infra/profile.js").InfraProfileStore;
+  infraDetector?: import("../infra/detector.js").InfraDetector;
+  connectorResolver?: import("../connectors/resolver.js").ConnectorResolver;
+  workflowStore?: import("../workflows/chain.js").WorkflowChainStore;
+  healthChecker?: import("../monitoring/checker.js").HealthChecker;
+  autoConfigDetector?: import("../infra/auto-config.js").AutoConfigDetector;
+  runbookMiner?: import("../workflows/runbook-miner.js").RunbookMiner;
+  crossAppPlanner?: import("../orchestrator/cross-app.js").CrossAppPlanner;
+  knowledgeCouncil?: import("../parliament/knowledge-council.js").KnowledgeCouncil;
+  intentStateMachine?: IntentStateMachine;
+  commitmentTracker?: CommitmentTracker;
+  preferenceModel?: UserPreferenceModel;
+  workingContextManager?: WorkingContextManager;
+  episodicMemory?: EpisodicMemory;
+  goalGraph?: GoalGraph;
+  proactiveLoop?: ProactiveIntentionLoop;
 }

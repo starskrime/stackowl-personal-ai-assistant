@@ -36,7 +36,9 @@ export class PluginLifecycleManager {
   async loadAll(pluginDir: string): Promise<number> {
     const resolvedDir = resolve(pluginDir);
     if (!existsSync(resolvedDir)) {
-      log.engine.info(`[PluginLifecycle] Plugin directory not found: ${resolvedDir}`);
+      log.engine.info(
+        `[PluginLifecycle] Plugin directory not found: ${resolvedDir}`,
+      );
       return 0;
     }
 
@@ -45,7 +47,11 @@ export class PluginLifecycleManager {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const manifestPath = join(resolvedDir, entry.name, "stackowl.plugin.json");
+      const manifestPath = join(
+        resolvedDir,
+        entry.name,
+        "stackowl.plugin.json",
+      );
       if (!existsSync(manifestPath)) continue;
 
       try {
@@ -58,7 +64,9 @@ export class PluginLifecycleManager {
       }
     }
 
-    log.engine.info(`[PluginLifecycle] Loaded ${loaded} plugins from ${resolvedDir}`);
+    log.engine.info(
+      `[PluginLifecycle] Loaded ${loaded} plugins from ${resolvedDir}`,
+    );
     return loaded;
   }
 
@@ -72,7 +80,9 @@ export class PluginLifecycleManager {
 
     // Validate manifest basics
     if (!manifest.name || !manifest.version || !manifest.entryPoint) {
-      throw new Error(`Invalid manifest: name, version, and entryPoint are required`);
+      throw new Error(
+        `Invalid manifest: name, version, and entryPoint are required`,
+      );
     }
 
     // Load the plugin module
@@ -86,7 +96,9 @@ export class PluginLifecycleManager {
     const PluginClass = mod.default || mod[manifest.name] || mod.Plugin;
 
     if (!PluginClass) {
-      throw new Error(`No default export or Plugin class found in ${entryPath}`);
+      throw new Error(
+        `No default export or Plugin class found in ${entryPath}`,
+      );
     }
 
     // Instantiate
@@ -118,7 +130,9 @@ export class PluginLifecycleManager {
    */
   async startAll(): Promise<void> {
     const order = this.registry.resolveLoadOrder();
-    log.engine.info(`[PluginLifecycle] Starting plugins in order: ${order.join(" → ")}`);
+    log.engine.info(
+      `[PluginLifecycle] Starting plugins in order: ${order.join(" → ")}`,
+    );
 
     // Phase 1: init all
     for (const name of order) {
@@ -193,7 +207,8 @@ export class PluginLifecycleManager {
 
     for (const name of order) {
       const plugin = this.registry.get(name);
-      if (!plugin || plugin.state === "unloaded" || plugin.state === "error") continue;
+      if (!plugin || plugin.state === "unloaded" || plugin.state === "error")
+        continue;
 
       try {
         this.registry.setState(name, "stopping");
@@ -223,7 +238,9 @@ export class PluginLifecycleManager {
   async reloadPlugin(name: string): Promise<void> {
     const plugin = this.registry.get(name);
     if (!plugin) {
-      log.engine.warn(`[PluginLifecycle] Cannot reload unknown plugin "${name}"`);
+      log.engine.warn(
+        `[PluginLifecycle] Cannot reload unknown plugin "${name}"`,
+      );
       return;
     }
 
@@ -287,28 +304,60 @@ export class PluginLifecycleManager {
     const name = plugin.manifest.name;
 
     if (hooks.beforeEngine) {
-      this.hookPipeline.register("beforeEngine", name, hooks.beforeEngine.bind(hooks));
+      this.hookPipeline.register(
+        "beforeEngine",
+        name,
+        hooks.beforeEngine.bind(hooks),
+      );
     }
     if (hooks.afterEngine) {
-      this.hookPipeline.register("afterEngine", name, hooks.afterEngine.bind(hooks));
+      this.hookPipeline.register(
+        "afterEngine",
+        name,
+        hooks.afterEngine.bind(hooks),
+      );
     }
     if (hooks.beforeToolCall) {
-      this.hookPipeline.register("beforeToolCall", name, hooks.beforeToolCall.bind(hooks));
+      this.hookPipeline.register(
+        "beforeToolCall",
+        name,
+        hooks.beforeToolCall.bind(hooks),
+      );
     }
     if (hooks.afterToolCall) {
-      this.hookPipeline.register("afterToolCall", name, hooks.afterToolCall.bind(hooks));
+      this.hookPipeline.register(
+        "afterToolCall",
+        name,
+        hooks.afterToolCall.bind(hooks),
+      );
     }
     if (hooks.onSessionCreated) {
-      this.hookPipeline.register("onSessionCreated", name, hooks.onSessionCreated.bind(hooks));
+      this.hookPipeline.register(
+        "onSessionCreated",
+        name,
+        hooks.onSessionCreated.bind(hooks),
+      );
     }
     if (hooks.onSessionEnded) {
-      this.hookPipeline.register("onSessionEnded", name, hooks.onSessionEnded.bind(hooks));
+      this.hookPipeline.register(
+        "onSessionEnded",
+        name,
+        hooks.onSessionEnded.bind(hooks),
+      );
     }
     if (hooks.onEvolutionTriggered) {
-      this.hookPipeline.register("onEvolutionTriggered", name, hooks.onEvolutionTriggered.bind(hooks));
+      this.hookPipeline.register(
+        "onEvolutionTriggered",
+        name,
+        hooks.onEvolutionTriggered.bind(hooks),
+      );
     }
     if (hooks.onConfigChanged) {
-      this.hookPipeline.register("onConfigChanged", name, hooks.onConfigChanged.bind(hooks));
+      this.hookPipeline.register(
+        "onConfigChanged",
+        name,
+        hooks.onConfigChanged.bind(hooks),
+      );
     }
   }
 

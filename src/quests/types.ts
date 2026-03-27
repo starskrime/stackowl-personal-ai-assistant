@@ -4,8 +4,12 @@
  * Gamified learning journeys with milestones, adaptive difficulty, and proactive check-ins.
  */
 
-export type QuestStatus = 'active' | 'paused' | 'completed' | 'abandoned';
-export type QuestDifficulty = 'beginner' | 'intermediate' | 'advanced' | 'expert';
+export type QuestStatus = "active" | "paused" | "completed" | "abandoned";
+export type QuestDifficulty =
+  | "beginner"
+  | "intermediate"
+  | "advanced"
+  | "expert";
 
 export interface QuestMilestone {
   id: string;

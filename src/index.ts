@@ -32,35 +32,70 @@ import { PatchTool } from "./tools/toolsmith.js";
 import { ScreenshotTool } from "./tools/screenshot.js";
 // ── macOS native tools ──
 import {
-  AppleCalendarTool, AppleRemindersTool, AppleContactsTool,
-  AppleNotesTool, AppleMailTool, SystemInfoTool, NotificationTool,
-  ClipboardTool, FocusModeTool, SpotlightSearchTool, TextToSpeechTool,
-  SystemControlsTool, MusicControlTool, IMessageTool,
+  AppleCalendarTool,
+  AppleRemindersTool,
+  AppleContactsTool,
+  AppleNotesTool,
+  AppleMailTool,
+  SystemInfoTool,
+  NotificationTool,
+  ClipboardTool,
+  FocusModeTool,
+  SpotlightSearchTool,
+  TextToSpeechTool,
+  SystemControlsTool,
+  MusicControlTool,
+  IMessageTool,
 } from "./tools/macos/index.js";
 // ── Utility tools ──
 import {
-  CalculatorTool, TimerTool, WeatherTool, CurrencyConverterTool,
-  PasswordGeneratorTool, JSONTransformTool, ProcessManagerTool,
-  DailyBriefingTool, HabitTrackerTool, ExpenseTrackerTool, QuickCaptureTool,
-  TranslatorTool, UnitConverterTool, QRCodeTool,
+  CalculatorTool,
+  TimerTool,
+  WeatherTool,
+  CurrencyConverterTool,
+  PasswordGeneratorTool,
+  JSONTransformTool,
+  ProcessManagerTool,
+  DailyBriefingTool,
+  HabitTrackerTool,
+  ExpenseTrackerTool,
+  QuickCaptureTool,
+  TranslatorTool,
+  UnitConverterTool,
+  QRCodeTool,
 } from "./tools/utils/index.js";
 // ── Web utility tools ──
 import {
-  WebMonitorTool, LinkPreviewTool, RSSFeedTool,
-  YouTubeSearchTool, BookmarkManagerTool,
+  WebMonitorTool,
+  LinkPreviewTool,
+  RSSFeedTool,
+  YouTubeSearchTool,
+  BookmarkManagerTool,
 } from "./tools/web-utils/index.js";
 // ── Dev tools ──
 import {
-  DockerTool, GitTool, APITesterTool, NetworkScanTool, CronJobTool,
+  DockerTool,
+  GitTool,
+  APITesterTool,
+  NetworkScanTool,
+  CronJobTool,
 } from "./tools/dev/index.js";
 // ── Creative tools ──
 import {
-  MermaidDiagramTool, MarkdownRenderTool, ImageGenerationTool, SpeechToTextTool,
+  MermaidDiagramTool,
+  MarkdownRenderTool,
+  ImageGenerationTool,
+  SpeechToTextTool,
 } from "./tools/creative/index.js";
 // ── Data tools ──
 import {
-  SpreadsheetTool, DataVisualizationTool, FileEncryptTool, FileOrganizeTool,
-  ArchiveTool, PDFReaderTool, OCRTool,
+  SpreadsheetTool,
+  DataVisualizationTool,
+  FileEncryptTool,
+  FileOrganizeTool,
+  ArchiveTool,
+  PDFReaderTool,
+  OCRTool,
 } from "./tools/data/index.js";
 // ── Computer Use ──
 import { ComputerUseTool } from "./tools/computer-use/index.js";
@@ -92,6 +127,8 @@ import { ReflexionEngine } from "./evolution/reflexion.js";
 import { SkillsLoader } from "./skills/index.js";
 import { MCPManager } from "./tools/mcp/manager.js";
 import { MicroLearner } from "./learning/micro-learner.js";
+import { MutationTracker } from "./owls/mutation-tracker.js";
+import { SelfLearningCoordinator } from "./learning/coordinator.js";
 import { MemorySearcher } from "./memory-threads/searcher.js";
 import { RecallMemoryTool } from "./tools/recall.js";
 import { EchoChamberDetector } from "./echo-chamber/detector.js";
@@ -110,13 +147,26 @@ import { BrowserPool, initSmartFetch } from "./browser/index.js";
 // ── New Feature Modules (Phase 1-3) ──
 import { InfraProfileStore, InfraDetector } from "./infra/index.js";
 import { ConnectorResolver } from "./connectors/index.js";
-import { WorkflowChainStore, WorkflowExecutor, RunbookMiner } from "./workflows/index.js";
+import {
+  WorkflowChainStore,
+  WorkflowExecutor,
+  RunbookMiner,
+} from "./workflows/index.js";
 import { HealthChecker } from "./monitoring/index.js";
 import { AutoConfigDetector } from "./infra/auto-config.js";
 import { CrossAppPlanner } from "./orchestrator/cross-app.js";
 import { createWorkflowTool } from "./tools/workflow.js";
 import { createMonitorTool } from "./tools/monitor.js";
 import { createConnectorTool } from "./tools/connector.js";
+import { IntentStateMachine, CommitmentTrackerImpl } from "./intent/index.js";
+import { UserPreferenceModel } from "./preferences/model.js";
+import { WorkingContextManager } from "./memory/working-context.js";
+import { EpisodicMemory } from "./memory/episodic.js";
+import { FactStore } from "./memory/fact-store.js";
+import { FactExtractor } from "./memory/fact-extractor.js";
+import { KnowledgeGraph } from "./knowledge/index.js";
+import { GoalGraph } from "./goals/graph.js";
+import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
 
@@ -135,7 +185,7 @@ async function bootstrap() {
       poolSize: config.browser?.poolSize ?? 2,
       warmUp: config.browser?.warmUp ?? true,
       stealthMode: config.browser?.stealthMode ?? true,
-      userDataDir: resolve(workspacePath, '.browser-data'),
+      userDataDir: resolve(workspacePath, ".browser-data"),
       proxy: config.browser?.proxy,
       headless: config.browser?.headless ?? true,
     });
@@ -156,6 +206,10 @@ async function bootstrap() {
   // Initialize owl registry
   const owlRegistry = new OwlRegistry(workspacePath);
   await owlRegistry.loadAll();
+
+  // Mutation Tracker — tracks DNA mutation outcomes for rollback decisions
+  const mutationTracker = new MutationTracker(owlRegistry, workspacePath);
+  await mutationTracker.init();
 
   // Initialize tools
   const toolRegistry = new ToolRegistry();
@@ -276,9 +330,13 @@ async function bootstrap() {
   await pelletStore.init();
 
   // Build knowledge graph in background (non-blocking)
-  pelletStore.buildGraph().catch(err =>
-    console.warn(`[PelletGraph] Build failed (non-fatal): ${err instanceof Error ? err.message : err}`),
-  );
+  pelletStore
+    .buildGraph()
+    .catch((err) =>
+      console.warn(
+        `[PelletGraph] Build failed (non-fatal): ${err instanceof Error ? err.message : err}`,
+      ),
+    );
 
   // Learning Engine — instantiated here so bootstrap can share it across CLI + Telegram
   // (actual owl binding happens after owl selection, so we expose a factory)
@@ -310,6 +368,21 @@ async function bootstrap() {
   // Micro-Learner — per-message lightweight signal extraction
   const microLearner = new MicroLearner(workspacePath);
   await microLearner.load().catch(() => {});
+
+  // Episodic Memory — LLM-extracted session summaries for cross-session recall
+  const episodicMemory = new EpisodicMemory(workspacePath);
+  await episodicMemory.load();
+
+  // Fact Store — Mem0-inspired structured fact memory with conflict resolution
+  const factStore = new FactStore(workspacePath);
+  await factStore.load();
+
+  // Knowledge Graph — entity relationships with semantic search
+  const knowledgeGraph = new KnowledgeGraph(workspacePath);
+  await knowledgeGraph.load();
+
+  // Fact Extractor — LLM-powered extraction from conversations
+  const factExtractor = new FactExtractor(providerRegistry.getDefault());
 
   // Memory Searcher — cross-system recall for conversational threads
   const memorySearcher = new MemorySearcher(
@@ -366,6 +439,7 @@ async function bootstrap() {
     sessionStore,
     owlRegistry,
     () => microLearner.getProfile(),
+    episodicMemory,
   );
 
   // Apply DNA decay for all owls if overdue (runs at most once per week per owl)
@@ -432,9 +506,47 @@ async function bootstrap() {
   const healthChecker = new HealthChecker(workspacePath);
   await healthChecker.load().catch(() => {});
 
+  // ── Intent State Machine ──
+  const intentStateMachine = new IntentStateMachine(workspacePath);
+  await intentStateMachine.load();
+
+  // ── Commitment Tracker ──
+  const commitmentTracker = new CommitmentTrackerImpl(workspacePath);
+  await commitmentTracker.load();
+
+  // ── User Preference Model (behavioral inference) ──
+  const preferenceModel = new UserPreferenceModel(workspacePath);
+  await preferenceModel.load();
+
+  // ── Mem0-Inspired Memory Layer ──
+  const { MemoryRetriever } = await import("./memory/memory-retriever.js");
+  const { MemoryFeedback } = await import("./memory/memory-feedback.js");
+  const memoryRetriever = new MemoryRetriever(
+    episodicMemory,
+    factStore,
+    knowledgeGraph,
+    preferenceModel,
+    pelletStore,
+    providerRegistry.getDefault(),
+  );
+  const memoryFeedback = new MemoryFeedback(factStore, knowledgeGraph);
+
+  // ── Memory Layers ──
+  const workingContextManager = new WorkingContextManager();
+
+  // ── Goal Graph ──
+  const goalGraph = new GoalGraph(workspacePath);
+  await goalGraph.load();
+
   // Register new tools
   const defaultProvider = providerRegistry.getDefault();
-  const workflowExecutor = new WorkflowExecutor(toolRegistry, defaultProvider, workspacePath, owlRegistry, config);
+  const workflowExecutor = new WorkflowExecutor(
+    toolRegistry,
+    defaultProvider,
+    workspacePath,
+    owlRegistry,
+    config,
+  );
   toolRegistry.registerAll([
     createWorkflowTool(workflowStore, workflowExecutor),
     createMonitorTool(healthChecker),
@@ -449,9 +561,16 @@ async function bootstrap() {
   // MCP server connections
   const mcpManager = new MCPManager();
   if (config.mcp?.servers?.length) {
-    const mcpCount = await mcpManager.connectAll(config.mcp.servers, toolRegistry);
+    const mcpCount = await mcpManager.connectAll(
+      config.mcp.servers,
+      toolRegistry,
+    );
     if (mcpCount > 0) {
-      console.log(chalk.dim(`  [MCP: ${mcpCount} tool(s) from ${config.mcp.servers.length} server(s)]`));
+      console.log(
+        chalk.dim(
+          `  [MCP: ${mcpCount} tool(s) from ${config.mcp.servers.length} server(s)]`,
+        ),
+      );
     }
   }
 
@@ -510,6 +629,18 @@ async function bootstrap() {
     workflowExecutor,
     healthChecker,
     browserPool,
+    intentStateMachine,
+    commitmentTracker,
+    preferenceModel,
+    mutationTracker,
+    workingContextManager,
+    episodicMemory,
+    factStore,
+    factExtractor,
+    knowledgeGraph,
+    memoryRetriever,
+    memoryFeedback,
+    goalGraph,
   };
 }
 
@@ -535,7 +666,9 @@ async function buildGateway(
     if (reflexionContext) {
       console.log(chalk.dim("  [Reflexion memory loaded]"));
     }
-  } catch { /* non-blocking — first run will have no reflexion data */ }
+  } catch {
+    /* non-blocking — first run will have no reflexion data */
+  }
 
   // Owl Inner Life — persistent desires, mood, opinions, inner monologue
   const innerLife = new OwlInnerLife(provider, owl, b.workspacePath);
@@ -544,12 +677,25 @@ async function buildGateway(
 
   // Knowledge Council — group learning & peer review sessions
   const knowledgeCouncil = new KnowledgeCouncil(
-    provider, b.owlRegistry, b.config, b.pelletStore, b.workspacePath, b.providerRegistry,
+    provider,
+    b.owlRegistry,
+    b.config,
+    b.pelletStore,
+    b.workspacePath,
+    b.providerRegistry,
   );
 
   // ─── New Infrastructure (Improvements #1-7) ──────────────────
   const eventBus = new StackOwlEventBus();
   const taskQueue = new TaskQueue(b.config.queue);
+
+  // Self-Learning Coordinator — wires SignalBus, MutationTracker, and UserPreferenceModel
+  const selfLearningCoordinator = new SelfLearningCoordinator(
+    b.microLearner,
+    b.mutationTracker,
+    b.preferenceModel,
+    owl.persona.name,
+  );
 
   // Cost tracker
   let costTracker: CostTracker | undefined;
@@ -577,7 +723,9 @@ async function buildGateway(
     });
   }
   if (b.config.rateLimiting?.perProvider) {
-    for (const [prov, limit] of Object.entries(b.config.rateLimiting.perProvider)) {
+    for (const [prov, limit] of Object.entries(
+      b.config.rateLimiting.perProvider,
+    )) {
       rules.push({
         name: `provider-${prov}-minute`,
         maxRequests: limit.maxPerMinute,
@@ -604,7 +752,11 @@ async function buildGateway(
   const hookPipeline = new HookPipeline();
   const pluginRegistry = new PluginRegistry();
   const pluginLifecycle = new PluginLifecycleManager(
-    pluginRegistry, serviceRegistry, hookPipeline, b.toolRegistry, eventBus,
+    pluginRegistry,
+    serviceRegistry,
+    hookPipeline,
+    b.toolRegistry,
+    eventBus,
   );
 
   // Load plugins from configured directories
@@ -618,7 +770,10 @@ async function buildGateway(
 
   // ─── Hot Reload Manager ────────────────────────────────────
   const { HotReloadManager } = await import("./reload/manager.js");
-  const hotReloadManager = new HotReloadManager(eventBus, b.config.skills?.watchDebounceMs ?? 250);
+  const hotReloadManager = new HotReloadManager(
+    eventBus,
+    b.config.skills?.watchDebounceMs ?? 250,
+  );
 
   // ─── ACP Router ────────────────────────────────────────────
   const { ACPRouter } = await import("./acp/router.js");
@@ -627,22 +782,68 @@ async function buildGateway(
   const acpRouter = new ACPRouter(agentRegistry, eventBus, bridgeFactory);
 
   // ─── New Feature Modules ──────────────────────────────────────
-  const autoConfigDetector = new AutoConfigDetector(b.infraProfile, b.connectorResolver);
+  const autoConfigDetector = new AutoConfigDetector(
+    b.infraProfile,
+    b.connectorResolver,
+  );
   const runbookMiner = new RunbookMiner(b.workflowStore, provider);
-  const crossAppPlanner = new CrossAppPlanner(provider, b.toolRegistry, b.workspacePath);
+  const crossAppPlanner = new CrossAppPlanner(
+    provider,
+    b.toolRegistry,
+    b.workspacePath,
+  );
 
   // Connect connector presets to MCP manager
   const connectorMcpConfigs = b.connectorResolver.resolveToMcpConfigs();
   if (connectorMcpConfigs.length > 0) {
     const mcpManager = new MCPManager();
-    const mcpCount = await mcpManager.connectAll(connectorMcpConfigs, b.toolRegistry);
+    const mcpCount = await mcpManager.connectAll(
+      connectorMcpConfigs,
+      b.toolRegistry,
+    );
     if (mcpCount > 0) {
-      console.log(chalk.dim(`  [Connectors: ${mcpCount} tool(s) from ${connectorMcpConfigs.length} app connector(s)]`));
+      console.log(
+        chalk.dim(
+          `  [Connectors: ${mcpCount} tool(s) from ${connectorMcpConfigs.length} app connector(s)]`,
+        ),
+      );
     }
   }
 
   // Start health monitoring
   b.healthChecker.startAll();
+
+  // ─── Cognitive Loop (Self-Improvement Engine) ──────────────
+  // Drives continuous learning from inner desires, capability gaps,
+  // pattern mining, skill evolution, and reflexion.
+  const { CognitiveLoop } = await import("./cognition/loop.js");
+  const skillsDir = b.skillsLoader
+    ? resolve(b.workspacePath, "skills")
+    : undefined;
+  const cognitiveLoop = new CognitiveLoop(
+    {
+      provider,
+      owl,
+      config: b.config,
+      innerLife,
+      learningOrchestrator: b.learningOrchestratorFactory(owl),
+      learningEngine: b.learningEngineFactory(owl),
+      reflexionEngine: b.reflexionEngine,
+      skillsRegistry: b.skillsLoader?.getRegistry(),
+      sessionStore: b.sessionStore,
+      pelletStore: b.pelletStore,
+      capabilityLedger: b.ledger,
+      microLearner: b.microLearner,
+      toolRegistry: b.toolRegistry,
+      skillsDir,
+      owlRegistry: b.owlRegistry,
+      evolutionEngine: b.evolutionEngine,
+      providerRegistry: b.providerRegistry,
+      skillsLoader: b.skillsLoader,
+    },
+    b.config.cognition,
+  );
+  cognitiveLoop.start();
 
   const gateway = new OwlGateway({
     provider,
@@ -663,7 +864,8 @@ async function buildGateway(
     preferenceStore: b.preferenceStore,
     reflexionEngine: b.reflexionEngine,
     skillsLoader: b.skillsLoader,
-    memoryContext: [memoryContext, reflexionContext].filter(Boolean).join("\n") || undefined,
+    memoryContext:
+      [memoryContext, reflexionContext].filter(Boolean).join("\n") || undefined,
     cwd: b.workspacePath,
     providerRegistry: b.providerRegistry,
     microLearner: b.microLearner,
@@ -680,6 +882,7 @@ async function buildGateway(
     costTracker,
     agentRegistry,
     rateLimiter,
+    selfLearningCoordinator,
     // Plugin, Reload & ACP
     pluginRegistry,
     serviceRegistry,
@@ -696,6 +899,24 @@ async function buildGateway(
     runbookMiner,
     crossAppPlanner,
     knowledgeCouncil,
+    cognitiveLoop,
+    intentStateMachine: b.intentStateMachine,
+    commitmentTracker: b.commitmentTracker,
+    preferenceModel: b.preferenceModel,
+    workingContextManager: b.workingContextManager,
+    episodicMemory: b.episodicMemory,
+    factStore: b.factStore,
+    factExtractor: b.factExtractor,
+    knowledgeGraph: b.knowledgeGraph,
+    memoryRetriever: b.memoryRetriever,
+    memoryFeedback: b.memoryFeedback,
+    goalGraph: b.goalGraph,
+    proactiveLoop: new ProactiveIntentionLoop(
+      b.commitmentTracker,
+      b.intentStateMachine,
+      b.goalGraph,
+      undefined, // contextMesh initialized separately in gateway
+    ),
   });
 
   return gateway;
@@ -873,34 +1094,35 @@ async function pelletsCommand(opts: {
 
   // ─── Bulk Dedup ────────────────────────────────────────────────
   if (opts.dedup) {
-    const { bulkDedup } = await import('./pellets/bulk-dedup.js');
-    console.log(chalk.cyan(
-      opts.dryRun
-        ? '🔍 Running bulk dedup DRY RUN (no changes will be made)...\n'
-        : '🧹 Running bulk dedup (duplicates will be merged/removed)...\n',
-    ));
-    const stats = await bulkDedup(
-      pelletStore,
-      pelletStore.getDeduplicator(),
-      { dryRun: opts.dryRun },
+    const { bulkDedup } = await import("./pellets/bulk-dedup.js");
+    console.log(
+      chalk.cyan(
+        opts.dryRun
+          ? "🔍 Running bulk dedup DRY RUN (no changes will be made)...\n"
+          : "🧹 Running bulk dedup (duplicates will be merged/removed)...\n",
+      ),
     );
-    console.log('\n' + chalk.bold('Results:'));
+    const stats = await bulkDedup(pelletStore, pelletStore.getDeduplicator(), {
+      dryRun: opts.dryRun,
+    });
+    console.log("\n" + chalk.bold("Results:"));
     console.log(`  Total pellets:  ${stats.total}`);
     console.log(`  Checked:        ${stats.checked}`);
     console.log(chalk.green(`  Kept:           ${stats.kept}`));
     console.log(chalk.yellow(`  Skipped:        ${stats.skipped}`));
     console.log(chalk.cyan(`  Merged:         ${stats.merged}`));
     console.log(chalk.magenta(`  Superseded:     ${stats.superseded}`));
-    if (stats.errors > 0) console.log(chalk.red(`  Errors:         ${stats.errors}`));
+    if (stats.errors > 0)
+      console.log(chalk.red(`  Errors:         ${stats.errors}`));
     return;
   }
 
   // ─── Knowledge Graph ─────────────────────────────────────────
   if (opts.graph) {
-    console.log(chalk.cyan('🕸️  Building knowledge graph...\n'));
+    console.log(chalk.cyan("🕸️  Building knowledge graph...\n"));
     const graph = await pelletStore.buildGraph();
     const stats = graph.getStats();
-    console.log(chalk.bold('Graph Stats:'));
+    console.log(chalk.bold("Graph Stats:"));
     console.log(`  Nodes (pellets): ${stats.nodes}`);
     console.log(`  Edges (links):   ${stats.edges}`);
     console.log(`  Clusters:        ${stats.clusters}`);
@@ -908,10 +1130,10 @@ async function pelletsCommand(opts: {
 
     const clusters = graph.getClusters();
     if (clusters.length > 0) {
-      console.log(chalk.bold('\nTop Knowledge Clusters:'));
+      console.log(chalk.bold("\nTop Knowledge Clusters:"));
       for (const cluster of clusters.slice(0, 10)) {
         console.log(
-          `  [${cluster.size} pellets] ${chalk.cyan(cluster.topTags.join(', '))}`,
+          `  [${cluster.size} pellets] ${chalk.cyan(cluster.topTags.join(", "))}`,
         );
       }
     }
@@ -920,17 +1142,19 @@ async function pelletsCommand(opts: {
 
   // ─── Find Related ────────────────────────────────────────────
   if (opts.related) {
-    console.log(chalk.cyan(`🔗 Finding pellets related to "${opts.related}"...\n`));
+    console.log(
+      chalk.cyan(`🔗 Finding pellets related to "${opts.related}"...\n`),
+    );
     const graph = await pelletStore.buildGraph();
     const related = graph.findRelatedByQuery(opts.related, 10);
     if (related.length === 0) {
-      console.log(chalk.dim('No related pellets found.'));
+      console.log(chalk.dim("No related pellets found."));
       return;
     }
     for (const r of related) {
       console.log(
         `${chalk.bold(r.title)} ${chalk.dim(`(${r.id})`)}` +
-        ` — weight: ${r.weight.toFixed(1)}, hops: ${r.hops}, via: ${r.sources.join(', ')}`,
+          ` — weight: ${r.weight.toFixed(1)}, hops: ${r.hops}, via: ${r.sources.join(", ")}`,
       );
     }
     return;
@@ -1228,11 +1452,7 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
         '  Set "slack.botToken" (xoxb-...) and "slack.appToken" (xapp-...) in stackowl.config.json',
       ),
     );
-    console.log(
-      chalk.dim(
-        '  See: https://api.slack.com/start/quickstart',
-      ),
-    );
+    console.log(chalk.dim("  See: https://api.slack.com/start/quickstart"));
     process.exit(1);
   }
 
@@ -1357,7 +1577,9 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     process.exit(1);
   }
 
-  const owl = opts.owl ? b.owlRegistry.get(opts.owl) : b.owlRegistry.getDefault();
+  const owl = opts.owl
+    ? b.owlRegistry.get(opts.owl)
+    : b.owlRegistry.getDefault();
   if (!owl) {
     console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
     process.exit(1);
@@ -1382,7 +1604,9 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     resolvedPort,
   );
   await server.start();
-  console.log(chalk.green(`✓ Channel: 🌐 WebSocket Control Plane (port ${resolvedPort})`));
+  console.log(
+    chalk.green(`✓ Channel: 🌐 WebSocket Control Plane (port ${resolvedPort})`),
+  );
 
   // 3. Check for Slack (start before Telegram — Telegram's bot.start() blocks)
   if (b.config.slack?.botToken && b.config.slack?.appToken) {
@@ -1399,7 +1623,11 @@ async function allCommand(opts: { owl?: string; port?: string }) {
       await slackAdapter.start();
       console.log(chalk.green(`✓ Channel: 💬 Slack`));
     } catch (err) {
-      console.error(chalk.red(`✗ Slack failed to start: ${err instanceof Error ? err.message : err}`));
+      console.error(
+        chalk.red(
+          `✗ Slack failed to start: ${err instanceof Error ? err.message : err}`,
+        ),
+      );
     }
   }
 
@@ -1413,8 +1641,12 @@ async function allCommand(opts: { owl?: string; port?: string }) {
       chatIdsPath: join(b.workspacePath, "known_chat_ids.json"),
     });
     gateway.register(telegramAdapter);
-    telegramAdapter.start().catch(err => {
-      console.error(chalk.red(`✗ Telegram failed: ${err instanceof Error ? err.message : err}`));
+    telegramAdapter.start().catch((err) => {
+      console.error(
+        chalk.red(
+          `✗ Telegram failed: ${err instanceof Error ? err.message : err}`,
+        ),
+      );
     });
     console.log(chalk.green(`✓ Channel: 📱 Telegram`));
   }
@@ -1502,9 +1734,15 @@ program
   .option("-s, --search <query>", "Search pellets by keyword or tag")
   .option("-r, --read <id>", "Read the full content of a specific pellet")
   .option("--dedup", "Run bulk deduplication on all pellets")
-  .option("--dry-run", "Preview dedup without making changes (use with --dedup)")
+  .option(
+    "--dry-run",
+    "Preview dedup without making changes (use with --dedup)",
+  )
   .option("--graph", "Build and display knowledge graph stats")
-  .option("--related <query>", "Find pellets related to a topic via graph traversal")
+  .option(
+    "--related <query>",
+    "Find pellets related to a topic via graph traversal",
+  )
   .action((opts) => {
     pelletsCommand(opts).catch((err) => {
       console.error(chalk.red(`Fatal error: ${err.message}`));

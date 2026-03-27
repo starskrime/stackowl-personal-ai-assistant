@@ -13,15 +13,19 @@ Generate a structured daily plan by querying calendar events and organizing prio
 ## Steps
 
 1. **Get today's date:**
+
    ```bash
    run_shell_command("date '+%A, %B %d, %Y'")
    ```
 
 2. **Fetch calendar events for today (macOS):**
+
    ```bash
    run_shell_command("icalBuddy -f -nc -n eventsToday")
    ```
+
    If `icalBuddy` is not installed, fall back to:
+
    ```bash
    run_shell_command("osascript -e 'tell application \"Calendar\" to get summary of (every event of calendar \"Home\" whose start date ≥ (current date))'")
    ```
@@ -39,6 +43,7 @@ Generate a structured daily plan by querying calendar events and organizing prio
 ## Examples
 
 ### Basic daily plan
+
 ```
 📅 Daily Plan — Monday, March 22, 2026
 

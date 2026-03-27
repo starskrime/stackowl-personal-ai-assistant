@@ -17,9 +17,9 @@ export interface ConfigSuggestion {
   type: "connector" | "health-check";
   name: string;
   description: string;
-  presetId?: string;       // for connector suggestions
+  presetId?: string; // for connector suggestions
   healthCheck?: HealthCheck; // for monitoring suggestions
-  confidence: number;       // 0-1
+  confidence: number; // 0-1
 }
 
 // Maps infrastructure keywords to connector preset IDs
@@ -27,7 +27,10 @@ const KEYWORD_TO_PRESET: Array<{ pattern: RegExp; presetId: string }> = [
   { pattern: /\bgithub\b/i, presetId: "github" },
   { pattern: /\bgitlab\b/i, presetId: "gitlab" },
   { pattern: /\b(?:aws|amazon|ec2|s3|lambda)\b/i, presetId: "aws" },
-  { pattern: /\b(?:kubernetes|k8s|kubectl|pods?|deploy(?:ment)?s?)\b/i, presetId: "kubernetes" },
+  {
+    pattern: /\b(?:kubernetes|k8s|kubectl|pods?|deploy(?:ment)?s?)\b/i,
+    presetId: "kubernetes",
+  },
   { pattern: /\b(?:postgres(?:ql)?|pg)\b/i, presetId: "postgres" },
   { pattern: /\bsqlite\b/i, presetId: "sqlite" },
   { pattern: /\bsentry\b/i, presetId: "sentry" },
@@ -54,7 +57,7 @@ export class AutoConfigDetector {
   analyze(messages: ChatMessage[]): ConfigSuggestion[] {
     const suggestions: ConfigSuggestion[] = [];
     const alreadyConfigured = new Set(
-      this.connectorResolver?.getInstances().map(i => i.presetId) ?? [],
+      this.connectorResolver?.getInstances().map((i) => i.presetId) ?? [],
     );
 
     for (const msg of messages) {
@@ -67,7 +70,7 @@ export class AutoConfigDetector {
         if (alreadyConfigured.has(presetId)) continue;
         if (this.suggestedPresets.has(presetId)) continue;
 
-        const preset = listPresets().find(p => p.id === presetId);
+        const preset = listPresets().find((p) => p.id === presetId);
         if (!preset) continue;
 
         suggestions.push({
@@ -88,8 +91,14 @@ export class AutoConfigDetector {
           try {
             const parsed = new URL(url);
             // Only suggest for non-common URLs (not google, stackoverflow, etc.)
-            const common = ["google.com", "stackoverflow.com", "github.com", "npmjs.com", "docs."];
-            if (common.some(c => parsed.hostname.includes(c))) continue;
+            const common = [
+              "google.com",
+              "stackoverflow.com",
+              "github.com",
+              "npmjs.com",
+              "docs.",
+            ];
+            if (common.some((c) => parsed.hostname.includes(c))) continue;
 
             suggestions.push({
               type: "health-check",
@@ -116,7 +125,9 @@ export class AutoConfigDetector {
     }
 
     if (suggestions.length > 0) {
-      log.engine.info(`[AutoConfig] ${suggestions.length} suggestion(s) detected`);
+      log.engine.info(
+        `[AutoConfig] ${suggestions.length} suggestion(s) detected`,
+      );
     }
 
     return suggestions;

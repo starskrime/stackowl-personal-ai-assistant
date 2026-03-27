@@ -1,12 +1,17 @@
-import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { Logger } from '../logger.js';
-import type { ModelProvider } from '../providers/base.js';
-import type { Skill } from '../skills/types.js';
-import type { SkillsRegistry } from '../skills/registry.js';
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { Logger } from "../logger.js";
+import type { ModelProvider } from "../providers/base.js";
+import type { Skill } from "../skills/types.js";
+import type { SkillsRegistry } from "../skills/registry.js";
 
-import type { Tournament, TournamentEntry, MatchResult, TournamentConfig } from './types.js';
+import type {
+  Tournament,
+  TournamentEntry,
+  MatchResult,
+  TournamentConfig,
+} from "./types.js";
 
 const DEFAULT_CONFIG: TournamentConfig = {
   minEntriesForTournament: 2,
@@ -17,7 +22,7 @@ const DEFAULT_CONFIG: TournamentConfig = {
 
 const K_FACTOR = 32;
 
-const logger = new Logger('TOURNAMENT');
+const logger = new Logger("TOURNAMENT");
 
 interface TournamentData {
   tournaments: Tournament[];
@@ -36,19 +41,21 @@ export class SkillArena {
     config?: Partial<TournamentConfig>,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.filePath = join(workspacePath, 'tournaments.json');
+    this.filePath = join(workspacePath, "tournaments.json");
   }
 
   async load(): Promise<void> {
     if (!existsSync(this.filePath)) {
-      logger.info('No existing tournament data, starting fresh');
+      logger.info("No existing tournament data, starting fresh");
       return;
     }
 
     try {
-      const raw = readFileSync(this.filePath, 'utf-8');
+      const raw = readFileSync(this.filePath, "utf-8");
       this.data = JSON.parse(raw) as TournamentData;
-      logger.info(`Loaded ${this.data.tournaments.length} tournament(s) and ${Object.keys(this.data.entries).length} entrie(s)`);
+      logger.info(
+        `Loaded ${this.data.tournaments.length} tournament(s) and ${Object.keys(this.data.entries).length} entrie(s)`,
+      );
     } catch (err) {
       logger.warn(`Failed to load tournament data: ${err}`);
     }
@@ -59,30 +66,36 @@ export class SkillArena {
     if (!tags || tags.length === 0) return [];
 
     const tagSet = new Set(tags);
-    return this.skillsRegistry.listEnabled().filter(other => {
+    return this.skillsRegistry.listEnabled().filter((other) => {
       if (other.name === skill.name) return false;
-      const otherTags = (other.metadata.openclaw as any)?.tags as string[] | undefined;
+      const otherTags = (other.metadata.openclaw as any)?.tags as
+        | string[]
+        | undefined;
       if (!otherTags) return false;
-      return otherTags.some(t => tagSet.has(t));
+      return otherTags.some((t) => tagSet.has(t));
     });
   }
 
-  async runMatch(skillA: Skill, skillB: Skill, challenge: string): Promise<MatchResult> {
+  async runMatch(
+    skillA: Skill,
+    skillB: Skill,
+    challenge: string,
+  ): Promise<MatchResult> {
     const tournamentId = randomUUID();
 
     const [responseA, responseB] = await Promise.all([
       this.provider.chat(
         [
-          { role: 'system', content: skillA.instructions },
-          { role: 'user', content: challenge },
+          { role: "system", content: skillA.instructions },
+          { role: "user", content: challenge },
         ],
         undefined,
         { temperature: 0.7 },
       ),
       this.provider.chat(
         [
-          { role: 'system', content: skillB.instructions },
-          { role: 'user', content: challenge },
+          { role: "system", content: skillB.instructions },
+          { role: "user", content: challenge },
         ],
         undefined,
         { temperature: 0.7 },
@@ -109,20 +122,33 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
 
     const judgeResponse = await this.provider.chat(
       [
-        { role: 'system', content: 'You are an impartial judge. Respond only with valid JSON.' },
-        { role: 'user', content: judgePrompt },
+        {
+          role: "system",
+          content: "You are an impartial judge. Respond only with valid JSON.",
+        },
+        { role: "user", content: judgePrompt },
       ],
       undefined,
       { temperature: 0.2 },
     );
 
-    let verdict: { scoreA: number; scoreB: number; winner: 'A' | 'B' | 'draw'; reasoning: string };
+    let verdict: {
+      scoreA: number;
+      scoreB: number;
+      winner: "A" | "B" | "draw";
+      reasoning: string;
+    };
     try {
       const jsonMatch = judgeResponse.content.match(/\{[\s\S]*\}/);
       verdict = JSON.parse(jsonMatch ? jsonMatch[0] : judgeResponse.content);
     } catch {
-      logger.warn('Failed to parse judge response, defaulting to draw');
-      verdict = { scoreA: 5, scoreB: 5, winner: 'draw', reasoning: 'Failed to parse judge response' };
+      logger.warn("Failed to parse judge response, defaulting to draw");
+      verdict = {
+        scoreA: 5,
+        scoreB: 5,
+        winner: "draw",
+        reasoning: "Failed to parse judge response",
+      };
     }
 
     const entryA = this.ensureEntry(skillA);
@@ -145,55 +171,72 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
       timestamp: new Date().toISOString(),
     };
 
-    logger.info(`Match: ${skillA.name} vs ${skillB.name} => winner: ${verdict.winner} (${verdict.scoreA}-${verdict.scoreB})`);
+    logger.info(
+      `Match: ${skillA.name} vs ${skillB.name} => winner: ${verdict.winner} (${verdict.scoreA}-${verdict.scoreB})`,
+    );
     return result;
   }
 
-  async runTournament(category: string, challenges: string[]): Promise<Tournament> {
-    const allSkills = this.skillsRegistry.listEnabled().filter(s => {
+  async runTournament(
+    category: string,
+    challenges: string[],
+  ): Promise<Tournament> {
+    const allSkills = this.skillsRegistry.listEnabled().filter((s) => {
       const tags = (s.metadata.openclaw as any)?.tags as string[] | undefined;
       return tags?.includes(category);
     });
 
     if (allSkills.length < this.config.minEntriesForTournament) {
-      throw new Error(`Not enough skills in category "${category}" (found ${allSkills.length}, need ${this.config.minEntriesForTournament})`);
+      throw new Error(
+        `Not enough skills in category "${category}" (found ${allSkills.length}, need ${this.config.minEntriesForTournament})`,
+      );
     }
 
     const tournament: Tournament = {
       id: randomUUID(),
       category,
-      entries: allSkills.map(s => this.ensureEntry(s)),
+      entries: allSkills.map((s) => this.ensureEntry(s)),
       matches: [],
-      status: 'active',
+      status: "active",
       createdAt: new Date().toISOString(),
     };
 
-    logger.info(`Starting tournament for category "${category}" with ${allSkills.length} skill(s) and ${challenges.length} challenge(s)`);
+    logger.info(
+      `Starting tournament for category "${category}" with ${allSkills.length} skill(s) and ${challenges.length} challenge(s)`,
+    );
 
     for (const challenge of challenges.slice(0, this.config.matchesPerRound)) {
       for (let i = 0; i < allSkills.length; i++) {
         for (let j = i + 1; j < allSkills.length; j++) {
-          const result = await this.runMatch(allSkills[i], allSkills[j], challenge);
+          const result = await this.runMatch(
+            allSkills[i],
+            allSkills[j],
+            challenge,
+          );
           result.tournamentId = tournament.id;
           tournament.matches.push(result);
         }
       }
     }
 
-    tournament.entries = allSkills.map(s => this.ensureEntry(s));
-    tournament.status = 'completed';
+    tournament.entries = allSkills.map((s) => this.ensureEntry(s));
+    tournament.status = "completed";
     tournament.completedAt = new Date().toISOString();
     this.data.tournaments.push(tournament);
 
-    logger.info(`Tournament "${tournament.id}" completed with ${tournament.matches.length} match(es)`);
+    logger.info(
+      `Tournament "${tournament.id}" completed with ${tournament.matches.length} match(es)`,
+    );
     return tournament;
   }
 
   getChampion(category: string): TournamentEntry | null {
-    const candidates = Object.values(this.data.entries).filter(e => {
+    const candidates = Object.values(this.data.entries).filter((e) => {
       const skill = this.skillsRegistry.get(e.skillName);
       if (!skill) return false;
-      const tags = (skill.metadata.openclaw as any)?.tags as string[] | undefined;
+      const tags = (skill.metadata.openclaw as any)?.tags as
+        | string[]
+        | undefined;
       return tags?.includes(category);
     });
 
@@ -206,7 +249,9 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
 
   getRetirementCandidates(): TournamentEntry[] {
     return Object.values(this.data.entries).filter(
-      e => e.elo < this.config.retirementThreshold && (e.wins + e.losses + e.draws) > 0,
+      (e) =>
+        e.elo < this.config.retirementThreshold &&
+        e.wins + e.losses + e.draws > 0,
     );
   }
 
@@ -217,7 +262,7 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
   async save(): Promise<void> {
     try {
       mkdirSync(this.workspacePath, { recursive: true });
-      writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), 'utf-8');
+      writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
       logger.info(`Persisted tournament data to ${this.filePath}`);
     } catch (err) {
       logger.error(`Failed to save tournament data: ${err}`);
@@ -243,19 +288,23 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
     return entry;
   }
 
-  private updateElo(entryA: TournamentEntry, entryB: TournamentEntry, winner: 'A' | 'B' | 'draw'): void {
+  private updateElo(
+    entryA: TournamentEntry,
+    entryB: TournamentEntry,
+    winner: "A" | "B" | "draw",
+  ): void {
     const expectedA = 1 / (1 + Math.pow(10, (entryB.elo - entryA.elo) / 400));
     const expectedB = 1 - expectedA;
 
     let scoreA: number;
     let scoreB: number;
 
-    if (winner === 'A') {
+    if (winner === "A") {
       scoreA = 1;
       scoreB = 0;
       entryA.wins++;
       entryB.losses++;
-    } else if (winner === 'B') {
+    } else if (winner === "B") {
       scoreA = 0;
       scoreB = 1;
       entryB.wins++;

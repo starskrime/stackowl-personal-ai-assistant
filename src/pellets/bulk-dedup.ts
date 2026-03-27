@@ -5,9 +5,9 @@
  * Runs every pair through the dedup engine and merges/removes duplicates.
  */
 
-import type { PelletStore } from './store.js';
-import type { PelletDeduplicator } from './dedup.js';
-import { log } from '../logger.js';
+import type { PelletStore } from "./store.js";
+import type { PelletDeduplicator } from "./dedup.js";
+import { log } from "../logger.js";
 
 export interface BulkDedupStats {
   total: number;
@@ -36,7 +36,8 @@ export async function bulkDedup(
 
   // Sort oldest-first so we keep the most recent version
   const sorted = [...allPellets].sort(
-    (a, b) => new Date(a.generatedAt).getTime() - new Date(b.generatedAt).getTime(),
+    (a, b) =>
+      new Date(a.generatedAt).getTime() - new Date(b.generatedAt).getTime(),
   );
 
   const stats: BulkDedupStats = {
@@ -52,7 +53,7 @@ export async function bulkDedup(
   const removed = new Set<string>();
 
   log.pellet.info(
-    `[BulkDedup] Starting ${dryRun ? 'DRY RUN' : 'live'} dedup of ${sorted.length} pellets...`,
+    `[BulkDedup] Starting ${dryRun ? "DRY RUN" : "live"} dedup of ${sorted.length} pellets...`,
   );
 
   for (const pellet of sorted) {
@@ -64,7 +65,7 @@ export async function bulkDedup(
       const result = await deduplicator.evaluate(pellet);
 
       switch (result.verdict) {
-        case 'SKIP': {
+        case "SKIP": {
           stats.skipped++;
           log.pellet.info(
             `[BulkDedup] SKIP: "${pellet.title.slice(0, 50)}" — ${result.reasoning}`,
@@ -76,7 +77,7 @@ export async function bulkDedup(
           break;
         }
 
-        case 'MERGE': {
+        case "MERGE": {
           stats.merged++;
           log.pellet.info(
             `[BulkDedup] MERGE: "${pellet.title.slice(0, 50)}" → "${result.targetPelletId}"`,
@@ -101,7 +102,7 @@ export async function bulkDedup(
           break;
         }
 
-        case 'SUPERSEDE': {
+        case "SUPERSEDE": {
           stats.superseded++;
           log.pellet.info(
             `[BulkDedup] SUPERSEDE: "${pellet.title.slice(0, 50)}" replaces "${result.targetPelletId}"`,
@@ -115,7 +116,7 @@ export async function bulkDedup(
           break;
         }
 
-        case 'CREATE':
+        case "CREATE":
         default:
           stats.kept++;
           break;
@@ -131,16 +132,16 @@ export async function bulkDedup(
     if (stats.checked % 25 === 0) {
       log.pellet.info(
         `[BulkDedup] Progress: ${stats.checked}/${sorted.length} ` +
-        `(${stats.skipped} skipped, ${stats.merged} merged, ${stats.superseded} superseded)`,
+          `(${stats.skipped} skipped, ${stats.merged} merged, ${stats.superseded} superseded)`,
       );
     }
   }
 
   log.pellet.info(
-    `[BulkDedup] ${dryRun ? 'DRY RUN' : 'Done'}: ` +
-    `${stats.total} total → ${stats.kept} kept, ` +
-    `${stats.skipped} skipped, ${stats.merged} merged, ` +
-    `${stats.superseded} superseded, ${stats.errors} errors`,
+    `[BulkDedup] ${dryRun ? "DRY RUN" : "Done"}: ` +
+      `${stats.total} total → ${stats.kept} kept, ` +
+      `${stats.skipped} skipped, ${stats.merged} merged, ` +
+      `${stats.superseded} superseded, ${stats.errors} errors`,
   );
 
   return stats;

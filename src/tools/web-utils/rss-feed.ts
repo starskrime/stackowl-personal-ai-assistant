@@ -61,7 +61,8 @@ function parseItems(xml: string): FeedItem[] {
         title: extractTag(block, "title"),
         link: linkMatch ? linkMatch[1] : extractTag(block, "link"),
         date: extractTag(block, "updated") || extractTag(block, "published"),
-        description: extractTag(block, "summary") || extractTag(block, "content"),
+        description:
+          extractTag(block, "summary") || extractTag(block, "content"),
       });
     }
   }
@@ -71,7 +72,10 @@ function parseItems(xml: string): FeedItem[] {
 
 function extractTag(xml: string, tag: string): string {
   // Handle CDATA sections
-  const cdataRe = new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`, "i");
+  const cdataRe = new RegExp(
+    `<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`,
+    "i",
+  );
   let match = cdataRe.exec(xml);
   if (match) return match[1].trim();
 
@@ -83,7 +87,10 @@ function extractTag(xml: string, tag: string): string {
 }
 
 function stripHtml(str: string): string {
-  return str.replace(/<[^>]+>/g, "").replace(/&[a-z]+;/gi, " ").trim();
+  return str
+    .replace(/<[^>]+>/g, "")
+    .replace(/&[a-z]+;/gi, " ")
+    .trim();
 }
 
 function formatItems(items: FeedItem[], max: number): string {
@@ -122,7 +129,8 @@ export const RSSFeedTool: ToolImplementation = {
         },
         name: {
           type: "string",
-          description: 'Friendly name for the subscription. Used with "subscribe".',
+          description:
+            'Friendly name for the subscription. Used with "subscribe".',
         },
       },
       required: ["action"],
@@ -141,7 +149,11 @@ export const RSSFeedTool: ToolImplementation = {
 
         const resp = await fetch(url, {
           signal: AbortSignal.timeout(15000),
-          headers: { "User-Agent": "StackOwl RSSFeed/1.0", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" },
+          headers: {
+            "User-Agent": "StackOwl RSSFeed/1.0",
+            Accept:
+              "application/rss+xml, application/atom+xml, application/xml, text/xml",
+          },
         });
         if (!resp.ok) return `Error: HTTP ${resp.status} ${resp.statusText}`;
 
@@ -161,7 +173,11 @@ export const RSSFeedTool: ToolImplementation = {
           return `Already subscribed to ${url}.`;
         }
 
-        data.feeds.push({ name: feedName, url, addedAt: new Date().toISOString() });
+        data.feeds.push({
+          name: feedName,
+          url,
+          addedAt: new Date().toISOString(),
+        });
         await saveFeeds(feedsPath, data);
         return `Subscribed to "${feedName}" (${url}).`;
       }
@@ -169,7 +185,9 @@ export const RSSFeedTool: ToolImplementation = {
       if (action === "list") {
         const data = await loadFeeds(feedsPath);
         if (data.feeds.length === 0) return "No feed subscriptions yet.";
-        const lines = data.feeds.map((f) => `- ${f.name} — ${f.url} (added ${f.addedAt})`);
+        const lines = data.feeds.map(
+          (f) => `- ${f.name} — ${f.url} (added ${f.addedAt})`,
+        );
         return `Subscribed feeds:\n${lines.join("\n")}`;
       }
 

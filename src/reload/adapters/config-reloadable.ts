@@ -54,7 +54,10 @@ export class ConfigReloadable implements ReloadableModule {
     const changes: Record<string, unknown> = {};
     if (this.currentConfig) {
       for (const key of Object.keys(newConfig) as (keyof StackOwlConfig)[]) {
-        if (JSON.stringify(newConfig[key]) !== JSON.stringify(this.currentConfig[key])) {
+        if (
+          JSON.stringify(newConfig[key]) !==
+          JSON.stringify(this.currentConfig[key])
+        ) {
           changes[key] = newConfig[key];
         }
       }

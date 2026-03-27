@@ -27,7 +27,8 @@ export const ArchiveTool: ToolImplementation = {
         },
         format: {
           type: "string",
-          description: "Archive format: zip (default), tar, tar.gz, tar.bz2. Auto-detected from output extension.",
+          description:
+            "Archive format: zip (default), tar, tar.gz, tar.bz2. Auto-detected from output extension.",
         },
         password: {
           type: "string",
@@ -73,13 +74,17 @@ export const ArchiveTool: ToolImplementation = {
         // Detect format from extension
         let format = (args.format as string) || "";
         if (!format) {
-          if (outPath.endsWith(".tar.gz") || outPath.endsWith(".tgz")) format = "tar.gz";
-          else if (outPath.endsWith(".tar.bz2") || outPath.endsWith(".tbz2")) format = "tar.bz2";
+          if (outPath.endsWith(".tar.gz") || outPath.endsWith(".tgz"))
+            format = "tar.gz";
+          else if (outPath.endsWith(".tar.bz2") || outPath.endsWith(".tbz2"))
+            format = "tar.bz2";
           else if (outPath.endsWith(".tar")) format = "tar";
           else format = "zip";
         }
 
-        const quotedPaths = inputPaths.map((p) => `"${resolve(cwd, p)}"`).join(" ");
+        const quotedPaths = inputPaths
+          .map((p) => `"${resolve(cwd, p)}"`)
+          .join(" ");
 
         switch (format) {
           case "zip": {
@@ -131,9 +136,13 @@ export const ArchiveTool: ToolImplementation = {
         } else if (archivePath.endsWith(".tar")) {
           await shell(`tar -xf "${archivePath}" -C "${outDir}"`);
         } else if (archivePath.endsWith(".7z")) {
-          await shell(`7z x "${archivePath}" -o"${outDir}" -y 2>/dev/null || echo "Install: brew install p7zip"`);
+          await shell(
+            `7z x "${archivePath}" -o"${outDir}" -y 2>/dev/null || echo "Install: brew install p7zip"`,
+          );
         } else if (archivePath.endsWith(".rar")) {
-          await shell(`unrar x "${archivePath}" "${outDir}" 2>/dev/null || echo "Install: brew install unrar"`);
+          await shell(
+            `unrar x "${archivePath}" "${outDir}" 2>/dev/null || echo "Install: brew install unrar"`,
+          );
         } else {
           return `Error: Cannot detect archive format from extension. Supported: .zip, .tar, .tar.gz, .tgz, .tar.bz2, .7z, .rar`;
         }

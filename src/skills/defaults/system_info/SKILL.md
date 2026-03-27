@@ -5,9 +5,13 @@ openclaw:
   emoji: "💻"
   os: [darwin]
 ---
+
 # System Info
+
 Get detailed system status on macOS.
+
 ## Steps
+
 1. **Gather system information:**
    ```bash
    run_shell_command("system_profiler SPHardwareDataType 2>/dev/null | grep -E 'Model|Chip|Memory|Serial'")
@@ -22,11 +26,16 @@ Get detailed system status on macOS.
    - RAM total and used
    - Disk usage (used/total)
    - Uptime
+
 ## Examples
+
 ### Quick system overview
+
 ```bash
 run_shell_command("sw_vers && uptime && df -h /")
 ```
+
 ## Error Handling
+
 - **system_profiler slow:** Use faster alternatives like `sysctl`.
 - **Permission denied:** Some info requires admin access; skip and note.

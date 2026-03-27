@@ -22,11 +22,13 @@ Analyze error messages and stack traces to find root causes.
    - Network error → Check connectivity
 
 3. **Read the relevant source file:**
+
    ```bash
    read_file("<file_path>")
    ```
 
 4. **Search for known solutions:**
+
    ```
    web_search query="<error_message> <language> fix"
    ```
@@ -39,6 +41,7 @@ Analyze error messages and stack traces to find root causes.
 ## Examples
 
 ### Debug a Node.js error
+
 ```bash
 read_file("src/index.ts")
 web_search query="TypeError: Cannot read properties of undefined Node.js"

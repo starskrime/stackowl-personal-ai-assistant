@@ -15,11 +15,11 @@
  * Returns deduplicated, relevance-ranked results regardless of source.
  */
 
-import type { MemoryReflexionEngine, MemoryEntry } from './reflexion.js';
-import type { PelletStore, Pellet } from '../pellets/store.js';
-import type { MicroLearner } from '../learning/micro-learner.js';
-import { MemoryConsolidator } from './consolidator.js';
-import { log } from '../logger.js';
+import type { MemoryReflexionEngine, MemoryEntry } from "./reflexion.js";
+import type { PelletStore, Pellet } from "../pellets/store.js";
+import type { MicroLearner } from "../learning/micro-learner.js";
+import { MemoryConsolidator } from "./consolidator.js";
+import { log } from "../logger.js";
 
 // ─── Unified Memory Item ─────────────────────────────────────────
 
@@ -29,11 +29,11 @@ export interface UnifiedMemory {
   /** Human-readable content */
   content: string;
   /** Where this memory came from */
-  source: 'reflexion' | 'pellet' | 'thread' | 'profile' | 'legacy';
+  source: "reflexion" | "pellet" | "thread" | "profile" | "legacy";
   /** 0–1 relevance score to the query */
   relevance: number;
   /** Category hint for system prompt formatting */
-  category: 'preference' | 'fact' | 'knowledge' | 'context' | 'profile';
+  category: "preference" | "fact" | "knowledge" | "context" | "profile";
   /** When this memory was created or last accessed */
   timestamp: string;
 }
@@ -68,7 +68,9 @@ export class MemoryBus {
       this.queryAllStores(query),
       new Promise<UnifiedMemory[]>((resolve) =>
         setTimeout(() => {
-          log.memory.warn(`[MemoryBus] Timeout after ${timeout}ms — returning partial results`);
+          log.memory.warn(
+            `[MemoryBus] Timeout after ${timeout}ms — returning partial results`,
+          );
           resolve([]);
         }, timeout),
       ),
@@ -95,9 +97,9 @@ export class MemoryBus {
    * Groups by category and caps total length.
    */
   toSystemPrompt(memories: UnifiedMemory[], maxChars: number = 3000): string {
-    if (memories.length === 0) return '';
+    if (memories.length === 0) return "";
 
-    const lines: string[] = ['## Recalled Memories (cross-store)'];
+    const lines: string[] = ["## Recalled Memories (cross-store)"];
 
     // Group by category
     const groups = new Map<string, UnifiedMemory[]>();
@@ -108,13 +110,19 @@ export class MemoryBus {
     }
 
     // Priority order for categories
-    const categoryOrder: string[] = ['preference', 'fact', 'knowledge', 'context', 'profile'];
+    const categoryOrder: string[] = [
+      "preference",
+      "fact",
+      "knowledge",
+      "context",
+      "profile",
+    ];
     const categoryLabels: Record<string, string> = {
-      preference: '🎯 Preferences',
-      fact: '📌 Known Facts',
-      knowledge: '📚 Knowledge',
-      context: '📝 Context',
-      profile: '👤 User Profile',
+      preference: "🎯 Preferences",
+      fact: "📌 Known Facts",
+      knowledge: "📚 Knowledge",
+      context: "📝 Context",
+      profile: "👤 User Profile",
     };
 
     let totalChars = 0;
@@ -126,14 +134,19 @@ export class MemoryBus {
       lines.push(`\n### ${label}`);
 
       for (const item of items.slice(0, 5)) {
-        const sourceTag = item.source === 'pellet' ? ' 📦' :
-                          item.source === 'reflexion' ? ' 🧠' :
-                          item.source === 'profile' ? ' 👤' : '';
+        const sourceTag =
+          item.source === "pellet"
+            ? " 📦"
+            : item.source === "reflexion"
+              ? " 🧠"
+              : item.source === "profile"
+                ? " 👤"
+                : "";
         const line = `- ${item.content}${sourceTag}`;
 
         if (totalChars + line.length > maxChars) {
-          lines.push('- ...[more memories available]');
-          return lines.join('\n');
+          lines.push("- ...[more memories available]");
+          return lines.join("\n");
         }
 
         lines.push(line);
@@ -141,7 +154,7 @@ export class MemoryBus {
       }
     }
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
   // ─── Private: Query All Stores ─────────────────────────────────
@@ -173,7 +186,7 @@ export class MemoryBus {
     const results: UnifiedMemory[] = [];
 
     for (const s of settled) {
-      if (s.status === 'fulfilled') {
+      if (s.status === "fulfilled") {
         results.push(...s.value);
       } else {
         log.memory.warn(`[MemoryBus] Store query failed: ${s.reason}`);
@@ -193,7 +206,7 @@ export class MemoryBus {
       return entries.map((e) => ({
         id: `rfx_${e.id}`,
         content: e.content,
-        source: 'reflexion' as const,
+        source: "reflexion" as const,
         relevance: e.importance,
         category: this.mapReflexionCategory(e.category),
         timestamp: e.lastAccessedAt ?? e.createdAt,
@@ -212,9 +225,9 @@ export class MemoryBus {
       return pellets.slice(0, 5).map((p, i) => ({
         id: `plt_${p.id}`,
         content: `**${p.title}**: ${p.content.slice(0, 300)}`,
-        source: 'pellet' as const,
+        source: "pellet" as const,
         relevance: Math.max(0.3, 1 - i * 0.15), // Position-based decay
-        category: 'knowledge' as const,
+        category: "knowledge" as const,
         timestamp: p.generatedAt,
       }));
     } catch (err) {
@@ -239,38 +252,42 @@ export class MemoryBus {
         .slice(0, 3);
       if (topTopics.length > 0) {
         memories.push({
-          id: 'prf_topics',
-          content: `User frequently discusses: ${topTopics.map(([t, c]) => `${t} (${c}x)`).join(', ')}`,
-          source: 'profile',
+          id: "prf_topics",
+          content: `User frequently discusses: ${topTopics.map(([t, c]) => `${t} (${c}x)`).join(", ")}`,
+          source: "profile",
           relevance: 0.6,
-          category: 'profile',
+          category: "profile",
           timestamp: now,
         });
       }
 
       // Interaction style
       const style =
-        profile.commandRate > 0.5 ? 'command-oriented (prefers direct actions)' :
-        profile.questionRate > 0.4 ? 'question-oriented (prefers explanations)' :
-        'conversational';
+        profile.commandRate > 0.5
+          ? "command-oriented (prefers direct actions)"
+          : profile.questionRate > 0.4
+            ? "question-oriented (prefers explanations)"
+            : "conversational";
       memories.push({
-        id: 'prf_style',
+        id: "prf_style",
         content: `User interaction style: ${style}. Avg message: ${Math.round(profile.avgMessageLength)} chars.`,
-        source: 'profile',
+        source: "profile",
         relevance: 0.4,
-        category: 'profile',
+        category: "profile",
         timestamp: now,
       });
 
       // Sentiment balance
       if (profile.positiveSignals + profile.negativeSignals > 10) {
-        const ratio = profile.positiveSignals / Math.max(1, profile.positiveSignals + profile.negativeSignals);
+        const ratio =
+          profile.positiveSignals /
+          Math.max(1, profile.positiveSignals + profile.negativeSignals);
         memories.push({
-          id: 'prf_sentiment',
+          id: "prf_sentiment",
           content: `User satisfaction: ${(ratio * 100).toFixed(0)}% positive (${profile.positiveSignals}+ / ${profile.negativeSignals}-)`,
-          source: 'profile',
+          source: "profile",
           relevance: 0.5,
-          category: 'profile',
+          category: "profile",
           timestamp: now,
         });
       }
@@ -290,12 +307,15 @@ export class MemoryBus {
       if (!raw || raw.length < 10) return [];
 
       // Simple keyword matching against memory.md content
-      const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-      const lines = raw.split('\n').filter(l => l.startsWith('- '));
+      const queryWords = query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 3);
+      const lines = raw.split("\n").filter((l) => l.startsWith("- "));
 
       return lines
         .map((line, i) => {
-          const content = line.replace(/^- /, '').trim();
+          const content = line.replace(/^- /, "").trim();
           const lower = content.toLowerCase();
           let relevance = 0.2; // Base relevance for being in memory
 
@@ -306,13 +326,13 @@ export class MemoryBus {
           return {
             id: `leg_${i}`,
             content,
-            source: 'legacy' as const,
+            source: "legacy" as const,
             relevance: Math.min(1, relevance),
-            category: 'fact' as const,
+            category: "fact" as const,
             timestamp: new Date().toISOString(),
           };
         })
-        .filter(m => m.relevance > 0.25) // Only return matches
+        .filter((m) => m.relevance > 0.25) // Only return matches
         .slice(0, 5);
     } catch {
       return [];
@@ -328,7 +348,7 @@ export class MemoryBus {
       // Normalize content for comparison
       const key = mem.content
         .toLowerCase()
-        .replace(/\s+/g, ' ')
+        .replace(/\s+/g, " ")
         .trim()
         .slice(0, 100);
 
@@ -341,12 +361,17 @@ export class MemoryBus {
       } else {
         // Check for fuzzy duplicates (>70% word overlap)
         let isDuplicate = false;
-        const memWords = new Set(key.split(' ').filter(w => w.length > 3));
+        const memWords = new Set(key.split(" ").filter((w) => w.length > 3));
 
         for (const [existingKey] of seen) {
-          const existingWords = new Set(existingKey.split(' ').filter(w => w.length > 3));
-          const intersection = [...memWords].filter(w => existingWords.has(w));
-          const overlap = intersection.length / Math.max(memWords.size, existingWords.size);
+          const existingWords = new Set(
+            existingKey.split(" ").filter((w) => w.length > 3),
+          );
+          const intersection = [...memWords].filter((w) =>
+            existingWords.has(w),
+          );
+          const overlap =
+            intersection.length / Math.max(memWords.size, existingWords.size);
 
           if (overlap > 0.7) {
             isDuplicate = true;
@@ -365,14 +390,14 @@ export class MemoryBus {
 
   // ─── Helpers ───────────────────────────────────────────────────
 
-  private mapReflexionCategory(cat: string): UnifiedMemory['category'] {
-    const mapping: Record<string, UnifiedMemory['category']> = {
-      preference: 'preference',
-      fact: 'fact',
-      decision: 'fact',
-      project: 'context',
-      context: 'context',
+  private mapReflexionCategory(cat: string): UnifiedMemory["category"] {
+    const mapping: Record<string, UnifiedMemory["category"]> = {
+      preference: "preference",
+      fact: "fact",
+      decision: "fact",
+      project: "context",
+      context: "context",
     };
-    return mapping[cat] ?? 'context';
+    return mapping[cat] ?? "context";
   }
 }

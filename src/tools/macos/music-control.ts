@@ -18,7 +18,8 @@ export const MusicControlTool: ToolImplementation = {
         },
         query: {
           type: "string",
-          description: "Search query for search_play or queue (song name, artist, album)",
+          description:
+            "Search query for search_play or queue (song name, artist, album)",
         },
         app: {
           type: "string",
@@ -41,7 +42,7 @@ export const MusicControlTool: ToolImplementation = {
   ): Promise<string> {
     const action = String(args.action);
     const query = args.query as string | undefined;
-    const appChoice = (args.app as string || "music").toLowerCase();
+    const appChoice = ((args.app as string) || "music").toLowerCase();
     const value = args.value as number | undefined;
 
     const { execFile } = await import("node:child_process");
@@ -51,7 +52,9 @@ export const MusicControlTool: ToolImplementation = {
     const appName = appChoice === "spotify" ? "Spotify" : "Music";
 
     const osa = async (script: string): Promise<string> => {
-      const { stdout } = await exec("osascript", ["-e", script], { timeout: 10000 });
+      const { stdout } = await exec("osascript", ["-e", script], {
+        timeout: 10000,
+      });
       return stdout.trim();
     };
 
@@ -79,12 +82,24 @@ export const MusicControlTool: ToolImplementation = {
 
         case "now_playing": {
           if (appChoice === "spotify") {
-            const name = await osa('tell application "Spotify" to name of current track');
-            const artist = await osa('tell application "Spotify" to artist of current track');
-            const album = await osa('tell application "Spotify" to album of current track');
-            const pos = await osa('tell application "Spotify" to player position');
-            const dur = await osa('tell application "Spotify" to (duration of current track) / 1000');
-            const state = await osa('tell application "Spotify" to player state as string');
+            const name = await osa(
+              'tell application "Spotify" to name of current track',
+            );
+            const artist = await osa(
+              'tell application "Spotify" to artist of current track',
+            );
+            const album = await osa(
+              'tell application "Spotify" to album of current track',
+            );
+            const pos = await osa(
+              'tell application "Spotify" to player position',
+            );
+            const dur = await osa(
+              'tell application "Spotify" to (duration of current track) / 1000',
+            );
+            const state = await osa(
+              'tell application "Spotify" to player state as string',
+            );
             return (
               `🎵 Now Playing (Spotify):\n` +
               `  Track: ${name}\n` +
@@ -94,12 +109,22 @@ export const MusicControlTool: ToolImplementation = {
               `  State: ${state}`
             );
           }
-          const name = await osa('tell application "Music" to name of current track');
-          const artist = await osa('tell application "Music" to artist of current track');
-          const album = await osa('tell application "Music" to album of current track');
+          const name = await osa(
+            'tell application "Music" to name of current track',
+          );
+          const artist = await osa(
+            'tell application "Music" to artist of current track',
+          );
+          const album = await osa(
+            'tell application "Music" to album of current track',
+          );
           const pos = await osa('tell application "Music" to player position');
-          const dur = await osa('tell application "Music" to duration of current track');
-          const state = await osa('tell application "Music" to player state as string');
+          const dur = await osa(
+            'tell application "Music" to duration of current track',
+          );
+          const state = await osa(
+            'tell application "Music" to player state as string',
+          );
           return (
             `🎵 Now Playing (Apple Music):\n` +
             `  Track: ${name}\n` +
@@ -137,42 +162,62 @@ end tell`;
         case "set_volume": {
           if (value === undefined || value < 0 || value > 100)
             return "Error: set_volume requires value 0-100.";
-          await osa(`tell application "${appName}" to set sound volume to ${value}`);
+          await osa(
+            `tell application "${appName}" to set sound volume to ${value}`,
+          );
           return `🔊 ${appName} volume set to ${value}%`;
         }
 
         case "shuffle": {
           if (appChoice === "spotify") {
-            const current = await osa('tell application "Spotify" to shuffling');
+            const current = await osa(
+              'tell application "Spotify" to shuffling',
+            );
             const newVal = current === "true" ? "false" : "true";
-            await osa(`tell application "Spotify" to set shuffling to ${newVal}`);
+            await osa(
+              `tell application "Spotify" to set shuffling to ${newVal}`,
+            );
             return `🔀 Shuffle ${newVal === "true" ? "ON" : "OFF"} (Spotify)`;
           }
-          const current = await osa('tell application "Music" to shuffle enabled');
+          const current = await osa(
+            'tell application "Music" to shuffle enabled',
+          );
           const newVal = current === "true" ? "false" : "true";
-          await osa(`tell application "Music" to set shuffle enabled to ${newVal}`);
+          await osa(
+            `tell application "Music" to set shuffle enabled to ${newVal}`,
+          );
           return `🔀 Shuffle ${newVal === "true" ? "ON" : "OFF"} (Apple Music)`;
         }
 
         case "repeat": {
           if (appChoice === "spotify") {
-            const current = await osa('tell application "Spotify" to repeating');
+            const current = await osa(
+              'tell application "Spotify" to repeating',
+            );
             const newVal = current === "true" ? "false" : "true";
-            await osa(`tell application "Spotify" to set repeating to ${newVal}`);
+            await osa(
+              `tell application "Spotify" to set repeating to ${newVal}`,
+            );
             return `🔁 Repeat ${newVal === "true" ? "ON" : "OFF"} (Spotify)`;
           }
           // Apple Music cycles: off → all → one
-          const current = await osa('tell application "Music" to song repeat as string');
+          const current = await osa(
+            'tell application "Music" to song repeat as string',
+          );
           let newMode = "off";
           if (current === "off") newMode = "all";
           else if (current === "all") newMode = "one";
-          await osa(`tell application "Music" to set song repeat to ${newMode}`);
+          await osa(
+            `tell application "Music" to set song repeat to ${newMode}`,
+          );
           return `🔁 Repeat: ${newMode} (Apple Music)`;
         }
 
         case "love": {
           if (appChoice !== "spotify") {
-            await osa('tell application "Music" to set loved of current track to true');
+            await osa(
+              'tell application "Music" to set loved of current track to true',
+            );
             return `❤️ Loved current track (Apple Music)`;
           }
           return "Love/save is not available via Spotify AppleScript.";
@@ -190,7 +235,10 @@ end tell`;
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes("not running") || msg.includes("Connection is invalid")) {
+      if (
+        msg.includes("not running") ||
+        msg.includes("Connection is invalid")
+      ) {
         return `${appName} is not running. Open it first, then try again.`;
       }
       return `Error (${action}): ${msg}`;

@@ -5,7 +5,7 @@ export type {
   SignalCollector,
   MeshState,
   AmbientRule,
-} from './types.js';
+} from "./types.js";
 
 export {
   GitStatusCollector,
@@ -13,6 +13,6 @@ export {
   SystemCollector,
   ActiveFileCollector,
   ClipboardCollector,
-} from './collectors.js';
+} from "./collectors.js";
 
-export { ContextMesh } from './mesh.js';
+export { ContextMesh } from "./mesh.js";

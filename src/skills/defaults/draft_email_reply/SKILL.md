@@ -36,6 +36,7 @@ Compose a professional, context-aware email reply.
 ## Examples
 
 ### Formal reply
+
 ```yaml
 apple_mail:
   action: "send"

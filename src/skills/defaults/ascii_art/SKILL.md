@@ -4,9 +4,13 @@ description: Generate ASCII art text banners from input text using figlet or toi
 openclaw:
   emoji: "🔤"
 ---
+
 # ASCII Art Generator
+
 Create ASCII art text banners.
+
 ## Steps
+
 1. **Check for tools:**
    ```bash
    run_shell_command("which figlet || which toilet")
@@ -17,11 +21,16 @@ Create ASCII art text banners.
    ```
    Or with style: `run_shell_command("figlet -f slant '<text>'")`
 3. **Present** the ASCII art.
+
 ## Examples
+
 ### Create a banner
+
 ```bash
 run_shell_command("figlet 'Hello World'")
 ```
+
 ## Error Handling
+
 - **figlet not installed:** `brew install figlet`.
 - **Font not found:** List available fonts with `figlet -list`.

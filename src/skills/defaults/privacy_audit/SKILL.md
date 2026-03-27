@@ -5,9 +5,13 @@ openclaw:
   emoji: "🕵️"
   os: [darwin]
 ---
+
 # Privacy Audit
+
 Audit macOS privacy/security settings.
+
 ## Steps
+
 1. **Check firewall:**
    ```bash
    run_shell_command("sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null || echo 'Requires admin'")
@@ -25,10 +29,15 @@ Audit macOS privacy/security settings.
    run_shell_command("spctl --status")
    ```
 5. **Present audit report** with recommendations.
+
 ## Examples
+
 ### Full audit
+
 ```bash
 run_shell_command("fdesetup status && csrutil status && spctl --status")
 ```
+
 ## Error Handling
+
 - **Requires sudo:** Note which checks need admin privileges.

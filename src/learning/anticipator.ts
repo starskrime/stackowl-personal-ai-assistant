@@ -11,14 +11,18 @@
  *   - Adjusts owl behavior proactively based on profile trends
  */
 
-import type { ModelProvider, ChatMessage } from '../providers/base.js';
-import type { MicroLearner } from './micro-learner.js';
-import type { PatternAnalyzer } from '../predictive/analyzer.js';
-import type { Skill } from '../skills/types.js';
-import { log } from '../logger.js';
+import type { ModelProvider, ChatMessage } from "../providers/base.js";
+import type { MicroLearner } from "./micro-learner.js";
+import type { PatternAnalyzer } from "../predictive/analyzer.js";
+import type { Skill } from "../skills/types.js";
+import { log } from "../logger.js";
 
 export interface Anticipation {
-  type: 'skill_suggestion' | 'content_prep' | 'behavior_adjustment' | 'proactive_message';
+  type:
+    | "skill_suggestion"
+    | "content_prep"
+    | "behavior_adjustment"
+    | "proactive_message";
   capability: string;
   reason: string;
   confidence: number;
@@ -48,14 +52,16 @@ export class ProactiveAnticipator {
 
     // ─── 1. Skill gap anticipation from capability clusters ───
     const anticipated = this.microLearner.getAnticipatedNeeds();
-    const existingSkillNames = new Set(existingSkills.map(s => s.name.toLowerCase()));
+    const existingSkillNames = new Set(
+      existingSkills.map((s) => s.name.toLowerCase()),
+    );
 
     for (const need of anticipated) {
       if (existingSkillNames.has(need.capability)) continue;
       if (need.confidence < 0.4) continue;
 
       anticipations.push({
-        type: 'skill_suggestion',
+        type: "skill_suggestion",
         capability: need.capability,
         reason: need.reason,
         confidence: need.confidence,
@@ -70,7 +76,7 @@ export class ProactiveAnticipator {
         if (pattern.confidence < 0.6) continue;
 
         anticipations.push({
-          type: 'content_prep',
+          type: "content_prep",
           capability: pattern.action,
           reason: `User typically "${pattern.action}" at this time (${pattern.frequency}x observed)`,
           confidence: pattern.confidence,
@@ -80,25 +86,29 @@ export class ProactiveAnticipator {
     }
 
     // ─── 3. Behavior adjustments from profile trends ──────────
-    const sentimentRatio = profile.positiveSignals / Math.max(1, profile.positiveSignals + profile.negativeSignals);
+    const sentimentRatio =
+      profile.positiveSignals /
+      Math.max(1, profile.positiveSignals + profile.negativeSignals);
 
     if (sentimentRatio < 0.4 && profile.totalMessages > 20) {
       anticipations.push({
-        type: 'behavior_adjustment',
-        capability: 'response_style',
+        type: "behavior_adjustment",
+        capability: "response_style",
         reason: `High negative signal rate (${(sentimentRatio * 100).toFixed(0)}% positive) — user may be frustrated with current behavior`,
         confidence: 0.7,
-        suggestedAction: 'Reduce verbosity, be more direct, and avoid unsolicited suggestions',
+        suggestedAction:
+          "Reduce verbosity, be more direct, and avoid unsolicited suggestions",
       });
     }
 
     if (profile.commandRate > 0.7) {
       anticipations.push({
-        type: 'behavior_adjustment',
-        capability: 'interaction_mode',
+        type: "behavior_adjustment",
+        capability: "interaction_mode",
         reason: `User sends commands ${(profile.commandRate * 100).toFixed(0)}% of the time — they prefer action over conversation`,
         confidence: 0.8,
-        suggestedAction: 'Minimize explanations, execute immediately, confirm only when necessary',
+        suggestedAction:
+          "Minimize explanations, execute immediately, confirm only when necessary",
       });
     }
 
@@ -106,7 +116,10 @@ export class ProactiveAnticipator {
     // Only run this if we have enough data and it's been a while
     if (profile.totalMessages >= 30 && anticipated.length > 0) {
       try {
-        const deepAnticipations = await this.deepAnticipate(profile, existingSkillNames);
+        const deepAnticipations = await this.deepAnticipate(
+          profile,
+          existingSkillNames,
+        );
         anticipations.push(...deepAnticipations);
       } catch (err) {
         log.engine.warn(`[Anticipator] Deep anticipation failed: ${err}`);
@@ -115,7 +128,7 @@ export class ProactiveAnticipator {
 
     // Deduplicate by capability
     const seen = new Set<string>();
-    return anticipations.filter(a => {
+    return anticipations.filter((a) => {
       if (seen.has(a.capability)) return false;
       seen.add(a.capability);
       return true;
@@ -127,7 +140,7 @@ export class ProactiveAnticipator {
    * user as a person and predict what they'll need.
    */
   private async deepAnticipate(
-    profile: import('./micro-learner.js').UserProfile,
+    profile: import("./micro-learner.js").UserProfile,
     existingSkills: Set<string>,
   ): Promise<Anticipation[]> {
     const topTopics = Object.entries(profile.topics)
@@ -146,12 +159,12 @@ export class ProactiveAnticipator {
 
 USER PROFILE:
 - Total messages: ${profile.totalMessages}
-- Top topics: ${topTopics.join(', ') || 'none yet'}
-- Most used tools: ${topTools.join(', ') || 'none yet'}
-- Peak active hours: ${peakHours.map(h => `${h}:00`).join(', ') || 'varies'}
-- Communication style: ${profile.commandRate > 0.5 ? 'command-oriented' : profile.questionRate > 0.4 ? 'question-oriented' : 'conversational'}
-- Message length: ${profile.avgMessageLength > 100 ? 'detailed' : profile.avgMessageLength > 40 ? 'moderate' : 'brief'}
-- Existing skills: ${Array.from(existingSkills).join(', ') || 'none'}
+- Top topics: ${topTopics.join(", ") || "none yet"}
+- Most used tools: ${topTools.join(", ") || "none yet"}
+- Peak active hours: ${peakHours.map((h) => `${h}:00`).join(", ") || "varies"}
+- Communication style: ${profile.commandRate > 0.5 ? "command-oriented" : profile.questionRate > 0.4 ? "question-oriented" : "conversational"}
+- Message length: ${profile.avgMessageLength > 100 ? "detailed" : profile.avgMessageLength > 40 ? "moderate" : "brief"}
+- Existing skills: ${Array.from(existingSkills).join(", ") || "none"}
 
 Think about this person holistically. Based on their usage patterns, what capabilities might they need that they haven't asked for yet?
 
@@ -165,20 +178,33 @@ Return a JSON array of predictions:
 Only include capabilities NOT in the existing skills list. Max 5 predictions. Output JSON only.`;
 
     const messages: ChatMessage[] = [
-      { role: 'system', content: 'You are a behavioral prediction engine. Output valid JSON only.' },
-      { role: 'user', content: prompt },
+      {
+        role: "system",
+        content:
+          "You are a behavioral prediction engine. Output valid JSON only.",
+      },
+      { role: "user", content: prompt },
     ];
 
-    const response = await this.provider.chat(messages, undefined, { temperature: 0.3 });
-    const cleaned = response.content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-    const predictions: Array<{ capability: string; reason: string; confidence: number }> = JSON.parse(cleaned);
+    const response = await this.provider.chat(messages, undefined, {
+      temperature: 0.3,
+    });
+    const cleaned = response.content
+      .replace(/```json\s*/g, "")
+      .replace(/```\s*/g, "")
+      .trim();
+    const predictions: Array<{
+      capability: string;
+      reason: string;
+      confidence: number;
+    }> = JSON.parse(cleaned);
 
     if (!Array.isArray(predictions)) return [];
 
     return predictions
-      .filter(p => p.confidence >= 0.4 && !existingSkills.has(p.capability))
-      .map(p => ({
-        type: 'skill_suggestion' as const,
+      .filter((p) => p.confidence >= 0.4 && !existingSkills.has(p.capability))
+      .map((p) => ({
+        type: "skill_suggestion" as const,
         capability: p.capability,
         reason: p.reason,
         confidence: p.confidence,
@@ -190,22 +216,27 @@ Only include capabilities NOT in the existing skills list. Max 5 predictions. Ou
    * Generate a proactive message for the user based on anticipations.
    * Only called when the system decides to proactively reach out.
    */
-  async generateProactiveContent(anticipation: Anticipation): Promise<string | null> {
-    if (anticipation.type !== 'content_prep') return null;
+  async generateProactiveContent(
+    anticipation: Anticipation,
+  ): Promise<string | null> {
+    if (anticipation.type !== "content_prep") return null;
 
     try {
       const messages: ChatMessage[] = [
         {
-          role: 'system',
-          content: 'You are a proactive AI assistant. Generate useful, concise content the user will find valuable. Be natural and helpful, not robotic.',
+          role: "system",
+          content:
+            "You are a proactive AI assistant. Generate useful, concise content the user will find valuable. Be natural and helpful, not robotic.",
         },
         {
-          role: 'user',
+          role: "user",
           content: `The user typically "${anticipation.capability}" around this time. Prepare a brief, useful response. Keep it under 150 words and make it feel personal and helpful.`,
         },
       ];
 
-      const response = await this.provider.chat(messages, undefined, { temperature: 0.5 });
+      const response = await this.provider.chat(messages, undefined, {
+        temperature: 0.5,
+      });
       return response.content;
     } catch {
       return null;

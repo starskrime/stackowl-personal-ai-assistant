@@ -1,9 +1,17 @@
 export type SignalSource =
-  | 'calendar' | 'git' | 'clipboard' | 'active_file'
-  | 'time_of_day' | 'system' | 'weather' | 'email'
-  | 'perch' | 'heartbeat' | 'user_pattern';
+  | "calendar"
+  | "git"
+  | "clipboard"
+  | "active_file"
+  | "time_of_day"
+  | "system"
+  | "weather"
+  | "email"
+  | "perch"
+  | "heartbeat"
+  | "user_pattern";
 
-export type SignalPriority = 'low' | 'medium' | 'high' | 'critical';
+export type SignalPriority = "low" | "medium" | "high" | "critical";
 
 export interface ContextSignal {
   id: string;
@@ -31,7 +39,7 @@ export interface MeshState {
 export interface AmbientRule {
   name: string;
   condition: (signals: ContextSignal[]) => boolean;
-  action: 'notify' | 'inject' | 'suggest';
+  action: "notify" | "inject" | "suggest";
   template: string;
   cooldownMs: number;
   lastFired?: number;

@@ -5,9 +5,13 @@ openclaw:
   emoji: "🖼️"
   os: [darwin]
 ---
+
 # Image Resize
+
 Resize and compress images.
+
 ## Steps
+
 1. **Check available tools:**
    ```bash
    run_shell_command("which sips convert 2>/dev/null")
@@ -20,11 +24,16 @@ Resize and compress images.
    ```bash
    run_shell_command("sips -s format png <input.jpg> --out <output.png>")
    ```
+
 ## Examples
+
 ### Resize to 800px wide
+
 ```bash
 run_shell_command("sips --resampleWidth 800 photo.jpg --out photo_small.jpg")
 ```
+
 ## Error Handling
+
 - **Unsupported format:** Convert to supported format first.
 - **sips fails:** Fall back to ImageMagick: `convert <input> -resize <size> <output>`.

@@ -1,4 +1,11 @@
-export type DemoStepType = 'command' | 'file_read' | 'file_write' | 'web_fetch' | 'api_call' | 'user_input' | 'decision';
+export type DemoStepType =
+  | "command"
+  | "file_read"
+  | "file_write"
+  | "web_fetch"
+  | "api_call"
+  | "user_input"
+  | "decision";
 
 export interface DemoStep {
   order: number;

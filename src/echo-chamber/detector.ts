@@ -5,17 +5,17 @@
  * in conversation history. Generates calibrated challenges.
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { SessionStore } from '../memory/store.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { SessionStore } from "../memory/store.js";
 import type {
   BiasDetection,
   ChallengeIntensity,
   EchoChamberAnalysis,
-} from './types.js';
-import { join } from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync, mkdirSync } from 'node:fs';
-import { log } from '../logger.js';
+} from "./types.js";
+import { join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync } from "node:fs";
+import { log } from "../logger.js";
 
 export class EchoChamberDetector {
   private sessionStore: SessionStore;
@@ -28,7 +28,7 @@ export class EchoChamberDetector {
     sessionStore: SessionStore,
     provider: ModelProvider,
     workspacePath: string,
-    intensity: ChallengeIntensity = 'balanced',
+    intensity: ChallengeIntensity = "balanced",
   ) {
     this.sessionStore = sessionStore;
     this.provider = provider;
@@ -57,14 +57,15 @@ export class EchoChamberDetector {
 
     // Step 2: LLM deep analysis (only if heuristics found something)
     let detections: BiasDetection[] = [];
-    let overallAssessment = '';
+    let overallAssessment = "";
 
     if (heuristics.hasSignals) {
       const llmResult = await this.runLLMAnalysis(recentSessions, heuristics);
       detections = llmResult.detections;
       overallAssessment = llmResult.assessment;
     } else {
-      overallAssessment = 'No significant bias patterns detected in recent conversations. Your thinking appears balanced.';
+      overallAssessment =
+        "No significant bias patterns detected in recent conversations. Your thinking appears balanced.";
     }
 
     const analysis: EchoChamberAnalysis = {
@@ -97,26 +98,33 @@ export class EchoChamberDetector {
   /**
    * Generate a challenge message for the user.
    */
-  async generateChallenge(intensity?: ChallengeIntensity): Promise<string | null> {
+  async generateChallenge(
+    intensity?: ChallengeIntensity,
+  ): Promise<string | null> {
     const detections = this.getRecentDetections();
     if (detections.length === 0) return null;
 
     const level = intensity || this.intensity;
-    const topDetection = detections.sort((a, b) => b.confidence - a.confidence)[0];
+    const topDetection = detections.sort(
+      (a, b) => b.confidence - a.confidence,
+    )[0];
 
     const toneGuide: Record<ChallengeIntensity, string> = {
-      gentle: 'Be warm and supportive. Frame observations as curious questions, not accusations. Use "I noticed" and "I wonder if".',
-      balanced: 'Be direct but respectful. State observations clearly and ask probing questions. Balance honesty with empathy.',
-      relentless: 'Be blunt and unsparing. Challenge every assumption. Don\'t sugarcoat. Push hard for self-reflection. Channel Socrates at his most relentless.',
+      gentle:
+        'Be warm and supportive. Frame observations as curious questions, not accusations. Use "I noticed" and "I wonder if".',
+      balanced:
+        "Be direct but respectful. State observations clearly and ask probing questions. Balance honesty with empathy.",
+      relentless:
+        "Be blunt and unsparing. Challenge every assumption. Don't sugarcoat. Push hard for self-reflection. Channel Socrates at his most relentless.",
     };
 
     try {
       const response = await this.provider.chat(
         [
           {
-            role: 'user',
+            role: "user",
             content:
-              `Generate a challenge message for a user who shows signs of ${topDetection.bias.replace(/_/g, ' ')}.\n\n` +
+              `Generate a challenge message for a user who shows signs of ${topDetection.bias.replace(/_/g, " ")}.\n\n` +
               `Evidence: ${topDetection.evidence}\n\n` +
               `Tone: ${toneGuide[level]}\n\n` +
               `Write 2-4 sentences that challenge this pattern. Be specific to their behavior. ` +
@@ -139,27 +147,36 @@ export class EchoChamberDetector {
    */
   toContextString(): string {
     const detections = this.getRecentDetections();
-    if (detections.length === 0) return '';
+    if (detections.length === 0) return "";
 
     const lines = detections
-      .filter(d => d.confidence >= 0.5)
+      .filter((d) => d.confidence >= 0.5)
       .slice(0, 3)
-      .map(d => `- ${d.bias.replace(/_/g, ' ')}: ${d.evidence} (confidence: ${(d.confidence * 100).toFixed(0)}%)`);
+      .map(
+        (d) =>
+          `- ${d.bias.replace(/_/g, " ")}: ${d.evidence} (confidence: ${(d.confidence * 100).toFixed(0)}%)`,
+      );
 
-    if (lines.length === 0) return '';
+    if (lines.length === 0) return "";
 
     return (
-      '\n<echo_chamber_awareness>\n' +
-      'Recent bias patterns detected in this user\'s conversations:\n' +
-      lines.join('\n') + '\n' +
-      'When relevant, gently challenge these patterns. Don\'t mention this system by name.\n' +
-      '</echo_chamber_awareness>\n'
+      "\n<echo_chamber_awareness>\n" +
+      "Recent bias patterns detected in this user's conversations:\n" +
+      lines.join("\n") +
+      "\n" +
+      "When relevant, gently challenge these patterns. Don't mention this system by name.\n" +
+      "</echo_chamber_awareness>\n"
     );
   }
 
   // ─── Private ─────────────────────────────────────────────
 
-  private runHeuristics(sessions: Array<{ id: string; messages: Array<{ role: string; content: string }> }>): {
+  private runHeuristics(
+    sessions: Array<{
+      id: string;
+      messages: Array<{ role: string; content: string }>;
+    }>,
+  ): {
     hasSignals: boolean;
     topicRepetitions: Map<string, number>;
     agreementRate: number;
@@ -172,25 +189,31 @@ export class EchoChamberDetector {
     let decisionFollowUps = 0;
 
     for (const session of sessions) {
-      const userMsgs = session.messages.filter(m => m.role === 'user');
+      const userMsgs = session.messages.filter((m) => m.role === "user");
       totalUserMsgs += userMsgs.length;
 
       for (const msg of userMsgs) {
         const lower = msg.content.toLowerCase();
 
         // Track topic repetitions
-        const words = lower.split(/\s+/).filter(w => w.length > 4);
+        const words = lower.split(/\s+/).filter((w) => w.length > 4);
         for (const w of words) {
           topicFreq.set(w, (topicFreq.get(w) || 0) + 1);
         }
 
         // Track agreement patterns
-        if (/\b(you'?re right|i agree|good point|exactly|makes sense)\b/.test(lower)) {
+        if (
+          /\b(you'?re right|i agree|good point|exactly|makes sense)\b/.test(
+            lower,
+          )
+        ) {
           agreementSignals++;
         }
 
         // Track decision avoidance
-        if (/\b(should i|what if|i can'?t decide|i'?m not sure)\b/.test(lower)) {
+        if (
+          /\b(should i|what if|i can'?t decide|i'?m not sure)\b/.test(lower)
+        ) {
           decisionMentions++;
         }
         if (/\b(i did it|i decided|i went with|i chose)\b/.test(lower)) {
@@ -199,8 +222,10 @@ export class EchoChamberDetector {
       }
     }
 
-    const agreementRate = totalUserMsgs > 0 ? agreementSignals / totalUserMsgs : 0;
-    const decisionAvoidance = decisionMentions > 0 && decisionFollowUps === 0 ? decisionMentions : 0;
+    const agreementRate =
+      totalUserMsgs > 0 ? agreementSignals / totalUserMsgs : 0;
+    const decisionAvoidance =
+      decisionMentions > 0 && decisionFollowUps === 0 ? decisionMentions : 0;
 
     // Check for highly repeated topics (same word >5 times across sessions)
     const repetitions = new Map<string, number>();
@@ -208,35 +233,58 @@ export class EchoChamberDetector {
       if (count >= 5) repetitions.set(word, count);
     }
 
-    const hasSignals = repetitions.size > 0 || agreementRate > 0.3 || decisionAvoidance > 2;
+    const hasSignals =
+      repetitions.size > 0 || agreementRate > 0.3 || decisionAvoidance > 2;
 
-    return { hasSignals, topicRepetitions: repetitions, agreementRate, decisionAvoidance };
+    return {
+      hasSignals,
+      topicRepetitions: repetitions,
+      agreementRate,
+      decisionAvoidance,
+    };
   }
 
   private async runLLMAnalysis(
-    sessions: Array<{ id: string; messages: Array<{ role: string; content: string }> }>,
-    heuristics: ReturnType<EchoChamberDetector['runHeuristics']>,
+    sessions: Array<{
+      id: string;
+      messages: Array<{ role: string; content: string }>;
+    }>,
+    heuristics: ReturnType<EchoChamberDetector["runHeuristics"]>,
   ): Promise<{ detections: BiasDetection[]; assessment: string }> {
     // Build condensed conversation summary for LLM
-    const summaries = sessions.slice(0, 10).map(s => {
-      const userMsgs = s.messages
-        .filter(m => m.role === 'user')
-        .map(m => m.content.slice(0, 150))
-        .join(' | ');
-      return `Session ${s.id.slice(-6)}: ${userMsgs.slice(0, 400)}`;
-    }).join('\n');
+    const summaries = sessions
+      .slice(0, 10)
+      .map((s) => {
+        const userMsgs = s.messages
+          .filter((m) => m.role === "user")
+          .map((m) => m.content.slice(0, 150))
+          .join(" | ");
+        return `Session ${s.id.slice(-6)}: ${userMsgs.slice(0, 400)}`;
+      })
+      .join("\n");
 
     const heuristicInfo = [
-      heuristics.agreementRate > 0.3 ? `User agrees with assistant ${(heuristics.agreementRate * 100).toFixed(0)}% of messages` : '',
-      heuristics.decisionAvoidance > 2 ? `User mentions ${heuristics.decisionAvoidance} decisions but never follows through` : '',
-      heuristics.topicRepetitions.size > 0 ? `Repeated topics: ${[...heuristics.topicRepetitions.entries()].slice(0, 5).map(([w, c]) => `${w}(${c}x)`).join(', ')}` : '',
-    ].filter(Boolean).join('\n');
+      heuristics.agreementRate > 0.3
+        ? `User agrees with assistant ${(heuristics.agreementRate * 100).toFixed(0)}% of messages`
+        : "",
+      heuristics.decisionAvoidance > 2
+        ? `User mentions ${heuristics.decisionAvoidance} decisions but never follows through`
+        : "",
+      heuristics.topicRepetitions.size > 0
+        ? `Repeated topics: ${[...heuristics.topicRepetitions.entries()]
+            .slice(0, 5)
+            .map(([w, c]) => `${w}(${c}x)`)
+            .join(", ")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     try {
       const response = await this.provider.chat(
         [
           {
-            role: 'user',
+            role: "user",
             content:
               `Analyze these conversation summaries for cognitive biases and echo chamber patterns:\n\n` +
               `${summaries}\n\n` +
@@ -258,36 +306,38 @@ export class EchoChamberDetector {
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
-      const detections: BiasDetection[] = (parsed.detections || []).map((d: any) => ({
-        bias: d.bias,
-        evidence: d.evidence || '',
-        confidence: Number(d.confidence) || 0.5,
-        suggestedChallenge: d.suggestedChallenge || '',
-        sessionIds: [],
-      }));
+      const detections: BiasDetection[] = (parsed.detections || []).map(
+        (d: any) => ({
+          bias: d.bias,
+          evidence: d.evidence || "",
+          confidence: Number(d.confidence) || 0.5,
+          suggestedChallenge: d.suggestedChallenge || "",
+          sessionIds: [],
+        }),
+      );
 
       return {
-        detections: detections.filter(d => d.confidence >= 0.3),
-        assessment: parsed.assessment || '',
+        detections: detections.filter((d) => d.confidence >= 0.3),
+        assessment: parsed.assessment || "",
       };
     } catch (err) {
       log.engine.debug(`[EchoChamber] LLM analysis failed: ${err}`);
-      return { detections: [], assessment: 'Analysis failed.' };
+      return { detections: [], assessment: "Analysis failed." };
     }
   }
 
   private async persist(analysis: EchoChamberAnalysis): Promise<void> {
     const dir = join(this.workspacePath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const path = join(dir, 'echo-chamber.json');
+    const path = join(dir, "echo-chamber.json");
     await writeFile(path, JSON.stringify(analysis, null, 2));
   }
 
   async load(): Promise<void> {
-    const path = join(this.workspacePath, 'echo-chamber.json');
+    const path = join(this.workspacePath, "echo-chamber.json");
     if (!existsSync(path)) return;
     try {
-      const data = await readFile(path, 'utf-8');
+      const data = await readFile(path, "utf-8");
       this.lastAnalysis = JSON.parse(data);
     } catch {
       // Ignore

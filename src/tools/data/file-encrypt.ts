@@ -6,7 +6,12 @@
 
 import { readFile, writeFile, access, constants } from "node:fs/promises";
 import { resolve, extname } from "node:path";
-import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from "node:crypto";
+import {
+  randomBytes,
+  scryptSync,
+  createCipheriv,
+  createDecipheriv,
+} from "node:crypto";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
 const ALGORITHM = "aes-256-cbc";
@@ -97,7 +102,10 @@ export const FileEncryptTool: ToolImplementation = {
 
         try {
           const decipher = createDecipheriv(ALGORITHM, key, iv);
-          const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+          const decrypted = Buffer.concat([
+            decipher.update(encrypted),
+            decipher.final(),
+          ]);
 
           const outputPath = resolvedPath.endsWith(".enc")
             ? resolvedPath.slice(0, -4)

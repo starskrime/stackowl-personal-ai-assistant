@@ -5,14 +5,14 @@
  * DNA evolution, and micro-learner signals.
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { PelletStore } from '../pellets/store.js';
-import type { SessionStore } from '../memory/store.js';
-import type { JournalEntry, GrowthMetrics } from './types.js';
-import { join } from 'node:path';
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
-import { existsSync, mkdirSync } from 'node:fs';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { PelletStore } from "../pellets/store.js";
+import type { SessionStore } from "../memory/store.js";
+import type { JournalEntry, GrowthMetrics } from "./types.js";
+import { join } from "node:path";
+import { readFile, writeFile, readdir, mkdir } from "node:fs/promises";
+import { existsSync, mkdirSync } from "node:fs";
+import { log } from "../logger.js";
 
 export class JournalGenerator {
   private pelletStore: PelletStore;
@@ -29,18 +29,19 @@ export class JournalGenerator {
     this.pelletStore = pelletStore;
     this.sessionStore = sessionStore;
     this.provider = provider;
-    this.journalDir = join(workspacePath, 'journal');
-    if (!existsSync(this.journalDir)) mkdirSync(this.journalDir, { recursive: true });
+    this.journalDir = join(workspacePath, "journal");
+    if (!existsSync(this.journalDir))
+      mkdirSync(this.journalDir, { recursive: true });
   }
 
   /**
    * Generate a journal entry for a given period.
    */
-  async generate(period: 'weekly' | 'monthly'): Promise<JournalEntry> {
+  async generate(period: "weekly" | "monthly"): Promise<JournalEntry> {
     const now = new Date();
     const startDate = new Date(now);
 
-    if (period === 'weekly') {
+    if (period === "weekly") {
       startDate.setDate(now.getDate() - 7);
     } else {
       startDate.setMonth(now.getMonth() - 1);
@@ -54,7 +55,12 @@ export class JournalGenerator {
     // Build LLM prompt with gathered data
     const dataContext = this.buildDataContext(metrics, pellets, sessions);
 
-    const narrative = await this.generateNarrative(period, startDate, now, dataContext);
+    const narrative = await this.generateNarrative(
+      period,
+      startDate,
+      now,
+      dataContext,
+    );
 
     const entry: JournalEntry = {
       id: `journal_${period}_${now.toISOString().slice(0, 10)}`,
@@ -85,15 +91,18 @@ export class JournalGenerator {
     const entries: JournalEntry[] = [];
 
     for (const file of files) {
-      if (!file.endsWith('.json')) continue;
+      if (!file.endsWith(".json")) continue;
       try {
-        const data = await readFile(join(this.journalDir, file), 'utf-8');
+        const data = await readFile(join(this.journalDir, file), "utf-8");
         entries.push(JSON.parse(data));
-      } catch { /* skip corrupt files */ }
+      } catch {
+        /* skip corrupt files */
+      }
     }
 
-    return entries.sort((a, b) =>
-      new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime(),
+    return entries.sort(
+      (a, b) =>
+        new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime(),
     );
   }
 
@@ -104,7 +113,7 @@ export class JournalGenerator {
     const path = join(this.journalDir, `${id}.json`);
     if (!existsSync(path)) return null;
     try {
-      const data = await readFile(path, 'utf-8');
+      const data = await readFile(path, "utf-8");
       return JSON.parse(data);
     } catch {
       return null;
@@ -117,10 +126,11 @@ export class JournalGenerator {
   async search(query: string): Promise<JournalEntry[]> {
     const all = await this.list();
     const q = query.toLowerCase();
-    return all.filter(e =>
-      e.narrative.toLowerCase().includes(q) ||
-      e.sections.skillsAcquired.some(s => s.toLowerCase().includes(q)) ||
-      e.sections.highlights.some(h => h.toLowerCase().includes(q)),
+    return all.filter(
+      (e) =>
+        e.narrative.toLowerCase().includes(q) ||
+        e.sections.skillsAcquired.some((s) => s.toLowerCase().includes(q)) ||
+        e.sections.highlights.some((h) => h.toLowerCase().includes(q)),
     );
   }
 
@@ -128,39 +138,44 @@ export class JournalGenerator {
 
   private async getMetrics(start: Date, end: Date): Promise<GrowthMetrics> {
     const allPellets = await this.pelletStore.listAll();
-    const pelletsInRange = allPellets.filter(p => {
+    const pelletsInRange = allPellets.filter((p) => {
       const d = new Date(p.generatedAt);
       return d >= start && d <= end;
     });
 
     const sessions = await this.sessionStore.listSessions();
-    const sessionsInRange = sessions.filter(s =>
-      s.metadata.startedAt >= start.getTime() && s.metadata.startedAt <= end.getTime(),
+    const sessionsInRange = sessions.filter(
+      (s) =>
+        s.metadata.startedAt >= start.getTime() &&
+        s.metadata.startedAt <= end.getTime(),
     );
 
     const topics = new Set<string>();
     const tools = new Set<string>();
 
     for (const p of pelletsInRange) {
-      p.tags.forEach(t => topics.add(t));
+      p.tags.forEach((t) => topics.add(t));
     }
 
     for (const s of sessionsInRange) {
       for (const m of s.messages) {
-        if (m.role === 'assistant' && m.content.includes('Running:')) {
+        if (m.role === "assistant" && m.content.includes("Running:")) {
           const toolMatch = m.content.match(/Running:\s+(\w+)/);
           if (toolMatch) tools.add(toolMatch[1]);
         }
       }
     }
 
-    const parliamentCount = pelletsInRange.filter(p =>
-      p.source?.includes('Parliament') || p.source?.includes('parliament'),
+    const parliamentCount = pelletsInRange.filter(
+      (p) =>
+        p.source?.includes("Parliament") || p.source?.includes("parliament"),
     ).length;
 
-    const avgLength = sessionsInRange.length > 0
-      ? sessionsInRange.reduce((sum, s) => sum + s.messages.length, 0) / sessionsInRange.length
-      : 0;
+    const avgLength =
+      sessionsInRange.length > 0
+        ? sessionsInRange.reduce((sum, s) => sum + s.messages.length, 0) /
+          sessionsInRange.length
+        : 0;
 
     return {
       pelletsCreated: pelletsInRange.length,
@@ -172,25 +187,37 @@ export class JournalGenerator {
     };
   }
 
-  private async getPelletsInRange(start: Date, end: Date): Promise<Array<{ title: string; tags: string[] }>> {
+  private async getPelletsInRange(
+    start: Date,
+    end: Date,
+  ): Promise<Array<{ title: string; tags: string[] }>> {
     const all = await this.pelletStore.listAll();
     return all
-      .filter(p => {
+      .filter((p) => {
         const d = new Date(p.generatedAt);
         return d >= start && d <= end;
       })
-      .map(p => ({ title: p.title, tags: p.tags }));
+      .map((p) => ({ title: p.title, tags: p.tags }));
   }
 
-  private async getSessionsInRange(start: Date, end: Date): Promise<Array<{ summary: string; date: string }>> {
+  private async getSessionsInRange(
+    start: Date,
+    end: Date,
+  ): Promise<Array<{ summary: string; date: string }>> {
     const sessions = await this.sessionStore.listSessions();
     return sessions
-      .filter(s => s.metadata.startedAt >= start.getTime() && s.metadata.startedAt <= end.getTime())
+      .filter(
+        (s) =>
+          s.metadata.startedAt >= start.getTime() &&
+          s.metadata.startedAt <= end.getTime(),
+      )
       .slice(0, 10)
-      .map(s => {
-        const userMsgs = s.messages.filter(m => m.role === 'user').map(m => m.content.slice(0, 100));
+      .map((s) => {
+        const userMsgs = s.messages
+          .filter((m) => m.role === "user")
+          .map((m) => m.content.slice(0, 100));
         return {
-          summary: userMsgs.join(' | ').slice(0, 300),
+          summary: userMsgs.join(" | ").slice(0, 300),
           date: new Date(s.metadata.startedAt).toLocaleDateString(),
         };
       });
@@ -203,19 +230,27 @@ export class JournalGenerator {
   ): string {
     const parts: string[] = [];
 
-    parts.push(`Metrics: ${metrics.pelletsCreated} pellets, ${metrics.sessionsCount} sessions, ${metrics.parliamentSessions} parliament debates`);
-    parts.push(`Topics explored: ${metrics.topicsExplored.join(', ') || 'none'}`);
-    parts.push(`Tools used: ${metrics.toolsLearned.join(', ') || 'none'}`);
+    parts.push(
+      `Metrics: ${metrics.pelletsCreated} pellets, ${metrics.sessionsCount} sessions, ${metrics.parliamentSessions} parliament debates`,
+    );
+    parts.push(
+      `Topics explored: ${metrics.topicsExplored.join(", ") || "none"}`,
+    );
+    parts.push(`Tools used: ${metrics.toolsLearned.join(", ") || "none"}`);
 
     if (pellets.length > 0) {
-      parts.push(`\nKnowledge created:\n${pellets.map(p => `- ${p.title} [${p.tags.join(', ')}]`).join('\n')}`);
+      parts.push(
+        `\nKnowledge created:\n${pellets.map((p) => `- ${p.title} [${p.tags.join(", ")}]`).join("\n")}`,
+      );
     }
 
     if (sessions.length > 0) {
-      parts.push(`\nConversation highlights:\n${sessions.map(s => `- ${s.date}: ${s.summary}`).join('\n')}`);
+      parts.push(
+        `\nConversation highlights:\n${sessions.map((s) => `- ${s.date}: ${s.summary}`).join("\n")}`,
+      );
     }
 
-    return parts.join('\n');
+    return parts.join("\n");
   }
 
   private async generateNarrative(
@@ -228,7 +263,7 @@ export class JournalGenerator {
       const response = await this.provider.chat(
         [
           {
-            role: 'user',
+            role: "user",
             content:
               `Write a ${period} growth journal entry for the period ${start.toLocaleDateString()} to ${end.toLocaleDateString()}.\n\n` +
               `Data:\n${dataContext}\n\n` +
@@ -253,7 +288,8 @@ export class JournalGenerator {
   }
 
   private async save(entry: JournalEntry): Promise<void> {
-    if (!existsSync(this.journalDir)) await mkdir(this.journalDir, { recursive: true });
+    if (!existsSync(this.journalDir))
+      await mkdir(this.journalDir, { recursive: true });
     await writeFile(
       join(this.journalDir, `${entry.id}.json`),
       JSON.stringify(entry, null, 2),

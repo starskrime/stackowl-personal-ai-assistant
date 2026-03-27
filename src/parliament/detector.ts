@@ -8,8 +8,8 @@
  * and intent far better than regex patterns ever could.
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import { log } from "../logger.js";
 
 /**
  * Ask the AI model whether this message warrants a Parliament debate.
@@ -30,7 +30,7 @@ export async function shouldConveneParliament(
     const response = await provider.chat(
       [
         {
-          role: 'user',
+          role: "user",
           content:
             `Classify this message. Reply with ONLY the single word "DEBATE" or "SINGLE".\n\n` +
             `DEBATE = the message asks about a decision, dilemma, tradeoff, or choice where reasonable people could disagree. ` +
@@ -49,10 +49,11 @@ export async function shouldConveneParliament(
     const answer = response.content.trim().toUpperCase();
     // Look for DEBATE anywhere in the response (handles models that add explanation)
     // Also handle models that say things like "This is a DEBATE question"
-    const shouldConvene = answer.includes('DEBATE') && !answer.includes('SINGLE');
+    const shouldConvene =
+      answer.includes("DEBATE") && !answer.includes("SINGLE");
 
     log.engine.info(
-      `[ParliamentDetector] "${userMessage.slice(0, 60)}..." → raw="${answer}" → ${shouldConvene ? 'PARLIAMENT' : 'skip'}`,
+      `[ParliamentDetector] "${userMessage.slice(0, 60)}..." → raw="${answer}" → ${shouldConvene ? "PARLIAMENT" : "skip"}`,
     );
 
     return shouldConvene;

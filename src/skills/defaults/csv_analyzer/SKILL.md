@@ -4,9 +4,13 @@ description: Analyze CSV files by showing statistics, column summaries, row coun
 openclaw:
   emoji: "📊"
 ---
+
 # CSV Analyzer
+
 Analyze CSV data files.
+
 ## Steps
+
 1. **Read file header and sample:**
    ```bash
    run_shell_command("head -5 <file.csv>")
@@ -21,11 +25,16 @@ Analyze CSV data files.
    run_shell_command("awk -F',' '{print $<col>}' <file.csv> | sort | uniq -c | sort -rn | head -10")
    ```
 4. **Present summary:** row count, column count, unique values per column, missing values.
+
 ## Examples
+
 ### Analyze a sales CSV
+
 ```bash
 run_shell_command("head -5 sales.csv && wc -l sales.csv")
 ```
+
 ## Error Handling
+
 - **Not a valid CSV:** Check delimiter (could be TSV or semicolon-separated).
 - **Very large file:** Use `head` and sampling instead of reading entire file.

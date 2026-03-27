@@ -27,7 +27,7 @@ export const MODEL_PRICING: Record<string, ModelPrice> = {
   "gpt-4o": { inputPer1M: 2.5, outputPer1M: 10.0 },
   "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6 },
   "gpt-4-turbo": { inputPer1M: 10.0, outputPer1M: 30.0 },
-  "o1": { inputPer1M: 15.0, outputPer1M: 60.0 },
+  o1: { inputPer1M: 15.0, outputPer1M: 60.0 },
   "o1-mini": { inputPer1M: 3.0, outputPer1M: 12.0 },
   "o3-mini": { inputPer1M: 1.1, outputPer1M: 4.4 },
 
@@ -42,7 +42,7 @@ export const MODEL_PRICING: Record<string, ModelPrice> = {
   "llama3.2": { inputPer1M: 0, outputPer1M: 0 },
   "llama3.1": { inputPer1M: 0, outputPer1M: 0 },
   "qwen2.5": { inputPer1M: 0, outputPer1M: 0 },
-  "mistral": { inputPer1M: 0, outputPer1M: 0 },
+  mistral: { inputPer1M: 0, outputPer1M: 0 },
 };
 
 /**
@@ -57,9 +57,7 @@ export function estimateCost(
   // Try exact match first, then prefix match
   const price =
     MODEL_PRICING[model] ??
-    Object.entries(MODEL_PRICING).find(([key]) =>
-      model.startsWith(key),
-    )?.[1];
+    Object.entries(MODEL_PRICING).find(([key]) => model.startsWith(key))?.[1];
 
   if (!price) return 0;
 

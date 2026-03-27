@@ -16,6 +16,7 @@ Send messages to Slack channels or users using the Bot API.
    - Channel ID or user ID
 
 2. **Send the message via curl:**
+
    ```bash
    run_shell_command("curl -s -X POST 'https://slack.com/api/chat.postMessage' -H 'Authorization: Bearer <BOT_TOKEN>' -H 'Content-Type: application/json' -d '{\"channel\": \"<CHANNEL_ID>\", \"text\": \"<message>\"}'")
    ```
@@ -25,6 +26,7 @@ Send messages to Slack channels or users using the Bot API.
 ## Examples
 
 ### Send to a channel
+
 ```bash
 run_shell_command("curl -s -X POST 'https://slack.com/api/chat.postMessage' -H 'Authorization: Bearer xoxb-token' -H 'Content-Type: application/json' -d '{\"channel\": \"C01234ABC\", \"text\": \"Deploy complete ✅\"}'")
 ```

@@ -8,7 +8,12 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import matter from "gray-matter";
 import YAML from "yaml";
-import type { Skill, SkillMetadata, SkillParameter, SkillStep } from "./types.js";
+import type {
+  Skill,
+  SkillMetadata,
+  SkillParameter,
+  SkillStep,
+} from "./types.js";
 
 export class SkillParser {
   /**
@@ -115,16 +120,20 @@ export class SkillParser {
   /**
    * Parse structured execution parameters from frontmatter.
    */
-  private parseParameters(data: Record<string, unknown>): Record<string, SkillParameter> {
+  private parseParameters(
+    data: Record<string, unknown>,
+  ): Record<string, SkillParameter> {
     const params: Record<string, SkillParameter> = {};
-    if (!data.parameters || typeof data.parameters !== 'object') return params;
+    if (!data.parameters || typeof data.parameters !== "object") return params;
 
-    for (const [key, val] of Object.entries(data.parameters as Record<string, unknown>)) {
-      if (!val || typeof val !== 'object') continue;
+    for (const [key, val] of Object.entries(
+      data.parameters as Record<string, unknown>,
+    )) {
+      if (!val || typeof val !== "object") continue;
       const v = val as Record<string, unknown>;
       if (!v.type || !v.description) continue;
       params[key] = {
-        type: String(v.type) as SkillParameter['type'],
+        type: String(v.type) as SkillParameter["type"],
         description: String(v.description),
         required: v.required !== false,
         ...(v.default !== undefined ? { default: v.default } : {}),
@@ -143,7 +152,7 @@ export class SkillParser {
     const steps: SkillStep[] = [];
 
     for (const raw of data.steps) {
-      if (!raw || typeof raw !== 'object' || !raw.id) continue;
+      if (!raw || typeof raw !== "object" || !raw.id) continue;
       const s = raw as Record<string, unknown>;
       const id = String(s.id);
       if (stepIds.has(id)) continue; // skip duplicate ids
@@ -153,19 +162,20 @@ export class SkillParser {
 
       if (s.tool) {
         step.tool = String(s.tool);
-        step.type = 'tool';
-      } else if (s.type === 'llm') {
-        step.type = 'llm';
+        step.type = "tool";
+      } else if (s.type === "llm") {
+        step.type = "llm";
       }
 
-      if (s.args && typeof s.args === 'object') {
+      if (s.args && typeof s.args === "object") {
         step.args = s.args as Record<string, unknown>;
       }
       if (s.prompt) step.prompt = String(s.prompt);
-      if (Array.isArray(s.depends_on)) step.depends_on = s.depends_on.map(String);
+      if (Array.isArray(s.depends_on))
+        step.depends_on = s.depends_on.map(String);
       if (Array.isArray(s.inputs)) step.inputs = s.inputs.map(String);
       if (s.on_failure) step.on_failure = String(s.on_failure);
-      if (typeof s.timeout_ms === 'number') step.timeout_ms = s.timeout_ms;
+      if (typeof s.timeout_ms === "number") step.timeout_ms = s.timeout_ms;
       if (s.optional === true) step.optional = true;
 
       steps.push(step);

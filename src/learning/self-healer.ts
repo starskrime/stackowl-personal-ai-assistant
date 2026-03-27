@@ -12,12 +12,12 @@
  * own code, understands what went wrong, and fixes itself.
  */
 
-import { readFile, writeFile, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ModelProvider } from '../providers/base.js';
-import type { ProviderRegistry } from '../providers/registry.js';
-import { log } from '../logger.js';
+import { readFile, writeFile, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import type { ModelProvider } from "../providers/base.js";
+import type { ProviderRegistry } from "../providers/registry.js";
+import { log } from "../logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -42,11 +42,17 @@ export interface HealingResult {
 
 interface DiagnosisResponse {
   rootCause: string;
-  action: 'config_fix' | 'data_cleanup' | 'code_patch' | 'restart_needed' | 'external_dependency' | 'skip';
+  action:
+    | "config_fix"
+    | "data_cleanup"
+    | "code_patch"
+    | "restart_needed"
+    | "external_dependency"
+    | "skip";
   explanation: string;
   fix?: {
     file: string;
-    type: 'replace' | 'write_json' | 'delete_file';
+    type: "replace" | "write_json" | "delete_file";
     search?: string;
     replace?: string;
     content?: string;
@@ -82,7 +88,7 @@ export class SelfHealer {
     projectRoot: string,
     workspacePath: string,
   ) {
-    this.srcRoot = join(projectRoot, 'src');
+    this.srcRoot = join(projectRoot, "src");
     this.workspacePath = workspacePath;
   }
 
@@ -100,13 +106,13 @@ export class SelfHealer {
       const provider = this.getAnthropicProvider();
       if (!provider) {
         log.evolution.warn(
-          '[SelfHealer] Anthropic provider not available — cannot self-heal. ' +
-          'Add an Anthropic provider to stackowl.config.json to enable self-healing.',
+          "[SelfHealer] Anthropic provider not available — cannot self-heal. " +
+            "Add an Anthropic provider to stackowl.config.json to enable self-healing.",
         );
         return {
           healed: false,
-          diagnosis: 'Anthropic provider not configured',
-          action: 'none',
+          diagnosis: "Anthropic provider not configured",
+          action: "none",
           filesChanged: [],
         };
       }
@@ -122,7 +128,12 @@ export class SelfHealer {
       const runtimeContext = await this.gatherRuntimeContext(ctx);
 
       // Step 4: Ask Claude to diagnose and prescribe a fix
-      const diagnosis = await this.diagnose(provider, ctx, sourceContext, runtimeContext);
+      const diagnosis = await this.diagnose(
+        provider,
+        ctx,
+        sourceContext,
+        runtimeContext,
+      );
 
       log.evolution.evolve(
         `[SelfHealer] Diagnosis: ${diagnosis.rootCause} → action: ${diagnosis.action}`,
@@ -133,8 +144,8 @@ export class SelfHealer {
 
       const elapsed = Date.now() - startTime;
       log.evolution.evolve(
-        `[SelfHealer] ${result.healed ? 'Healed' : 'Could not heal'} ` +
-        `${ctx.subsystem}/${ctx.operation} in ${elapsed}ms — ${result.action}`,
+        `[SelfHealer] ${result.healed ? "Healed" : "Could not heal"} ` +
+          `${ctx.subsystem}/${ctx.operation} in ${elapsed}ms — ${result.action}`,
       );
 
       // Record in history
@@ -154,7 +165,7 @@ export class SelfHealer {
       return {
         healed: false,
         diagnosis: `Healing failed: ${err instanceof Error ? err.message : String(err)}`,
-        action: 'none',
+        action: "none",
         filesChanged: [],
       };
     }
@@ -173,17 +184,22 @@ export class SelfHealer {
     if (this.anthropicProvider) return this.anthropicProvider;
 
     try {
-      this.anthropicProvider = this.providerRegistry.get('anthropic');
+      this.anthropicProvider = this.providerRegistry.get("anthropic");
       return this.anthropicProvider;
     } catch {
       // Anthropic not registered — try to find any provider with "anthropic" or "claude" in name
       const providers = this.providerRegistry.listProviders();
       for (const name of providers) {
-        if (name.toLowerCase().includes('anthropic') || name.toLowerCase().includes('claude')) {
+        if (
+          name.toLowerCase().includes("anthropic") ||
+          name.toLowerCase().includes("claude")
+        ) {
           try {
             this.anthropicProvider = this.providerRegistry.get(name);
             return this.anthropicProvider;
-          } catch { /* continue */ }
+          } catch {
+            /* continue */
+          }
         }
       }
       return null;
@@ -199,43 +215,35 @@ export class SelfHealer {
   private async gatherSourceContext(subsystem: string): Promise<string> {
     const fileMap: Record<string, string[]> = {
       learning: [
-        'learning/self-study.ts',
-        'learning/extractor.ts',
-        'learning/researcher.ts',
-        'learning/knowledge-graph.ts',
-        'learning/micro-learner.ts',
-        'pellets/store.ts',
-        'pellets/dedup.ts',
+        "learning/self-study.ts",
+        "learning/extractor.ts",
+        "learning/researcher.ts",
+        "learning/knowledge-graph.ts",
+        "learning/micro-learner.ts",
+        "pellets/store.ts",
+        "pellets/dedup.ts",
       ],
       evolution: [
-        'owls/evolution.ts',
-        'evolution/handler.ts',
-        'evolution/detector.ts',
-        'evolution/synthesizer.ts',
+        "owls/evolution.ts",
+        "evolution/handler.ts",
+        "evolution/detector.ts",
+        "evolution/synthesizer.ts",
       ],
       pellets: [
-        'pellets/store.ts',
-        'pellets/dedup.ts',
-        'pellets/tfidf.ts',
-        'pellets/graph.ts',
-        'pellets/concepts.ts',
+        "pellets/store.ts",
+        "pellets/dedup.ts",
+        "pellets/tfidf.ts",
+        "pellets/graph.ts",
+        "pellets/concepts.ts",
       ],
-      engine: [
-        'engine/runtime.ts',
-        'engine/router.ts',
-        'engine/planner.ts',
-      ],
+      engine: ["engine/runtime.ts", "engine/router.ts", "engine/planner.ts"],
       gateway: [
-        'gateway/core.ts',
-        'gateway/types.ts',
-        'orchestrator/orchestrator.ts',
-        'orchestrator/classifier.ts',
+        "gateway/core.ts",
+        "gateway/types.ts",
+        "orchestrator/orchestrator.ts",
+        "orchestrator/classifier.ts",
       ],
-      tools: [
-        'tools/search.ts',
-        'tools/shell.ts',
-        'tools/web.ts',
-      ],
+      tools: ["tools/search.ts", "tools/shell.ts", "tools/web.ts"],
     };
 
     // Get the relevant files, or default to the subsystem directory
@@ -247,11 +255,12 @@ export class SelfHealer {
       if (!existsSync(fullPath)) continue;
 
       try {
-        const content = await readFile(fullPath, 'utf-8');
+        const content = await readFile(fullPath, "utf-8");
         // Cap each file at 3000 chars to stay within context limits
-        const trimmed = content.length > 3000
-          ? content.slice(0, 3000) + '\n... [truncated]'
-          : content;
+        const trimmed =
+          content.length > 3000
+            ? content.slice(0, 3000) + "\n... [truncated]"
+            : content;
         parts.push(`=== FILE: src/${file} ===\n${trimmed}\n`);
       } catch {
         // Skip unreadable files
@@ -264,18 +273,23 @@ export class SelfHealer {
       if (existsSync(dirPath)) {
         try {
           const dirFiles = await readdir(dirPath);
-          for (const f of dirFiles.filter(f => f.endsWith('.ts')).slice(0, 5)) {
-            const content = await readFile(join(dirPath, f), 'utf-8');
-            const trimmed = content.length > 2000
-              ? content.slice(0, 2000) + '\n... [truncated]'
-              : content;
+          for (const f of dirFiles
+            .filter((f) => f.endsWith(".ts"))
+            .slice(0, 5)) {
+            const content = await readFile(join(dirPath, f), "utf-8");
+            const trimmed =
+              content.length > 2000
+                ? content.slice(0, 2000) + "\n... [truncated]"
+                : content;
             parts.push(`=== FILE: src/${subsystem}/${f} ===\n${trimmed}\n`);
           }
-        } catch { /* directory unreadable */ }
+        } catch {
+          /* directory unreadable */
+        }
       }
     }
 
-    return parts.join('\n');
+    return parts.join("\n");
   }
 
   /**
@@ -285,66 +299,89 @@ export class SelfHealer {
     const parts: string[] = [];
 
     // Config file
-    const configPath = join(this.workspacePath, '..', 'stackowl.config.json');
+    const configPath = join(this.workspacePath, "..", "stackowl.config.json");
     if (existsSync(configPath)) {
       try {
-        const config = await readFile(configPath, 'utf-8');
+        const config = await readFile(configPath, "utf-8");
         const parsed = JSON.parse(config);
         // Redact API keys
-        const redacted = JSON.stringify(parsed, (key, value) => {
-          if (key.toLowerCase().includes('key') || key.toLowerCase().includes('token')) {
-            return typeof value === 'string' ? value.slice(0, 8) + '...[REDACTED]' : value;
-          }
-          return value;
-        }, 2);
-        parts.push(`=== CONFIG (keys redacted) ===\n${redacted.slice(0, 2000)}\n`);
-      } catch { /* skip */ }
+        const redacted = JSON.stringify(
+          parsed,
+          (key, value) => {
+            if (
+              key.toLowerCase().includes("key") ||
+              key.toLowerCase().includes("token")
+            ) {
+              return typeof value === "string"
+                ? value.slice(0, 8) + "...[REDACTED]"
+                : value;
+            }
+            return value;
+          },
+          2,
+        );
+        parts.push(
+          `=== CONFIG (keys redacted) ===\n${redacted.slice(0, 2000)}\n`,
+        );
+      } catch {
+        /* skip */
+      }
     }
 
     // Knowledge graph state
-    const kgPath = join(this.workspacePath, 'knowledge_graph.json');
+    const kgPath = join(this.workspacePath, "knowledge_graph.json");
     if (existsSync(kgPath)) {
       try {
-        const kg = await readFile(kgPath, 'utf-8');
+        const kg = await readFile(kgPath, "utf-8");
         const parsed = JSON.parse(kg);
         const domainCount = Object.keys(parsed.domains ?? {}).length;
         const queueLen = (parsed.studyQueue ?? []).length;
-        parts.push(`=== KNOWLEDGE GRAPH STATE ===\nDomains: ${domainCount}, Study queue: ${queueLen}\n`);
-      } catch { /* skip */ }
+        parts.push(
+          `=== KNOWLEDGE GRAPH STATE ===\nDomains: ${domainCount}, Study queue: ${queueLen}\n`,
+        );
+      } catch {
+        /* skip */
+      }
     }
 
     // Pellet count
-    const pelletsDir = join(this.workspacePath, 'pellets');
+    const pelletsDir = join(this.workspacePath, "pellets");
     if (existsSync(pelletsDir)) {
       try {
         const files = await readdir(pelletsDir);
-        const mdFiles = files.filter(f => f.endsWith('.md'));
+        const mdFiles = files.filter((f) => f.endsWith(".md"));
         parts.push(`=== PELLETS ===\n${mdFiles.length} pellet files on disk\n`);
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
 
     // Session log (last 50 lines)
-    const logPath = join(this.workspacePath, 'logs', 'session.log');
+    const logPath = join(this.workspacePath, "logs", "session.log");
     if (existsSync(logPath)) {
       try {
-        const logContent = await readFile(logPath, 'utf-8');
-        const lines = logContent.split('\n');
-        const recentLines = lines.slice(-50).join('\n');
-        parts.push(`=== RECENT SESSION LOG (last 50 lines) ===\n${recentLines}\n`);
-      } catch { /* skip */ }
+        const logContent = await readFile(logPath, "utf-8");
+        const lines = logContent.split("\n");
+        const recentLines = lines.slice(-50).join("\n");
+        parts.push(
+          `=== RECENT SESSION LOG (last 50 lines) ===\n${recentLines}\n`,
+        );
+      } catch {
+        /* skip */
+      }
     }
 
     // Error details
     parts.push(
       `=== ERROR DETAILS ===\n` +
-      `Subsystem: ${ctx.subsystem}\n` +
-      `Operation: ${ctx.operation}\n` +
-      `Error: ${ctx.error.message}\n` +
-      `Stack: ${ctx.error.stack?.slice(0, 500) ?? 'no stack'}\n` +
-      (ctx.context ? `Context: ${ctx.context}\n` : ''),
+        `Subsystem: ${ctx.subsystem}\n` +
+        `Operation: ${ctx.operation}\n` +
+        `Error: ${ctx.error.message}\n` +
+        `Stack: ${ctx.error.stack?.slice(0, 500) ?? "no stack"}\n` +
+        (ctx.context ? `Context: ${ctx.context}\n` : ""),
     );
 
-    return parts.join('\n');
+    return parts.join("\n");
   }
 
   // ─── Private: Diagnosis ───────────────────────────────────────
@@ -402,29 +439,32 @@ export class SelfHealer {
     const response = await provider.chat(
       [
         {
-          role: 'system',
+          role: "system",
           content:
-            'You are a self-healing diagnostic AI. You read source code, diagnose failures, ' +
-            'and prescribe minimal fixes. Output only valid JSON. Be conservative — ' +
-            'a wrong fix is worse than no fix.',
+            "You are a self-healing diagnostic AI. You read source code, diagnose failures, " +
+            "and prescribe minimal fixes. Output only valid JSON. Be conservative — " +
+            "a wrong fix is worse than no fix.",
         },
-        { role: 'user', content: prompt },
+        { role: "user", content: prompt },
       ],
       undefined,
       { temperature: 0.1, maxTokens: 2048 },
     );
 
     let jsonStr = response.content.trim();
-    if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/^```json?/, '').replace(/```$/, '').trim();
+    if (jsonStr.startsWith("```")) {
+      jsonStr = jsonStr
+        .replace(/^```json?/, "")
+        .replace(/```$/, "")
+        .trim();
     }
     // Strip JS-style comments and trailing commas
-    jsonStr = jsonStr.replace(/\/\/[^\n]*/g, '');
-    jsonStr = jsonStr.replace(/,\s*([}\]])/g, '$1');
+    jsonStr = jsonStr.replace(/\/\/[^\n]*/g, "");
+    jsonStr = jsonStr.replace(/,\s*([}\]])/g, "$1");
 
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('Diagnosis returned no JSON');
+      throw new Error("Diagnosis returned no JSON");
     }
 
     return JSON.parse(jsonMatch[0]) as DiagnosisResponse;
@@ -444,29 +484,29 @@ export class SelfHealer {
     };
 
     switch (diagnosis.action) {
-      case 'skip':
+      case "skip":
         base.healed = true; // Nothing to fix
         base.action = `Transient: ${diagnosis.explanation}`;
         return base;
 
-      case 'external_dependency':
+      case "external_dependency":
         base.action = `External: ${diagnosis.explanation}`;
         return base;
 
-      case 'restart_needed':
+      case "restart_needed":
         base.action = `Restart required: ${diagnosis.explanation}`;
         log.evolution.warn(
           `[SelfHealer] Fix requires restart: ${diagnosis.explanation}`,
         );
         return base;
 
-      case 'config_fix':
+      case "config_fix":
         return this.applyConfigFix(diagnosis, base);
 
-      case 'data_cleanup':
+      case "data_cleanup":
         return this.applyDataCleanup(diagnosis, base);
 
-      case 'code_patch':
+      case "code_patch":
         return this.applyDataPatch(diagnosis, base);
 
       default:
@@ -481,28 +521,28 @@ export class SelfHealer {
   ): Promise<HealingResult> {
     if (!diagnosis.configFix) return result;
 
-    const configPath = join(this.workspacePath, '..', 'stackowl.config.json');
+    const configPath = join(this.workspacePath, "..", "stackowl.config.json");
     if (!existsSync(configPath)) {
-      result.action = 'Config file not found';
+      result.action = "Config file not found";
       return result;
     }
 
     try {
-      const raw = await readFile(configPath, 'utf-8');
+      const raw = await readFile(configPath, "utf-8");
       const config = JSON.parse(raw);
 
       // Apply dot-notation path
-      const keys = diagnosis.configFix.key.split('.');
+      const keys = diagnosis.configFix.key.split(".");
       let obj = config;
       for (let i = 0; i < keys.length - 1; i++) {
-        if (typeof obj[keys[i]] !== 'object' || obj[keys[i]] === null) {
+        if (typeof obj[keys[i]] !== "object" || obj[keys[i]] === null) {
           obj[keys[i]] = {};
         }
         obj = obj[keys[i]];
       }
       obj[keys[keys.length - 1]] = diagnosis.configFix.value;
 
-      await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
 
       result.healed = true;
       result.action = `Config: set ${diagnosis.configFix.key} = ${JSON.stringify(diagnosis.configFix.value)} — ${diagnosis.configFix.reason}`;
@@ -531,13 +571,13 @@ export class SelfHealer {
     }
 
     try {
-      const { unlink } = await import('node:fs/promises');
+      const { unlink } = await import("node:fs/promises");
       const files = await readdir(dir);
       const pattern = new RegExp(
         diagnosis.dataCleanup.pattern
-          .replace(/\./g, '\\.')
-          .replace(/\*/g, '.*')
-          .replace(/\?/g, '.'),
+          .replace(/\./g, "\\.")
+          .replace(/\*/g, ".*")
+          .replace(/\?/g, "."),
       );
 
       let cleaned = 0;
@@ -569,48 +609,52 @@ export class SelfHealer {
     if (!diagnosis.fix) return result;
 
     // Safety: only allow patching data files (JSON, MD), never TypeScript source
-    const allowedExtensions = ['.json', '.md', '.yaml', '.yml', '.txt'];
-    const ext = diagnosis.fix.file.slice(diagnosis.fix.file.lastIndexOf('.'));
+    const allowedExtensions = [".json", ".md", ".yaml", ".yml", ".txt"];
+    const ext = diagnosis.fix.file.slice(diagnosis.fix.file.lastIndexOf("."));
     if (!allowedExtensions.includes(ext)) {
-      result.action = `Refused to patch ${diagnosis.fix.file} — only data files allowed (${allowedExtensions.join(', ')})`;
+      result.action = `Refused to patch ${diagnosis.fix.file} — only data files allowed (${allowedExtensions.join(", ")})`;
       log.evolution.warn(
         `[SelfHealer] Blocked attempt to patch source file: ${diagnosis.fix.file}`,
       );
       return result;
     }
 
-    const filePath = join(this.workspacePath, '..', diagnosis.fix.file);
+    const filePath = join(this.workspacePath, "..", diagnosis.fix.file);
 
     try {
       switch (diagnosis.fix.type) {
-        case 'write_json': {
+        case "write_json": {
           if (!diagnosis.fix.content) break;
-          await writeFile(filePath, diagnosis.fix.content, 'utf-8');
+          await writeFile(filePath, diagnosis.fix.content, "utf-8");
           result.healed = true;
           result.action = `Wrote ${diagnosis.fix.file}`;
           result.filesChanged = [filePath];
           break;
         }
 
-        case 'replace': {
-          if (!diagnosis.fix.search || diagnosis.fix.replace === undefined) break;
+        case "replace": {
+          if (!diagnosis.fix.search || diagnosis.fix.replace === undefined)
+            break;
           if (!existsSync(filePath)) break;
-          const content = await readFile(filePath, 'utf-8');
+          const content = await readFile(filePath, "utf-8");
           if (!content.includes(diagnosis.fix.search)) {
             result.action = `Search string not found in ${diagnosis.fix.file}`;
             break;
           }
-          const newContent = content.replace(diagnosis.fix.search, diagnosis.fix.replace);
-          await writeFile(filePath, newContent, 'utf-8');
+          const newContent = content.replace(
+            diagnosis.fix.search,
+            diagnosis.fix.replace,
+          );
+          await writeFile(filePath, newContent, "utf-8");
           result.healed = true;
           result.action = `Patched ${diagnosis.fix.file}`;
           result.filesChanged = [filePath];
           break;
         }
 
-        case 'delete_file': {
+        case "delete_file": {
           if (!existsSync(filePath)) break;
-          const { unlink } = await import('node:fs/promises');
+          const { unlink } = await import("node:fs/promises");
           await unlink(filePath);
           result.healed = true;
           result.action = `Deleted ${diagnosis.fix.file}`;

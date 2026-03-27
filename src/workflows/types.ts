@@ -8,14 +8,26 @@
 
 // ─── Step Types ──────────────────────────────────────────────
 
-export type StepType = "tool" | "llm" | "agent" | "condition" | "parallel" | "wait";
+export type StepType =
+  | "tool"
+  | "llm"
+  | "agent"
+  | "condition"
+  | "parallel"
+  | "wait";
 
 export interface WorkflowStep {
   id: string;
   name: string;
   type: StepType;
   /** Step-specific configuration */
-  config: ToolStepConfig | LlmStepConfig | AgentStepConfig | ConditionStepConfig | ParallelStepConfig | WaitStepConfig;
+  config:
+    | ToolStepConfig
+    | LlmStepConfig
+    | AgentStepConfig
+    | ConditionStepConfig
+    | ParallelStepConfig
+    | WaitStepConfig;
   /** Steps that must complete before this one */
   dependsOn?: string[];
   /** Max retries on failure. Default: 0 */
@@ -101,7 +113,12 @@ export interface WorkflowParameter {
 
 // ─── Execution ───────────────────────────────────────────────
 
-export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type StepStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
 
 export interface StepResult {
   stepId: string;

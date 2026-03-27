@@ -36,9 +36,7 @@ export class RateLimitedProvider implements ModelProvider {
       log.engine.warn(
         `[RateLimitedProvider] ${this.providerKey} rate limited by "${result.rule}" — retry in ${waitSec}s`,
       );
-      throw new Error(
-        `Rate limited (${result.rule}): retry after ${waitSec}s`,
-      );
+      throw new Error(`Rate limited (${result.rule}): retry after ${waitSec}s`);
     }
   }
 

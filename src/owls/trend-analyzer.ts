@@ -12,7 +12,7 @@
  * or block the entire evolution pass.
  */
 
-import type { OwlDNA, EvolutionEntry } from './persona.js';
+import type { OwlDNA, EvolutionEntry } from "./persona.js";
 // logger reserved for future use
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -80,7 +80,9 @@ export class EvolutionTrendAnalyzer {
     for (const osc of oscillations) {
       if (osc.isOscillating) {
         frozenTraits.push(osc.trait);
-        reasons.push(`"${osc.trait}" is oscillating (values: ${osc.values.slice(-4).join(' → ')})`);
+        reasons.push(
+          `"${osc.trait}" is oscillating (values: ${osc.values.slice(-4).join(" → ")})`,
+        );
         healthScore -= 0.1;
       }
     }
@@ -95,7 +97,9 @@ export class EvolutionTrendAnalyzer {
     // 3. Detect stagnation
     const stagnation = this.detectStagnation(dna);
     if (stagnation.isStagnating) {
-      reasons.push(`No evolution for ${stagnation.weeksSinceLastEvolution} weeks — consider triggering manual review`);
+      reasons.push(
+        `No evolution for ${stagnation.weeksSinceLastEvolution} weeks — consider triggering manual review`,
+      );
       healthScore -= 0.05; // Mild concern
     }
 
@@ -104,7 +108,9 @@ export class EvolutionTrendAnalyzer {
     for (const [type, avg] of typeAnalysis) {
       if (avg < EvolutionTrendAnalyzer.EFFECTIVENESS_FLOOR) {
         avoidTypes.push(type);
-        reasons.push(`"${type}" mutations average ${(avg * 100).toFixed(0)}% effectiveness — avoid`);
+        reasons.push(
+          `"${type}" mutations average ${(avg * 100).toFixed(0)}% effectiveness — avoid`,
+        );
       } else if (avg > 0.7) {
         preferTypes.push(type);
       }
@@ -113,7 +119,9 @@ export class EvolutionTrendAnalyzer {
     // 5. Decision: should we evolve?
     const shouldEvolve = healthScore > 0.3 && frozenTraits.length < 3;
     if (!shouldEvolve) {
-      reasons.push('Evolution PAUSED — too many issues detected. Allow stabilization.');
+      reasons.push(
+        "Evolution PAUSED — too many issues detected. Allow stabilization.",
+      );
     }
 
     return {
@@ -121,7 +129,7 @@ export class EvolutionTrendAnalyzer {
       frozenTraits,
       avoidMutationTypes: avoidTypes,
       preferMutationTypes: preferTypes,
-      reasoning: reasons.join('; '),
+      reasoning: reasons.join("; "),
       healthScore: Math.max(0, Math.min(1, healthScore)),
     };
   }
@@ -135,38 +143,44 @@ export class EvolutionTrendAnalyzer {
 
     if (analysis.frozenTraits.length > 0) {
       lines.push(
-        `FROZEN TRAITS (DO NOT MUTATE): ${analysis.frozenTraits.join(', ')}. ` +
-        `These traits have been oscillating — leave them unchanged.`,
+        `FROZEN TRAITS (DO NOT MUTATE): ${analysis.frozenTraits.join(", ")}. ` +
+          `These traits have been oscillating — leave them unchanged.`,
       );
     }
 
     if (analysis.avoidMutationTypes.length > 0) {
       lines.push(
-        `AVOID these mutation types (historically ineffective): ${analysis.avoidMutationTypes.join(', ')}`,
+        `AVOID these mutation types (historically ineffective): ${analysis.avoidMutationTypes.join(", ")}`,
       );
     }
 
     if (analysis.preferMutationTypes.length > 0) {
       lines.push(
-        `PREFER these mutation types (historically effective): ${analysis.preferMutationTypes.join(', ')}`,
+        `PREFER these mutation types (historically effective): ${analysis.preferMutationTypes.join(", ")}`,
       );
     }
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
   // ─── Oscillation Detection ─────────────────────────────────────
 
   private detectOscillation(entries: EvolutionEntry[]): TraitHistory[] {
     const window = entries.slice(-EvolutionTrendAnalyzer.OSCILLATION_WINDOW);
-    const traitTimeline = new Map<string, { values: string[]; timestamps: string[] }>();
+    const traitTimeline = new Map<
+      string,
+      { values: string[]; timestamps: string[] }
+    >();
 
     for (const entry of window) {
       for (const mutation of entry.mutations) {
         const parsed = this.parseMutation(mutation);
         if (!parsed) continue;
 
-        const existing = traitTimeline.get(parsed.trait) ?? { values: [], timestamps: [] };
+        const existing = traitTimeline.get(parsed.trait) ?? {
+          values: [],
+          timestamps: [],
+        };
         existing.values.push(parsed.newValue);
         existing.timestamps.push(entry.timestamp);
         traitTimeline.set(parsed.trait, existing);
@@ -203,21 +217,28 @@ export class EvolutionTrendAnalyzer {
 
   // ─── Regression Detection ──────────────────────────────────────
 
-  private detectRegression(entries: EvolutionEntry[]): { isRegressing: boolean; trend: string } {
-    const withEffectiveness = entries.filter(e => e.effectiveness !== undefined);
+  private detectRegression(entries: EvolutionEntry[]): {
+    isRegressing: boolean;
+    trend: string;
+  } {
+    const withEffectiveness = entries.filter(
+      (e) => e.effectiveness !== undefined,
+    );
     if (withEffectiveness.length < 4) {
-      return { isRegressing: false, trend: 'insufficient data' };
+      return { isRegressing: false, trend: "insufficient data" };
     }
 
     const recent = withEffectiveness.slice(-5);
     const earlier = withEffectiveness.slice(-10, -5);
 
     if (earlier.length === 0) {
-      return { isRegressing: false, trend: 'insufficient history' };
+      return { isRegressing: false, trend: "insufficient history" };
     }
 
-    const recentAvg = recent.reduce((s, e) => s + (e.effectiveness ?? 0), 0) / recent.length;
-    const earlierAvg = earlier.reduce((s, e) => s + (e.effectiveness ?? 0), 0) / earlier.length;
+    const recentAvg =
+      recent.reduce((s, e) => s + (e.effectiveness ?? 0), 0) / recent.length;
+    const earlierAvg =
+      earlier.reduce((s, e) => s + (e.effectiveness ?? 0), 0) / earlier.length;
     const delta = recentAvg - earlierAvg;
 
     if (delta < -0.1) {
@@ -227,17 +248,25 @@ export class EvolutionTrendAnalyzer {
       };
     }
 
-    return { isRegressing: false, trend: `stable at ${(recentAvg * 100).toFixed(0)}%` };
+    return {
+      isRegressing: false,
+      trend: `stable at ${(recentAvg * 100).toFixed(0)}%`,
+    };
   }
 
   // ─── Stagnation Detection ──────────────────────────────────────
 
-  private detectStagnation(dna: OwlDNA): { isStagnating: boolean; weeksSinceLastEvolution: number } {
+  private detectStagnation(dna: OwlDNA): {
+    isStagnating: boolean;
+    weeksSinceLastEvolution: number;
+  } {
     if (!dna.lastEvolved) {
       return { isStagnating: true, weeksSinceLastEvolution: 999 };
     }
 
-    const daysSince = (Date.now() - new Date(dna.lastEvolved).getTime()) / (1000 * 60 * 60 * 24);
+    const daysSince =
+      (Date.now() - new Date(dna.lastEvolved).getTime()) /
+      (1000 * 60 * 60 * 24);
     const weeks = Math.floor(daysSince / 7);
 
     return {
@@ -274,23 +303,34 @@ export class EvolutionTrendAnalyzer {
 
   // ─── Helpers ───────────────────────────────────────────────────
 
-  private parseMutation(mutation: string): { trait: string; newValue: string } | null {
+  private parseMutation(
+    mutation: string,
+  ): { trait: string; newValue: string } | null {
     // "Verbosity changed: balanced -> concise"
     const changeMatch = mutation.match(/(.+?) changed: .+ -> (.+)/i);
     if (changeMatch) {
-      return { trait: changeMatch[1].trim().toLowerCase(), newValue: changeMatch[2].trim() };
+      return {
+        trait: changeMatch[1].trim().toLowerCase(),
+        newValue: changeMatch[2].trim(),
+      };
     }
 
     // "Learned preference: prefers_rust = 0.9"
     const prefMatch = mutation.match(/Learned preference: (.+?) = (.+)/i);
     if (prefMatch) {
-      return { trait: `pref:${prefMatch[1].trim()}`, newValue: prefMatch[2].trim() };
+      return {
+        trait: `pref:${prefMatch[1].trim()}`,
+        newValue: prefMatch[2].trim(),
+      };
     }
 
     // "Grew expertise in rust_macros (+0.1)"
     const expertiseMatch = mutation.match(/Grew expertise in (.+?) \(/i);
     if (expertiseMatch) {
-      return { trait: `expertise:${expertiseMatch[1].trim()}`, newValue: 'grew' };
+      return {
+        trait: `expertise:${expertiseMatch[1].trim()}`,
+        newValue: "grew",
+      };
     }
 
     return null;
@@ -298,12 +338,12 @@ export class EvolutionTrendAnalyzer {
 
   private classifyMutationType(mutation: string): string {
     const lower = mutation.toLowerCase();
-    if (lower.includes('verbosity')) return 'verbosity';
-    if (lower.includes('challenge')) return 'challenge';
-    if (lower.includes('preference')) return 'preference';
-    if (lower.includes('expertise')) return 'expertise';
-    if (lower.includes('humor')) return 'humor';
-    if (lower.includes('formality')) return 'formality';
-    return 'other';
+    if (lower.includes("verbosity")) return "verbosity";
+    if (lower.includes("challenge")) return "challenge";
+    if (lower.includes("preference")) return "preference";
+    if (lower.includes("expertise")) return "expertise";
+    if (lower.includes("humor")) return "humor";
+    if (lower.includes("formality")) return "formality";
+    return "other";
   }
 }

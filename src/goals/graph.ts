@@ -11,17 +11,17 @@
  *   - Injected into the system prompt so the owl has working memory
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ModelProvider, ChatMessage } from '../providers/base.js';
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type {
   Goal,
   GoalStatus,
   GoalPriority,
   GoalExtraction,
-} from './types.js';
-import { log } from '../logger.js';
+} from "./types.js";
+import { log } from "../logger.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ export class GoalGraph {
   private loaded = false;
 
   constructor(workspacePath: string) {
-    this.filePath = join(workspacePath, 'goals', 'goal-graph.json');
+    this.filePath = join(workspacePath, "goals", "goal-graph.json");
   }
 
   // ─── Persistence ───────────────────────────────────────────────
@@ -45,25 +45,27 @@ export class GoalGraph {
     if (this.loaded) return;
     try {
       if (existsSync(this.filePath)) {
-        const data = await readFile(this.filePath, 'utf-8');
+        const data = await readFile(this.filePath, "utf-8");
         const parsed = JSON.parse(data) as Goal[];
         for (const goal of parsed) {
           this.goals.set(goal.id, goal);
         }
       }
     } catch (err) {
-      log.engine.warn(`[GoalGraph] Failed to load: ${err instanceof Error ? err.message : err}`);
+      log.engine.warn(
+        `[GoalGraph] Failed to load: ${err instanceof Error ? err.message : err}`,
+      );
     }
     this.loaded = true;
   }
 
   async save(): Promise<void> {
-    const dir = join(this.filePath, '..');
+    const dir = join(this.filePath, "..");
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
     const data = JSON.stringify([...this.goals.values()], null, 2);
-    await writeFile(this.filePath, data, 'utf-8');
+    await writeFile(this.filePath, data, "utf-8");
   }
 
   // ─── CRUD ──────────────────────────────────────────────────────
@@ -81,7 +83,7 @@ export class GoalGraph {
       id: `goal_${now}_${Math.random().toString(36).slice(2, 8)}`,
       title: params.title,
       description: params.description,
-      status: 'active',
+      status: "active",
       priority: params.priority,
       subGoalIds: [],
       parentId: params.parentId,
@@ -120,10 +122,10 @@ export class GoalGraph {
 
     goal.status = status;
     goal.updatedAt = Date.now();
-    if (status === 'blocked' && reason) {
+    if (status === "blocked" && reason) {
       goal.blockedReason = reason;
     }
-    if (status === 'completed') {
+    if (status === "completed") {
       goal.progress = 100;
     }
   }
@@ -132,8 +134,8 @@ export class GoalGraph {
     const goal = this.goals.get(goalId);
     if (!goal) return;
 
-    const milestone = goal.milestones.find(
-      m => m.description.toLowerCase().includes(milestoneDesc.toLowerCase()),
+    const milestone = goal.milestones.find((m) =>
+      m.description.toLowerCase().includes(milestoneDesc.toLowerCase()),
     );
     if (milestone && !milestone.completed) {
       milestone.completed = true;
@@ -142,7 +144,7 @@ export class GoalGraph {
 
       // Recalculate progress
       const total = goal.milestones.length;
-      const done = goal.milestones.filter(m => m.completed).length;
+      const done = goal.milestones.filter((m) => m.completed).length;
       goal.progress = total > 0 ? Math.round((done / total) * 100) : 0;
 
       log.engine.info(
@@ -169,11 +171,13 @@ export class GoalGraph {
   }
 
   getActive(): Goal[] {
-    return this.getAll().filter(g => g.status === 'active' || g.status === 'in_progress');
+    return this.getAll().filter(
+      (g) => g.status === "active" || g.status === "in_progress",
+    );
   }
 
   getBlocked(): Goal[] {
-    return this.getAll().filter(g => g.status === 'blocked');
+    return this.getAll().filter((g) => g.status === "blocked");
   }
 
   /**
@@ -181,7 +185,7 @@ export class GoalGraph {
    */
   getStale(daysThreshold: number = STALE_THRESHOLD_DAYS): Goal[] {
     const cutoff = Date.now() - daysThreshold * 24 * 60 * 60 * 1000;
-    return this.getActive().filter(g => g.lastActiveAt < cutoff);
+    return this.getActive().filter((g) => g.lastActiveAt < cutoff);
   }
 
   /**
@@ -189,17 +193,17 @@ export class GoalGraph {
    */
   findByTitle(titleQuery: string): Goal | undefined {
     const lower = titleQuery.toLowerCase();
-    return this.getAll().find(g => g.title.toLowerCase().includes(lower));
+    return this.getAll().find((g) => g.title.toLowerCase().includes(lower));
   }
 
   /**
    * Get the highest-priority active goal.
    */
   getTopPriority(): Goal | undefined {
-    const priorityOrder: GoalPriority[] = ['critical', 'high', 'medium', 'low'];
+    const priorityOrder: GoalPriority[] = ["critical", "high", "medium", "low"];
     const active = this.getActive();
     for (const p of priorityOrder) {
-      const found = active.find(g => g.priority === p);
+      const found = active.find((g) => g.priority === p);
       if (found) return found;
     }
     return active[0];
@@ -213,22 +217,24 @@ export class GoalGraph {
    */
   toContextString(): string {
     const active = this.getActive();
-    if (active.length === 0) return '';
+    if (active.length === 0) return "";
 
-    const lines = ['<user_goals>'];
+    const lines = ["<user_goals>"];
     for (const goal of active.slice(0, 8)) {
-      const milestoneStr = goal.milestones.length > 0
-        ? ` | Milestones: ${goal.milestones.map(m => `${m.completed ? '✓' : '○'} ${m.description}`).join(', ')}`
-        : '';
-      const blockerStr = goal.status === 'blocked' && goal.blockedReason
-        ? ` | BLOCKED: ${goal.blockedReason}`
-        : '';
+      const milestoneStr =
+        goal.milestones.length > 0
+          ? ` | Milestones: ${goal.milestones.map((m) => `${m.completed ? "✓" : "○"} ${m.description}`).join(", ")}`
+          : "";
+      const blockerStr =
+        goal.status === "blocked" && goal.blockedReason
+          ? ` | BLOCKED: ${goal.blockedReason}`
+          : "";
       lines.push(
         `  [${goal.priority.toUpperCase()}] ${goal.title} — ${goal.progress}% complete${milestoneStr}${blockerStr}`,
       );
     }
-    lines.push('</user_goals>');
-    return lines.join('\n');
+    lines.push("</user_goals>");
+    return lines.join("\n");
   }
 
   // ─── LLM-based Extraction ─────────────────────────────────────
@@ -244,19 +250,19 @@ export class GoalGraph {
     await this.load();
 
     const userMessages = messages
-      .filter(m => m.role === 'user')
-      .map(m => (m.content ?? '').slice(0, 300))
-      .join('\n');
+      .filter((m) => m.role === "user")
+      .map((m) => (m.content ?? "").slice(0, 300))
+      .join("\n");
 
     if (userMessages.length < 20) return; // Too short to extract goals
 
     const existingGoals = this.getAll()
-      .map(g => `- "${g.title}" [${g.status}] ${g.progress}%`)
-      .join('\n');
+      .map((g) => `- "${g.title}" [${g.status}] ${g.progress}%`)
+      .join("\n");
 
     const systemPrompt =
       `You analyze conversations to extract user goals.` +
-      `\nExisting goals:\n${existingGoals || '(none)'}` +
+      `\nExisting goals:\n${existingGoals || "(none)"}` +
       `\n\nOutput valid JSON matching this schema:` +
       `\n{ "newGoals": [{ "title": string, "description": string, "priority": "critical"|"high"|"medium"|"low", "milestones": string[] }],` +
       `  "goalUpdates": [{ "goalTitle": string, "statusChange"?: string, "progressDelta"?: number, "milestonesCompleted"?: string[] }] }` +
@@ -269,16 +275,19 @@ export class GoalGraph {
     try {
       const response = await provider.chat(
         [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Conversation:\n${userMessages}` },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Conversation:\n${userMessages}` },
         ],
         undefined,
         { temperature: 0, maxTokens: 512 },
       );
 
       let jsonStr = response.content.trim();
-      if (jsonStr.startsWith('```')) {
-        jsonStr = jsonStr.replace(/^```(?:json)?/, '').replace(/```$/, '').trim();
+      if (jsonStr.startsWith("```")) {
+        jsonStr = jsonStr
+          .replace(/^```(?:json)?/, "")
+          .replace(/```$/, "")
+          .trim();
       }
 
       const extraction = JSON.parse(jsonStr) as GoalExtraction;

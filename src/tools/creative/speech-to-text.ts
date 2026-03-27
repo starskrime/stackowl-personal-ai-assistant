@@ -13,7 +13,17 @@ import type { ToolImplementation, ToolContext } from "../registry.js";
 const execAsync = promisify(exec);
 const EXEC_TIMEOUT_MS = 30_000;
 
-const SUPPORTED_FORMATS = [".mp3", ".mp4", ".wav", ".m4a", ".webm", ".mpeg", ".mpga", ".oga", ".ogg"];
+const SUPPORTED_FORMATS = [
+  ".mp3",
+  ".mp4",
+  ".wav",
+  ".m4a",
+  ".webm",
+  ".mpeg",
+  ".mpga",
+  ".oga",
+  ".ogg",
+];
 
 export const SpeechToTextTool: ToolImplementation = {
   definition: {
@@ -78,7 +88,10 @@ export const SpeechToTextTool: ToolImplementation = {
       }
 
       try {
-        const result = JSON.parse(stdout) as { text?: string; error?: { message: string } };
+        const result = JSON.parse(stdout) as {
+          text?: string;
+          error?: { message: string };
+        };
         if (result.error) {
           return `Whisper API error: ${result.error.message}`;
         }

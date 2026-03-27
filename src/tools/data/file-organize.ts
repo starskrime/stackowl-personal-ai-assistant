@@ -10,12 +10,65 @@ import { resolve, extname, join } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
 const TYPE_CATEGORIES: Record<string, string[]> = {
-  Documents: [".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".xls", ".xlsx", ".csv", ".ppt", ".pptx", ".pages", ".numbers", ".key"],
-  Images: [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".ico", ".tiff", ".heic", ".heif"],
+  Documents: [
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".txt",
+    ".rtf",
+    ".odt",
+    ".xls",
+    ".xlsx",
+    ".csv",
+    ".ppt",
+    ".pptx",
+    ".pages",
+    ".numbers",
+    ".key",
+  ],
+  Images: [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".svg",
+    ".webp",
+    ".ico",
+    ".tiff",
+    ".heic",
+    ".heif",
+  ],
   Videos: [".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v"],
   Audio: [".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a", ".opus"],
   Archives: [".zip", ".tar", ".gz", ".rar", ".7z", ".bz2", ".xz", ".tgz"],
-  Code: [".js", ".ts", ".py", ".rb", ".java", ".c", ".cpp", ".h", ".go", ".rs", ".swift", ".kt", ".cs", ".php", ".html", ".css", ".json", ".yaml", ".yml", ".xml", ".sh", ".bash", ".zsh", ".sql", ".md"],
+  Code: [
+    ".js",
+    ".ts",
+    ".py",
+    ".rb",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".go",
+    ".rs",
+    ".swift",
+    ".kt",
+    ".cs",
+    ".php",
+    ".html",
+    ".css",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".sql",
+    ".md",
+  ],
 };
 
 function getCategoryForExt(ext: string): string {
@@ -27,7 +80,7 @@ function getCategoryForExt(ext: string): string {
 }
 
 function getSizeCategory(bytes: number): string {
-  if (bytes < 100 * 1024) return "Small";       // < 100KB
+  if (bytes < 100 * 1024) return "Small"; // < 100KB
   if (bytes < 10 * 1024 * 1024) return "Medium"; // < 10MB
   return "Large";
 }

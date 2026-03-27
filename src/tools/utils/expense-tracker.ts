@@ -81,9 +81,7 @@ export const ExpenseTrackerTool: ToolImplementation = {
         case "add": {
           const amount = args.amount ? Number(args.amount) : NaN;
           const category = args.category ? String(args.category) : "";
-          const description = args.description
-            ? String(args.description)
-            : "";
+          const description = args.description ? String(args.description) : "";
 
           if (!isFinite(amount) || amount <= 0) {
             return 'Error: Valid positive "amount" is required.';
@@ -121,15 +119,12 @@ export const ExpenseTrackerTool: ToolImplementation = {
           const byCategory: Record<string, number> = {};
           let total = 0;
           for (const e of monthExpenses) {
-            byCategory[e.category] =
-              (byCategory[e.category] ?? 0) + e.amount;
+            byCategory[e.category] = (byCategory[e.category] ?? 0) + e.amount;
             total += e.amount;
           }
 
           let result = `Expense Summary for ${currentMonth}:\n${"=".repeat(35)}\n`;
-          const sorted = Object.entries(byCategory).sort(
-            (a, b) => b[1] - a[1],
-          );
+          const sorted = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
           for (const [cat, amt] of sorted) {
             const pct = ((amt / total) * 100).toFixed(1);
             result += `  ${cat.padEnd(18)} $${amt.toFixed(2).padStart(8)} (${pct}%)\n`;

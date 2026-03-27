@@ -30,23 +30,23 @@
  *   - ToolScope (2025): cosine similarity thresholds 0.85–0.92 for deduplication
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { Skill } from '../skills/types.js';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { Skill } from "../skills/types.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
 export type RequestType =
-  | 'CONVERSATIONAL' // greetings, thanks, small talk
-  | 'INFORMATIONAL'  // facts, explanations, knowledge questions
-  | 'ANALYTICAL'     // summarize, analyze, compare existing content
-  | 'OPERATIONAL';   // system actions: send, create, control, download, run
+  | "CONVERSATIONAL" // greetings, thanks, small talk
+  | "INFORMATIONAL" // facts, explanations, knowledge questions
+  | "ANALYTICAL" // summarize, analyze, compare existing content
+  | "OPERATIONAL"; // system actions: send, create, control, download, run
 
 export type SynthesisVerdict =
-  | 'SKIP'               // Request type doesn't warrant synthesis
-  | 'COVERED'            // Existing tools/skills already handle this
-  | 'NEAR_DUPLICATE'     // Very similar skill exists — improve it instead of creating new
-  | 'SYNTHESIZE';        // Genuine capability gap — proceed with synthesis
+  | "SKIP" // Request type doesn't warrant synthesis
+  | "COVERED" // Existing tools/skills already handle this
+  | "NEAR_DUPLICATE" // Very similar skill exists — improve it instead of creating new
+  | "SYNTHESIZE"; // Genuine capability gap — proceed with synthesis
 
 export interface AssessmentResult {
   verdict: SynthesisVerdict;
@@ -74,32 +74,53 @@ const INFORMATIONAL_STARTERS = [
 
 /** Words that signal a genuine system-level action need */
 const OPERATIONAL_VERBS = [
-  'send', 'post', 'email', 'tweet', 'message', 'notify',
-  'download', 'upload', 'save', 'create file', 'write file',
-  'take screenshot', 'capture', 'record',
-  'open app', 'launch', 'install', 'run command',
-  'control', 'click', 'type', 'press',
-  'monitor', 'watch', 'track',
-  'schedule', 'remind',
-  'connect', 'sync',
+  "send",
+  "post",
+  "email",
+  "tweet",
+  "message",
+  "notify",
+  "download",
+  "upload",
+  "save",
+  "create file",
+  "write file",
+  "take screenshot",
+  "capture",
+  "record",
+  "open app",
+  "launch",
+  "install",
+  "run command",
+  "control",
+  "click",
+  "type",
+  "press",
+  "monitor",
+  "watch",
+  "track",
+  "schedule",
+  "remind",
+  "connect",
+  "sync",
 ];
 
 function heuristicRequestType(userRequest: string): RequestType | null {
   const lower = userRequest.toLowerCase().trim();
 
   // Very short messages are likely conversational
-  if (lower.length < 20 && CONVERSATIONAL_PATTERNS.some(p => p.test(lower))) {
-    return 'CONVERSATIONAL';
+  if (lower.length < 20 && CONVERSATIONAL_PATTERNS.some((p) => p.test(lower))) {
+    return "CONVERSATIONAL";
   }
 
   // Informational starters
-  if (INFORMATIONAL_STARTERS.some(p => p.test(lower))) {
-    return 'INFORMATIONAL';
+  if (INFORMATIONAL_STARTERS.some((p) => p.test(lower))) {
+    return "INFORMATIONAL";
   }
 
   // Operational verbs
-  if (OPERATIONAL_VERBS.some(v => lower.includes(v))) {
-    return 'OPERATIONAL';
+  if (OPERATIONAL_VERBS.some((v) => lower.includes(v))) {
+    return "OPERATIONAL";
   }
 
   return null; // uncertain — let LLM decide
@@ -107,10 +128,13 @@ function heuristicRequestType(userRequest: string): RequestType | null {
 
 /** Keyword-based overlap between a user request and a skill's name + description */
 function computeOverlap(userRequest: string, skill: Skill): number {
-  const requestWords = userRequest.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+  const requestWords = userRequest
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((w) => w.length > 3);
   const skillText = `${skill.name} ${skill.description}`.toLowerCase();
   if (requestWords.length === 0) return 0;
-  const matchCount = requestWords.filter(w => skillText.includes(w)).length;
+  const matchCount = requestWords.filter((w) => skillText.includes(w)).length;
   return matchCount / requestWords.length;
 }
 
@@ -138,19 +162,20 @@ export class CapabilityNeedAssessor {
     // ── Gate 1: Fast heuristic pre-filter ────────────────────────
     const heuristicType = heuristicRequestType(userRequest);
 
-    if (heuristicType === 'CONVERSATIONAL') {
+    if (heuristicType === "CONVERSATIONAL") {
       return {
-        verdict: 'SKIP',
-        requestType: 'CONVERSATIONAL',
-        reasoning: 'Conversational request — no skill synthesis needed.',
+        verdict: "SKIP",
+        requestType: "CONVERSATIONAL",
+        reasoning: "Conversational request — no skill synthesis needed.",
       };
     }
 
-    if (heuristicType === 'INFORMATIONAL') {
+    if (heuristicType === "INFORMATIONAL") {
       return {
-        verdict: 'SKIP',
-        requestType: 'INFORMATIONAL',
-        reasoning: 'Informational request — web search or existing knowledge is sufficient.',
+        verdict: "SKIP",
+        requestType: "INFORMATIONAL",
+        reasoning:
+          "Informational request — web search or existing knowledge is sufficient.",
       };
     }
 
@@ -167,8 +192,8 @@ export class CapabilityNeedAssessor {
 
     if (bestOverlap >= 0.85 && bestSkill) {
       return {
-        verdict: 'NEAR_DUPLICATE',
-        requestType: 'OPERATIONAL',
+        verdict: "NEAR_DUPLICATE",
+        requestType: "OPERATIONAL",
         reasoning: `Skill "${bestSkill.name}" already covers this (${(bestOverlap * 100).toFixed(0)}% keyword overlap). Improve it instead.`,
         suggestedExistingSkill: bestSkill.name,
         overlapScore: bestOverlap,
@@ -182,22 +207,30 @@ export class CapabilityNeedAssessor {
     // concluding it covers "open Chrome browser").
     if (gapDescription) {
       return {
-        verdict: 'SYNTHESIZE',
-        requestType: 'OPERATIONAL',
+        verdict: "SYNTHESIZE",
+        requestType: "OPERATIONAL",
         reasoning: `Engine gap: ${gapDescription.slice(0, 120)}`,
       };
     }
 
     // ── Gates 1+2 combined LLM call ───────────────────────────────
     try {
-      return await this.assessWithLLM(userRequest, availableToolNames, existingSkills, bestSkill, bestOverlap);
+      return await this.assessWithLLM(
+        userRequest,
+        availableToolNames,
+        existingSkills,
+        bestSkill,
+        bestOverlap,
+      );
     } catch (err) {
-      log.engine.warn(`[CapabilityNeedAssessor] LLM assessment failed, defaulting to SYNTHESIZE: ${err instanceof Error ? err.message : String(err)}`);
+      log.engine.warn(
+        `[CapabilityNeedAssessor] LLM assessment failed, defaulting to SYNTHESIZE: ${err instanceof Error ? err.message : String(err)}`,
+      );
       // Fail open — if assessor errors, allow synthesis rather than block legitimate needs
       return {
-        verdict: 'SYNTHESIZE',
-        requestType: 'OPERATIONAL',
-        reasoning: 'Assessment unavailable — proceeding with synthesis.',
+        verdict: "SYNTHESIZE",
+        requestType: "OPERATIONAL",
+        reasoning: "Assessment unavailable — proceeding with synthesis.",
       };
     }
   }
@@ -209,13 +242,15 @@ export class CapabilityNeedAssessor {
     closestSkill: Skill | undefined,
     closestOverlap: number,
   ): Promise<AssessmentResult> {
-    const toolList = availableToolNames.length > 0
-      ? availableToolNames.join(', ')
-      : 'run_shell_command, read_file, write_file, web_crawl';
+    const toolList =
+      availableToolNames.length > 0
+        ? availableToolNames.join(", ")
+        : "run_shell_command, read_file, write_file, web_crawl";
 
-    const skillList = existingSkills.length > 0
-      ? existingSkills.map(s => `• ${s.name}: ${s.description}`).join('\n')
-      : '(none registered yet)';
+    const skillList =
+      existingSkills.length > 0
+        ? existingSkills.map((s) => `• ${s.name}: ${s.description}`).join("\n")
+        : "(none registered yet)";
 
     const prompt =
       `You are a STRICT capability analyst for an AI assistant. Answer in JSON only.\n\n` +
@@ -240,13 +275,13 @@ export class CapabilityNeedAssessor {
       `}`;
 
     const response = await this.provider.chat(
-      [{ role: 'user', content: prompt }],
+      [{ role: "user", content: prompt }],
       undefined,
       { temperature: 0, maxTokens: 256 },
     );
 
     const match = response.content.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON in assessment response');
+    if (!match) throw new Error("No JSON in assessment response");
 
     const parsed = JSON.parse(match[0]) as {
       request_type: string;
@@ -255,23 +290,28 @@ export class CapabilityNeedAssessor {
       reasoning: string;
     };
 
-    const requestType = (['CONVERSATIONAL', 'INFORMATIONAL', 'ANALYTICAL', 'OPERATIONAL'].includes(parsed.request_type)
-      ? parsed.request_type
-      : 'OPERATIONAL') as RequestType;
+    const requestType = (
+      ["CONVERSATIONAL", "INFORMATIONAL", "ANALYTICAL", "OPERATIONAL"].includes(
+        parsed.request_type,
+      )
+        ? parsed.request_type
+        : "OPERATIONAL"
+    ) as RequestType;
 
     // SKIP for non-operational requests
-    if (requestType === 'CONVERSATIONAL' || requestType === 'INFORMATIONAL') {
+    if (requestType === "CONVERSATIONAL" || requestType === "INFORMATIONAL") {
       return {
-        verdict: 'SKIP',
+        verdict: "SKIP",
         requestType,
-        reasoning: parsed.reasoning ?? 'Non-operational request — synthesis skipped.',
+        reasoning:
+          parsed.reasoning ?? "Non-operational request — synthesis skipped.",
       };
     }
 
     // ANALYTICAL requests can almost always be handled by existing tools
-    if (requestType === 'ANALYTICAL' && parsed.covered_by_existing) {
+    if (requestType === "ANALYTICAL" && parsed.covered_by_existing) {
       return {
-        verdict: 'COVERED',
+        verdict: "COVERED",
         requestType,
         reasoning: parsed.reasoning,
         suggestedExistingSkill: parsed.covering_skill_or_tool ?? undefined,
@@ -281,7 +321,7 @@ export class CapabilityNeedAssessor {
     // COVERED — existing capability handles it
     if (parsed.covered_by_existing) {
       return {
-        verdict: 'COVERED',
+        verdict: "COVERED",
         requestType,
         reasoning: parsed.reasoning,
         suggestedExistingSkill: parsed.covering_skill_or_tool ?? undefined,
@@ -289,9 +329,9 @@ export class CapabilityNeedAssessor {
     }
 
     // Near-duplicate check with LLM-confirmed overlap
-    if (closestSkill && closestOverlap >= 0.60) {
+    if (closestSkill && closestOverlap >= 0.6) {
       return {
-        verdict: 'NEAR_DUPLICATE',
+        verdict: "NEAR_DUPLICATE",
         requestType,
         reasoning: `Similar skill "${closestSkill.name}" exists. ${parsed.reasoning}`,
         suggestedExistingSkill: closestSkill.name,
@@ -301,7 +341,7 @@ export class CapabilityNeedAssessor {
 
     // Genuine gap — allow synthesis
     return {
-      verdict: 'SYNTHESIZE',
+      verdict: "SYNTHESIZE",
       requestType,
       reasoning: parsed.reasoning,
     };

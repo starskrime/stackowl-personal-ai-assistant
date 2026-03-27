@@ -4,9 +4,13 @@ description: List, start, stop, and inspect Docker containers and images
 openclaw:
   emoji: "🐳"
 ---
+
 # Docker Management
+
 Manage Docker containers and images.
+
 ## Steps
+
 1. **List running containers:**
    ```bash
    run_shell_command("docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'")
@@ -24,11 +28,16 @@ Manage Docker containers and images.
    ```bash
    run_shell_command("docker logs --tail 50 <container>")
    ```
+
 ## Examples
+
 ### List containers
+
 ```bash
 run_shell_command("docker ps")
 ```
+
 ## Error Handling
+
 - **Docker not running:** `open -a Docker` on macOS.
 - **Permission denied:** May need `sudo` or adding user to docker group.

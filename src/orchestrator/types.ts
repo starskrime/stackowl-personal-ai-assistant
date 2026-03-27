@@ -8,12 +8,12 @@
 // ─── Strategy Types ──────────────────────────────────────────
 
 export type StrategyType =
-  | 'DIRECT'      // Quick answer, no tools (greetings, trivial facts)
-  | 'STANDARD'    // Single owl with tools (default engine.run())
-  | 'SPECIALIST'  // Route to a specific specialist owl based on domain
-  | 'PLANNED'     // Multi-step with dependency-aware parallel execution
-  | 'PARLIAMENT'  // Multi-owl debate with smart owl selection
-  | 'SWARM';      // Multiple owls work on different subtasks in parallel
+  | "DIRECT" // Quick answer, no tools (greetings, trivial facts)
+  | "STANDARD" // Single owl with tools (default engine.run())
+  | "SPECIALIST" // Route to a specific specialist owl based on domain
+  | "PLANNED" // Multi-step with dependency-aware parallel execution
+  | "PARLIAMENT" // Multi-owl debate with smart owl selection
+  | "SWARM"; // Multiple owls work on different subtasks in parallel
 
 export interface OwlAssignment {
   owlName: string;
@@ -58,7 +58,7 @@ export interface OrchestrationResult {
   subtaskResults?: Array<{
     id: number;
     owlName: string;
-    status: 'done' | 'failed';
+    status: "done" | "failed";
     content: string;
   }>;
   usage?: {

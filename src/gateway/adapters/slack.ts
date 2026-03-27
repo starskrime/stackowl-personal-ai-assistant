@@ -18,17 +18,17 @@
  *   - Streaming via message updates
  */
 
-import { App, type SayFn } from '@slack/bolt';
-import type { KnownBlock } from '@slack/types';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
-import { createReadStream } from 'node:fs';
-import { ProactivePinger } from '../../heartbeat/proactive.js';
-import { log } from '../../logger.js';
-import { makeSessionId, makeMessageId, OwlGateway } from '../core.js';
-import type { StreamEvent } from '../../providers/base.js';
-import type { ChannelAdapter, GatewayResponse } from '../types.js';
+import { App, type SayFn } from "@slack/bolt";
+import type { KnownBlock } from "@slack/types";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join, basename } from "node:path";
+import { createReadStream } from "node:fs";
+import { ProactivePinger } from "../../heartbeat/proactive.js";
+import { log } from "../../logger.js";
+import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
+import type { StreamEvent } from "../../providers/base.js";
+import type { ChannelAdapter, GatewayResponse } from "../types.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -50,13 +50,13 @@ export interface SlackAdapterConfig {
 // ─── Adapter ─────────────────────────────────────────────────────
 
 export class SlackAdapter implements ChannelAdapter {
-  readonly id = 'slack';
-  readonly name = 'Slack';
+  readonly id = "slack";
+  readonly name = "Slack";
 
   private app: App;
   private pinger: ProactivePinger | null = null;
   private activeChannels: Set<string> = new Set();
-  private botUserId: string = '';
+  private botUserId: string = "";
   private channelIdsPath: string;
 
   constructor(
@@ -64,19 +64,20 @@ export class SlackAdapter implements ChannelAdapter {
     private config: SlackAdapterConfig,
   ) {
     if (!config.botToken?.trim()) {
-      throw new Error('[SlackAdapter] Bot token (xoxb-) is required.');
+      throw new Error("[SlackAdapter] Bot token (xoxb-) is required.");
     }
 
     this.app = new App({
       token: config.botToken,
-      signingSecret: config.signingSecret || 'not-used-in-socket-mode',
+      signingSecret: config.signingSecret || "not-used-in-socket-mode",
       socketMode: !!config.appToken,
       appToken: config.appToken,
       port: config.port ?? 3078,
     });
 
-    this.channelIdsPath = config.channelIdsPath
-      ?? join(process.cwd(), 'workspace', 'known_slack_channels.json');
+    this.channelIdsPath =
+      config.channelIdsPath ??
+      join(process.cwd(), "workspace", "known_slack_channels.json");
 
     this.setupHandlers();
   }
@@ -96,7 +97,9 @@ export class SlackAdapter implements ChannelAdapter {
         });
       }
     } catch (err) {
-      log.slack.warn(`sendToUser failed for ${userId}: ${err instanceof Error ? err.message : err}`);
+      log.slack.warn(
+        `sendToUser failed for ${userId}: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
@@ -112,24 +115,30 @@ export class SlackAdapter implements ChannelAdapter {
           blocks,
         });
       } catch (err) {
-        log.slack.error(`Broadcast failed for ${channelId}: ${err instanceof Error ? err.message : err}`);
+        log.slack.error(
+          `Broadcast failed for ${channelId}: ${err instanceof Error ? err.message : err}`,
+        );
         this.activeChannels.delete(channelId);
       }
     }
   }
 
   async start(): Promise<void> {
-    log.slack.info('Starting Slack adapter...');
+    log.slack.info("Starting Slack adapter...");
     await this.loadChannelIds();
 
     // Get bot's own user ID to ignore self-messages
     const authResult = await this.app.client.auth.test();
-    this.botUserId = authResult.user_id ?? '';
-    log.slack.info(`Connected as <@${this.botUserId}> (${authResult.user ?? 'unknown'})`);
-    log.slack.info(`Owl: ${this.gateway.getOwl().persona.emoji} ${this.gateway.getOwl().persona.name}`);
+    this.botUserId = authResult.user_id ?? "";
+    log.slack.info(
+      `Connected as <@${this.botUserId}> (${authResult.user ?? "unknown"})`,
+    );
+    log.slack.info(
+      `Owl: ${this.gateway.getOwl().persona.emoji} ${this.gateway.getOwl().persona.name}`,
+    );
 
     await this.app.start();
-    log.slack.info('Slack adapter is running.');
+    log.slack.info("Slack adapter is running.");
 
     this.startPinger();
   }
@@ -137,7 +146,7 @@ export class SlackAdapter implements ChannelAdapter {
   stop(): void {
     this.pinger?.stop();
     this.app.stop().catch(() => {});
-    log.slack.info('Slack adapter stopped.');
+    log.slack.info("Slack adapter stopped.");
   }
 
   // ─── Bot handlers ─────────────────────────────────────────────
@@ -146,8 +155,14 @@ export class SlackAdapter implements ChannelAdapter {
     // Handle all messages (DMs and channel mentions)
     this.app.message(async ({ message, say, client }) => {
       // Type guard: only handle text messages
-      if (!('text' in message) || message.subtype) return;
-      const msg = message as { text: string; user: string; channel: string; ts: string; thread_ts?: string };
+      if (!("text" in message) || message.subtype) return;
+      const msg = message as {
+        text: string;
+        user: string;
+        channel: string;
+        ts: string;
+        thread_ts?: string;
+      };
 
       // Ignore bot's own messages
       if (msg.user === this.botUserId) return;
@@ -161,12 +176,14 @@ export class SlackAdapter implements ChannelAdapter {
       let text = msg.text;
 
       // In channels (not DMs), only respond if mentioned
-      const isDM = msg.channel.startsWith('D');
+      const isDM = msg.channel.startsWith("D");
       if (!isDM) {
-        const mentionPattern = new RegExp(`<@${this.botUserId}>`, 'g');
+        const mentionPattern = new RegExp(`<@${this.botUserId}>`, "g");
         if (!mentionPattern.test(text)) return;
         // Strip the mention from the text
-        text = text.replace(new RegExp(`<@${this.botUserId}>\\s*`, 'g'), '').trim();
+        text = text
+          .replace(new RegExp(`<@${this.botUserId}>\\s*`, "g"), "")
+          .trim();
         if (!text) return;
       }
 
@@ -183,14 +200,20 @@ export class SlackAdapter implements ChannelAdapter {
         await client.reactions.add({
           channel: msg.channel,
           timestamp: msg.ts,
-          name: 'eyes',
+          name: "eyes",
         });
       } catch {
         // Non-fatal — might not have permission
       }
 
       try {
-        const streamCtx = this.createStreamHandler(msg.channel, threadTs, client);
+        this.gateway.getCognitiveLoop()?.notifyUserActivity();
+
+        const streamCtx = this.createStreamHandler(
+          msg.channel,
+          threadTs,
+          client,
+        );
 
         const response = await this.gateway.handle(
           {
@@ -214,12 +237,14 @@ export class SlackAdapter implements ChannelAdapter {
                   title: caption ?? basename(filePath),
                 });
               } catch (err) {
-                log.slack.warn(`File upload failed: ${err instanceof Error ? err.message : err}`);
+                log.slack.warn(
+                  `File upload failed: ${err instanceof Error ? err.message : err}`,
+                );
               }
             },
             askInstall: async (deps: string[]) => {
               await say({
-                text: `📦 Need to install npm deps: \`${deps.join(' ')}\`\nReply *yes* to install or *no* to skip.`,
+                text: `📦 Need to install npm deps: \`${deps.join(" ")}\`\nReply *yes* to install or *no* to skip.`,
                 thread_ts: threadTs,
               });
               // For Slack we auto-approve — interactive approval would need
@@ -235,22 +260,25 @@ export class SlackAdapter implements ChannelAdapter {
           await client.reactions.remove({
             channel: msg.channel,
             timestamp: msg.ts,
-            name: 'eyes',
+            name: "eyes",
           });
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
 
         log.slack.outgoing(`user:${msg.user}`, response.content);
         log.slack.info(
-          `tools:[${response.toolsUsed.join(', ') || 'none'}] ` +
-          `usage:${response.usage ? `${response.usage.promptTokens}→${response.usage.completionTokens}` : 'n/a'}`,
+          `tools:[${response.toolsUsed.join(", ") || "none"}] ` +
+            `usage:${response.usage ? `${response.usage.promptTokens}→${response.usage.completionTokens}` : "n/a"}`,
         );
 
         // Send final response only if streaming didn't already deliver it
         const streamed = streamCtx.status.streamedContent;
         const finalContent = response.content.trim();
         const streamedFinal = streamed.trim();
-        const alreadyDelivered = streamedFinal.length > 0
-          && finalContent.startsWith(streamedFinal.slice(0, 100));
+        const alreadyDelivered =
+          streamedFinal.length > 0 &&
+          finalContent.startsWith(streamedFinal.slice(0, 100));
 
         if (!alreadyDelivered) {
           await this.sendResponse(msg.channel, threadTs, response, say);
@@ -261,9 +289,19 @@ export class SlackAdapter implements ChannelAdapter {
 
         // Remove eyes, add warning
         try {
-          await client.reactions.remove({ channel: msg.channel, timestamp: msg.ts, name: 'eyes' });
-          await client.reactions.add({ channel: msg.channel, timestamp: msg.ts, name: 'warning' });
-        } catch { /* non-fatal */ }
+          await client.reactions.remove({
+            channel: msg.channel,
+            timestamp: msg.ts,
+            name: "eyes",
+          });
+          await client.reactions.add({
+            channel: msg.channel,
+            timestamp: msg.ts,
+            name: "warning",
+          });
+        } catch {
+          /* non-fatal */
+        }
 
         await say({ text: `❌ Error: ${errMsg}`, thread_ts: threadTs });
       }
@@ -271,10 +309,10 @@ export class SlackAdapter implements ChannelAdapter {
 
     // Handle app_mention events — already covered by the message handler
     // but registered to prevent Bolt from logging unhandled event warnings
-    this.app.event('app_mention', async () => {});
+    this.app.event("app_mention", async () => {});
 
     // Slash commands
-    this.app.command('/owl-status', async ({ ack, respond }) => {
+    this.app.command("/owl-status", async ({ ack, respond }) => {
       await ack();
       const owl = this.gateway.getOwl();
       const config = this.gateway.getConfig();
@@ -287,17 +325,17 @@ export class SlackAdapter implements ChannelAdapter {
       });
     });
 
-    this.app.command('/owl-reset', async ({ ack, respond, command }) => {
+    this.app.command("/owl-reset", async ({ ack, respond, command }) => {
       await ack();
       const sessionId = makeSessionId(this.id, `${command.user_id}:reset`);
       await this.gateway.endSession(sessionId).catch(() => {});
-      await respond({ text: '🔄 Context reset. Starting fresh.' });
+      await respond({ text: "🔄 Context reset. Starting fresh." });
     });
 
-    this.app.command('/owl-owls', async ({ ack, respond }) => {
+    this.app.command("/owl-owls", async ({ ack, respond }) => {
       await ack();
       const registry = this.gateway.getOwlRegistry();
-      let msg = '🦉 *Available Owls*\n\n';
+      let msg = "🦉 *Available Owls*\n\n";
       for (const o of registry.listOwls()) {
         msg += `${o.persona.emoji} *${o.persona.name}* — ${o.persona.type}\n`;
       }
@@ -310,16 +348,16 @@ export class SlackAdapter implements ChannelAdapter {
   private createStreamHandler(
     channel: string,
     threadTs: string,
-    client: InstanceType<typeof App>['client'],
+    client: InstanceType<typeof App>["client"],
   ): {
     handler: (event: StreamEvent) => Promise<void>;
     status: { streamedContent: string };
     pushToolStatus: (msg: string) => void;
   } {
-    const status = { streamedContent: '' };
+    const status = { streamedContent: "" };
     let messageTs: string | null = null;
-    let displayText = '';
-    let pureContent = '';
+    let displayText = "";
+    let pureContent = "";
     let lastEditTime = 0;
     let pendingEdit: ReturnType<typeof setTimeout> | null = null;
     let hasToolStatus = false;
@@ -342,12 +380,12 @@ export class SlackAdapter implements ChannelAdapter {
 
     const handler = async (event: StreamEvent) => {
       switch (event.type) {
-        case 'text_delta': {
-          const chunk = event.content.replace(/\[DONE\]/g, '');
+        case "text_delta": {
+          const chunk = event.content.replace(/\[DONE\]/g, "");
           if (!chunk) break;
 
           if (hasToolStatus && !contentStarted) {
-            displayText += '\n\n';
+            displayText += "\n\n";
             contentStarted = true;
           }
           displayText += chunk;
@@ -358,7 +396,7 @@ export class SlackAdapter implements ChannelAdapter {
               const sent = await client.chat.postMessage({
                 channel,
                 thread_ts: threadTs,
-                text: displayText || '...',
+                text: displayText || "...",
               });
               messageTs = sent.ts ?? null;
               lastEditTime = Date.now();
@@ -370,7 +408,10 @@ export class SlackAdapter implements ChannelAdapter {
 
           const elapsed = Date.now() - lastEditTime;
           if (elapsed >= THROTTLE_MS) {
-            if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
+            if (pendingEdit) {
+              clearTimeout(pendingEdit);
+              pendingEdit = null;
+            }
             await flushEdit();
           } else if (!pendingEdit) {
             pendingEdit = setTimeout(async () => {
@@ -380,11 +421,14 @@ export class SlackAdapter implements ChannelAdapter {
           }
           break;
         }
-        case 'tool_start':
-        case 'tool_end':
+        case "tool_start":
+        case "tool_end":
           break;
-        case 'done': {
-          if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
+        case "done": {
+          if (pendingEdit) {
+            clearTimeout(pendingEdit);
+            pendingEdit = null;
+          }
           await flushEdit();
           if (messageTs && pureContent.length > 0) {
             status.streamedContent = pureContent;
@@ -399,14 +443,17 @@ export class SlackAdapter implements ChannelAdapter {
       hasToolStatus = true;
 
       if (!messageTs) {
-        client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: displayText || '...',
-        }).then(sent => {
-          messageTs = sent.ts ?? null;
-          lastEditTime = Date.now();
-        }).catch(() => {});
+        client.chat
+          .postMessage({
+            channel,
+            thread_ts: threadTs,
+            text: displayText || "...",
+          })
+          .then((sent) => {
+            messageTs = sent.ts ?? null;
+            lastEditTime = Date.now();
+          })
+          .catch(() => {});
       } else {
         flushEdit().catch(() => {});
       }
@@ -440,9 +487,9 @@ export class SlackAdapter implements ChannelAdapter {
 
     // Header with owl name
     blocks.push({
-      type: 'section',
+      type: "section",
       text: {
-        type: 'mrkdwn',
+        type: "mrkdwn",
         text: `${response.owlEmoji} *${response.owlName}*`,
       },
     });
@@ -452,9 +499,9 @@ export class SlackAdapter implements ChannelAdapter {
     const chunks = this.splitContent(content, 2900);
     for (const chunk of chunks) {
       blocks.push({
-        type: 'section',
+        type: "section",
         text: {
-          type: 'mrkdwn',
+          type: "mrkdwn",
           text: chunk,
         },
       });
@@ -463,22 +510,26 @@ export class SlackAdapter implements ChannelAdapter {
     // Tools used footer
     if (response.toolsUsed.length > 0) {
       blocks.push({
-        type: 'context',
-        elements: [{
-          type: 'mrkdwn',
-          text: `🛠️ Tools: ${response.toolsUsed.join(', ')}`,
-        }],
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `🛠️ Tools: ${response.toolsUsed.join(", ")}`,
+          },
+        ],
       });
     }
 
     // Usage footer
     if (response.usage) {
       blocks.push({
-        type: 'context',
-        elements: [{
-          type: 'mrkdwn',
-          text: `📊 ${response.usage.promptTokens}→${response.usage.completionTokens} tokens`,
-        }],
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `📊 ${response.usage.promptTokens}→${response.usage.completionTokens} tokens`,
+          },
+        ],
       });
     }
 
@@ -489,9 +540,13 @@ export class SlackAdapter implements ChannelAdapter {
     const chunks: string[] = [];
     let remaining = text;
     while (remaining.length > 0) {
-      if (remaining.length <= maxLen) { chunks.push(remaining); break; }
-      let splitAt = remaining.lastIndexOf('\n', maxLen);
-      if (splitAt === -1 || splitAt < maxLen / 2) splitAt = remaining.lastIndexOf(' ', maxLen);
+      if (remaining.length <= maxLen) {
+        chunks.push(remaining);
+        break;
+      }
+      let splitAt = remaining.lastIndexOf("\n", maxLen);
+      if (splitAt === -1 || splitAt < maxLen / 2)
+        splitAt = remaining.lastIndexOf(" ", maxLen);
       if (splitAt === -1 || splitAt < maxLen / 2) splitAt = maxLen;
       chunks.push(remaining.substring(0, splitAt));
       remaining = remaining.substring(splitAt).trimStart();
@@ -514,6 +569,8 @@ export class SlackAdapter implements ChannelAdapter {
       preferenceStore: this.gateway.getPreferenceStore(),
       reflexionEngine: this.gateway.getReflexionEngine(),
       toolRegistry: this.gateway.getToolRegistry(),
+      goalGraph: this.gateway.getGoalGraph(),
+      proactiveLoop: this.gateway.getProactiveLoop(),
       sendToUser: async (message: string) => {
         await this.broadcast({
           content: message,
@@ -538,19 +595,29 @@ export class SlackAdapter implements ChannelAdapter {
   private async loadChannelIds(): Promise<void> {
     if (!existsSync(this.channelIdsPath)) return;
     try {
-      const ids: string[] = JSON.parse(await readFile(this.channelIdsPath, 'utf-8'));
+      const ids: string[] = JSON.parse(
+        await readFile(this.channelIdsPath, "utf-8"),
+      );
       for (const id of ids) this.activeChannels.add(id);
       log.slack.info(`Loaded ${ids.length} known channel(s)`);
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
   }
 
   private async saveChannelIds(): Promise<void> {
     try {
-      const dir = join(this.channelIdsPath, '..');
+      const dir = join(this.channelIdsPath, "..");
       if (!existsSync(dir)) await mkdir(dir, { recursive: true });
-      await writeFile(this.channelIdsPath, JSON.stringify([...this.activeChannels]), 'utf-8');
+      await writeFile(
+        this.channelIdsPath,
+        JSON.stringify([...this.activeChannels]),
+        "utf-8",
+      );
     } catch (err) {
-      log.slack.warn(`Could not persist channel IDs: ${err instanceof Error ? err.message : err}`);
+      log.slack.warn(
+        `Could not persist channel IDs: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 }

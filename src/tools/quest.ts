@@ -1,52 +1,57 @@
-import type { ToolImplementation, ToolContext } from './registry.js';
+import type { ToolImplementation, ToolContext } from "./registry.js";
 
 /**
  * Quest Tool — create and manage gamified learning quests.
  */
 export class QuestTool implements ToolImplementation {
   definition = {
-    name: 'quest',
+    name: "quest",
     description:
-      'Create and manage learning quests — structured journeys with milestones. ' +
-      'Use when the user wants to learn a topic systematically or track learning progress.',
+      "Create and manage learning quests — structured journeys with milestones. " +
+      "Use when the user wants to learn a topic systematically or track learning progress.",
     parameters: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
         action: {
-          type: 'string',
-          description: 'Action: "create", "list", "progress", "pause", "abandon"',
+          type: "string",
+          description:
+            'Action: "create", "list", "progress", "pause", "abandon"',
         },
         topic: {
-          type: 'string',
-          description: 'For create: the topic to build a quest around',
+          type: "string",
+          description: "For create: the topic to build a quest around",
         },
         difficulty: {
-          type: 'string',
-          description: 'For create: "beginner", "intermediate" (default), "advanced", or "expert"',
+          type: "string",
+          description:
+            'For create: "beginner", "intermediate" (default), "advanced", or "expert"',
         },
         questId: {
-          type: 'string',
-          description: 'For progress/pause/abandon: the quest ID',
+          type: "string",
+          description: "For progress/pause/abandon: the quest ID",
         },
       },
-      required: ['action'],
+      required: ["action"],
     },
   };
 
-  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
+  async execute(
+    args: Record<string, unknown>,
+    context: ToolContext,
+  ): Promise<string> {
     const action = args.action as string;
     const questManager = context.engineContext?.questManager;
 
     if (!questManager) {
-      return 'Quest system is not available.';
+      return "Quest system is not available.";
     }
 
     try {
       switch (action) {
-        case 'create': {
+        case "create": {
           const topic = args.topic as string;
-          if (!topic) return 'Error: topic is required for create action.';
-          const difficulty = (args.difficulty as any) || 'intermediate';
+          if (!topic) return "Error: topic is required for create action.";
+          const difficulty = (args.difficulty as any) || "intermediate";
           const quest = await questManager.create(topic, difficulty);
           let result = `**Quest Created: ${quest.title}**\n\n${quest.description}\n\n**Milestones:**\n`;
           for (const m of quest.milestones) {
@@ -55,19 +60,24 @@ export class QuestTool implements ToolImplementation {
           return result;
         }
 
-        case 'list': {
+        case "list": {
           const quests = await questManager.list();
-          if (quests.length === 0) return 'No quests yet. Use action "create" to start one.';
-          return '**Your Quests:**\n' +
-            quests.map(q => {
-              const done = q.milestones.filter(m => m.completed).length;
-              return `- **${q.title}** [${q.status}] — ${done}/${q.milestones.length} milestones (ID: ${q.id})`;
-            }).join('\n');
+          if (quests.length === 0)
+            return 'No quests yet. Use action "create" to start one.';
+          return (
+            "**Your Quests:**\n" +
+            quests
+              .map((q) => {
+                const done = q.milestones.filter((m) => m.completed).length;
+                return `- **${q.title}** [${q.status}] — ${done}/${q.milestones.length} milestones (ID: ${q.id})`;
+              })
+              .join("\n")
+          );
         }
 
-        case 'progress': {
+        case "progress": {
           const qid = args.questId as string;
-          if (!qid) return 'Error: questId is required.';
+          if (!qid) return "Error: questId is required.";
           const progress = await questManager.progress(qid);
           if (!progress) return `Quest "${qid}" not found.`;
           let result = `**${progress.questTitle}** — ${progress.percentComplete}% complete\n`;
@@ -81,18 +91,20 @@ export class QuestTool implements ToolImplementation {
           return result;
         }
 
-        case 'pause': {
+        case "pause": {
           const id = args.questId as string;
-          if (!id) return 'Error: questId is required.';
-          const q = await questManager.updateStatus(id, 'paused');
+          if (!id) return "Error: questId is required.";
+          const q = await questManager.updateStatus(id, "paused");
           return q ? `Quest "${q.title}" paused.` : `Quest "${id}" not found.`;
         }
 
-        case 'abandon': {
+        case "abandon": {
           const id = args.questId as string;
-          if (!id) return 'Error: questId is required.';
-          const q = await questManager.updateStatus(id, 'abandoned');
-          return q ? `Quest "${q.title}" abandoned.` : `Quest "${id}" not found.`;
+          if (!id) return "Error: questId is required.";
+          const q = await questManager.updateStatus(id, "abandoned");
+          return q
+            ? `Quest "${q.title}" abandoned.`
+            : `Quest "${id}" not found.`;
         }
 
         default:

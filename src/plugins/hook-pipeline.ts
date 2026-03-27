@@ -58,7 +58,10 @@ export class HookPipeline {
    * Execute "before" hooks in priority order.
    * Returns the first non-null result (short-circuit), or null if all return null.
    */
-  async executeBefore<T>(hookName: string, ...args: unknown[]): Promise<T | null> {
+  async executeBefore<T>(
+    hookName: string,
+    ...args: unknown[]
+  ): Promise<T | null> {
     const entries = this.hooks.get(hookName);
     if (!entries || entries.length === 0) return null;
 
@@ -85,7 +88,11 @@ export class HookPipeline {
    * Execute "after" hooks in priority order, chaining the result.
    * Each hook receives the output of the previous hook.
    */
-  async executeAfter<T>(hookName: string, initial: T, ...args: unknown[]): Promise<T> {
+  async executeAfter<T>(
+    hookName: string,
+    initial: T,
+    ...args: unknown[]
+  ): Promise<T> {
     const entries = this.hooks.get(hookName);
     if (!entries || entries.length === 0) return initial;
 

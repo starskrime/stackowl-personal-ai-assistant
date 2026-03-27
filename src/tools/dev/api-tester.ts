@@ -21,7 +21,8 @@ export const APITesterTool: ToolImplementation = {
         },
         headers: {
           type: "string",
-          description: 'Optional headers as a JSON string, e.g. \'{"Authorization":"Bearer xxx"}\'.',
+          description:
+            'Optional headers as a JSON string, e.g. \'{"Authorization":"Bearer xxx"}\'.',
         },
         body: {
           type: "string",
@@ -74,7 +75,9 @@ export const APITesterTool: ToolImplementation = {
       }
 
       if (respBody.length > MAX_BODY_LENGTH) {
-        respBody = respBody.slice(0, MAX_BODY_LENGTH) + `\n... (truncated, ${respBody.length} chars total)`;
+        respBody =
+          respBody.slice(0, MAX_BODY_LENGTH) +
+          `\n... (truncated, ${respBody.length} chars total)`;
       }
 
       return [

@@ -13,12 +13,12 @@
  *   5. On success → offer to save as recipe
  */
 
-import type { ModelProvider } from '../../providers/base.js';
-import type { ScreenState } from './screen-reader.js';
-import { readScreen, formatScreenMinimal } from './screen-reader.js';
-import { RecipeStore, type Recipe, type RecipeStep } from './recipes.js';
-import { diffScreenStates } from './screen-diff.js';
-import { log } from '../../logger.js';
+import type { ModelProvider } from "../../providers/base.js";
+import type { ScreenState } from "./screen-reader.js";
+import { readScreen, formatScreenMinimal } from "./screen-reader.js";
+import { RecipeStore, type Recipe, type RecipeStep } from "./recipes.js";
+import { diffScreenStates } from "./screen-diff.js";
+import { log } from "../../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ export class ActionPlanner {
         `[ActionPlanner] Found matching recipe: "${recipe.task}" (score: ${matches[0].score.toFixed(2)})`,
       );
       return {
-        steps: recipe.steps.map(s => ({
+        steps: recipe.steps.map((s) => ({
           action: s.action,
           args: s.args,
           description: s.description,
@@ -100,15 +100,17 @@ export class ActionPlanner {
 
     try {
       const response = await this.provider.chat(
-        [{ role: 'user', content: prompt }],
+        [{ role: "user", content: prompt }],
         undefined,
         { temperature: 0, maxTokens: 2048 },
       );
 
       const jsonMatch = response.content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        log.engine.warn('[ActionPlanner] No JSON in AI response, falling back to single-step');
-        return { steps: [], reasoning: 'Could not parse plan' };
+        log.engine.warn(
+          "[ActionPlanner] No JSON in AI response, falling back to single-step",
+        );
+        return { steps: [], reasoning: "Could not parse plan" };
       }
 
       const parsed = JSON.parse(jsonMatch[0]) as PlanResult;
@@ -120,7 +122,7 @@ export class ActionPlanner {
       log.engine.warn(
         `[ActionPlanner] Planning failed: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return { steps: [], reasoning: 'Planning failed' };
+      return { steps: [], reasoning: "Planning failed" };
     }
   }
 
@@ -130,7 +132,10 @@ export class ActionPlanner {
    */
   async execute(
     plan: PlanResult,
-    executeAction: (action: string, args: Record<string, unknown>) => Promise<string>,
+    executeAction: (
+      action: string,
+      args: Record<string, unknown>,
+    ) => Promise<string>,
     onProgress?: (msg: string) => Promise<void>,
   ): Promise<ExecutionResult> {
     const completedSteps: RecipeStep[] = [];
@@ -139,7 +144,9 @@ export class ActionPlanner {
     for (let i = 0; i < plan.steps.length; i++) {
       const step = plan.steps[i];
 
-      await onProgress?.(`Step ${i + 1}/${plan.steps.length}: ${step.description}`);
+      await onProgress?.(
+        `Step ${i + 1}/${plan.steps.length}: ${step.description}`,
+      );
 
       // Capture screen before action
       try {
@@ -153,7 +160,10 @@ export class ActionPlanner {
         const result = await executeAction(step.action, step.args);
 
         // Check for error in result
-        if (result.startsWith('Error:') || result.startsWith('PERMISSION ERROR:')) {
+        if (
+          result.startsWith("Error:") ||
+          result.startsWith("PERMISSION ERROR:")
+        ) {
           log.engine.warn(`[ActionPlanner] Step ${i + 1} failed: ${result}`);
           return {
             success: false,
@@ -171,20 +181,22 @@ export class ActionPlanner {
           success: false,
           stepsCompleted: i,
           totalSteps: plan.steps.length,
-          screenChanges: '',
+          screenChanges: "",
           error: msg,
           completedSteps,
         };
       }
 
       // Brief wait for UI to settle
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
       // Verify step if verification criteria provided
       if (step.verify) {
         try {
           const afterScreen = await readScreen();
-          const diff = lastScreen ? diffScreenStates(lastScreen, afterScreen) : null;
+          const diff = lastScreen
+            ? diffScreenStates(lastScreen, afterScreen)
+            : null;
 
           if (diff && !diff.hasChanges) {
             log.engine.debug(
@@ -205,7 +217,7 @@ export class ActionPlanner {
     }
 
     // Final screen state for summary
-    let screenChanges = '';
+    let screenChanges = "";
     try {
       const finalScreen = await readScreen();
       if (lastScreen) {
@@ -215,7 +227,7 @@ export class ActionPlanner {
         screenChanges = formatScreenMinimal(finalScreen);
       }
     } catch {
-      screenChanges = '(could not read final screen state)';
+      screenChanges = "(could not read final screen state)";
     }
 
     return {

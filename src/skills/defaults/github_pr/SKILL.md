@@ -4,9 +4,13 @@ description: Create GitHub pull requests with title, description, and labels usi
 openclaw:
   emoji: "🔀"
 ---
+
 # GitHub Pull Request
+
 Create and manage GitHub PRs.
+
 ## Steps
+
 1. **Check gh CLI is available:**
    ```bash
    run_shell_command("which gh && gh auth status")
@@ -23,12 +27,17 @@ Create and manage GitHub PRs.
    ```bash
    run_shell_command("gh pr view <number>")
    ```
+
 ## Examples
+
 ### Create a PR
+
 ```bash
 run_shell_command("gh pr create --title 'feat: add auth module' --body 'Implements OAuth2 login' --base main")
 ```
+
 ## Error Handling
+
 - **gh not installed:** `brew install gh`.
 - **Not authenticated:** `gh auth login`.
 - **No upstream:** Set with `git push -u origin <branch>`.

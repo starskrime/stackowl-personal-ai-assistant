@@ -13,11 +13,13 @@ Search the macOS Contacts database for contact information.
 ## Steps
 
 1. **Search contacts by name:**
+
    ```bash
    run_shell_command("osascript -e 'tell application \"Contacts\" to get name of every person whose name contains \"<search_term>\"'")
    ```
 
 2. **Get specific details for a contact:**
+
    ```bash
    run_shell_command("osascript -e 'tell application \"Contacts\" to get value of every email of person \"<full_name>\"'")
    run_shell_command("osascript -e 'tell application \"Contacts\" to get value of every phone of person \"<full_name>\"'")
@@ -28,6 +30,7 @@ Search the macOS Contacts database for contact information.
 ## Examples
 
 ### Find email for John
+
 ```bash
 run_shell_command("osascript -e 'tell application \"Contacts\" to get {name, value of email 1} of every person whose name contains \"John\"'")
 ```

@@ -44,7 +44,9 @@ export const DailyBriefingTool: ToolImplementation = {
         hour: "2-digit",
         minute: "2-digit",
       });
-      sections.push(`Daily Briefing\n${"=".repeat(40)}\n${dateStr} at ${timeStr}`);
+      sections.push(
+        `Daily Briefing\n${"=".repeat(40)}\n${dateStr} at ${timeStr}`,
+      );
 
       // Weather (auto-detect location via wttr.in)
       try {
@@ -56,17 +58,17 @@ export const DailyBriefingTool: ToolImplementation = {
           const data = (await weatherRes.json()) as Record<string, unknown>;
           const nearest = data.nearest_area as Record<string, unknown>[];
           const area = nearest?.[0];
-          const areaName = (area?.areaName as Record<string, unknown>[])?.[0]
-            ?.value ?? "Unknown";
-          const country = (area?.country as Record<string, unknown>[])?.[0]
-            ?.value ?? "";
+          const areaName =
+            (area?.areaName as Record<string, unknown>[])?.[0]?.value ??
+            "Unknown";
+          const country =
+            (area?.country as Record<string, unknown>[])?.[0]?.value ?? "";
           const current = (
             data.current_condition as Record<string, unknown>[]
           )?.[0];
           if (current) {
-            const desc = (
-              current.weatherDesc as Record<string, unknown>[]
-            )?.[0]?.value;
+            const desc = (current.weatherDesc as Record<string, unknown>[])?.[0]
+              ?.value;
             sections.push(
               `\nWeather (${areaName}, ${country}):\n  ${desc}, ${current.temp_C}°C / ${current.temp_F}°F, Humidity: ${current.humidity}%`,
             );
@@ -122,9 +124,7 @@ export const DailyBriefingTool: ToolImplementation = {
 
       // System info
       const [batteryOutput, diskOutput] = await Promise.all([
-        execPromise(
-          "pmset -g batt | grep -Eo '\\d+%' | head -1",
-        ),
+        execPromise("pmset -g batt | grep -Eo '\\d+%' | head -1"),
         execPromise(
           "df -h / | tail -1 | awk '{print $4 \" available of \" $2}'",
         ),

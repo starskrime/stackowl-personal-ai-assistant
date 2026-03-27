@@ -4,9 +4,13 @@ description: Verify a claim or statement by searching multiple authoritative sou
 openclaw:
   emoji: "✅"
 ---
+
 # Fact Check
+
 Verify claims using multiple sources.
+
 ## Steps
+
 1. **Identify the claim** to verify.
 2. **Search for evidence:**
    ```
@@ -21,11 +25,16 @@ Verify claims using multiple sources.
    - ❌ **False** — contradicted by evidence
    - ❓ **Unverifiable** — insufficient evidence
 5. **Cite sources** with URLs.
+
 ## Examples
+
 ### Check a claim
+
 ```
 web_search query="does drinking water help weight loss fact check"
 ```
+
 ## Error Handling
+
 - **Controversial topic:** Present multiple perspectives rather than a single verdict.
 - **No fact-check sources:** Note this and present raw evidence for user to judge.

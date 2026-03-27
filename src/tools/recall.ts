@@ -1,4 +1,4 @@
-import type { ToolImplementation, ToolContext } from './registry.js';
+import type { ToolImplementation, ToolContext } from "./registry.js";
 
 /**
  * Recall Memory Tool — searches across pellets, sessions, and memory
@@ -6,42 +6,47 @@ import type { ToolImplementation, ToolContext } from './registry.js';
  */
 export class RecallMemoryTool implements ToolImplementation {
   definition = {
-    name: 'recall_memory',
+    name: "recall_memory",
     description:
-      'Search your memory for past conversations, knowledge, and insights. ' +
+      "Search your memory for past conversations, knowledge, and insights. " +
       'Use when the user says "remember", "we discussed", "what did we talk about", ' +
-      'or wants to recall a previous topic. Returns a narrative thread reconstruction.',
+      "or wants to recall a previous topic. Returns a narrative thread reconstruction.",
     parameters: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
         query: {
-          type: 'string',
-          description: 'What to recall — a topic, keyword, or natural language description',
+          type: "string",
+          description:
+            "What to recall — a topic, keyword, or natural language description",
         },
         scope: {
-          type: 'string',
-          description: 'Where to search: "all" (default), "pellets" (knowledge only), "sessions" (conversations only)',
+          type: "string",
+          description:
+            'Where to search: "all" (default), "pellets" (knowledge only), "sessions" (conversations only)',
         },
       },
-      required: ['query'],
+      required: ["query"],
     },
   };
 
-  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
+  async execute(
+    args: Record<string, unknown>,
+    context: ToolContext,
+  ): Promise<string> {
     const query = args.query as string;
-    if (!query) return 'Error: query is required.';
+    if (!query) return "Error: query is required.";
 
-    const scope = (args.scope as string) || 'all';
+    const scope = (args.scope as string) || "all";
     const memorySearcher = context.engineContext?.memorySearcher;
 
     if (!memorySearcher) {
-      return 'Memory search is not available. The MemorySearcher module is not initialized.';
+      return "Memory search is not available. The MemorySearcher module is not initialized.";
     }
 
     try {
       const thread = await memorySearcher.recall(
         query,
-        scope as 'all' | 'pellets' | 'sessions',
+        scope as "all" | "pellets" | "sessions",
       );
 
       if (thread.timeline.length === 0) {

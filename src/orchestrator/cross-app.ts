@@ -66,9 +66,9 @@ If the request does NOT need cross-app coordination, return {"skip": true}.
 Keep steps minimal — only what's needed.`;
 
     try {
-      const chatResponse = await this.provider.chat(
-        [{ role: "user", content: prompt }],
-      );
+      const chatResponse = await this.provider.chat([
+        { role: "user", content: prompt },
+      ]);
       const response = chatResponse.content;
 
       const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -92,7 +92,9 @@ Keep steps minimal — only what's needed.`;
         estimatedDuration: parsed.estimatedDuration,
       };
 
-      log.engine.info(`[CrossApp] Planned ${plan.steps.length} step(s): ${plan.description}`);
+      log.engine.info(
+        `[CrossApp] Planned ${plan.steps.length} step(s): ${plan.description}`,
+      );
       return plan;
     } catch (err) {
       log.engine.warn(`[CrossApp] Planning failed: ${err}`);
@@ -135,7 +137,8 @@ Keep steps minimal — only what's needed.`;
               stepId: step.id,
               app: step.app,
               status: "done" as const,
-              output: typeof output === "string" ? output : JSON.stringify(output),
+              output:
+                typeof output === "string" ? output : JSON.stringify(output),
             };
           } catch (err) {
             const error = err instanceof Error ? err.message : String(err);
@@ -169,14 +172,17 @@ Keep steps minimal — only what's needed.`;
     }
 
     // Check if all failed
-    if (result.stepResults.every(r => r.status === "failed")) {
+    if (result.stepResults.every((r) => r.status === "failed")) {
       result.status = "failed";
     }
 
     return result;
   }
 
-  private async executeStep(step: ActionStep, args: Record<string, unknown>): Promise<unknown> {
+  private async executeStep(
+    step: ActionStep,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
     // Try to find a matching tool
     if (this.toolRegistry) {
       try {
@@ -187,7 +193,11 @@ Keep steps minimal — only what's needed.`;
         // Tool not found, try action as tool name
         try {
           const toolCtx: ToolContext = { cwd: this.cwd };
-          const result = await this.toolRegistry.execute(step.action, args, toolCtx);
+          const result = await this.toolRegistry.execute(
+            step.action,
+            args,
+            toolCtx,
+          );
           return result;
         } catch {
           // Neither found
@@ -195,7 +205,9 @@ Keep steps minimal — only what's needed.`;
       }
     }
 
-    throw new Error(`No handler found for app "${step.app}" action "${step.action}"`);
+    throw new Error(
+      `No handler found for app "${step.app}" action "${step.action}"`,
+    );
   }
 
   private resolveArgs(
@@ -204,12 +216,22 @@ Keep steps minimal — only what's needed.`;
   ): Record<string, unknown> {
     const resolved: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(args)) {
-      if (typeof value === "string" && value.startsWith("{{") && value.endsWith("}}")) {
+      if (
+        typeof value === "string" &&
+        value.startsWith("{{") &&
+        value.endsWith("}}")
+      ) {
         const ref = value.slice(2, -2).trim();
         const [stepId, ...fieldParts] = ref.split(".");
         const stepOutput = outputs.get(stepId);
-        if (stepOutput && typeof stepOutput === "object" && stepOutput !== null) {
-          resolved[key] = (stepOutput as Record<string, unknown>)[fieldParts.join(".")] ?? value;
+        if (
+          stepOutput &&
+          typeof stepOutput === "object" &&
+          stepOutput !== null
+        ) {
+          resolved[key] =
+            (stepOutput as Record<string, unknown>)[fieldParts.join(".")] ??
+            value;
         } else {
           resolved[key] = stepOutput ?? value;
         }
@@ -226,9 +248,9 @@ Keep steps minimal — only what's needed.`;
     const remaining = [...steps];
 
     while (remaining.length > 0) {
-      const wave = remaining.filter(step => {
+      const wave = remaining.filter((step) => {
         const deps = step.dependsOn ?? [];
-        return deps.every(d => completed.has(d));
+        return deps.every((d) => completed.has(d));
       });
 
       if (wave.length === 0) {

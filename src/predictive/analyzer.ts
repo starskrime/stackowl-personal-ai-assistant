@@ -1,16 +1,26 @@
-import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { Logger } from '../logger.js';
-import type { ModelProvider, ChatMessage } from '../providers/base.js';
-import type { UserPattern, PredictiveConfig, DayOfWeek, TimeSlot } from './types.js';
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { Logger } from "../logger.js";
+import type { ModelProvider, ChatMessage } from "../providers/base.js";
+import type {
+  UserPattern,
+  PredictiveConfig,
+  DayOfWeek,
+  TimeSlot,
+} from "./types.js";
 
-const log = new Logger('PREDICTIVE');
+const log = new Logger("PREDICTIVE");
 
 interface Session {
   id: string;
   messages: { role: string; content: string }[];
-  metadata: { owlName: string; startedAt: number; lastUpdatedAt: number; title?: string };
+  metadata: {
+    owlName: string;
+    startedAt: number;
+    lastUpdatedAt: number;
+    title?: string;
+  };
 }
 
 const DEFAULT_CONFIG: PredictiveConfig = {
@@ -20,15 +30,23 @@ const DEFAULT_CONFIG: PredictiveConfig = {
   minConfidence: 0.6,
 };
 
-const DAYS: DayOfWeek[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const DAYS: DayOfWeek[] = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
 
 function getTimeSlot(hour: number): TimeSlot {
-  if (hour < 6) return 'night';
-  if (hour < 9) return 'early_morning';
-  if (hour < 12) return 'morning';
-  if (hour < 17) return 'afternoon';
-  if (hour < 21) return 'evening';
-  return 'night';
+  if (hour < 6) return "night";
+  if (hour < 9) return "early_morning";
+  if (hour < 12) return "morning";
+  if (hour < 17) return "afternoon";
+  if (hour < 21) return "evening";
+  return "night";
 }
 
 export class PatternAnalyzer {
@@ -39,19 +57,19 @@ export class PatternAnalyzer {
   constructor(
     private provider: ModelProvider,
     private workspacePath: string,
-    config?: Partial<PredictiveConfig>
+    config?: Partial<PredictiveConfig>,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.filePath = join(workspacePath, 'user-patterns.json');
+    this.filePath = join(workspacePath, "user-patterns.json");
   }
 
   async load(): Promise<void> {
     try {
       if (!existsSync(this.filePath)) {
-        log.debug('No existing patterns found, starting fresh');
+        log.debug("No existing patterns found, starting fresh");
         return;
       }
-      const raw = readFileSync(this.filePath, 'utf-8');
+      const raw = readFileSync(this.filePath, "utf-8");
       const data: UserPattern[] = JSON.parse(raw);
       this.patterns.clear();
       for (const pattern of data) {
@@ -66,7 +84,10 @@ export class PatternAnalyzer {
   async analyzeHistory(sessions: Session[]): Promise<UserPattern[]> {
     if (sessions.length === 0) return [];
 
-    const grouped: Record<string, { day: DayOfWeek; slot: TimeSlot; content: string }[]> = {};
+    const grouped: Record<
+      string,
+      { day: DayOfWeek; slot: TimeSlot; content: string }[]
+    > = {};
 
     for (const session of sessions) {
       const date = new Date(session.metadata.startedAt);
@@ -74,7 +95,7 @@ export class PatternAnalyzer {
       const slot = getTimeSlot(date.getHours());
 
       for (const msg of session.messages) {
-        if (msg.role !== 'user') continue;
+        if (msg.role !== "user") continue;
         const key = `${day}-${slot}`;
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push({ day, slot, content: msg.content });
@@ -82,8 +103,11 @@ export class PatternAnalyzer {
     }
 
     const groupedText = Object.entries(grouped)
-      .map(([key, msgs]) => `${key} (${msgs.length} messages):\n${msgs.map(m => `  - ${m.content.slice(0, 100)}`).join('\n')}`)
-      .join('\n\n');
+      .map(
+        ([key, msgs]) =>
+          `${key} (${msgs.length} messages):\n${msgs.map((m) => `  - ${m.content.slice(0, 100)}`).join("\n")}`,
+      )
+      .join("\n\n");
 
     if (!groupedText.trim()) return [];
 
@@ -105,12 +129,21 @@ Only include patterns with ${this.config.minPatternFrequency}+ occurrences.`;
 
     try {
       const messages: ChatMessage[] = [
-        { role: 'system', content: 'You are a behavior analysis engine. Output valid JSON only.' },
-        { role: 'user', content: prompt },
+        {
+          role: "system",
+          content:
+            "You are a behavior analysis engine. Output valid JSON only.",
+        },
+        { role: "user", content: prompt },
       ];
 
-      const response = await this.provider.chat(messages, undefined, { temperature: 0.2 });
-      const cleaned = response.content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      const response = await this.provider.chat(messages, undefined, {
+        temperature: 0.2,
+      });
+      const cleaned = response.content
+        .replace(/```json\s*/g, "")
+        .replace(/```\s*/g, "")
+        .trim();
       const discovered: Array<{
         action: string;
         dayPreference: DayOfWeek[];
@@ -126,9 +159,14 @@ Only include patterns with ${this.config.minPatternFrequency}+ occurrences.`;
         if (existing) {
           existing.frequency++;
           existing.confidence = Math.max(existing.confidence, d.confidence);
-          existing.avgIntervalHours = (existing.avgIntervalHours + d.avgIntervalHours) / 2;
-          existing.dayPreference = [...new Set([...existing.dayPreference, ...d.dayPreference])];
-          existing.timePreference = [...new Set([...existing.timePreference, ...d.timePreference])];
+          existing.avgIntervalHours =
+            (existing.avgIntervalHours + d.avgIntervalHours) / 2;
+          existing.dayPreference = [
+            ...new Set([...existing.dayPreference, ...d.dayPreference]),
+          ];
+          existing.timePreference = [
+            ...new Set([...existing.timePreference, ...d.timePreference]),
+          ];
         } else {
           const pattern: UserPattern = {
             id: randomUUID(),
@@ -160,10 +198,14 @@ Only include patterns with ${this.config.minPatternFrequency}+ occurrences.`;
     if (existing) {
       const lastTime = new Date(existing.lastOccurred).getTime();
       const hoursSince = (now.getTime() - lastTime) / (1000 * 60 * 60);
-      existing.avgIntervalHours = (existing.avgIntervalHours * existing.frequency + hoursSince) / (existing.frequency + 1);
+      existing.avgIntervalHours =
+        (existing.avgIntervalHours * existing.frequency + hoursSince) /
+        (existing.frequency + 1);
       existing.frequency++;
       existing.lastOccurred = now.toISOString();
-      existing.relatedSkills = [...new Set([...existing.relatedSkills, ...skills])];
+      existing.relatedSkills = [
+        ...new Set([...existing.relatedSkills, ...skills]),
+      ];
 
       const day = DAYS[now.getDay()];
       if (!existing.dayPreference.includes(day)) {
@@ -207,13 +249,16 @@ Only include patterns with ${this.config.minPatternFrequency}+ occurrences.`;
       const lastTime = new Date(pattern.lastOccurred).getTime();
       const nextExpected = lastTime + pattern.avgIntervalHours * 60 * 60 * 1000;
 
-      if (nextExpected <= now + horizonMs && nextExpected >= now - horizonMs / 2) {
+      if (
+        nextExpected <= now + horizonMs &&
+        nextExpected >= now - horizonMs / 2
+      ) {
         upcoming.push({ pattern, predictedTime: nextExpected });
       }
     }
 
     upcoming.sort((a, b) => a.predictedTime - b.predictedTime);
-    return upcoming.map(u => u.pattern);
+    return upcoming.map((u) => u.pattern);
   }
 
   async save(): Promise<void> {
@@ -222,7 +267,7 @@ Only include patterns with ${this.config.minPatternFrequency}+ occurrences.`;
         mkdirSync(this.workspacePath, { recursive: true });
       }
       const data = Array.from(this.patterns.values());
-      writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
+      writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
       log.debug(`Saved ${data.length} user patterns`);
     } catch (err) {
       log.error(`Failed to save patterns: ${err}`);

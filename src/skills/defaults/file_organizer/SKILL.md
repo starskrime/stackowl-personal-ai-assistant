@@ -4,9 +4,13 @@ description: Organize files in a directory by sorting them into subfolders based
 openclaw:
   emoji: "📂"
 ---
+
 # File Organizer
+
 Sort files into subfolders by type or date.
+
 ## Steps
+
 1. **List files in target directory:**
    ```bash
    run_shell_command("ls -la <directory>")
@@ -22,12 +26,17 @@ Sort files into subfolders by type or date.
    run_shell_command("mv <directory>/*.{mp4,mov,avi,mkv} <directory>/Videos/ 2>/dev/null")
    ```
 4. **Show summary** of files moved per category.
+
 ## Examples
+
 ### Organize Downloads folder
+
 ```bash
 run_shell_command("mkdir -p ~/Downloads/{Images,Documents,Videos} && mv ~/Downloads/*.pdf ~/Downloads/Documents/ 2>/dev/null")
 ```
+
 ## Error Handling
+
 - **Empty directory:** Inform user "No files to organize."
 - **Permission denied:** Skip protected files and report them.
 - **Name conflicts:** Append timestamp to avoid overwriting.

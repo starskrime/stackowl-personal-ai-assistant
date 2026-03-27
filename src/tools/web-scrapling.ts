@@ -27,28 +27,42 @@ function runPython(script: string, timeout = TIMEOUT): Promise<string> {
 
     let stdout = "";
     let stderr = "";
-    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.stdout.on("data", (d: Buffer) => {
+      stdout += d.toString();
+    });
+    proc.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
 
     proc.on("close", (code) => {
       if (code !== 0) {
         // Check if scrapling or its dependencies are not installed
-        if (stderr.includes("No module named 'scrapling'") ||
-            (stderr.includes("ModuleNotFoundError") && stderr.includes("scrapling"))) {
-          reject(new Error(
-            "Scrapling is not installed. Install it with:\n" +
-            "  pip install scrapling[all] && scrapling install\n" +
-            "Then try again."
-          ));
-        } else if (stderr.includes("No module named") || stderr.includes("ModuleNotFoundError")) {
+        if (
+          stderr.includes("No module named 'scrapling'") ||
+          (stderr.includes("ModuleNotFoundError") &&
+            stderr.includes("scrapling"))
+        ) {
+          reject(
+            new Error(
+              "Scrapling is not installed. Install it with:\n" +
+                "  pip install scrapling[all] && scrapling install\n" +
+                "Then try again.",
+            ),
+          );
+        } else if (
+          stderr.includes("No module named") ||
+          stderr.includes("ModuleNotFoundError")
+        ) {
           // Missing dependency — extract the module name
           const modMatch = stderr.match(/No module named '([^']+)'/);
           const modName = modMatch ? modMatch[1] : "unknown";
-          reject(new Error(
-            `Missing Python dependency: ${modName}\n` +
-            `Install it with: pip install ${modName}\n` +
-            `Or install all Scrapling deps: pip install scrapling[all]`
-          ));
+          reject(
+            new Error(
+              `Missing Python dependency: ${modName}\n` +
+                `Install it with: pip install ${modName}\n` +
+                `Or install all Scrapling deps: pip install scrapling[all]`,
+            ),
+          );
         } else {
           reject(new Error(stderr.trim() || `Python exited with code ${code}`));
         }
@@ -59,10 +73,12 @@ function runPython(script: string, timeout = TIMEOUT): Promise<string> {
 
     proc.on("error", (err) => {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        reject(new Error(
-          "Python 3 is not installed or not in PATH. " +
-          "Scrapling requires Python 3.8+."
-        ));
+        reject(
+          new Error(
+            "Python 3 is not installed or not in PATH. " +
+              "Scrapling requires Python 3.8+.",
+          ),
+        );
       } else {
         reject(err);
       }
@@ -175,7 +191,8 @@ export const ScraplingTool: ToolImplementation = {
       properties: {
         url: {
           type: "string",
-          description: "Full URL to fetch (must start with http:// or https://)",
+          description:
+            "Full URL to fetch (must start with http:// or https://)",
         },
         mode: {
           type: "string",

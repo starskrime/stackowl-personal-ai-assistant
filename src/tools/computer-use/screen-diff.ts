@@ -7,7 +7,7 @@
  * No AI model needed — pure structural comparison of AX tree elements.
  */
 
-import type { ScreenState, ScreenElement } from './screen-reader.js';
+import type { ScreenState, ScreenElement } from "./screen-reader.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -37,7 +37,10 @@ export interface ScreenDiff {
  * Designed to be fast and token-efficient — the summary is what gets
  * injected into the model's context.
  */
-export function diffScreenStates(before: ScreenState, after: ScreenState): ScreenDiff {
+export function diffScreenStates(
+  before: ScreenState,
+  after: ScreenState,
+): ScreenDiff {
   const appChanged = before.app !== after.app;
   const titleChanged = before.windowTitle !== after.windowTitle;
 
@@ -48,18 +51,22 @@ export function diffScreenStates(before: ScreenState, after: ScreenState): Scree
   // Find new, removed, and changed elements
   const newElements: string[] = [];
   const removedElements: string[] = [];
-  const changedValues: { label: string; oldValue: string; newValue: string }[] = [];
+  const changedValues: { label: string; oldValue: string; newValue: string }[] =
+    [];
 
   // Check what's new or changed
   for (const [key, afterEl] of afterMap) {
     const beforeEl = beforeMap.get(key);
     if (!beforeEl) {
       newElements.push(afterEl.label || afterEl.role);
-    } else if (afterEl.value !== beforeEl.value && (afterEl.value || beforeEl.value)) {
+    } else if (
+      afterEl.value !== beforeEl.value &&
+      (afterEl.value || beforeEl.value)
+    ) {
       changedValues.push({
         label: afterEl.label || afterEl.role,
-        oldValue: beforeEl.value || '',
-        newValue: afterEl.value || '',
+        oldValue: beforeEl.value || "",
+        newValue: afterEl.value || "",
       });
     }
   }
@@ -72,7 +79,8 @@ export function diffScreenStates(before: ScreenState, after: ScreenState): Scree
     }
   }
 
-  const interactiveCountDelta = after.interactiveCount - before.interactiveCount;
+  const interactiveCountDelta =
+    after.interactiveCount - before.interactiveCount;
 
   const hasChanges =
     appChanged ||
@@ -84,21 +92,32 @@ export function diffScreenStates(before: ScreenState, after: ScreenState): Scree
   // Build summary
   const parts: string[] = [];
   if (appChanged) parts.push(`App: ${before.app} → ${after.app}`);
-  if (titleChanged) parts.push(`Window: "${before.windowTitle}" → "${after.windowTitle}"`);
-  if (newElements.length > 0) parts.push(`New: ${newElements.slice(0, 5).join(', ')}${newElements.length > 5 ? ` (+${newElements.length - 5} more)` : ''}`);
-  if (removedElements.length > 0) parts.push(`Gone: ${removedElements.slice(0, 5).join(', ')}${removedElements.length > 5 ? ` (+${removedElements.length - 5} more)` : ''}`);
+  if (titleChanged)
+    parts.push(`Window: "${before.windowTitle}" → "${after.windowTitle}"`);
+  if (newElements.length > 0)
+    parts.push(
+      `New: ${newElements.slice(0, 5).join(", ")}${newElements.length > 5 ? ` (+${newElements.length - 5} more)` : ""}`,
+    );
+  if (removedElements.length > 0)
+    parts.push(
+      `Gone: ${removedElements.slice(0, 5).join(", ")}${removedElements.length > 5 ? ` (+${removedElements.length - 5} more)` : ""}`,
+    );
   if (changedValues.length > 0) {
     for (const cv of changedValues.slice(0, 3)) {
-      parts.push(`Changed: ${cv.label} "${truncate(cv.oldValue, 30)}" → "${truncate(cv.newValue, 30)}"`);
+      parts.push(
+        `Changed: ${cv.label} "${truncate(cv.oldValue, 30)}" → "${truncate(cv.newValue, 30)}"`,
+      );
     }
   }
   if (interactiveCountDelta !== 0) {
-    parts.push(`Interactive elements: ${interactiveCountDelta > 0 ? '+' : ''}${interactiveCountDelta}`);
+    parts.push(
+      `Interactive elements: ${interactiveCountDelta > 0 ? "+" : ""}${interactiveCountDelta}`,
+    );
   }
 
   return {
     hasChanges,
-    summary: parts.length > 0 ? parts.join('\n') : 'No visible changes',
+    summary: parts.length > 0 ? parts.join("\n") : "No visible changes",
     appChanged,
     titleChanged,
     newElements,
@@ -150,5 +169,5 @@ function flattenInteractive(
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
-  return s.slice(0, max - 3) + '...';
+  return s.slice(0, max - 3) + "...";
 }

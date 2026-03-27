@@ -12,19 +12,23 @@ Stage changes and commit with a well-formatted message.
 ## Steps
 
 1. **Check current git status:**
+
    ```bash
    run_shell_command("git status --short")
    ```
 
 2. **Review the diff:**
+
    ```bash
    run_shell_command("git diff --stat")
    ```
 
 3. **Stage files:**
+
    ```bash
    run_shell_command("git add <files>")
    ```
+
    Or stage all: `run_shell_command("git add -A")`
 
 4. **Generate a conventional commit message:**
@@ -32,6 +36,7 @@ Stage changes and commit with a well-formatted message.
    Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 5. **Create the commit:**
+
    ```bash
    run_shell_command("git commit -m '<type>(<scope>): <description>'")
    ```
@@ -44,6 +49,7 @@ Stage changes and commit with a well-formatted message.
 ## Examples
 
 ### Commit a feature
+
 ```bash
 run_shell_command("git add -A && git commit -m 'feat(auth): add OAuth2 login flow'")
 ```

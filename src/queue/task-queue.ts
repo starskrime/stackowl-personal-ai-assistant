@@ -62,10 +62,11 @@ export class TaskQueue {
     priority: TaskPriority = "normal",
   ): string {
     if (this.queue.length >= this.config.maxQueueSize) {
-      log.engine.warn(
-        `[TaskQueue] Queue full (${this.config.maxQueueSize}), dropping task "${name}"`,
+      const err = new Error(
+        `[TaskQueue] Queue full (${this.config.maxQueueSize}), cannot add task "${name}"`,
       );
-      return "";
+      log.engine.error(err.message);
+      throw err;
     }
 
     const id = `task-${++taskIdCounter}`;
@@ -122,15 +123,18 @@ export class TaskQueue {
           this.stats.completed++;
           const elapsed = Date.now() - startMs;
           if (elapsed > 5000) {
-            log.engine.info(`[TaskQueue] Task "${task.name}" completed in ${elapsed}ms`);
+            log.engine.info(
+              `[TaskQueue] Task "${task.name}" completed in ${elapsed}ms`,
+            );
           }
         })
         .catch((err) => {
           this.stats.failed++;
           const elapsed = Date.now() - startMs;
-          const errMsg = err instanceof Error
-            ? `${err.message}\n${err.stack ?? ""}`
-            : String(err);
+          const errMsg =
+            err instanceof Error
+              ? `${err.message}\n${err.stack ?? ""}`
+              : String(err);
           log.engine.error(
             `[TaskQueue] Task "${task.name}" FAILED after ${elapsed}ms:\n${errMsg}`,
           );

@@ -20,7 +20,8 @@ export const TranslatorTool: ToolImplementation = {
         },
         to: {
           type: "string",
-          description: "Target language code (e.g., 'es', 'fr', 'de', 'ja'). Required.",
+          description:
+            "Target language code (e.g., 'es', 'fr', 'de', 'ja'). Required.",
         },
       },
       required: ["text", "to"],
@@ -73,13 +74,13 @@ except ImportError:
       });
 
       const result = JSON.parse(stdout.trim());
-      const langInfo = from === "auto" && result.detected_lang
-        ? ` (detected: ${result.detected_lang})`
-        : "";
+      const langInfo =
+        from === "auto" && result.detected_lang
+          ? ` (detected: ${result.detected_lang})`
+          : "";
 
       return (
-        `**Translation** (${from}${langInfo} → ${to}):\n\n` +
-        result.translation
+        `**Translation** (${from}${langInfo} → ${to}):\n\n` + result.translation
       );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

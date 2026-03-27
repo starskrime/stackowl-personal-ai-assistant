@@ -14,9 +14,15 @@ import { Logger } from "../logger.js";
 
 export class PluginSandbox {
   private registeredTools: string[] = [];
-  private eventHandlers: Array<{ type: EventType; handler: (...args: any[]) => any }> = [];
+  private eventHandlers: Array<{
+    type: EventType;
+    handler: (...args: any[]) => any;
+  }> = [];
   private providedServices: string[] = [];
-  private acpHandlers: Array<{ channel: string; handler: (msg: unknown) => Promise<void> }> = [];
+  private acpHandlers: Array<{
+    channel: string;
+    handler: (msg: unknown) => Promise<void>;
+  }> = [];
   readonly log: Logger;
 
   constructor(
@@ -55,7 +61,9 @@ export class PluginSandbox {
   unregisterTool(name: string): void {
     const namespacedName = `plugin_${this.pluginName}_${name}`;
     this.toolRegistry.unregister(namespacedName);
-    this.registeredTools = this.registeredTools.filter((n) => n !== namespacedName);
+    this.registeredTools = this.registeredTools.filter(
+      (n) => n !== namespacedName,
+    );
   }
 
   // ─── Scoped Event Subscription ────────────────────────────────
@@ -91,7 +99,10 @@ export class PluginSandbox {
   /**
    * Get registered ACP handlers (used by ACP router to wire up).
    */
-  getACPHandlers(): Array<{ channel: string; handler: (msg: unknown) => Promise<void> }> {
+  getACPHandlers(): Array<{
+    channel: string;
+    handler: (msg: unknown) => Promise<void>;
+  }> {
     return [...this.acpHandlers];
   }
 

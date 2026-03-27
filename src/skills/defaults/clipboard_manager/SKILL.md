@@ -5,9 +5,13 @@ openclaw:
   emoji: "📋"
   os: [darwin]
 ---
+
 # Clipboard Manager
+
 Manage macOS clipboard contents.
+
 ## Steps
+
 1. **Read clipboard:**
    ```bash
    run_shell_command("pbpaste")
@@ -20,15 +24,22 @@ Manage macOS clipboard contents.
    ```bash
    run_shell_command("pbpaste | tr '[:lower:]' '[:upper:]' | pbcopy")
    ```
+
 ## Examples
+
 ### Copy text to clipboard
+
 ```bash
 run_shell_command("echo 'Hello World' | pbcopy")
 ```
+
 ### Read and transform
+
 ```bash
 run_shell_command("pbpaste | sort | pbcopy")
 ```
+
 ## Error Handling
+
 - **Empty clipboard:** Inform user "Clipboard is empty."
 - **Binary content:** Note that only text content can be displayed.

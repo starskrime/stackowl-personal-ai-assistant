@@ -1,10 +1,15 @@
-import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { Logger } from '../logger.js';
-import type { KnowledgeNode, KnowledgeEdge, EdgeType, GraphStats } from './types.js';
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { Logger } from "../logger.js";
+import type {
+  KnowledgeNode,
+  KnowledgeEdge,
+  EdgeType,
+  GraphStats,
+} from "./types.js";
 
-const log = new Logger('KNOWLEDGE');
+const log = new Logger("KNOWLEDGE");
 
 interface GraphData {
   nodes: KnowledgeNode[];
@@ -17,16 +22,16 @@ export class KnowledgeGraph {
   private filePath: string;
 
   constructor(private workspacePath: string) {
-    this.filePath = join(workspacePath, 'knowledge-graph.json');
+    this.filePath = join(workspacePath, "knowledge-graph.json");
   }
 
   async load(): Promise<void> {
     try {
       if (!existsSync(this.filePath)) {
-        log.debug('No existing knowledge graph found, starting fresh');
+        log.debug("No existing knowledge graph found, starting fresh");
         return;
       }
-      const raw = readFileSync(this.filePath, 'utf-8');
+      const raw = readFileSync(this.filePath, "utf-8");
       const data: GraphData = JSON.parse(raw);
       this.nodes.clear();
       this.edges.clear();
@@ -36,13 +41,18 @@ export class KnowledgeGraph {
       for (const edge of data.edges) {
         this.edges.set(edge.id, edge);
       }
-      log.info(`Loaded knowledge graph: ${this.nodes.size} nodes, ${this.edges.size} edges`);
+      log.info(
+        `Loaded knowledge graph: ${this.nodes.size} nodes, ${this.edges.size} edges`,
+      );
     } catch (err) {
       log.error(`Failed to load knowledge graph: ${err}`);
     }
   }
 
-  addNode(node: Omit<KnowledgeNode, 'id' | 'createdAt' | 'updatedAt' | 'accessCount'>): string {
+  addNode(
+    node: Omit<KnowledgeNode, "id" | "createdAt" | "updatedAt" | "accessCount">,
+    embedding?: number[],
+  ): string {
     const id = randomUUID();
     const now = new Date().toISOString();
     const full: KnowledgeNode = {
@@ -51,13 +61,20 @@ export class KnowledgeGraph {
       createdAt: now,
       updatedAt: now,
       accessCount: 0,
+      ...(embedding ? { embedding } : {}),
     };
     this.nodes.set(id, full);
     log.debug(`Added node: ${full.title} (${id})`);
     return id;
   }
 
-  addEdge(from: string, to: string, type: EdgeType, weight = 0.5, evidence?: string): string {
+  addEdge(
+    from: string,
+    to: string,
+    type: EdgeType,
+    weight = 0.5,
+    evidence?: string,
+  ): string {
     if (!this.nodes.has(from)) throw new Error(`Node not found: ${from}`);
     if (!this.nodes.has(to)) throw new Error(`Node not found: ${to}`);
 
@@ -79,7 +96,7 @@ export class KnowledgeGraph {
   findByDomain(domain: string): KnowledgeNode[] {
     const lowerDomain = domain.toLowerCase();
     return Array.from(this.nodes.values()).filter(
-      n => n.domain.toLowerCase() === lowerDomain
+      (n) => n.domain.toLowerCase() === lowerDomain,
     );
   }
 
@@ -107,36 +124,105 @@ export class KnowledgeGraph {
     }
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map(s => {
+    return scored.slice(0, limit).map((s) => {
       s.node.accessCount++;
       s.node.updatedAt = new Date().toISOString();
       return s.node;
     });
   }
 
+  async semanticSearch(
+    query: string,
+    limit = 10,
+    embedder?: (text: string) => Promise<number[]>,
+  ): Promise<KnowledgeNode[]> {
+    const nodesWithEmbed = [...this.nodes.values()].filter(
+      (n) => n.embedding?.length,
+    );
+    if (nodesWithEmbed.length === 0) {
+      return this.search(query, limit);
+    }
+
+    if (!embedder) {
+      return this.search(query, limit);
+    }
+
+    let queryEmbedding: number[] = [];
+    try {
+      queryEmbedding = await embedder(query);
+    } catch {
+      return this.search(query, limit);
+    }
+
+    if (queryEmbedding.length === 0) {
+      return this.search(query, limit);
+    }
+
+    const scored = nodesWithEmbed.map((node) => ({
+      node,
+      score: this.cosineSimilarity(queryEmbedding, node.embedding!),
+    }));
+
+    const keywordResults = this.search(query, limit);
+    const kwIds = new Set(keywordResults.map((n) => n.id));
+
+    const hybrid = scored.map(({ node, score }) => ({
+      node,
+      score: kwIds.has(node.id) ? score + 0.1 : score,
+    }));
+
+    hybrid.sort((a, b) => b.score - a.score);
+    return hybrid.slice(0, limit).map((r) => {
+      r.node.accessCount++;
+      r.node.updatedAt = new Date().toISOString();
+      return r.node;
+    });
+  }
+
+  private cosineSimilarity(a: number[], b: number[]): number {
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
   getEdges(nodeId: string): KnowledgeEdge[] {
     return Array.from(this.edges.values()).filter(
-      e => e.from === nodeId || e.to === nodeId
+      (e) => e.from === nodeId || e.to === nodeId,
     );
   }
 
   getNeighbors(nodeId: string, edgeType?: EdgeType): KnowledgeNode[] {
     const relevantEdges = this.getEdges(nodeId).filter(
-      e => !edgeType || e.type === edgeType
+      (e) => !edgeType || e.type === edgeType,
     );
     const neighborIds = new Set<string>();
     for (const edge of relevantEdges) {
       neighborIds.add(edge.from === nodeId ? edge.to : edge.from);
     }
     return Array.from(neighborIds)
-      .map(id => this.nodes.get(id))
+      .map((id) => this.nodes.get(id))
       .filter((n): n is KnowledgeNode => n !== undefined);
   }
 
-  findContradictions(): { nodeA: KnowledgeNode; nodeB: KnowledgeNode; edge: KnowledgeEdge }[] {
-    const results: { nodeA: KnowledgeNode; nodeB: KnowledgeNode; edge: KnowledgeEdge }[] = [];
+  findContradictions(): {
+    nodeA: KnowledgeNode;
+    nodeB: KnowledgeNode;
+    edge: KnowledgeEdge;
+  }[] {
+    const results: {
+      nodeA: KnowledgeNode;
+      nodeB: KnowledgeNode;
+      edge: KnowledgeEdge;
+    }[] = [];
     for (const edge of this.edges.values()) {
-      if (edge.type !== 'contradicts') continue;
+      if (edge.type !== "contradicts") continue;
       const nodeA = this.nodes.get(edge.from);
       const nodeB = this.nodes.get(edge.to);
       if (nodeA && nodeB) {
@@ -148,15 +234,16 @@ export class KnowledgeGraph {
 
   getStats(): GraphStats {
     const nodes = Array.from(this.nodes.values());
-    const domains = [...new Set(nodes.map(n => n.domain))];
-    const avgConfidence = nodes.length > 0
-      ? nodes.reduce((sum, n) => sum + n.confidence, 0) / nodes.length
-      : 0;
+    const domains = [...new Set(nodes.map((n) => n.domain))];
+    const avgConfidence =
+      nodes.length > 0
+        ? nodes.reduce((sum, n) => sum + n.confidence, 0) / nodes.length
+        : 0;
 
     const topNodes = [...nodes]
       .sort((a, b) => b.accessCount - a.accessCount)
       .slice(0, 10)
-      .map(n => ({ id: n.id, title: n.title, accessCount: n.accessCount }));
+      .map((n) => ({ id: n.id, title: n.title, accessCount: n.accessCount }));
 
     return {
       totalNodes: this.nodes.size,
@@ -181,7 +268,9 @@ export class KnowledgeGraph {
     const keep = this.nodes.get(keepId);
     const remove = this.nodes.get(removeId);
     if (!keep || !remove) {
-      throw new Error(`Cannot merge: node not found (keep=${keepId}, remove=${removeId})`);
+      throw new Error(
+        `Cannot merge: node not found (keep=${keepId}, remove=${removeId})`,
+      );
     }
 
     keep.content = `${keep.content}\n\n${remove.content}`;
@@ -228,8 +317,10 @@ export class KnowledgeGraph {
         nodes: Array.from(this.nodes.values()),
         edges: Array.from(this.edges.values()),
       };
-      writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
-      log.debug(`Saved knowledge graph: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+      writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
+      log.debug(
+        `Saved knowledge graph: ${data.nodes.length} nodes, ${data.edges.length} edges`,
+      );
     } catch (err) {
       log.error(`Failed to save knowledge graph: ${err}`);
     }

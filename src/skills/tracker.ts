@@ -25,6 +25,7 @@ export class SkillTracker {
 
   constructor(workspacePath: string) {
     this.filePath = join(workspacePath, "skills-stats.json");
+    this.load();
   }
 
   async load(): Promise<void> {
@@ -42,11 +43,11 @@ export class SkillTracker {
       }
 
       log.engine.info(
-        `Loaded skill stats for ${this.stats.size} skill(s) from ${this.filePath}`
+        `Loaded skill stats for ${this.stats.size} skill(s) from ${this.filePath}`,
       );
     } catch (err) {
       log.engine.warn(
-        `Failed to load skill stats from ${this.filePath}: ${err}`
+        `Failed to load skill stats from ${this.filePath}: ${err}`,
       );
     }
   }
@@ -57,6 +58,14 @@ export class SkillTracker {
     s.lastUsedAt = new Date().toISOString();
     this.dirty = true;
     this.scheduleSave();
+  }
+
+  /** Days since last use (0 if never used) */
+  getDaysSinceLastUse(skillName: string): number {
+    const s = this.stats.get(skillName);
+    if (!s || !s.lastUsedAt) return Infinity;
+    const msPerDay = 24 * 60 * 60 * 1000;
+    return (Date.now() - new Date(s.lastUsedAt).getTime()) / msPerDay;
   }
 
   recordSuccess(skillName: string, durationMs: number): void {
@@ -100,6 +109,31 @@ export class SkillTracker {
     return s.successRate;
   }
 
+  /**
+   * Recency-adjusted usage multiplier for re-ranking.
+   * Range: 0.7 (never used or 0% success) → 1.3 (100% success, used today)
+   * Half-life: 90 days (recent successes matter ~2.7× more than stale ones)
+   */
+  getUsageMultiplier(skillName: string): number {
+    const successRate = this.getSuccessRate(skillName);
+    const daysSinceLastUse = this.getDaysSinceLastUse(skillName);
+
+    // Baseline multiplier from success rate: 0.7–1.3
+    let baseMultiplier = 0.7;
+    if (successRate !== undefined) {
+      baseMultiplier = 0.7 + successRate * 0.6;
+    }
+
+    // Recency factor: e^(-days/90), ~1.0 (today) to ~0.5 (180+ days)
+    const recencyFactor = Math.exp(-daysSinceLastUse / 90);
+
+    // Blend: multiplier × (0.5 + 0.5 × recencyFactor)
+    // Recent perfect score: 1.3 × 1.0 = 1.3
+    // Stale perfect score: 1.3 × 0.75 = 0.975
+    // Zero success: 0.7 regardless of recency
+    return baseMultiplier * (0.5 + 0.5 * recencyFactor);
+  }
+
   private scheduleSave(): void {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(async () => {
@@ -120,7 +154,7 @@ export class SkillTracker {
       await writeFile(this.filePath, JSON.stringify(obj, null, 2), "utf-8");
       this.dirty = false;
       log.engine.info(
-        `Persisted skill stats for ${this.stats.size} skill(s) to ${this.filePath}`
+        `Persisted skill stats for ${this.stats.size} skill(s) to ${this.filePath}`,
       );
     } catch (err) {
       log.engine.warn(`Failed to persist skill stats: ${err}`);

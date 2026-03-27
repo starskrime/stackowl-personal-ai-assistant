@@ -23,7 +23,8 @@ export const WebCrawlTool: ToolImplementation = {
       properties: {
         url: {
           type: "string",
-          description: "Full URL to fetch (e.g. https://example.com/article). Must start with http:// or https://",
+          description:
+            "Full URL to fetch (e.g. https://example.com/article). Must start with http:// or https://",
         },
       },
       required: ["url"],

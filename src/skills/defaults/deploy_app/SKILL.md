@@ -4,9 +4,13 @@ description: Deploy applications by running build commands, pushing to git remot
 openclaw:
   emoji: "🚢"
 ---
+
 # Deploy Application
+
 Run deployment workflows.
+
 ## Steps
+
 1. **Run tests first:**
    ```bash
    run_shell_command("npm test")
@@ -27,12 +31,17 @@ Run deployment workflows.
    ```bash
    run_shell_command("curl -s -o /dev/null -w '%{http_code}' <production_url>")
    ```
+
 ## Examples
+
 ### Deploy Node.js app
+
 ```bash
 run_shell_command("npm run build && git push origin main")
 ```
+
 ## Error Handling
+
 - **Tests fail:** Abort deployment and show failures.
 - **Build fails:** Show error and suggest fixes.
 - **Push rejected:** Pull first with `git pull --rebase`.

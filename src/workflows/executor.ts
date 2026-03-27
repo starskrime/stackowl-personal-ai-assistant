@@ -62,7 +62,7 @@ export class WorkflowExecutor {
 
       for (const wave of waves) {
         const results = await Promise.allSettled(
-          wave.map(step => this.executeStep(step, context, onProgress)),
+          wave.map((step) => this.executeStep(step, context, onProgress)),
         );
 
         for (let i = 0; i < results.length; i++) {
@@ -149,15 +149,26 @@ export class WorkflowExecutor {
             retryCount: retryCount - 1,
           };
         }
-        log.engine.info(`[WorkflowExecutor] Retrying step "${step.name}" (${retryCount}/${maxRetries})`);
+        log.engine.info(
+          `[WorkflowExecutor] Retrying step "${step.name}" (${retryCount}/${maxRetries})`,
+        );
       }
     }
 
     // Unreachable but TypeScript needs it
-    return { stepId: step.id, status: "failed", error: "Max retries exceeded", durationMs: Date.now() - start, retryCount };
+    return {
+      stepId: step.id,
+      status: "failed",
+      error: "Max retries exceeded",
+      durationMs: Date.now() - start,
+      retryCount,
+    };
   }
 
-  private async runStep(step: WorkflowStep, context: ExecutionContext): Promise<unknown> {
+  private async runStep(
+    step: WorkflowStep,
+    context: ExecutionContext,
+  ): Promise<unknown> {
     const timeoutMs = step.timeoutMs ?? 30_000;
 
     const promise = (async () => {
@@ -169,7 +180,10 @@ export class WorkflowExecutor {
         case "agent":
           return this.runAgentStep(step.config as AgentStepConfig, context);
         case "condition":
-          return this.runConditionStep(step.config as ConditionStepConfig, context);
+          return this.runConditionStep(
+            step.config as ConditionStepConfig,
+            context,
+          );
         case "parallel":
           return this.runParallelStep(step.config as ParallelStepConfig);
         case "wait":
@@ -182,12 +196,21 @@ export class WorkflowExecutor {
     return Promise.race([
       promise,
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Step "${step.name}" timed out after ${timeoutMs}ms`)), timeoutMs),
+        setTimeout(
+          () =>
+            reject(
+              new Error(`Step "${step.name}" timed out after ${timeoutMs}ms`),
+            ),
+          timeoutMs,
+        ),
       ),
     ]);
   }
 
-  private async runToolStep(config: ToolStepConfig, context: ExecutionContext): Promise<unknown> {
+  private async runToolStep(
+    config: ToolStepConfig,
+    context: ExecutionContext,
+  ): Promise<unknown> {
     if (!this.toolRegistry) {
       throw new Error("No tool registry available");
     }
@@ -195,7 +218,11 @@ export class WorkflowExecutor {
     // Interpolate args with context values
     const resolvedArgs: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(config.args)) {
-      if (typeof value === "string" && value.startsWith("{{") && value.endsWith("}}")) {
+      if (
+        typeof value === "string" &&
+        value.startsWith("{{") &&
+        value.endsWith("}}")
+      ) {
         const ref = value.slice(2, -2).trim();
         resolvedArgs[key] = context.resolve(ref) ?? value;
       } else {
@@ -204,11 +231,18 @@ export class WorkflowExecutor {
     }
 
     const toolCtx: ToolContext = { cwd: this.defaultCwd };
-    const result = await this.toolRegistry.execute(config.toolName, resolvedArgs, toolCtx);
+    const result = await this.toolRegistry.execute(
+      config.toolName,
+      resolvedArgs,
+      toolCtx,
+    );
     return result;
   }
 
-  private async runLlmStep(config: LlmStepConfig, context: ExecutionContext): Promise<unknown> {
+  private async runLlmStep(
+    config: LlmStepConfig,
+    context: ExecutionContext,
+  ): Promise<unknown> {
     // Interpolate prompt
     let prompt = config.prompt;
     const varPattern = /\{\{([^}]+)\}\}/g;
@@ -238,12 +272,19 @@ export class WorkflowExecutor {
     return text;
   }
 
-  private async runAgentStep(config: AgentStepConfig, context: ExecutionContext): Promise<unknown> {
+  private async runAgentStep(
+    config: AgentStepConfig,
+    context: ExecutionContext,
+  ): Promise<unknown> {
     if (!this.owlRegistry || !this.config) {
       throw new Error("OwlRegistry and Config are required for agent steps.");
     }
 
-    let prompt = config.prompt || (config as any).message || (config as any).task || "Follow your instructions.";
+    let prompt =
+      config.prompt ||
+      (config as any).message ||
+      (config as any).task ||
+      "Follow your instructions.";
     const varPattern = /\{\{([^}]+)\}\}/g;
     let match: RegExpExecArray | null;
     if (config.prompt) {
@@ -257,8 +298,10 @@ export class WorkflowExecutor {
     }
 
     let owl = this.owlRegistry.getDefault();
-    const desiredOwlName = config.owlName || (config as any).agent_id || (config as any).agent;
-    const desiredOwlRole = config.owlRole || (config as any).role || desiredOwlName;
+    const desiredOwlName =
+      config.owlName || (config as any).agent_id || (config as any).agent;
+    const desiredOwlRole =
+      config.owlRole || (config as any).role || desiredOwlName;
 
     if (desiredOwlName) {
       const found = this.owlRegistry.get(desiredOwlName);
@@ -266,18 +309,21 @@ export class WorkflowExecutor {
       else if (desiredOwlRole) {
         const roleStr = desiredOwlRole.toLowerCase();
         const allOwls = this.owlRegistry.listOwls();
-        const foundRole = allOwls.find(o => 
-          (o.persona.type && o.persona.type.toLowerCase().includes(roleStr)) ||
-          (o.persona.name && o.persona.name.toLowerCase() === roleStr)
+        const foundRole = allOwls.find(
+          (o) =>
+            (o.persona.type &&
+              o.persona.type.toLowerCase().includes(roleStr)) ||
+            (o.persona.name && o.persona.name.toLowerCase() === roleStr),
         );
         if (foundRole) owl = foundRole;
       }
     } else if (desiredOwlRole) {
       const roleStr = desiredOwlRole.toLowerCase();
       const allOwls = this.owlRegistry.listOwls();
-      const found = allOwls.find(o => 
-        (o.persona.type && o.persona.type.toLowerCase().includes(roleStr)) ||
-        (o.persona.name && o.persona.name.toLowerCase() === roleStr)
+      const found = allOwls.find(
+        (o) =>
+          (o.persona.type && o.persona.type.toLowerCase().includes(roleStr)) ||
+          (o.persona.name && o.persona.name.toLowerCase() === roleStr),
       );
       if (found) owl = found;
     }
@@ -292,7 +338,11 @@ export class WorkflowExecutor {
 
     const text = response.content;
     if (config.extractAs === "json") {
-      try { return JSON.parse(text); } catch { return text; }
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
     }
     if (config.extractAs === "list") {
       return text.split("\n").filter((l: string) => l.trim().length > 0);
@@ -300,7 +350,10 @@ export class WorkflowExecutor {
     return text;
   }
 
-  private runConditionStep(config: ConditionStepConfig, context: ExecutionContext): string {
+  private runConditionStep(
+    config: ConditionStepConfig,
+    context: ExecutionContext,
+  ): string {
     // Simple expression evaluation: "stepId.output === 'value'"
     let expr = config.expression;
     const varPattern = /\{\{([^}]+)\}\}/g;
@@ -334,7 +387,9 @@ export class WorkflowExecutor {
 
     // Truthy check
     const val = expr.trim().replace(/^["']|["']$/g, "");
-    return val !== "" && val !== "false" && val !== "null" && val !== "undefined";
+    return (
+      val !== "" && val !== "false" && val !== "null" && val !== "undefined"
+    );
   }
 
   private runParallelStep(_config: ParallelStepConfig): string {
@@ -343,7 +398,9 @@ export class WorkflowExecutor {
   }
 
   private runWaitStep(config: WaitStepConfig): Promise<string> {
-    return new Promise(resolve => setTimeout(() => resolve("waited"), config.durationMs));
+    return new Promise((resolve) =>
+      setTimeout(() => resolve("waited"), config.durationMs),
+    );
   }
 
   /**
@@ -356,15 +413,19 @@ export class WorkflowExecutor {
     const remaining = [...steps];
 
     while (remaining.length > 0) {
-      const wave = remaining.filter(step => {
+      const wave = remaining.filter((step) => {
         const deps = step.dependsOn ?? [];
-        return deps.every(d => completed.has(d));
+        return deps.every((d) => completed.has(d));
       });
 
       if (wave.length === 0) {
         // Circular dependency — fail securely instead of silently running unresolved steps
-        log.engine.error("[WorkflowExecutor] Circular dependency detected among remaining steps");
-        throw new Error("Workflow resolution failed: Circular or missing dependencies detected");
+        log.engine.error(
+          "[WorkflowExecutor] Circular dependency detected among remaining steps",
+        );
+        throw new Error(
+          "Workflow resolution failed: Circular or missing dependencies detected",
+        );
       }
 
       waves.push(wave);

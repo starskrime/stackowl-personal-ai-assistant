@@ -11,10 +11,10 @@
  *   - Clean up completed/failed tasks older than retention period
  */
 
-import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { Task, TaskStatus, TaskCheckpoint, TaskEvent } from './types.js';
+import { mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import type { Task, TaskStatus, TaskCheckpoint, TaskEvent } from "./types.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ export class TaskStore {
   private listeners: Array<(event: TaskEvent) => void> = [];
 
   constructor(workspacePath: string) {
-    this.tasksDir = join(workspacePath, 'tasks');
+    this.tasksDir = join(workspacePath, "tasks");
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────
@@ -54,7 +54,11 @@ export class TaskStore {
 
   private emit(event: TaskEvent): void {
     for (const listener of this.listeners) {
-      try { listener(event); } catch { /* non-fatal */ }
+      try {
+        listener(event);
+      } catch {
+        /* non-fatal */
+      }
     }
   }
 
@@ -74,12 +78,12 @@ export class TaskStore {
     const task: Task = {
       id: `task_${now}_${Math.random().toString(36).slice(2, 8)}`,
       userMessage: params.userMessage,
-      status: 'pending',
+      status: "pending",
       channelId: params.channelId,
       userId: params.userId,
       sessionId: params.sessionId,
       background: params.background ?? false,
-      progressMessage: '',
+      progressMessage: "",
       progressPercent: -1,
       toolsUsed: [],
       retryCount: 0,
@@ -90,7 +94,7 @@ export class TaskStore {
 
     this.cache.set(task.id, task);
     await this.persist(task);
-    this.emit({ type: 'task:created', task });
+    this.emit({ type: "task:created", task });
     return task;
   }
 
@@ -104,7 +108,11 @@ export class TaskStore {
   /**
    * Update a task's status and persist.
    */
-  async updateStatus(taskId: string, status: TaskStatus, extra?: Partial<Task>): Promise<Task | undefined> {
+  async updateStatus(
+    taskId: string,
+    status: TaskStatus,
+    extra?: Partial<Task>,
+  ): Promise<Task | undefined> {
     const task = this.cache.get(taskId);
     if (!task) return undefined;
 
@@ -112,7 +120,11 @@ export class TaskStore {
     task.updatedAt = Date.now();
     if (extra) Object.assign(task, extra);
 
-    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+    if (
+      status === "completed" ||
+      status === "failed" ||
+      status === "cancelled"
+    ) {
       task.completedAt = Date.now();
     }
 
@@ -120,17 +132,25 @@ export class TaskStore {
 
     // Emit appropriate event
     switch (status) {
-      case 'running':
-        this.emit({ type: 'task:started', taskId });
+      case "running":
+        this.emit({ type: "task:started", taskId });
         break;
-      case 'completed':
-        this.emit({ type: 'task:completed', taskId, result: task.result ?? '' });
+      case "completed":
+        this.emit({
+          type: "task:completed",
+          taskId,
+          result: task.result ?? "",
+        });
         break;
-      case 'failed':
-        this.emit({ type: 'task:failed', taskId, error: task.error ?? 'Unknown error' });
+      case "failed":
+        this.emit({
+          type: "task:failed",
+          taskId,
+          error: task.error ?? "Unknown error",
+        });
         break;
-      case 'cancelled':
-        this.emit({ type: 'task:cancelled', taskId });
+      case "cancelled":
+        this.emit({ type: "task:cancelled", taskId });
         break;
     }
 
@@ -140,7 +160,11 @@ export class TaskStore {
   /**
    * Update progress for a running task.
    */
-  async updateProgress(taskId: string, message: string, percent: number = -1): Promise<void> {
+  async updateProgress(
+    taskId: string,
+    message: string,
+    percent: number = -1,
+  ): Promise<void> {
     const task = this.cache.get(taskId);
     if (!task) return;
 
@@ -150,20 +174,23 @@ export class TaskStore {
 
     // Persist less frequently for progress (every 5s) to avoid disk thrashing
     await this.persist(task);
-    this.emit({ type: 'task:progress', taskId, message, percent });
+    this.emit({ type: "task:progress", taskId, message, percent });
   }
 
   /**
    * Save a ReAct loop checkpoint for resume capability.
    */
-  async saveCheckpoint(taskId: string, checkpoint: TaskCheckpoint): Promise<void> {
+  async saveCheckpoint(
+    taskId: string,
+    checkpoint: TaskCheckpoint,
+  ): Promise<void> {
     const task = this.cache.get(taskId);
     if (!task) return;
 
     task.checkpoint = checkpoint;
     task.updatedAt = Date.now();
     await this.persist(task);
-    this.emit({ type: 'task:checkpoint', taskId, checkpoint });
+    this.emit({ type: "task:checkpoint", taskId, checkpoint });
   }
 
   // ─── Queries ───────────────────────────────────────────────────
@@ -180,17 +207,19 @@ export class TaskStore {
     let tasks = [...this.cache.values()];
 
     if (filter?.status) {
-      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-      tasks = tasks.filter(t => statuses.includes(t.status));
+      const statuses = Array.isArray(filter.status)
+        ? filter.status
+        : [filter.status];
+      tasks = tasks.filter((t) => statuses.includes(t.status));
     }
     if (filter?.userId) {
-      tasks = tasks.filter(t => t.userId === filter.userId);
+      tasks = tasks.filter((t) => t.userId === filter.userId);
     }
     if (filter?.sessionId) {
-      tasks = tasks.filter(t => t.sessionId === filter.sessionId);
+      tasks = tasks.filter((t) => t.sessionId === filter.sessionId);
     }
     if (filter?.background !== undefined) {
-      tasks = tasks.filter(t => t.background === filter.background);
+      tasks = tasks.filter((t) => t.background === filter.background);
     }
 
     return tasks.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -200,15 +229,20 @@ export class TaskStore {
    * Get tasks that were running when the process crashed (for resume).
    */
   getResumable(): Task[] {
-    return this.list({ status: ['running', 'pending'] })
-      .filter(t => t.checkpoint != null);
+    return this.list({ status: ["running", "pending"] }).filter(
+      (t) => t.checkpoint != null,
+    );
   }
 
   /**
    * Get active background tasks for a user.
    */
   getActiveBackground(userId: string): Task[] {
-    return this.list({ userId, status: ['running', 'pending'], background: true });
+    return this.list({
+      userId,
+      status: ["running", "pending"],
+      background: true,
+    });
   }
 
   // ─── Cleanup ───────────────────────────────────────────────────
@@ -222,12 +256,16 @@ export class TaskStore {
 
     for (const [id, task] of this.cache) {
       if (
-        (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') &&
+        (task.status === "completed" ||
+          task.status === "failed" ||
+          task.status === "cancelled") &&
         (task.completedAt ?? task.updatedAt) < cutoff
       ) {
         this.cache.delete(id);
         const filePath = join(this.tasksDir, `${id}.json`);
-        await unlink(filePath).catch(() => { /* non-fatal */ });
+        await unlink(filePath).catch(() => {
+          /* non-fatal */
+        });
         removed++;
       }
     }
@@ -239,7 +277,7 @@ export class TaskStore {
 
   private async persist(task: Task): Promise<void> {
     const filePath = join(this.tasksDir, `${task.id}.json`);
-    await writeFile(filePath, JSON.stringify(task, null, 2), 'utf-8');
+    await writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
   }
 
   private async loadAll(): Promise<void> {
@@ -248,9 +286,9 @@ export class TaskStore {
     try {
       const files = await readdir(this.tasksDir);
       for (const file of files) {
-        if (!file.endsWith('.json')) continue;
+        if (!file.endsWith(".json")) continue;
         try {
-          const data = await readFile(join(this.tasksDir, file), 'utf-8');
+          const data = await readFile(join(this.tasksDir, file), "utf-8");
           const task = JSON.parse(data) as Task;
           this.cache.set(task.id, task);
         } catch {

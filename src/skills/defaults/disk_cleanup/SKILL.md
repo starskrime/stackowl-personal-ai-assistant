@@ -5,9 +5,13 @@ openclaw:
   emoji: "🧹"
   os: [darwin]
 ---
+
 # Disk Cleanup
+
 Free up disk space by cleaning caches and finding large files.
+
 ## Steps
+
 1. **Show current disk usage:**
    ```bash
    run_shell_command("df -h /")
@@ -26,11 +30,16 @@ Free up disk space by cleaning caches and finding large files.
    ```bash
    run_shell_command("rm -rf ~/Library/Caches/<specific_app>/")
    ```
+
 ## Examples
+
 ### Show space usage
+
 ```bash
 run_shell_command("du -sh ~/Library/Caches ~/Downloads ~/.Trash ~/Library/Developer 2>/dev/null")
 ```
+
 ## Error Handling
+
 - **Permission denied:** Skip protected directories and note them.
 - **Critical directory:** NEVER delete system files, ~/Documents, ~/Desktop without explicit confirmation.

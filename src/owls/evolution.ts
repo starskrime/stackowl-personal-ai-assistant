@@ -22,20 +22,27 @@ export class OwlEvolutionEngine {
   private config: StackOwlConfig;
   private sessionStore: SessionStore;
   private owlRegistry: OwlRegistry;
-  private userProfileProvider?: () => import('../learning/micro-learner.js').UserProfile | null;
+  private userProfileProvider?: () =>
+    | import("../learning/micro-learner.js").UserProfile
+    | null;
+  private episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
 
   constructor(
     provider: ModelProvider,
     config: StackOwlConfig,
     sessionStore: SessionStore,
     owlRegistry: OwlRegistry,
-    userProfileProvider?: () => import('../learning/micro-learner.js').UserProfile | null,
+    userProfileProvider?: () =>
+      | import("../learning/micro-learner.js").UserProfile
+      | null,
+    episodicMemory?: import("../memory/episodic.js").EpisodicMemory,
   ) {
     this.provider = provider;
     this.config = config;
     this.sessionStore = sessionStore;
     this.owlRegistry = owlRegistry;
     this.userProfileProvider = userProfileProvider;
+    this.episodicMemory = episodicMemory;
   }
 
   /**
@@ -88,6 +95,37 @@ export class OwlEvolutionEngine {
   }
 
   /**
+   * Build a summary of recent evolution history to guide the LLM.
+   */
+  private buildEvolutionHistorySection(owl: {
+    dna: {
+      evolutionLog: Array<{
+        generation: number;
+        timestamp: string;
+        mutations: string[];
+        effectiveness?: number;
+      }>;
+    };
+  }): string {
+    const log = owl.dna.evolutionLog;
+    if (!log || log.length === 0) {
+      return "EVOLUTION HISTORY: No previous mutations yet.\n\n";
+    }
+
+    const recent = log.slice(-5).reverse();
+    const lines = recent.map((e) => {
+      const eff =
+        e.effectiveness !== undefined
+          ? ` (${(e.effectiveness * 100).toFixed(0)}% effective)`
+          : "";
+      const mutations = e.mutations.slice(0, 3).join("; ") || "no changes";
+      return `Gen ${e.generation}${eff}: ${mutations}`;
+    });
+
+    return `EVOLUTION HISTORY (last 5 generations, newest first):\n${lines.join("\n")}\n\n`;
+  }
+
+  /**
    * Trigger an evolution pass for a specific owl.
    * Analyzes their most recent session and updates their DNA.
    */
@@ -114,7 +152,9 @@ export class OwlEvolutionEngine {
     const sessionsToAnalyze = owlSessions.slice(0, MAX_SESSIONS_TO_ANALYZE);
 
     // Filter out sessions that are too short
-    const validSessions = sessionsToAnalyze.filter((s) => s.messages.length >= 4);
+    const validSessions = sessionsToAnalyze.filter(
+      (s) => s.messages.length >= 4,
+    );
     if (validSessions.length === 0) {
       log.evolution.info(
         `All recent sessions too short for ${owl.persona.name}. Skipping evolution.`,
@@ -133,7 +173,9 @@ export class OwlEvolutionEngine {
       allRelevantMessages.push(...sampled);
     }
     // Cap total messages to avoid overflow
-    const relevantMessages = allRelevantMessages.slice(-MAX_EVOLUTION_MESSAGES * 2);
+    const relevantMessages = allRelevantMessages.slice(
+      -MAX_EVOLUTION_MESSAGES * 2,
+    );
 
     const transcript = relevantMessages
       .map(
@@ -144,25 +186,52 @@ export class OwlEvolutionEngine {
 
     // If a user profile is available (from MicroLearner), include it
     // to give the evolution LLM a holistic view of who this person is
-    let profileSection = '';
+    let profileSection = "";
     if (this.userProfileProvider) {
       const profile = this.userProfileProvider();
       if (profile && profile.totalMessages > 10) {
         const topTopics = Object.entries(profile.topics)
           .sort(([, a], [, b]) => b - a)
           .slice(0, 5)
-          .map(([t, c]) => `${t}(${c}x)`).join(', ');
+          .map(([t, c]) => `${t}(${c}x)`)
+          .join(", ");
         const topTools = Object.entries(profile.toolUsage)
           .sort(([, a], [, b]) => b - a)
           .slice(0, 5)
-          .map(([t, c]) => `${t}(${c}x)`).join(', ');
+          .map(([t, c]) => `${t}(${c}x)`)
+          .join(", ");
         profileSection =
           `\nUSER PROFILE (${profile.totalMessages} total messages):\n` +
-          `- Top topics: ${topTopics || 'none'}\n` +
-          `- Most used tools: ${topTools || 'none'}\n` +
-          `- Interaction style: ${profile.commandRate > 0.5 ? 'command-oriented (prefers actions)' : profile.questionRate > 0.4 ? 'question-oriented (prefers explanations)' : 'conversational'}\n` +
+          `- Top topics: ${topTopics || "none"}\n` +
+          `- Most used tools: ${topTools || "none"}\n` +
+          `- Interaction style: ${profile.commandRate > 0.5 ? "command-oriented (prefers actions)" : profile.questionRate > 0.4 ? "question-oriented (prefers explanations)" : "conversational"}\n` +
           `- Avg message length: ${Math.round(profile.avgMessageLength)} chars\n` +
           `- Sentiment: ${profile.positiveSignals}+ / ${profile.negativeSignals}-\n\n`;
+      }
+    }
+
+    // Retrieve relevant episodic memories for context
+    // Prioritize memories related to the user's top topics
+    let memorySection = "";
+    if (this.episodicMemory) {
+      try {
+        // Build a query from top topics in the transcript
+        const topicWords = relevantMessages
+          .slice(-6) // last 3 turns
+          .map((m) => (m.content ?? "").toLowerCase())
+          .join(" ")
+          .split(/\s+/)
+          .filter((w) => w.length > 4)
+          .slice(0, 20);
+        const query = [...new Set(topicWords)].join(" ");
+        memorySection = await this.episodicMemory.toContextString(query, 3);
+        if (memorySection) {
+          memorySection = `\n## Relevant Past Episodes\n${memorySection}\n\n`;
+        }
+      } catch (err) {
+        log.evolution.warn(
+          `[Evolution] EpisodicMemory retrieval failed: ${err}`,
+        );
       }
     }
 
@@ -170,13 +239,16 @@ export class OwlEvolutionEngine {
       `You are the subconscious of "${owl.persona.name}", analyzing a recent conversation to learn and evolve.\n\n` +
       `CURRENT DNA STATE:\n${JSON.stringify(owl.dna, null, 2)}\n\n` +
       profileSection +
+      memorySection +
+      this.buildEvolutionHistorySection(owl) +
       `RECENT CONVERSATION (last ${relevantMessages.length} turns):\n${transcript}\n\n` +
       `Task: Think about this user as a PERSON. Go beyond just this conversation:\n` +
       `- What do their patterns reveal about who they are and what they need?\n` +
       `- Did they express annoyance at your verbosity? Did they state a preference?\n` +
       `- Did they reject your advice, or accept it?\n` +
       `- Based on their topics and tool usage, what expertise should you develop to serve them better?\n` +
-      `- What communication style would best match their personality?\n\n` +
+      `- What communication style would best match their personality?\n` +
+      `- Look at your evolution history — what worked and what didn't? Avoid repeating failed mutations.\n\n` +
       `Return a JSON object with proposed mutations to your DNA. Schema:\n` +
       `{\n` +
       `  "newPreferences": { "prefers_rust": 0.9, "hates_boilerplate": 0.8 }, // Add or update 0.0 to 1.0\n` +
@@ -348,7 +420,9 @@ export class OwlEvolutionEngine {
    *   - preference stability (fewer wild swings = better calibration)
    *   - expertise breadth (growing expertise is a positive signal)
    */
-  private computeMutationEffectiveness(owl: { dna: import("./persona.js").OwlDNA }): number {
+  private computeMutationEffectiveness(owl: {
+    dna: import("./persona.js").OwlDNA;
+  }): number {
     const stats = owl.dna.interactionStats;
 
     // Factor 1: advice acceptance rate (already 0–1)
@@ -358,18 +432,24 @@ export class OwlEvolutionEngine {
     // Preferences near 0.5 are neutral (uncertain); near 0 or 1 indicate strong signal.
     // We reward strong signals that have stabilized (not bouncing).
     const prefValues = Object.values(owl.dna.learnedPreferences);
-    const prefStability = prefValues.length > 0
-      ? prefValues.reduce((sum, v) => sum + (1 - Math.abs(v - 0.5) * 2) * 0.3 + 0.7 * Math.abs(v - 0.5), 0) / prefValues.length
-      : 0.5;
+    const prefStability =
+      prefValues.length > 0
+        ? prefValues.reduce(
+            (sum, v) =>
+              sum + (1 - Math.abs(v - 0.5) * 2) * 0.3 + 0.7 * Math.abs(v - 0.5),
+            0,
+          ) / prefValues.length
+        : 0.5;
 
     // Factor 3: expertise breadth — more topics = owl is learning
     const expertiseKeys = Object.keys(owl.dna.expertiseGrowth);
     const expertiseBreadth = Math.min(1, expertiseKeys.length / 10);
 
     // Factor 4: challenge acceptance ratio
-    const challengeRatio = stats.challengesGiven > 0
-      ? Math.min(1, stats.challengesAccepted / stats.challengesGiven)
-      : 0.5;
+    const challengeRatio =
+      stats.challengesGiven > 0
+        ? Math.min(1, stats.challengesAccepted / stats.challengesGiven)
+        : 0.5;
 
     // Weighted composite
     const score =
@@ -395,23 +475,32 @@ export class OwlEvolutionEngine {
     if (recentLogs.length < 3) return; // Not enough data for analysis
 
     // Compute rolling average effectiveness
-    const avgEffectiveness = recentLogs
-      .filter(e => e.effectiveness !== undefined)
-      .reduce((sum, e) => sum + (e.effectiveness ?? 0), 0) / Math.max(1, recentLogs.filter(e => e.effectiveness !== undefined).length);
+    const avgEffectiveness =
+      recentLogs
+        .filter((e) => e.effectiveness !== undefined)
+        .reduce((sum, e) => sum + (e.effectiveness ?? 0), 0) /
+      Math.max(
+        1,
+        recentLogs.filter((e) => e.effectiveness !== undefined).length,
+      );
 
     // If current batch is significantly below average, log a warning
     if (effectiveness < avgEffectiveness - 0.15) {
       log.evolution.warn(
-        `[A/B] ${owl.dna.owl} mutation batch scored ${(effectiveness * 100).toFixed(0)}% vs avg ${(avgEffectiveness * 100).toFixed(0)}% — mutations may be counterproductive: ${mutations.join('; ')}`,
+        `[A/B] ${owl.dna.owl} mutation batch scored ${(effectiveness * 100).toFixed(0)}% vs avg ${(avgEffectiveness * 100).toFixed(0)}% — mutations may be counterproductive: ${mutations.join("; ")}`,
       );
     }
 
     // If effectiveness is trending upward over last 5 entries, log success
-    const last5 = recentLogs.slice(-5).filter(e => e.effectiveness !== undefined);
+    const last5 = recentLogs
+      .slice(-5)
+      .filter((e) => e.effectiveness !== undefined);
     if (last5.length >= 3) {
       const trend = last5.reduce((acc, e, i) => {
         if (i === 0) return 0;
-        return acc + ((e.effectiveness ?? 0) - (last5[i - 1].effectiveness ?? 0));
+        return (
+          acc + ((e.effectiveness ?? 0) - (last5[i - 1].effectiveness ?? 0))
+        );
       }, 0);
 
       if (trend > 0.1) {

@@ -1,5 +1,5 @@
-export { CollabSessionManager } from './session-manager.js';
-export { CollabFacilitator } from './facilitator.js';
+export { CollabSessionManager } from "./session-manager.js";
+export { CollabFacilitator } from "./facilitator.js";
 export type {
   SharedSession,
   CollabMessage,
@@ -7,4 +7,4 @@ export type {
   ParticipantRole,
   SessionSettings,
   CollabConfig,
-} from './types.js';
+} from "./types.js";

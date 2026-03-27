@@ -9,10 +9,11 @@
  * harder to fingerprint as bots.
  */
 
-import { mkdirSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { log } from '../logger.js';
-import { findChrome } from './chrome.js';
+import { mkdirSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { log } from "../logger.js";
+import { findChrome } from "./chrome.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ export interface BrowserPoolConfig {
 }
 
 interface PooledBrowser {
-  browser: import('puppeteer').Browser;
+  browser: import("puppeteer").Browser;
   profileDir: string;
   inUse: boolean;
   launchedAt: number;
@@ -43,7 +44,7 @@ const DEFAULT_POOL_CONFIG: BrowserPoolConfig = {
   poolSize: 2,
   warmUp: true,
   stealthMode: true,
-  userDataDir: '',
+  userDataDir: "",
   headless: true,
 };
 
@@ -108,8 +109,8 @@ export class BrowserPool {
 
     log.engine.info(
       `[BrowserPool] Launching ${this.config.poolSize} browser(s)` +
-      `${this.config.stealthMode ? ' (stealth)' : ''}` +
-      `${this.config.warmUp ? ' with warm-up' : ''}...`,
+        `${this.config.stealthMode ? " (stealth)" : ""}` +
+        `${this.config.warmUp ? " with warm-up" : ""}...`,
     );
 
     const launchPromises: Promise<void>[] = [];
@@ -118,13 +119,17 @@ export class BrowserPool {
     }
     await Promise.allSettled(launchPromises);
 
-    const alive = this.pool.filter(b => b.browser.connected).length;
+    const alive = this.pool.filter((b) => b.browser.connected).length;
     if (alive === 0) {
-      log.engine.warn('[BrowserPool] No browsers launched — web fetching will fall back to HTTP only');
+      log.engine.warn(
+        "[BrowserPool] No browsers launched — web fetching will fall back to HTTP only",
+      );
       return;
     }
 
-    log.engine.info(`[BrowserPool] ${alive}/${this.config.poolSize} browsers ready`);
+    log.engine.info(
+      `[BrowserPool] ${alive}/${this.config.poolSize} browsers ready`,
+    );
 
     if (this.config.warmUp) {
       await this.warmUp();
@@ -138,10 +143,10 @@ export class BrowserPool {
    * Caller MUST call release() when done.
    */
   async acquire(): Promise<PooledBrowser> {
-    if (this.shuttingDown) throw new Error('BrowserPool is shutting down');
+    if (this.shuttingDown) throw new Error("BrowserPool is shutting down");
 
     // Find an idle browser
-    const idle = this.pool.find(b => !b.inUse && b.browser.connected);
+    const idle = this.pool.find((b) => !b.inUse && b.browser.connected);
     if (idle) {
       idle.inUse = true;
       idle.requestCount++;
@@ -173,7 +178,7 @@ export class BrowserPool {
    * Get a new page from a pooled browser. Applies stealth scripts.
    * The page should be closed by the caller when done.
    */
-  async getPage(pooled: PooledBrowser): Promise<import('puppeteer').Page> {
+  async getPage(pooled: PooledBrowser): Promise<import("puppeteer").Page> {
     const page = await pooled.browser.newPage();
 
     if (this.config.stealthMode) {
@@ -185,8 +190,8 @@ export class BrowserPool {
     // Set realistic viewport and user agent
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
-      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     );
 
     return page;
@@ -199,7 +204,9 @@ export class BrowserPool {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
 
-    log.engine.info(`[BrowserPool] Shutting down ${this.pool.length} browser(s)...`);
+    log.engine.info(
+      `[BrowserPool] Shutting down ${this.pool.length} browser(s)...`,
+    );
 
     // Reject any waiting acquires
     for (const waiter of this.waitQueue) {
@@ -219,17 +226,17 @@ export class BrowserPool {
     this.pool = [];
     this.initialized = false;
 
-    log.engine.info('[BrowserPool] All browsers closed');
+    log.engine.info("[BrowserPool] All browsers closed");
   }
 
   /** Number of browsers currently idle */
   get availableCount(): number {
-    return this.pool.filter(b => !b.inUse && b.browser.connected).length;
+    return this.pool.filter((b) => !b.inUse && b.browser.connected).length;
   }
 
   /** Total number of browsers in the pool */
   get totalCount(): number {
-    return this.pool.filter(b => b.browser.connected).length;
+    return this.pool.filter((b) => b.browser.connected).length;
   }
 
   get isReady(): boolean {
@@ -241,21 +248,44 @@ export class BrowserPool {
   private async launchBrowser(index: number): Promise<void> {
     const profileDir = join(this.config.userDataDir, `profile-${index}`);
 
-    // Clean corrupted profile dirs
-    if (existsSync(join(profileDir, 'SingletonLock'))) {
-      try { rmSync(join(profileDir, 'SingletonLock')); } catch { /* ok */ }
+    // Clean stale lock files
+    for (const lock of [
+      "SingletonLock",
+      "SingletonCookie",
+      "SingletonSocket",
+    ]) {
+      const lockPath = join(profileDir, lock);
+      if (existsSync(lockPath)) {
+        try {
+          rmSync(lockPath);
+        } catch {
+          /* ok */
+        }
+      }
+    }
+
+    // Kill any stale Chrome processes holding this profile directory.
+    // This handles the case where a previous Node process was killed without
+    // graceful shutdown and left Chrome running.
+    try {
+      execSync(
+        `pkill -f 'chrome.*${profileDir.replace(/'/g, "'\\''")}' 2>/dev/null || true`,
+        { stdio: "ignore" },
+      );
+    } catch {
+      /* ignore */
     }
 
     mkdirSync(profileDir, { recursive: true });
 
     const chromePath = findChrome();
     const args = [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-      '--window-size=1366,768',
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-infobars",
+      "--window-size=1366,768",
     ];
 
     if (this.config.proxy) {
@@ -263,7 +293,7 @@ export class BrowserPool {
     }
 
     try {
-      const puppeteer = await import('puppeteer');
+      const puppeteer = await import("puppeteer");
       const browser = await puppeteer.default.launch({
         headless: this.config.headless,
         executablePath: chromePath,
@@ -281,20 +311,24 @@ export class BrowserPool {
       });
 
       // Auto-restart crashed browsers
-      browser.on('disconnected', () => {
+      browser.on("disconnected", () => {
         if (!this.shuttingDown) {
-          log.engine.warn(`[BrowserPool] Browser ${index} disconnected — relaunching`);
-          const idx = this.pool.findIndex(b => b.profileDir === profileDir);
+          log.engine.warn(
+            `[BrowserPool] Browser ${index} disconnected — relaunching`,
+          );
+          const idx = this.pool.findIndex((b) => b.profileDir === profileDir);
           if (idx !== -1) this.pool.splice(idx, 1);
           this.launchBrowser(index).catch((err) => {
-            log.engine.error(`[BrowserPool] Failed to relaunch browser ${index}: ${err}`);
+            log.engine.error(
+              `[BrowserPool] Failed to relaunch browser ${index}: ${err}`,
+            );
           });
         }
       });
     } catch (err) {
       log.engine.error(
         `[BrowserPool] Failed to launch browser ${index}: ` +
-        `${err instanceof Error ? err.message : err}`,
+          `${err instanceof Error ? err.message : err}`,
       );
     }
   }
@@ -306,11 +340,13 @@ export class BrowserPool {
    */
   private async warmUp(): Promise<void> {
     const warmUpUrls = [
-      'https://www.google.com',
-      'https://en.wikipedia.org/wiki/Main_Page',
+      "https://www.google.com",
+      "https://en.wikipedia.org/wiki/Main_Page",
     ];
 
-    log.engine.info(`[BrowserPool] Warming up ${this.pool.length} browser(s)...`);
+    log.engine.info(
+      `[BrowserPool] Warming up ${this.pool.length} browser(s)...`,
+    );
 
     await Promise.allSettled(
       this.pool.map(async (pooled) => {
@@ -318,9 +354,14 @@ export class BrowserPool {
         try {
           for (const url of warmUpUrls) {
             try {
-              await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 });
+              await page.goto(url, {
+                waitUntil: "domcontentloaded",
+                timeout: 10000,
+              });
               // Brief pause to look human
-              await new Promise(r => setTimeout(r, 500 + Math.random() * 1000));
+              await new Promise((r) =>
+                setTimeout(r, 500 + Math.random() * 1000),
+              );
             } catch {
               // Non-fatal: warm-up failure doesn't prevent operation
             }
@@ -331,6 +372,6 @@ export class BrowserPool {
       }),
     );
 
-    log.engine.info('[BrowserPool] Warm-up complete');
+    log.engine.info("[BrowserPool] Warm-up complete");
   }
 }

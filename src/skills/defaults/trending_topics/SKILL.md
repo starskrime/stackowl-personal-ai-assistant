@@ -4,9 +4,13 @@ description: Discover what topics are currently trending on social media, news, 
 openclaw:
   emoji: "📈"
 ---
+
 # Trending Topics
+
 Find currently trending topics.
+
 ## Steps
+
 1. **Search for trending content:**
    ```
    web_search query="trending topics today"
@@ -19,10 +23,15 @@ Find currently trending topics.
    - 🎬 Entertainment
    - ⚽ Sports
 3. **Present top 10 trends** with brief context for each.
+
 ## Examples
+
 ### Get today's trends
+
 ```
 web_search query="trending topics today March 2026"
 ```
+
 ## Error Handling
+
 - **Region-specific trends:** Ask user for their region if results are too broad.

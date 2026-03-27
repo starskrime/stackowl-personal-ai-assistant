@@ -67,7 +67,12 @@ export interface CouncilSession {
   id: string;
   startedAt: string;
   completedAt?: string;
-  phase: "independent" | "presenting" | "reviewing" | "synthesizing" | "complete";
+  phase:
+    | "independent"
+    | "presenting"
+    | "reviewing"
+    | "synthesizing"
+    | "complete";
   /** Each owl's independent learning */
   learnings: IndependentLearning[];
   /** Peer reviews from cross-examination */
@@ -142,24 +147,28 @@ export class KnowledgeCouncil {
       pelletsCreated: 0,
     };
 
-    log.engine.info(
-      `[KnowledgeCouncil] Convening with ${allOwls.length} owls`,
-    );
+    log.engine.info(`[KnowledgeCouncil] Convening with ${allOwls.length} owls`);
     await onProgress?.(
       `🏛️ **Knowledge Council** convening — ${allOwls.length} owls gathering...`,
     );
 
     // Phase 1: Independent Learning
-    await onProgress?.(`📚 **Phase 1: Independent Study** — Each owl is researching their topic...`);
+    await onProgress?.(
+      `📚 **Phase 1: Independent Study** — Each owl is researching their topic...`,
+    );
     await this.phaseIndependentLearning(session, allOwls, topics, onProgress);
 
     // Phase 2: Presentations & Peer Review
-    await onProgress?.(`🔍 **Phase 2: Peer Review** — Owls are challenging each other's findings...`);
+    await onProgress?.(
+      `🔍 **Phase 2: Peer Review** — Owls are challenging each other's findings...`,
+    );
     session.phase = "reviewing";
     await this.phasePeerReview(session, allOwls, onProgress);
 
     // Phase 3: Cross-Pollination
-    await onProgress?.(`🔗 **Phase 3: Cross-Pollination** — Looking for connections across domains...`);
+    await onProgress?.(
+      `🔗 **Phase 3: Cross-Pollination** — Looking for connections across domains...`,
+    );
     session.phase = "synthesizing";
     await this.phaseCrossPollination(session, allOwls, onProgress);
 
@@ -180,12 +189,11 @@ export class KnowledgeCouncil {
 
     log.engine.info(
       `[KnowledgeCouncil] Session complete — ${session.pelletsCreated} pellets created, ` +
-      `${session.crossPollinations.length} cross-domain connections found`,
+        `${session.crossPollinations.length} cross-domain connections found`,
     );
 
     await onProgress?.(
-      `✅ **Knowledge Council complete!**\n\n` +
-      `${session.summary}`,
+      `✅ **Knowledge Council complete!**\n\n` + `${session.summary}`,
     );
 
     return session;
@@ -214,7 +222,7 @@ export class KnowledgeCouncil {
         session.learnings.push(learning);
         await onProgress?.(
           `  ${owl.persona.emoji} **${owl.persona.name}** finished — ` +
-          `${learning.keyInsights.length} insights, ${(learning.confidence * 100).toFixed(0)}% confidence`,
+            `${learning.keyInsights.length} insights, ${(learning.confidence * 100).toFixed(0)}% confidence`,
         );
       } catch (err) {
         log.engine.warn(
@@ -242,11 +250,20 @@ export class KnowledgeCouncil {
       // Try to load inner state for desire-driven topic selection
       let desires: string[] = [];
       try {
-        const innerLife = new OwlInnerLife(this.provider, owl, this.workspacePath);
+        const innerLife = new OwlInnerLife(
+          this.provider,
+          owl,
+          this.workspacePath,
+        );
         await innerLife.load();
         const state = JSON.parse(
           await readFile(
-            join(this.workspacePath, "owls", owl.persona.name.toLowerCase(), "inner_state.json"),
+            join(
+              this.workspacePath,
+              "owls",
+              owl.persona.name.toLowerCase(),
+              "inner_state.json",
+            ),
             "utf-8",
           ).catch(() => "{}"),
         );
@@ -255,7 +272,9 @@ export class KnowledgeCouncil {
             .filter((d: { intensity: number }) => d.intensity > 0.4)
             .map((d: { description: string }) => d.description);
         }
-      } catch { /* no inner state yet */ }
+      } catch {
+        /* no inner state yet */
+      }
 
       const prompt = `You are ${owl.persona.name} (${owl.persona.type}).
 Your specialties: ${owl.persona.specialties.join(", ")}
@@ -273,7 +292,10 @@ Respond with ONLY the topic — no explanation, no quotes. Just the topic in one
 
       try {
         const response = await this.provider.chat(
-          [{ role: "system", content: prompt }, { role: "user", content: "What do you want to study?" }],
+          [
+            { role: "system", content: prompt },
+            { role: "user", content: "What do you want to study?" },
+          ],
           undefined,
           { temperature: 0.9, maxTokens: 100 },
         );
@@ -312,7 +334,10 @@ Respond as JSON:
 }`;
 
     const response = await this.provider.chat(
-      [{ role: "system", content: studyPrompt }, { role: "user", content: `Study "${topic}" now.` }],
+      [
+        { role: "system", content: studyPrompt },
+        { role: "user", content: `Study "${topic}" now.` },
+      ],
       undefined,
       { temperature: 0.7, maxTokens: 800 },
     );
@@ -362,25 +387,27 @@ Respond as JSON:
         if (learning.owlName === reviewer.persona.name) continue;
 
         reviewPromises.push(
-          this.owlReview(reviewer, learning).then(async (review) => {
-            session.reviews.push(review);
-            if (review.type === "challenge") {
-              await onProgress?.(
-                `  ${reviewer.persona.emoji} **${reviewer.persona.name}** challenges ` +
-                `${learning.owlEmoji} **${learning.owlName}** on *${learning.topic}*: ` +
-                `"${review.feedback.slice(0, 120)}..."`,
+          this.owlReview(reviewer, learning)
+            .then(async (review) => {
+              session.reviews.push(review);
+              if (review.type === "challenge") {
+                await onProgress?.(
+                  `  ${reviewer.persona.emoji} **${reviewer.persona.name}** challenges ` +
+                    `${learning.owlEmoji} **${learning.owlName}** on *${learning.topic}*: ` +
+                    `"${review.feedback.slice(0, 120)}..."`,
+                );
+              } else if (review.type === "expand") {
+                await onProgress?.(
+                  `  ${reviewer.persona.emoji} **${reviewer.persona.name}** expands on ` +
+                    `${learning.owlEmoji} **${learning.owlName}**'s findings about *${learning.topic}*`,
+                );
+              }
+            })
+            .catch((err) => {
+              log.engine.warn(
+                `[KnowledgeCouncil] Review by ${reviewer.persona.name} failed: ${err instanceof Error ? err.message : err}`,
               );
-            } else if (review.type === "expand") {
-              await onProgress?.(
-                `  ${reviewer.persona.emoji} **${reviewer.persona.name}** expands on ` +
-                `${learning.owlEmoji} **${learning.owlName}**'s findings about *${learning.topic}*`,
-              );
-            }
-          }).catch((err) => {
-            log.engine.warn(
-              `[KnowledgeCouncil] Review by ${reviewer.persona.name} failed: ${err instanceof Error ? err.message : err}`,
-            );
-          }),
+            }),
         );
       }
     }
@@ -405,7 +432,7 @@ ${learning.owlName} just presented their research on "${learning.topic}":
 ${learning.keyInsights.map((i, idx) => `${idx + 1}. ${i}`).join("\n")}
 
 **Open Questions:**
-${learning.openQuestions.map(q => `- ${q}`).join("\n")}
+${learning.openQuestions.map((q) => `- ${q}`).join("\n")}
 
 **Their confidence:** ${(learning.confidence * 100).toFixed(0)}%
 
@@ -424,7 +451,10 @@ Respond as JSON:
 }`;
 
     const response = await this.provider.chat(
-      [{ role: "system", content: reviewPrompt }, { role: "user", content: "Give your honest review." }],
+      [
+        { role: "system", content: reviewPrompt },
+        { role: "user", content: "Give your honest review." },
+      ],
       undefined,
       { temperature: 0.8, maxTokens: 400 },
     );
@@ -468,17 +498,25 @@ Respond as JSON:
     if (session.learnings.length < 2) return;
 
     // Use the most analytical/general owl to find connections
-    const synthesizer = owls.find(o =>
-      o.persona.type.includes("executive") || o.persona.type.includes("assistant"),
-    ) ?? owls[0];
+    const synthesizer =
+      owls.find(
+        (o) =>
+          o.persona.type.includes("executive") ||
+          o.persona.type.includes("assistant"),
+      ) ?? owls[0];
 
-    const allLearnings = session.learnings.map(l =>
-      `**${l.owlName}** studied "${l.topic}":\n${l.findings}\nInsights: ${l.keyInsights.join("; ")}`,
-    ).join("\n\n---\n\n");
+    const allLearnings = session.learnings
+      .map(
+        (l) =>
+          `**${l.owlName}** studied "${l.topic}":\n${l.findings}\nInsights: ${l.keyInsights.join("; ")}`,
+      )
+      .join("\n\n---\n\n");
 
     const allReviews = session.reviews
-      .filter(r => r.type !== "agree")
-      .map(r => `${r.reviewerName} → ${r.targetOwl}: [${r.type}] ${r.feedback}`)
+      .filter((r) => r.type !== "agree")
+      .map(
+        (r) => `${r.reviewerName} → ${r.targetOwl}: [${r.type}] ${r.feedback}`,
+      )
       .join("\n");
 
     const crossPrompt = `You are ${synthesizer.persona.name}, facilitating a Knowledge Council.
@@ -512,7 +550,10 @@ Respond as JSON:
 
     try {
       const response = await this.provider.chat(
-        [{ role: "system", content: crossPrompt }, { role: "user", content: "Find the connections." }],
+        [
+          { role: "system", content: crossPrompt },
+          { role: "user", content: "Find the connections." },
+        ],
         undefined,
         { temperature: 0.8, maxTokens: 800 },
       );
@@ -554,10 +595,13 @@ Respond as JSON:
   ): Promise<void> {
     // Create pellets for learnings that passed peer review
     for (const learning of session.learnings) {
-      const reviews = session.reviews.filter(r => r.targetOwl === learning.owlName);
-      const avgTrust = reviews.length > 0
-        ? reviews.reduce((sum, r) => sum + r.trustScore, 0) / reviews.length
-        : learning.confidence;
+      const reviews = session.reviews.filter(
+        (r) => r.targetOwl === learning.owlName,
+      );
+      const avgTrust =
+        reviews.length > 0
+          ? reviews.reduce((sum, r) => sum + r.trustScore, 0) / reviews.length
+          : learning.confidence;
 
       // Only create pellets for knowledge that peers trust (> 0.5 avg trust)
       if (avgTrust < 0.4) {
@@ -567,8 +611,8 @@ Respond as JSON:
         continue;
       }
 
-      const challenges = reviews.filter(r => r.type === "challenge");
-      const expansions = reviews.filter(r => r.type === "expand");
+      const challenges = reviews.filter((r) => r.type === "challenge");
+      const expansions = reviews.filter((r) => r.type === "expand");
 
       // Build enriched content from learning + peer feedback
       const enrichedContent = [
@@ -580,26 +624,37 @@ Respond as JSON:
         learning.findings,
         ``,
         `## Key Insights`,
-        ...learning.keyInsights.map(i => `- ${i}`),
-        ...(challenges.length > 0 ? [
-          ``,
-          `## Challenges Raised`,
-          ...challenges.map(c => `- **${c.reviewerName}**: ${c.feedback}`),
-        ] : []),
-        ...(expansions.length > 0 ? [
-          ``,
-          `## Expansions`,
-          ...expansions.map(e => `- **${e.reviewerName}**: ${e.feedback}`),
-        ] : []),
-        ...(learning.openQuestions.length > 0 ? [
-          ``,
-          `## Open Questions`,
-          ...learning.openQuestions.map(q => `- ${q}`),
-        ] : []),
+        ...learning.keyInsights.map((i) => `- ${i}`),
+        ...(challenges.length > 0
+          ? [
+              ``,
+              `## Challenges Raised`,
+              ...challenges.map(
+                (c) => `- **${c.reviewerName}**: ${c.feedback}`,
+              ),
+            ]
+          : []),
+        ...(expansions.length > 0
+          ? [
+              ``,
+              `## Expansions`,
+              ...expansions.map(
+                (e) => `- **${e.reviewerName}**: ${e.feedback}`,
+              ),
+            ]
+          : []),
+        ...(learning.openQuestions.length > 0
+          ? [
+              ``,
+              `## Open Questions`,
+              ...learning.openQuestions.map((q) => `- ${q}`),
+            ]
+          : []),
       ].join("\n");
 
       try {
-        const owl = owls.find(o => o.persona.name === learning.owlName) ?? owls[0];
+        const owl =
+          owls.find((o) => o.persona.name === learning.owlName) ?? owls[0];
         const pellet = await this.pelletGenerator.generate(
           enrichedContent,
           `Knowledge Council: ${learning.topic}`,
@@ -656,22 +711,31 @@ Respond as JSON:
   ): Promise<void> {
     for (const owl of owls) {
       try {
-        const innerLife = new OwlInnerLife(this.provider, owl, this.workspacePath);
+        const innerLife = new OwlInnerLife(
+          this.provider,
+          owl,
+          this.workspacePath,
+        );
         await innerLife.load();
 
         // Form opinions based on what was learned
-        const learning = session.learnings.find(l => l.owlName === owl.persona.name);
+        const learning = session.learnings.find(
+          (l) => l.owlName === owl.persona.name,
+        );
         if (learning) {
           await innerLife.formOpinion(learning.topic, learning.findings);
         }
 
         // Form opinions based on peer feedback received
-        const feedbackReceived = session.reviews.filter(r => r.targetOwl === owl.persona.name);
+        const feedbackReceived = session.reviews.filter(
+          (r) => r.targetOwl === owl.persona.name,
+        );
         for (const review of feedbackReceived) {
           if (review.type === "challenge") {
             // Being challenged might shift the owl's views
             const challengeContext = `${review.reviewerName} challenged my work on "${
-              session.learnings.find(l => l.owlName === owl.persona.name)?.topic ?? "a topic"
+              session.learnings.find((l) => l.owlName === owl.persona.name)
+                ?.topic ?? "a topic"
             }": ${review.feedback}`;
             await innerLife.formOpinion(
               `peer feedback from ${review.reviewerName}`,
@@ -684,7 +748,7 @@ Respond as JSON:
         for (const cp of session.crossPollinations) {
           if (cp.owls.includes(owl.persona.name)) {
             // The owl's work was part of a cross-domain connection — spark curiosity
-            const otherOwl = cp.owls.find(o => o !== owl.persona.name);
+            const otherOwl = cp.owls.find((o) => o !== owl.persona.name);
             if (otherOwl) {
               await innerLife.formOpinion(
                 `connection with ${otherOwl}'s research`,
@@ -706,30 +770,41 @@ Respond as JSON:
   private async generateSummary(session: CouncilSession): Promise<string> {
     const lines: string[] = [];
 
-    lines.push(`**${session.learnings.length} owls** studied independently, then peer-reviewed each other.\n`);
+    lines.push(
+      `**${session.learnings.length} owls** studied independently, then peer-reviewed each other.\n`,
+    );
 
     for (const learning of session.learnings) {
-      const reviews = session.reviews.filter(r => r.targetOwl === learning.owlName);
-      const challenges = reviews.filter(r => r.type === "challenge").length;
-      const avgTrust = reviews.length > 0
-        ? reviews.reduce((sum, r) => sum + r.trustScore, 0) / reviews.length
-        : learning.confidence;
+      const reviews = session.reviews.filter(
+        (r) => r.targetOwl === learning.owlName,
+      );
+      const challenges = reviews.filter((r) => r.type === "challenge").length;
+      const avgTrust =
+        reviews.length > 0
+          ? reviews.reduce((sum, r) => sum + r.trustScore, 0) / reviews.length
+          : learning.confidence;
 
       lines.push(
         `${learning.owlEmoji} **${learning.owlName}** → *${learning.topic}*` +
-        ` (${(avgTrust * 100).toFixed(0)}% peer trust` +
-        `${challenges > 0 ? `, ${challenges} challenge(s)` : ""})`
+          ` (${(avgTrust * 100).toFixed(0)}% peer trust` +
+          `${challenges > 0 ? `, ${challenges} challenge(s)` : ""})`,
       );
     }
 
     if (session.crossPollinations.length > 0) {
-      lines.push(`\n**${session.crossPollinations.length} cross-domain connections** discovered:`);
+      lines.push(
+        `\n**${session.crossPollinations.length} cross-domain connections** discovered:`,
+      );
       for (const cp of session.crossPollinations) {
-        lines.push(`  🔗 ${cp.owls.join(" ↔ ")}: ${cp.emergentInsight.slice(0, 100)}`);
+        lines.push(
+          `  🔗 ${cp.owls.join(" ↔ ")}: ${cp.emergentInsight.slice(0, 100)}`,
+        );
       }
     }
 
-    lines.push(`\n**${session.pelletsCreated} knowledge pellets** created and saved.`);
+    lines.push(
+      `\n**${session.pelletsCreated} knowledge pellets** created and saved.`,
+    );
 
     return lines.join("\n");
   }
@@ -755,7 +830,7 @@ Respond as JSON:
     this.history!.sessions.push({
       id: session.id,
       date: session.startedAt,
-      topics: session.learnings.map(l => l.topic),
+      topics: session.learnings.map((l) => l.topic),
       pelletsCreated: session.pelletsCreated,
       participantCount: session.learnings.length,
     });
@@ -789,7 +864,8 @@ Respond as JSON:
     if (!this.history?.lastCouncil) return true;
 
     const lastCouncil = new Date(this.history.lastCouncil);
-    const daysSince = (Date.now() - lastCouncil.getTime()) / (1000 * 60 * 60 * 24);
+    const daysSince =
+      (Date.now() - lastCouncil.getTime()) / (1000 * 60 * 60 * 24);
     const intervalDays = this.config.council?.intervalDays ?? 7;
 
     return daysSince >= intervalDays;
@@ -804,7 +880,9 @@ Respond as JSON:
     }
 
     const recent = this.history.sessions.slice(-3);
-    const lines = [`**${this.history.sessions.length} council sessions** held so far.\n`];
+    const lines = [
+      `**${this.history.sessions.length} council sessions** held so far.\n`,
+    ];
     lines.push("Recent sessions:");
     for (const s of recent) {
       lines.push(
@@ -812,7 +890,9 @@ Respond as JSON:
       );
     }
     if (this.history.suggestedTopics.length > 0) {
-      lines.push(`\nSuggested for next session: ${this.history.suggestedTopics.slice(0, 3).join(", ")}`);
+      lines.push(
+        `\nSuggested for next session: ${this.history.suggestedTopics.slice(0, 3).join(", ")}`,
+      );
     }
     return lines.join("\n");
   }

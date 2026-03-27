@@ -62,9 +62,7 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
   });
 }
 
-function toOpenAITools(
-  tools: ToolDefinition[],
-): Array<{
+function toOpenAITools(tools: ToolDefinition[]): Array<{
   type: "function";
   function: { name: string; description: string; parameters: unknown };
 }> {
@@ -146,11 +144,12 @@ export class OpenAICompatProvider implements ModelProvider {
     return h;
   }
 
+  private static readonly TIMEOUT_MS = 60_000;
+
   private completionsUrl(): string {
     // Support both /v1/chat/completions and bare base URLs
     if (this.baseUrl.endsWith("/chat/completions")) return this.baseUrl;
-    if (this.baseUrl.endsWith("/v1"))
-      return `${this.baseUrl}/chat/completions`;
+    if (this.baseUrl.endsWith("/v1")) return `${this.baseUrl}/chat/completions`;
     return `${this.baseUrl}/v1/chat/completions`;
   }
 
@@ -166,8 +165,8 @@ export class OpenAICompatProvider implements ModelProvider {
     };
     if (options?.temperature !== undefined)
       body.temperature = options.temperature;
-    if (options?.maxTokens !== undefined)
-      body.max_tokens = options.maxTokens;
+    if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+    else body.max_tokens = 8192;
     if (options?.topP !== undefined) body.top_p = options.topP;
     if (options?.stop) body.stop = options.stop;
 
@@ -175,6 +174,7 @@ export class OpenAICompatProvider implements ModelProvider {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(OpenAICompatProvider.TIMEOUT_MS),
     });
 
     if (!res.ok) {
@@ -219,14 +219,15 @@ export class OpenAICompatProvider implements ModelProvider {
     }
     if (options?.temperature !== undefined)
       body.temperature = options.temperature;
-    if (options?.maxTokens !== undefined)
-      body.max_tokens = options.maxTokens;
+    if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+    else body.max_tokens = 8192; // Cap response length to prevent runaway responses
     if (options?.topP !== undefined) body.top_p = options.topP;
 
     const res = await fetch(this.completionsUrl(), {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(OpenAICompatProvider.TIMEOUT_MS),
     });
 
     if (!res.ok) {
@@ -244,10 +245,14 @@ export class OpenAICompatProvider implements ModelProvider {
     if (choice?.message?.tool_calls?.length) {
       for (const tc of choice.message.tool_calls) {
         let args: Record<string, unknown> = {};
+        const rawArgs = tc.function?.arguments ?? "{}";
         try {
-          args = JSON.parse(tc.function?.arguments ?? "{}");
+          args = JSON.parse(rawArgs);
         } catch {
-          args = {};
+          const preview = rawArgs.slice(0, 100);
+          throw new Error(
+            `[${this.name}] Malformed tool call arguments for ${tc.function?.name}: ${preview}${rawArgs.length > 100 ? "..." : ""}`,
+          );
         }
         toolCalls.push({
           id:
@@ -290,13 +295,14 @@ export class OpenAICompatProvider implements ModelProvider {
     }
     if (options?.temperature !== undefined)
       body.temperature = options.temperature;
-    if (options?.maxTokens !== undefined)
-      body.max_tokens = options.maxTokens;
+    if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+    else body.max_tokens = 8192; // Cap streaming responses too
 
     const res = await fetch(this.completionsUrl(), {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(OpenAICompatProvider.TIMEOUT_MS),
     });
 
     if (!res.ok) {
@@ -313,10 +319,78 @@ export class OpenAICompatProvider implements ModelProvider {
     > = new Map();
     let usage: TokenUsage | undefined;
 
-    for await (const chunk of parseSSE(res)) {
-      const choice = (chunk as any).choices?.[0];
-      if (!choice) {
-        // Check for usage in final chunk
+    try {
+      for await (const chunk of parseSSE(res)) {
+        const choice = (chunk as any).choices?.[0];
+        if (!choice) {
+          // Check for usage in final chunk
+          if ((chunk as any).usage) {
+            const u = (chunk as any).usage;
+            usage = {
+              promptTokens: u.prompt_tokens ?? 0,
+              completionTokens: u.completion_tokens ?? 0,
+              totalTokens: u.total_tokens ?? 0,
+            };
+          }
+          continue;
+        }
+
+        const delta = choice.delta;
+        if (!delta) continue;
+
+        // Text content delta
+        if (delta.content) {
+          yield { type: "text_delta", content: delta.content };
+        }
+
+        // Tool call deltas — OpenAI streams these incrementally by index
+        if (delta.tool_calls) {
+          for (const tcDelta of delta.tool_calls) {
+            const idx = tcDelta.index ?? 0;
+
+            if (!toolCallAccum.has(idx)) {
+              // First delta for this tool call — emit start
+              const id =
+                tcDelta.id ??
+                `tc_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 8)}`;
+              const name = tcDelta.function?.name ?? "";
+              toolCallAccum.set(idx, { id, name, argsStr: "" });
+
+              if (name) {
+                yield { type: "tool_start", toolCallId: id, toolName: name };
+              }
+            }
+
+            const accum = toolCallAccum.get(idx)!;
+
+            // Update name if we got it later
+            if (tcDelta.function?.name && !accum.name) {
+              accum.name = tcDelta.function.name;
+              yield {
+                type: "tool_start",
+                toolCallId: accum.id,
+                toolName: accum.name,
+              };
+            }
+
+            // Update ID if we got it later
+            if (tcDelta.id) {
+              accum.id = tcDelta.id;
+            }
+
+            // Accumulate argument string chunks
+            if (tcDelta.function?.arguments) {
+              accum.argsStr += tcDelta.function.arguments;
+              yield {
+                type: "tool_args_delta",
+                toolCallId: accum.id,
+                argsDelta: tcDelta.function.arguments,
+              };
+            }
+          }
+        }
+
+        // Check for usage
         if ((chunk as any).usage) {
           const u = (chunk as any).usage;
           usage = {
@@ -325,73 +399,10 @@ export class OpenAICompatProvider implements ModelProvider {
             totalTokens: u.total_tokens ?? 0,
           };
         }
-        continue;
       }
-
-      const delta = choice.delta;
-      if (!delta) continue;
-
-      // Text content delta
-      if (delta.content) {
-        yield { type: "text_delta", content: delta.content };
-      }
-
-      // Tool call deltas — OpenAI streams these incrementally by index
-      if (delta.tool_calls) {
-        for (const tcDelta of delta.tool_calls) {
-          const idx = tcDelta.index ?? 0;
-
-          if (!toolCallAccum.has(idx)) {
-            // First delta for this tool call — emit start
-            const id =
-              tcDelta.id ??
-              `tc_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 8)}`;
-            const name = tcDelta.function?.name ?? "";
-            toolCallAccum.set(idx, { id, name, argsStr: "" });
-
-            if (name) {
-              yield { type: "tool_start", toolCallId: id, toolName: name };
-            }
-          }
-
-          const accum = toolCallAccum.get(idx)!;
-
-          // Update name if we got it later
-          if (tcDelta.function?.name && !accum.name) {
-            accum.name = tcDelta.function.name;
-            yield {
-              type: "tool_start",
-              toolCallId: accum.id,
-              toolName: accum.name,
-            };
-          }
-
-          // Update ID if we got it later
-          if (tcDelta.id) {
-            accum.id = tcDelta.id;
-          }
-
-          // Accumulate argument string chunks
-          if (tcDelta.function?.arguments) {
-            accum.argsStr += tcDelta.function.arguments;
-            yield {
-              type: "tool_args_delta",
-              toolCallId: accum.id,
-              argsDelta: tcDelta.function.arguments,
-            };
-          }
-        }
-      }
-
-      // Check for usage
-      if ((chunk as any).usage) {
-        const u = (chunk as any).usage;
-        usage = {
-          promptTokens: u.prompt_tokens ?? 0,
-          completionTokens: u.completion_tokens ?? 0,
-          totalTokens: u.total_tokens ?? 0,
-        };
-      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield { type: "text_delta", content: `\n[Stream error: ${msg}]\n` };
     }
 
     // Emit tool_end for all accumulated tool calls
@@ -425,19 +436,17 @@ export class OpenAICompatProvider implements ModelProvider {
     };
     if (options?.temperature !== undefined)
       body.temperature = options.temperature;
-    if (options?.maxTokens !== undefined)
-      body.max_tokens = options.maxTokens;
+    if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
 
     const res = await fetch(this.completionsUrl(), {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(OpenAICompatProvider.TIMEOUT_MS),
     });
 
     if (!res.ok) {
-      throw new Error(
-        `[${this.name}] Stream failed: HTTP ${res.status}`,
-      );
+      throw new Error(`[${this.name}] Stream failed: HTTP ${res.status}`);
     }
 
     for await (const chunk of parseSSE(res)) {
@@ -463,12 +472,11 @@ export class OpenAICompatProvider implements ModelProvider {
         model: model ?? this.defaultEmbeddingModel,
         input: text,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
-      throw new Error(
-        `[${this.name}] Embed failed: HTTP ${res.status}`,
-      );
+      throw new Error(`[${this.name}] Embed failed: HTTP ${res.status}`);
     }
 
     const data = (await res.json()) as any;

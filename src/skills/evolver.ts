@@ -15,16 +15,16 @@
  * Skills that score ≥ 0.65 are left untouched.
  */
 
-import { writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
-import type { ModelProvider } from '../providers/base.js';
-import type { StackOwlConfig } from '../config/loader.js';
-import { SkillCritic, type CritiqueResult } from './critic.js';
-import { SkillParser } from './parser.js';
-import type { SkillsRegistry } from './registry.js';
-import type { Skill } from './types.js';
-import { log } from '../logger.js';
+import { writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
+import type { ModelProvider } from "../providers/base.js";
+import type { StackOwlConfig } from "../config/loader.js";
+import { SkillCritic, type CritiqueResult } from "./critic.js";
+import { SkillParser } from "./parser.js";
+import type { SkillsRegistry } from "./registry.js";
+import type { Skill } from "./types.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -67,7 +67,9 @@ export class SkillEvolver {
    */
   async evolveAll(registry: SkillsRegistry): Promise<SkillEvolutionReport> {
     const skills = registry.listEnabled();
-    log.engine.info(`[SkillEvolver] Starting evolution pass over ${skills.length} skill(s)...`);
+    log.engine.info(
+      `[SkillEvolver] Starting evolution pass over ${skills.length} skill(s)...`,
+    );
 
     const report: SkillEvolutionReport = {
       evaluated: 0,
@@ -79,7 +81,7 @@ export class SkillEvolver {
 
     for (const skill of skills) {
       // Skip skills without a known source path (built-in, non-file skills)
-      if (!skill.sourcePath || skill.sourcePath === 'unknown') continue;
+      if (!skill.sourcePath || skill.sourcePath === "unknown") continue;
 
       try {
         const entry = await this.evolveSkill(skill);
@@ -89,25 +91,33 @@ export class SkillEvolver {
         else report.unchanged++;
       } catch (err) {
         report.failed++;
-        log.engine.warn(`[SkillEvolver] Failed to evolve "${skill.name}": ${err instanceof Error ? err.message : String(err)}`);
+        log.engine.warn(
+          `[SkillEvolver] Failed to evolve "${skill.name}": ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
     // Reload registry so the improved skills are live immediately
     if (report.improved > 0) {
-      for (const entry of report.entries.filter(e => e.improved)) {
+      for (const entry of report.entries.filter((e) => e.improved)) {
         const improved = registry.get(entry.skillName);
         if (improved) {
           // Re-parse and re-register
           try {
             const reParsed = await this.parser.parse(improved.sourcePath);
             registry.register(reParsed);
-          } catch { /* non-fatal */ }
+          } catch {
+            /* non-fatal */
+          }
         }
       }
-      log.engine.info(`[SkillEvolver] ✓ Evolution complete: ${report.improved}/${report.evaluated} skills improved`);
+      log.engine.info(
+        `[SkillEvolver] ✓ Evolution complete: ${report.improved}/${report.evaluated} skills improved`,
+      );
     } else {
-      log.engine.info(`[SkillEvolver] All skills already at quality threshold — no rewrites needed`);
+      log.engine.info(
+        `[SkillEvolver] All skills already at quality threshold — no rewrites needed`,
+      );
     }
 
     return report;
@@ -130,11 +140,15 @@ export class SkillEvolver {
     };
 
     if (!critique.needsRewrite) {
-      log.engine.info(`[SkillEvolver] "${skill.name}" score ${originalScore.toFixed(2)} — no rewrite needed`);
+      log.engine.info(
+        `[SkillEvolver] "${skill.name}" score ${originalScore.toFixed(2)} — no rewrite needed`,
+      );
       return entry;
     }
 
-    log.engine.info(`[SkillEvolver] "${skill.name}" score ${originalScore.toFixed(2)} — starting Self-Refine loop`);
+    log.engine.info(
+      `[SkillEvolver] "${skill.name}" score ${originalScore.toFixed(2)} — starting Self-Refine loop`,
+    );
 
     let currentContent = await this.readSkillFile(skill.sourcePath);
     let bestContent = currentContent;
@@ -144,7 +158,11 @@ export class SkillEvolver {
     for (let i = 0; i < SkillEvolver.MAX_ITERATIONS; i++) {
       entry.iterations++;
 
-      const rewritten = await this.rewrite(skill, currentContent, currentCritique);
+      const rewritten = await this.rewrite(
+        skill,
+        currentContent,
+        currentCritique,
+      );
       if (!rewritten) break;
 
       // Validate the rewrite is parseable
@@ -152,13 +170,17 @@ export class SkillEvolver {
       try {
         rewrittenSkill = this.parser.parseContent(rewritten, skill.sourcePath);
       } catch (parseErr) {
-        log.engine.warn(`[SkillEvolver] Rewrite of "${skill.name}" iteration ${i + 1} failed validation: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+        log.engine.warn(
+          `[SkillEvolver] Rewrite of "${skill.name}" iteration ${i + 1} failed validation: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+        );
         break;
       }
 
       // Re-critique the rewrite
       const newCritique = await this.critic.critique(rewrittenSkill);
-      log.engine.info(`[SkillEvolver] "${skill.name}" iteration ${i + 1}: ${originalScore.toFixed(2)} → ${newCritique.overallScore.toFixed(2)}`);
+      log.engine.info(
+        `[SkillEvolver] "${skill.name}" iteration ${i + 1}: ${originalScore.toFixed(2)} → ${newCritique.overallScore.toFixed(2)}`,
+      );
 
       if (newCritique.overallScore > bestScore) {
         bestContent = rewritten;
@@ -179,9 +201,13 @@ export class SkillEvolver {
       await this.writeSkillFile(skill.sourcePath, bestContent);
       entry.finalScore = bestScore;
       entry.improved = true;
-      log.engine.info(`[SkillEvolver] ✓ "${skill.name}" improved: ${originalScore.toFixed(2)} → ${bestScore.toFixed(2)}`);
+      log.engine.info(
+        `[SkillEvolver] ✓ "${skill.name}" improved: ${originalScore.toFixed(2)} → ${bestScore.toFixed(2)}`,
+      );
     } else {
-      log.engine.info(`[SkillEvolver] "${skill.name}" rewrite did not improve score sufficiently — keeping original`);
+      log.engine.info(
+        `[SkillEvolver] "${skill.name}" rewrite did not improve score sufficiently — keeping original`,
+      );
     }
 
     return entry;
@@ -219,7 +245,7 @@ export class SkillEvolver {
       `Output ONLY the complete rewritten SKILL.md content. No explanation, no fences.`;
 
     const response = await this.provider.chat(
-      [{ role: 'user', content: prompt }],
+      [{ role: "user", content: prompt }],
       this.config.defaultModel,
       { temperature: 0.3, maxTokens: 1024 },
     );
@@ -227,8 +253,10 @@ export class SkillEvolver {
     const content = response.content.trim();
 
     // Must contain frontmatter markers
-    if (!content.includes('---') || !content.includes('name:')) {
-      log.engine.warn(`[SkillEvolver] Rewrite for "${skill.name}" missing frontmatter`);
+    if (!content.includes("---") || !content.includes("name:")) {
+      log.engine.warn(
+        `[SkillEvolver] Rewrite for "${skill.name}" missing frontmatter`,
+      );
       return null;
     }
 
@@ -236,13 +264,16 @@ export class SkillEvolver {
   }
 
   private async readSkillFile(sourcePath: string): Promise<string> {
-    const { readFile } = await import('node:fs/promises');
-    return readFile(sourcePath, 'utf-8');
+    const { readFile } = await import("node:fs/promises");
+    return readFile(sourcePath, "utf-8");
   }
 
-  private async writeSkillFile(sourcePath: string, content: string): Promise<void> {
+  private async writeSkillFile(
+    sourcePath: string,
+    content: string,
+  ): Promise<void> {
     const dir = dirname(sourcePath);
     if (!existsSync(dir)) await mkdir(dir, { recursive: true });
-    await writeFile(sourcePath, content, 'utf-8');
+    await writeFile(sourcePath, content, "utf-8");
   }
 }

@@ -14,6 +14,7 @@ Condense a long email or chat thread into a structured summary.
 1. **Receive the thread content** from the user (pasted text, file path, or email).
 
 2. **If provided as a file, read it:**
+
    ```bash
    read_file("<file_path>")
    ```
@@ -30,6 +31,7 @@ Condense a long email or chat thread into a structured summary.
 ## Examples
 
 ### Summarize from a file
+
 ```bash
 read_file("~/Downloads/long_email_thread.txt")
 ```

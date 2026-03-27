@@ -82,7 +82,9 @@ export const BookmarkManagerTool: ToolImplementation = {
           if (!url) return "Error: save requires 'url'.";
           const title = (args.title as string) || url;
           const tags = args.tags
-            ? String(args.tags).split(",").map((t) => t.trim().toLowerCase())
+            ? String(args.tags)
+                .split(",")
+                .map((t) => t.trim().toLowerCase())
             : [];
           const note = args.note as string | undefined;
 
@@ -121,7 +123,9 @@ export const BookmarkManagerTool: ToolImplementation = {
         case "list": {
           const store = loadStore(cwd);
           const tagFilter = args.tags
-            ? String(args.tags).split(",").map((t) => t.trim().toLowerCase())
+            ? String(args.tags)
+                .split(",")
+                .map((t) => t.trim().toLowerCase())
             : [];
 
           let bookmarks = store.bookmarks;
@@ -150,7 +154,7 @@ export const BookmarkManagerTool: ToolImplementation = {
         }
 
         case "search": {
-          const query = (args.query as string || "").toLowerCase();
+          const query = ((args.query as string) || "").toLowerCase();
           if (!query) return "Error: search requires 'query'.";
 
           const store = loadStore(cwd);
@@ -174,8 +178,7 @@ export const BookmarkManagerTool: ToolImplementation = {
         case "delete": {
           const url = args.url as string;
           const query = args.query as string;
-          if (!url && !query)
-            return "Error: delete requires 'url' or 'query'.";
+          if (!url && !query) return "Error: delete requires 'url' or 'query'.";
 
           const store = loadStore(cwd);
           const before = store.bookmarks.length;
@@ -217,7 +220,7 @@ export const BookmarkManagerTool: ToolImplementation = {
           const store = loadStore(cwd);
           const html = [
             "<!DOCTYPE NETSCAPE-Bookmark-file-1>",
-            "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">",
+            '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
             "<TITLE>Bookmarks</TITLE>",
             "<H1>Bookmarks</H1>",
             "<DL><p>",

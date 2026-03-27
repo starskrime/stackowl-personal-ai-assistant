@@ -12,6 +12,7 @@ Auto-detect and execute the project's test suite.
 ## Steps
 
 1. **Detect the test framework** by checking config files:
+
    ```bash
    run_shell_command("ls package.json pyproject.toml Cargo.toml Makefile go.mod 2>/dev/null")
    ```
@@ -33,11 +34,13 @@ Auto-detect and execute the project's test suite.
 ## Examples
 
 ### Run Node.js tests
+
 ```bash
 run_shell_command("npm test 2>&1")
 ```
 
 ### Run Python tests
+
 ```bash
 run_shell_command("python -m pytest -v --tb=short 2>&1")
 ```

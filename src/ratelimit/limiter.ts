@@ -179,9 +179,7 @@ export class RateLimiter {
     const maxWindow = Math.max(...this.rules.map((r) => r.windowMs));
 
     for (const [key, window] of this.windows) {
-      window.timestamps = window.timestamps.filter(
-        (t) => now - t < maxWindow,
-      );
+      window.timestamps = window.timestamps.filter((t) => now - t < maxWindow);
       if (window.timestamps.length === 0) {
         this.windows.delete(key);
       }

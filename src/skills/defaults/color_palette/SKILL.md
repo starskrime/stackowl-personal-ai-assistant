@@ -4,9 +4,13 @@ description: Generate harmonious color palettes from a base color with hex codes
 openclaw:
   emoji: "🎨"
 ---
+
 # Color Palette Generator
+
 Generate color palettes from a base color.
+
 ## Steps
+
 1. **Get base color** from user (hex, name, or description).
 2. **Generate palette** using color theory:
    - Complementary (opposite on color wheel)
@@ -23,12 +27,17 @@ Generate color palettes from a base color.
    Light tint:   #DBEAFE
    ```
 4. **Generate CSS variables** if requested.
+
 ## Examples
+
 ### Generate from blue
+
 ```
 🎨 Base: #3B82F6
   --color-primary: #3B82F6;
   --color-secondary: #F6923B;
 ```
+
 ## Error Handling
+
 - **Invalid hex:** Validate format and suggest correction.

@@ -12,6 +12,7 @@ Audit project dependencies for updates, vulnerabilities, and unused packages.
 ## Steps
 
 1. **Detect package manager:**
+
    ```bash
    run_shell_command("ls package.json requirements.txt go.mod Cargo.toml 2>/dev/null")
    ```
@@ -26,22 +27,27 @@ Audit project dependencies for updates, vulnerabilities, and unused packages.
    - **pip:** `run_shell_command("pip-audit 2>/dev/null || echo 'pip-audit not installed'")`
 
 4. **Present a summary:**
+
    ```markdown
    ## Dependency Audit
 
    ### ⚠️ Vulnerabilities
+
    - <package>: <severity> — <description>
 
    ### 📦 Outdated
+
    - <package>: <current> → <latest>
 
    ### Recommendations
+
    - Run `npm audit fix` to auto-fix N issues
    ```
 
 ## Examples
 
 ### Audit npm project
+
 ```bash
 run_shell_command("npm outdated && npm audit")
 ```

@@ -16,7 +16,8 @@ export const IMessageTool: ToolImplementation = {
         },
         to: {
           type: "string",
-          description: "Phone number or email for send action (e.g., '+1234567890')",
+          description:
+            "Phone number or email for send action (e.g., '+1234567890')",
         },
         message: {
           type: "string",
@@ -52,7 +53,9 @@ export const IMessageTool: ToolImplementation = {
     const exec = promisify(execFile);
 
     const osa = async (script: string): Promise<string> => {
-      const { stdout } = await exec("osascript", ["-e", script], { timeout: 15000 });
+      const { stdout } = await exec("osascript", ["-e", script], {
+        timeout: 15000,
+      });
       return stdout.trim();
     };
 
@@ -95,7 +98,8 @@ LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database. Grant Ful
         }
 
         case "read_chat": {
-          if (!to) return "Error: read_chat requires 'to' (phone number or email).";
+          if (!to)
+            return "Error: read_chat requires 'to' (phone number or email).";
           const escapedTo = to.replace(/'/g, "''");
           const result = await shell(
             `sqlite3 ~/Library/Messages/chat.db "

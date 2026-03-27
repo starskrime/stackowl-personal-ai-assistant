@@ -1,9 +1,15 @@
 export type NodeCapability =
-  | 'desktop_automation' | 'gpu_compute' | 'web_scraping'
-  | 'file_storage' | 'always_on' | 'location_aware'
-  | 'macos_native' | 'linux_native' | 'docker';
+  | "desktop_automation"
+  | "gpu_compute"
+  | "web_scraping"
+  | "file_storage"
+  | "always_on"
+  | "location_aware"
+  | "macos_native"
+  | "linux_native"
+  | "docker";
 
-export type NodeStatus = 'online' | 'offline' | 'busy' | 'idle';
+export type NodeStatus = "online" | "offline" | "busy" | "idle";
 
 export interface SwarmNode {
   id: string;
@@ -23,7 +29,7 @@ export interface SwarmTask {
   description: string;
   requiredCapabilities: NodeCapability[];
   assignedNode?: string;
-  status: 'pending' | 'assigned' | 'running' | 'completed' | 'failed';
+  status: "pending" | "assigned" | "running" | "completed" | "failed";
   result?: string;
   error?: string;
   createdAt: string;
@@ -31,7 +37,12 @@ export interface SwarmTask {
 }
 
 export interface SwarmMessage {
-  type: 'task_request' | 'task_result' | 'heartbeat' | 'capability_query' | 'capability_response';
+  type:
+    | "task_request"
+    | "task_result"
+    | "heartbeat"
+    | "capability_query"
+    | "capability_response";
   sourceNode: string;
   targetNode?: string;
   payload: unknown;

@@ -20,18 +20,18 @@
  *   Creates skill: "summarize_article" with those exact steps
  */
 
-import { writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ModelProvider } from '../providers/base.js';
-import type { ChatMessage } from '../providers/base.js';
-import type { SessionStore } from '../memory/store.js';
-import type { StackOwlConfig } from '../config/loader.js';
-import type { SkillsRegistry } from './registry.js';
-import { SkillParser } from './parser.js';
-import { ConfigContextBuilder } from './config-context.js';
-import type { ToolRegistry } from '../tools/registry.js';
-import { log } from '../logger.js';
+import { writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import type { ModelProvider } from "../providers/base.js";
+import type { ChatMessage } from "../providers/base.js";
+import type { SessionStore } from "../memory/store.js";
+import type { StackOwlConfig } from "../config/loader.js";
+import type { SkillsRegistry } from "./registry.js";
+import { SkillParser } from "./parser.js";
+import { ConfigContextBuilder } from "./config-context.js";
+import type { ToolRegistry } from "../tools/registry.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -83,7 +83,11 @@ export class PatternMiner {
     skillsRegistry?: SkillsRegistry,
   ) {
     this.parser = new SkillParser();
-    this.configContext = new ConfigContextBuilder(config, toolRegistry, skillsRegistry);
+    this.configContext = new ConfigContextBuilder(
+      config,
+      toolRegistry,
+      skillsRegistry,
+    );
   }
 
   /**
@@ -91,7 +95,7 @@ export class PatternMiner {
    * Returns the names of any new skills created.
    */
   async mine(registry: SkillsRegistry, skillsDir: string): Promise<string[]> {
-    log.engine.info('[PatternMiner] Starting pattern mining pass...');
+    log.engine.info("[PatternMiner] Starting pattern mining pass...");
 
     const sessions = await this.sessionStore.listSessions();
     if (sessions.length === 0) return [];
@@ -105,15 +109,21 @@ export class PatternMiner {
     }
 
     if (allSequences.length === 0) {
-      log.engine.info('[PatternMiner] No tool sequences found in recent sessions');
+      log.engine.info(
+        "[PatternMiner] No tool sequences found in recent sessions",
+      );
       return [];
     }
 
     // Filter to only successful sequences (failed ones teach nothing useful here)
-    const successfulSequences = allSequences.filter(s => s.succeeded && s.tools.length >= 2);
+    const successfulSequences = allSequences.filter(
+      (s) => s.succeeded && s.tools.length >= 2,
+    );
 
     if (successfulSequences.length === 0) {
-      log.engine.info('[PatternMiner] No successful multi-tool sequences found');
+      log.engine.info(
+        "[PatternMiner] No successful multi-tool sequences found",
+      );
       return [];
     }
 
@@ -121,27 +131,39 @@ export class PatternMiner {
     const patterns = await this.groupPatterns(successfulSequences);
 
     // Filter to patterns that appear enough times
-    const frequentPatterns = patterns.filter(p => p.sequences.length >= MIN_PATTERN_FREQUENCY);
+    const frequentPatterns = patterns.filter(
+      (p) => p.sequences.length >= MIN_PATTERN_FREQUENCY,
+    );
 
     if (frequentPatterns.length === 0) {
-      log.engine.info('[PatternMiner] No frequent patterns found (need ≥ 2 occurrences)');
+      log.engine.info(
+        "[PatternMiner] No frequent patterns found (need ≥ 2 occurrences)",
+      );
       return [];
     }
 
     // Filter out patterns already covered by existing skills
     const existingSkills = registry.listEnabled();
-    const uncoveredPatterns = await this.filterUncoveredPatterns(frequentPatterns, existingSkills);
+    const uncoveredPatterns = await this.filterUncoveredPatterns(
+      frequentPatterns,
+      existingSkills,
+    );
 
     if (uncoveredPatterns.length === 0) {
-      log.engine.info('[PatternMiner] All frequent patterns are already covered by existing skills');
+      log.engine.info(
+        "[PatternMiner] All frequent patterns are already covered by existing skills",
+      );
       return [];
     }
 
-    log.engine.info(`[PatternMiner] Found ${uncoveredPatterns.length} uncovered pattern(s) — crystallizing into skills`);
+    log.engine.info(
+      `[PatternMiner] Found ${uncoveredPatterns.length} uncovered pattern(s) — crystallizing into skills`,
+    );
 
     // Generate new skills for uncovered patterns
     const newSkillNames: string[] = [];
-    for (const pattern of uncoveredPatterns.slice(0, 3)) { // cap at 3 new skills per pass
+    for (const pattern of uncoveredPatterns.slice(0, 3)) {
+      // cap at 3 new skills per pass
       try {
         const skill = await this.crystallize(pattern, skillsDir);
         if (skill) {
@@ -150,13 +172,19 @@ export class PatternMiner {
             const parsed = await this.parser.parse(skill.filePath);
             registry.register(parsed);
             newSkillNames.push(skill.name);
-            log.engine.info(`[PatternMiner] ✓ New skill crystallized: "${skill.name}"`);
+            log.engine.info(
+              `[PatternMiner] ✓ New skill crystallized: "${skill.name}"`,
+            );
           } catch (parseErr) {
-            log.engine.warn(`[PatternMiner] Failed to parse crystallized skill "${skill.name}": ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+            log.engine.warn(
+              `[PatternMiner] Failed to parse crystallized skill "${skill.name}": ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+            );
           }
         }
       } catch (err) {
-        log.engine.warn(`[PatternMiner] Failed to crystallize pattern: ${err instanceof Error ? err.message : String(err)}`);
+        log.engine.warn(
+          `[PatternMiner] Failed to crystallize pattern: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -172,22 +200,29 @@ export class PatternMiner {
     let i = 0;
 
     while (i < messages.length) {
-      if (messages[i].role !== 'user') { i++; continue; }
+      if (messages[i].role !== "user") {
+        i++;
+        continue;
+      }
 
-      const userRequest = messages[i].content ?? '';
+      const userRequest = messages[i].content ?? "";
       const tools: string[] = [];
-      let finalResponse = '';
+      let finalResponse = "";
       let j = i + 1;
 
       // Collect everything until the next user message
-      while (j < messages.length && messages[j].role !== 'user') {
+      while (j < messages.length && messages[j].role !== "user") {
         const msg = messages[j];
-        if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+        if (
+          msg.role === "assistant" &&
+          msg.toolCalls &&
+          msg.toolCalls.length > 0
+        ) {
           for (const tc of msg.toolCalls) {
             tools.push(tc.name);
           }
         }
-        if (msg.role === 'assistant' && !msg.toolCalls?.length && msg.content) {
+        if (msg.role === "assistant" && !msg.toolCalls?.length && msg.content) {
           finalResponse = msg.content;
         }
         j++;
@@ -195,11 +230,12 @@ export class PatternMiner {
 
       if (tools.length >= 2 && finalResponse) {
         // Heuristic success detection: response is substantive and doesn't contain error markers
-        const succeeded = finalResponse.length > 50 &&
+        const succeeded =
+          finalResponse.length > 50 &&
           !finalResponse.toLowerCase().includes("i couldn't") &&
           !finalResponse.toLowerCase().includes("i was unable") &&
           !finalResponse.toLowerCase().includes("failed to") &&
-          !finalResponse.includes('EXHAUSTED');
+          !finalResponse.includes("EXHAUSTED");
 
         sequences.push({ userRequest, tools, finalResponse, succeeded });
       }
@@ -214,14 +250,16 @@ export class PatternMiner {
    * Group sequences by their tool pattern using LLM clustering.
    * For small datasets uses simple tool-name-based grouping.
    */
-  private async groupPatterns(sequences: ToolSequence[]): Promise<PatternGroup[]> {
+  private async groupPatterns(
+    sequences: ToolSequence[],
+  ): Promise<PatternGroup[]> {
     // Simple grouping: cluster by the sorted set of tool names
     // This catches "web_crawl + run_shell_command" appearing multiple times
     const groups = new Map<string, ToolSequence[]>();
 
     for (const seq of sequences) {
       // Key = sorted unique tool names (order-independent grouping)
-      const key = [...new Set(seq.tools)].sort().join('+');
+      const key = [...new Set(seq.tools)].sort().join("+");
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(seq);
     }
@@ -235,7 +273,7 @@ export class PatternMiner {
       const representative = seqs[0].userRequest;
 
       result.push({
-        description: `Uses ${key.replace(/\+/g, ', ')} to respond to: "${representative.slice(0, 60)}"`,
+        description: `Uses ${key.replace(/\+/g, ", ")} to respond to: "${representative.slice(0, 60)}"`,
         sequences: seqs,
         representativeRequest: representative,
       });
@@ -250,22 +288,23 @@ export class PatternMiner {
    */
   private async filterUncoveredPatterns(
     patterns: PatternGroup[],
-    existingSkills: import('./types.js').Skill[],
+    existingSkills: import("./types.js").Skill[],
   ): Promise<PatternGroup[]> {
     if (existingSkills.length === 0) return patterns;
 
-    const existingDescriptions = existingSkills.map(s =>
-      `${s.name} ${s.description}`.toLowerCase()
+    const existingDescriptions = existingSkills.map((s) =>
+      `${s.name} ${s.description}`.toLowerCase(),
     );
 
-    return patterns.filter(pattern => {
-      const patternWords = pattern.representativeRequest.toLowerCase()
+    return patterns.filter((pattern) => {
+      const patternWords = pattern.representativeRequest
+        .toLowerCase()
         .split(/\W+/)
-        .filter(w => w.length > 3);
+        .filter((w) => w.length > 3);
 
       // If > 40% of pattern words appear in any existing skill description, skip
       for (const desc of existingDescriptions) {
-        const overlap = patternWords.filter(w => desc.includes(w)).length;
+        const overlap = patternWords.filter((w) => desc.includes(w)).length;
         if (overlap / patternWords.length > 0.4) return false;
       }
 
@@ -276,16 +315,19 @@ export class PatternMiner {
   /**
    * Crystallize a pattern group into a new SKILL.md file.
    */
-  private async crystallize(pattern: PatternGroup, skillsDir: string): Promise<MinedSkill | null> {
+  private async crystallize(
+    pattern: PatternGroup,
+    skillsDir: string,
+  ): Promise<MinedSkill | null> {
     const exampleRequests = pattern.sequences
       .slice(0, 3)
-      .map(s => `"${s.userRequest.slice(0, 80)}"`)
-      .join('\n- ');
+      .map((s) => `"${s.userRequest.slice(0, 80)}"`)
+      .join("\n- ");
 
     const exampleToolSequences = pattern.sequences
       .slice(0, 3)
-      .map(s => `Tools used: ${s.tools.join(' → ')}`)
-      .join('\n');
+      .map((s) => `Tools used: ${s.tools.join(" → ")}`)
+      .join("\n");
 
     const prompt =
       `You are writing a SKILL.md for an AI assistant called StackOwl.\n` +
@@ -317,7 +359,7 @@ export class PatternMiner {
       `- Output ONLY the SKILL.md, no explanation`;
 
     const response = await this.provider.chat(
-      [{ role: 'user', content: prompt }],
+      [{ role: "user", content: prompt }],
       this.config.defaultModel,
       { temperature: 0.4, maxTokens: 1024 },
     );
@@ -325,27 +367,31 @@ export class PatternMiner {
     const content = response.content.trim();
 
     // Validate structure
-    if (!content.includes('---') || !content.includes('name:')) {
-      log.engine.warn('[PatternMiner] Crystallized skill missing frontmatter, skipping');
+    if (!content.includes("---") || !content.includes("name:")) {
+      log.engine.warn(
+        "[PatternMiner] Crystallized skill missing frontmatter, skipping",
+      );
       return null;
     }
 
     // Extract skill name
     const nameMatch = content.match(/^name:\s*(\S+)/m);
     const skillName = nameMatch
-      ? nameMatch[1].replace(/[^a-z0-9_]/gi, '_').toLowerCase()
+      ? nameMatch[1].replace(/[^a-z0-9_]/gi, "_").toLowerCase()
       : `mined_skill_${Date.now()}`;
 
     // Don't overwrite existing skills
     const skillDir = join(skillsDir, skillName);
     if (existsSync(skillDir)) {
-      log.engine.info(`[PatternMiner] Skill "${skillName}" already exists — skipping`);
+      log.engine.info(
+        `[PatternMiner] Skill "${skillName}" already exists — skipping`,
+      );
       return null;
     }
 
-    const filePath = join(skillDir, 'SKILL.md');
+    const filePath = join(skillDir, "SKILL.md");
     await mkdir(skillDir, { recursive: true });
-    await writeFile(filePath, content, 'utf-8');
+    await writeFile(filePath, content, "utf-8");
 
     return { name: skillName, filePath, content };
   }

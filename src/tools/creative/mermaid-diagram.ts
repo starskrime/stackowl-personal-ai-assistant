@@ -44,8 +44,7 @@ export const MermaidDiagramTool: ToolImplementation = {
       const code = args["code"] as string;
       if (!code) return "Error: 'code' parameter is required.";
 
-      const name =
-        (args["output"] as string) || `diagram-${Date.now()}`;
+      const name = (args["output"] as string) || `diagram-${Date.now()}`;
       const safeName = basename(name).replace(/[^a-zA-Z0-9_-]/g, "_");
 
       const diagramsDir = resolve(_context.cwd, "workspace", "diagrams");

@@ -145,7 +145,7 @@ export const SystemControlsTool: ToolImplementation = {
           try {
             const network = await shell(
               "networksetup -getairportnetwork en0 2>/dev/null || " +
-              "ipconfig getifaddr en0 2>/dev/null || echo 'Not connected'",
+                "ipconfig getifaddr en0 2>/dev/null || echo 'Not connected'",
             );
             return `Wi-Fi: ${network}`;
           } catch {
@@ -155,11 +155,15 @@ export const SystemControlsTool: ToolImplementation = {
 
         // ── Bluetooth ──
         case "bluetooth_on": {
-          await shell("blueutil --power 1 2>/dev/null || echo 'Install: brew install blueutil'");
+          await shell(
+            "blueutil --power 1 2>/dev/null || echo 'Install: brew install blueutil'",
+          );
           return "Bluetooth turned on.";
         }
         case "bluetooth_off": {
-          await shell("blueutil --power 0 2>/dev/null || echo 'Install: brew install blueutil'");
+          await shell(
+            "blueutil --power 0 2>/dev/null || echo 'Install: brew install blueutil'",
+          );
           return "Bluetooth turned off.";
         }
         case "bluetooth_status": {
@@ -206,9 +210,7 @@ export const SystemControlsTool: ToolImplementation = {
 
         // ── Trash ──
         case "empty_trash": {
-          await osa(
-            'tell application "Finder" to empty trash',
-          );
+          await osa('tell application "Finder" to empty trash');
           return "Trash emptied.";
         }
 
@@ -216,14 +218,14 @@ export const SystemControlsTool: ToolImplementation = {
         case "dnd_on": {
           await shell(
             "shortcuts run 'Turn On Do Not Disturb' 2>/dev/null || " +
-            "defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean true && killall NotificationCenter 2>/dev/null",
+              "defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean true && killall NotificationCenter 2>/dev/null",
           );
           return "Do Not Disturb enabled.";
         }
         case "dnd_off": {
           await shell(
             "shortcuts run 'Turn Off Do Not Disturb' 2>/dev/null || " +
-            "defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean false && killall NotificationCenter 2>/dev/null",
+              "defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean false && killall NotificationCenter 2>/dev/null",
           );
           return "Do Not Disturb disabled.";
         }

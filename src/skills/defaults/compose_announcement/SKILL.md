@@ -32,6 +32,7 @@ Draft professional announcements for various audiences.
 ## Examples
 
 ### Team announcement
+
 ```
 Subject: 🎉 New Feature Launch — Project Phoenix
 

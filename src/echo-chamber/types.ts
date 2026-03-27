@@ -3,17 +3,17 @@
  */
 
 export type CognitiveBias =
-  | 'confirmation_bias'
-  | 'sunk_cost'
-  | 'recency_bias'
-  | 'anchoring'
-  | 'status_quo'
-  | 'availability_heuristic'
-  | 'bandwagon'
-  | 'optimism_bias'
-  | 'dunning_kruger';
+  | "confirmation_bias"
+  | "sunk_cost"
+  | "recency_bias"
+  | "anchoring"
+  | "status_quo"
+  | "availability_heuristic"
+  | "bandwagon"
+  | "optimism_bias"
+  | "dunning_kruger";
 
-export type ChallengeIntensity = 'gentle' | 'balanced' | 'relentless';
+export type ChallengeIntensity = "gentle" | "balanced" | "relentless";
 
 export interface BiasDetection {
   bias: CognitiveBias;

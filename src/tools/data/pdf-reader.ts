@@ -19,7 +19,8 @@ export const PDFReaderTool: ToolImplementation = {
         },
         pages: {
           type: "string",
-          description: "Page range: '1-5', '3', '1,3,5', 'all' (default: first 10 pages)",
+          description:
+            "Page range: '1-5', '3', '1,3,5', 'all' (default: first 10 pages)",
         },
         query: {
           type: "string",
@@ -68,7 +69,10 @@ export const PDFReaderTool: ToolImplementation = {
           try {
             if (pages) {
               // Parse page range for pdftotext
-              const pageFlag = pages === "all" ? "" : `-f ${pages.split("-")[0] || pages.split(",")[0]} -l ${pages.split("-")[1] || pages.split(",").pop()}`;
+              const pageFlag =
+                pages === "all"
+                  ? ""
+                  : `-f ${pages.split("-")[0] || pages.split(",")[0]} -l ${pages.split("-")[1] || pages.split(",").pop()}`;
               text = await shell(
                 `pdftotext ${pageFlag} "${resolvedPath}" - 2>/dev/null`,
               );
@@ -77,8 +81,11 @@ export const PDFReaderTool: ToolImplementation = {
                 `pdftotext -f 1 -l 10 "${resolvedPath}" - 2>/dev/null`,
               );
             }
-            if (text.trim()) return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
-          } catch { /* try next method */ }
+            if (text.trim())
+              return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
+          } catch {
+            /* try next method */
+          }
 
           // Method 2: Python with PyPDF2 or pdfplumber
           try {
@@ -119,15 +126,25 @@ except ImportError:
     except ImportError:
         print("NO_LIB")
 `;
-            text = await shell(`python3 -c '${pyScript.replace(/'/g, "'\\''")}' 2>/dev/null`);
-            if (text && text !== "NO_LIB") return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
-          } catch { /* try next */ }
+            text = await shell(
+              `python3 -c '${pyScript.replace(/'/g, "'\\''")}' 2>/dev/null`,
+            );
+            if (text && text !== "NO_LIB")
+              return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
+          } catch {
+            /* try next */
+          }
 
           // Method 3: macOS mdimport spotlight extraction
           try {
-            text = await shell(`mdimport -d2 "${resolvedPath}" 2>&1 | head -200`);
-            if (text.trim()) return `📄 PDF Content (extracted via Spotlight):\n\n${text}`;
-          } catch { /* fallthrough */ }
+            text = await shell(
+              `mdimport -d2 "${resolvedPath}" 2>&1 | head -200`,
+            );
+            if (text.trim())
+              return `📄 PDF Content (extracted via Spotlight):\n\n${text}`;
+          } catch {
+            /* fallthrough */
+          }
 
           return (
             `Could not extract text from PDF. Install one of:\n` +
@@ -155,7 +172,9 @@ if meta:
 " 2>/dev/null`,
               );
             } catch {
-              info = await shell(`mdls -name kMDItemNumberOfPages -name kMDItemTitle -name kMDItemAuthors "${resolvedPath}" 2>/dev/null`);
+              info = await shell(
+                `mdls -name kMDItemNumberOfPages -name kMDItemTitle -name kMDItemAuthors "${resolvedPath}" 2>/dev/null`,
+              );
             }
           }
           return `📋 PDF Info (${resolvedPath}):\n${info || "Could not read metadata."}`;
@@ -164,13 +183,18 @@ if meta:
         case "search": {
           if (!query) return "Error: search requires 'query'.";
           try {
-            const text = await shell(`pdftotext "${resolvedPath}" - 2>/dev/null`);
+            const text = await shell(
+              `pdftotext "${resolvedPath}" - 2>/dev/null`,
+            );
             const lines = text.split("\n");
             const matches = lines
               .map((line, i) => ({ line: i + 1, text: line }))
-              .filter((l) => l.text.toLowerCase().includes(query.toLowerCase()));
+              .filter((l) =>
+                l.text.toLowerCase().includes(query.toLowerCase()),
+              );
 
-            if (matches.length === 0) return `No matches for "${query}" in ${resolvedPath}.`;
+            if (matches.length === 0)
+              return `No matches for "${query}" in ${resolvedPath}.`;
 
             const formatted = matches
               .slice(0, 20)

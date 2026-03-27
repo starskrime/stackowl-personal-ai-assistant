@@ -1,15 +1,15 @@
-import { createServer, type Server } from 'node:http';
-import { WebSocketServer, WebSocket } from 'ws';
-import { Logger } from '../logger.js';
+import { createServer, type Server } from "node:http";
+import { WebSocketServer, WebSocket } from "ws";
+import { Logger } from "../logger.js";
 import type {
   SwarmConfig,
   SwarmNode,
   SwarmMessage,
   NodeCapability,
   NodeStatus,
-} from './types.js';
+} from "./types.js";
 
-const log = new Logger('SWARM');
+const log = new Logger("SWARM");
 
 interface PeerEntry {
   ws: WebSocket;
@@ -21,7 +21,7 @@ export class LocalSwarmNode {
   private wss: WebSocketServer | null = null;
   private peers = new Map<string, PeerEntry>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private status: NodeStatus = 'idle';
+  private status: NodeStatus = "idle";
   private currentLoad = 0;
   private onTaskRequest?: (description: string) => Promise<string>;
 
@@ -34,10 +34,10 @@ export class LocalSwarmNode {
     this.server = createServer();
     this.wss = new WebSocketServer({ server: this.server });
 
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on("connection", (ws: WebSocket) => {
       log.info(`Incoming peer connection`);
 
-      ws.on('message', (raw: Buffer) => {
+      ws.on("message", (raw: Buffer) => {
         try {
           const message = JSON.parse(raw.toString()) as SwarmMessage;
           this.handleMessage(ws, message);
@@ -46,7 +46,7 @@ export class LocalSwarmNode {
         }
       });
 
-      ws.on('close', () => {
+      ws.on("close", () => {
         for (const [id, peer] of this.peers) {
           if (peer.ws === ws) {
             log.info(`Peer disconnected: ${peer.node.name} (${id})`);
@@ -56,12 +56,12 @@ export class LocalSwarmNode {
         }
       });
 
-      ws.on('error', (err) => {
+      ws.on("error", (err) => {
         log.error(`WebSocket error: ${err.message}`);
       });
 
       const greeting: SwarmMessage = {
-        type: 'capability_response',
+        type: "capability_response",
         sourceNode: this.config.nodeId,
         payload: this.getInfo(),
         timestamp: Date.now(),
@@ -74,7 +74,7 @@ export class LocalSwarmNode {
         log.info(`Swarm node listening on port ${this.config.port}`);
         resolve();
       });
-      this.server!.on('error', reject);
+      this.server!.on("error", reject);
     });
 
     this.heartbeatTimer = setInterval(() => {
@@ -105,14 +105,14 @@ export class LocalSwarmNode {
       this.server = null;
     }
 
-    log.info('Swarm node stopped');
+    log.info("Swarm node stopped");
   }
 
   getInfo(): SwarmNode {
     return {
       id: this.config.nodeId,
       name: this.config.nodeName,
-      host: '0.0.0.0',
+      host: "0.0.0.0",
       port: this.config.port,
       capabilities: this.localCapabilities,
       status: this.status,
@@ -137,9 +137,9 @@ export class LocalSwarmNode {
 
   private handleMessage(ws: WebSocket, message: SwarmMessage): void {
     switch (message.type) {
-      case 'capability_query': {
+      case "capability_query": {
         const response: SwarmMessage = {
-          type: 'capability_response',
+          type: "capability_response",
           sourceNode: this.config.nodeId,
           targetNode: message.sourceNode,
           payload: this.getInfo(),
@@ -149,14 +149,14 @@ export class LocalSwarmNode {
         break;
       }
 
-      case 'capability_response': {
+      case "capability_response": {
         const nodeInfo = message.payload as SwarmNode;
         this.peers.set(message.sourceNode, { ws, node: nodeInfo });
         log.info(`Registered peer: ${nodeInfo.name} (${message.sourceNode})`);
         break;
       }
 
-      case 'heartbeat': {
+      case "heartbeat": {
         const heartbeatNode = message.payload as SwarmNode;
         const peer = this.peers.get(message.sourceNode);
         if (peer) {
@@ -167,13 +167,13 @@ export class LocalSwarmNode {
         break;
       }
 
-      case 'task_request': {
+      case "task_request": {
         const task = message.payload as { id: string; description: string };
         this.handleTaskRequest(ws, message.sourceNode, task);
         break;
       }
 
-      case 'task_result': {
+      case "task_result": {
         break;
       }
     }
@@ -185,7 +185,7 @@ export class LocalSwarmNode {
     task: { id: string; description: string },
   ): Promise<void> {
     log.info(`Received task from ${sourceNode}: ${task.description}`);
-    this.status = 'busy';
+    this.status = "busy";
     this.currentLoad = 0.8;
 
     let result: string;
@@ -199,14 +199,14 @@ export class LocalSwarmNode {
       }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
-      result = '';
+      result = "";
     }
 
-    this.status = 'idle';
+    this.status = "idle";
     this.currentLoad = 0;
 
     const response: SwarmMessage = {
-      type: 'task_result',
+      type: "task_result",
       sourceNode: this.config.nodeId,
       targetNode: sourceNode,
       payload: {
@@ -223,7 +223,7 @@ export class LocalSwarmNode {
 
   private broadcastHeartbeat(): void {
     const heartbeat: SwarmMessage = {
-      type: 'heartbeat',
+      type: "heartbeat",
       sourceNode: this.config.nodeId,
       payload: this.getInfo(),
       timestamp: Date.now(),

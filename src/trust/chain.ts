@@ -1,19 +1,38 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { Logger } from '../logger.js';
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { Logger } from "../logger.js";
 import type {
   ActionCategory,
   TrustDecision,
   TrustLevel,
   TrustScore,
   TrustThresholds,
-} from './types.js';
+} from "./types.js";
 
-const log = new Logger('TRUST');
+const log = new Logger("TRUST");
 
-const DANGEROUS_COMMANDS = ['rm ', 'rm\t', 'rmdir', 'kill ', 'sudo ', 'mkfs', 'dd ', 'chmod', 'chown', '> /dev/', 'shutdown', 'reboot', 'format '];
+const DANGEROUS_COMMANDS = [
+  "rm ",
+  "rm\t",
+  "rmdir",
+  "kill ",
+  "sudo ",
+  "mkfs",
+  "dd ",
+  "chmod",
+  "chown",
+  "> /dev/",
+  "shutdown",
+  "reboot",
+  "format ",
+];
 
-const TRUST_LEVELS: TrustLevel[] = ['supervised', 'prompted', 'trusted', 'autonomous'];
+const TRUST_LEVELS: TrustLevel[] = [
+  "supervised",
+  "prompted",
+  "trusted",
+  "autonomous",
+];
 
 const DEFAULT_THRESHOLDS: TrustThresholds = {
   promptedAfter: 5,
@@ -26,7 +45,7 @@ const DEFAULT_THRESHOLDS: TrustThresholds = {
 function makeDefaultScore(category: ActionCategory): TrustScore {
   return {
     category,
-    level: 'supervised',
+    level: "supervised",
     approvalCount: 0,
     denialCount: 0,
     totalExecutions: 0,
@@ -44,22 +63,19 @@ export class TrustChain {
   private filePath: string;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(
-    workspacePath: string,
-    thresholds?: Partial<TrustThresholds>,
-  ) {
+  constructor(workspacePath: string, thresholds?: Partial<TrustThresholds>) {
     this.thresholds = { ...DEFAULT_THRESHOLDS, ...thresholds };
-    this.filePath = join(workspacePath, 'trust-scores.json');
+    this.filePath = join(workspacePath, "trust-scores.json");
   }
 
   async load(): Promise<void> {
     try {
       if (!existsSync(this.filePath)) {
-        log.info('No trust scores file found, starting fresh');
+        log.info("No trust scores file found, starting fresh");
         return;
       }
 
-      const raw = readFileSync(this.filePath, 'utf-8');
+      const raw = readFileSync(this.filePath, "utf-8");
       const data = JSON.parse(raw) as TrustScore[];
 
       for (const score of data) {
@@ -75,21 +91,20 @@ export class TrustChain {
   evaluate(category: ActionCategory, _toolName?: string): TrustDecision {
     const score = this.getOrCreate(category);
 
-    const allowed =
-      score.level === 'trusted' || score.level === 'autonomous';
+    const allowed = score.level === "trusted" || score.level === "autonomous";
 
     let reason: string;
     switch (score.level) {
-      case 'supervised':
+      case "supervised":
         reason = `Action "${category}" requires explicit approval (${score.approvalCount}/${this.thresholds.promptedAfter} approvals to unlock prompted mode)`;
         break;
-      case 'prompted':
+      case "prompted":
         reason = `Action "${category}" will prompt for confirmation (${score.approvalCount}/${this.thresholds.trustedAfter} approvals to unlock trusted mode)`;
         break;
-      case 'trusted':
+      case "trusted":
         reason = `Action "${category}" is trusted based on ${score.approvalCount} prior approvals`;
         break;
-      case 'autonomous':
+      case "autonomous":
         reason = `Action "${category}" runs autonomously after ${score.approvalCount} successful approvals`;
         break;
     }
@@ -144,7 +159,7 @@ export class TrustChain {
     let changed = false;
 
     for (const score of this.scores.values()) {
-      if (score.level === 'supervised') continue;
+      if (score.level === "supervised") continue;
       if (!score.lastApproved) continue;
 
       const lastApprovedMs = new Date(score.lastApproved).getTime();
@@ -164,59 +179,86 @@ export class TrustChain {
 
   formatStatus(): string {
     const scores = this.getAllScores();
-    if (scores.length === 0) return 'No trust data recorded yet.';
+    if (scores.length === 0) return "No trust data recorded yet.";
 
-    const lines: string[] = ['Trust Chain Status:', ''];
+    const lines: string[] = ["Trust Chain Status:", ""];
 
-    for (const score of scores.sort((a, b) => a.category.localeCompare(b.category))) {
+    for (const score of scores.sort((a, b) =>
+      a.category.localeCompare(b.category),
+    )) {
       const nextLevel = this.getNextThreshold(score.level);
-      const effectiveApprovals = score.approvalCount - score.denialCount * this.thresholds.denialPenalty;
+      const effectiveApprovals =
+        score.approvalCount - score.denialCount * this.thresholds.denialPenalty;
 
       let progressBar: string;
       if (nextLevel === null) {
-        progressBar = '[##########] MAX';
+        progressBar = "[##########] MAX";
       } else {
-        const filled = Math.max(0, Math.min(10, Math.floor((effectiveApprovals / nextLevel) * 10)));
+        const filled = Math.max(
+          0,
+          Math.min(10, Math.floor((effectiveApprovals / nextLevel) * 10)),
+        );
         const empty = 10 - filled;
-        progressBar = `[${'#'.repeat(filled)}${'-'.repeat(empty)}] ${effectiveApprovals}/${nextLevel}`;
+        progressBar = `[${"#".repeat(filled)}${"-".repeat(empty)}] ${effectiveApprovals}/${nextLevel}`;
       }
 
-      lines.push(`  ${score.category.padEnd(20)} ${score.level.padEnd(12)} ${progressBar}`);
+      lines.push(
+        `  ${score.category.padEnd(20)} ${score.level.padEnd(12)} ${progressBar}`,
+      );
     }
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
   static classifyTool(toolName: string): ActionCategory {
     const name = toolName.toLowerCase();
 
-    if (name === 'read_file' || name === 'readfile' || name === 'read') return 'file_read';
-    if (name === 'write_file' || name === 'writefile' || name === 'edit_file' || name === 'editfile') return 'file_write';
-    if (name === 'delete_file' || name === 'deletefile') return 'file_delete';
+    if (name === "read_file" || name === "readfile" || name === "read")
+      return "file_read";
+    if (
+      name === "write_file" ||
+      name === "writefile" ||
+      name === "edit_file" ||
+      name === "editfile"
+    )
+      return "file_write";
+    if (name === "delete_file" || name === "deletefile") return "file_delete";
 
-    if (name === 'git_status' || name === 'git_log' || name === 'git_diff') return 'git_read';
-    if (name === 'git_commit' || name === 'git_branch' || name === 'git_checkout' || name === 'git_merge') return 'git_write';
-    if (name === 'git_push') return 'git_push';
+    if (name === "git_status" || name === "git_log" || name === "git_diff")
+      return "git_read";
+    if (
+      name === "git_commit" ||
+      name === "git_branch" ||
+      name === "git_checkout" ||
+      name === "git_merge"
+    )
+      return "git_write";
+    if (name === "git_push") return "git_push";
 
-    if (name === 'web_crawl' || name === 'web_fetch' || name === 'google_search') return 'web_fetch';
-    if (name === 'scrapling_fetch') return 'web_scrape';
+    if (
+      name === "web_crawl" ||
+      name === "web_fetch" ||
+      name === "google_search"
+    )
+      return "web_fetch";
+    if (name === "scrapling_fetch") return "web_scrape";
 
-    if (name === 'send_file') return 'send_file';
-    if (name === 'send_message') return 'send_message';
+    if (name === "send_file") return "send_file";
+    if (name === "send_message") return "send_message";
 
-    if (name === 'run_shell_command' || name === 'shell' || name === 'exec') {
-      return 'shell_safe'; // Caller should use classifyCommand for dangerous detection
+    if (name === "run_shell_command" || name === "shell" || name === "exec") {
+      return "shell_safe"; // Caller should use classifyCommand for dangerous detection
     }
 
-    return 'shell_safe';
+    return "shell_safe";
   }
 
   static classifyCommand(command: string): ActionCategory {
     const lower = command.toLowerCase().trim();
     for (const pattern of DANGEROUS_COMMANDS) {
-      if (lower.includes(pattern)) return 'shell_dangerous';
+      if (lower.includes(pattern)) return "shell_dangerous";
     }
-    return 'shell_safe';
+    return "shell_safe";
   }
 
   private getOrCreate(category: ActionCategory): TrustScore {
@@ -229,23 +271,27 @@ export class TrustChain {
   }
 
   private updateLevel(score: TrustScore): void {
-    const effective = score.approvalCount - score.denialCount * this.thresholds.denialPenalty;
+    const effective =
+      score.approvalCount - score.denialCount * this.thresholds.denialPenalty;
 
     if (effective >= this.thresholds.autonomousAfter) {
-      score.level = 'autonomous';
+      score.level = "autonomous";
     } else if (effective >= this.thresholds.trustedAfter) {
-      score.level = 'trusted';
+      score.level = "trusted";
     } else if (effective >= this.thresholds.promptedAfter) {
-      score.level = 'prompted';
+      score.level = "prompted";
     } else {
-      score.level = 'supervised';
+      score.level = "supervised";
     }
 
     this.updateConfidence(score);
   }
 
   private updateConfidence(score: TrustScore): void {
-    const effective = Math.max(0, score.approvalCount - score.denialCount * this.thresholds.denialPenalty);
+    const effective = Math.max(
+      0,
+      score.approvalCount - score.denialCount * this.thresholds.denialPenalty,
+    );
     const nextThreshold = this.getNextThreshold(score.level);
     if (nextThreshold === null) {
       score.confidence = 1;
@@ -256,10 +302,14 @@ export class TrustChain {
 
   private getNextThreshold(level: TrustLevel): number | null {
     switch (level) {
-      case 'supervised': return this.thresholds.promptedAfter;
-      case 'prompted': return this.thresholds.trustedAfter;
-      case 'trusted': return this.thresholds.autonomousAfter;
-      case 'autonomous': return null;
+      case "supervised":
+        return this.thresholds.promptedAfter;
+      case "prompted":
+        return this.thresholds.trustedAfter;
+      case "trusted":
+        return this.thresholds.autonomousAfter;
+      case "autonomous":
+        return null;
     }
   }
 
@@ -275,7 +325,7 @@ export class TrustChain {
   private persist(): void {
     try {
       const data = Array.from(this.scores.values());
-      writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
+      writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
       log.debug(`Trust scores persisted (${data.length} categories)`);
     } catch (err) {
       log.warn(`Failed to persist trust scores: ${(err as Error).message}`);

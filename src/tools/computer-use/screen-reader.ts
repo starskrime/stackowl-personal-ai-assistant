@@ -24,19 +24,19 @@ const TIMEOUT = 20_000;
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ScreenElement {
-  ref?: number;           // Numbered reference for interactive elements
-  role: string;           // AXRole (AXButton, AXTextField, AXStaticText, etc.)
-  label: string;          // Title or description
-  value?: string;         // Current value (text field content, checkbox state, etc.)
+  ref?: number; // Numbered reference for interactive elements
+  role: string; // AXRole (AXButton, AXTextField, AXStaticText, etc.)
+  label: string; // Title or description
+  value?: string; // Current value (text field content, checkbox state, etc.)
   position: { x: number; y: number };
   size: { width: number; height: number };
   children?: ScreenElement[];
-  interactable: boolean;  // Can be clicked/typed into
+  interactable: boolean; // Can be clicked/typed into
 }
 
 export interface ScreenState {
-  app: string;            // Front application name
-  windowTitle: string;    // Active window title
+  app: string; // Front application name
+  windowTitle: string; // Active window title
   screen: { width: number; height: number; scale: number };
   elements: ScreenElement[];
   interactiveCount: number;
@@ -59,10 +59,15 @@ async function jxa(script: string): Promise<string> {
     });
     let stdout = "";
     let stderr = "";
-    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.stdout.on("data", (d: Buffer) => {
+      stdout += d.toString();
+    });
+    proc.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
     proc.on("close", (code) => {
-      if (code !== 0) reject(new Error(stderr.trim() || `osascript exited ${code}`));
+      if (code !== 0)
+        reject(new Error(stderr.trim() || `osascript exited ${code}`));
       else resolve(stdout.trim());
     });
     proc.on("error", reject);
@@ -255,9 +260,15 @@ export function formatScreenAsText(state: ScreenState): string {
   const lines: string[] = [];
 
   // Header
-  lines.push(`APP: ${state.app} | WINDOW: ${state.windowTitle || "(untitled)"}`);
-  lines.push(`SCREEN: ${state.screen.width}x${state.screen.height} (${state.screen.scale}x)`);
-  lines.push(`INTERACTIVE ELEMENTS: ${state.interactiveCount} (use ref number to click)`);
+  lines.push(
+    `APP: ${state.app} | WINDOW: ${state.windowTitle || "(untitled)"}`,
+  );
+  lines.push(
+    `SCREEN: ${state.screen.width}x${state.screen.height} (${state.screen.scale}x)`,
+  );
+  lines.push(
+    `INTERACTIVE ELEMENTS: ${state.interactiveCount} (use ref number to click)`,
+  );
   lines.push("");
 
   // Flatten and format elements
@@ -266,9 +277,15 @@ export function formatScreenAsText(state: ScreenState): string {
   // Instructions footer
   lines.push("");
   lines.push("---");
-  lines.push("To interact: computer_use(action:'click', x:X, y:Y) using coordinates above.");
-  lines.push("To click by ref: find the [ref:N] element and use its coordinates.");
-  lines.push("To type: first click a text field, then computer_use(action:'type', text:'...').");
+  lines.push(
+    "To interact: computer_use(action:'click', x:X, y:Y) using coordinates above.",
+  );
+  lines.push(
+    "To click by ref: find the [ref:N] element and use its coordinates.",
+  );
+  lines.push(
+    "To type: first click a text field, then computer_use(action:'type', text:'...').",
+  );
 
   return lines.join("\n");
 }
@@ -382,7 +399,9 @@ function filterByRegion(
       cy <= region.y + region.height;
 
     if (inRegion || (el.children && el.children.length > 0)) {
-      const childFiltered = el.children ? filterByRegion(el.children, region) : [];
+      const childFiltered = el.children
+        ? filterByRegion(el.children, region)
+        : [];
       if (inRegion || childFiltered.length > 0) {
         result.push({
           ...el,
@@ -423,7 +442,7 @@ export async function waitForElement(
     } catch {
       // AX read failed — retry
     }
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return null;
 }
@@ -436,8 +455,10 @@ function findElement(
     const matchesRole = !criteria.role || el.role === criteria.role;
     const matchesText =
       !criteria.text ||
-      (el.label && el.label.toLowerCase().includes(criteria.text.toLowerCase())) ||
-      (el.value && el.value.toLowerCase().includes(criteria.text.toLowerCase()));
+      (el.label &&
+        el.label.toLowerCase().includes(criteria.text.toLowerCase())) ||
+      (el.value &&
+        el.value.toLowerCase().includes(criteria.text.toLowerCase()));
 
     if (matchesRole && matchesText) return el;
 

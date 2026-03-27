@@ -11,7 +11,11 @@ const COMMON_PORTS = [22, 80, 443, 3000, 5000, 8080, 8443];
 
 function checkPort(host: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port, timeout: PORT_TIMEOUT_MS });
+    const socket = net.createConnection({
+      host,
+      port,
+      timeout: PORT_TIMEOUT_MS,
+    });
     socket.on("connect", () => {
       socket.destroy();
       resolve(true);
@@ -57,7 +61,9 @@ export const NetworkScanTool: ToolImplementation = {
     try {
       switch (action) {
         case "devices": {
-          const { stdout, stderr } = await execAsync("arp -a", { timeout: TIMEOUT_MS });
+          const { stdout, stderr } = await execAsync("arp -a", {
+            timeout: TIMEOUT_MS,
+          });
           const output = (stdout || "").trim();
           if (!output) return stderr?.trim() || "No devices found.";
           return `LAN devices:\n${output}`;

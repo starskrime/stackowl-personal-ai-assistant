@@ -56,14 +56,18 @@ export const YouTubeSearchTool: ToolImplementation = {
         try {
           const result = await shell(
             `yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format txt --print-to-file subtitle "${url}" - 2>/dev/null || ` +
-            `yt-dlp --skip-download --write-sub --sub-lang en -o - "${url}" 2>/dev/null | head -200`,
+              `yt-dlp --skip-download --write-sub --sub-lang en -o - "${url}" 2>/dev/null | head -200`,
           );
           if (result) return `📝 Transcript for ${url}:\n\n${result}`;
-        } catch { /* fallthrough */ }
+        } catch {
+          /* fallthrough */
+        }
 
         // Fallback: Python youtube_transcript_api
         try {
-          const videoId = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
+          const videoId = url.match(
+            /(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+          )?.[1];
           if (videoId) {
             const py = await shell(
               `python3 -c "
@@ -75,7 +79,9 @@ for entry in transcript[:100]:
             );
             if (py) return `📝 Transcript for ${url}:\n\n${py}`;
           }
-        } catch { /* fallthrough */ }
+        } catch {
+          /* fallthrough */
+        }
 
         return "Could not fetch transcript. Install: pip3 install youtube_transcript_api or brew install yt-dlp";
       }
@@ -90,7 +96,8 @@ for entry in transcript[:100]:
         if (result) {
           const lines = result.split("\n").filter(Boolean);
           const formatted = lines.map((line, i) => {
-            const [title, channel, videoUrl, duration, views] = line.split("|||");
+            const [title, channel, videoUrl, duration, views] =
+              line.split("|||");
             const viewCount = views ? Number(views).toLocaleString() : "N/A";
             return (
               `${i + 1}. **${title || "Unknown"}**\n` +
@@ -100,7 +107,9 @@ for entry in transcript[:100]:
           });
           return `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
         }
-      } catch { /* fallthrough to Python */ }
+      } catch {
+        /* fallthrough to Python */
+      }
 
       // Fallback: scrape YouTube search page
       try {
@@ -136,7 +145,8 @@ if match:
         if (pyResult) {
           const lines = pyResult.split("\n").filter(Boolean);
           const formatted = lines.map((line, i) => {
-            const [title, channel, videoUrl, duration, views] = line.split("|||");
+            const [title, channel, videoUrl, duration, views] =
+              line.split("|||");
             return (
               `${i + 1}. **${title}**\n` +
               `   Channel: ${channel} | Duration: ${duration} | ${views}\n` +
@@ -145,7 +155,9 @@ if match:
           });
           return `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
         }
-      } catch { /* fallthrough */ }
+      } catch {
+        /* fallthrough */
+      }
 
       return (
         `Could not search YouTube. For best results, install yt-dlp:\n` +

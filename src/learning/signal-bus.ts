@@ -13,8 +13,8 @@
  *   - MutationTracker → satisfaction feedback → rollback decisions
  */
 
-import type { MicroSignal } from './micro-learner.js';
-import { log } from '../logger.js';
+import type { MicroSignal } from "./micro-learner.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -44,19 +44,19 @@ export interface SignalBusStats {
 /** Pre-built filters for common use cases */
 export const SignalFilters = {
   /** Only sentiment signals (positive/negative reactions) */
-  sentiment: (s: MicroSignal) => s.type === 'sentiment',
+  sentiment: (s: MicroSignal) => s.type === "sentiment",
   /** Only topic mentions */
-  topics: (s: MicroSignal) => s.type === 'topic',
+  topics: (s: MicroSignal) => s.type === "topic",
   /** Only tool usage events */
-  toolUsage: (s: MicroSignal) => s.type === 'tool_use',
+  toolUsage: (s: MicroSignal) => s.type === "tool_use",
   /** Only temporal patterns */
-  temporal: (s: MicroSignal) => s.type === 'temporal',
+  temporal: (s: MicroSignal) => s.type === "temporal",
   /** Only style signals */
-  style: (s: MicroSignal) => s.type === 'style',
+  style: (s: MicroSignal) => s.type === "style",
   /** Negative sentiment only */
-  negative: (s: MicroSignal) => s.type === 'sentiment' && s.key === 'negative',
+  negative: (s: MicroSignal) => s.type === "sentiment" && s.key === "negative",
   /** Positive sentiment only */
-  positive: (s: MicroSignal) => s.type === 'sentiment' && s.key === 'positive',
+  positive: (s: MicroSignal) => s.type === "sentiment" && s.key === "positive",
   /** All signals */
   all: (_s: MicroSignal) => true,
 } as const;
@@ -71,7 +71,7 @@ export class SignalBus {
     totalSignals: 0,
     subscriberCount: 0,
     signalsByType: {},
-    lastSignalAt: '',
+    lastSignalAt: "",
   };
 
   /**

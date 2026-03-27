@@ -5,36 +5,36 @@
  * a single prioritized list with urgency scores and synthesis strategy routing.
  */
 
-import { log } from '../logger.js';
-import type { ConversationInsights } from './extractor.js';
-import type { KnowledgeGraph } from './knowledge-graph.js';
+import { log } from "../logger.js";
+import type { ConversationInsights } from "./extractor.js";
+import type { KnowledgeGraph } from "./knowledge-graph.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
 export type SynthesisStrategy =
-  | 'deep_research'   // User explicitly needs this, gap = high urgency
-  | 'quick_lookup'    // Topic appeared once, just-in-time learning
-  | 'watch_and_learn' // Observation mode, passive
-  | 'repo_digest'     // Likely a codebase question
-  | 'document_digest' // Likely docs or README question
-  | 'web_research'    // Needs current web info
-  | 'q_and_a'
-  | 'repo_analysis';       // Self-generated Q&A (current behavior)
+  | "deep_research" // User explicitly needs this, gap = high urgency
+  | "quick_lookup" // Topic appeared once, just-in-time learning
+  | "watch_and_learn" // Observation mode, passive
+  | "repo_digest" // Likely a codebase question
+  | "document_digest" // Likely docs or README question
+  | "web_research" // Needs current web info
+  | "q_and_a"
+  | "repo_analysis"; // Self-generated Q&A (current behavior)
 
-export type SourceSignal = 'topic' | 'domain' | 'gap' | 'question';
+export type SourceSignal = "topic" | "domain" | "gap" | "question";
 
 export interface FusedTopic {
   id: string;
   normalizedName: string;
   displayName: string;
-  urgency: number;              // 0-100, calculated
+  urgency: number; // 0-100, calculated
   sourceSignals: SourceSignal[];
   originalSignals: string[];
   lastSeen: string;
   failureCount: number;
   relatedDomains: string[];
   synthesisStrategy: SynthesisStrategy;
-  priorityOverride?: 'critical' | 'high' | 'low';
+  priorityOverride?: "critical" | "high" | "low";
   sourceInsights: ConversationInsights[];
 }
 
@@ -51,51 +51,51 @@ export interface FusionResult {
 // ─── Aliases & Normalization ────────────────────────────────────
 
 const ALIAS_MAP: Record<string, string> = {
-  'openai': 'openai-api',
-  'open ai': 'openai-api',
-  'open-ai': 'openai-api',
-  'claude': 'anthropic-claude',
-  'claude api': 'anthropic-claude',
-  'llm': 'large-language-models',
-  'llms': 'large-language-models',
-  'ai model': 'large-language-models',
-  'ai models': 'large-language-models',
-  'machine learning': 'machine-learning',
-  'ml': 'machine-learning',
-  'web scraping': 'web-scraping',
-  'web_scraping': 'web-scraping',
-  'webscraping': 'web-scraping',
-  'web search': 'web-search',
-  'api': 'api-development',
-  'apis': 'api-development',
-  'docker': 'docker-containers',
-  'kubernetes': 'kubernetes-k8s',
-  'k8s': 'kubernetes-k8s',
-  'typescript': 'typescript-lang',
-  'ts': 'typescript-lang',
-  'javascript': 'javascript-js',
-  'js': 'javascript-js',
-  'python': 'python-lang',
-  'rust': 'rust-lang',
-  'go': 'golang',
-  'golang': 'golang',
-  'postgresql': 'postgresql-db',
-  'postgres': 'postgresql-db',
-  'pg': 'postgresql-db',
-  'mongodb': 'mongodb-db',
-  'mongo': 'mongodb-db',
-  'redis': 'redis-cache',
+  openai: "openai-api",
+  "open ai": "openai-api",
+  "open-ai": "openai-api",
+  claude: "anthropic-claude",
+  "claude api": "anthropic-claude",
+  llm: "large-language-models",
+  llms: "large-language-models",
+  "ai model": "large-language-models",
+  "ai models": "large-language-models",
+  "machine learning": "machine-learning",
+  ml: "machine-learning",
+  "web scraping": "web-scraping",
+  web_scraping: "web-scraping",
+  webscraping: "web-scraping",
+  "web search": "web-search",
+  api: "api-development",
+  apis: "api-development",
+  docker: "docker-containers",
+  kubernetes: "kubernetes-k8s",
+  k8s: "kubernetes-k8s",
+  typescript: "typescript-lang",
+  ts: "typescript-lang",
+  javascript: "javascript-js",
+  js: "javascript-js",
+  python: "python-lang",
+  rust: "rust-lang",
+  go: "golang",
+  golang: "golang",
+  postgresql: "postgresql-db",
+  postgres: "postgresql-db",
+  pg: "postgresql-db",
+  mongodb: "mongodb-db",
+  mongo: "mongodb-db",
+  redis: "redis-cache",
 };
 
 export function normalizeTopic(raw: string): string {
   let normalized = raw
     .toLowerCase()
     .trim()
-    .replace(/[._-]+/g, '-')
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+    .replace(/[._-]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 
   if (ALIAS_MAP[normalized]) {
     normalized = ALIAS_MAP[normalized];
@@ -106,60 +106,74 @@ export function normalizeTopic(raw: string): string {
 
 export function toDisplayName(normalized: string): string {
   return normalized
-    .split('-')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 // ─── Strategy Routing ───────────────────────────────────────────
 
 const URL_PATTERNS = /\b(https?:\/\/|www\.)\S+/i;
-const REPO_PATTERNS = /\b(github|gitlab|sourcehut)\S*|[\w-]+\/[\w.-]+|~\/\S+\.git\b/i;
-const CODE_PATTERNS = /\b(function|class|const|let|var|import|export|def|fn|pub|struct|enum)\b/i;
+const REPO_PATTERNS =
+  /\b(github|gitlab|sourcehut)\S*|[\w-]+\/[\w.-]+|~\/\S+\.git\b/i;
+const CODE_PATTERNS =
+  /\b(function|class|const|let|var|import|export|def|fn|pub|struct|enum)\b/i;
 const QUESTION_PATTERNS = /\b(how|what|why|when|where|which|who)\b/i;
 const DOC_PATTERNS = /\b(readme|docs?|documentation|manual|guide|tutorial)\b/i;
 
-function routeStrategy(signal: string, fused: Partial<FusedTopic>): SynthesisStrategy {
+function routeStrategy(
+  signal: string,
+  fused: Partial<FusedTopic>,
+): SynthesisStrategy {
   const lower = signal.toLowerCase();
 
-  if (fused.sourceSignals?.includes('gap')) {
-    return fused.failureCount && fused.failureCount >= 2 ? 'deep_research' : 'quick_lookup';
+  if (fused.sourceSignals?.includes("gap")) {
+    return fused.failureCount && fused.failureCount >= 2
+      ? "deep_research"
+      : "quick_lookup";
   }
 
-  if (fused.sourceSignals?.includes('question')) {
-    return 'deep_research';
+  if (fused.sourceSignals?.includes("question")) {
+    return "deep_research";
   }
 
   if (URL_PATTERNS.test(signal)) {
-    return REPO_PATTERNS.test(signal) ? 'repo_digest' : 'document_digest';
+    return REPO_PATTERNS.test(signal) ? "repo_digest" : "document_digest";
   }
 
-  if (REPO_PATTERNS.test(lower) || lower.includes('repo') || lower.includes('codebase')) {
-    return 'repo_digest';
+  if (
+    REPO_PATTERNS.test(lower) ||
+    lower.includes("repo") ||
+    lower.includes("codebase")
+  ) {
+    return "repo_digest";
   }
 
   if (CODE_PATTERNS.test(signal)) {
-    return 'repo_digest';
+    return "repo_digest";
   }
 
   if (DOC_PATTERNS.test(lower)) {
-    return 'document_digest';
+    return "document_digest";
   }
 
-  if (QUESTION_PATTERNS.test(lower) && /price|cost|latest|current|recent|today|news|status/i.test(lower)) {
-    return 'web_research';
+  if (
+    QUESTION_PATTERNS.test(lower) &&
+    /price|cost|latest|current|recent|today|news|status/i.test(lower)
+  ) {
+    return "web_research";
   }
 
-  return 'q_and_a';
+  return "q_and_a";
 }
 
 // ─── Urgency Scoring ────────────────────────────────────────────
 
 const SIGNAL_WEIGHTS: Record<SourceSignal, number> = {
   gap: 40,
-  question: 25,
-  domain: 10,
-  topic: 5,
+  question: 30,
+  domain: 15,
+  topic: 10,
 };
 
 function calculateUrgency(fused: FusedTopic): number {
@@ -177,9 +191,9 @@ function calculateUrgency(fused: FusedTopic): number {
   else if (ageHours < 6) score += 5;
   else if (ageHours < 24) score += 2;
 
-  if (fused.priorityOverride === 'critical') score = Math.max(score, 80);
-  else if (fused.priorityOverride === 'high') score = Math.max(score, 60);
-  else if (fused.priorityOverride === 'low') score = Math.max(score, 10);
+  if (fused.priorityOverride === "critical") score = Math.max(score, 80);
+  else if (fused.priorityOverride === "high") score = Math.max(score, 60);
+  else if (fused.priorityOverride === "low") score = Math.max(score, 10);
 
   return Math.min(100, score);
 }
@@ -188,46 +202,46 @@ function calculateUrgency(fused: FusedTopic): number {
 
 function extractRelatedDomains(signals: string[]): string[] {
   const domainKeywords: Record<string, string> = {
-    'web': 'web-development',
-    'api': 'api-development',
-    'database': 'databases',
-    'db': 'databases',
-    'cloud': 'cloud-computing',
-    'docker': 'docker-containers',
-    'kubernetes': 'kubernetes-k8s',
-    'ai': 'artificial-intelligence',
-    'ml': 'machine-learning',
-    'devops': 'devops',
-    'security': 'security',
-    'network': 'networking',
-    'code': 'programming',
-    'script': 'scripting',
-    'mobile': 'mobile-development',
-    'frontend': 'frontend-development',
-    'backend': 'backend-development',
-    'openai': 'openai-api',
-    'anthropic': 'anthropic-claude',
-    'claude': 'anthropic-claude',
-    'ollama': 'ollama-local-ai',
-    'rust': 'rust-lang',
-    'python': 'python-lang',
-    'typescript': 'typescript-lang',
-    'javascript': 'javascript-js',
-    'golang': 'golang',
-    'apple': 'apple-platforms',
-    'macos': 'apple-platforms',
-    'ios': 'mobile-development',
-    'linux': 'linux-systems',
-    'git': 'version-control',
-    'github': 'version-control',
-    'testing': 'software-testing',
-    'ci': 'ci-cd',
-    'cd': 'ci-cd',
-    'monitoring': 'monitoring-observability',
+    web: "web-development",
+    api: "api-development",
+    database: "databases",
+    db: "databases",
+    cloud: "cloud-computing",
+    docker: "docker-containers",
+    kubernetes: "kubernetes-k8s",
+    ai: "artificial-intelligence",
+    ml: "machine-learning",
+    devops: "devops",
+    security: "security",
+    network: "networking",
+    code: "programming",
+    script: "scripting",
+    mobile: "mobile-development",
+    frontend: "frontend-development",
+    backend: "backend-development",
+    openai: "openai-api",
+    anthropic: "anthropic-claude",
+    claude: "anthropic-claude",
+    ollama: "ollama-local-ai",
+    rust: "rust-lang",
+    python: "python-lang",
+    typescript: "typescript-lang",
+    javascript: "javascript-js",
+    golang: "golang",
+    apple: "apple-platforms",
+    macos: "apple-platforms",
+    ios: "mobile-development",
+    linux: "linux-systems",
+    git: "version-control",
+    github: "version-control",
+    testing: "software-testing",
+    ci: "ci-cd",
+    cd: "ci-cd",
+    monitoring: "monitoring-observability",
   };
 
   const domains = new Set<string>();
-  const combined = signals.join(' ').toLowerCase();
+  const combined = signals.join(" ").toLowerCase();
 
   for (const [keyword, domain] of Object.entries(domainKeywords)) {
     if (combined.includes(keyword)) {
@@ -243,36 +257,49 @@ function extractRelatedDomains(signals: string[]): string[] {
 export class TopicFusionEngine {
   async fuse(
     insights: ConversationInsights[],
-    graph: KnowledgeGraph
+    graph: KnowledgeGraph,
   ): Promise<FusionResult> {
     if (insights.length === 0) {
       return {
         fusedTopics: [],
-        stats: { totalSignals: 0, uniqueTopics: 0, criticalCount: 0, deduplicatedSignals: 0 },
+        stats: {
+          totalSignals: 0,
+          uniqueTopics: 0,
+          criticalCount: 0,
+          deduplicatedSignals: 0,
+        },
       };
     }
 
-    log.evolution.info(`[TopicFusion] Fusing ${insights.length} insight batch(es)...`);
+    log.evolution.info(
+      `[TopicFusion] Fusing ${insights.length} insight batch(es)...`,
+    );
 
-    type RawSignal = { text: string; signal: SourceSignal; insight: ConversationInsights };
+    type RawSignal = {
+      text: string;
+      signal: SourceSignal;
+      insight: ConversationInsights;
+    };
     const rawSignals: RawSignal[] = [];
 
     for (const insight of insights) {
       for (const topic of insight.topics) {
-        rawSignals.push({ text: topic, signal: 'topic', insight });
+        rawSignals.push({ text: topic, signal: "topic", insight });
       }
       for (const domain of insight.domains) {
-        rawSignals.push({ text: domain, signal: 'domain', insight });
+        rawSignals.push({ text: domain, signal: "domain", insight });
       }
       for (const gap of insight.knowledgeGaps) {
-        rawSignals.push({ text: gap, signal: 'gap', insight });
+        rawSignals.push({ text: gap, signal: "gap", insight });
       }
       for (const question of insight.researchQuestions) {
-        rawSignals.push({ text: question, signal: 'question', insight });
+        rawSignals.push({ text: question, signal: "question", insight });
       }
     }
 
-    log.evolution.debug(`[TopicFusion] ${rawSignals.length} raw signals collected`);
+    log.evolution.debug(
+      `[TopicFusion] ${rawSignals.length} raw signals collected`,
+    );
 
     const fusedMap = new Map<string, FusedTopic>();
 
@@ -293,10 +320,13 @@ export class TopicFusionEngine {
         if (!existing.sourceInsights.includes(insight)) {
           existing.sourceInsights.push(insight);
         }
-        if (new Date(insight.timestamp ?? Date.now()) > new Date(existing.lastSeen)) {
+        if (
+          new Date(insight.timestamp ?? Date.now()) >
+          new Date(existing.lastSeen)
+        ) {
           existing.lastSeen = insight.timestamp ?? new Date().toISOString();
         }
-        if (signal === 'gap') {
+        if (signal === "gap") {
           existing.failureCount++;
         }
       } else {
@@ -313,10 +343,10 @@ export class TopicFusionEngine {
           sourceSignals: [signal],
           originalSignals: [text.trim()],
           lastSeen: now,
-          failureCount: signal === 'gap' ? 1 : 0,
+          failureCount: signal === "gap" ? 1 : 0,
           relatedDomains,
           synthesisStrategy: routeStrategy(text, { sourceSignals: [signal] }),
-          priorityOverride: alreadyKnown ? 'low' : undefined,
+          priorityOverride: alreadyKnown ? "low" : undefined,
           sourceInsights: [insight],
         });
       }
@@ -325,31 +355,48 @@ export class TopicFusionEngine {
     for (const fused of fusedMap.values()) {
       fused.urgency = calculateUrgency(fused);
 
-      if (fused.urgency >= 60) {
-        fused.synthesisStrategy = 'deep_research';
-      } else if (fused.urgency >= 30) {
-        fused.synthesisStrategy = 'q_and_a';
-      } else {
-        fused.synthesisStrategy = 'quick_lookup';
+      // Override strategy based on urgency — higher urgency gets deeper research.
+      // Gap-driven and question-driven routing from routeStrategy() is preserved
+      // for topics that already have a specialized strategy.
+      if (fused.urgency >= 50) {
+        fused.synthesisStrategy = "deep_research";
+      } else if (fused.urgency >= 20) {
+        // Most domain mentions and topic+domain combos land here
+        if (fused.synthesisStrategy === "quick_lookup") {
+          fused.synthesisStrategy = "q_and_a";
+        }
       }
+      // urgency < 20: keep whatever routeStrategy() assigned (usually quick_lookup)
     }
 
     const fusedTopics = [...fusedMap.values()].sort((a, b) => {
-      if (a.priorityOverride === 'critical' && b.priorityOverride !== 'critical') return -1;
-      if (b.priorityOverride === 'critical' && a.priorityOverride !== 'critical') return 1;
-      if (a.priorityOverride === 'high' && b.priorityOverride === 'low') return -1;
-      if (b.priorityOverride === 'high' && a.priorityOverride === 'low') return 1;
+      if (
+        a.priorityOverride === "critical" &&
+        b.priorityOverride !== "critical"
+      )
+        return -1;
+      if (
+        b.priorityOverride === "critical" &&
+        a.priorityOverride !== "critical"
+      )
+        return 1;
+      if (a.priorityOverride === "high" && b.priorityOverride === "low")
+        return -1;
+      if (b.priorityOverride === "high" && a.priorityOverride === "low")
+        return 1;
       return b.urgency - a.urgency;
     });
 
-    const criticalCount = fusedTopics.filter(t => t.urgency >= 60 || t.priorityOverride === 'critical').length;
+    const criticalCount = fusedTopics.filter(
+      (t) => t.urgency >= 60 || t.priorityOverride === "critical",
+    ).length;
     const totalSignals = rawSignals.length;
     const uniqueTopics = fusedTopics.length;
     const deduplicatedSignals = totalSignals - uniqueTopics;
 
     log.evolution.evolve(
       `[TopicFusion] ${totalSignals} signals -> ${uniqueTopics} unique topics ` +
-      `(${deduplicatedSignals} deduplicated), ${criticalCount} critical`
+        `(${deduplicatedSignals} deduplicated), ${criticalCount} critical`,
     );
 
     return {
@@ -360,7 +407,7 @@ export class TopicFusionEngine {
 
   async fuseSingle(
     insight: ConversationInsights,
-    graph: KnowledgeGraph
+    graph: KnowledgeGraph,
   ): Promise<FusionResult> {
     return this.fuse([insight], graph);
   }

@@ -12,11 +12,11 @@
  *   4. Only promote if tests pass; record results for SkillEvolver
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { StackOwlConfig } from '../config/loader.js';
-import { OwlEngine } from '../engine/runtime.js';
-import type { EngineContext } from '../engine/runtime.js';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { StackOwlConfig } from "../config/loader.js";
+import { OwlEngine } from "../engine/runtime.js";
+import type { EngineContext } from "../engine/runtime.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -72,7 +72,9 @@ export class SkillValidator {
   ): Promise<ValidationResult> {
     const startTime = Date.now();
 
-    log.evolution.info(`[SkillValidator] Generating test cases for "${skillName}"...`);
+    log.evolution.info(
+      `[SkillValidator] Generating test cases for "${skillName}"...`,
+    );
 
     // Step 1: Generate test cases
     const testCases = await this.generateTestCases(skillName, skillContent);
@@ -85,10 +87,12 @@ export class SkillValidator {
       };
     }
 
-    log.evolution.info(`[SkillValidator] Running ${testCases.length} test case(s)...`);
+    log.evolution.info(
+      `[SkillValidator] Running ${testCases.length} test case(s)...`,
+    );
 
     // Step 2: Execute each test case in sandboxed mode
-    const testResults: ValidationResult['testResults'] = [];
+    const testResults: ValidationResult["testResults"] = [];
 
     for (const testCase of testCases) {
       try {
@@ -97,7 +101,7 @@ export class SkillValidator {
           ...context,
           sessionHistory: [
             {
-              role: 'system',
+              role: "system",
               content:
                 `[SKILL VALIDATION MODE] You are testing a new skill. Follow the skill instructions exactly.\n\n` +
                 `<skill name="${skillName}">\n${skillContent}\n</skill>`,
@@ -107,10 +111,16 @@ export class SkillValidator {
           isolatedTask: true,
         };
 
-        const response = await this.engine.run(testCase.userMessage, sandboxContext);
+        const response = await this.engine.run(
+          testCase.userMessage,
+          sandboxContext,
+        );
 
         // Step 3: Evaluate the response
-        const evaluation = await this.evaluateResponse(testCase, response.content);
+        const evaluation = await this.evaluateResponse(
+          testCase,
+          response.content,
+        );
         testResults.push({
           testCase,
           output: response.content.slice(0, 500),
@@ -128,7 +138,7 @@ export class SkillValidator {
     }
 
     // Step 4: Overall verdict
-    const passedCount = testResults.filter(r => r.passed).length;
+    const passedCount = testResults.filter((r) => r.passed).length;
     const overallPassed = passedCount >= Math.ceil(testResults.length * 0.6);
 
     const result: ValidationResult = {
@@ -136,7 +146,7 @@ export class SkillValidator {
       testResults,
       summary:
         `Skill "${skillName}": ${passedCount}/${testResults.length} tests passed — ` +
-        `${overallPassed ? '✅ PROMOTED' : '❌ REJECTED'}`,
+        `${overallPassed ? "✅ PROMOTED" : "❌ REJECTED"}`,
       durationMs: Date.now() - startTime,
     };
 
@@ -149,7 +159,10 @@ export class SkillValidator {
   /**
    * Generate synthetic test cases from the skill description.
    */
-  private async generateTestCases(skillName: string, skillContent: string): Promise<TestCase[]> {
+  private async generateTestCases(
+    skillName: string,
+    skillContent: string,
+  ): Promise<TestCase[]> {
     const systemPrompt =
       `You generate test cases for an AI assistant skill. ` +
       `Given a skill description, produce 2-3 realistic user messages that would invoke this skill, ` +
@@ -160,16 +173,22 @@ export class SkillValidator {
     try {
       const response = await this.provider.chat(
         [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Skill name: "${skillName}"\n\nSkill content:\n${skillContent.slice(0, 1500)}` },
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Skill name: "${skillName}"\n\nSkill content:\n${skillContent.slice(0, 1500)}`,
+          },
         ],
         undefined,
         { temperature: 0.3, maxTokens: 512 },
       );
 
       let jsonStr = response.content.trim();
-      if (jsonStr.startsWith('```')) {
-        jsonStr = jsonStr.replace(/^```(?:json)?/, '').replace(/```$/, '').trim();
+      if (jsonStr.startsWith("```")) {
+        jsonStr = jsonStr
+          .replace(/^```(?:json)?/, "")
+          .replace(/```$/, "")
+          .trim();
       }
 
       return JSON.parse(jsonStr) as TestCase[];
@@ -193,24 +212,25 @@ export class SkillValidator {
 
     // Check for obvious failure signals
     if (
-      lowerResponse.includes('i cannot') ||
+      lowerResponse.includes("i cannot") ||
       lowerResponse.includes("i don't have") ||
-      lowerResponse.includes('error:') ||
-      lowerResponse.includes('failed to')
+      lowerResponse.includes("error:") ||
+      lowerResponse.includes("failed to")
     ) {
       return {
         passed: false,
-        reason: 'Response contains failure/refusal signals.',
+        reason: "Response contains failure/refusal signals.",
       };
     }
 
     // Check for expected keywords
-    const keywordsFound = testCase.expectedKeywords.filter(
-      kw => lowerResponse.includes(kw.toLowerCase()),
+    const keywordsFound = testCase.expectedKeywords.filter((kw) =>
+      lowerResponse.includes(kw.toLowerCase()),
     );
-    const keywordRatio = testCase.expectedKeywords.length > 0
-      ? keywordsFound.length / testCase.expectedKeywords.length
-      : 1;
+    const keywordRatio =
+      testCase.expectedKeywords.length > 0
+        ? keywordsFound.length / testCase.expectedKeywords.length
+        : 1;
 
     if (keywordRatio >= 0.5) {
       return {
@@ -223,7 +243,7 @@ export class SkillValidator {
     if (response.length < 50) {
       return {
         passed: false,
-        reason: 'Response too short — likely incomplete or failed.',
+        reason: "Response too short — likely incomplete or failed.",
       };
     }
 

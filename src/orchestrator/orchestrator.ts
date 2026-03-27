@@ -8,30 +8,26 @@
  * All strategies fall back to STANDARD on failure.
  */
 
-import type { OwlInstance } from '../owls/persona.js';
-import type { OwlRegistry } from '../owls/registry.js';
-import type { ModelProvider } from '../providers/base.js';
-import type { StackOwlConfig } from '../config/loader.js';
-import type { ToolRegistry } from '../tools/registry.js';
-import type { PelletStore } from '../pellets/store.js';
-import type { EngineContext, EngineResponse } from '../engine/runtime.js';
-import type { GatewayCallbacks } from '../gateway/types.js';
-import type { ParliamentCallbacks } from '../parliament/protocol.js';
-import { OwlEngine } from '../engine/runtime.js';
-import { ParliamentOrchestrator } from '../parliament/orchestrator.js';
-import type {
-  TaskStrategy,
-  OrchestrationResult,
-  SubTask,
-} from './types.js';
-import { log } from '../logger.js';
-import { SwarmBlackboard } from '../swarm/blackboard.js';
+import type { OwlInstance } from "../owls/persona.js";
+import type { OwlRegistry } from "../owls/registry.js";
+import type { ModelProvider } from "../providers/base.js";
+import type { StackOwlConfig } from "../config/loader.js";
+import type { ToolRegistry } from "../tools/registry.js";
+import type { PelletStore } from "../pellets/store.js";
+import type { EngineContext, EngineResponse } from "../engine/runtime.js";
+import type { GatewayCallbacks } from "../gateway/types.js";
+import type { ParliamentCallbacks } from "../parliament/protocol.js";
+import { OwlEngine } from "../engine/runtime.js";
+import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
+import type { TaskStrategy, OrchestrationResult, SubTask } from "./types.js";
+import { log } from "../logger.js";
+import { SwarmBlackboard } from "../swarm/blackboard.js";
 
 // ─── Helpers ─────────────────────────────────────────────────
 
 function toOrchResult(
   r: EngineResponse,
-  strategy: TaskStrategy['strategy'],
+  strategy: TaskStrategy["strategy"],
 ): OrchestrationResult {
   return {
     content: r.content,
@@ -72,10 +68,12 @@ export class TaskOrchestrator {
     } catch (err) {
       log.engine.warn(
         `[Orchestrator] ${strategy.strategy} failed, falling back to STANDARD: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
+          `${err instanceof Error ? err.message : String(err)}`,
       );
       if (callbacks.onProgress) {
-        await callbacks.onProgress('Strategy failed, falling back to standard processing...');
+        await callbacks.onProgress(
+          "Strategy failed, falling back to standard processing...",
+        );
       }
       return this.executeStandard(userMessage, baseContext);
     }
@@ -91,22 +89,37 @@ export class TaskOrchestrator {
     callbacks: GatewayCallbacks,
   ): Promise<OrchestrationResult> {
     switch (strategy.strategy) {
-      case 'DIRECT':
+      case "DIRECT":
         return this.executeDirect(userMessage, baseContext);
 
-      case 'STANDARD':
+      case "STANDARD":
         return this.executeStandard(userMessage, baseContext);
 
-      case 'SPECIALIST':
-        return this.executeSpecialist(userMessage, baseContext, strategy, callbacks);
+      case "SPECIALIST":
+        return this.executeSpecialist(
+          userMessage,
+          baseContext,
+          strategy,
+          callbacks,
+        );
 
-      case 'PLANNED':
-        return this.executePlanned(userMessage, baseContext, strategy, callbacks);
+      case "PLANNED":
+        return this.executePlanned(
+          userMessage,
+          baseContext,
+          strategy,
+          callbacks,
+        );
 
-      case 'PARLIAMENT':
-        return this.executeParliament(userMessage, baseContext, strategy, callbacks);
+      case "PARLIAMENT":
+        return this.executeParliament(
+          userMessage,
+          baseContext,
+          strategy,
+          callbacks,
+        );
 
-      case 'SWARM':
+      case "SWARM":
         return this.executeSwarm(userMessage, baseContext, strategy, callbacks);
 
       default:
@@ -125,7 +138,7 @@ export class TaskOrchestrator {
       skipGapDetection: true,
     };
     const response = await this.engine.run(userMessage, ctx);
-    return toOrchResult(response, 'DIRECT');
+    return toOrchResult(response, "DIRECT");
   }
 
   // ─── STANDARD ────────────────────────────────────────────────
@@ -135,7 +148,7 @@ export class TaskOrchestrator {
     baseContext: EngineContext,
   ): Promise<OrchestrationResult> {
     const response = await this.engine.run(userMessage, baseContext);
-    return toOrchResult(response, 'STANDARD');
+    return toOrchResult(response, "STANDARD");
   }
 
   // ─── SPECIALIST ──────────────────────────────────────────────
@@ -149,10 +162,13 @@ export class TaskOrchestrator {
     const assignment = strategy.owlAssignments[0];
     const specialistOwl = this.resolveOwl(assignment?.owlName);
 
-    if (specialistOwl && specialistOwl.persona.name !== baseContext.owl.persona.name) {
+    if (
+      specialistOwl &&
+      specialistOwl.persona.name !== baseContext.owl.persona.name
+    ) {
       if (callbacks.onProgress) {
         await callbacks.onProgress(
-          `${specialistOwl.persona.emoji} Routing to **${specialistOwl.persona.name}** (${specialistOwl.persona.type}) — ${assignment?.reasoning ?? 'specialist match'}`,
+          `${specialistOwl.persona.emoji} Routing to **${specialistOwl.persona.name}** (${specialistOwl.persona.type}) — ${assignment?.reasoning ?? "specialist match"}`,
         );
       }
     }
@@ -163,7 +179,7 @@ export class TaskOrchestrator {
     };
 
     const response = await this.engine.run(userMessage, ctx);
-    return toOrchResult(response, 'SPECIALIST');
+    return toOrchResult(response, "SPECIALIST");
   }
 
   // ─── PLANNED (wave-based parallel) ──────────────────────────
@@ -178,12 +194,12 @@ export class TaskOrchestrator {
 
     // Fallback: use TaskPlanner if classifier didn't provide subtasks
     if (!subtasks || subtasks.length === 0) {
-      const { TaskPlanner } = await import('../engine/planner.js');
+      const { TaskPlanner } = await import("../engine/planner.js");
       const planner = new TaskPlanner(this.provider);
-      const tools = baseContext.toolRegistry?.getDefinitions() ?? [];
+      const tools = baseContext.toolRegistry?.getAllDefinitions() ?? [];
       const plan = await planner.createPlan(userMessage, tools);
 
-      subtasks = plan.steps.map(s => ({
+      subtasks = plan.steps.map((s) => ({
         id: s.id,
         description: s.description,
         assignedOwl: baseContext.owl.persona.name,
@@ -207,14 +223,16 @@ export class TaskOrchestrator {
     }
 
     const allToolsUsed: string[] = [];
-    const subtaskResults: OrchestrationResult['subtaskResults'] = [];
+    const subtaskResults: OrchestrationResult["subtaskResults"] = [];
     const completedResults = new Map<number, string>();
 
     for (let w = 0; w < waves.length; w++) {
       const wave = waves[w];
 
       if (callbacks.onProgress) {
-        const taskNames = wave.map(t => t.description.slice(0, 50)).join(', ');
+        const taskNames = wave
+          .map((t) => t.description.slice(0, 50))
+          .join(", ");
         await callbacks.onProgress(
           `⚡ **Wave ${w + 1}/${waves.length}** (${wave.length} parallel): ${taskNames}`,
         );
@@ -227,12 +245,14 @@ export class TaskOrchestrator {
 
           // Build context with completed results from prior waves
           const priorContext = Array.from(completedResults.entries())
-            .map(([id, result]) => `[Step ${id} result]: ${result.slice(0, 300)}`)
-            .join('\n');
+            .map(
+              ([id, result]) => `[Step ${id} result]: ${result.slice(0, 300)}`,
+            )
+            .join("\n");
 
           const stepPrompt =
             `[TASK PLAN — Step ${task.id}/${subtasks!.length}]\n` +
-            (priorContext ? `Prior results:\n${priorContext}\n\n` : '') +
+            (priorContext ? `Prior results:\n${priorContext}\n\n` : "") +
             `CURRENT STEP: ${task.description}\n` +
             `Focus ONLY on completing this step.`;
 
@@ -240,58 +260,66 @@ export class TaskOrchestrator {
             ...baseContext,
             owl,
             sessionHistory: [
-              { role: 'system', content: stepPrompt },
+              { role: "system", content: stepPrompt },
               ...baseContext.sessionHistory.slice(-4),
             ],
             skipGapDetection: true,
             isolatedTask: true,
           };
 
-          return { task, response: await this.engine.run(task.description, ctx) };
+          return {
+            task,
+            response: await this.engine.run(task.description, ctx),
+          };
         }),
       );
 
       // Process results
       for (const result of results) {
-        if (result.status === 'fulfilled') {
+        if (result.status === "fulfilled") {
           const { task, response } = result.value;
           completedResults.set(task.id, response.content);
           allToolsUsed.push(...response.toolsUsed);
           subtaskResults.push({
             id: task.id,
             owlName: response.owlName,
-            status: 'done',
+            status: "done",
             content: response.content,
           });
 
           if (callbacks.onProgress) {
-            await callbacks.onProgress(`✅ Step ${task.id} complete: ${task.description.slice(0, 60)}`);
+            await callbacks.onProgress(
+              `✅ Step ${task.id} complete: ${task.description.slice(0, 60)}`,
+            );
           }
         } else {
           const task = wave[results.indexOf(result)];
           subtaskResults.push({
             id: task.id,
             owlName: task.assignedOwl,
-            status: 'failed',
+            status: "failed",
             content: result.reason?.message ?? String(result.reason),
           });
 
           if (callbacks.onProgress) {
-            await callbacks.onProgress(`❌ Step ${task.id} failed: ${task.description.slice(0, 60)}`);
+            await callbacks.onProgress(
+              `❌ Step ${task.id} failed: ${task.description.slice(0, 60)}`,
+            );
           }
         }
       }
     }
 
     // Final synthesis
-    const completedSteps = subtaskResults.filter(r => r.status === 'done');
+    const completedSteps = subtaskResults.filter((r) => r.status === "done");
     if (completedSteps.length === 0) {
       return {
-        content: 'All planned steps failed. Please try rephrasing your request.',
+        content:
+          "All planned steps failed. Please try rephrasing your request.",
         owlName: baseContext.owl.persona.name,
         owlEmoji: baseContext.owl.persona.emoji,
         toolsUsed: allToolsUsed,
-        strategy: 'PLANNED',
+        strategy: "PLANNED",
         subtaskResults,
       };
     }
@@ -299,9 +327,12 @@ export class TaskOrchestrator {
     const synthesisPrompt =
       `You executed a multi-step plan for the user. Combine the results into a clear, cohesive response.\n\n` +
       `Original request: ${userMessage}\n\n` +
-      subtaskResults.map(r =>
-        `Step ${r.id} (${r.status}, ${r.owlName}): ${r.content.slice(0, 500)}`,
-      ).join('\n\n') +
+      subtaskResults
+        .map(
+          (r) =>
+            `Step ${r.id} (${r.status}, ${r.owlName}): ${r.content.slice(0, 500)}`,
+        )
+        .join("\n\n") +
       `\n\nProvide a clear summary. If any steps failed, mention what couldn't be completed.`;
 
     const synthesisResponse = await this.engine.run(synthesisPrompt, {
@@ -315,7 +346,7 @@ export class TaskOrchestrator {
       owlName: synthesisResponse.owlName,
       owlEmoji: synthesisResponse.owlEmoji,
       toolsUsed: [...new Set(allToolsUsed)],
-      strategy: 'PLANNED',
+      strategy: "PLANNED",
       subtaskResults,
       usage: synthesisResponse.usage,
     };
@@ -349,7 +380,9 @@ export class TaskOrchestrator {
     const topic = strategy.parliamentConfig?.topic ?? userMessage;
 
     if (callbacks.onProgress) {
-      const owlNames = participants.map(o => `${o.persona.emoji} ${o.persona.name}`).join(', ');
+      const owlNames = participants
+        .map((o) => `${o.persona.emoji} ${o.persona.name}`)
+        .join(", ");
       await callbacks.onProgress(
         `🏛️ Convening Parliament with ${participants.length} owls: ${owlNames}`,
       );
@@ -361,11 +394,13 @@ export class TaskOrchestrator {
       ? {
           onRoundStart: async (_round, phase) => {
             const labels: Record<string, string> = {
-              round1_position: '📢 Round 1: Initial Positions',
-              round2_challenge: '⚔️ Round 2: Cross-Examination',
-              round3_synthesis: '🔮 Round 3: Synthesis',
+              round1_position: "📢 Round 1: Initial Positions",
+              round2_challenge: "⚔️ Round 2: Cross-Examination",
+              round3_synthesis: "🔮 Round 3: Synthesis",
             };
-            await onProgress(`\n🏛️ **Parliament** — ${labels[phase] || `Round ${_round}`}`);
+            await onProgress(
+              `\n🏛️ **Parliament** — ${labels[phase] || `Round ${_round}`}`,
+            );
           },
           onPositionReady: async (position) => {
             await onProgress(
@@ -393,9 +428,9 @@ export class TaskOrchestrator {
     const session = await orchestrator.convene({
       topic,
       participants,
-      contextMessages: baseContext.sessionHistory.map(m => ({
+      contextMessages: baseContext.sessionHistory.map((m) => ({
         role: m.role,
-        content: m.content ?? '',
+        content: m.content ?? "",
       })),
       callbacks: parliamentCallbacks,
     });
@@ -406,8 +441,8 @@ export class TaskOrchestrator {
       content,
       owlName: baseContext.owl.persona.name,
       owlEmoji: baseContext.owl.persona.emoji,
-      toolsUsed: ['summon_parliament'],
-      strategy: 'PARLIAMENT',
+      toolsUsed: ["summon_parliament"],
+      strategy: "PARLIAMENT",
     };
   }
 
@@ -428,18 +463,23 @@ export class TaskOrchestrator {
     if (subtasks.length === 1) {
       const owl = this.resolveOwl(subtasks[0].assignedOwl);
       if (owl) {
-        return this.executeSpecialist(userMessage, baseContext, strategy, callbacks);
+        return this.executeSpecialist(
+          userMessage,
+          baseContext,
+          strategy,
+          callbacks,
+        );
       }
       return this.executeStandard(userMessage, baseContext);
     }
 
     if (callbacks.onProgress) {
-      const assignments = subtasks.map(t => {
+      const assignments = subtasks.map((t) => {
         const owl = this.resolveOwl(t.assignedOwl);
-        return `${owl?.persona.emoji ?? '🦉'} ${t.assignedOwl}: ${t.description.slice(0, 50)}`;
+        return `${owl?.persona.emoji ?? "🦉"} ${t.assignedOwl}: ${t.description.slice(0, 50)}`;
       });
       await callbacks.onProgress(
-        `🐝 **Swarm activated** — ${subtasks.length} parallel tasks:\n${assignments.join('\n')}`,
+        `🐝 **Swarm activated** — ${subtasks.length} parallel tasks:\n${assignments.join("\n")}`,
       );
     }
 
@@ -458,7 +498,9 @@ export class TaskOrchestrator {
           `Focus exclusively on this subtask:\n\n` +
           `${task.description}\n\n` +
           `Original user request for context: "${userMessage}"\n\n` +
-          (sharedContext ? `Shared context from other agents:\n${sharedContext}\n\n` : '') +
+          (sharedContext
+            ? `Shared context from other agents:\n${sharedContext}\n\n`
+            : "") +
           `Provide your specialist analysis. Be thorough but concise.`;
 
         const ctx: EngineContext = {
@@ -490,16 +532,16 @@ export class TaskOrchestrator {
 
     // Collect results
     const allToolsUsed: string[] = [];
-    const subtaskResults: OrchestrationResult['subtaskResults'] = [];
+    const subtaskResults: OrchestrationResult["subtaskResults"] = [];
 
     for (const result of results) {
-      if (result.status === 'fulfilled') {
+      if (result.status === "fulfilled") {
         const { task, response } = result.value;
         allToolsUsed.push(...response.toolsUsed);
         subtaskResults.push({
           id: task.id,
           owlName: response.owlName,
-          status: 'done',
+          status: "done",
           content: response.content,
         });
       } else {
@@ -508,21 +550,21 @@ export class TaskOrchestrator {
         subtaskResults.push({
           id: task.id,
           owlName: task.assignedOwl,
-          status: 'failed',
+          status: "failed",
           content: result.reason?.message ?? String(result.reason),
         });
       }
     }
 
     // Synthesis: Noctua merges all specialist results
-    const completedResults = subtaskResults.filter(r => r.status === 'done');
+    const completedResults = subtaskResults.filter((r) => r.status === "done");
     if (completedResults.length === 0) {
       return {
-        content: 'All swarm tasks failed. Please try rephrasing your request.',
+        content: "All swarm tasks failed. Please try rephrasing your request.",
         owlName: baseContext.owl.persona.name,
         owlEmoji: baseContext.owl.persona.emoji,
         toolsUsed: allToolsUsed,
-        strategy: 'SWARM',
+        strategy: "SWARM",
         subtaskResults,
       };
     }
@@ -531,9 +573,9 @@ export class TaskOrchestrator {
       `Multiple specialist agents worked on parts of the user's request in parallel. ` +
       `Combine their results into a single cohesive response.\n\n` +
       `Original request: "${userMessage}"\n\n` +
-      completedResults.map(r =>
-        `--- ${r.owlName}'s analysis ---\n${r.content}`,
-      ).join('\n\n') +
+      completedResults
+        .map((r) => `--- ${r.owlName}'s analysis ---\n${r.content}`)
+        .join("\n\n") +
       `\n\nShared blackboard context from execution:\n${blackboard.toSummary()}` +
       `\n\nSynthesize these into a clear, unified answer. Credit each specialist's contribution where relevant.`;
 
@@ -541,7 +583,9 @@ export class TaskOrchestrator {
     blackboard.clear();
 
     if (callbacks.onProgress) {
-      await callbacks.onProgress('🔮 Synthesizing results from all specialists...');
+      await callbacks.onProgress(
+        "🔮 Synthesizing results from all specialists...",
+      );
     }
 
     const synthesisResponse = await this.engine.run(synthesisPrompt, {
@@ -555,7 +599,7 @@ export class TaskOrchestrator {
       owlName: synthesisResponse.owlName,
       owlEmoji: synthesisResponse.owlEmoji,
       toolsUsed: [...new Set(allToolsUsed)],
-      strategy: 'SWARM',
+      strategy: "SWARM",
       subtaskResults,
       usage: synthesisResponse.usage,
     };
@@ -573,8 +617,8 @@ export class TaskOrchestrator {
     const remaining = [...subtasks];
 
     while (remaining.length > 0) {
-      const wave = remaining.filter(t =>
-        t.dependsOn.every(dep => completed.has(dep)),
+      const wave = remaining.filter((t) =>
+        t.dependsOn.every((dep) => completed.has(dep)),
       );
 
       if (wave.length === 0) {
@@ -606,7 +650,9 @@ export class TaskOrchestrator {
     } catch {
       // Try case-insensitive
       const all = this.owlRegistry.listOwls();
-      return all.find(o => o.persona.name.toLowerCase() === name.toLowerCase());
+      return all.find(
+        (o) => o.persona.name.toLowerCase() === name.toLowerCase(),
+      );
     }
   }
 }

@@ -24,33 +24,41 @@ Analyze code for quality, bugs, security, and best practices.
    - **Error handling:** Missing try/catch, swallowed exceptions
 
 3. **Present findings** as a structured review:
+
    ```markdown
    ## Code Review: <file_or_commit>
 
    ### 🐛 Bugs (Critical)
+
    - Line 42: Potential null reference...
 
    ### 🔒 Security
+
    - Line 15: API key hardcoded...
 
    ### ⚡ Performance
+
    - Line 78: O(n²) loop could be O(n)...
 
    ### 💅 Style
+
    - Inconsistent naming convention...
 
    ### ✅ What's Good
+
    - Clean separation of concerns...
    ```
 
 ## Examples
 
 ### Review a specific file
+
 ```bash
 read_file("src/auth/login.ts")
 ```
 
 ### Review last commit
+
 ```bash
 run_shell_command("git diff HEAD~1")
 ```

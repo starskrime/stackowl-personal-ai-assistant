@@ -1,6 +1,12 @@
-export type VoiceStyle = 'warm' | 'professional' | 'energetic' | 'calm' | 'playful' | 'serious';
-export type SpeechSpeed = 'slow' | 'normal' | 'fast';
-export type VoicePitch = 'low' | 'medium' | 'high';
+export type VoiceStyle =
+  | "warm"
+  | "professional"
+  | "energetic"
+  | "calm"
+  | "playful"
+  | "serious";
+export type SpeechSpeed = "slow" | "normal" | "fast";
+export type VoicePitch = "low" | "medium" | "high";
 
 export interface VoiceProfile {
   style: VoiceStyle;
@@ -13,7 +19,7 @@ export interface VoiceProfile {
 
 export interface VoiceConfig {
   enabled: boolean;
-  provider: 'system' | 'openai' | 'elevenlabs';
+  provider: "system" | "openai" | "elevenlabs";
   systemVoice?: string;
   openaiVoice?: string;
   elevenlabsVoiceId?: string;
@@ -22,8 +28,8 @@ export interface VoiceConfig {
 }
 
 export interface OwlDna {
-  challengeLevel: 'low' | 'medium' | 'high' | 'relentless';
-  verbosity: 'verbose' | 'balanced' | 'concise';
+  challengeLevel: "low" | "medium" | "high" | "relentless";
+  verbosity: "verbose" | "balanced" | "concise";
   humor: number;
   formality: number;
 }

@@ -106,7 +106,8 @@ export const HabitTrackerTool: ToolImplementation = {
           }
 
           const lines = todayEntries.map(
-            (e) => `  [x] ${e.habit} (${e.timestamp.split("T")[1]?.slice(0, 5)})`,
+            (e) =>
+              `  [x] ${e.habit} (${e.timestamp.split("T")[1]?.slice(0, 5)})`,
           );
           return `Today's habits (${today}):\n${lines.join("\n")}`;
         }
@@ -138,9 +139,7 @@ export const HabitTrackerTool: ToolImplementation = {
           for (const habit of allHabits) {
             const row = dates
               .map((d) =>
-                data.entries.some(
-                  (e) => e.habit === habit && e.date === d,
-                )
+                data.entries.some((e) => e.habit === habit && e.date === d)
                   ? " x   "
                   : " .   ",
               )

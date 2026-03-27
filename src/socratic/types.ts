@@ -4,7 +4,11 @@
  * Toggle-able mode where the owl responds only with probing questions.
  */
 
-export type SocraticSubMode = 'pure' | 'guided' | 'reflective' | 'devils_advocate';
+export type SocraticSubMode =
+  | "pure"
+  | "guided"
+  | "reflective"
+  | "devils_advocate";
 
 export interface SocraticConfig {
   enabled: boolean;

@@ -85,11 +85,10 @@ export class ToolTimeoutError extends ToolError {
   readonly timeoutMs: number;
 
   constructor(toolName: string, timeoutMs: number) {
-    super(
-      toolName,
-      `Tool "${toolName}" timed out after ${timeoutMs}ms.`,
-      { retryable: true, errorCode: "TIMEOUT" },
-    );
+    super(toolName, `Tool "${toolName}" timed out after ${timeoutMs}ms.`, {
+      retryable: true,
+      errorCode: "TIMEOUT",
+    });
     this.name = "ToolTimeoutError";
     this.timeoutMs = timeoutMs;
   }

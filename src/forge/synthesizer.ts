@@ -1,11 +1,11 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import matter from 'gray-matter';
-import { Logger } from '../logger.js';
-import type { ModelProvider } from '../providers/base.js';
-import type { DemoRecording } from './types.js';
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import matter from "gray-matter";
+import { Logger } from "../logger.js";
+import type { ModelProvider } from "../providers/base.js";
+import type { DemoRecording } from "./types.js";
 
-const logger = new Logger('FORGE');
+const logger = new Logger("FORGE");
 
 export class ForgeSynthesizer {
   constructor(private provider: ModelProvider) {}
@@ -39,12 +39,17 @@ User's description: ${recording.description}
 
 Generate the SKILL.md now. Output ONLY the markdown content, nothing else.`;
 
-    logger.info(`Synthesizing skill from recording "${recording.name}" (${recording.steps.length} steps)`);
+    logger.info(
+      `Synthesizing skill from recording "${recording.name}" (${recording.steps.length} steps)`,
+    );
 
     const response = await this.provider.chat(
       [
-        { role: 'system', content: 'You generate SKILL.md files from recorded demonstrations.' },
-        { role: 'user', content: prompt },
+        {
+          role: "system",
+          content: "You generate SKILL.md files from recorded demonstrations.",
+        },
+        { role: "user", content: prompt },
       ],
       undefined,
       { temperature: 0.3 },
@@ -58,14 +63,16 @@ Generate the SKILL.md now. Output ONLY the markdown content, nothing else.`;
     const name = parsed.data.name as string | undefined;
 
     if (!name) {
-      throw new Error('Generated SKILL.md is missing a "name" field in frontmatter');
+      throw new Error(
+        'Generated SKILL.md is missing a "name" field in frontmatter',
+      );
     }
 
     const skillDirPath = join(skillsDir, name);
     mkdirSync(skillDirPath, { recursive: true });
 
-    const filePath = join(skillDirPath, 'SKILL.md');
-    writeFileSync(filePath, skillMd, 'utf-8');
+    const filePath = join(skillDirPath, "SKILL.md");
+    writeFileSync(filePath, skillMd, "utf-8");
     logger.info(`Saved generated skill to ${filePath}`);
     return filePath;
   }

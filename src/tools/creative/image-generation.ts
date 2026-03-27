@@ -27,7 +27,8 @@ export const ImageGenerationTool: ToolImplementation = {
         },
         provider: {
           type: "string",
-          description: 'Image generation provider. Currently only "openai" is supported.',
+          description:
+            'Image generation provider. Currently only "openai" is supported.',
         },
       },
       required: ["prompt"],
@@ -57,20 +58,23 @@ export const ImageGenerationTool: ToolImplementation = {
         );
       }
 
-      const response = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
+      const response = await fetch(
+        "https://api.openai.com/v1/images/generations",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "dall-e-3",
+            prompt,
+            n: 1,
+            size,
+          }),
+          signal: AbortSignal.timeout(30_000),
         },
-        body: JSON.stringify({
-          model: "dall-e-3",
-          prompt,
-          n: 1,
-          size,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
+      );
 
       if (!response.ok) {
         const errorText = await response.text();

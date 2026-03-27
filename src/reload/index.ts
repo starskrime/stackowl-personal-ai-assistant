@@ -4,7 +4,12 @@
  * Barrel exports for the reload subsystem.
  */
 
-export type { ReloadableModule, ReloadableKind, ReloadEvent, ModuleSnapshot } from "./types.js";
+export type {
+  ReloadableModule,
+  ReloadableKind,
+  ReloadEvent,
+  ModuleSnapshot,
+} from "./types.js";
 export { DependencyGraph } from "./graph.js";
 export { HotReloadManager } from "./manager.js";
 export { ToolReloadable } from "./adapters/tool-reloadable.js";

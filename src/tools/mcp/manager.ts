@@ -73,15 +73,17 @@ export class MCPManager {
   async connectNpx(
     packageName: string,
     toolRegistry: ToolRegistry,
-    args: string[] = []
+    args: string[] = [],
   ): Promise<number> {
     const config: MCPServerConfig = {
-      name: packageName.replace(/[^a-zA-Z0-9_-]/g, '_'),
+      name: packageName.replace(/[^a-zA-Z0-9_-]/g, "_"),
       transport: "stdio",
       command: "npx",
       args: ["-y", packageName, ...args],
     };
-    log.engine.info(`[MCP] Dynamically resolving ClawHub/NPM package: ${packageName}`);
+    log.engine.info(
+      `[MCP] Dynamically resolving ClawHub/NPM package: ${packageName}`,
+    );
     return this.connect(config, toolRegistry);
   }
 

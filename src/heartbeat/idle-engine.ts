@@ -16,30 +16,30 @@
  * message arrives, idle activities are paused immediately.
  */
 
-import type { StackOwlConfig } from '../config/loader.js';
-import type { LearningEngine } from '../learning/self-study.js';
-import type { PatternMiner } from '../skills/pattern-miner.js';
-import type { SkillsRegistry } from '../skills/registry.js';
-import type { MicroLearner } from '../learning/micro-learner.js';
-import type { ToolOutcomeStore } from '../tools/outcome-store.js';
-import { CapabilityScanner } from './capability-scanner.js';
-import { log } from '../logger.js';
+import type { StackOwlConfig } from "../config/loader.js";
+import type { LearningEngine } from "../learning/self-study.js";
+import type { PatternMiner } from "../skills/pattern-miner.js";
+import type { SkillsRegistry } from "../skills/registry.js";
+import type { MicroLearner } from "../learning/micro-learner.js";
+import type { ToolOutcomeStore } from "../tools/outcome-store.js";
+import { CapabilityScanner } from "./capability-scanner.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
 export type IdleActivity =
-  | 'pattern_mining'
-  | 'capability_exploration'
-  | 'anticipatory_research'
-  | 'tool_outcome_review'
-  | 'knowledge_refresh';
+  | "pattern_mining"
+  | "capability_exploration"
+  | "anticipatory_research"
+  | "tool_outcome_review"
+  | "knowledge_refresh";
 
 export interface IdleActivityResult {
   activity: IdleActivity;
   description: string;
   success: boolean;
   durationMs: number;
-  artifacts: string[];  // e.g., new skill names, pellet titles
+  artifacts: string[]; // e.g., new skill names, pellet titles
 }
 
 export interface IdleEngineConfig {
@@ -104,13 +104,16 @@ export class IdleActivityEngine {
   start(): void {
     log.engine.info(
       `[IdleEngine] Started — idle threshold: ${this.config.idleThresholdMinutes}min, ` +
-      `cycle: ${this.config.cycleLengthMinutes}min`,
+        `cycle: ${this.config.cycleLengthMinutes}min`,
     );
 
     this.timer = setInterval(
-      () => this.tick().catch(err => {
-        log.engine.warn(`[IdleEngine] Tick failed: ${err instanceof Error ? err.message : err}`);
-      }),
+      () =>
+        this.tick().catch((err) => {
+          log.engine.warn(
+            `[IdleEngine] Tick failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }),
       60_000, // Check every minute
     );
   }
@@ -121,7 +124,7 @@ export class IdleActivityEngine {
       this.timer = null;
     }
     this.running = false;
-    log.engine.info('[IdleEngine] Stopped');
+    log.engine.info("[IdleEngine] Stopped");
   }
 
   /**
@@ -196,41 +199,46 @@ export class IdleActivityEngine {
 
     // Pattern mining — highest value, creates new skills
     if (this.config.enabled.patternMining && this.deps.patternMiner) {
-      const lastRun = this.lastActivities.get('pattern_mining') ?? 0;
-      if (now - lastRun > cycleMs * 3) { // Run every 3 cycles
-        candidates.push({ activity: 'pattern_mining', score: 80 });
+      const lastRun = this.lastActivities.get("pattern_mining") ?? 0;
+      if (now - lastRun > cycleMs * 3) {
+        // Run every 3 cycles
+        candidates.push({ activity: "pattern_mining", score: 80 });
       }
     }
 
     // Capability exploration — find unused platform features
-    if (this.config.enabled.capabilityExploration && this.deps.capabilityScanner) {
-      const lastRun = this.lastActivities.get('capability_exploration') ?? 0;
-      if (now - lastRun > cycleMs * 5) { // Run every 5 cycles
-        candidates.push({ activity: 'capability_exploration', score: 60 });
+    if (
+      this.config.enabled.capabilityExploration &&
+      this.deps.capabilityScanner
+    ) {
+      const lastRun = this.lastActivities.get("capability_exploration") ?? 0;
+      if (now - lastRun > cycleMs * 5) {
+        // Run every 5 cycles
+        candidates.push({ activity: "capability_exploration", score: 60 });
       }
     }
 
     // Anticipatory research — pre-study likely topics
     if (this.config.enabled.anticipatoryResearch && this.deps.learningEngine) {
-      const lastRun = this.lastActivities.get('anticipatory_research') ?? 0;
+      const lastRun = this.lastActivities.get("anticipatory_research") ?? 0;
       if (now - lastRun > cycleMs) {
-        candidates.push({ activity: 'anticipatory_research', score: 50 });
+        candidates.push({ activity: "anticipatory_research", score: 50 });
       }
     }
 
     // Tool outcome review
     if (this.config.enabled.toolOutcomeReview && this.deps.toolOutcomeStore) {
-      const lastRun = this.lastActivities.get('tool_outcome_review') ?? 0;
+      const lastRun = this.lastActivities.get("tool_outcome_review") ?? 0;
       if (now - lastRun > cycleMs * 2) {
-        candidates.push({ activity: 'tool_outcome_review', score: 40 });
+        candidates.push({ activity: "tool_outcome_review", score: 40 });
       }
     }
 
     // Knowledge refresh
     if (this.config.enabled.knowledgeRefresh && this.deps.learningEngine) {
-      const lastRun = this.lastActivities.get('knowledge_refresh') ?? 0;
+      const lastRun = this.lastActivities.get("knowledge_refresh") ?? 0;
       if (now - lastRun > cycleMs * 2) {
-        candidates.push({ activity: 'knowledge_refresh', score: 30 });
+        candidates.push({ activity: "knowledge_refresh", score: 30 });
       }
     }
 
@@ -242,51 +250,57 @@ export class IdleActivityEngine {
 
   // ─── Activity Runners ──────────────────────────────────────────
 
-  private async runActivity(activity: IdleActivity): Promise<IdleActivityResult> {
+  private async runActivity(
+    activity: IdleActivity,
+  ): Promise<IdleActivityResult> {
     switch (activity) {
-      case 'pattern_mining':
+      case "pattern_mining":
         return await this.runPatternMining();
-      case 'capability_exploration':
+      case "capability_exploration":
         return await this.runCapabilityExploration();
-      case 'anticipatory_research':
+      case "anticipatory_research":
         return await this.runAnticipatoryResearch();
-      case 'tool_outcome_review':
+      case "tool_outcome_review":
         return await this.runToolOutcomeReview();
-      case 'knowledge_refresh':
+      case "knowledge_refresh":
         return await this.runKnowledgeRefresh();
     }
   }
 
   private async runPatternMining(): Promise<IdleActivityResult> {
     if (!this.deps.patternMiner || !this.deps.skillsRegistry) {
-      return this.emptyResult('pattern_mining', 'Missing dependencies');
+      return this.emptyResult("pattern_mining", "Missing dependencies");
     }
 
     try {
       const skillsDirs = this.appConfig.skills?.directories ?? [];
-      const skillsDir = skillsDirs[0] ?? './workspace/skills';
+      const skillsDir = skillsDirs[0] ?? "./workspace/skills";
       const newSkills = await this.deps.patternMiner.mine(
         this.deps.skillsRegistry,
         skillsDir,
       );
 
       return {
-        activity: 'pattern_mining',
-        description: newSkills.length > 0
-          ? `Crystallized ${newSkills.length} new skill(s): ${newSkills.join(', ')}`
-          : 'No new patterns found to crystallize',
+        activity: "pattern_mining",
+        description:
+          newSkills.length > 0
+            ? `Crystallized ${newSkills.length} new skill(s): ${newSkills.join(", ")}`
+            : "No new patterns found to crystallize",
         success: true,
         durationMs: 0,
         artifacts: newSkills,
       };
     } catch (err) {
-      return this.emptyResult('pattern_mining', `Failed: ${err instanceof Error ? err.message : String(err)}`);
+      return this.emptyResult(
+        "pattern_mining",
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   private async runCapabilityExploration(): Promise<IdleActivityResult> {
     if (!this.deps.capabilityScanner) {
-      return this.emptyResult('capability_exploration', 'No scanner available');
+      return this.emptyResult("capability_exploration", "No scanner available");
     }
 
     try {
@@ -294,85 +308,110 @@ export class IdleActivityEngine {
       const topGaps = result.gaps.slice(0, 3);
 
       return {
-        activity: 'capability_exploration',
-        description: topGaps.length > 0
-          ? `Found ${result.gaps.length} capability gaps. Top: ${topGaps.map(g => g.name).join(', ')}`
-          : 'No capability gaps detected — platform is well-utilized',
+        activity: "capability_exploration",
+        description:
+          topGaps.length > 0
+            ? `Found ${result.gaps.length} capability gaps. Top: ${topGaps.map((g) => g.name).join(", ")}`
+            : "No capability gaps detected — platform is well-utilized",
         success: true,
         durationMs: 0,
-        artifacts: topGaps.map(g => `${g.type}:${g.name}`),
+        artifacts: topGaps.map((g) => `${g.type}:${g.name}`),
       };
     } catch (err) {
-      return this.emptyResult('capability_exploration', `Failed: ${err instanceof Error ? err.message : String(err)}`);
+      return this.emptyResult(
+        "capability_exploration",
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   private async runAnticipatoryResearch(): Promise<IdleActivityResult> {
     if (!this.deps.learningEngine) {
-      return this.emptyResult('anticipatory_research', 'No learning engine');
+      return this.emptyResult("anticipatory_research", "No learning engine");
     }
 
     try {
       const result = await this.deps.learningEngine.runStudySession(2);
       return {
-        activity: 'anticipatory_research',
-        description: result.studied.length > 0
-          ? `Studied ${result.studied.length} topic(s): ${result.studied.join(', ')}. ${result.pelletsCreated} pellet(s) created.`
-          : 'Study queue empty — no topics to research',
+        activity: "anticipatory_research",
+        description:
+          result.studied.length > 0
+            ? `Studied ${result.studied.length} topic(s): ${result.studied.join(", ")}. ${result.pelletsCreated} pellet(s) created.`
+            : "Study queue empty — no topics to research",
         success: true,
         durationMs: 0,
         artifacts: result.studied,
       };
     } catch (err) {
-      return this.emptyResult('anticipatory_research', `Failed: ${err instanceof Error ? err.message : String(err)}`);
+      return this.emptyResult(
+        "anticipatory_research",
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   private async runToolOutcomeReview(): Promise<IdleActivityResult> {
     if (!this.deps.toolOutcomeStore) {
-      return this.emptyResult('tool_outcome_review', 'No outcome store');
+      return this.emptyResult("tool_outcome_review", "No outcome store");
     }
 
     try {
       const patterns = this.deps.toolOutcomeStore.getTopPatterns(5);
-      const lowSuccess = patterns.filter(p => p.successRate < 0.5);
+      const lowSuccess = patterns.filter((p) => p.successRate < 0.5);
 
       return {
-        activity: 'tool_outcome_review',
-        description: lowSuccess.length > 0
-          ? `Found ${lowSuccess.length} underperforming tool pattern(s): ${lowSuccess.map(p => `${p.requestType} (${(p.successRate * 100).toFixed(0)}%)`).join(', ')}`
-          : `All ${patterns.length} tool patterns performing well`,
+        activity: "tool_outcome_review",
+        description:
+          lowSuccess.length > 0
+            ? `Found ${lowSuccess.length} underperforming tool pattern(s): ${lowSuccess.map((p) => `${p.requestType} (${(p.successRate * 100).toFixed(0)}%)`).join(", ")}`
+            : `All ${patterns.length} tool patterns performing well`,
         success: true,
         durationMs: 0,
-        artifacts: lowSuccess.map(p => p.requestType),
+        artifacts: lowSuccess.map((p) => p.requestType),
       };
     } catch (err) {
-      return this.emptyResult('tool_outcome_review', `Failed: ${err instanceof Error ? err.message : String(err)}`);
+      return this.emptyResult(
+        "tool_outcome_review",
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   private async runKnowledgeRefresh(): Promise<IdleActivityResult> {
     if (!this.deps.learningEngine) {
-      return this.emptyResult('knowledge_refresh', 'No learning engine');
+      return this.emptyResult("knowledge_refresh", "No learning engine");
     }
 
     try {
       const result = await this.deps.learningEngine.runStudySession(1);
       return {
-        activity: 'knowledge_refresh',
-        description: result.studied.length > 0
-          ? `Refreshed knowledge on: ${result.studied.join(', ')}`
-          : 'Nothing to refresh',
+        activity: "knowledge_refresh",
+        description:
+          result.studied.length > 0
+            ? `Refreshed knowledge on: ${result.studied.join(", ")}`
+            : "Nothing to refresh",
         success: true,
         durationMs: 0,
         artifacts: result.studied,
       };
     } catch (err) {
-      return this.emptyResult('knowledge_refresh', `Failed: ${err instanceof Error ? err.message : String(err)}`);
+      return this.emptyResult(
+        "knowledge_refresh",
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
-  private emptyResult(activity: IdleActivity, description: string): IdleActivityResult {
-    return { activity, description, success: false, durationMs: 0, artifacts: [] };
+  private emptyResult(
+    activity: IdleActivity,
+    description: string,
+  ): IdleActivityResult {
+    return {
+      activity,
+      description,
+      success: false,
+      durationMs: 0,
+      artifacts: [],
+    };
   }
 }

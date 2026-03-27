@@ -5,54 +5,59 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 function escapeForShell(str: string): string {
-    return str.replace(/'/g, "'\\''");
+  return str.replace(/'/g, "'\\''");
 }
 
 export const AppleCalendarTool: ToolImplementation = {
-    definition: {
-        name: "apple_calendar",
-        description:
-            "Manage macOS Calendar — list today's events, add new events, or search. Use for scheduling, checking availability, and time management.",
-        parameters: {
-            type: "object",
-            properties: {
-                action: {
-                    type: "string",
-                    enum: ["list", "add", "search"],
-                    description: "Action to perform: list today's events, add a new event, or search events.",
-                },
-                title: {
-                    type: "string",
-                    description: "Event title (required for 'add').",
-                },
-                date: {
-                    type: "string",
-                    description: "Event date in YYYY-MM-DD format (required for 'add').",
-                },
-                time: {
-                    type: "string",
-                    description: "Event start time in HH:MM 24h format (required for 'add').",
-                },
-                duration: {
-                    type: "number",
-                    description: "Event duration in minutes (required for 'add').",
-                },
-                keyword: {
-                    type: "string",
-                    description: "Search keyword (required for 'search').",
-                },
-            },
-            required: ["action"],
+  definition: {
+    name: "apple_calendar",
+    description:
+      "Manage macOS Calendar — list today's events, add new events, or search. Use for scheduling, checking availability, and time management.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "add", "search"],
+          description:
+            "Action to perform: list today's events, add a new event, or search events.",
         },
+        title: {
+          type: "string",
+          description: "Event title (required for 'add').",
+        },
+        date: {
+          type: "string",
+          description: "Event date in YYYY-MM-DD format (required for 'add').",
+        },
+        time: {
+          type: "string",
+          description:
+            "Event start time in HH:MM 24h format (required for 'add').",
+        },
+        duration: {
+          type: "number",
+          description: "Event duration in minutes (required for 'add').",
+        },
+        keyword: {
+          type: "string",
+          description: "Search keyword (required for 'search').",
+        },
+      },
+      required: ["action"],
     },
+  },
 
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
-        const action = args.action as string;
+  async execute(
+    args: Record<string, unknown>,
+    _context: ToolContext,
+  ): Promise<string> {
+    const action = args.action as string;
 
-        try {
-            switch (action) {
-                case "list": {
-                    const script = `
+    try {
+      switch (action) {
+        case "list": {
+          const script = `
 tell application "Calendar"
     set today to current date
     set time of today to 0
@@ -75,24 +80,27 @@ tell application "Calendar"
     end if
     return output
 end tell`;
-                    const { stdout } = await execAsync(`osascript -e '${escapeForShell(script)}'`, { timeout: 15000 });
-                    return stdout.trim() || "No events found for today.";
-                }
+          const { stdout } = await execAsync(
+            `osascript -e '${escapeForShell(script)}'`,
+            { timeout: 15000 },
+          );
+          return stdout.trim() || "No events found for today.";
+        }
 
-                case "add": {
-                    const title = args.title as string;
-                    const date = args.date as string;
-                    const time = args.time as string;
-                    const duration = args.duration as number;
+        case "add": {
+          const title = args.title as string;
+          const date = args.date as string;
+          const time = args.time as string;
+          const duration = args.duration as number;
 
-                    if (!title || !date || !time || !duration) {
-                        return "Error: 'add' action requires title, date, time, and duration parameters.";
-                    }
+          if (!title || !date || !time || !duration) {
+            return "Error: 'add' action requires title, date, time, and duration parameters.";
+          }
 
-                    const [year, month, day] = date.split("-");
-                    const [hour, minute] = time.split(":");
+          const [year, month, day] = date.split("-");
+          const [hour, minute] = time.split(":");
 
-                    const script = `
+          const script = `
 tell application "Calendar"
     set startDate to current date
     set year of startDate to ${year}
@@ -107,17 +115,20 @@ tell application "Calendar"
     end tell
     return "Event created: ${escapeForShell(title)} on ${escapeForShell(date)} at ${escapeForShell(time)} for ${duration} minutes."
 end tell`;
-                    const { stdout } = await execAsync(`osascript -e '${escapeForShell(script)}'`, { timeout: 15000 });
-                    return stdout.trim() || `Event "${title}" created successfully.`;
-                }
+          const { stdout } = await execAsync(
+            `osascript -e '${escapeForShell(script)}'`,
+            { timeout: 15000 },
+          );
+          return stdout.trim() || `Event "${title}" created successfully.`;
+        }
 
-                case "search": {
-                    const keyword = args.keyword as string;
-                    if (!keyword) {
-                        return "Error: 'search' action requires a keyword parameter.";
-                    }
+        case "search": {
+          const keyword = args.keyword as string;
+          if (!keyword) {
+            return "Error: 'search' action requires a keyword parameter.";
+          }
 
-                    const script = `
+          const script = `
 tell application "Calendar"
     set output to ""
     set searchTerm to "${escapeForShell(keyword)}"
@@ -138,16 +149,19 @@ tell application "Calendar"
     end if
     return output
 end tell`;
-                    const { stdout } = await execAsync(`osascript -e '${escapeForShell(script)}'`, { timeout: 15000 });
-                    return stdout.trim() || `No events found matching "${keyword}".`;
-                }
-
-                default:
-                    return `Error: Unknown action "${action}". Use "list", "add", or "search".`;
-            }
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            return `Error interacting with Calendar: ${msg}`;
+          const { stdout } = await execAsync(
+            `osascript -e '${escapeForShell(script)}'`,
+            { timeout: 15000 },
+          );
+          return stdout.trim() || `No events found matching "${keyword}".`;
         }
-    },
+
+        default:
+          return `Error: Unknown action "${action}". Use "list", "add", or "search".`;
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return `Error interacting with Calendar: ${msg}`;
+    }
+  },
 };

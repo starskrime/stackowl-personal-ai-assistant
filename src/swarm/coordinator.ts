@@ -1,17 +1,17 @@
-import { WebSocket } from 'ws';
-import { createSocket, type Socket } from 'node:dgram';
-import { randomUUID } from 'node:crypto';
-import { Logger } from '../logger.js';
+import { WebSocket } from "ws";
+import { createSocket, type Socket } from "node:dgram";
+import { randomUUID } from "node:crypto";
+import { Logger } from "../logger.js";
 import type {
   SwarmConfig,
   SwarmNode,
   SwarmTask,
   SwarmMessage,
   NodeCapability,
-} from './types.js';
-import { LocalSwarmNode } from './node.js';
+} from "./types.js";
+import { LocalSwarmNode } from "./node.js";
 
-const log = new Logger('SWARM');
+const log = new Logger("SWARM");
 
 export class SwarmCoordinator {
   private localNode: LocalSwarmNode;
@@ -36,9 +36,9 @@ export class SwarmCoordinator {
 
       const connectTime = Date.now();
 
-      ws.on('open', () => {
+      ws.on("open", () => {
         const query: SwarmMessage = {
-          type: 'capability_query',
+          type: "capability_query",
           sourceNode: this.config.nodeId,
           payload: this.localNode.getInfo(),
           timestamp: Date.now(),
@@ -46,11 +46,11 @@ export class SwarmCoordinator {
         ws.send(JSON.stringify(query));
       });
 
-      ws.on('message', (raw: Buffer) => {
+      ws.on("message", (raw: Buffer) => {
         try {
           const message = JSON.parse(raw.toString()) as SwarmMessage;
 
-          if (message.type === 'capability_response') {
+          if (message.type === "capability_response") {
             clearTimeout(timeout);
             const nodeInfo = message.payload as SwarmNode;
             nodeInfo.latencyMs = Date.now() - connectTime;
@@ -60,11 +60,11 @@ export class SwarmCoordinator {
             resolve(nodeInfo);
           }
 
-          if (message.type === 'task_result') {
+          if (message.type === "task_result") {
             this.handleTaskResult(message);
           }
 
-          if (message.type === 'heartbeat') {
+          if (message.type === "heartbeat") {
             const heartbeatNode = message.payload as SwarmNode;
             const peers = this.localNode.getPeers();
             const peer = peers.get(message.sourceNode);
@@ -77,12 +77,14 @@ export class SwarmCoordinator {
         }
       });
 
-      ws.on('error', (err) => {
+      ws.on("error", (err) => {
         clearTimeout(timeout);
-        reject(new Error(`Connection to ${host}:${port} failed: ${err.message}`));
+        reject(
+          new Error(`Connection to ${host}:${port} failed: ${err.message}`),
+        );
       });
 
-      ws.on('close', () => {
+      ws.on("close", () => {
         const peers = this.localNode.getPeers();
         for (const [id, peer] of peers) {
           if (peer.ws === ws) {
@@ -114,7 +116,7 @@ export class SwarmCoordinator {
 
   findBestNode(requiredCapabilities: NodeCapability[]): SwarmNode | null {
     const candidates = this.getNodes()
-      .filter((n) => n.status === 'online' || n.status === 'idle')
+      .filter((n) => n.status === "online" || n.status === "idle")
       .filter((n) =>
         requiredCapabilities.every((cap) => n.capabilities.includes(cap)),
       )
@@ -136,20 +138,20 @@ export class SwarmCoordinator {
       id: randomUUID(),
       description,
       requiredCapabilities,
-      status: 'pending',
+      status: "pending",
       createdAt: new Date().toISOString(),
     };
 
     const bestNode = this.findBestNode(requiredCapabilities);
     if (!bestNode) {
-      task.status = 'failed';
-      task.error = 'No capable node available';
+      task.status = "failed";
+      task.error = "No capable node available";
       this.tasks.set(task.id, task);
       return task;
     }
 
     task.assignedNode = bestNode.id;
-    task.status = 'assigned';
+    task.status = "assigned";
     this.tasks.set(task.id, task);
 
     if (bestNode.id === this.config.nodeId) {
@@ -158,13 +160,13 @@ export class SwarmCoordinator {
       const peers = this.localNode.getPeers();
       const peer = peers.get(bestNode.id);
       if (!peer || peer.ws.readyState !== WebSocket.OPEN) {
-        task.status = 'failed';
-        task.error = 'Peer connection lost';
+        task.status = "failed";
+        task.error = "Peer connection lost";
         return task;
       }
 
       const message: SwarmMessage = {
-        type: 'task_request',
+        type: "task_request",
         sourceNode: this.config.nodeId,
         targetNode: bestNode.id,
         payload: { id: task.id, description: task.description },
@@ -187,7 +189,7 @@ export class SwarmCoordinator {
       throw new Error(`Task ${taskId} not found`);
     }
 
-    if (task.status === 'completed' || task.status === 'failed') {
+    if (task.status === "completed" || task.status === "failed") {
       return task;
     }
 
@@ -195,8 +197,8 @@ export class SwarmCoordinator {
 
     return new Promise<SwarmTask>((resolve) => {
       const timeout = setTimeout(() => {
-        task.status = 'failed';
-        task.error = 'Task timed out';
+        task.status = "failed";
+        task.error = "Task timed out";
         this.taskResolvers.delete(taskId);
         resolve(task);
       }, effectiveTimeout);
@@ -217,9 +219,9 @@ export class SwarmCoordinator {
     const activeTasks: SwarmTask[] = [];
     for (const [, task] of this.tasks) {
       if (
-        task.status === 'pending' ||
-        task.status === 'assigned' ||
-        task.status === 'running'
+        task.status === "pending" ||
+        task.status === "assigned" ||
+        task.status === "running"
       ) {
         activeTasks.push(task);
       }
@@ -238,24 +240,24 @@ export class SwarmCoordinator {
       let socket: Socket;
 
       try {
-        socket = createSocket('udp4');
+        socket = createSocket("udp4");
       } catch (err) {
         log.error(`Failed to create UDP socket: ${err}`);
         resolve([]);
         return;
       }
 
-      socket.on('error', (err) => {
+      socket.on("error", (err) => {
         log.error(`Discovery error: ${err.message}`);
         socket.close();
         resolve(discovered);
       });
 
-      socket.on('message', (msg, rinfo) => {
+      socket.on("message", (msg, rinfo) => {
         try {
           const message = JSON.parse(msg.toString()) as SwarmMessage;
           if (
-            message.type === 'capability_response' &&
+            message.type === "capability_response" &&
             message.sourceNode !== this.config.nodeId
           ) {
             const nodeInfo = message.payload as SwarmNode;
@@ -271,18 +273,25 @@ export class SwarmCoordinator {
         socket.setBroadcast(true);
 
         const query: SwarmMessage = {
-          type: 'capability_query',
+          type: "capability_query",
           sourceNode: this.config.nodeId,
           payload: this.localNode.getInfo(),
           timestamp: Date.now(),
         };
 
         const buf = Buffer.from(JSON.stringify(query));
-        socket.send(buf, 0, buf.length, this.config.discoveryPort, '255.255.255.255', (err) => {
-          if (err) {
-            log.error(`Discovery broadcast failed: ${err.message}`);
-          }
-        });
+        socket.send(
+          buf,
+          0,
+          buf.length,
+          this.config.discoveryPort,
+          "255.255.255.255",
+          (err) => {
+            if (err) {
+              log.error(`Discovery broadcast failed: ${err.message}`);
+            }
+          },
+        );
       });
 
       setTimeout(async () => {
@@ -292,7 +301,9 @@ export class SwarmCoordinator {
           try {
             await this.connectToNode(node.host, node.port);
           } catch (err) {
-            log.warn(`Failed to connect to discovered node ${node.name}: ${err}`);
+            log.warn(
+              `Failed to connect to discovered node ${node.name}: ${err}`,
+            );
           }
         }
 
@@ -302,7 +313,7 @@ export class SwarmCoordinator {
   }
 
   private async executeLocally(task: SwarmTask): Promise<void> {
-    task.status = 'running';
+    task.status = "running";
 
     try {
       const handler = (this.localNode as any).onTaskRequest as
@@ -314,11 +325,11 @@ export class SwarmCoordinator {
       } else {
         task.result = `Task "${task.description}" completed locally (no handler)`;
       }
-      task.status = 'completed';
+      task.status = "completed";
       task.completedAt = new Date().toISOString();
       this.totalCompleted++;
     } catch (err) {
-      task.status = 'failed';
+      task.status = "failed";
       task.error = err instanceof Error ? err.message : String(err);
       task.completedAt = new Date().toISOString();
     }
@@ -341,10 +352,10 @@ export class SwarmCoordinator {
     if (!task) return;
 
     if (result.error) {
-      task.status = 'failed';
+      task.status = "failed";
       task.error = result.error;
     } else {
-      task.status = 'completed';
+      task.status = "completed";
       task.result = result.result;
       this.totalCompleted++;
     }

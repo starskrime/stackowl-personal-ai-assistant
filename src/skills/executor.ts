@@ -13,16 +13,16 @@
  *   - LLM only consulted for analysis/synthesis steps (type: 'llm')
  */
 
-import { log } from '../logger.js';
-import type { ModelProvider } from '../providers/base.js';
-import type { ToolRegistry } from '../tools/registry.js';
+import { log } from "../logger.js";
+import type { ModelProvider } from "../providers/base.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type {
   Skill,
   SkillStep,
   SkillStepStatus,
   SkillStepResult,
   SkillExecutionResult,
-} from './types.js';
+} from "./types.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -32,6 +32,7 @@ interface StepState {
   output?: string;
   error?: string;
   startedAt?: number;
+  finishedAt?: number;
 }
 
 type ProgressCallback = (
@@ -66,9 +67,9 @@ export class SkillExecutor {
     if (steps.length === 0) {
       return {
         skillName: skill.name,
-        status: 'failed',
+        status: "failed",
         stepResults: [],
-        finalOutput: 'Skill has no execution steps defined.',
+        finalOutput: "Skill has no execution steps defined.",
         totalDurationMs: 0,
         parameters,
       };
@@ -77,7 +78,7 @@ export class SkillExecutor {
     // Initialize step states
     const states = new Map<string, StepState>();
     for (const step of steps) {
-      states.set(step.id, { step, status: 'pending' });
+      states.set(step.id, { step, status: "pending" });
     }
 
     // Step outputs for template interpolation
@@ -88,7 +89,7 @@ export class SkillExecutor {
 
     log.engine.info(
       `[SkillExecutor] Starting "${skill.name}" — ` +
-      `${steps.length} steps in ${waves.length} wave(s)`,
+        `${steps.length} steps in ${waves.length} wave(s)`,
     );
 
     let failed = false;
@@ -102,7 +103,7 @@ export class SkillExecutor {
           const state = states.get(stepId)!;
 
           // Skip if already resolved (e.g., on_failure target)
-          if (state.status !== 'pending') return;
+          if (state.status !== "pending") return;
 
           await this.executeStep(
             state,
@@ -117,11 +118,11 @@ export class SkillExecutor {
       // Check for failures that should stop execution
       for (const stepId of wave) {
         const state = states.get(stepId)!;
-        if (state.status === 'failed' && !state.step.optional) {
+        if (state.status === "failed" && !state.step.optional) {
           // Check if on_failure was triggered and succeeded
           if (state.step.on_failure) {
             const fallback = states.get(state.step.on_failure);
-            if (fallback && fallback.status === 'success') continue;
+            if (fallback && fallback.status === "success") continue;
           }
           failed = true;
           break;
@@ -137,43 +138,55 @@ export class SkillExecutor {
         status: state.status,
         output: state.output,
         error: state.error,
-        durationMs: state.startedAt ? Date.now() - state.startedAt : 0,
+        durationMs:
+          state.startedAt && state.finishedAt
+            ? state.finishedAt - state.startedAt
+            : 0,
       });
     }
 
     // Build final output from the last successful step
     // Prefer the last LLM step's output (it's usually the analysis/summary)
-    let finalOutput = '';
-    const completedSteps = [...states.values()].filter(s => s.status === 'success');
-    const lastLlmStep = completedSteps.reverse().find(s => s.step.type === 'llm');
+    let finalOutput = "";
+    const completedSteps = [...states.values()].filter(
+      (s) => s.status === "success",
+    );
+    const lastLlmStep = completedSteps.findLast(
+      (s) => s.step.type === "llm",
+    );
     if (lastLlmStep?.output) {
       finalOutput = lastLlmStep.output;
     } else if (completedSteps.length > 0) {
       // Concatenate all tool outputs
       finalOutput = completedSteps
-        .filter(s => s.output)
-        .map(s => `**${s.step.id}:**\n${s.output}`)
-        .join('\n\n');
+        .filter((s) => s.output)
+        .map((s) => `**${s.step.id}:**\n${s.output}`)
+        .join("\n\n");
     }
 
     if (failed && !finalOutput) {
-      const failedSteps = [...states.values()].filter(s => s.status === 'failed');
-      finalOutput = `Skill "${skill.name}" failed.\n\n` +
+      const failedSteps = [...states.values()].filter(
+        (s) => s.status === "failed",
+      );
+      finalOutput =
+        `Skill "${skill.name}" failed.\n\n` +
         failedSteps
-          .map(s => `Step "${s.step.id}" failed: ${s.error || 'unknown error'}`)
-          .join('\n');
+          .map(
+            (s) => `Step "${s.step.id}" failed: ${s.error || "unknown error"}`,
+          )
+          .join("\n");
     }
 
     const totalDurationMs = Date.now() - startTime;
 
     log.engine.info(
-      `[SkillExecutor] "${skill.name}" ${failed ? 'FAILED' : 'completed'} — ` +
-      `${completedSteps.length}/${steps.length} steps succeeded in ${totalDurationMs}ms`,
+      `[SkillExecutor] "${skill.name}" ${failed ? "FAILED" : "completed"} — ` +
+        `${completedSteps.length}/${steps.length} steps succeeded in ${totalDurationMs}ms`,
     );
 
     return {
       skillName: skill.name,
-      status: failed ? 'failed' : 'success',
+      status: failed ? "failed" : "success",
       stepResults,
       finalOutput,
       totalDurationMs,
@@ -191,16 +204,16 @@ export class SkillExecutor {
     onProgress?: ProgressCallback,
   ): Promise<void> {
     const { step } = state;
-    state.status = 'running';
+    state.status = "running";
     state.startedAt = Date.now();
 
-    await onProgress?.(step.id, 'running', step.tool || step.type || 'step');
+    await onProgress?.(step.id, "running", step.tool || step.type || "step");
 
     try {
       const timeout = step.timeout_ms ?? DEFAULT_STEP_TIMEOUT;
       let output: string;
 
-      if (step.type === 'llm') {
+      if (step.type === "llm") {
         output = await this.withTimeout(
           () => this.executeLlmStep(step, parameters, outputs),
           timeout,
@@ -214,25 +227,25 @@ export class SkillExecutor {
         );
       }
 
-      state.status = 'success';
+      state.status = "success";
       state.output = output;
+      state.finishedAt = Date.now();
       outputs.set(step.id, output);
-      await onProgress?.(step.id, 'success');
+      await onProgress?.(step.id, "success");
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      state.status = 'failed';
+      state.status = "failed";
       state.error = errorMsg;
+      state.finishedAt = Date.now();
 
-      log.engine.warn(
-        `[SkillExecutor] Step "${step.id}" failed: ${errorMsg}`,
-      );
+      log.engine.warn(`[SkillExecutor] Step "${step.id}" failed: ${errorMsg}`);
 
-      await onProgress?.(step.id, 'failed', errorMsg);
+      await onProgress?.(step.id, "failed", errorMsg);
 
       // Handle on_failure redirect
       if (step.on_failure) {
         const fallbackState = allStates.get(step.on_failure);
-        if (fallbackState && fallbackState.status === 'pending') {
+        if (fallbackState && fallbackState.status === "pending") {
           log.engine.info(
             `[SkillExecutor] Step "${step.id}" failed, running fallback "${step.on_failure}"`,
           );
@@ -245,8 +258,8 @@ export class SkillExecutor {
           );
         }
       } else if (step.optional) {
-        state.status = 'skipped';
-        await onProgress?.(step.id, 'skipped', 'optional step failed');
+        state.status = "skipped";
+        await onProgress?.(step.id, "skipped", "optional step failed");
       }
     }
   }
@@ -262,14 +275,19 @@ export class SkillExecutor {
     const resolvedArgs: Record<string, unknown> = {};
     if (step.args) {
       for (const [key, val] of Object.entries(step.args)) {
-        resolvedArgs[key] = typeof val === 'string'
-          ? this.interpolate(val, parameters, outputs)
-          : val;
+        resolvedArgs[key] =
+          typeof val === "string"
+            ? this.interpolate(val, parameters, outputs)
+            : val;
       }
     }
 
-    log.tool.info(`[SkillExecutor] Calling tool "${step.tool}" for step "${step.id}"`);
-    return this.toolRegistry.execute(step.tool, resolvedArgs, { cwd: this.cwd });
+    log.tool.info(
+      `[SkillExecutor] Calling tool "${step.tool}" for step "${step.id}"`,
+    );
+    return this.toolRegistry.execute(step.tool, resolvedArgs, {
+      cwd: this.cwd,
+    });
   }
 
   private async executeLlmStep(
@@ -295,13 +313,17 @@ export class SkillExecutor {
         }
       }
       if (inputSections.length > 0) {
-        prompt += '\n\n## Step Results:\n' + inputSections.join('\n\n');
+        prompt += "\n\n## Step Results:\n" + inputSections.join("\n\n");
       }
     }
 
     const response = await this.provider.chat([
-      { role: 'system', content: 'You are a helpful assistant analyzing results. Be concise and actionable.' },
-      { role: 'user', content: prompt },
+      {
+        role: "system",
+        content:
+          "You are a helpful assistant analyzing results. Be concise and actionable.",
+      },
+      { role: "user", content: prompt },
     ]);
 
     return response.content;
@@ -315,7 +337,7 @@ export class SkillExecutor {
    * Steps whose dependencies are all in earlier waves go in the next wave.
    */
   private buildWaves(steps: SkillStep[]): string[][] {
-    const stepIds = new Set(steps.map(s => s.id));
+    const stepIds = new Set(steps.map((s) => s.id));
     const deps = new Map<string, Set<string>>();
 
     for (const step of steps) {
@@ -338,18 +360,19 @@ export class SkillExecutor {
       for (const id of remaining) {
         const d = deps.get(id)!;
         // All dependencies satisfied?
-        if ([...d].every(dep => placed.has(dep))) {
+        if ([...d].every((dep) => placed.has(dep))) {
           wave.push(id);
         }
       }
 
       if (wave.length === 0) {
-        // Cycle detected — place all remaining in one wave
-        log.engine.warn(
-          `[SkillExecutor] Circular dependency detected in steps: ${[...remaining].join(', ')}`,
+        // Cycle detected — cannot resolve dependencies
+        log.engine.error(
+          `[SkillExecutor] Circular dependency detected in steps: ${[...remaining].join(", ")}`,
         );
-        waves.push([...remaining]);
-        break;
+        throw new Error(
+          `Circular dependency detected in steps: ${[...remaining].join(", ")}`,
+        );
       }
 
       waves.push(wave);
@@ -372,18 +395,21 @@ export class SkillExecutor {
     parameters: Record<string, unknown>,
     outputs: Map<string, string>,
   ): string {
-    return template.replace(/\{\{(\w+(?:\.\w+)?)\}\}/g, (match, key: string) => {
-      // Check if it's a step output reference: stepId.output
-      if (key.includes('.')) {
-        const [stepId, field] = key.split('.');
-        if (field === 'output') {
-          return outputs.get(stepId) ?? match;
+    return template.replace(
+      /\{\{(\w+(?:\.\w+)?)\}\}/g,
+      (match, key: string) => {
+        // Check if it's a step output reference: stepId.output
+        if (key.includes(".")) {
+          const [stepId, field] = key.split(".");
+          if (field === "output") {
+            return outputs.get(stepId) ?? match;
+          }
         }
-      }
-      // Otherwise it's a parameter reference
-      const value = parameters[key];
-      return value !== undefined ? String(value) : match;
-    });
+        // Otherwise it's a parameter reference
+        const value = parameters[key];
+        return value !== undefined ? String(value) : match;
+      },
+    );
   }
 
   /**
@@ -394,11 +420,18 @@ export class SkillExecutor {
     timeoutMs: number,
     stepId: string,
   ): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
-      fn(),
+      fn().then((result) => {
+        clearTimeout(timer);
+        return result;
+      }),
       new Promise<never>((_, reject) => {
-        setTimeout(
-          () => reject(new Error(`Step "${stepId}" timed out after ${timeoutMs}ms`)),
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(`Step "${stepId}" timed out after ${timeoutMs}ms`),
+            ),
           timeoutMs,
         );
       }),

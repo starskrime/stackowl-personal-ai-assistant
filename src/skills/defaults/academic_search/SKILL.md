@@ -4,9 +4,13 @@ description: Search for academic papers, journals, and research publications on 
 openclaw:
   emoji: "🎓"
 ---
+
 # Academic Search
+
 Find academic papers and research.
+
 ## Steps
+
 1. **Search academic databases:**
    ```
    web_search query="<topic> site:scholar.google.com"
@@ -19,11 +23,16 @@ Find academic papers and research.
    web_crawl url="<paper_url>"
    ```
 4. **Present results** sorted by relevance/recency.
+
 ## Examples
+
 ### Search for AI papers
+
 ```
 web_search query="large language model reasoning arxiv 2026"
 ```
+
 ## Error Handling
+
 - **Paywalled papers:** Look for preprint versions on arxiv or author websites.
 - **No results:** Broaden search terms or try different keyword combinations.

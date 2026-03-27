@@ -4,6 +4,6 @@ export type {
   TrustScore,
   TrustThresholds,
   TrustDecision,
-} from './types.js';
+} from "./types.js";
 
-export { TrustChain } from './chain.js';
+export { TrustChain } from "./chain.js";

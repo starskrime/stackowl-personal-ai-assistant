@@ -5,9 +5,9 @@
  * for structured skill execution. Single LLM call per extraction.
  */
 
-import { log } from '../logger.js';
-import type { ModelProvider } from '../providers/base.js';
-import type { SkillParameter } from './types.js';
+import { log } from "../logger.js";
+import type { ModelProvider } from "../providers/base.js";
+import type { SkillParameter } from "./types.js";
 
 export class SkillParamExtractor {
   constructor(private provider: ModelProvider) {}
@@ -26,11 +26,14 @@ export class SkillParamExtractor {
     // Build parameter description for the LLM
     const paramDesc = paramEntries
       .map(([name, def]) => {
-        const req = def.required !== false ? 'required' : 'optional';
-        const defVal = def.default !== undefined ? `, default: ${JSON.stringify(def.default)}` : '';
+        const req = def.required !== false ? "required" : "optional";
+        const defVal =
+          def.default !== undefined
+            ? `, default: ${JSON.stringify(def.default)}`
+            : "";
         return `- "${name}" (${def.type}, ${req}${defVal}): ${def.description}`;
       })
-      .join('\n');
+      .join("\n");
 
     const prompt =
       `Extract parameter values from this user message.\n\n` +
@@ -44,8 +47,12 @@ export class SkillParamExtractor {
     try {
       const response = await this.provider.chat(
         [
-          { role: 'system', content: 'You are a parameter extraction assistant. Output only valid JSON.' },
-          { role: 'user', content: prompt },
+          {
+            role: "system",
+            content:
+              "You are a parameter extraction assistant. Output only valid JSON.",
+          },
+          { role: "user", content: prompt },
         ],
         undefined,
         { maxTokens: 256 },
@@ -61,7 +68,9 @@ export class SkillParamExtractor {
         } else if (def.default !== undefined) {
           result[name] = def.default;
         } else if (def.required !== false) {
-          throw new Error(`Required parameter "${name}" not found in message: "${userMessage}"`);
+          throw new Error(
+            `Required parameter "${name}" not found in message: "${userMessage}"`,
+          );
         }
       }
 
@@ -70,14 +79,16 @@ export class SkillParamExtractor {
       // On LLM failure, apply defaults only
       log.engine.warn(
         `[ParamExtractor] LLM extraction failed, using defaults: ` +
-        `${err instanceof Error ? err.message : err}`,
+          `${err instanceof Error ? err.message : err}`,
       );
       const result: Record<string, unknown> = {};
       for (const [name, def] of paramEntries) {
         if (def.default !== undefined) {
           result[name] = def.default;
         } else if (def.required !== false) {
-          throw new Error(`Required parameter "${name}" could not be extracted and has no default`);
+          throw new Error(
+            `Required parameter "${name}" could not be extracted and has no default`,
+          );
         }
       }
       return result;
@@ -88,14 +99,18 @@ export class SkillParamExtractor {
     // Try direct parse
     try {
       return JSON.parse(text);
-    } catch { /* continue */ }
+    } catch {
+      /* continue */
+    }
 
     // Extract JSON from markdown code block
     const match = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (match) {
       try {
         return JSON.parse(match[1].trim());
-      } catch { /* continue */ }
+      } catch {
+        /* continue */
+      }
     }
 
     // Try finding JSON object in text
@@ -103,7 +118,9 @@ export class SkillParamExtractor {
     if (braceMatch) {
       try {
         return JSON.parse(braceMatch[0]);
-      } catch { /* continue */ }
+      } catch {
+        /* continue */
+      }
     }
 
     return {};
@@ -113,17 +130,17 @@ export class SkillParamExtractor {
     if (value === null || value === undefined) return value;
 
     switch (type) {
-      case 'number': {
+      case "number": {
         const n = Number(value);
         return isNaN(n) ? value : n;
       }
-      case 'boolean': {
-        if (typeof value === 'string') {
-          return value.toLowerCase() === 'true' || value === '1';
+      case "boolean": {
+        if (typeof value === "string") {
+          return value.toLowerCase() === "true" || value === "1";
         }
         return Boolean(value);
       }
-      case 'string':
+      case "string":
         return String(value);
       default:
         return value;

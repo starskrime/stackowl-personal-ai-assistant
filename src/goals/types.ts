@@ -9,14 +9,14 @@
 // ─── Status ──────────────────────────────────────────────────────
 
 export type GoalStatus =
-  | 'active'         // user is working on this
-  | 'in_progress'    // partially completed
-  | 'blocked'        // waiting on external input or dependency
-  | 'completed'      // done
-  | 'abandoned'      // user explicitly dropped or went quiet
-  | 'deferred';      // user said "later" / "not now"
+  | "active" // user is working on this
+  | "in_progress" // partially completed
+  | "blocked" // waiting on external input or dependency
+  | "completed" // done
+  | "abandoned" // user explicitly dropped or went quiet
+  | "deferred"; // user said "later" / "not now"
 
-export type GoalPriority = 'critical' | 'high' | 'medium' | 'low';
+export type GoalPriority = "critical" | "high" | "medium" | "low";
 
 // ─── Goal ────────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ export interface GoalExtraction {
   }>;
   /** Updates to existing goals (status changes, progress) */
   goalUpdates: Array<{
-    goalTitle: string;  // matched by fuzzy title
+    goalTitle: string; // matched by fuzzy title
     statusChange?: GoalStatus;
     progressDelta?: number;
     milestonesCompleted?: string[];

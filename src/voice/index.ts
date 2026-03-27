@@ -1,5 +1,5 @@
-export { VoicePersona } from './persona.js';
-export { VoiceAdapter } from './adapter.js';
+export { VoicePersona } from "./persona.js";
+export { VoiceAdapter } from "./adapter.js";
 export type {
   VoiceProfile,
   VoiceConfig,
@@ -8,4 +8,4 @@ export type {
   VoicePitch,
   OwlDna,
   DnaToVoiceMapping,
-} from './types.js';
+} from "./types.js";

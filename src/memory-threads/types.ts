@@ -25,7 +25,7 @@ export interface ThreadEntry {
   /** When this entry occurred */
   timestamp: string;
   /** Source type */
-  source: 'session' | 'pellet' | 'memory';
+  source: "session" | "pellet" | "memory";
   /** Source identifier (session ID or pellet ID) */
   sourceId: string;
   /** Relevant text excerpt */

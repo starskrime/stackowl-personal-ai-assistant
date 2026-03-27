@@ -24,8 +24,15 @@ export interface SessionCache {
 // ─── Topic Switch Detection ─────────────────────────────────────
 
 const RESET_PHRASES = [
-  "new topic", "start over", "forget that", "forget everything",
-  "fresh start", "reset", "clear", "/new", "new task",
+  "new topic",
+  "start over",
+  "forget that",
+  "forget everything",
+  "fresh start",
+  "reset",
+  "clear",
+  "/new",
+  "new task",
 ];
 const LONE_GREETINGS = ["hi", "hello", "hey", "yo", "sup"];
 
@@ -40,7 +47,10 @@ export class SessionManager {
     private defaultOwlName: string,
     private eventBus: EventBus | null,
   ) {
-    this.evictionInterval = setInterval(() => this.evictStale(), 30 * 60 * 1000);
+    this.evictionInterval = setInterval(
+      () => this.evictStale(),
+      30 * 60 * 1000,
+    );
     this.evictionInterval.unref?.();
   }
 
@@ -87,7 +97,12 @@ export class SessionManager {
     }
 
     // Add assistant response if not already in newMessages
-    if (assistantResponse && !newMessages.some(m => m.role === "assistant" && m.content === assistantResponse)) {
+    if (
+      assistantResponse &&
+      !newMessages.some(
+        (m) => m.role === "assistant" && m.content === assistantResponse,
+      )
+    ) {
       session.messages.push({ role: "assistant", content: assistantResponse });
     }
 

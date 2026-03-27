@@ -4,9 +4,13 @@ description: Generate a professional README.md for a project by analyzing its st
 openclaw:
   emoji: "📖"
 ---
+
 # README Generator
+
 Generate a comprehensive project README.
+
 ## Steps
+
 1. **Analyze project:**
    ```bash
    run_shell_command("ls -la")
@@ -24,12 +28,17 @@ Generate a comprehensive project README.
    ```bash
    write_file("README.md", "<generated_readme>")
    ```
+
 ## Examples
+
 ### Generate for a Node.js project
+
 ```bash
 run_shell_command("cat package.json")
 run_shell_command("ls src/")
 ```
+
 ## Error Handling
+
 - **No package file:** Infer from file structure.
 - **README already exists:** Ask before overwriting.

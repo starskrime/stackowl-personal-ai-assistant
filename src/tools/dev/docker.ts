@@ -21,11 +21,12 @@ export const DockerTool: ToolImplementation = {
         container_name: {
           type: "string",
           description:
-            'Container name or ID. Required for logs, start, stop, restart.',
+            "Container name or ID. Required for logs, start, stop, restart.",
         },
         tail: {
           type: "number",
-          description: "Number of log lines to show (default 50). Used with logs.",
+          description:
+            "Number of log lines to show (default 50). Used with logs.",
         },
       },
       required: ["action"],
@@ -42,29 +43,36 @@ export const DockerTool: ToolImplementation = {
 
       switch (action) {
         case "ps":
-          cmd = "docker ps -a --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}'";
+          cmd =
+            "docker ps -a --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}'";
           break;
         case "images":
-          cmd = "docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}'";
+          cmd =
+            "docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}'";
           break;
         case "logs":
-          if (!container) return "Error: container_name is required for the logs action.";
+          if (!container)
+            return "Error: container_name is required for the logs action.";
           cmd = `docker logs --tail ${tail} ${container}`;
           break;
         case "start":
-          if (!container) return "Error: container_name is required for the start action.";
+          if (!container)
+            return "Error: container_name is required for the start action.";
           cmd = `docker start ${container}`;
           break;
         case "stop":
-          if (!container) return "Error: container_name is required for the stop action.";
+          if (!container)
+            return "Error: container_name is required for the stop action.";
           cmd = `docker stop ${container}`;
           break;
         case "restart":
-          if (!container) return "Error: container_name is required for the restart action.";
+          if (!container)
+            return "Error: container_name is required for the restart action.";
           cmd = `docker restart ${container}`;
           break;
         case "stats":
-          cmd = "docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}'";
+          cmd =
+            "docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}'";
           break;
         default:
           return `Unknown action: ${action}. Use ps, images, logs, start, stop, restart, or stats.`;

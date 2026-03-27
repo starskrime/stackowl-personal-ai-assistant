@@ -30,8 +30,7 @@ export const DataVisualizationTool: ToolImplementation = {
         },
         data: {
           type: "string",
-          description:
-            'JSON array of numbers. Example: \'[10, 20, 30]\'',
+          description: "JSON array of numbers. Example: '[10, 20, 30]'",
         },
         title: {
           type: "string",

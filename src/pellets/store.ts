@@ -159,10 +159,7 @@ export class PelletStore {
             ];
             existing.owls = [...new Set([...existing.owls, ...pellet.owls])];
             existing.version = (existing.version || 1) + 1;
-            existing.mergedFrom = [
-              ...(existing.mergedFrom || []),
-              pellet.id,
-            ];
+            existing.mergedFrom = [...(existing.mergedFrom || []), pellet.id];
             existing.lastMergedAt = new Date().toISOString();
 
             await this.writePellet(existing);
@@ -218,8 +215,7 @@ export class PelletStore {
 
     // Include dedup tracking fields when present
     if (pellet.supersedes) frontmatter.supersedes = pellet.supersedes;
-    if (pellet.mergedFrom?.length)
-      frontmatter.merged_from = pellet.mergedFrom;
+    if (pellet.mergedFrom?.length) frontmatter.merged_from = pellet.mergedFrom;
     if (pellet.lastMergedAt) frontmatter.last_merged_at = pellet.lastMergedAt;
 
     const raw = matter.stringify(pellet.content, frontmatter);
@@ -227,8 +223,22 @@ export class PelletStore {
     const finalPath = join(this.pelletsDir, `${pellet.id}.md`);
 
     // Write safely to tmp then rename
-    await writeFile(mdPath, raw, "utf-8");
-    await rename(mdPath, finalPath);
+    try {
+      await writeFile(mdPath, raw, "utf-8");
+    } catch (err: any) {
+      if (err.code === "ENOSPC") {
+        throw new Error(`Disk full — cannot save pellet "${pellet.id}"`);
+      }
+      throw err;
+    }
+    try {
+      await rename(mdPath, finalPath);
+    } catch (err: any) {
+      if (err.code === "ENOSPC") {
+        throw new Error(`Disk full — cannot finalize pellet "${pellet.id}"`);
+      }
+      throw err;
+    }
 
     // Invalidate the list cache so next search() picks up the new pellet
     this.listAllCache = null;
@@ -271,8 +281,7 @@ export class PelletStore {
 
       // Dedup tracking fields (optional, backward-compatible)
       if (data.supersedes) pellet.supersedes = data.supersedes;
-      if (Array.isArray(data.merged_from))
-        pellet.mergedFrom = data.merged_from;
+      if (Array.isArray(data.merged_from)) pellet.mergedFrom = data.merged_from;
       if (data.last_merged_at) pellet.lastMergedAt = data.last_merged_at;
 
       return pellet;

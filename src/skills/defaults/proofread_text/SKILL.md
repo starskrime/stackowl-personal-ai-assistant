@@ -4,9 +4,13 @@ description: Check text for grammar, spelling, punctuation, and style errors wit
 openclaw:
   emoji: "📝"
 ---
+
 # Proofread Text
+
 Check text for grammar and style issues.
+
 ## Steps
+
 1. **Get text** from user input or file:
    ```bash
    read_file("<file_path>")
@@ -25,11 +29,16 @@ Check text for grammar and style issues.
    ```bash
    write_file("<file_path>", "<corrected_text>")
    ```
+
 ## Examples
+
 ### Proofread a document
+
 ```bash
 read_file("~/Documents/report.md")
 ```
+
 ## Error Handling
+
 - **Very long document:** Process section by section.
 - **Multiple languages:** Ask which language to proofread in.

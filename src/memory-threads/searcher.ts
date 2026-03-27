@@ -5,14 +5,14 @@
  * Reconstructs narrative threads from scattered knowledge.
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { PelletStore } from '../pellets/store.js';
-import type { SessionStore } from '../memory/store.js';
-import type { MemoryThread, ThreadEntry, SessionIndex } from './types.js';
-import { join } from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { PelletStore } from "../pellets/store.js";
+import type { SessionStore } from "../memory/store.js";
+import type { MemoryThread, ThreadEntry, SessionIndex } from "./types.js";
+import { join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { log } from "../logger.js";
 
 export class MemorySearcher {
   private pelletStore: PelletStore;
@@ -36,22 +36,25 @@ export class MemorySearcher {
   /**
    * Main recall entry point. Searches all sources and reconstructs a narrative thread.
    */
-  async recall(query: string, scope: 'all' | 'pellets' | 'sessions' = 'all'): Promise<MemoryThread> {
+  async recall(
+    query: string,
+    scope: "all" | "pellets" | "sessions" = "all",
+  ): Promise<MemoryThread> {
     const entries: ThreadEntry[] = [];
     const relatedPellets: string[] = [];
     const relatedSessions: string[] = [];
 
     // 1. Search pellets via BM25
-    if (scope === 'all' || scope === 'pellets') {
+    if (scope === "all" || scope === "pellets") {
       try {
         const pelletResults = await this.pelletStore.search(query);
         for (const pellet of pelletResults.slice(0, 5)) {
           relatedPellets.push(pellet.id);
           entries.push({
             timestamp: pellet.generatedAt || new Date().toISOString(),
-            source: 'pellet',
+            source: "pellet",
             sourceId: pellet.id,
-            excerpt: `**${pellet.title}** (tags: ${pellet.tags.join(', ')})\n${pellet.content.slice(0, 300)}`,
+            excerpt: `**${pellet.title}** (tags: ${pellet.tags.join(", ")})\n${pellet.content.slice(0, 300)}`,
             relevanceScore: 1.0,
           });
         }
@@ -61,7 +64,7 @@ export class MemorySearcher {
     }
 
     // 2. Search sessions via keyword scan
-    if (scope === 'all' || scope === 'sessions') {
+    if (scope === "all" || scope === "sessions") {
       try {
         const sessionMatches = await this.searchSessions(query, 5);
         for (const match of sessionMatches) {
@@ -74,7 +77,7 @@ export class MemorySearcher {
     }
 
     // 3. Search persistent memory
-    if (scope === 'all') {
+    if (scope === "all") {
       try {
         const memoryMatches = await this.searchMemory(query);
         entries.push(...memoryMatches);
@@ -84,10 +87,13 @@ export class MemorySearcher {
     }
 
     // Sort by timestamp (oldest first for narrative flow)
-    entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    entries.sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    );
 
     // Generate narrative
-    let narrative = '';
+    let narrative = "";
     if (entries.length > 0) {
       narrative = await this.generateNarrative(query, entries);
     } else {
@@ -108,13 +114,18 @@ export class MemorySearcher {
   /**
    * Find cross-references: sessions/pellets where both topics appear.
    */
-  async findCrossReferences(topicA: string, topicB: string): Promise<ThreadEntry[]> {
-    const threadA = await this.recall(topicA, 'all');
-    const threadB = await this.recall(topicB, 'all');
+  async findCrossReferences(
+    topicA: string,
+    topicB: string,
+  ): Promise<ThreadEntry[]> {
+    const threadA = await this.recall(topicA, "all");
+    const threadB = await this.recall(topicB, "all");
 
     // Find source IDs that appear in both
-    const sourceIdsA = new Set(threadA.timeline.map(e => e.sourceId));
-    const crossRefs = threadB.timeline.filter(e => sourceIdsA.has(e.sourceId));
+    const sourceIdsA = new Set(threadA.timeline.map((e) => e.sourceId));
+    const crossRefs = threadB.timeline.filter((e) =>
+      sourceIdsA.has(e.sourceId),
+    );
 
     return crossRefs;
   }
@@ -122,10 +133,13 @@ export class MemorySearcher {
   /**
    * Search session content for matching messages.
    */
-  private async searchSessions(query: string, limit: number): Promise<ThreadEntry[]> {
+  private async searchSessions(
+    query: string,
+    limit: number,
+  ): Promise<ThreadEntry[]> {
     const results: ThreadEntry[] = [];
     const queryLower = query.toLowerCase();
-    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+    const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 2);
 
     // Use index if available, otherwise scan sessions directly
     const sessions = await this.sessionStore.listSessions();
@@ -135,7 +149,7 @@ export class MemorySearcher {
 
     for (const session of recentSessions) {
       let bestScore = 0;
-      let bestExcerpt = '';
+      let bestExcerpt = "";
 
       for (const msg of session.messages) {
         const contentLower = msg.content.toLowerCase();
@@ -155,7 +169,10 @@ export class MemorySearcher {
 
         if (score > bestScore) {
           bestScore = score;
-          const start = Math.max(0, contentLower.indexOf(queryWords[0] || queryLower) - 50);
+          const start = Math.max(
+            0,
+            contentLower.indexOf(queryWords[0] || queryLower) - 50,
+          );
           bestExcerpt = `[${msg.role}]: ${msg.content.slice(start, start + 300)}`;
         }
       }
@@ -163,9 +180,10 @@ export class MemorySearcher {
       if (bestScore > 0) {
         results.push({
           timestamp: new Date(session.metadata.startedAt).toISOString(),
-          source: 'session',
+          source: "session",
           sourceId: session.id,
-          excerpt: bestExcerpt || `Session with ${session.messages.length} messages`,
+          excerpt:
+            bestExcerpt || `Session with ${session.messages.length} messages`,
           relevanceScore: bestScore / queryWords.length,
         });
       }
@@ -180,14 +198,14 @@ export class MemorySearcher {
    * Search persistent memory (memory.md).
    */
   private async searchMemory(query: string): Promise<ThreadEntry[]> {
-    const memoryPath = join(this.workspacePath, 'memory.md');
+    const memoryPath = join(this.workspacePath, "memory.md");
     if (!existsSync(memoryPath)) return [];
 
     try {
-      const content = await readFile(memoryPath, 'utf-8');
-      const lines = content.split('\n').filter(l => l.trim());
+      const content = await readFile(memoryPath, "utf-8");
+      const lines = content.split("\n").filter((l) => l.trim());
       const queryLower = query.toLowerCase();
-      const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+      const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 2);
 
       const results: ThreadEntry[] = [];
 
@@ -200,15 +218,17 @@ export class MemorySearcher {
         if (score > 0) {
           results.push({
             timestamp: new Date().toISOString(), // memory.md has no timestamps per-line
-            source: 'memory',
-            sourceId: 'persistent_memory',
+            source: "memory",
+            sourceId: "persistent_memory",
             excerpt: line.trim(),
             relevanceScore: score / queryWords.length,
           });
         }
       }
 
-      return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, 3);
+      return results
+        .sort((a, b) => b.relevanceScore - a.relevanceScore)
+        .slice(0, 3);
     } catch {
       return [];
     }
@@ -217,20 +237,28 @@ export class MemorySearcher {
   /**
    * Generate a narrative summary from thread entries via LLM.
    */
-  private async generateNarrative(query: string, entries: ThreadEntry[]): Promise<string> {
+  private async generateNarrative(
+    query: string,
+    entries: ThreadEntry[],
+  ): Promise<string> {
     // Build a condensed context for the LLM
-    const entrySummaries = entries.slice(0, 8).map((e, i) => {
-      const date = new Date(e.timestamp).toLocaleDateString('en-US', {
-        weekday: 'short', month: 'short', day: 'numeric',
-      });
-      return `[${i + 1}] ${date} (${e.source}): ${e.excerpt.slice(0, 200)}`;
-    }).join('\n\n');
+    const entrySummaries = entries
+      .slice(0, 8)
+      .map((e, i) => {
+        const date = new Date(e.timestamp).toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        });
+        return `[${i + 1}] ${date} (${e.source}): ${e.excerpt.slice(0, 200)}`;
+      })
+      .join("\n\n");
 
     try {
       const response = await this.provider.chat(
         [
           {
-            role: 'user',
+            role: "user",
             content:
               `The user asked: "${query}"\n\n` +
               `Here are the related memories and knowledge I found:\n\n${entrySummaries}\n\n` +
@@ -250,8 +278,8 @@ export class MemorySearcher {
       // Fallback: return raw entries
       return entries
         .slice(0, 5)
-        .map(e => `- ${e.excerpt.slice(0, 150)}`)
-        .join('\n');
+        .map((e) => `- ${e.excerpt.slice(0, 150)}`)
+        .join("\n");
     }
   }
 
@@ -260,12 +288,15 @@ export class MemorySearcher {
    */
   async rebuildIndex(): Promise<void> {
     const sessions = await this.sessionStore.listSessions();
-    const entries = sessions.slice(0, 100).map(s => {
-      const userMessages = s.messages.filter(m => m.role === 'user');
-      const allText = userMessages.map(m => m.content).join(' ').toLowerCase();
+    const entries = sessions.slice(0, 100).map((s) => {
+      const userMessages = s.messages.filter((m) => m.role === "user");
+      const allText = userMessages
+        .map((m) => m.content)
+        .join(" ")
+        .toLowerCase();
 
       // Extract topic words (most frequent non-stop words)
-      const words = allText.split(/\s+/).filter(w => w.length > 3);
+      const words = allText.split(/\s+/).filter((w) => w.length > 3);
       const freq = new Map<string, number>();
       for (const w of words) {
         freq.set(w, (freq.get(w) || 0) + 1);
@@ -280,25 +311,27 @@ export class MemorySearcher {
         topics,
         timestamp: s.metadata.startedAt,
         messageCount: s.messages.length,
-        firstMessage: userMessages[0]?.content.slice(0, 100) || '',
+        firstMessage: userMessages[0]?.content.slice(0, 100) || "",
       };
     });
 
     this.sessionIndex = { entries, lastUpdated: new Date().toISOString() };
 
-    const indexPath = join(this.workspacePath, 'session-index.json');
+    const indexPath = join(this.workspacePath, "session-index.json");
     await writeFile(indexPath, JSON.stringify(this.sessionIndex, null, 2));
-    log.engine.debug(`[MemorySearcher] Rebuilt session index: ${entries.length} sessions`);
+    log.engine.debug(
+      `[MemorySearcher] Rebuilt session index: ${entries.length} sessions`,
+    );
   }
 
   /**
    * Load session index from disk.
    */
   async loadIndex(): Promise<void> {
-    const indexPath = join(this.workspacePath, 'session-index.json');
+    const indexPath = join(this.workspacePath, "session-index.json");
     if (!existsSync(indexPath)) return;
     try {
-      const data = await readFile(indexPath, 'utf-8');
+      const data = await readFile(indexPath, "utf-8");
       this.sessionIndex = JSON.parse(data);
     } catch {
       // Ignore

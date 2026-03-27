@@ -769,4 +769,3 @@ export function formatScreenshotForLLM(
 
   return content;
 }
-

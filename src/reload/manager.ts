@@ -217,7 +217,9 @@ export class HotReloadManager {
     const moduleId = this.fileToModule.get(filePath);
     if (!moduleId) return;
 
-    log.engine.warn(`[HotReload] File removed: ${filePath} (module: ${moduleId})`);
+    log.engine.warn(
+      `[HotReload] File removed: ${filePath} (module: ${moduleId})`,
+    );
     this.untrack(moduleId);
   }
 

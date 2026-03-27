@@ -4,9 +4,13 @@ description: Generate QR codes from text, URLs, or contact information and save 
 openclaw:
   emoji: "◻️"
 ---
+
 # QR Code Generator
+
 Generate QR codes from text or URLs.
+
 ## Steps
+
 1. **Get content** to encode (URL, text, vCard, WiFi config).
 2. **Generate using Python:**
    ```bash
@@ -22,11 +26,16 @@ Generate QR codes from text or URLs.
      path: "/tmp/qrcode.png"
      caption: "QR Code for: <content>"
    ```
+
 ## Examples
+
 ### Generate URL QR code
+
 ```bash
 run_shell_command("curl -o /tmp/qr.png 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https://example.com'")
 ```
+
 ## Error Handling
+
 - **Content too long:** QR codes have data limits; warn if exceeding ~4000 chars.
 - **No Python qrcode module:** Use web API fallback.

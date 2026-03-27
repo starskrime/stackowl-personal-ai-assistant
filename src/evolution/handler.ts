@@ -78,10 +78,13 @@ export class EvolutionHandler {
    * Prefers the configured synthesis provider (default: Anthropic Claude Sonnet 4.6)
    * over the default provider to ensure high-quality tool generation.
    */
-  private resolveSynthesisProvider(context: EngineContext): { provider: ModelProvider; model: string } {
+  private resolveSynthesisProvider(context: EngineContext): {
+    provider: ModelProvider;
+    model: string;
+  } {
     const synthesisConfig = context.config.synthesis;
-    const providerName = synthesisConfig?.provider ?? 'anthropic';
-    const model = synthesisConfig?.model ?? 'claude-sonnet-4-5-20241022';
+    const providerName = synthesisConfig?.provider ?? "anthropic";
+    const model = synthesisConfig?.model ?? "claude-sonnet-4-5-20241022";
 
     // Try to get the synthesis-specific provider from the registry
     if (context.providerRegistry) {
@@ -199,7 +202,8 @@ export class EvolutionHandler {
           description: gap.description,
         };
 
-    const { provider: synthesisProvider, model: synthesisModel } = this.resolveSynthesisProvider(context);
+    const { provider: synthesisProvider, model: synthesisModel } =
+      this.resolveSynthesisProvider(context);
     const proposal = await this.synthesizer.designSpec(
       capabilityGap,
       synthesisProvider,
@@ -309,10 +313,11 @@ export class EvolutionHandler {
     const skillsDir = context.config.skills?.directories?.[0];
     if (skillsDir) {
       // ── Capability Need Assessment — gate before synthesis ────
-      const { provider: synthesisProvider } = this.resolveSynthesisProvider(context);
+      const { provider: synthesisProvider } =
+        this.resolveSynthesisProvider(context);
       const assessor = new CapabilityNeedAssessor(synthesisProvider);
       const toolNames = context.toolRegistry
-        ? context.toolRegistry.getDefinitions().map((d) => d.name)
+        ? context.toolRegistry.getAllDefinitions().map((d) => d.name)
         : [];
       const existingSkills: Skill[] = context.skillsRegistry
         ? context.skillsRegistry.listEnabled()
@@ -424,10 +429,13 @@ export class EvolutionHandler {
 
     // Pass full tool descriptions so the skill knows all available tools
     const toolDescriptions = context.toolRegistry
-      ? context.toolRegistry.getDefinitions().map(d => `${d.name}: ${d.description?.slice(0, 100) ?? ""}`)
+      ? context.toolRegistry
+          .getAllDefinitions()
+          .map((d) => `${d.name}: ${d.description?.slice(0, 100) ?? ""}`)
       : undefined;
 
-    const { provider: synthesisProvider, model: synthesisModel } = this.resolveSynthesisProvider(context);
+    const { provider: synthesisProvider, model: synthesisModel } =
+      this.resolveSynthesisProvider(context);
     const skill = await this.synthesizer.generateSkillMd(
       gap,
       synthesisProvider,
@@ -485,7 +493,8 @@ export class EvolutionHandler {
       );
     }
 
-    const { provider: synthesisProvider, model: synthesisModel } = this.resolveSynthesisProvider(context);
+    const { provider: synthesisProvider, model: synthesisModel } =
+      this.resolveSynthesisProvider(context);
     const MAX_RETRIES = 3;
     let attempt = 1;
     let lastError: string | undefined;

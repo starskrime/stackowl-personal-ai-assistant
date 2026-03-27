@@ -12,14 +12,14 @@
  *   - Automatic cleanup after swarm execution completes
  */
 
-import { log } from '../logger.js';
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
 export interface BlackboardEntry {
   key: string;
   value: unknown;
-  writtenBy: string;  // owl name or agent ID
+  writtenBy: string; // owl name or agent ID
   timestamp: number;
 }
 
@@ -28,7 +28,8 @@ export interface BlackboardEntry {
 export class SwarmBlackboard {
   private entries: Map<string, BlackboardEntry> = new Map();
   /** Waiters: callbacks waiting for a specific key to appear */
-  private waiters: Map<string, Array<(entry: BlackboardEntry) => void>> = new Map();
+  private waiters: Map<string, Array<(entry: BlackboardEntry) => void>> =
+    new Map();
 
   /**
    * Write a value to the blackboard.
@@ -77,7 +78,10 @@ export class SwarmBlackboard {
    * If the key already exists, resolves immediately.
    * Supports a timeout to prevent infinite waits.
    */
-  async waitFor<T = unknown>(key: string, timeoutMs: number = 30_000): Promise<T> {
+  async waitFor<T = unknown>(
+    key: string,
+    timeoutMs: number = 30_000,
+  ): Promise<T> {
     // Already available
     const existing = this.entries.get(key);
     if (existing) return existing.value as T;
@@ -91,7 +95,11 @@ export class SwarmBlackboard {
           const idx = keyWaiters.indexOf(waiterCallback);
           if (idx >= 0) keyWaiters.splice(idx, 1);
         }
-        reject(new Error(`Blackboard: timeout waiting for key "${key}" after ${timeoutMs}ms`));
+        reject(
+          new Error(
+            `Blackboard: timeout waiting for key "${key}" after ${timeoutMs}ms`,
+          ),
+        );
       }, timeoutMs);
 
       const waiterCallback = (entry: BlackboardEntry) => {
@@ -110,24 +118,25 @@ export class SwarmBlackboard {
    * Get all entries written by a specific agent.
    */
   getByAuthor(agentId: string): BlackboardEntry[] {
-    return [...this.entries.values()].filter(e => e.writtenBy === agentId);
+    return [...this.entries.values()].filter((e) => e.writtenBy === agentId);
   }
 
   /**
    * Get all entries as a readable summary (for injection into synthesis prompt).
    */
   toSummary(): string {
-    if (this.entries.size === 0) return '';
+    if (this.entries.size === 0) return "";
 
-    const lines = ['<swarm_shared_context>'];
+    const lines = ["<swarm_shared_context>"];
     for (const [key, entry] of this.entries) {
-      const valueStr = typeof entry.value === 'string'
-        ? entry.value.slice(0, 300)
-        : JSON.stringify(entry.value).slice(0, 300);
+      const valueStr =
+        typeof entry.value === "string"
+          ? entry.value.slice(0, 300)
+          : JSON.stringify(entry.value).slice(0, 300);
       lines.push(`  [${entry.writtenBy}] ${key}: ${valueStr}`);
     }
-    lines.push('</swarm_shared_context>');
-    return lines.join('\n');
+    lines.push("</swarm_shared_context>");
+    return lines.join("\n");
   }
 
   /**
@@ -146,7 +155,12 @@ export class SwarmBlackboard {
     for (const [key, keyWaiters] of this.waiters) {
       for (const resolve of keyWaiters) {
         // Resolve with undefined to avoid unhandled rejections
-        resolve({ key, value: undefined, writtenBy: 'system', timestamp: Date.now() });
+        resolve({
+          key,
+          value: undefined,
+          writtenBy: "system",
+          timestamp: Date.now(),
+        });
       }
     }
     this.waiters.clear();

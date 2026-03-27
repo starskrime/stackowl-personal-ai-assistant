@@ -4,9 +4,13 @@ description: Diagnose network connectivity issues by testing DNS, ping, tracerou
 openclaw:
   emoji: "🌐"
 ---
+
 # Network Diagnostics
+
 Troubleshoot network connectivity.
+
 ## Steps
+
 1. **Check internet connectivity:**
    ```bash
    run_shell_command("ping -c 3 8.8.8.8")
@@ -27,11 +31,16 @@ Troubleshoot network connectivity.
    ```bash
    run_shell_command("curl -s ifconfig.me")
    ```
+
 ## Examples
+
 ### Full diagnostic
+
 ```bash
 run_shell_command("ping -c 3 8.8.8.8 && nslookup google.com && curl -s ifconfig.me")
 ```
+
 ## Error Handling
+
 - **ping fails:** Network is down — check WiFi/ethernet connection.
 - **DNS fails but ping works:** DNS issue — suggest changing to 8.8.8.8 or 1.1.1.1.

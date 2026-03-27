@@ -20,7 +20,10 @@ export class SessionBridgeFactory {
    * Create a scoped, read-mostly proxy into a session.
    * The bridge lazily fetches data on demand, not upfront.
    */
-  createBridge(sessionId: string, permissions: BridgePermissions): SessionBridge {
+  createBridge(
+    sessionId: string,
+    permissions: BridgePermissions,
+  ): SessionBridge {
     const store = this.sessionStore;
     const contextStore = new Map<string, unknown>();
 

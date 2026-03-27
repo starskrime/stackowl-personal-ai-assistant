@@ -194,12 +194,7 @@ export class TfIdfEngine {
           bm25(doc.tags[term] ?? 0, idf, doc.lengths[1], this.avgLengths[1]);
         score +=
           BOOST_CONTENT *
-          bm25(
-            doc.content[term] ?? 0,
-            idf,
-            doc.lengths[2],
-            this.avgLengths[2],
-          );
+          bm25(doc.content[term] ?? 0, idf, doc.lengths[2], this.avgLengths[2]);
       }
 
       if (score > 0) {
@@ -250,11 +245,7 @@ export class TfIdfEngine {
       g += doc.lengths[1];
       c += doc.lengths[2];
     }
-    this.avgLengths = [
-      t / this.docCount,
-      g / this.docCount,
-      c / this.docCount,
-    ];
+    this.avgLengths = [t / this.docCount, g / this.docCount, c / this.docCount];
   }
 }
 
@@ -282,5 +273,7 @@ function bm25(
   avgFieldLen: number,
 ): number {
   if (tf === 0 || avgFieldLen === 0) return 0;
-  return idf * ((tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (fieldLen / avgFieldLen))));
+  return (
+    idf * ((tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (fieldLen / avgFieldLen))))
+  );
 }

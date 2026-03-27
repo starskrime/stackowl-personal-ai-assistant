@@ -4,9 +4,13 @@ description: Refactor code to improve readability, reduce duplication, and follo
 openclaw:
   emoji: "♻️"
 ---
+
 # Refactor Code
+
 Improve code quality through systematic refactoring.
+
 ## Steps
+
 1. **Read the target file:**
    ```bash
    read_file("<file_path>")
@@ -25,11 +29,16 @@ Improve code quality through systematic refactoring.
    ```bash
    run_shell_command("npm test")
    ```
+
 ## Examples
+
 ### Refactor a file
+
 ```bash
 read_file("src/utils/helpers.ts")
 ```
+
 ## Error Handling
+
 - **Tests fail after refactoring:** Revert changes and try smaller refactoring steps.
 - **File too large:** Focus on one function/section at a time.

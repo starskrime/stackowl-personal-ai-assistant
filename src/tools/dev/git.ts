@@ -20,7 +20,8 @@ export const GitTool: ToolImplementation = {
         },
         count: {
           type: "number",
-          description: "Number of log entries to show (default 10). Used with log.",
+          description:
+            "Number of log entries to show (default 10). Used with log.",
         },
         stash_action: {
           type: "string",
@@ -57,7 +58,8 @@ export const GitTool: ToolImplementation = {
           cmd = "git diff && echo '\\n--- STAGED ---\\n' && git diff --staged";
           break;
         case "branch":
-          cmd = "git branch -a --format='%(if)%(HEAD)%(then)* %(end)%(refname:short) %(upstream:short)'";
+          cmd =
+            "git branch -a --format='%(if)%(HEAD)%(then)* %(end)%(refname:short) %(upstream:short)'";
           break;
         case "stash":
           switch (stashAction) {
@@ -78,7 +80,10 @@ export const GitTool: ToolImplementation = {
           return `Unknown action: ${action}. Use status, log, diff, branch, or stash.`;
       }
 
-      const { stdout, stderr } = await execAsync(cmd, { timeout: TIMEOUT_MS, cwd });
+      const { stdout, stderr } = await execAsync(cmd, {
+        timeout: TIMEOUT_MS,
+        cwd,
+      });
       const output = (stdout || "").trim();
       const errors = (stderr || "").trim();
 

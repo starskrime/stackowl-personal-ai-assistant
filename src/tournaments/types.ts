@@ -17,7 +17,7 @@ export interface MatchResult {
   entryB: string;
   outputA: string;
   outputB: string;
-  winner: 'A' | 'B' | 'draw';
+  winner: "A" | "B" | "draw";
   scoreA: number;
   scoreB: number;
   judgeReasoning: string;
@@ -29,7 +29,7 @@ export interface Tournament {
   category: string;
   entries: TournamentEntry[];
   matches: MatchResult[];
-  status: 'active' | 'completed';
+  status: "active" | "completed";
   createdAt: string;
   completedAt?: string;
 }

@@ -14,11 +14,11 @@
  * Built on graphology (~15KB, zero native deps).
  */
 
-import Graph from 'graphology';
-import { bfsFromNode } from 'graphology-traversal';
-import { connectedComponents } from 'graphology-components';
-import type { Pellet, PelletStore } from './store.js';
-import type { TfIdfEngine } from './tfidf.js';
+import Graph from "graphology";
+import { bfsFromNode } from "graphology-traversal";
+import { connectedComponents } from "graphology-components";
+import type { Pellet, PelletStore } from "./store.js";
+import type { TfIdfEngine } from "./tfidf.js";
 import {
   extractConcepts,
   createConceptIndex,
@@ -26,8 +26,8 @@ import {
   removePelletFromIndex,
   findRelatedByConcepts,
   type ConceptIndex,
-} from './concepts.js';
-import { log } from '../logger.js';
+} from "./concepts.js";
+import { log } from "../logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ interface EdgeAttrs {
   /** Sum of all relationship signals */
   weight: number;
   /** Why this edge exists */
-  sources: ('tags' | 'concepts' | 'bm25')[];
+  sources: ("tags" | "concepts" | "bm25")[];
 }
 
 export interface RelatedPellet {
@@ -87,8 +87,10 @@ export class PelletGraph {
     private tfidf: TfIdfEngine,
   ) {
     // Resolve CJS/ESM default export
-    const G = (typeof Graph === 'function' ? Graph : (Graph as any).default) as any;
-    this.graph = new G({ type: 'undirected', allowSelfLoops: false });
+    const G = (
+      typeof Graph === "function" ? Graph : (Graph as any).default
+    ) as any;
+    this.graph = new G({ type: "undirected", allowSelfLoops: false });
     this.conceptIndex = createConceptIndex();
   }
 
@@ -155,45 +157,53 @@ export class PelletGraph {
     const results: RelatedPellet[] = [];
     const visited = new Set<string>();
 
-    bfsFromNode(this.graph, pelletId, (node: string, attrs: any, depth: number) => {
-      if (depth > maxHops) return true; // stop traversal
-      if (node === pelletId) return false;
-      if (visited.has(node)) return false;
-      visited.add(node);
+    bfsFromNode(
+      this.graph,
+      pelletId,
+      (node: string, attrs: any, depth: number) => {
+        if (depth > maxHops) return true; // stop traversal
+        if (node === pelletId) return false;
+        if (visited.has(node)) return false;
+        visited.add(node);
 
-      // Get edge weight to the source or accumulated
-      let weight = 0;
-      let sources: string[] = [];
+        // Get edge weight to the source or accumulated
+        let weight = 0;
+        let sources: string[] = [];
 
-      // Check direct edge first
-      const edgeKey = this.graph.hasEdge(pelletId, node)
-        ? this.graph.edge(pelletId, node)
-        : undefined;
+        // Check direct edge first
+        const edgeKey = this.graph.hasEdge(pelletId, node)
+          ? this.graph.edge(pelletId, node)
+          : undefined;
 
-      if (edgeKey != null) {
-        const edgeAttrs = this.graph.getEdgeAttributes(edgeKey) as EdgeAttrs;
-        weight = edgeAttrs.weight;
-        sources = edgeAttrs.sources;
-      } else {
-        // Multi-hop — use concept overlap as proxy weight
-        const conceptRelated = findRelatedByConcepts(this.conceptIndex, pelletId, 1);
-        const match = conceptRelated.find(r => r.id === node);
-        weight = match ? match.sharedConcepts * CONCEPT_WEIGHT : 0.1;
-        sources = ['indirect'];
-      }
+        if (edgeKey != null) {
+          const edgeAttrs = this.graph.getEdgeAttributes(edgeKey) as EdgeAttrs;
+          weight = edgeAttrs.weight;
+          sources = edgeAttrs.sources;
+        } else {
+          // Multi-hop — use concept overlap as proxy weight
+          const conceptRelated = findRelatedByConcepts(
+            this.conceptIndex,
+            pelletId,
+            1,
+          );
+          const match = conceptRelated.find((r) => r.id === node);
+          weight = match ? match.sharedConcepts * CONCEPT_WEIGHT : 0.1;
+          sources = ["indirect"];
+        }
 
-      // Discount by hop distance
-      const discountedWeight = weight / depth;
+        // Discount by hop distance
+        const discountedWeight = weight / depth;
 
-      results.push({
-        id: node,
-        title: (attrs as PelletNodeAttrs).title ?? node,
-        weight: discountedWeight,
-        hops: depth,
-        sources,
-      });
-      return false;
-    });
+        results.push({
+          id: node,
+          title: (attrs as PelletNodeAttrs).title ?? node,
+          weight: discountedWeight,
+          hops: depth,
+          sources,
+        });
+        return false;
+      },
+    );
 
     // Sort by weight descending
     results.sort((a, b) => b.weight - a.weight);
@@ -226,7 +236,7 @@ export class PelletGraph {
           title: attrs.title,
           weight: 10, // High weight for direct BM25 matches
           hops: 0,
-          sources: ['bm25-direct'],
+          sources: ["bm25-direct"],
         });
       }
     }
@@ -280,12 +290,21 @@ export class PelletGraph {
   /**
    * Get graph statistics.
    */
-  getStats(): { nodes: number; edges: number; clusters: number; avgDegree: number } {
+  getStats(): {
+    nodes: number;
+    edges: number;
+    clusters: number;
+    avgDegree: number;
+  } {
     const components = connectedComponents(this.graph);
-    const multiNodeClusters = components.filter(c => c.length >= 2).length;
-    const totalDegree = this.graph.order > 0
-      ? [...this.graph.nodes()].reduce((sum, n) => sum + this.graph.degree(n), 0)
-      : 0;
+    const multiNodeClusters = components.filter((c) => c.length >= 2).length;
+    const totalDegree =
+      this.graph.order > 0
+        ? [...this.graph.nodes()].reduce(
+            (sum, n) => sum + this.graph.degree(n),
+            0,
+          )
+        : 0;
     const avgDegree = this.graph.order > 0 ? totalDegree / this.graph.order : 0;
 
     return {
@@ -321,8 +340,10 @@ export class PelletGraph {
     for (let i = 0; i < pellets.length; i++) {
       for (let j = i + 1; j < pellets.length; j++) {
         this.maybeCreateEdge(
-          pellets[i].id, pellets[j].id,
-          pellets[i].tags, pellets[j].tags,
+          pellets[i].id,
+          pellets[j].id,
+          pellets[i].tags,
+          pellets[j].tags,
         );
       }
     }
@@ -333,7 +354,12 @@ export class PelletGraph {
       const related = findRelatedByConcepts(this.conceptIndex, pellet.id, 10);
       for (const { id: otherId, sharedConcepts } of related) {
         if (sharedConcepts < 3) continue; // Require meaningful overlap
-        this.addOrUpdateEdge(pellet.id, otherId, sharedConcepts * CONCEPT_WEIGHT, 'concepts');
+        this.addOrUpdateEdge(
+          pellet.id,
+          otherId,
+          sharedConcepts * CONCEPT_WEIGHT,
+          "concepts",
+        );
       }
     }
   }
@@ -343,7 +369,7 @@ export class PelletGraph {
       const query = `${pellet.title} ${pellet.content.slice(0, 200)}`;
       const selfScore = this.tfidf.selfScore({
         title: pellet.title,
-        tags: pellet.tags.join(' '),
+        tags: pellet.tags.join(" "),
         content: pellet.content,
       });
 
@@ -351,35 +377,43 @@ export class PelletGraph {
 
       const candidates = this.tfidf
         .search(query, BM25_CANDIDATES + 1)
-        .filter(r => r.id !== pellet.id);
+        .filter((r) => r.id !== pellet.id);
 
       for (const { id: otherId, score } of candidates) {
         const similarity = score / selfScore;
         if (similarity >= BM25_EDGE_THRESHOLD) {
-          this.addOrUpdateEdge(pellet.id, otherId, similarity * BM25_WEIGHT, 'bm25');
+          this.addOrUpdateEdge(
+            pellet.id,
+            otherId,
+            similarity * BM25_WEIGHT,
+            "bm25",
+          );
         }
       }
     }
   }
 
   private maybeCreateEdge(
-    id1: string, id2: string,
-    tags1: string[], tags2: string[],
+    id1: string,
+    id2: string,
+    tags1: string[],
+    tags2: string[],
   ): void {
-    const set1 = new Set(tags1.map(t => t.toLowerCase()));
+    const set1 = new Set(tags1.map((t) => t.toLowerCase()));
     let overlap = 0;
     for (const tag of tags2) {
       if (set1.has(tag.toLowerCase())) overlap++;
     }
     if (overlap >= MIN_TAG_OVERLAP) {
-      this.addOrUpdateEdge(id1, id2, overlap * TAG_WEIGHT, 'tags');
+      this.addOrUpdateEdge(id1, id2, overlap * TAG_WEIGHT, "tags");
     }
   }
 
   private addOrUpdateEdge(
-    id1: string, id2: string,
+    id1: string,
+    id2: string,
     weight: number,
-    source: 'tags' | 'concepts' | 'bm25',
+    source: "tags" | "concepts" | "bm25",
   ): void {
     if (!this.graph.hasNode(id1) || !this.graph.hasNode(id2)) return;
 
@@ -390,8 +424,8 @@ export class PelletGraph {
       if (!attrs.sources.includes(source)) {
         attrs.sources.push(source);
       }
-      this.graph.setEdgeAttribute(edge, 'weight', attrs.weight);
-      this.graph.setEdgeAttribute(edge, 'sources', attrs.sources);
+      this.graph.setEdgeAttribute(edge, "weight", attrs.weight);
+      this.graph.setEdgeAttribute(edge, "sources", attrs.sources);
     } else {
       this.graph.addEdge(id1, id2, { weight, sources: [source] });
     }

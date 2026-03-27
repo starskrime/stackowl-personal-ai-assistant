@@ -5,7 +5,7 @@ export type {
   SwarmTask,
   SwarmMessage,
   SwarmConfig,
-} from './types.js';
+} from "./types.js";
 
-export { LocalSwarmNode } from './node.js';
-export { SwarmCoordinator } from './coordinator.js';
+export { LocalSwarmNode } from "./node.js";
+export { SwarmCoordinator } from "./coordinator.js";

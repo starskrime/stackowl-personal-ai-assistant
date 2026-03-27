@@ -16,7 +16,8 @@ export const OCRTool: ToolImplementation = {
         },
         language: {
           type: "string",
-          description: "Recognition language: en (default), zh, ja, ko, de, fr, es, pt, it, ru",
+          description:
+            "Recognition language: en (default), zh, ja, ko, de, fr, es, pt, it, ru",
         },
       },
       required: ["path"],
@@ -77,11 +78,9 @@ for observation in observations {
     }
 }
 `;
-      const { stdout } = await exec(
-        "swift",
-        ["-e", swiftScript],
-        { timeout: 30000 },
-      );
+      const { stdout } = await exec("swift", ["-e", swiftScript], {
+        timeout: 30000,
+      });
 
       const text = stdout.trim();
       if (text && !text.startsWith("ERROR:")) {
@@ -95,31 +94,41 @@ for observation in observations {
     try {
       const { stdout } = await exec(
         "bash",
-        ["-c", `shortcuts run "Extract Text from Image" -i "${resolvedPath}" 2>/dev/null`],
+        [
+          "-c",
+          `shortcuts run "Extract Text from Image" -i "${resolvedPath}" 2>/dev/null`,
+        ],
         { timeout: 15000 },
       );
       if (stdout.trim()) {
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch { /* try next */ }
+    } catch {
+      /* try next */
+    }
 
     // Method 3: Python tesseract
     try {
       const { stdout } = await exec(
         "python3",
-        ["-c", `
+        [
+          "-c",
+          `
 import pytesseract
 from PIL import Image
 img = Image.open("${resolvedPath}")
 text = pytesseract.image_to_string(img, lang="${language}")
 print(text)
-`],
+`,
+        ],
         { timeout: 20000 },
       );
       if (stdout.trim()) {
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch { /* try next */ }
+    } catch {
+      /* try next */
+    }
 
     // Method 4: tesseract CLI directly
     try {
@@ -131,7 +140,9 @@ print(text)
       if (stdout.trim()) {
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch { /* fallthrough */ }
+    } catch {
+      /* fallthrough */
+    }
 
     return (
       `Could not perform OCR. Available options:\n` +

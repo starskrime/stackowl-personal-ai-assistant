@@ -55,7 +55,10 @@ export function createMonitorTool(checker: HealthChecker): ToolImplementation {
     },
     category: "network",
     source: "builtin",
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+    async execute(
+      args: Record<string, unknown>,
+      _context: ToolContext,
+    ): Promise<string> {
       const action = args.action as string;
 
       switch (action) {
@@ -63,7 +66,7 @@ export function createMonitorTool(checker: HealthChecker): ToolImplementation {
           const checks = checker.getChecks();
           if (checks.length === 0) return "No health checks configured.";
           return checks
-            .map(c => {
+            .map((c) => {
               const result = checker.getLastResult(c.id);
               const status = result?.status ?? "unknown";
               return `- ${c.name} (${c.type}:${c.target}) — ${status} [${c.enabled ? "enabled" : "disabled"}]`;
@@ -74,7 +77,8 @@ export function createMonitorTool(checker: HealthChecker): ToolImplementation {
         case "add": {
           const name = args.name as string;
           const target = args.target as string;
-          if (!name || !target) return "Error: name and target are required for add";
+          if (!name || !target)
+            return "Error: name and target are required for add";
 
           const check: HealthCheck = {
             id: `check-${name.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}`,
@@ -111,7 +115,7 @@ export function createMonitorTool(checker: HealthChecker): ToolImplementation {
           const checks = checker.getChecks();
           if (checks.length === 0) return "No health checks configured.";
           return checks
-            .map(c => {
+            .map((c) => {
               const r = checker.getLastResult(c.id);
               return `${c.name}: ${r?.status ?? "unknown"} (${r?.responseTimeMs ?? "?"}ms)`;
             })
@@ -122,7 +126,10 @@ export function createMonitorTool(checker: HealthChecker): ToolImplementation {
           const alerts = checker.getActiveAlerts();
           if (alerts.length === 0) return "No active alerts.";
           return alerts
-            .map(a => `[${a.severity.toUpperCase()}] ${a.message} (${new Date(a.timestamp).toLocaleString()})`)
+            .map(
+              (a) =>
+                `[${a.severity.toUpperCase()}] ${a.message} (${new Date(a.timestamp).toLocaleString()})`,
+            )
             .join("\n");
         }
 

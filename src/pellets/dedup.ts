@@ -177,7 +177,10 @@ export class PelletDeduplicator {
     // Fetch the full existing pellet
     const existing = await this.getPellet(best.id);
     if (!existing) {
-      return { verdict: "CREATE", reasoning: "matched pellet not found on disk" };
+      return {
+        verdict: "CREATE",
+        reasoning: "matched pellet not found on disk",
+      };
     }
 
     // High similarity without LLM — auto-skip
@@ -314,10 +317,16 @@ export class PelletDeduplicator {
   ): DedupResult {
     // Compute title word overlap
     const incomingWords = new Set(
-      incoming.title.toLowerCase().split(/\W+/).filter((w) => w.length > 2),
+      incoming.title
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((w) => w.length > 2),
     );
     const existingWords = new Set(
-      existing.title.toLowerCase().split(/\W+/).filter((w) => w.length > 2),
+      existing.title
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((w) => w.length > 2),
     );
 
     let overlap = 0;

@@ -11,16 +11,21 @@
  * Produces actionable suggestions the idle engine or planner can act on.
  */
 
-import type { StackOwlConfig } from '../config/loader.js';
-import type { ToolRegistry } from '../tools/registry.js';
-import type { SkillsRegistry } from '../skills/registry.js';
-import type { MicroLearner } from '../learning/micro-learner.js';
-import { log } from '../logger.js';
+import type { StackOwlConfig } from "../config/loader.js";
+import type { ToolRegistry } from "../tools/registry.js";
+import type { SkillsRegistry } from "../skills/registry.js";
+import type { MicroLearner } from "../learning/micro-learner.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
 export interface CapabilityGap {
-  type: 'unused_adapter' | 'tool_without_skill' | 'unused_mcp' | 'topic_gap' | 'permission_gap';
+  type:
+    | "unused_adapter"
+    | "tool_without_skill"
+    | "unused_mcp"
+    | "topic_gap"
+    | "permission_gap";
   name: string;
   description: string;
   /** Suggested action to fill this gap */
@@ -63,15 +68,16 @@ export class CapabilityScanner {
     // Sort by priority (highest first)
     gaps.sort((a, b) => b.priority - a.priority);
 
-    const totalTools = this.toolRegistry?.getDefinitions().length ?? 0;
+    const totalTools = this.toolRegistry?.getAllDefinitions().length ?? 0;
     const totalSkills = this.skillsRegistry?.listEnabled().length ?? 0;
-    const coverage = totalTools > 0
-      ? Math.min(100, Math.round((totalSkills / totalTools) * 100))
-      : 0;
+    const coverage =
+      totalTools > 0
+        ? Math.min(100, Math.round((totalSkills / totalTools) * 100))
+        : 0;
 
     log.engine.info(
       `[CapabilityScanner] Scan complete: ${gaps.length} gaps found, ` +
-      `${totalTools} tools, ${totalSkills} skills, ${coverage}% coverage`,
+        `${totalTools} tools, ${totalSkills} skills, ${coverage}% coverage`,
     );
 
     return {
@@ -95,18 +101,18 @@ export class CapabilityScanner {
    */
   toIdlePrompt(result?: ScanResult): string {
     const r = result ?? this.scan();
-    if (r.gaps.length === 0) return '';
+    if (r.gaps.length === 0) return "";
 
     const top = r.gaps.slice(0, 5);
     const lines: string[] = [
-      'CAPABILITY GAPS (things you could improve right now):',
+      "CAPABILITY GAPS (things you could improve right now):",
     ];
 
     for (const gap of top) {
       lines.push(`- [${gap.type}] ${gap.name}: ${gap.suggestion}`);
     }
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
   // ─── Sub-Scanners ──────────────────────────────────────────────
@@ -117,13 +123,15 @@ export class CapabilityScanner {
     // Check Telegram
     if (this.config.telegram?.botToken && this.microLearner) {
       const profile = this.microLearner.getProfile();
-      const telegramUsage = profile.toolUsage['send_telegram_message'] ?? 0;
+      const telegramUsage = profile.toolUsage["send_telegram_message"] ?? 0;
       if (telegramUsage === 0 && profile.totalMessages > 10) {
         gaps.push({
-          type: 'unused_adapter',
-          name: 'telegram',
-          description: 'Telegram is configured but the user has never received a proactive message',
-          suggestion: 'Create a skill that sends daily summaries or reminders via Telegram',
+          type: "unused_adapter",
+          name: "telegram",
+          description:
+            "Telegram is configured but the user has never received a proactive message",
+          suggestion:
+            "Create a skill that sends daily summaries or reminders via Telegram",
           priority: 75,
         });
       }
@@ -132,13 +140,14 @@ export class CapabilityScanner {
     // Check Slack
     if (this.config.slack?.botToken && this.microLearner) {
       const profile = this.microLearner.getProfile();
-      const slackUsage = profile.toolUsage['send_slack_message'] ?? 0;
+      const slackUsage = profile.toolUsage["send_slack_message"] ?? 0;
       if (slackUsage === 0 && profile.totalMessages > 10) {
         gaps.push({
-          type: 'unused_adapter',
-          name: 'slack',
-          description: 'Slack is configured but never used for messaging',
-          suggestion: 'Create a skill that posts status updates or alerts to Slack channels',
+          type: "unused_adapter",
+          name: "slack",
+          description: "Slack is configured but never used for messaging",
+          suggestion:
+            "Create a skill that posts status updates or alerts to Slack channels",
           priority: 65,
         });
       }
@@ -151,22 +160,28 @@ export class CapabilityScanner {
     if (!this.toolRegistry || !this.skillsRegistry) return [];
 
     const gaps: CapabilityGap[] = [];
-    const toolDefs = this.toolRegistry.getDefinitions();
+    const toolDefs = this.toolRegistry.getAllDefinitions();
     const skillDescriptions = this.skillsRegistry
       .listEnabled()
-      .map(s => `${s.name} ${s.description}`.toLowerCase());
+      .map((s) => `${s.name} ${s.description}`.toLowerCase());
 
     // Core tools that should have skills
     const importantTools = [
-      'web_crawl', 'google_search', 'generate_image',
-      'send_telegram_message', 'send_file', 'read_file', 'write_file',
+      "web_crawl",
+      "google_search",
+      "generate_image",
+      "send_telegram_message",
+      "send_file",
+      "read_file",
+      "write_file",
     ];
 
     for (const tool of toolDefs) {
       // Skip if a skill already covers this tool
       const toolLower = tool.name.toLowerCase();
-      const hasCoverage = skillDescriptions.some(d =>
-        d.includes(toolLower) || d.includes(toolLower.replace(/_/g, ' ')),
+      const hasCoverage = skillDescriptions.some(
+        (d) =>
+          d.includes(toolLower) || d.includes(toolLower.replace(/_/g, " ")),
       );
       if (hasCoverage) continue;
 
@@ -175,7 +190,7 @@ export class CapabilityScanner {
       if (!isImportant) continue;
 
       gaps.push({
-        type: 'tool_without_skill',
+        type: "tool_without_skill",
         name: tool.name,
         description: `Tool "${tool.name}" has no matching skill — the owl uses raw tool calls instead of optimized skill steps`,
         suggestion: `Create a skill that wraps "${tool.name}" with best-practice steps and error handling`,
@@ -195,12 +210,12 @@ export class CapabilityScanner {
       // (MCP tools are prefixed with the server name)
       if (this.microLearner) {
         const profile = this.microLearner.getProfile();
-        const serverTools = Object.keys(profile.toolUsage).filter(t =>
+        const serverTools = Object.keys(profile.toolUsage).filter((t) =>
           t.toLowerCase().includes(server.name.toLowerCase()),
         );
         if (serverTools.length === 0 && profile.totalMessages > 10) {
           gaps.push({
-            type: 'unused_mcp',
+            type: "unused_mcp",
             name: server.name,
             description: `MCP server "${server.name}" is configured but its tools have never been used`,
             suggestion: `Research what "${server.name}" MCP server provides and create skills that leverage its capabilities`,
@@ -222,7 +237,7 @@ export class CapabilityScanner {
     for (const need of anticipated.slice(0, 3)) {
       if (need.confidence > 0.5) {
         gaps.push({
-          type: 'topic_gap',
+          type: "topic_gap",
           name: need.capability,
           description: need.reason,
           suggestion: `Research "${need.capability}" and create a skill or store knowledge pellets about it`,
@@ -238,10 +253,12 @@ export class CapabilityScanner {
     if (!this.config.tools?.permissions) return [];
 
     const gaps: CapabilityGap[] = [];
-    for (const [tool, permission] of Object.entries(this.config.tools.permissions)) {
-      if (permission === 'denied') {
+    for (const [tool, permission] of Object.entries(
+      this.config.tools.permissions,
+    )) {
+      if (permission === "denied") {
         gaps.push({
-          type: 'permission_gap',
+          type: "permission_gap",
           name: tool,
           description: `Tool "${tool}" exists but is denied by permissions config`,
           suggestion: `Consider whether "${tool}" should be enabled — the user might benefit from it`,

@@ -24,6 +24,7 @@ import { ModelRouter } from "./router.js";
 import { GapDetector } from "../evolution/detector.js";
 import { log } from "../logger.js";
 import type { OwlInnerLife, InnerMonologue } from "../owls/inner-life.js";
+import { DNADecisionLayer } from "../owls/decision-layer.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -72,25 +73,25 @@ export interface EngineContext {
    */
   onStreamEvent?: (event: StreamEvent) => Promise<void>;
   /** Memory thread searcher for conversational recall */
-  memorySearcher?: import('../memory-threads/searcher.js').MemorySearcher;
+  memorySearcher?: import("../memory-threads/searcher.js").MemorySearcher;
   /** Echo chamber detector for bias analysis */
-  echoChamberDetector?: import('../echo-chamber/detector.js').EchoChamberDetector;
+  echoChamberDetector?: import("../echo-chamber/detector.js").EchoChamberDetector;
   /** Growth journal generator */
-  journalGenerator?: import('../growth-journal/generator.js').JournalGenerator;
+  journalGenerator?: import("../growth-journal/generator.js").JournalGenerator;
   /** Quest manager for gamified learning */
-  questManager?: import('../quests/manager.js').QuestManager;
+  questManager?: import("../quests/manager.js").QuestManager;
   /** Time capsule manager */
-  capsuleManager?: import('../capsules/manager.js').CapsuleManager;
+  capsuleManager?: import("../capsules/manager.js").CapsuleManager;
   /** Owl's inner life — desires, mood, opinions, inner monologue */
   innerLife?: OwlInnerLife;
   /** Persistent goal graph — tracks user objectives across sessions */
-  goalGraph?: import('../goals/graph.js').GoalGraph;
+  goalGraph?: import("../goals/graph.js").GoalGraph;
   /** Persistent task store — enables checkpoint/resume for long-running tasks */
-  taskStore?: import('../tasks/store.js').TaskStore;
+  taskStore?: import("../tasks/store.js").TaskStore;
   /** Current background task ID (set when running as a background task) */
   backgroundTaskId?: string;
   /** RAG-based pellet search — replaces brute-force pellet injection */
-  pelletSearch?: import('../pellets/search.js').PelletSearch;
+  pelletSearch?: import("../pellets/search.js").PelletSearch;
 }
 
 export interface PendingCapabilityGap {
@@ -134,11 +135,28 @@ const DEFAULT_MAX_TOOL_ITERATIONS = 15;
 const DONE_SIGNAL = "[DONE]";
 
 function hasDoneSignal(content: string): boolean {
-  return content.includes(DONE_SIGNAL);
+  if (!content.includes(DONE_SIGNAL)) return false;
+  const lines = content.split("\n");
+  const lastLine = lines[lines.length - 1].trim();
+  return lastLine === DONE_SIGNAL || content.endsWith(DONE_SIGNAL);
 }
 
 function stripDoneSignal(content: string): string {
-  return content.replace(/\[DONE\]/g, "").trim();
+  if (!hasDoneSignal(content)) return content;
+  const lastNewline = content.lastIndexOf("\n");
+  if (lastNewline === -1) return "";
+  return content.slice(0, lastNewline).trim();
+}
+
+function safeStringify(args: unknown): string {
+  const seen = new WeakSet();
+  return JSON.stringify(args, (_key, value) => {
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) return "[circular]";
+      seen.add(value);
+    }
+    return value;
+  });
 }
 
 /**
@@ -152,6 +170,33 @@ function isFailureResult(result: string): boolean {
   if (exitMatch && parseInt(exitMatch[1], 10) !== 0) return true;
   // Explicit diagnostic hint = tool detected a known failure condition
   if (result.includes("[SYSTEM DIAGNOSTIC HINT:")) return true;
+  // Detect common error prefixes and patterns
+  const lower = result.toLowerCase();
+  const failurePrefixes = [
+    "error:",
+    "failed:",
+    "failure:",
+    "exception:",
+    "crash:",
+  ];
+  for (const prefix of failurePrefixes) {
+    if (lower.startsWith(prefix)) return true;
+  }
+  // Detect permission/auth failures
+  const failurePatterns = [
+    "denied:",
+    "unauthorized:",
+    "forbidden:",
+    "not found:",
+    "cannot find",
+    "unable to",
+    "failed to",
+    "timeout",
+    "connection refused",
+  ];
+  for (const pattern of failurePatterns) {
+    if (lower.includes(pattern)) return true;
+  }
   return false;
 }
 /**
@@ -237,7 +282,9 @@ async function consumeStream(
     string,
     { id: string; name: string; argsStr: string }
   >();
-  let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
+  let usage:
+    | { promptTokens: number; completionTokens: number; totalTokens: number }
+    | undefined;
   let model = "";
 
   for await (const event of stream) {
@@ -327,16 +374,26 @@ export class OwlEngine {
 
     log.engine.model(optimalModel);
 
+    // 1c. DNA Decision Layer — compute DNA-driven runtime decisions
+    // This drives: token budget, temperature adjustment, style directives,
+    // tool prioritization, risk tolerance. Previously computed but never used.
+    const dnaDecisions = DNADecisionLayer.decide(owl, userMessage);
+
     // 1b. Inner Monologue — the owl thinks about the message through its personality
     let innerMonologue: InnerMonologue | undefined;
     if (context.innerLife) {
       try {
-        innerMonologue = await context.innerLife.think(userMessage, sessionHistory);
+        innerMonologue = await context.innerLife.think(
+          userMessage,
+          sessionHistory,
+        );
         log.engine.info(
           `[InnerLife] ${owl.persona.name} thinks: "${innerMonologue.thoughts.slice(0, 100)}..." → ${innerMonologue.responseIntent.slice(0, 80)}`,
         );
       } catch (err) {
-        log.engine.warn(`[InnerLife] Monologue failed: ${err instanceof Error ? err.message : err}`);
+        log.engine.warn(
+          `[InnerLife] Monologue failed: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
 
@@ -359,9 +416,19 @@ export class OwlEngine {
       innerMonologue,
     );
 
+    // Append DNA-driven style directive from DNADecisionLayer
+    // This provides programmatic style guidance (humor level, formality, examples, next steps)
+    // vs. the hardcoded challenge/verbosity directives already in buildSystemPrompt
+    const dnaStyleDirective = DNADecisionLayer.toStyleDirective(dnaDecisions);
+    const finalSystemPrompt = dnaStyleDirective
+      ? systemPrompt +
+        "\n\n## Response Style (DNA-Driven)\n\n" +
+        dnaStyleDirective
+      : systemPrompt;
+
     // 2b. Sanitize history — remove references to tools that no longer exist.
     // Stale tool calls from defunct tools poison the context and confuse local models.
-    const currentToolDefs = toolRegistry?.getDefinitions();
+    const currentToolDefs = toolRegistry?.getAllDefinitions();
     const validToolNames = currentToolDefs
       ? new Set(currentToolDefs.map((t) => t.name))
       : new Set<string>();
@@ -377,7 +444,11 @@ export class OwlEngine {
             if (allStale && !msg.content?.trim()) return false;
           }
           // Drop tool result messages for missing tools
-          if (msg.role === "tool" && msg.name && !validToolNames.has(msg.name)) {
+          if (
+            msg.role === "tool" &&
+            msg.name &&
+            !validToolNames.has(msg.name)
+          ) {
             return false;
           }
           return true;
@@ -404,7 +475,8 @@ export class OwlEngine {
       const keepRecent = config.engine?.contextKeepRecent ?? 10;
       const estTokens = estimateTokens(sanitizedHistory);
       const needsCompression =
-        sanitizedHistory.length > CONTEXT_WINDOW_THRESHOLD || estTokens > maxTokens;
+        sanitizedHistory.length > CONTEXT_WINDOW_THRESHOLD ||
+        estTokens > maxTokens;
 
       if (needsCompression) {
         // Two-tier: keep last N messages verbatim, compress the rest
@@ -416,9 +488,11 @@ export class OwlEngine {
             setTimeout(() => resolve(recentMessages), 5000),
           );
           historyToUse = await Promise.race([
-            this.compressHistory(olderMessages, currentProvider, optimalModel).then(
-              (compressed) => [...compressed, ...recentMessages],
-            ),
+            this.compressHistory(
+              olderMessages,
+              currentProvider,
+              optimalModel,
+            ).then((compressed) => [...compressed, ...recentMessages]),
             compressionFallback,
           ]);
         } else {
@@ -458,7 +532,7 @@ Focus ONLY on the user's current request below. If the previous context is irrel
       `<NEW_TASK>
 ${userMessage}
 </NEW_TASK>`;
-    if (toolRegistry && toolRegistry.getDefinitions().length > 0) {
+    if (toolRegistry && toolRegistry.getAllDefinitions().length > 0) {
       finalUserMessage +=
         `\n\n[SYSTEM DIRECTIVE — ReAct Rules]\n` +
         `1. ANSWER DIRECTLY if the question is factual, conversational, or answerable from context/memory. ` +
@@ -481,26 +555,44 @@ ${userMessage}
         `Rephrase your query instead of repeating similar searches. If web_crawl returns blocked/empty content, try a DIFFERENT URL.\n` +
         `5. SIGNAL COMPLETION: when your response is the final answer, append [DONE] at the very end. ` +
         `The engine will drop any pending tool calls and return your answer immediately.\n` +
-        `6. CAPABILITY GAP: output [CAPABILITY_GAP: <description>] ONLY if the request requires a genuine SYSTEM ACTION ` +
-        `(OS-level, hardware, network call to an external service) that no available tool or shell command can perform. ` +
-        `Do NOT use this for knowledge gaps, analysis, or tasks solvable with run_shell_command.\n` +
+        `6. CAPABILITY GAP: output [CAPABILITY_GAP: <description>] when the request needs a tool or system capability ` +
+        `not in your current toolset. This helps the system learn and build missing capabilities. ` +
+        `Do NOT use this for knowledge gaps or tasks solvable with existing tools/shell commands.\n` +
         `7. NEVER call the same tool with the same arguments twice — the result is already in your context.\n` +
         `8. SKILLS FIRST: If a <skill> block is present in your system prompt, it means a learned capability ` +
         `matches this request. Follow the skill's steps EXACTLY instead of improvising. Skills are optimized playbooks.`;
     }
 
     const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: finalSystemPrompt },
       ...historyToUse,
       { role: "user", content: finalUserMessage },
     ];
+
+    // DNA-driven chat options (token budget, temperature adjustment)
+    // DNADecisionLayer computes these from the owl's evolved personality traits
+    const dnaBaseTemp = 0.7;
+    const chatOptions: {
+      temperature: number;
+      maxTokens: number;
+    } = {
+      temperature: Math.max(
+        0,
+        Math.min(1, dnaBaseTemp + dnaDecisions.temperatureAdjustment),
+      ),
+      maxTokens: dnaDecisions.maxResponseTokens,
+    };
 
     // 5. ReAct loop — call model, handle tool calls iteratively
     let response: ChatResponse;
     let iterations = 0;
     let globalConsecutiveFailures = 0;
     let loopBrokenEarly = false; // set true when inner shouldBreakLoop fires
-    const tools = toolRegistry?.getDefinitions();
+    const enableRouting = config.tools?.enableIntentRouting !== false;
+    const tools = await toolRegistry?.getDefinitions({
+      maxTools: config.tools?.maxToolsRouting ?? 8,
+      userMessage: enableRouting ? userMessage : undefined,
+    });
 
     if (tools && tools.length > 0) {
       // Per-tool consecutive failure tracker for this ReAct session
@@ -526,7 +618,12 @@ ${userMessage}
       log.engine.llmRequest(optimalModel, messages);
       if (currentProvider.chatWithToolsStream && context.onStreamEvent) {
         response = await consumeStream(
-          currentProvider.chatWithToolsStream(messages, tools, optimalModel),
+          currentProvider.chatWithToolsStream(
+            messages,
+            tools,
+            optimalModel,
+            chatOptions,
+          ),
           context.onStreamEvent,
         );
       } else {
@@ -534,6 +631,7 @@ ${userMessage}
           messages,
           tools,
           optimalModel,
+          chatOptions,
         );
       }
       log.engine.llmResponse(
@@ -595,7 +693,7 @@ ${userMessage}
           log.tool.toolCall(toolCall.name, toolCall.arguments);
 
           // ── Duplicate tool call guard ──────────────────────────────
-          const callFingerprint = `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`;
+          const callFingerprint = `${toolCall.name}:${safeStringify(toolCall.arguments)}`;
           if (seenToolCalls.has(callFingerprint)) {
             log.engine.warn(
               `Duplicate tool call skipped: ${toolCall.name} (same args already executed this session)`,
@@ -641,7 +739,9 @@ ${userMessage}
 
         if (executableActions.length > 0) {
           if (context.onProgress) {
-            const toolNames = executableActions.map((a) => `\`${a.toolCall.name}\``).join(", ");
+            const toolNames = executableActions
+              .map((a) => `\`${a.toolCall.name}\``)
+              .join(", ");
             await context.onProgress(
               executableActions.length > 1
                 ? `⚙️ **Running ${executableActions.length} tools in parallel:** ${toolNames}`
@@ -776,7 +876,9 @@ ${userMessage}
               if (context.capabilityLedger) {
                 context.capabilityLedger
                   .recordUsage(toolCall.name, !isAnyFailure)
-                  .catch(() => {});
+                  .catch((err) =>
+                    log.engine.warn(`CapabilityLedger save failed: ${err}`),
+                  );
               }
 
               if (isAnyFailure) {
@@ -918,7 +1020,12 @@ ${userMessage}
         log.engine.llmRequest(optimalModel, messages);
         if (currentProvider.chatWithToolsStream && context.onStreamEvent) {
           response = await consumeStream(
-            currentProvider.chatWithToolsStream(messages, tools, optimalModel),
+            currentProvider.chatWithToolsStream(
+              messages,
+              tools,
+              optimalModel,
+              chatOptions,
+            ),
             context.onStreamEvent,
           );
         } else {
@@ -926,6 +1033,7 @@ ${userMessage}
             messages,
             tools,
             optimalModel,
+            chatOptions,
           );
         }
         log.engine.llmResponse(
@@ -1039,7 +1147,7 @@ ${userMessage}
     } else {
       // Simple chat without tools
       log.engine.llmRequest(optimalModel, messages);
-      response = await provider.chat(messages, optimalModel);
+      response = await provider.chat(messages, optimalModel, chatOptions);
       log.engine.llmResponse(
         optimalModel,
         response.content,
@@ -1077,7 +1185,7 @@ ${userMessage}
     if (!response.content.trim()) {
       log.engine.warn(
         `Empty response from model (${iterations} iterations, ${toolsUsed.length} tools used) — ` +
-        `retrying with minimal context as plain chat`,
+          `retrying with minimal context as plain chat`,
       );
       try {
         const minimalMessages: ChatMessage[] = [
@@ -1091,7 +1199,10 @@ ${userMessage}
           },
           { role: "user", content: userMessage },
         ];
-        const plainResponse = await currentProvider.chat(minimalMessages, optimalModel);
+        const plainResponse = await currentProvider.chat(
+          minimalMessages,
+          optimalModel,
+        );
         const plainContent = (plainResponse.content ?? "")
           .replace(/<\/?(think|reasoning)>/gi, "")
           .trim();
@@ -1129,20 +1240,19 @@ ${userMessage}
     }
 
     // 8. Gap detection
-    //    We skip the expensive natural-language GapDetector if tools were used,
-    //    to avoid false positives on routine text. BUT we MUST honor explicit structured
-    //    markers [CAPABILITY_GAP: ...] even if tools were used mid-task.
-    const usedAtLeastOneTool = toolsUsed.length > 0;
+    //    Always check for explicit structured markers [CAPABILITY_GAP: ...].
+    //    Run NLP detection unless in retry mode — the model may use tools (e.g. search)
+    //    and STILL hit a genuine capability wall that should be detected.
     const hasExplicitMarker = response.content.match(
       /\[CAPABILITY_GAP:\s*([^\]]+)\]/i,
     );
 
     const shouldSkipNlpDetection =
-      context.skipGapDetection || (usedAtLeastOneTool && !hasExplicitMarker);
+      context.skipGapDetection && !hasExplicitMarker;
 
     if (shouldSkipNlpDetection) {
       log.evolution.debug(
-        `Skipping NLP gap detection (${context.skipGapDetection ? "retry mode" : "tools used"})`,
+        `Skipping NLP gap detection (retry mode)`,
       );
     } else {
       log.evolution.debug(`Checking response for capability gap...`);
@@ -1377,7 +1487,10 @@ steps. Follow them precisely — they are your primary instructions for this tas
     // Hard limit prevents context explosion when pellet store is large.
     if (pelletStore && userMessage) {
       try {
-        const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(0, 3);
+        const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(
+          0,
+          3,
+        );
         if (top.length > 0) {
           prompt += "\n## Relevant Past Knowledge\n";
           for (const pellet of top) {
@@ -1396,7 +1509,7 @@ steps. Follow them precisely — they are your primary instructions for this tas
 
     // Tools — comprehensive documentation with examples
     if (toolRegistry) {
-      const tools = toolRegistry.getDefinitions();
+      const tools = toolRegistry.getAllDefinitions();
       if (tools.length > 0) {
         prompt += "\n## Tools Available\n";
         prompt +=
@@ -1444,21 +1557,22 @@ steps. Follow them precisely — they are your primary instructions for this tas
           "- Don't repeat the same tool call with same arguments\n" +
           "- When done, append [DONE] to return immediately\n";
 
-        // Self-improvement — strict criteria to prevent over-synthesis
+        // Self-improvement — balanced criteria: catch real gaps without over-synthesis
         prompt +=
-          "\n**Self-Improvement (last resort only):**\n" +
-          "- ONLY emit [CAPABILITY_GAP: what you need] if ALL of these are true:\n" +
-          "  1. The request requires a SYSTEM ACTION (file I/O, network, OS control, hardware)\n" +
-          "  2. None of the available tools can accomplish it even with shell commands\n" +
-          "  3. You already attempted to solve it with existing tools and failed\n" +
-          "- DO NOT emit [CAPABILITY_GAP: ...] for: facts, explanations, summaries, analysis,\n" +
-          "  conversational replies, tasks solvable with run_shell_command, or tasks where\n" +
-          "  you simply lack knowledge (use google_search or web_crawl instead).\n";
+          "\n**Self-Improvement:**\n" +
+          "- Emit [CAPABILITY_GAP: what you need] when you recognize the request needs a tool or system " +
+          "capability that doesn't exist in your current toolset. This triggers the system to learn and " +
+          "potentially create the missing capability for future use.\n" +
+          "- Good examples: controlling screen brightness, sending SMS, accessing a database you have no " +
+          "tool for, interacting with an API you can't reach, managing calendar events.\n" +
+          "- DO NOT emit for: facts/knowledge (use search), analysis, conversational replies, or tasks " +
+          "solvable with run_shell_command.\n" +
+          "- When in doubt, emit the gap — the system will validate before acting on it.\n";
       }
     }
 
     // Capability gap marker — only shown when tools are loaded
-    if (toolRegistry && toolRegistry.getDefinitions().length > 0) {
+    if (toolRegistry && toolRegistry.getAllDefinitions().length > 0) {
       prompt +=
         "\n[CAPABILITY_GAP: ...] is stripped before display. Use it only for genuine missing tool/access gaps.\n";
     }
@@ -1481,7 +1595,7 @@ steps. Follow them precisely — they are your primary instructions for this tas
     const { TaskPlanner } = await import("./planner.js");
     const planner = new TaskPlanner(context.provider);
 
-    const tools = context.toolRegistry?.getDefinitions() ?? [];
+    const tools = context.toolRegistry?.getAllDefinitions() ?? [];
     const plan = await planner.createPlan(userMessage, tools, undefined);
 
     log.engine.info(
@@ -1575,12 +1689,13 @@ steps. Follow them precisely — they are your primary instructions for this tas
         .join("\n\n") +
       `\n\nProvide a clear, cohesive summary of what was accomplished. If any steps failed, mention what couldn't be completed.`;
 
-    const synthResponse = await context.provider.chat(
-      [
-        { role: "system", content: "Synthesize multi-step task results concisely." },
-        { role: "user", content: summaryPrompt },
-      ],
-    );
+    const synthResponse = await context.provider.chat([
+      {
+        role: "system",
+        content: "Synthesize multi-step task results concisely.",
+      },
+      { role: "user", content: summaryPrompt },
+    ]);
 
     return {
       content: synthResponse.content,

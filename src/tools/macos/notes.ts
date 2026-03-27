@@ -5,46 +5,49 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 function escapeForShell(str: string): string {
-    return str.replace(/'/g, "'\\''");
+  return str.replace(/'/g, "'\\''");
 }
 
 export const AppleNotesTool: ToolImplementation = {
-    definition: {
-        name: "apple_notes",
-        description:
-            "Manage macOS Notes — list, search, or create notes.",
-        parameters: {
-            type: "object",
-            properties: {
-                action: {
-                    type: "string",
-                    enum: ["list", "search", "create"],
-                    description: "Action to perform: list recent notes, search by keyword, or create a new note.",
-                },
-                keyword: {
-                    type: "string",
-                    description: "Search keyword (required for 'search').",
-                },
-                title: {
-                    type: "string",
-                    description: "Note title (required for 'create').",
-                },
-                body: {
-                    type: "string",
-                    description: "Note body content (required for 'create').",
-                },
-            },
-            required: ["action"],
+  definition: {
+    name: "apple_notes",
+    description: "Manage macOS Notes — list, search, or create notes.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "search", "create"],
+          description:
+            "Action to perform: list recent notes, search by keyword, or create a new note.",
         },
+        keyword: {
+          type: "string",
+          description: "Search keyword (required for 'search').",
+        },
+        title: {
+          type: "string",
+          description: "Note title (required for 'create').",
+        },
+        body: {
+          type: "string",
+          description: "Note body content (required for 'create').",
+        },
+      },
+      required: ["action"],
     },
+  },
 
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
-        const action = args.action as string;
+  async execute(
+    args: Record<string, unknown>,
+    _context: ToolContext,
+  ): Promise<string> {
+    const action = args.action as string;
 
-        try {
-            switch (action) {
-                case "list": {
-                    const script = `
+    try {
+      switch (action) {
+        case "list": {
+          const script = `
 tell application "Notes"
     set output to ""
     set noteList to every note of default account
@@ -61,17 +64,20 @@ tell application "Notes"
     end if
     return output
 end tell`;
-                    const { stdout } = await execAsync(`osascript -e '${escapeForShell(script)}'`, { timeout: 15000 });
-                    return stdout.trim() || "No notes found.";
-                }
+          const { stdout } = await execAsync(
+            `osascript -e '${escapeForShell(script)}'`,
+            { timeout: 15000 },
+          );
+          return stdout.trim() || "No notes found.";
+        }
 
-                case "search": {
-                    const keyword = args.keyword as string;
-                    if (!keyword) {
-                        return "Error: 'search' action requires a keyword parameter.";
-                    }
+        case "search": {
+          const keyword = args.keyword as string;
+          if (!keyword) {
+            return "Error: 'search' action requires a keyword parameter.";
+          }
 
-                    const script = `
+          const script = `
 tell application "Notes"
     set output to ""
     set searchTerm to "${escapeForShell(keyword)}"
@@ -90,33 +96,39 @@ tell application "Notes"
     end if
     return output
 end tell`;
-                    const { stdout } = await execAsync(`osascript -e '${escapeForShell(script)}'`, { timeout: 15000 });
-                    return stdout.trim() || `No notes found matching "${keyword}".`;
-                }
+          const { stdout } = await execAsync(
+            `osascript -e '${escapeForShell(script)}'`,
+            { timeout: 15000 },
+          );
+          return stdout.trim() || `No notes found matching "${keyword}".`;
+        }
 
-                case "create": {
-                    const title = args.title as string;
-                    const body = args.body as string;
-                    if (!title || !body) {
-                        return "Error: 'create' action requires title and body parameters.";
-                    }
+        case "create": {
+          const title = args.title as string;
+          const body = args.body as string;
+          if (!title || !body) {
+            return "Error: 'create' action requires title and body parameters.";
+          }
 
-                    const script = `
+          const script = `
 tell application "Notes"
     set noteBody to "<h1>${escapeForShell(title)}</h1><br>" & "${escapeForShell(body)}"
     make new note at default account with properties {name:"${escapeForShell(title)}", body:noteBody}
     return "Note created: ${escapeForShell(title)}"
 end tell`;
-                    const { stdout } = await execAsync(`osascript -e '${escapeForShell(script)}'`, { timeout: 15000 });
-                    return stdout.trim() || `Note "${title}" created successfully.`;
-                }
-
-                default:
-                    return `Error: Unknown action "${action}". Use "list", "search", or "create".`;
-            }
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            return `Error interacting with Notes: ${msg}`;
+          const { stdout } = await execAsync(
+            `osascript -e '${escapeForShell(script)}'`,
+            { timeout: 15000 },
+          );
+          return stdout.trim() || `Note "${title}" created successfully.`;
         }
-    },
+
+        default:
+          return `Error: Unknown action "${action}". Use "list", "search", or "create".`;
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return `Error interacting with Notes: ${msg}`;
+    }
+  },
 };

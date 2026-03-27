@@ -5,13 +5,18 @@
       "defaultModel": "gpt-oss:120b",
       "defaultEmbeddingModel": "gpt-oss:120b"
     },
+    "minimax": {
+      "name": "minimax",
+      "apiKey": "sk-cp-K4bx8kHCDEX6sQhBalBVhTZh5LoO6yoeu-LFGgFfGE0xAwVu52KiqyQoQWvavsinnrBuiJNOA68CoCsLn-6UHyWxlnAiEPpIZ1kt1xXnqkLpob92YhTt-Gw",
+      "defaultModel": "MiniMax-M2.7"
+    },
     "anthropic": {
       "apiKey": "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",
       "defaultModel": "claude-sonnet-4-6"
     }
   },
-  "defaultProvider": "ollama",
-  "defaultModel": "gpt-oss:120b",
+  "defaultProvider": "minimax",
+  "defaultModel": "MiniMax-M2.7",
   "workspace": "./workspace",
   "gateway": {
     "port": 3077,

@@ -209,10 +209,7 @@ export class StackOwlEventBus implements EventBus {
     });
   }
 
-  off<T extends EventType>(
-    type: T,
-    handler: (...args: any[]) => any,
-  ): void {
+  off<T extends EventType>(type: T, handler: (...args: any[]) => any): void {
     this.emitter.off(type, handler);
   }
 

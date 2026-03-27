@@ -118,9 +118,7 @@ function toAnthropicMessages(messages: ChatMessage[]): {
   return { system, messages: result };
 }
 
-function toAnthropicTools(
-  tools: ToolDefinition[],
-): Array<{
+function toAnthropicTools(tools: ToolDefinition[]): Array<{
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
@@ -157,7 +155,7 @@ export class AnthropicNativeProvider implements ModelProvider {
 
     const response = await this.client.messages.create({
       model: model ?? this.defaultModel,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: options?.maxTokens ?? 8192,
       system: system || undefined,
       messages: anthropicMessages as any,
       temperature: options?.temperature,
@@ -176,8 +174,7 @@ export class AnthropicNativeProvider implements ModelProvider {
       usage: {
         promptTokens: response.usage.input_tokens,
         completionTokens: response.usage.output_tokens,
-        totalTokens:
-          response.usage.input_tokens + response.usage.output_tokens,
+        totalTokens: response.usage.input_tokens + response.usage.output_tokens,
       },
     };
   }
@@ -193,7 +190,7 @@ export class AnthropicNativeProvider implements ModelProvider {
 
     const params: any = {
       model: model ?? this.defaultModel,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: options?.maxTokens ?? 8192,
       system: system || undefined,
       messages: anthropicMessages,
       temperature: options?.temperature,
@@ -227,8 +224,7 @@ export class AnthropicNativeProvider implements ModelProvider {
       usage: {
         promptTokens: response.usage.input_tokens,
         completionTokens: response.usage.output_tokens,
-        totalTokens:
-          response.usage.input_tokens + response.usage.output_tokens,
+        totalTokens: response.usage.input_tokens + response.usage.output_tokens,
       },
     };
   }
@@ -244,7 +240,7 @@ export class AnthropicNativeProvider implements ModelProvider {
 
     const params: any = {
       model: model ?? this.defaultModel,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: options?.maxTokens ?? 8192,
       system: system || undefined,
       messages: anthropicMessages,
       temperature: options?.temperature,
@@ -357,7 +353,7 @@ export class AnthropicNativeProvider implements ModelProvider {
 
     const stream = this.client.messages.stream({
       model: model ?? this.defaultModel,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: options?.maxTokens ?? 8192,
       system: system || undefined,
       messages: anthropicMessages as any,
       temperature: options?.temperature,

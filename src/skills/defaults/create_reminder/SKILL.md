@@ -17,11 +17,13 @@ Set a timed reminder using macOS notification system.
    - Delay time (e.g., "in 30 minutes", "in 2 hours")
 
 2. **Convert the delay to seconds:**
+
    ```bash
    run_shell_command("echo $((30 * 60))")
    ```
 
 3. **Schedule the reminder using a background process:**
+
    ```bash
    run_shell_command("(sleep <seconds> && osascript -e 'display notification \"<message>\" with title \"StackOwl Reminder\"') &")
    ```
@@ -34,11 +36,13 @@ Set a timed reminder using macOS notification system.
 ## Examples
 
 ### Remind in 30 minutes
+
 ```bash
 run_shell_command("(sleep 1800 && osascript -e 'display notification \"Time to stretch!\" with title \"StackOwl Reminder\"') &")
 ```
 
 ### Remind in 2 hours
+
 ```bash
 run_shell_command("(sleep 7200 && osascript -e 'display notification \"Check the oven\" with title \"StackOwl Reminder\"') &")
 ```

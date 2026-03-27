@@ -9,9 +9,15 @@
  * matching and the existing BM25 TF-IDF for fast candidate lookup.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { log } from '../../logger.js';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+} from "node:fs";
+import { join } from "node:path";
+import { log } from "../../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -49,7 +55,7 @@ export class RecipeStore {
   private recipes: Map<string, Recipe> = new Map();
 
   constructor(workspacePath: string) {
-    this.recipesDir = join(workspacePath, 'recipes');
+    this.recipesDir = join(workspacePath, "recipes");
     if (!existsSync(this.recipesDir)) {
       mkdirSync(this.recipesDir, { recursive: true });
     }
@@ -59,10 +65,12 @@ export class RecipeStore {
   async init(): Promise<void> {
     if (!existsSync(this.recipesDir)) return;
 
-    const files = readdirSync(this.recipesDir).filter(f => f.endsWith('.json'));
+    const files = readdirSync(this.recipesDir).filter((f) =>
+      f.endsWith(".json"),
+    );
     for (const file of files) {
       try {
-        const raw = readFileSync(join(this.recipesDir, file), 'utf-8');
+        const raw = readFileSync(join(this.recipesDir, file), "utf-8");
         const recipe = JSON.parse(raw) as Recipe;
         this.recipes.set(recipe.id, recipe);
       } catch {
@@ -76,8 +84,10 @@ export class RecipeStore {
   save(recipe: Recipe): void {
     this.recipes.set(recipe.id, recipe);
     const path = join(this.recipesDir, `${recipe.id}.json`);
-    writeFileSync(path, JSON.stringify(recipe, null, 2), 'utf-8');
-    log.engine.info(`[RecipeStore] Saved recipe: "${recipe.task}" (${recipe.steps.length} steps)`);
+    writeFileSync(path, JSON.stringify(recipe, null, 2), "utf-8");
+    log.engine.info(
+      `[RecipeStore] Saved recipe: "${recipe.task}" (${recipe.steps.length} steps)`,
+    );
   }
 
   /** Update an existing recipe (bump success/fail counts, lastUsed) */
@@ -87,7 +97,7 @@ export class RecipeStore {
     const updated = { ...existing, ...updates };
     this.recipes.set(id, updated);
     const path = join(this.recipesDir, `${id}.json`);
-    writeFileSync(path, JSON.stringify(updated, null, 2), 'utf-8');
+    writeFileSync(path, JSON.stringify(updated, null, 2), "utf-8");
   }
 
   /** Get a recipe by ID */
@@ -104,9 +114,15 @@ export class RecipeStore {
    * Find recipes matching a task description.
    * Uses simple word overlap scoring — no extra model calls needed.
    */
-  findMatching(taskDescription: string, maxResults = 3): { recipe: Recipe; score: number }[] {
+  findMatching(
+    taskDescription: string,
+    maxResults = 3,
+  ): { recipe: Recipe; score: number }[] {
     const queryWords = new Set(
-      taskDescription.toLowerCase().split(/\s+/).filter(w => w.length > 2),
+      taskDescription
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 2),
     );
     if (queryWords.size === 0) return [];
 
@@ -114,10 +130,10 @@ export class RecipeStore {
 
     for (const recipe of this.recipes.values()) {
       const recipeWords = new Set(
-        `${recipe.task} ${recipe.tags.join(' ')} ${recipe.apps.join(' ')}`
+        `${recipe.task} ${recipe.tags.join(" ")} ${recipe.apps.join(" ")}`
           .toLowerCase()
           .split(/\s+/)
-          .filter(w => w.length > 2),
+          .filter((w) => w.length > 2),
       );
 
       // Jaccard similarity
@@ -138,17 +154,19 @@ export class RecipeStore {
       }
     }
 
-    return scored
-      .sort((a, b) => b.score - a.score)
-      .slice(0, maxResults);
+    return scored.sort((a, b) => b.score - a.score).slice(0, maxResults);
   }
 
   /** Generate a recipe ID from a task description */
   static makeId(task: string): string {
-    return task
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 60) + '-' + Date.now().toString(36);
+    return (
+      task
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 60) +
+      "-" +
+      Date.now().toString(36)
+    );
   }
 }

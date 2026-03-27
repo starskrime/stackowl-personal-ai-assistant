@@ -38,7 +38,18 @@ export const ScreenshotTool: ToolImplementation = {
     args: Record<string, unknown>,
     context: ToolContext,
   ): Promise<string> {
-    const filename = (args["filename"] as string) || "screenshot.png";
+    const rawFilename = (args["filename"] as string) || "screenshot.png";
+
+    const safeChars = /^[a-zA-Z0-9_\-. ]+$/;
+    if (!safeChars.test(rawFilename)) {
+      return `Screenshot failed: filename contains invalid characters. Use only alphanumeric, dashes, underscores, spaces, and dots.`;
+    }
+
+    if (rawFilename.length > 255) {
+      return `Screenshot failed: filename too long (max 255 characters).`;
+    }
+
+    const filename = rawFilename;
     const cwd = context.cwd || process.cwd();
     const outDir = resolve(cwd, "screenshots");
 
@@ -48,16 +59,36 @@ export const ScreenshotTool: ToolImplementation = {
 
     const outPath = join(outDir, filename);
 
+    const resolvedPath = resolve(outPath);
+    const resolvedDir = resolve(outDir);
+    if (
+      !resolvedPath.startsWith(
+        resolvedDir + (process.platform === "win32" ? "\\" : "/"),
+      )
+    ) {
+      return `Screenshot failed: path traversal detected.`;
+    }
+
+    if (process.platform !== "darwin") {
+      const hint =
+        process.platform === "linux"
+          ? " On Linux/Docker, screenshot requires a display server (X11) which is not available in containerized environments."
+          : " This tool requires macOS.";
+      return `Screenshot failed: not supported on ${process.platform}.${hint}`;
+    }
+
     try {
-      // macOS screencapture
       await execAsync(`screencapture -x "${outPath}"`, { timeout: 10_000 });
 
       if (!existsSync(outPath)) {
-        return "Screenshot failed — file was not created. This tool requires macOS with screencapture.";
+        return "Screenshot failed — file was not created. Ensure macOS screencapture is available and has screen recording permissions.";
       }
 
       return `Screenshot saved to: ${outPath}\nUse send_file to deliver it to the user.`;
     } catch (error: any) {
+      if (error.message.includes("screencapture: cannot hook")) {
+        return "Screenshot failed: screen recording permission not granted. Go to System Preferences > Security & Privacy > Privacy > Screen Recording and enable terminal/script runner access.";
+      }
       return `Screenshot failed: ${error.message}`;
     }
   },

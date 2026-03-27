@@ -45,6 +45,8 @@ steps:
     depends_on: [ping, dns, public_ip]
     inputs: [ping.output, dns.output, public_ip.output]
 ---
+
 # Network Check (Structured)
+
 Automated network health check using structured execution.
 Steps run in parallel where possible and results are analyzed by the LLM.

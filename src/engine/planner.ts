@@ -106,7 +106,10 @@ export class TaskPlanner {
     try {
       let jsonStr = response.content.trim();
       if (jsonStr.startsWith("```json"))
-        jsonStr = jsonStr.replace(/^```json/, "").replace(/```$/, "").trim();
+        jsonStr = jsonStr
+          .replace(/^```json/, "")
+          .replace(/```$/, "")
+          .trim();
       else if (jsonStr.startsWith("```"))
         jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "").trim();
 
@@ -125,7 +128,9 @@ export class TaskPlanner {
       };
     } catch {
       // Fallback: single-step plan
-      log.engine.warn("[Planner] Failed to parse plan — falling back to single step");
+      log.engine.warn(
+        "[Planner] Failed to parse plan — falling back to single step",
+      );
       return {
         goal: userMessage.slice(0, 100),
         estimatedComplexity: "simple",

@@ -18,6 +18,7 @@ Scaffold a new project with best-practice structure.
    - Static HTML/CSS/JS
 
 2. **Create the directory structure:**
+
    ```bash
    run_shell_command("mkdir -p <project_name>/{src,tests,docs}")
    ```
@@ -25,11 +26,13 @@ Scaffold a new project with best-practice structure.
 3. **Initialize based on type:**
 
    **Node.js:**
+
    ```bash
    run_shell_command("cd <project_name> && npm init -y && npx tsc --init")
    ```
 
    **Python:**
+
    ```bash
    run_shell_command("cd <project_name> && python3 -m venv venv && echo 'pytest\nblack\nmypy' > requirements.txt")
    ```
@@ -47,6 +50,7 @@ Scaffold a new project with best-practice structure.
 ## Examples
 
 ### Create a TypeScript project
+
 ```bash
 run_shell_command("mkdir -p my-app/{src,tests,docs} && cd my-app && npm init -y")
 ```

@@ -12,6 +12,7 @@ Manage a persistent todo list stored at `~/stackowl_todos.md`.
 ## Steps
 
 1. **Read the current todo file:**
+
    ```bash
    run_shell_command("cat ~/stackowl_todos.md 2>/dev/null || echo '# Todo List'")
    ```
@@ -19,21 +20,25 @@ Manage a persistent todo list stored at `~/stackowl_todos.md`.
 2. **Perform the requested action:**
 
    **Add a task:**
+
    ```bash
    run_shell_command("echo '- [ ] <task description>' >> ~/stackowl_todos.md")
    ```
 
    **Complete a task** (change `[ ]` to `[x]`):
+
    ```bash
    run_shell_command("sed -i '' 's/- \[ \] <task>/- [x] <task>/' ~/stackowl_todos.md")
    ```
 
    **Delete a task:**
+
    ```bash
    run_shell_command("sed -i '' '/<task>/d' ~/stackowl_todos.md")
    ```
 
    **List all tasks:**
+
    ```bash
    run_shell_command("cat ~/stackowl_todos.md")
    ```
@@ -43,11 +48,13 @@ Manage a persistent todo list stored at `~/stackowl_todos.md`.
 ## Examples
 
 ### Add a task
+
 ```bash
 run_shell_command("echo '- [ ] Buy groceries' >> ~/stackowl_todos.md")
 ```
 
 ### Complete a task
+
 ```bash
 run_shell_command("sed -i '' 's/- \[ \] Buy groceries/- [x] Buy groceries/' ~/stackowl_todos.md")
 ```

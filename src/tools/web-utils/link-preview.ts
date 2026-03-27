@@ -4,7 +4,7 @@ function extractMeta(html: string, property: string): string | null {
   // Try og: property first
   const ogRe = new RegExp(
     `<meta[^>]+property=["']og:${property}["'][^>]+content=["']([^"']+)["']`,
-    "i"
+    "i",
   );
   let match = ogRe.exec(html);
   if (match) return match[1];
@@ -12,7 +12,7 @@ function extractMeta(html: string, property: string): string | null {
   // Try reversed attribute order (content before property)
   const ogRevRe = new RegExp(
     `<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:${property}["']`,
-    "i"
+    "i",
   );
   match = ogRevRe.exec(html);
   if (match) return match[1];
@@ -23,14 +23,14 @@ function extractMeta(html: string, property: string): string | null {
 function extractMetaName(html: string, name: string): string | null {
   const re = new RegExp(
     `<meta[^>]+name=["']${name}["'][^>]+content=["']([^"']+)["']`,
-    "i"
+    "i",
   );
   let match = re.exec(html);
   if (match) return match[1];
 
   const revRe = new RegExp(
     `<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${name}["']`,
-    "i"
+    "i",
   );
   match = revRe.exec(html);
   if (match) return match[1];
@@ -78,7 +78,8 @@ export const LinkPreviewTool: ToolImplementation = {
 
       const html = await resp.text();
 
-      const title = extractMeta(html, "title") ?? extractTitle(html) ?? "No title found";
+      const title =
+        extractMeta(html, "title") ?? extractTitle(html) ?? "No title found";
       const description =
         extractMeta(html, "description") ??
         extractMetaName(html, "description") ??

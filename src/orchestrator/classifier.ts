@@ -8,14 +8,15 @@
  * and reasoning — all from one model call.
  */
 
-import type { ModelProvider, ChatMessage } from '../providers/base.js';
-import type { OwlInstance } from '../owls/persona.js';
-import type { TaskStrategy, StrategyType } from './types.js';
-import { log } from '../logger.js';
+import type { ModelProvider, ChatMessage } from "../providers/base.js";
+import type { OwlInstance } from "../owls/persona.js";
+import type { TaskStrategy, StrategyType } from "./types.js";
+import { log } from "../logger.js";
 
 // ─── Quick Exit Patterns ─────────────────────────────────────
 
-const GREETING_PATTERNS = /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|goodbye|good morning|good evening|gm|gn)\b/i;
+const GREETING_PATTERNS =
+  /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|goodbye|good morning|good evening|gm|gn)\b/i;
 
 function isTrivia(text: string): boolean {
   const trimmed = text.trim();
@@ -28,36 +29,38 @@ function isTrivia(text: string): boolean {
 
 function makeDefault(owlName: string): TaskStrategy {
   return {
-    strategy: 'STANDARD',
-    reasoning: 'Default strategy',
+    strategy: "STANDARD",
+    reasoning: "Default strategy",
     confidence: 0.5,
-    owlAssignments: [{ owlName, role: 'lead', reasoning: 'Default owl' }],
+    owlAssignments: [{ owlName, role: "lead", reasoning: "Default owl" }],
   };
 }
 
 function makeDirect(owlName: string): TaskStrategy {
   return {
-    strategy: 'DIRECT',
-    reasoning: 'Trivial message, no tools needed',
+    strategy: "DIRECT",
+    reasoning: "Trivial message, no tools needed",
     confidence: 1.0,
-    owlAssignments: [{ owlName, role: 'lead', reasoning: 'Default owl' }],
+    owlAssignments: [{ owlName, role: "lead", reasoning: "Default owl" }],
   };
 }
 
 // ─── Owl Summary for Prompt ──────────────────────────────────
 
 function formatOwlsForPrompt(owls: OwlInstance[]): string {
-  return owls.map(owl => {
-    const specialties = owl.persona.specialties?.join(', ') || 'general';
-    const expertise = owl.dna.expertiseGrowth
-      ? Object.entries(owl.dna.expertiseGrowth)
-          .sort(([, a], [, b]) => b - a)
-          .slice(0, 3)
-          .map(([k, v]) => `${k}(${v.toFixed(1)})`)
-          .join(', ')
-      : '';
-    return `- ${owl.persona.name} (${owl.persona.type}): specialties=[${specialties}], challenge=${owl.dna.evolvedTraits.challengeLevel}${expertise ? `, expertise=[${expertise}]` : ''}`;
-  }).join('\n');
+  return owls
+    .map((owl) => {
+      const specialties = owl.persona.specialties?.join(", ") || "general";
+      const expertise = owl.dna.expertiseGrowth
+        ? Object.entries(owl.dna.expertiseGrowth)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 3)
+            .map(([k, v]) => `${k}(${v.toFixed(1)})`)
+            .join(", ")
+        : "";
+      return `- ${owl.persona.name} (${owl.persona.type}): specialties=[${specialties}], challenge=${owl.dna.evolvedTraits.challengeLevel}${expertise ? `, expertise=[${expertise}]` : ""}`;
+    })
+    .join("\n");
 }
 
 // ─── Classify Strategy ───────────────────────────────────────
@@ -73,9 +76,10 @@ export async function classifyStrategy(
   recentContext: ChatMessage[],
   provider: ModelProvider,
 ): Promise<TaskStrategy> {
-  const defaultOwl = owls.find(o => o.persona.name === 'Noctua')?.persona.name
-    ?? owls[0]?.persona.name
-    ?? 'Noctua';
+  const defaultOwl =
+    owls.find((o) => o.persona.name === "Noctua")?.persona.name ??
+    owls[0]?.persona.name ??
+    "Noctua";
 
   // Quick exit for trivial messages
   if (isTrivia(userMessage)) {
@@ -83,18 +87,18 @@ export async function classifyStrategy(
   }
 
   const owlSummary = formatOwlsForPrompt(owls);
-  const toolSummary = toolNames.slice(0, 20).join(', ');
+  const toolSummary = toolNames.slice(0, 20).join(", ");
   const contextSummary = recentContext
     .slice(-3)
-    .map(m => `${m.role}: ${(m.content ?? '').slice(0, 150)}`)
-    .join('\n');
+    .map((m) => `${m.role}: ${(m.content ?? "").slice(0, 150)}`)
+    .join("\n");
 
   const prompt =
     `You are a task routing classifier for an AI assistant with multiple specialist agents (owls). ` +
     `Given a user message, decide the optimal execution strategy.\n\n` +
     `AVAILABLE OWLS:\n${owlSummary}\n\n` +
     `AVAILABLE TOOLS: ${toolSummary}\n\n` +
-    (contextSummary ? `RECENT CONVERSATION:\n${contextSummary}\n\n` : '') +
+    (contextSummary ? `RECENT CONVERSATION:\n${contextSummary}\n\n` : "") +
     `STRATEGIES:\n` +
     `- DIRECT: Simple greetings, thanks, trivial questions. No tools. Use default owl (Noctua).\n` +
     `- STANDARD: Most requests. Single owl with tool access. Default when unsure.\n` +
@@ -124,38 +128,57 @@ export async function classifyStrategy(
 
   try {
     const response = await provider.chat(
-      [{ role: 'user', content: prompt }],
+      [{ role: "user", content: prompt }],
       undefined,
       { temperature: 0.1, maxTokens: 512 },
     );
 
-    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+    // Strip thinking tags before extracting JSON — MiniMax injects <think> blocks
+    const cleanContent = response.content
+      .replace(/<\/?think[^>]*>[\s\S]*?<\/?think[^>]*>/gi, "")
+      .replace(/<think>[\s\S]*?<\/think>/gi, "");
+
+    const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      log.engine.warn('[Classifier] No JSON in response, defaulting to STANDARD');
+      log.engine.warn(
+        "[Classifier] No JSON in response, defaulting to STANDARD",
+      );
       return makeDefault(defaultOwl);
     }
 
     const parsed = JSON.parse(jsonMatch[0]) as TaskStrategy;
 
     // Validate strategy type
-    const validStrategies: StrategyType[] = ['DIRECT', 'STANDARD', 'SPECIALIST', 'PLANNED', 'PARLIAMENT', 'SWARM'];
+    const validStrategies: StrategyType[] = [
+      "DIRECT",
+      "STANDARD",
+      "SPECIALIST",
+      "PLANNED",
+      "PARLIAMENT",
+      "SWARM",
+    ];
     if (!validStrategies.includes(parsed.strategy)) {
-      log.engine.warn(`[Classifier] Invalid strategy "${parsed.strategy}", defaulting to STANDARD`);
+      log.engine.warn(
+        `[Classifier] Invalid strategy "${parsed.strategy}", defaulting to STANDARD`,
+      );
       return makeDefault(defaultOwl);
     }
 
     // Ensure at least one owl assignment
     if (!parsed.owlAssignments || parsed.owlAssignments.length === 0) {
-      parsed.owlAssignments = [{ owlName: defaultOwl, role: 'lead', reasoning: 'Fallback' }];
+      parsed.owlAssignments = [
+        { owlName: defaultOwl, role: "lead", reasoning: "Fallback" },
+      ];
     }
 
     // Validate owl names exist
-    const owlNames = new Set(owls.map(o => o.persona.name));
+    const owlNames = new Set(owls.map((o) => o.persona.name));
     for (const assignment of parsed.owlAssignments) {
       if (!owlNames.has(assignment.owlName)) {
         // Try case-insensitive match
-        const match = owls.find(o =>
-          o.persona.name.toLowerCase() === assignment.owlName.toLowerCase(),
+        const match = owls.find(
+          (o) =>
+            o.persona.name.toLowerCase() === assignment.owlName.toLowerCase(),
         );
         assignment.owlName = match?.persona.name ?? defaultOwl;
       }
@@ -165,8 +188,9 @@ export async function classifyStrategy(
     if (parsed.subtasks) {
       for (const sub of parsed.subtasks) {
         if (!owlNames.has(sub.assignedOwl)) {
-          const match = owls.find(o =>
-            o.persona.name.toLowerCase() === sub.assignedOwl.toLowerCase(),
+          const match = owls.find(
+            (o) =>
+              o.persona.name.toLowerCase() === sub.assignedOwl.toLowerCase(),
           );
           sub.assignedOwl = match?.persona.name ?? defaultOwl;
         }
@@ -175,9 +199,9 @@ export async function classifyStrategy(
 
     log.engine.info(
       `[Classifier] "${userMessage.slice(0, 60)}..." → ${parsed.strategy} ` +
-      `(confidence: ${parsed.confidence?.toFixed(2)}) ` +
-      `owls: [${parsed.owlAssignments.map(a => a.owlName).join(', ')}] ` +
-      `reason: ${parsed.reasoning}`,
+        `(confidence: ${parsed.confidence?.toFixed(2)}) ` +
+        `owls: [${parsed.owlAssignments.map((a) => a.owlName).join(", ")}] ` +
+        `reason: ${parsed.reasoning}`,
     );
 
     return parsed;

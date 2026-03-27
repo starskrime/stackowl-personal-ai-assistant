@@ -4,9 +4,13 @@ description: Draft a structured blog post with title, introduction, sections, co
 openclaw:
   emoji: "✏️"
 ---
+
 # Blog Writer
+
 Draft structured blog posts.
+
 ## Steps
+
 1. **Collect from user:** topic, target audience, tone, key points.
 2. **Research the topic:**
    ```
@@ -22,12 +26,17 @@ Draft structured blog posts.
    ```bash
    write_file("~/Documents/blog/<title_slug>.md", "<content>")
    ```
+
 ## Examples
+
 ### Draft a tech blog
+
 ```
 web_search query="AI agents practical applications 2026"
 write_file("~/Documents/blog/ai_agents_guide.md", "<drafted content>")
 ```
+
 ## Error Handling
+
 - **No topic specified:** Ask user for the topic and target audience.
 - **Research returns thin results:** Rely on existing knowledge and note sources.

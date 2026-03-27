@@ -4,9 +4,13 @@ description: Analyze and optimize web content for search engine rankings with ke
 openclaw:
   emoji: "🔎"
 ---
+
 # SEO Optimizer
+
 Optimize content for search engines.
+
 ## Steps
+
 1. **Read the content:**
    ```bash
    read_file("<file_path>")
@@ -24,10 +28,15 @@ Optimize content for search engines.
    web_search query="<topic> related keywords search volume"
    ```
 4. **Present SEO report** with actionable improvements.
+
 ## Examples
+
 ### Analyze a blog post
+
 ```bash
 read_file("blog/my_article.md")
 ```
+
 ## Error Handling
+
 - **No keywords specified:** Suggest keywords based on content analysis.

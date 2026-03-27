@@ -1,4 +1,4 @@
-export type ParticipantRole = 'owner' | 'member' | 'observer';
+export type ParticipantRole = "owner" | "member" | "observer";
 
 export interface Participant {
   userId: string;
@@ -30,7 +30,7 @@ export interface CollabMessage {
   id: string;
   userId: string;
   displayName: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   timestamp: string;
   replyTo?: string;
@@ -41,7 +41,7 @@ export interface SessionSettings {
   maxParticipants: number;
   allowObservers: boolean;
   roundRobin: boolean;
-  decisionMode: 'consensus' | 'majority' | 'owner_decides';
+  decisionMode: "consensus" | "majority" | "owner_decides";
   autoSummarize: boolean;
 }
 

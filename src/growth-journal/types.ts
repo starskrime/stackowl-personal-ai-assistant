@@ -4,7 +4,7 @@
 
 export interface JournalEntry {
   id: string;
-  period: 'weekly' | 'monthly';
+  period: "weekly" | "monthly";
   startDate: string;
   endDate: string;
   sections: {

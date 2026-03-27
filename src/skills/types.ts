@@ -131,7 +131,7 @@ export interface Skill {
 // ─── Structured Skill Execution ──────────────────────────────────
 
 export interface SkillParameter {
-  type: 'string' | 'number' | 'boolean';
+  type: "string" | "number" | "boolean";
   description: string;
   required?: boolean;
   default?: unknown;
@@ -142,7 +142,7 @@ export interface SkillStep {
   /** Tool to call. Mutually exclusive with type: 'llm'. */
   tool?: string;
   /** Step type — defaults to 'tool' when tool is set. */
-  type?: 'tool' | 'llm';
+  type?: "tool" | "llm";
   /** Tool arguments with {{param}} template interpolation. */
   args?: Record<string, unknown>;
   /** LLM prompt for type: 'llm' steps. Supports {{param}} and {{stepId.output}}. */
@@ -159,7 +159,12 @@ export interface SkillStep {
   optional?: boolean;
 }
 
-export type SkillStepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+export type SkillStepStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "failed"
+  | "skipped";
 
 export interface SkillStepResult {
   stepId: string;
@@ -171,7 +176,7 @@ export interface SkillStepResult {
 
 export interface SkillExecutionResult {
   skillName: string;
-  status: 'success' | 'failed';
+  status: "success" | "failed";
   stepResults: SkillStepResult[];
   /** Final output text (from last LLM step or concatenated tool outputs). */
   finalOutput: string;

@@ -22,15 +22,15 @@
  *   - Constitutional AI: critique → revision loop
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { Skill } from './types.js';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { Skill } from "./types.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
 export interface DimensionScore {
-  score: number;         // 0.0–1.0
-  feedback: string;      // specific, actionable criticism
+  score: number; // 0.0–1.0
+  feedback: string; // specific, actionable criticism
 }
 
 export interface CritiqueResult {
@@ -60,19 +60,19 @@ const GENERIC_NAME_PATTERNS = [
 ];
 
 function isGenericName(name: string): boolean {
-  return GENERIC_NAME_PATTERNS.some(p => p.test(name));
+  return GENERIC_NAME_PATTERNS.some((p) => p.test(name));
 }
 
 function hasConcreteInstructions(instructions: string): boolean {
   // Concrete instructions contain: numbered steps, shell commands, specific tool calls
   const concreteMarkers = [
-    /\d+\.\s+/,                // numbered list
+    /\d+\.\s+/, // numbered list
     /run_shell_command|read_file|write_file|web_crawl|web_fetch/i,
-    /```[\s\S]+```/,           // code block
-    /\$\s*\w+|`[^`]+`/,       // inline commands
+    /```[\s\S]+```/, // code block
+    /\$\s*\w+|`[^`]+`/, // inline commands
     /step \d+/i,
   ];
-  return concreteMarkers.some(p => p.test(instructions));
+  return concreteMarkers.some((p) => p.test(instructions));
 }
 
 // ─── Critic ──────────────────────────────────────────────────────
@@ -88,7 +88,9 @@ export class SkillCritic {
     try {
       return await this.critiqueWithLLM(skill);
     } catch (err) {
-      log.engine.warn(`[SkillCritic] LLM critique failed for "${skill.name}", using heuristic: ${err instanceof Error ? err.message : String(err)}`);
+      log.engine.warn(
+        `[SkillCritic] LLM critique failed for "${skill.name}", using heuristic: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return this.critiqueHeuristic(skill);
     }
   }
@@ -120,13 +122,13 @@ export class SkillCritic {
       `}`;
 
     const response = await this.provider.chat(
-      [{ role: 'user', content: prompt }],
+      [{ role: "user", content: prompt }],
       undefined,
       { temperature: 0, maxTokens: 512 },
     );
 
     const match = response.content.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON in LLM critique response');
+    if (!match) throw new Error("No JSON in LLM critique response");
 
     const parsed = JSON.parse(match[0]) as {
       name_clarity: { score: number; feedback: string };
@@ -136,18 +138,30 @@ export class SkillCritic {
     };
 
     const nameScore = Math.max(0, Math.min(1, parsed.name_clarity.score));
-    const instrScore = Math.max(0, Math.min(1, parsed.instruction_clarity.score));
+    const instrScore = Math.max(
+      0,
+      Math.min(1, parsed.instruction_clarity.score),
+    );
     const trigScore = Math.max(0, Math.min(1, parsed.trigger_precision.score));
     const overall = nameScore * 0.25 + instrScore * 0.5 + trigScore * 0.25;
 
     return {
       skillName: skill.name,
-      nameClarityScore: { score: nameScore, feedback: parsed.name_clarity.feedback },
-      instructionClarityScore: { score: instrScore, feedback: parsed.instruction_clarity.feedback },
-      triggerPrecisionScore: { score: trigScore, feedback: parsed.trigger_precision.feedback },
+      nameClarityScore: {
+        score: nameScore,
+        feedback: parsed.name_clarity.feedback,
+      },
+      instructionClarityScore: {
+        score: instrScore,
+        feedback: parsed.instruction_clarity.feedback,
+      },
+      triggerPrecisionScore: {
+        score: trigScore,
+        feedback: parsed.trigger_precision.feedback,
+      },
       overallScore: overall,
       needsRewrite: overall < REWRITE_THRESHOLD,
-      rewriteDirective: parsed.rewrite_directive ?? '',
+      rewriteDirective: parsed.rewrite_directive ?? "",
     };
   }
 
@@ -155,35 +169,41 @@ export class SkillCritic {
   critiqueHeuristic(skill: Skill): CritiqueResult {
     // Name clarity
     let nameScore = 0.8;
-    let nameFeedback = 'Name looks descriptive.';
+    let nameFeedback = "Name looks descriptive.";
     if (isGenericName(skill.name)) {
       nameScore = 0.1;
       nameFeedback = `Name "${skill.name}" is generic. Use a verb-noun name like "summarize_webpage" or "send_weather_brief".`;
     } else if (skill.name.length < 5) {
       nameScore = 0.3;
-      nameFeedback = 'Name is too short to be descriptive.';
-    } else if (!skill.name.includes('_')) {
+      nameFeedback = "Name is too short to be descriptive.";
+    } else if (!skill.name.includes("_")) {
       nameScore = 0.6;
-      nameFeedback = 'Name should use snake_case with a verb (e.g., fetch_news, send_summary).';
+      nameFeedback =
+        "Name should use snake_case with a verb (e.g., fetch_news, send_summary).";
     }
 
     // Instruction clarity
     const hasSteps = hasConcreteInstructions(skill.instructions);
     const instrScore = hasSteps ? 0.8 : 0.3;
     const instrFeedback = hasSteps
-      ? 'Instructions contain concrete steps.'
-      : 'Instructions are vague. Add numbered steps with exact tool calls (run_shell_command, read_file, etc.).';
+      ? "Instructions contain concrete steps."
+      : "Instructions are vague. Add numbered steps with exact tool calls (run_shell_command, read_file, etc.).";
 
     // Trigger precision — heuristic: description length and specificity
     const descWords = skill.description.split(/\s+/).length;
     let trigScore = 0.7;
-    let trigFeedback = 'Trigger scope seems reasonable.';
+    let trigFeedback = "Trigger scope seems reasonable.";
     if (descWords < 4) {
       trigScore = 0.3;
-      trigFeedback = 'Description is too short to define a precise trigger. Add what type of user request activates this.';
-    } else if (skill.description.toLowerCase().includes('anything') || skill.description.toLowerCase().includes('all tasks')) {
+      trigFeedback =
+        "Description is too short to define a precise trigger. Add what type of user request activates this.";
+    } else if (
+      skill.description.toLowerCase().includes("anything") ||
+      skill.description.toLowerCase().includes("all tasks")
+    ) {
       trigScore = 0.1;
-      trigFeedback = 'Description is too broad — will trigger for everything. Narrow down to a specific domain.';
+      trigFeedback =
+        "Description is too broad — will trigger for everything. Narrow down to a specific domain.";
     }
 
     const overall = nameScore * 0.25 + instrScore * 0.5 + trigScore * 0.25;
@@ -200,9 +220,10 @@ export class SkillCritic {
       triggerPrecisionScore: { score: trigScore, feedback: trigFeedback },
       overallScore: overall,
       needsRewrite: overall < REWRITE_THRESHOLD,
-      rewriteDirective: issues.length > 0
-        ? `Rewrite this skill addressing: ${issues.join('; ')}`
-        : 'Minor improvements only.',
+      rewriteDirective:
+        issues.length > 0
+          ? `Rewrite this skill addressing: ${issues.join("; ")}`
+          : "Minor improvements only.",
     };
   }
 }

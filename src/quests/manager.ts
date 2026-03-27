@@ -5,13 +5,18 @@
  * Uses LLM to generate quest structure and check progress against pellets/sessions.
  */
 
-import type { ModelProvider } from '../providers/base.js';
-import type { PelletStore } from '../pellets/store.js';
-import type { Quest, QuestMilestone, QuestProgress, QuestDifficulty } from './types.js';
-import { join } from 'node:path';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
-import { existsSync, mkdirSync } from 'node:fs';
-import { log } from '../logger.js';
+import type { ModelProvider } from "../providers/base.js";
+import type { PelletStore } from "../pellets/store.js";
+import type {
+  Quest,
+  QuestMilestone,
+  QuestProgress,
+  QuestDifficulty,
+} from "./types.js";
+import { join } from "node:path";
+import { readFile, writeFile, readdir } from "node:fs/promises";
+import { existsSync, mkdirSync } from "node:fs";
+import { log } from "../logger.js";
 
 export class QuestManager {
   private provider: ModelProvider;
@@ -25,23 +30,27 @@ export class QuestManager {
   ) {
     this.provider = provider;
     this.pelletStore = pelletStore;
-    this.questDir = join(workspacePath, 'quests');
-    if (!existsSync(this.questDir)) mkdirSync(this.questDir, { recursive: true });
+    this.questDir = join(workspacePath, "quests");
+    if (!existsSync(this.questDir))
+      mkdirSync(this.questDir, { recursive: true });
   }
 
   /**
    * Create a new quest on a given topic.
    */
-  async create(topic: string, difficulty: QuestDifficulty = 'intermediate'): Promise<Quest> {
+  async create(
+    topic: string,
+    difficulty: QuestDifficulty = "intermediate",
+  ): Promise<Quest> {
     const milestones = await this.generateMilestones(topic, difficulty);
 
     const quest: Quest = {
       id: `quest_${Date.now()}`,
       title: `${topic} Learning Quest`,
-      description: '',
+      description: "",
       topic,
       difficulty,
-      status: 'active',
+      status: "active",
       milestones,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -50,13 +59,15 @@ export class QuestManager {
     // Generate description via LLM
     try {
       const resp = await this.provider.chat(
-        [{
-          role: 'user',
-          content:
-            `Write a 1-2 sentence description for a learning quest about "${topic}" ` +
-            `at ${difficulty} level with these milestones: ${milestones.map(m => m.title).join(', ')}. ` +
-            `Be motivating and specific.`,
-        }],
+        [
+          {
+            role: "user",
+            content:
+              `Write a 1-2 sentence description for a learning quest about "${topic}" ` +
+              `at ${difficulty} level with these milestones: ${milestones.map((m) => m.title).join(", ")}. ` +
+              `Be motivating and specific.`,
+          },
+        ],
         undefined,
         { temperature: 0.4, maxTokens: 100 },
       );
@@ -72,22 +83,25 @@ export class QuestManager {
   /**
    * List all quests, optionally filtered by status.
    */
-  async list(status?: Quest['status']): Promise<Quest[]> {
+  async list(status?: Quest["status"]): Promise<Quest[]> {
     if (!existsSync(this.questDir)) return [];
     const files = await readdir(this.questDir);
     const quests: Quest[] = [];
 
     for (const file of files) {
-      if (!file.endsWith('.json')) continue;
+      if (!file.endsWith(".json")) continue;
       try {
-        const data = await readFile(join(this.questDir, file), 'utf-8');
+        const data = await readFile(join(this.questDir, file), "utf-8");
         const quest: Quest = JSON.parse(data);
         if (!status || quest.status === status) quests.push(quest);
-      } catch { /* skip corrupt */ }
+      } catch {
+        /* skip corrupt */
+      }
     }
 
-    return quests.sort((a, b) =>
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    return quests.sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
   }
 
@@ -101,32 +115,36 @@ export class QuestManager {
     // Check milestones against pellets
     await this.checkMilestones(quest);
 
-    const completed = quest.milestones.filter(m => m.completed).length;
+    const completed = quest.milestones.filter((m) => m.completed).length;
     const total = quest.milestones.length;
-    const next = quest.milestones.find(m => !m.completed);
+    const next = quest.milestones.find((m) => !m.completed);
 
     let suggestion: string | undefined;
     if (next) {
       try {
         const resp = await this.provider.chat(
-          [{
-            role: 'user',
-            content:
-              `The user is working on a quest about "${quest.topic}". ` +
-              `Their next milestone is: "${next.title}" — ${next.description}. ` +
-              `They've completed ${completed}/${total} milestones so far. ` +
-              `Give a brief (1-2 sentence) actionable suggestion for what to do next.`,
-          }],
+          [
+            {
+              role: "user",
+              content:
+                `The user is working on a quest about "${quest.topic}". ` +
+                `Their next milestone is: "${next.title}" — ${next.description}. ` +
+                `They've completed ${completed}/${total} milestones so far. ` +
+                `Give a brief (1-2 sentence) actionable suggestion for what to do next.`,
+            },
+          ],
           undefined,
           { temperature: 0.3, maxTokens: 100 },
         );
         suggestion = resp.content.trim();
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
 
     // Auto-complete quest if all milestones done
-    if (completed === total && quest.status === 'active') {
-      quest.status = 'completed';
+    if (completed === total && quest.status === "active") {
+      quest.status = "completed";
       quest.completedAt = new Date().toISOString();
       await this.save(quest);
     }
@@ -145,12 +163,15 @@ export class QuestManager {
   /**
    * Pause or abandon a quest.
    */
-  async updateStatus(questId: string, status: Quest['status']): Promise<Quest | null> {
+  async updateStatus(
+    questId: string,
+    status: Quest["status"],
+  ): Promise<Quest | null> {
     const quest = await this.get(questId);
     if (!quest) return null;
     quest.status = status;
     quest.updatedAt = new Date().toISOString();
-    if (status === 'completed') quest.completedAt = new Date().toISOString();
+    if (status === "completed") quest.completedAt = new Date().toISOString();
     await this.save(quest);
     return quest;
   }
@@ -161,14 +182,17 @@ export class QuestManager {
     const path = join(this.questDir, `${id}.json`);
     if (!existsSync(path)) return null;
     try {
-      const data = await readFile(path, 'utf-8');
+      const data = await readFile(path, "utf-8");
       return JSON.parse(data);
     } catch {
       return null;
     }
   }
 
-  private async generateMilestones(topic: string, difficulty: QuestDifficulty): Promise<QuestMilestone[]> {
+  private async generateMilestones(
+    topic: string,
+    difficulty: QuestDifficulty,
+  ): Promise<QuestMilestone[]> {
     const countByDifficulty: Record<QuestDifficulty, number> = {
       beginner: 3,
       intermediate: 5,
@@ -179,28 +203,30 @@ export class QuestManager {
 
     try {
       const resp = await this.provider.chat(
-        [{
-          role: 'user',
-          content:
-            `Create ${count} learning milestones for a "${topic}" quest at ${difficulty} level.\n\n` +
-            `Respond with JSON array: [{"title":"...","description":"...","completionCriteria":"..."}]\n\n` +
-            `Milestones should be progressive (easy to hard) and specific. ` +
-            `Each completionCriteria should describe what evidence would prove mastery.`,
-        }],
+        [
+          {
+            role: "user",
+            content:
+              `Create ${count} learning milestones for a "${topic}" quest at ${difficulty} level.\n\n` +
+              `Respond with JSON array: [{"title":"...","description":"...","completionCriteria":"..."}]\n\n` +
+              `Milestones should be progressive (easy to hard) and specific. ` +
+              `Each completionCriteria should describe what evidence would prove mastery.`,
+          },
+        ],
         undefined,
         { temperature: 0.3, maxTokens: 800 },
       );
 
       const text = resp.content.trim();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) throw new Error('No JSON array found');
+      if (!jsonMatch) throw new Error("No JSON array found");
 
       const parsed = JSON.parse(jsonMatch[0]);
       return parsed.map((m: any, i: number) => ({
         id: `milestone_${Date.now()}_${i}`,
         title: m.title || `Milestone ${i + 1}`,
-        description: m.description || '',
-        completionCriteria: m.completionCriteria || '',
+        description: m.description || "",
+        completionCriteria: m.completionCriteria || "",
         completed: false,
         relatedPellets: [],
         order: i,
@@ -229,11 +255,20 @@ export class QuestManager {
 
       // Check if any pellet matches this milestone's criteria
       for (const pellet of topicPellets) {
-        const pelletText = `${pellet.title} ${pellet.content} ${pellet.tags.join(' ')}`.toLowerCase();
-        const criteriaWords = milestone.completionCriteria.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-        const matchCount = criteriaWords.filter(w => pelletText.includes(w)).length;
+        const pelletText =
+          `${pellet.title} ${pellet.content} ${pellet.tags.join(" ")}`.toLowerCase();
+        const criteriaWords = milestone.completionCriteria
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length > 3);
+        const matchCount = criteriaWords.filter((w) =>
+          pelletText.includes(w),
+        ).length;
 
-        if (criteriaWords.length > 0 && matchCount / criteriaWords.length >= 0.4) {
+        if (
+          criteriaWords.length > 0 &&
+          matchCount / criteriaWords.length >= 0.4
+        ) {
           milestone.completed = true;
           milestone.completedAt = new Date().toISOString();
           milestone.relatedPellets.push(pellet.id);
