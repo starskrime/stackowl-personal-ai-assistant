@@ -1,38 +1,51 @@
 ---
 name: telegram_read
 description: Fetch and display recent messages from a Telegram chat using the Bot API
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "📩"
+parameters:
+  bot_token:
+    type: string
+    description: "Telegram bot token (or from config)"
+  limit:
+    type: number
+    description: "Number of messages to fetch"
+    default: "10"
+  chat_id:
+    type: string
+    description: "Optional chat ID to filter messages"
+required: []
+steps:
+  - id: fetch_messages
+    tool: ShellTool
+    args:
+      command: "curl -s 'https://api.telegram.org/bot{{bot_token}}/getUpdates?limit={{limit}}' | python3 -m json.tool"
+      mode: "local"
+    timeout_ms: 15000
+  - id: parse_messages
+    type: llm
+    prompt: "Parse and present these Telegram messages in a clean format showing sender name, message text, and timestamp for each message:\n\n{{fetch_messages.output}}"
+    depends_on: [fetch_messages]
+    inputs: [fetch_messages.output]
 ---
 
 # Read Telegram Messages
 
 Fetch recent messages from a Telegram chat using the Bot API.
 
-## Steps
-
-1. **Get bot token** from config or memory.
-
-2. **Fetch recent updates:**
-
-   ```bash
-   run_shell_command("curl -s 'https://api.telegram.org/bot<BOT_TOKEN>/getUpdates?limit=10' | python3 -m json.tool")
-   ```
-
-3. **Parse and display messages** showing:
-   - Sender name
-   - Message text
-   - Timestamp
-
-4. **Optionally filter** by chat ID or sender.
-
-## Examples
-
-### Get last 10 messages
+## Usage
 
 ```bash
-run_shell_command("curl -s 'https://api.telegram.org/bot<TOKEN>/getUpdates?limit=10&offset=-10'")
+/telegram_read bot_token=YOUR_TOKEN limit=10
 ```
+
+## Parameters
+
+- **bot_token**: Telegram bot token (or from config)
+- **limit**: Number of messages to fetch (default: 10)
+- **chat_id**: Optional chat ID to filter messages
 
 ## Error Handling
 

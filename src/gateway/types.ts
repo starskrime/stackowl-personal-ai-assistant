@@ -245,6 +245,9 @@ export interface GatewayContext {
   // ─── Cognitive Loop (Self-Improvement) ──────────────────────
   cognitiveLoop?: import("../cognition/loop.js").CognitiveLoop;
 
+  // ─── Conversational Ground State (Phase 4) ─────────────────
+  groundState?: import("../cognition/ground-state.js").GroundStateView;
+
   // ─── Feature Modules (Phase 1-3) ──────────────────────────
   infraProfile?: import("../infra/profile.js").InfraProfileStore;
   infraDetector?: import("../infra/detector.js").InfraDetector;

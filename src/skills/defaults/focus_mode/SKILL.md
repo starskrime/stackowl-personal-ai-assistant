@@ -1,46 +1,71 @@
 ---
 name: focus_mode
 description: Enable system-wide focus mode on macOS by activating Do Not Disturb and optionally blocking distracting apps
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🧘"
   os: [darwin]
+parameters:
+  duration_seconds:
+    type: number
+    description: "Duration of focus session in seconds"
+    default: 3600
+  block_apps:
+    type: string
+    description: "Comma-separated list of app names to quit"
+required: []
+steps:
+  - id: enable_dnd
+    tool: ShellTool
+    args:
+      command: "shortcuts run 'Set Focus' 2>/dev/null || osascript -e 'do shell script \"defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean true && killall NotificationCenter\"'"
+      mode: "local"
+    timeout_ms: 15000
+  - id: block_apps
+    tool: ShellTool
+    args:
+      command: "osascript -e 'tell application \"Slack\" to quit' && osascript -e 'tell application \"Discord\" to quit' && osascript -e 'tell application \"Twitter\" to quit'"
+      mode: "local"
+    timeout_ms: 10000
+    optional: true
+  - id: set_timer
+    tool: ShellTool
+    args:
+      command: "(sleep {{duration_seconds}} && osascript -e 'display notification \"Focus session ended\" with title \"Focus Mode\"') &"
+      mode: "local"
+    timeout_ms: 5000
+    optional: true
 ---
 
 # Focus Mode
 
 Enable macOS Do Not Disturb and optionally block distracting applications.
 
-## Steps
+## Usage
 
-1. **Enable Do Not Disturb:**
+```bash
+/focus_mode duration_seconds=<seconds> block_apps=<Slack,Discord>
+```
 
-   ```bash
-   run_shell_command("shortcuts run 'Set Focus' 2>/dev/null || osascript -e 'do shell script \"defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean true && killall NotificationCenter\"'")
-   ```
+## Parameters
 
-2. **Optionally block distracting apps** (quit them):
-
-   ```bash
-   run_shell_command("osascript -e 'tell application \"<app_name>\" to quit'")
-   ```
-
-   Common distracting apps: Slack, Discord, Twitter, Messages.
-
-3. **Set a timer to disable focus mode:**
-
-   ```bash
-   run_shell_command("(sleep <seconds> && osascript -e 'display notification \"Focus session ended\" with title \"🧘 Focus Mode\"') &")
-   ```
-
-4. **Confirm** focus mode is active and when it will end.
+- **duration_seconds**: Duration of focus session in seconds (default: 3600)
+- **block_apps**: Comma-separated list of app names to quit
 
 ## Examples
 
 ### 1-hour focus session
 
-```bash
-run_shell_command("osascript -e 'tell application \"Slack\" to quit'")
-run_shell_command("osascript -e 'tell application \"Discord\" to quit'")
+```
+duration_seconds=3600
+```
+
+### Focus with app blocking
+
+```
+duration_seconds=7200
+block_apps=Slack,Discord,Twitter,Messages
 ```
 
 ## Error Handling

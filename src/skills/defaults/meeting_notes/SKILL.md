@@ -1,62 +1,65 @@
 ---
 name: meeting_notes
 description: Capture, structure, and save meeting notes with action items, decisions, and attendee tracking
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "📝"
+parameters:
+  title:
+    type: string
+    description: "Meeting title or topic"
+  attendees:
+    type: string
+    description: "Comma-separated list of attendees"
+  raw_notes:
+    type: string
+    description: "Raw notes or transcript"
+required: [title]
+steps:
+  - id: create_meetings_dir
+    tool: ShellTool
+    args:
+      command: "mkdir -p ~/Documents/meetings"
+      mode: "local"
+    timeout_ms: 5000
+  - id: generate_notes
+    tool: WriteFileTool
+    args:
+      path: "~/Documents/meetings/$(date +%Y-%m-%d)_{{title}}.md"
+      content: "# Meeting: {{title}}\n\n**Date:** $(date +%Y-%m-%d)\n**Attendees:** {{attendees}}\n\n## Key Discussion Points\n\n- \n\n## Decisions Made\n\n- \n\n## Action Items\n\n- [ ]  — Owner:  — Due: \n\n## Next Steps\n\n- \n"
+  - id: confirm_save
+    tool: ShellTool
+    args:
+      command: "ls -la ~/Documents/meetings/$(date +%Y-%m-%d)_{{title}}.md"
+      mode: "local"
+    timeout_ms: 5000
 ---
 
 # Meeting Notes
 
 Structure and save meeting notes from raw input provided by the user.
 
-## Steps
+## Usage
 
-1. **Collect meeting details from user:**
-   - Meeting title / topic
-   - Attendees
-   - Raw notes or transcript
+```bash
+/meeting_notes title=<title> attendees=<names> raw_notes=<notes>
+```
 
-2. **Structure the notes** into a standard template:
+## Parameters
 
-   ```markdown
-   # Meeting: <title>
-
-   **Date:** <today's date>
-   **Attendees:** <names>
-
-   ## Key Discussion Points
-
-   - <point 1>
-   - <point 2>
-
-   ## Decisions Made
-
-   - <decision 1>
-
-   ## Action Items
-
-   - [ ] <action> — Owner: <name> — Due: <date>
-
-   ## Next Steps
-
-   - <next meeting date/topic>
-   ```
-
-3. **Save the notes:**
-
-   ```bash
-   write_file("~/Documents/meetings/<date>_<title>.md", "<structured notes>")
-   ```
-
-4. **Confirm** the file was saved and offer to send a summary to attendees via email.
+- **title**: Meeting title or topic
+- **attendees**: Comma-separated list of attendees
+- **raw_notes**: Raw notes or transcript
 
 ## Examples
 
 ### Save meeting notes
 
-```bash
-run_shell_command("mkdir -p ~/Documents/meetings")
-write_file("~/Documents/meetings/2026-03-22_sprint_review.md", "<structured content>")
+```
+title=Sprint Review
+attendees=Alice, Bob, Charlie
+raw_notes=Discussed the new feature roadmap...
 ```
 
 ## Error Handling

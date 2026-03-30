@@ -1,44 +1,56 @@
 ---
 name: translate_text
 description: Translate text between languages using web-based translation services
+command-dispatch: tool
+command-tool: google_search
 openclaw:
   emoji: "🌐"
+parameters:
+  text:
+    type: string
+    description: "Text to translate"
+  source_language:
+    type: string
+    description: "Source language (use 'auto' for auto-detect)"
+    default: "auto"
+  target_language:
+    type: string
+    description: "Target language for translation"
+required: [text, target_language]
+steps:
+  - id: translate
+    tool: google_search
+    args:
+      query: "translate '{{text}}' from {{source_language}} to {{target_language}}"
+    timeout_ms: 15000
+  - id: present_result
+    type: llm
+    prompt: "Present the translation results clearly showing:\n- Original text: {{text}}\n- Translated text (from search results): {{translate.output}}\n- Source language: {{source_language}}\n- Target language: {{target_language}}\n\nIf the text is ambiguous, offer alternative translations."
+    depends_on: [translate]
+    inputs: [translate.output, text]
 ---
 
 # Translate Text
 
 Translate text between languages using web search for translation.
 
-## Steps
+## Usage
 
-1. **Identify source and target languages** from user request.
+```bash
+/translate_text text="Hello world" target_language=Spanish
+```
 
-2. **Perform translation using web search:**
+## Parameters
 
-   ```
-   web_search query="translate '<text>' from <source_language> to <target_language>"
-   ```
-
-3. **Present the translation** with:
-   - Original text
-   - Translated text
-   - Source and target language labels
-   - Pronunciation guide (for non-Latin scripts)
-
-4. **Offer alternative translations** if the text is ambiguous.
+- **text**: Text to translate
+- **source_language**: Source language (use 'auto' for auto-detect, default: auto)
+- **target_language**: Target language for translation
 
 ## Examples
 
-### English to Spanish
-
 ```
-web_search query="translate 'Good morning, how are you?' to Spanish"
-```
-
-### Detect language and translate
-
-```
-web_search query="translate '你好世界' to English"
+translate_text text="Good morning, how are you?" target_language=Spanish
+translate_text text="你好世界" target_language=English source_language=auto
 ```
 
 ## Error Handling

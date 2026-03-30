@@ -554,61 +554,18 @@ export class ProactivePinger {
    */
   private lastCouncilDate = "";
   private async maybeKnowledgeCouncil(): Promise<void> {
-    if (!this.context.knowledgeCouncil) return;
-
-    const now = new Date();
-    const hour = now.getHours();
-    const day = now.getDay(); // 0 = Sunday
-    const dateKey = now.toISOString().split("T")[0];
-
-    // Run at 3 AM on Sundays (or configured day), once per week
-    if (hour !== 3 || day !== 0) return;
-    if (this.lastCouncilDate === dateKey) return;
-    if (!this.context.knowledgeCouncil.shouldConvene()) return;
-
-    this.lastCouncilDate = dateKey;
-
-    try {
-      console.log("[ProactivePinger] 🏛️ Starting Knowledge Council session...");
-      const session = await this.context.knowledgeCouncil.convene(
-        undefined,
-        async (msg) => {
-          console.log(`[KnowledgeCouncil] ${msg}`);
-          // Send progress to user if available
-          await this.context.sendToUser(msg).catch(() => {});
-        },
-      );
-
-      if (session.pelletsCreated > 0) {
-        await this.context
-          .sendToUser(
-            `🏛️ **Knowledge Council Report**\n\n${session.summary ?? "Session complete."}`,
-          )
-          .catch(() => {});
-      }
-    } catch (err) {
-      console.error("[ProactivePinger] Knowledge Council failed:", err);
-    }
+    // DISABLED — Knowledge Council burned tokens proactively.
+    // Learning now only happens reactively (on actual failures).
+    return;
   }
 
   /**
    * Idle-Time Dreaming — reflects on past mistakes to adapt heuristics.
    */
   private async maybeDream(): Promise<void> {
-    if (!this.context.reflexionEngine) return;
-
-    const now = Date.now();
-    // Run at most once every 15 minutes during idle time
-    const DREAM_INTERVAL_MS = 15 * 60 * 1000;
-
-    if (now - this.lastDreamTime < DREAM_INTERVAL_MS) return;
-    this.lastDreamTime = now;
-
-    try {
-      await this.context.reflexionEngine.dream();
-    } catch (err) {
-      console.error("[ProactivePinger] Dream session failed:", err);
-    }
+    // DISABLED — Dreaming is handled by CognitiveLoop's reflexion_dream action.
+    // No need to duplicate with a separate timer.
+    return;
   }
 
   /**
@@ -623,62 +580,9 @@ export class ProactivePinger {
    * Neither phase sends anything to the user — all work is silent.
    */
   private async maybeEvolveSkills(): Promise<void> {
-    if (!this.context.skillsRegistry) return;
-
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const dateKey = now.toISOString().split("T")[0];
-
-    // Run at 5 AM, once per day
-    if (hour !== 5 || minute !== 0) return;
-    if (this.lastSkillEvolutionDate === dateKey) return;
-
-    this.lastSkillEvolutionDate = dateKey;
-
-    // Phase 1: Evolve existing skills
-    try {
-      console.log(
-        "[ProactivePinger] 🌱 Starting overnight skill evolution pass...",
-      );
-      const evolver = new SkillEvolver(
-        this.context.provider,
-        this.context.config,
-      );
-      const report = await evolver.evolveAll(this.context.skillsRegistry);
-      console.log(
-        `[ProactivePinger] ✓ Skill evolution done: ` +
-          `${report.improved}/${report.evaluated} improved, ` +
-          `${report.failed} failed`,
-      );
-    } catch (err) {
-      console.error("[ProactivePinger] Skill evolution failed:", err);
-    }
-
-    // Phase 2: Mine new skills from conversation history
-    if (this.context.sessionStore && this.context.skillsDir) {
-      try {
-        console.log("[ProactivePinger] ⛏️  Starting pattern mining pass...");
-        const miner = new PatternMiner(
-          this.context.provider,
-          this.context.sessionStore,
-          this.context.config,
-        );
-        const newSkills = await miner.mine(
-          this.context.skillsRegistry,
-          this.context.skillsDir,
-        );
-        if (newSkills.length > 0) {
-          console.log(
-            `[ProactivePinger] ✓ Pattern miner crystallized ${newSkills.length} new skill(s): [${newSkills.join(", ")}]`,
-          );
-        } else {
-          console.log("[ProactivePinger] Pattern miner: no new patterns found");
-        }
-      } catch (err) {
-        console.error("[ProactivePinger] Pattern mining failed:", err);
-      }
-    }
+    // DISABLED — Skill evolution and pattern mining burned tokens proactively.
+    // Learning now only happens reactively (on actual failures).
+    return;
   }
 
   /**

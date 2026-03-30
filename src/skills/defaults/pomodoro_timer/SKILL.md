@@ -1,53 +1,70 @@
 ---
 name: pomodoro_timer
 description: Start a Pomodoro focus timer with configurable work and break intervals and macOS notifications
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🍅"
   os: [darwin]
+parameters:
+  work_minutes:
+    type: number
+    description: "Work session duration in minutes"
+    default: 25
+  break_minutes:
+    type: number
+    description: "Break duration in minutes"
+    default: 5
+required: []
+steps:
+  - id: show_start_time
+    tool: ShellTool
+    args:
+      command: "date -v+{{work_minutes}}M '+%H:%M'"
+      mode: "local"
+  - id: start_work_timer
+    tool: ShellTool
+    args:
+      command: "(sleep {{work_minutes * 60}} && osascript -e 'display notification \"Work session complete! Time for a break.\" with title \"🍅 Pomodoro\" sound name \"Glass\"') &"
+      mode: "local"
+  - id: confirm_start
+    type: llm
+    prompt: "Confirm that the Pomodoro session has started. Work duration: {{work_minutes}} minutes. Break duration: {{break_minutes}} minutes. Session will end at {{show_start_time.output}}."
+    depends_on: [start_work_timer]
+    inputs: [work_minutes, break_minutes, show_start_time.output]
 ---
 
 # Pomodoro Timer
 
 Run a Pomodoro focus session with notifications.
 
-## Steps
+## Usage
 
-1. **Confirm session parameters** (defaults: 25 min work, 5 min break):
-   - Work duration (default: 25 minutes)
-   - Break duration (default: 5 minutes)
+```bash
+/pomodoro_timer
+/pomodoro_timer work_minutes=50 break_minutes=10
+```
 
-2. **Start the work timer:**
+## Parameters
 
-   ```bash
-   run_shell_command("(sleep 1500 && osascript -e 'display notification \"Work session complete! Time for a break.\" with title \"🍅 Pomodoro\" sound name \"Glass\"') &")
-   ```
-
-3. **Notify the user** that the Pomodoro session has started with the end time:
-
-   ```bash
-   run_shell_command("date -v+25M '+%H:%M'")
-   ```
-
-4. **After work timer fires**, prompt user to start break timer:
-   ```bash
-   run_shell_command("(sleep 300 && osascript -e 'display notification \"Break is over! Ready for the next session?\" with title \"🍅 Pomodoro\" sound name \"Ping\"') &")
-   ```
+- **work_minutes**: Work session duration in minutes (default: 25)
+- **break_minutes**: Break duration in minutes (default: 5)
 
 ## Examples
 
 ### Standard 25/5 Pomodoro
 
 ```bash
-run_shell_command("(sleep 1500 && osascript -e 'display notification \"Time for a break!\" with title \"🍅 Pomodoro\" sound name \"Glass\"') &")
+(sleep 1500 && osascript -e 'display notification "Time for a break!" with title "🍅 Pomodoro" sound name "Glass"') &
 ```
 
 ### Long 50/10 session
 
 ```bash
-run_shell_command("(sleep 3000 && osascript -e 'display notification \"Long session done!\" with title \"🍅 Pomodoro\" sound name \"Glass\"') &")
+(sleep 3000 && osascript -e 'display notification "Long session done!" with title "🍅 Pomodoro" sound name "Glass"') &
 ```
 
 ## Error Handling
 
 - **osascript not available:** Use `say "Pomodoro complete"` as audio fallback.
-- **User wants to cancel:** Kill background sleep: `run_shell_command("pkill -f 'sleep.*Pomodoro'")`.
+- **User wants to cancel:** Kill background sleep: `pkill -f 'sleep.*Pomodoro'`.

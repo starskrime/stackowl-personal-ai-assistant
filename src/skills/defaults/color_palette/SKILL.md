@@ -1,8 +1,29 @@
 ---
 name: color_palette
 description: Generate harmonious color palettes from a base color with hex codes, RGB values, and CSS variables
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🎨"
+parameters:
+  base_color:
+    type: string
+    description: "Base color in hex format (e.g., #3B82F6) or color name"
+  include_css:
+    type: boolean
+    description: "Include CSS custom properties in output"
+    default: false
+required: [base_color]
+steps:
+  - id: generate_palette
+    type: llm
+    prompt: "Generate a harmonious color palette from base color '{{base_color}}'. Include:\n1. Complementary color (opposite on color wheel)\n2. Analogous colors (adjacent colors)\n3. Triadic colors (three evenly spaced)\n4. Dark shade\n5. Light tint\n\nFor each color provide: hex code, RGB values, and a descriptive name. Also provide CSS custom properties if requested (include_css={{include_css}}). Format as markdown."
+    depends_on: []
+  - id: present_palette
+    type: llm
+    prompt: "Format the color palette as a visually appealing markdown presentation with color swatches using emoji or code blocks. Base color: {{base_color}}"
+    depends_on: [generate_palette]
+    inputs: [generate_palette.output]
 ---
 
 # Color Palette Generator
@@ -33,9 +54,8 @@ Generate color palettes from a base color.
 ### Generate from blue
 
 ```
-🎨 Base: #3B82F6
-  --color-primary: #3B82F6;
-  --color-secondary: #F6923B;
+base_color="#3B82F6"
+include_css=true
 ```
 
 ## Error Handling

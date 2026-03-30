@@ -1,37 +1,103 @@
 ---
 name: backup_files
 description: Create timestamped backups of important files or directories as compressed archives
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "💾"
+parameters:
+  source:
+    type: string
+    description: "Source file or directory to backup"
+  destination:
+    type: string
+    description: "Backup destination directory"
+    default: "~/Backups"
+  name:
+    type: string
+    description: "Backup name prefix"
+    default: "backup"
+required: [source]
+steps:
+  - id: create_backup_dir
+    tool: ShellTool
+    args:
+      command: "mkdir -p {{destination}}"
+      mode: "local"
+    timeout_ms: 5000
+  - id: check_source
+    tool: ShellTool
+    args:
+      command: "ls -la {{source}} 2>/dev/null | head -10 || echo 'Source not found'"
+      mode: "local"
+    timeout_ms: 5000
+  - id: check_disk_space
+    tool: ShellTool
+    args:
+      command: "df -h {{destination}} | tail -1"
+      mode: "local"
+    timeout_ms: 3000
+  - id: create_backup
+    tool: ShellTool
+    args:
+      command: "tar -czf {{destination}}/{{name}}_$(date +%Y%m%d_%H%M%S).tar.gz {{source}}"
+      mode: "local"
+    timeout_ms: 120000
+  - id: verify_backup
+    tool: ShellTool
+    args:
+      command: "ls -lh {{destination}}/{{name}}_*.tar.gz | tail -3"
+      mode: "local"
+    timeout_ms: 5000
+  - id: analyze
+    type: llm
+    prompt: "Backup operation completed.\n\nSource: {{source}}\nDestination: {{destination}}\nDisk space: {{check_disk_space.output}}\n\nBackup created:\n{{verify_backup.output}}\n\nProvide a summary."
+    depends_on: [check_disk_space, verify_backup]
+    inputs: [check_disk_space.output, verify_backup.output]
 ---
 
 # Backup Files
 
-Create compressed backups of files or directories.
+Create compressed timestamped backups of files or directories.
 
-## Steps
+## Usage
 
-1. **Determine what to backup** from user request.
-2. **Create timestamped backup:**
-   ```bash
-   run_shell_command("tar -czf ~/Backups/backup_$(date +%Y%m%d_%H%M%S).tar.gz <source_path>")
-   ```
-3. **Verify the backup:**
-   ```bash
-   run_shell_command("ls -lh ~/Backups/backup_*.tar.gz | tail -1")
-   ```
-4. **Confirm** with file size and location.
+```bash
+/backup_files ~/Documents
+```
+
+With options:
+```
+source=~/Documents
+destination=~/Backups
+name=docs
+```
 
 ## Examples
 
 ### Backup Documents folder
+```
+source=~/Documents
+destination=~/Backups
+name=docs
+```
 
-```bash
-run_shell_command("mkdir -p ~/Backups && tar -czf ~/Backups/docs_$(date +%Y%m%d).tar.gz ~/Documents/")
+### Backup project directory
+```
+source=./my_project
+destination=~/Backups
+name=project
 ```
 
 ## Error Handling
 
-- **Backup directory doesn't exist:** Create it with `mkdir -p ~/Backups`.
-- **Not enough disk space:** Check with `df -h` before starting.
-- **Permission denied:** Skip protected files and note them in the backup log.
+- **Destination missing:** Auto-creates the backup directory
+- **Disk full:** Checks available space first
+- **Permission denied:** Reports which files couldn't be backed up
+- **Source not found:** Validates path before attempting backup
+
+## Notes
+
+- Backups are timestamped automatically: `backup_20240329_143052.tar.gz`
+- Uses tar.gz format for broad compatibility
+- Compresses to save disk space

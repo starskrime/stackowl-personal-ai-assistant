@@ -130,22 +130,32 @@ export class MiniMaxProvider implements ModelProvider {
     return `${this.baseUrl}/v1/messages`;
   }
 
-  async healthCheck(): Promise<boolean> {
-    try {
-      const res = await fetch(this.messagesUrl(), {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({
-          model: this.defaultModel,
-          messages: [{ role: "user", content: "ping" }],
-          max_tokens: 2,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      return res.ok || res.status === 401;
-    } catch {
-      return false;
+  async healthCheck(retries = 3, baseDelayMs = 1000): Promise<boolean> {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const res = await fetch(this.messagesUrl(), {
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify({
+            model: this.defaultModel,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 2,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (res.ok || res.status === 401) {
+          return true;
+        }
+        if (attempt < retries - 1) {
+          await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
+        }
+      } catch {
+        if (attempt < retries - 1) {
+          await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
+        }
+      }
     }
+    return false;
   }
 
   async chat(

@@ -1,37 +1,58 @@
 ---
 name: price_compare
 description: Compare prices for a product across multiple online retailers using web search
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "💰"
+parameters:
+  product:
+    type: string
+    description: "The product name to search for"
+required: [product]
+steps:
+  - id: search_amazon
+    tool: google_search
+    args:
+      query: "{{product}} price Amazon"
+      num: 5
+  - id: search_bestbuy
+    tool: google_search
+    args:
+      query: "{{product}} price Best Buy"
+      num: 5
+  - id: search_walmart
+    tool: google_search
+    args:
+      query: "{{product}} price Walmart"
+      num: 5
+  - id: compare_prices
+    type: llm
+    prompt: "Create a price comparison table from the search results for {{product}}. Extract prices from Amazon, Best Buy, and Walmart. Highlight the best deal."
+    depends_on: [search_amazon, search_bestbuy, search_walmart]
+    inputs: [search_amazon.output, search_bestbuy.output, search_walmart.output]
 ---
 
 # Price Compare
 
 Compare prices for a product across retailers.
 
-## Steps
+## Usage
 
-1. **Search for the product on multiple retailers:**
-   ```
-   web_search query="<product> price Amazon"
-   web_search query="<product> price Best Buy"
-   web_search query="<product> price Walmart"
-   ```
-2. **Extract prices** from search results.
-3. **Present a comparison table:**
-   | Retailer | Price | Link |
-   |----------|-------|------|
-   | Amazon | $XX | url |
-   | Best Buy | $XX | url |
-4. **Highlight the best deal.**
+```bash
+/price_compare product="MacBook Air M3"
+```
+
+## Parameters
+
+- **product**: The product name to search for (required)
 
 ## Examples
 
 ### Compare laptop prices
 
 ```
-web_search query="MacBook Air M3 price Amazon 2026"
-web_search query="MacBook Air M3 price Best Buy 2026"
+product="MacBook Air M3 2026"
 ```
 
 ## Error Handling

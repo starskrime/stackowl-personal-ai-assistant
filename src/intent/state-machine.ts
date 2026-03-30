@@ -52,6 +52,9 @@ export class IntentStateMachine {
       );
     }
     this.loaded = true;
+
+    // Decay stale threads (>14 days inactive → abandoned)
+    this.decayThreads();
   }
 
   async save(): Promise<void> {
@@ -209,6 +212,127 @@ export class IntentStateMachine {
     intent.updatedAt = Date.now();
   }
 
+  // ─── NarrativeThread methods ──────────────────────────────────
+
+  /**
+   * Promote an intent to a cross-session narrative thread.
+   * Threads survive session boundaries and are matched by topic.
+   */
+  promoteToThread(intentId: string, summary: string): void {
+    const intent = this.intents.get(intentId);
+    if (!intent) return;
+    if (intent.isThread) return; // already promoted
+    intent.isThread = true;
+    intent.summary = summary;
+    intent.sessions = [intent.sessionId];
+    intent.resumeCount = 0;
+    intent.updatedAt = Date.now();
+    log.engine.info(
+      `[IntentSM] Promoted to thread: "${summary}" [${intentId}]`,
+    );
+  }
+
+  /**
+   * Get all active/paused threads (cross-session narrative threads).
+   */
+  getActiveThreads(): Intent[] {
+    return [...this.intents.values()].filter(
+      (i) =>
+        i.isThread === true &&
+        !["completed", "abandoned"].includes(i.status),
+    );
+  }
+
+  /**
+   * Find a thread whose summary matches the given query.
+   * Uses keyword overlap scoring (no LLM, instant).
+   * Returns the best match above threshold, or null.
+   */
+  getThreadForTopic(query: string, threshold = 0.3): Intent | null {
+    const threads = this.getActiveThreads();
+    if (threads.length === 0) return null;
+
+    const queryWords = new Set(
+      query
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((w) => w.length > 2),
+    );
+    if (queryWords.size === 0) return null;
+
+    let bestMatch: Intent | null = null;
+    let bestScore = 0;
+
+    for (const thread of threads) {
+      const summaryWords = new Set(
+        (thread.summary ?? thread.description)
+          .toLowerCase()
+          .split(/\W+/)
+          .filter((w) => w.length > 2),
+      );
+      if (summaryWords.size === 0) continue;
+
+      // Jaccard-ish overlap: |intersection| / min(|A|, |B|)
+      let overlap = 0;
+      for (const w of queryWords) {
+        if (summaryWords.has(w)) overlap++;
+      }
+      const score = overlap / Math.min(queryWords.size, summaryWords.size);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = thread;
+      }
+    }
+
+    return bestScore >= threshold ? bestMatch : null;
+  }
+
+  /**
+   * Resume a thread: increment resumeCount, add session, update lastActiveAt.
+   */
+  resumeThread(intentId: string, sessionId: string): void {
+    const intent = this.intents.get(intentId);
+    if (!intent || !intent.isThread) return;
+    intent.resumeCount = (intent.resumeCount ?? 0) + 1;
+    intent.sessions = intent.sessions ?? [];
+    if (!intent.sessions.includes(sessionId)) {
+      intent.sessions.push(sessionId);
+    }
+    intent.lastActiveAt = Date.now();
+    intent.updatedAt = Date.now();
+    if (intent.status === "abandoned" || intent.status === "pending") {
+      intent.status = "in_progress";
+    }
+    log.engine.info(
+      `[IntentSM] Thread resumed: "${intent.summary}" (resume #${intent.resumeCount}) [${intentId}]`,
+    );
+  }
+
+  /**
+   * Decay stale threads. Called on load().
+   * Threads inactive for >14 days transition to "abandoned".
+   */
+  decayThreads(maxAgeDays = 14): number {
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    let decayed = 0;
+    for (const intent of this.intents.values()) {
+      if (
+        intent.isThread &&
+        !["completed", "abandoned"].includes(intent.status) &&
+        intent.lastActiveAt < cutoff
+      ) {
+        intent.status = "abandoned";
+        intent.updatedAt = Date.now();
+        decayed++;
+      }
+    }
+    if (decayed > 0) {
+      log.engine.info(`[IntentSM] Decayed ${decayed} stale thread(s)`);
+    }
+    return decayed;
+  }
+
   toContextString(maxLength = 800): string {
     const active = this.getActive();
     if (active.length === 0) return "";
@@ -246,6 +370,25 @@ export class IntentStateMachine {
       );
     }
     lines.push("</active_intents>");
+
+    // Append narrative threads section if any exist
+    const threads = this.getActiveThreads();
+    if (threads.length > 0) {
+      lines.push("");
+      lines.push("<narrative_threads>");
+      for (const thread of threads.slice(0, 5)) {
+        const sessions = thread.sessions?.length ?? 1;
+        const resumes = thread.resumeCount ?? 0;
+        const progressStr = thread.progress ? ` | Progress: ${thread.progress}` : "";
+        const nextStr = thread.nextSteps?.length
+          ? ` | Next: ${thread.nextSteps[0]}`
+          : "";
+        lines.push(
+          `  📌 ${thread.summary ?? thread.description} (${sessions} session(s), resumed ${resumes}x)${progressStr}${nextStr}`,
+        );
+      }
+      lines.push("</narrative_threads>");
+    }
 
     const result = lines.join("\n");
     return result.length > maxLength

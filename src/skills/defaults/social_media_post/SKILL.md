@@ -1,32 +1,67 @@
 ---
 name: social_media_post
 description: Create optimized social media posts for Twitter/X, LinkedIn, or Instagram with hashtags and engagement hooks
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "📱"
+parameters:
+  platform:
+    type: string
+    description: "Target platform: twitter, linkedin, instagram"
+    default: "twitter"
+  topic:
+    type: string
+    description: "The main topic or key points for the post"
+  tone:
+    type: string
+    description: "Tone: professional, casual, humorous, inspirational"
+    default: "casual"
+  include_cta:
+    type: boolean
+    description: "Include a call-to-action"
+    default: true
+required: [topic]
+steps:
+  - id: draft_twitter
+    type: llm
+    prompt: "Draft a Twitter/X post (280 chars max) about: {{topic}}\n\nRequirements:\n- Punchy opening hook in first line\n- Relevant hashtags (3-5)\n- Include CTA if include_cta=true\n- Tone: {{tone}}\n\nFormat with emojis."
+    depends_on: []
+    inputs: [topic, tone, include_cta]
+  - id: draft_linkedin
+    type: llm
+    prompt: "Draft a LinkedIn post (1300 chars max) about: {{topic}}\n\nRequirements:\n- Professional tone\n- Include insights/thought leadership\n- 2-3 relevant hashtags\n- Include CTA if include_cta=true\n\nFormat with line breaks and emojis for readability."
+    depends_on: []
+    inputs: [topic, tone, include_cta]
+  - id: draft_instagram
+    type: llm
+    prompt: "Draft an Instagram caption about: {{topic}}\n\nRequirements:\n- Visual-first storytelling approach\n- 30 hashtags max (in comments style)\n- Include CTA if include_cta=true\n- Tone: {{tone}}\n\nUse emojis and line breaks for visual appeal."
+    depends_on: []
+    inputs: [topic, tone, include_cta]
+  - id: present_posts
+    type: llm
+    prompt: "Present all three platform drafts clearly labeled. Offer variations or adaptations.\n\nTwitter: {{draft_twitter.output}}\nLinkedIn: {{draft_linkedin.output}}\nInstagram: {{draft_instagram.output}}"
+    depends_on: [draft_twitter, draft_linkedin, draft_instagram]
+    inputs: [draft_twitter.output, draft_linkedin.output, draft_instagram.output]
 ---
 
 # Create Social Media Post
 
 Draft platform-optimized social media content.
 
-## Steps
+## Usage
 
-1. **Identify the platform** (Twitter/X, LinkedIn, Instagram).
+```bash
+/social_media_post platform=twitter topic="Just launched StackOwl v2.0!"
+/social_media_post platform=linkedin topic="My thoughts on AI in 2026" tone=professional
+```
 
-2. **Collect the topic** and any key points from the user.
+## Parameters
 
-3. **Draft platform-specific content:**
-   - **Twitter/X:** 280 chars max, punchy, relevant hashtags (3–5)
-   - **LinkedIn:** Professional tone, 1300 chars, include insights
-   - **Instagram:** Visual-first caption, storytelling, 30 hashtags max
-
-4. **Include engagement elements:**
-   - Hook in first line
-   - Call-to-action (CTA)
-   - Relevant emojis
-   - Hashtag suggestions
-
-5. **Present draft** for review. Offer variations.
+- **platform**: Target platform: twitter, linkedin, instagram (default: twitter)
+- **topic**: The main topic or key points for the post (required)
+- **tone**: Tone: professional, casual, humorous, inspirational (default: casual)
+- **include_cta**: Include a call-to-action (default: true)
 
 ## Examples
 

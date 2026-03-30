@@ -1,40 +1,72 @@
 ---
 name: language_practice
 description: Practice a foreign language with vocabulary drills, sentence construction, and conversation exercises
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🗣️"
+parameters:
+  language:
+    type: string
+    description: "Language to practice"
+  level:
+    type: string
+    description: "Proficiency level: beginner, intermediate, advanced"
+    default: "beginner"
+  exercise_type:
+    type: string
+    description: "Exercise type: vocabulary, sentences, conversation, or grammar"
+    default: "vocabulary"
+  score:
+    type: number
+    description: "Score from practice session"
+required: [language]
+steps:
+  - id: search_pronunciation
+    tool: google_search
+    args:
+      query: "how to pronounce '{{word}}' in {{language}}"
+      num: 3
+    optional: true
+  - id: log_progress
+    tool: ShellTool
+    args:
+      command: "echo '$(date +%Y-%m-%d),{{language}},{{score}}' >> ~/stackowl_language_log.csv"
+      mode: "local"
+    timeout_ms: 5000
+    optional: true
+  - id: start_practice
+    type: llm
+    prompt: "Conduct a {{exercise_type}} practice session in {{language}} for a {{level}} level learner. For vocabulary: present words and ask for translations. For sentences: give words and ask user to construct sentences. For conversation: engage in dialogue. For grammar: present sentences with errors to fix."
+    depends_on: [search_pronunciation]
+    inputs: [search_pronunciation.output]
 ---
 
 # Language Practice
 
 Practice a foreign language.
 
-## Steps
+## Usage
 
-1. **Identify the language** and user's level (beginner, intermediate, advanced).
-2. **Choose exercise type:**
-   - **Vocabulary drill:** Present word → ask for translation
-   - **Sentence building:** Give words → user constructs sentence
-   - **Conversation:** Dialogue practice in target language
-   - **Grammar quiz:** Present sentence with error → ask user to fix
-3. **Validate answers** and provide corrections.
-4. **Web search for pronunciation** if needed:
-   ```
-   web_search query="how to pronounce '<word>' in <language>"
-   ```
-5. **Track progress** in a practice log:
-   ```bash
-   run_shell_command("echo '$(date +%Y-%m-%d),<language>,<score>' >> ~/stackowl_language_log.csv")
-   ```
+```bash
+/language_practice language=<lang> level=<level> exercise_type=<type> score=<score>
+```
+
+## Parameters
+
+- **language**: Language to practice
+- **level**: Proficiency level: beginner, intermediate, advanced (default: beginner)
+- **exercise_type**: Exercise type: vocabulary, sentences, conversation, or grammar (default: vocabulary)
+- **score**: Score from practice session
 
 ## Examples
 
 ### Spanish vocabulary drill
 
 ```
-Word: "house"
-Your answer: ___
-Correct: "casa" ✅
+language=Spanish
+level=beginner
+exercise_type=vocabulary
 ```
 
 ## Error Handling

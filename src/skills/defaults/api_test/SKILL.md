@@ -1,8 +1,39 @@
 ---
 name: api_test
 description: Test REST API endpoints by sending HTTP requests and validating response status, headers, and body
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🔌"
+parameters:
+  url:
+    type: string
+    description: "The URL to test"
+  method:
+    type: string
+    description: "HTTP method (GET, POST, PUT, DELETE, PATCH)"
+    default: "GET"
+  body:
+    type: string
+    description: "Request body for POST/PUT/PATCH (JSON string)"
+    default: ""
+  headers:
+    type: string
+    description: "Additional headers as JSON string"
+    default: "{}"
+required: [url]
+steps:
+  - id: construct_request
+    tool: ShellTool
+    args:
+      command: "curl -s -w '\n%{http_code}' -X {{method}} '{{url}}' -H 'Content-Type: application/json' {{#if headers}}-H {{headers}}{{/if}} {{#if body}}-d '{{body}}'{{/if}}"
+      mode: "local"
+    timeout_ms: 30000
+  - id: parse_response
+    type: llm
+    prompt: "Parse the API response. Extract: 1) HTTP status code, 2) Response body (format as JSON if possible), 3) Any errors. Present in a clear format."
+    depends_on: [construct_request]
+    inputs: [construct_request.stdout]
 ---
 
 # API Test
@@ -13,7 +44,7 @@ Test API endpoints using curl.
 
 1. **Construct the request:**
    ```bash
-   run_shell_command("curl -s -w '\n%{http_code}' -X <METHOD> '<URL>' -H 'Content-Type: application/json' -d '<body>'")
+   curl -s -w '\n%{http_code}' -X <METHOD> '<URL>' -H 'Content-Type: application/json' -d '<body>'
    ```
 2. **Validate the response:**
    - Check HTTP status code (200, 201, 4xx, 5xx)
@@ -26,13 +57,15 @@ Test API endpoints using curl.
 ### GET request
 
 ```bash
-run_shell_command("curl -s -w '\n%{http_code}' https://api.example.com/users")
+url="https://api.example.com/users"
 ```
 
 ### POST with JSON body
 
 ```bash
-run_shell_command("curl -s -X POST 'https://api.example.com/users' -H 'Content-Type: application/json' -d '{\"name\":\"John\"}'")
+url="https://api.example.com/users"
+method="POST"
+body='{"name":"John"}'
 ```
 
 ## Error Handling

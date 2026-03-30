@@ -45,6 +45,19 @@ import { ContextBuilder } from "./handlers/context-builder.js";
 import { SessionManager } from "./handlers/session-manager.js";
 import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
 import { TaskQueue } from "../queue/task-queue.js";
+import {
+  computeTemporalContext,
+  loadPreviousSession,
+} from "../cognition/temporal-context.js";
+import {
+  classifyContinuity,
+  type ContinuityResult,
+} from "../cognition/continuity-engine.js";
+import {
+  getUnextractedSegments,
+  getSegmentMessages,
+} from "../memory/session-segmenter.js";
+import { UserMentalModel } from "../cognition/user-mental-model.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -109,6 +122,9 @@ export class OwlGateway {
    */
   private attemptLogs = new AttemptLogRegistry();
 
+  /** User mental model — infers user state from behavioral signals */
+  private userMentalModel: UserMentalModel | null = null;
+
   constructor(public ctx: GatewayContext) {
     this.engine = new OwlEngine();
 
@@ -167,6 +183,9 @@ export class OwlGateway {
       );
     }
 
+    // User mental model — behavioral state inference
+    this.userMentalModel = new UserMentalModel();
+
     // Initialize extracted handlers (Improvement #4)
     // ContextBuilder is initialized after skillInjector below
     // InnerLifeDNABridge — connects inner life state to DNA mutations
@@ -183,7 +202,7 @@ export class OwlGateway {
       ctx.costTracker ?? null,
       innerLifeBridge,
     );
-    this.contextBuilder = new ContextBuilder(ctx, this.microLearner, null);
+    this.contextBuilder = new ContextBuilder(ctx, this.microLearner, null, this.userMentalModel);
 
     // Built-in middleware
     this.middleware.push(new LoggingMiddleware());
@@ -244,6 +263,15 @@ export class OwlGateway {
       log.engine.info(
         `Skill injector initialized with ${registry.listEnabled().length} skills (BM25 + usage tracking)`,
       );
+    }
+
+    // Wire learning orchestrator → cognitive loop gap bridge.
+    // When the orchestrator discovers knowledge gaps from conversations,
+    // forward them to the cognitive loop's synthesis queue so skills get built.
+    if (ctx.learningOrchestrator && ctx.cognitiveLoop) {
+      ctx.learningOrchestrator.setCapabilityGapCallback((gap, description) => {
+        ctx.cognitiveLoop!.enqueueSynthesisTarget(gap, description, "conversation");
+      });
     }
 
     // Initialize new feature modules (all optional, fire-and-forget load)
@@ -509,16 +537,206 @@ export class OwlGateway {
     const learnResult = await this.handleLearnRequest(message, callbacks);
     if (learnResult) return learnResult;
 
-    // Check for topic switch (heuristic, no LLM call)
-    const freshStartDirective = this.detectTopicSwitch(
-      message.text,
-      session.messages,
-    );
-    // Flush both in-memory and on-disk session state atomically
-    if (freshStartDirective) {
-      session.messages = [];
-      this.attemptLogs.delete(message.sessionId);
-      await this.ctx.sessionStore.saveSession(session);
+    // ─── Continuity Engine (Phase 0+1+2) ───────────────────────
+    // 3-layer classification: temporal → linguistic → semantic (LLM only when ambiguous)
+    let continuityResult: ContinuityResult | null = null;
+    let freshStartDirective: string | null = null;
+
+    try {
+      const timezone =
+        (this.ctx.config as any).timezone ??
+        Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const previousSession = await loadPreviousSession(
+        this.ctx.sessionStore,
+        message.sessionId,
+      );
+      const temporalSnapshot = computeTemporalContext(
+        session,
+        previousSession,
+        timezone,
+      );
+
+      // Use fastest available provider for Layer 3 (semantic disambiguation)
+      let fastProvider: import("../providers/base.js").ModelProvider | undefined;
+      if (this.ctx.providerRegistry) {
+        try {
+          fastProvider = this.ctx.providerRegistry.get("anthropic");
+        } catch {
+          fastProvider = this.ctx.provider;
+        }
+      }
+
+      continuityResult = await classifyContinuity(
+        message.text,
+        session,
+        temporalSnapshot,
+        fastProvider,
+      );
+
+      log.engine.info(
+        `[Continuity] ${continuityResult.classification} (conf=${continuityResult.confidence.toFixed(2)}, layer=${continuityResult.layerUsed}): ${continuityResult.reason}`,
+      );
+
+      // Update user mental model with this message's behavioral signals
+      this.userMentalModel?.update(message.text);
+
+      // Act on classification
+      const wc = this.ctx.workingContextManager?.getOrCreate(message.sessionId);
+      const intentSM = this.ctx.intentStateMachine;
+      const activeIntent = intentSM?.getActiveForSession(message.sessionId);
+
+      switch (continuityResult.classification) {
+        case "CONTINUATION":
+          // Touch active intent to keep it alive
+          if (activeIntent) {
+            intentSM!.touch(activeIntent.id);
+          } else if (intentSM) {
+            // No active intent — check for narrative thread match
+            const matchedThread = intentSM.getThreadForTopic(message.text);
+            if (matchedThread) {
+              intentSM.resumeThread(matchedThread.id, message.sessionId);
+              if (wc) {
+                wc.set("threadResumed", `Resuming thread: ${matchedThread.summary ?? matchedThread.description}`);
+              }
+              // Fire-and-forget: refresh thread summary from recent messages
+              this.refreshThreadSummary(matchedThread.id, session.messages);
+            }
+          }
+          break;
+
+        case "FOLLOW_UP":
+          // Touch active intent + add context hint
+          if (activeIntent) {
+            intentSM!.touch(activeIntent.id);
+          } else if (intentSM) {
+            // Check for thread match on follow-up too
+            const matchedThread = intentSM.getThreadForTopic(message.text);
+            if (matchedThread) {
+              intentSM.resumeThread(matchedThread.id, message.sessionId);
+              this.refreshThreadSummary(matchedThread.id, session.messages);
+            }
+          }
+          if (wc) {
+            const topic = wc.getCurrentTopic();
+            if (topic) {
+              wc.set("continuityHint", `Building on: ${topic}`);
+            }
+          }
+          break;
+
+        case "TOPIC_SWITCH":
+          // Record topic switch for user mental model
+          this.userMentalModel?.recordTopicSwitch();
+          // Pause active intent, clear working context topic
+          if (activeIntent) {
+            intentSM!.transition(activeIntent.id, "abandoned", "Topic switch detected");
+          }
+          if (wc) {
+            const prevTopic = wc.getCurrentTopic();
+            wc.clear();
+            if (prevTopic) {
+              wc.set("continuityHint", `Previous topic was: ${prevTopic}. User has switched to a new topic.`);
+            }
+          }
+          // Archive ground state — expire open questions, keep decisions
+          if (this.ctx.groundState) {
+            const uid = message.sessionId.split(":")[1] || message.sessionId;
+            this.ctx.groundState.archive(uid).catch(() => {});
+          }
+          break;
+
+        case "FRESH_START":
+          // Full context flush
+          if (activeIntent) {
+            intentSM!.transition(activeIntent.id, "abandoned", "Fresh start — user returning or resetting");
+          }
+          session.messages = [];
+          this.attemptLogs.delete(message.sessionId);
+          await this.ctx.sessionStore.saveSession(session);
+          if (wc) wc.clear();
+
+          // Build fresh start directive
+          const prevTopic = previousSession
+            ? previousSession.messages
+                .filter((m) => m.role === "user")
+                .slice(-1)[0]?.content?.slice(0, 100)
+            : null;
+          freshStartDirective = `[SYSTEM DIRECTIVE: Context has been flushed. You are starting a fresh task.]`;
+          if (prevTopic && temporalSnapshot.isReturningUser) {
+            freshStartDirective += `\n[Previous session context: User was last discussing "${prevTopic}"]`;
+          }
+          break;
+      }
+    } catch (err) {
+      log.engine.warn(
+        `[Continuity] Engine failed, falling back to keyword detection: ${err instanceof Error ? err.message : err}`,
+      );
+      // Fallback to legacy keyword detection
+      freshStartDirective = this.detectTopicSwitch(
+        message.text,
+        session.messages,
+      );
+      if (freshStartDirective) {
+        session.messages = [];
+        this.attemptLogs.delete(message.sessionId);
+        await this.ctx.sessionStore.saveSession(session);
+        if (this.ctx.workingContextManager) {
+          this.ctx.workingContextManager.getOrCreate(message.sessionId).clear();
+        }
+      }
+    }
+
+    // ─── Episodic Memory: Segment Extraction (Phase 3) ──────────
+    // When a gap or topic switch is detected, extract episodes from completed segments.
+    // Fire-and-forget — don't block the response.
+    if (
+      this.ctx.episodicMemory &&
+      continuityResult &&
+      ["TOPIC_SWITCH", "FRESH_START"].includes(continuityResult.classification) &&
+      session.messages.length >= 4
+    ) {
+      this.runBackground("episode-extract", (async () => {
+        try {
+          const extractedUpTo = (session.metadata as any).episodicExtractedUpTo ?? 0;
+          const segments = getUnextractedSegments(session, extractedUpTo);
+
+          for (const segment of segments.slice(0, 2)) { // Max 2 segments per trigger
+            const segMessages = getSegmentMessages(session, segment);
+            if (segMessages.length < 3) continue;
+
+            await this.ctx.episodicMemory!.extractFromMessages(
+              segMessages,
+              session.id,
+              this.ctx.owl.persona.name,
+              this.ctx.provider,
+            );
+
+            // Track extraction progress in session metadata
+            (session.metadata as any).episodicExtractedUpTo = segment.endIndex + 1;
+          }
+
+          if (segments.length > 0) {
+            await this.ctx.sessionStore.saveSession(session);
+          }
+        } catch (err) {
+          log.engine.warn(
+            `[EpisodicMemory] Segment extraction failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      })());
+    }
+
+    // Abandon stale intents (no activity in 30+ minutes)
+    if (this.ctx.intentStateMachine) {
+      for (const stale of this.ctx.intentStateMachine.getStale()) {
+        this.ctx.intentStateMachine.transition(stale.id, "abandoned", "Stale — no activity for 30+ minutes");
+      }
+    }
+
+    // Populate working context with current message
+    if (this.ctx.workingContextManager) {
+      const wc = this.ctx.workingContextManager.getOrCreate(message.sessionId);
+      wc.setLastUserMessage(message.text);
     }
 
     // Evaluate instincts — may inject behavioral constraints
@@ -550,6 +768,7 @@ export class OwlGateway {
 
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
     let dynamicSkillsContext = "";
+    let injectedSkillNames: string[] = [];
     if (this.skillInjector) {
       const relevantMatches =
         await this.skillInjector.getRelevantMatches(text);
@@ -599,6 +818,7 @@ export class OwlGateway {
         // Unstructured skills — inject as context XML (existing path)
         dynamicSkillsContext = await this.skillInjector.injectIntoContext(text);
         const skillNames = relevantSkills.map((s) => s.name);
+        injectedSkillNames = skillNames;
         log.engine.info(`Dynamic skill injection: ${skillNames.join(", ")}`);
 
         // Notify user about skill usage (like tool history)
@@ -682,6 +902,13 @@ export class OwlGateway {
 
     // Capability gap detected — try to synthesize the missing tool and retry
     if (response.pendingCapabilityGap && this.ctx.evolution) {
+      // Also queue the gap for background synthesis in case the real-time
+      // handler fails — the cognitive loop will pick it up on the next idle tick.
+      this.ctx.cognitiveLoop?.enqueueSynthesisTarget(
+        response.pendingCapabilityGap.userRequest,
+        response.pendingCapabilityGap.description,
+        "conversation",
+      );
       return await this.handleCapabilityGap(
         message,
         response,
@@ -700,14 +927,67 @@ export class OwlGateway {
     );
     this.postProcess(session.messages, session.id);
 
+    // Update working context with owl's response
+    if (this.ctx.workingContextManager) {
+      const wc = this.ctx.workingContextManager.getOrCreate(message.sessionId);
+      wc.setLastOwlResponse(response.content.slice(0, 200));
+    }
+
+    // Track unstructured skill outcomes — skills injected as prompt context
+    // don't go through the executor, so we infer success/failure from the response.
+    if (injectedSkillNames.length > 0 && this.skillInjector) {
+      const tracker = this.skillInjector.getTracker();
+      const hasGap = !!response.pendingCapabilityGap;
+      const responseText = response.content.toLowerCase();
+      const looksLikeRefusal =
+        hasGap ||
+        /\b(?:i (?:can't|cannot|don't have|am unable|don't know how)|not (?:able|possible)|outside my|beyond my)\b/.test(
+          responseText,
+        );
+      const usedTools = (response.toolsUsed ?? []).length > 0;
+
+      for (const name of injectedSkillNames) {
+        if (looksLikeRefusal && !usedTools) {
+          tracker.recordFailure(name, 0);
+          // Queue for re-synthesis — skill matched but couldn't deliver
+          this.ctx.cognitiveLoop?.enqueueSynthesisTarget(
+            name.replace(/_/g, " "),
+            `Skill "${name}" matched but response indicates failure`,
+            "conversation",
+          );
+        } else {
+          tracker.recordSuccess(name, 0);
+        }
+      }
+    }
+
     // Detect and persist preferences expressed in this message (fire-and-forget)
     this.detectPreferences(message.text, message.channelId);
 
     // Track intent state based on this exchange (fire-and-forget)
     this.trackIntent(message.sessionId, message.text, response.content);
 
+    // Persist intent state (fire-and-forget)
+    this.ctx.intentStateMachine?.save().catch(() => {});
+
     // Record behavioral signals for preference inference (fire-and-forget)
     this.analyzeBehavior(message.text, message.channelId);
+
+    // Ground state refresh — every N turns, extract facts/decisions/questions (fire-and-forget)
+    if (this.ctx.groundState) {
+      const shouldRefresh = this.ctx.groundState.recordTurn();
+      if (shouldRefresh && session.messages.length >= 4) {
+        const userId = message.sessionId.split(":")[1] || message.sessionId;
+        this.runBackground(
+          "ground-state-refresh",
+          this.ctx.groundState.refresh(
+            session.messages,
+            userId,
+            message.sessionId,
+          ),
+        );
+      }
+    }
 
     return toGatewayResponse(response);
   }
@@ -723,6 +1003,23 @@ export class OwlGateway {
     if (!cache) return;
 
     const messages = cache.session.messages;
+
+    // Episodic memory extraction — extract episode from full session on explicit end
+    if (this.ctx.episodicMemory && messages.length >= 4) {
+      try {
+        await this.ctx.episodicMemory.extractFromMessages(
+          messages,
+          sessionId,
+          this.ctx.owl.persona.name,
+          this.ctx.provider,
+        );
+        log.engine.info("[endSession:episodic] Episode extracted");
+      } catch (err) {
+        log.engine.warn(
+          `[endSession:episodic] Extraction failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
 
     // Memory consolidation
     try {
@@ -845,6 +1142,11 @@ export class OwlGateway {
           `[endSession:patterns] ✗ failed: ${err instanceof Error ? err.message : err}`,
         );
       }
+    }
+
+    // Update user mental model baseline on session end
+    if (this.userMentalModel) {
+      this.userMentalModel.endSession();
     }
 
     // Save micro-learner profile on session end
@@ -2029,16 +2331,26 @@ export class OwlGateway {
             const commitmentPatterns = [
               {
                 pattern:
+                  /(?:I'll|I will|I'm going to|let me)\s+(?:remind|check|look into|get back|follow up|send|prepare|update|notify|monitor|track|find out|investigate)/i,
+                type: "deadline" as const,
+              },
+              {
+                pattern:
                   /(?:我会|我会帮|我会|I'll|I will).{0,30}(?:提醒|告诉|检查|给你|给你看|通知|发给你)/i,
                 type: "deadline" as const,
               },
               {
                 pattern:
-                  /(?:稍后|等一下|回头|晚点|later|soon|afterwards).{0,20}(?:再说|再|再说)/i,
+                  /(?:later|soon|afterwards|tomorrow|next time|in a (?:bit|moment|few))/i,
                 type: "time_delay" as const,
               },
               {
-                pattern: /(?:如果|when|if).{0,30}(?:有|的话|available)/i,
+                pattern:
+                  /(?:稍后|等一下|回头|晚点).{0,20}(?:再说|再|再说)/i,
+                type: "time_delay" as const,
+              },
+              {
+                pattern: /(?:when|if|once)\s+.{0,30}(?:available|ready|done|finished|back)/i,
                 type: "context_change" as const,
               },
             ];
@@ -2082,6 +2394,25 @@ export class OwlGateway {
                 break;
               }
             }
+
+            // ─── Thread Promotion Check ──────────────────────────
+            // Promote intent to narrative thread if it meets criteria:
+            //   - 3+ completed checkpoints
+            //   - OR linked to a goal
+            if (!existingIntent.isThread) {
+              const completedCheckpoints = existingIntent.checkpoints.filter(
+                (c) => c.completedAt,
+              ).length;
+              const shouldPromote =
+                completedCheckpoints >= 3 || !!existingIntent.linkedGoalId;
+
+              if (shouldPromote) {
+                intentSM.promoteToThread(
+                  existingIntent.id,
+                  existingIntent.description,
+                );
+              }
+            }
           }
         } catch (err) {
           log.engine.warn(
@@ -2096,17 +2427,30 @@ export class OwlGateway {
     message: string,
   ): import("../intent/types.js").IntentType {
     const lower = message.toLowerCase();
-    if (
-      /^(帮我|帮我做|帮我|帮我安排|帮我预订|帮我订|帮我查|can you|help me|book|order|schedule|find|search|check|帮我问一下)/.test(
-        lower,
-      ) ||
-      (/[吗\?]/.test(message) === false &&
-        /^(帮我|帮我做|can you|could you|please|帮我安排)/.test(lower))
-    ) {
-      return "task";
-    }
-    if (/[吗\?]|what is|how do|why|when|where|who is/.test(lower))
+
+    // Task patterns — user wants something done
+    const TASK_PATTERNS = [
+      // English imperative/request patterns
+      /^(?:can you|could you|would you|please|help me|i (?:want|need) (?:you )?to)\b/,
+      /^(?:set up|create|build|fix|install|configure|deploy|update|add|remove|delete|send|fetch|write|make|run|start|stop)\b/,
+      /^(?:book|order|schedule|find|search|check|look up|download|upload)\b/,
+      // Chinese patterns
+      /^(?:帮我|帮我做|帮我安排|帮我预订|帮我订|帮我查|帮我问一下)/,
+      // "I want to..." / "I need to..."
+      /\b(?:i want to|i need to|i'd like to|let's|lets)\b/,
+    ];
+
+    const isTask = TASK_PATTERNS.some((p) => p.test(lower));
+    if (isTask) return "task";
+
+    // Question patterns
+    if (/[吗？?]|^(?:what|how|why|when|where|who|which|is there|are there|do you|does|can i|should)\b/.test(lower))
       return "question";
+
+    // Information patterns
+    if (/^(?:tell me|explain|describe|what is|what are)\b/.test(lower))
+      return "information";
+
     return "exploration";
   }
 
@@ -2119,7 +2463,7 @@ export class OwlGateway {
     // Extract the relevant sentence containing commitment language
     const sentences = response.split(/[。！？.!?]/);
     for (const s of sentences) {
-      if (/我会|I'll|I will|我会帮|我会检查|我会提醒/.test(s)) {
+      if (/我会|I'll|I will|I'm going to|let me|我会帮|我会检查|我会提醒/.test(s)) {
         return s.trim().slice(0, 200);
       }
     }
@@ -2133,6 +2477,80 @@ export class OwlGateway {
     );
     if (match) return match[0].trim();
     return "that thing I said I'd follow up on";
+  }
+
+  /**
+   * Fire-and-forget: refresh a narrative thread's summary and progress
+   * using a lightweight LLM call. Called when a thread is resumed.
+   */
+  private refreshThreadSummary(
+    intentId: string,
+    recentMessages: ChatMessage[],
+  ): void {
+    const intentSM = this.ctx.intentStateMachine;
+    if (!intentSM) return;
+
+    this.runBackground(
+      "thread-refresh",
+      (async () => {
+        try {
+          const msgs = recentMessages
+            .slice(-8)
+            .map((m) => `${m.role}: ${m.content.slice(0, 150)}`)
+            .join("\n");
+
+          const intent = intentSM.getActive().find((i) => i.id === intentId);
+          if (!intent?.isThread) return;
+
+          const prompt = `Given thread "${intent.summary}" and recent messages, update the thread state.
+
+Messages:
+${msgs}
+
+Return JSON:
+{
+  "summary": "1-sentence summary of what this thread is about",
+  "progress": "1-sentence of what's been done so far",
+  "nextSteps": ["what should happen next"]
+}
+
+Return ONLY valid JSON.`;
+
+          const response = await Promise.race([
+            this.ctx.provider.chat(
+              [{ role: "user", content: prompt }],
+              undefined,
+              { temperature: 0, maxTokens: 200 },
+            ),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("timeout")), 3000),
+            ),
+          ]);
+
+          const match = response.content.trim().match(/\{[\s\S]*\}/);
+          if (!match) return;
+
+          const parsed = JSON.parse(match[0]) as {
+            summary?: string;
+            progress?: string;
+            nextSteps?: string[];
+          };
+
+          if (parsed.summary) intent.summary = parsed.summary;
+          if (parsed.progress) intent.progress = parsed.progress;
+          if (parsed.nextSteps) intent.nextSteps = parsed.nextSteps;
+          intent.updatedAt = Date.now();
+
+          log.engine.info(
+            `[Thread] Refreshed: "${(intent.summary ?? "").slice(0, 50)}"`,
+          );
+        } catch (err) {
+          log.engine.warn(
+            `[Thread] Refresh failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      })(),
+    );
   }
 }
 

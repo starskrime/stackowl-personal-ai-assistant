@@ -1,45 +1,78 @@
 ---
 name: math_solver
 description: Solve mathematical problems including arithmetic, algebra, calculus, and unit conversions
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🧮"
+parameters:
+  expression:
+    type: string
+    description: "Mathematical expression to solve"
+  type:
+    type: string
+    description: "Type: arithmetic, algebra, calculus, or conversion"
+    default: "arithmetic"
+required: [expression]
+steps:
+  - id: compute
+    tool: ShellTool
+    args:
+      command: "python3 -c 'print({{expression}})'"
+      mode: "local"
+    timeout_ms: 10000
+  - id: compute_math
+    tool: ShellTool
+    args:
+      command: "python3 -c 'import math; print({{expression}})'"
+      mode: "local"
+    timeout_ms: 10000
+    optional: true
+  - id: convert
+    tool: ShellTool
+    args:
+      command: "python3 -c '{{conversion}}'"
+      mode: "local"
+    timeout_ms: 10000
+    optional: true
 ---
 
 # Math Solver
 
 Solve mathematical problems.
 
-## Steps
+## Usage
 
-1. **Parse the problem** from user input.
-2. **Compute using Python:**
-   ```bash
-   run_shell_command("python3 -c 'print(<expression>)'")
-   ```
-   For complex math:
-   ```bash
-   run_shell_command("python3 -c 'import math; print(<expression>)'")
-   ```
-3. **Show step-by-step solution** for educational value.
+```bash
+/math_solver expression=<expr> type=<type>
+```
+
+## Parameters
+
+- **expression**: Mathematical expression to solve
+- **type**: Type: arithmetic, algebra, calculus, or conversion (default: arithmetic)
 
 ## Examples
 
 ### Arithmetic
 
-```bash
-run_shell_command("python3 -c 'print(15 * 23 + 47 / 3)'")
+```
+expression=15 * 23 + 47 / 3
+type=arithmetic
 ```
 
 ### Trigonometry
 
-```bash
-run_shell_command("python3 -c 'import math; print(math.sin(math.radians(45)))'")
+```
+expression=math.sin(math.radians(45))
+type=calculus
 ```
 
 ### Unit conversion
 
-```bash
-run_shell_command("python3 -c 'miles=26.2; print(f\"{miles} miles = {miles * 1.60934:.2f} km\")'")
+```
+expression=miles=26.2; print(f"{miles} miles = {miles * 1.60934:.2f} km")
+type=conversion
 ```
 
 ## Error Handling

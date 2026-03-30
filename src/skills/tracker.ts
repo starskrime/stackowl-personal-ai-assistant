@@ -102,6 +102,30 @@ export class SkillTracker {
       .map(([name, stats]) => ({ name, stats }));
   }
 
+  /** Get all tracked skills and their stats */
+  listAll(): { name: string; stats: SkillUsageStats }[] {
+    return [...this.stats.entries()].map(([name, stats]) => ({ name, stats }));
+  }
+
+  /**
+   * Get skills with high selection counts but poor success rates.
+   * These are prime candidates for re-synthesis or improvement.
+   */
+  getFailingSkills(
+    minSelections: number = 3,
+    maxSuccessRate: number = 0.3,
+  ): { name: string; stats: SkillUsageStats }[] {
+    return [...this.stats.entries()]
+      .filter(
+        ([, s]) =>
+          s.selectionCount >= minSelections &&
+          (s.successCount + s.failureCount === 0 ||
+            s.successRate <= maxSuccessRate),
+      )
+      .sort(([, a], [, b]) => b.selectionCount - a.selectionCount)
+      .map(([name, stats]) => ({ name, stats }));
+  }
+
   /** Get success rate for a skill (0-1), or undefined if no data */
   getSuccessRate(skillName: string): number | undefined {
     const s = this.stats.get(skillName);

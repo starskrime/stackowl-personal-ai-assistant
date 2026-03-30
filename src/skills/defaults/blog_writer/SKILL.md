@@ -1,8 +1,46 @@
 ---
 name: blog_writer
 description: Draft a structured blog post with title, introduction, sections, conclusion, and SEO metadata
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "✏️"
+parameters:
+  topic:
+    type: string
+    description: "The blog post topic"
+  audience:
+    type: string
+    description: "Target audience (e.g., developers, executives, beginners)"
+    default: "general"
+  tone:
+    type: string
+    description: "Writing tone (professional, casual, technical)"
+    default: "professional"
+  key_points:
+    type: string
+    description: "Key points to cover (comma-separated)"
+    default: ""
+required: [topic]
+steps:
+  - id: research_topic
+    tool: ShellTool
+    args:
+      command: "curl -s 'https://api.duckduckgo.com/?q={{topic}}+latest+insights+2026&format=json' 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); [print(r['Text']) for r in d.get('RelatedTopics',[])[:5]]\" 2>/dev/null || echo 'Research unavailable'"
+      mode: "local"
+    timeout_ms: 15000
+    optional: true
+  - id: write_blog
+    type: llm
+    prompt: "Write a blog post on '{{topic}}' for {{audience}} audience with {{tone}} tone. Key points to cover: {{key_points}}. Include: compelling title (60 chars max for SEO), hook introduction (2-3 sentences), 3-5 sections with headers, conclusion with CTA, and meta description (155 chars). Output the full blog post in markdown format."
+    depends_on: [research_topic]
+    inputs: [research_topic.stdout]
+  - id: save_draft
+    tool: WriteFileTool
+    args:
+      path: "~/Documents/blog/{{topic | slugify}}.md"
+      content: "{{write_blog.output}}"
+    optional: true
 ---
 
 # Blog Writer
@@ -32,8 +70,9 @@ Draft structured blog posts.
 ### Draft a tech blog
 
 ```
-web_search query="AI agents practical applications 2026"
-write_file("~/Documents/blog/ai_agents_guide.md", "<drafted content>")
+topic="AI agents practical applications"
+audience="developers"
+tone="technical"
 ```
 
 ## Error Handling

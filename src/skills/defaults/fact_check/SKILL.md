@@ -1,37 +1,58 @@
 ---
 name: fact_check
 description: Verify a claim or statement by searching multiple authoritative sources and presenting evidence
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "✅"
+parameters:
+  claim:
+    type: string
+    description: "The claim or statement to verify"
+required: [claim]
+steps:
+  - id: search_primary
+    tool: google_search
+    args:
+      query: "{{claim}} fact check"
+      num: 5
+  - id: search_evidence
+    tool: google_search
+    args:
+      query: "{{claim}} evidence"
+      num: 5
+  - id: search_authoritative
+    tool: google_search
+    args:
+      query: "{{claim}} snopes OR politifact OR reuters"
+      num: 5
+  - id: analyze
+    type: llm
+    prompt: "Based on the search results for the claim '{{claim}}', evaluate the claim and present a verdict: Confirmed (supported by multiple reliable sources), Partially true (context matters), False (contradicted by evidence), or Unverifiable (insufficient evidence). Cite the sources found."
+    depends_on: [search_primary, search_evidence, search_authoritative]
+    inputs: [search_primary.output, search_evidence.output, search_authoritative.output]
 ---
 
 # Fact Check
 
 Verify claims using multiple sources.
 
-## Steps
+## Usage
 
-1. **Identify the claim** to verify.
-2. **Search for evidence:**
-   ```
-   web_search query="<claim> fact check"
-   web_search query="<claim> evidence"
-   web_search query="<claim> snopes OR politifact OR reuters"
-   ```
-3. **Evaluate sources** for reliability and recency.
-4. **Present verdict:**
-   - ✅ **Confirmed** — supported by multiple reliable sources
-   - ⚠️ **Partially true** — context matters
-   - ❌ **False** — contradicted by evidence
-   - ❓ **Unverifiable** — insufficient evidence
-5. **Cite sources** with URLs.
+```bash
+/fact_check claim="<statement to verify>"
+```
+
+## Parameters
+
+- **claim**: The claim or statement to verify
 
 ## Examples
 
 ### Check a claim
 
 ```
-web_search query="does drinking water help weight loss fact check"
+claim="does drinking water help weight loss"
 ```
 
 ## Error Handling

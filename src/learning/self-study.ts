@@ -206,34 +206,16 @@ export class LearningEngine {
         this.graphManager.touchDomain(topic, "conversation");
       }
 
-      // Step 3: Research knowledge gaps (LLM calls — may fail per-gap)
+      // Step 3: Register knowledge gaps in knowledge graph (no LLM synthesis).
+      // Previously researched each gap with LLM calls and created pellets.
+      // Now just registers them — actual learning happens via CognitiveLoop
+      // synthesis queue when there are real conversation failures.
       if (insights.knowledgeGaps.length > 0) {
-        log.evolution.evolve(
-          `[Learning] Researching ${Math.min(2, insights.knowledgeGaps.length)} knowledge gap(s)...`,
-        );
-        const researcher = new KnowledgeResearcher(
-          this.provider,
-          this.owl,
-          this.config,
-          this.pelletStore,
-          this.graphManager,
-        );
-
-        const recentContext = messages
-          .filter(
-            (m: ChatMessage) => m.role === "user" || m.role === "assistant",
-          )
-          .slice(-6)
-          .map((m: ChatMessage) => (m.content ?? "").slice(0, 200))
-          .join(" ");
-
         for (const gap of insights.knowledgeGaps.slice(0, 2)) {
           try {
-            const result = await researcher.research(gap, recentContext);
-            pelletsCreated += result.pellets.length;
+            this.graphManager.touchDomain(gap, "conversation");
             log.evolution.evolve(
-              `[Learning] Gap "${gap}" → ${result.pellets.length} pellet(s), ` +
-                `${result.relatedTopics.length} frontier topics`,
+              `[Learning] Gap "${gap}" → registered in knowledge graph`,
             );
           } catch (err) {
             const errClass = classifyError(err);

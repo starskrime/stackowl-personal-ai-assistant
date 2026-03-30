@@ -534,6 +534,10 @@ async function bootstrap() {
   // ── Memory Layers ──
   const workingContextManager = new WorkingContextManager();
 
+  // ── Ground State View (Phase 4) ──
+  const { GroundStateView } = await import("./cognition/ground-state.js");
+  const groundState = new GroundStateView(factStore, providerRegistry.getDefault());
+
   // ── Goal Graph ──
   const goalGraph = new GoalGraph(workspacePath);
   await goalGraph.load();
@@ -641,6 +645,7 @@ async function bootstrap() {
     memoryRetriever,
     memoryFeedback,
     goalGraph,
+    groundState,
   };
 }
 
@@ -911,6 +916,7 @@ async function buildGateway(
     memoryRetriever: b.memoryRetriever,
     memoryFeedback: b.memoryFeedback,
     goalGraph: b.goalGraph,
+    groundState: b.groundState,
     proactiveLoop: new ProactiveIntentionLoop(
       b.commitmentTracker,
       b.intentStateMachine,

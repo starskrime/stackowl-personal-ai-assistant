@@ -64,6 +64,14 @@ export class KnowledgeGraphManager {
     }
   }
 
+  /**
+   * Return a snapshot of the current graph for use by TopicFusionEngine.
+   * Avoids the need for type-unsafe bracket notation access to private fields.
+   */
+  getGraph(): KnowledgeGraph {
+    return this.graph;
+  }
+
   async save(): Promise<void> {
     this.graph.lastUpdated = new Date().toISOString();
     await writeFile(

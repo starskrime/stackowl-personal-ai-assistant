@@ -1,33 +1,87 @@
 ---
 name: lint_fix
 description: Run code linters and automatically fix formatting and style issues in the project
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "✨"
+parameters:
+  project_type:
+    type: string
+    description: "Project type: javascript, typescript, python, or auto-detect"
+    default: "auto"
+  path:
+    type: string
+    description: "Path to lint (default: current directory)"
+    default: "."
+required: []
+steps:
+  - id: detect_project
+    tool: ShellTool
+    args:
+      command: "ls .eslintrc* .prettierrc* pyproject.toml .flake8 2>/dev/null"
+      mode: "local"
+    timeout_ms: 5000
+    optional: true
+  - id: run_eslint
+    tool: ShellTool
+    args:
+      command: "npx eslint --fix {{path}}"
+      mode: "local"
+    timeout_ms: 60000
+    optional: true
+  - id: run_prettier
+    tool: ShellTool
+    args:
+      command: "npx prettier --write {{path}}"
+      mode: "local"
+    timeout_ms: 60000
+    optional: true
+  - id: run_black
+    tool: ShellTool
+    args:
+      command: "python -m black {{path}}"
+      mode: "local"
+    timeout_ms: 60000
+    optional: true
+  - id: run_ruff
+    tool: ShellTool
+    args:
+      command: "ruff check --fix {{path}}"
+      mode: "local"
+    timeout_ms: 60000
+    optional: true
 ---
 
 # Lint and Fix
 
 Run linters and auto-fix code style issues.
 
-## Steps
+## Usage
 
-1. **Detect the project type and linter:**
-   ```bash
-   run_shell_command("ls .eslintrc* .prettierrc* pyproject.toml .flake8 2>/dev/null")
-   ```
-2. **Run the linter with auto-fix:**
-   - **ESLint:** `run_shell_command("npx eslint --fix src/")`
-   - **Prettier:** `run_shell_command("npx prettier --write src/")`
-   - **Python (black):** `run_shell_command("python -m black .")`
-   - **Python (ruff):** `run_shell_command("ruff check --fix .")`
-3. **Show summary** of fixes applied.
+```bash
+/lint_fix project_type=<type> path=<path>
+```
+
+## Parameters
+
+- **project_type**: Project type: javascript, typescript, python, or auto-detect (default: auto)
+- **path**: Path to lint (default: current directory)
 
 ## Examples
 
 ### Fix JavaScript project
 
-```bash
-run_shell_command("npx eslint --fix src/ && npx prettier --write src/")
+```
+project_type=javascript
+path=src/
+```
+
+### Fix Python project
+
+```
+project_type=python
+path=.
 ```
 
 ## Error Handling

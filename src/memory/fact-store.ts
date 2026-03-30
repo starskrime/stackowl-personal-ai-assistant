@@ -34,7 +34,12 @@ export type FactCategory =
   | "goal"
   | "relationship"
   | "habit"
-  | "context";
+  | "context"
+  // Phase 4: Conversational Ground State categories
+  | "decision"
+  | "open_question"
+  | "active_goal"
+  | "sub_goal";
 
 export type FactSource = "explicit" | "inferred" | "confirmed";
 

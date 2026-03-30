@@ -112,6 +112,48 @@ export interface CognitiveLoopDeps {
   skillsLoader?: SkillsLoader;
 }
 
+/**
+ * Determines if a desire description represents an actionable capability need
+ * (e.g., "Build ability to send emails") vs. an abstract behavioral goal
+ * (e.g., "Build a relationship where the user trusts me").
+ *
+ * Uses phrase-level patterns instead of single keywords to avoid false positives
+ * like "Build a relationship" matching on "build".
+ */
+function isCapabilityDesire(description: string): boolean {
+  const text = description.toLowerCase();
+
+  // Phrase patterns that indicate a concrete capability need
+  const CAPABILITY_PHRASES = [
+    /\b(?:build|create|develop|add)\s+(?:ability|skills?|tools?|capability)\b/,
+    /\b(?:build|create|develop|add)\s+(?:a\s+)?(?:way|method|system)\s+to\b/,
+    /\bautomate\b/,
+    /\b(?:send|fetch|access|control|manage|schedule|monitor|scrape|parse|convert)\s+\w/,
+    /\bintegrat(?:e|ing)\b/,
+    /\btools?\s+for\b/,
+    /\bskills?\s+for\b/,
+    /\bcapability\s+to\b/,
+    /\bability\s+to\s+(?!understand|learn|anticipate|build\s+(?:a\s+)?relationship)/,
+  ];
+
+  // Exclusion patterns for abstract behavioral/relationship goals
+  const EXCLUSIONS = [
+    /\brelationship\b/,
+    /\btrust\b.*\bjudgment\b/,
+    /\banticipat(?:e|ing)\s+what\b/,
+    /\bunderstand\s+(?:the\s+)?user/,
+    /\bproactive\s+(?!automat)/,
+  ];
+
+  // Must match at least one capability phrase
+  const matchesCapability = CAPABILITY_PHRASES.some((p) => p.test(text));
+  if (!matchesCapability) return false;
+
+  // Must not match exclusions
+  const matchesExclusion = EXCLUSIONS.some((p) => p.test(text));
+  return !matchesExclusion;
+}
+
 const DEFAULT_CONFIG: CognitiveLoopConfig = {
   tickIntervalMinutes: 15,
   minIdleMinutes: 5,
@@ -141,6 +183,19 @@ export class CognitiveLoop {
   private history: CognitiveTickResult[] = [];
   private capabilityScanner: CapabilityScanner | null = null;
 
+  /**
+   * Persistent synthesis queue — targets discovered during conversations or
+   * cognitive ticks accumulate here and get consumed across future ticks.
+   * Survives across ticks (but not across restarts — transient by design,
+   * since stale gaps become irrelevant as user needs change).
+   */
+  private synthesisQueue: Array<{
+    userRequest: string;
+    description: string;
+    addedAt: number;
+    source: "conversation" | "self_reflection" | "capability_scan" | "skill_stats";
+  }> = [];
+
   constructor(
     private deps: CognitiveLoopDeps,
     config?: Partial<CognitiveLoopConfig>,
@@ -165,14 +220,48 @@ export class CognitiveLoop {
 
     this.stop();
 
-    // Seed knowledge graph from inner life desires so the study queue
-    // isn't empty on fresh start. Desires like "learn about X" become
-    // initial study topics, giving the learning pipeline material to work with.
-    this.seedKnowledgeGraphFromDesires().catch((err) => {
+    // ─── Initialization diagnostics ─────────────────────────────
+    // Log which deps are available so runtime failures are visible.
+    const deps = this.deps;
+    const available: string[] = [];
+    const missing: string[] = [];
+    const check = (name: string, val: unknown) =>
+      (val ? available : missing).push(name);
+
+    check("innerLife", deps.innerLife);
+    check("learningOrchestrator", deps.learningOrchestrator);
+    check("reflexionEngine", deps.reflexionEngine);
+    check("skillsRegistry", deps.skillsRegistry);
+    check("sessionStore", deps.sessionStore);
+    check("pelletStore", deps.pelletStore);
+    check("capabilityLedger", deps.capabilityLedger);
+    check("toolRegistry", deps.toolRegistry);
+    check("skillsDir", deps.skillsDir);
+    check("evolutionEngine", deps.evolutionEngine);
+    check("providerRegistry", deps.providerRegistry);
+    check("skillsLoader", deps.skillsLoader);
+
+    log.engine.info(
+      `[CognitiveLoop] Deps available: [${available.join(", ")}]`,
+    );
+    if (missing.length > 0) {
       log.engine.warn(
-        `[CognitiveLoop] Desire seeding failed: ${err instanceof Error ? err.message : err}`,
+        `[CognitiveLoop] Deps MISSING (features disabled): [${missing.join(", ")}]`,
       );
-    });
+    }
+
+    // Wire the learning orchestrator's capability gap callback so that
+    // knowledge gaps discovered from conversation analysis (e.g., "couldn't send email")
+    // automatically enter the synthesis queue for autonomous skill creation.
+    if (this.deps.learningOrchestrator) {
+      this.deps.learningOrchestrator.setCapabilityGapCallback(
+        (gap, description) => this.enqueueSynthesisTarget(gap, description, "conversation"),
+      );
+    }
+
+    // NOTE: Desire seeding removed — the loop only learns reactively now.
+    // Learning is triggered by actual failures (synthesis queue from conversation
+    // gaps), not proactive exploration of random topics.
 
     log.engine.info(
       `[CognitiveLoop] Started — ticking every ${this.config.tickIntervalMinutes} min`,
@@ -210,6 +299,42 @@ export class CognitiveLoop {
   /** Call when user sends a message to reset idle timer. */
   notifyUserActivity(): void {
     this.lastUserActivity = Date.now();
+  }
+
+  /**
+   * Enqueue a synthesis target from a conversation. Called by the gateway
+   * when the assistant detects it can't do something the user asked for,
+   * or when post-processing identifies an unmet need.
+   *
+   * The cognitive loop will pick this up on the next idle tick and attempt
+   * to synthesize a skill for it — no waiting for the 3-hour cooldown.
+   */
+  enqueueSynthesisTarget(
+    userRequest: string,
+    description: string,
+    source: "conversation" | "self_reflection" | "capability_scan" | "skill_stats" = "conversation",
+  ): void {
+    // Dedup against existing queue entries (fuzzy match on first 30 chars)
+    const key = userRequest.toLowerCase().slice(0, 30);
+    const alreadyQueued = this.synthesisQueue.some(
+      (t) => t.userRequest.toLowerCase().slice(0, 30) === key,
+    );
+    if (alreadyQueued) return;
+
+    // Cap queue size to prevent unbounded growth
+    if (this.synthesisQueue.length >= 20) {
+      this.synthesisQueue.shift(); // Drop oldest
+    }
+
+    this.synthesisQueue.push({
+      userRequest,
+      description,
+      addedAt: Date.now(),
+      source,
+    });
+    log.engine.info(
+      `[CognitiveLoop] Synthesis target queued (${source}): "${userRequest.slice(0, 60)}"`,
+    );
   }
 
   /** Get recent cognitive history for debugging/status. */
@@ -313,93 +438,29 @@ export class CognitiveLoop {
     const now = Date.now();
     const HOUR_MS = 60 * 60 * 1000;
 
-    // 1. Desire-driven study — highest priority
-    // The owl's inner desires represent genuine curiosity that should drive learning.
-    if (this.deps.innerLife && this.deps.learningOrchestrator) {
-      const state = this.deps.innerLife.getState();
-      if (state) {
-        const strongDesires = state.desires
-          .filter((d) => d.intensity >= 0.5)
-          .sort((a, b) => b.intensity - a.intensity);
+    // ─── Reactive-Only Learning ─────────────────────────────────
+    // The loop ONLY acts on concrete failures and queued gaps from
+    // actual conversations. No proactive exploration, no desire-driven
+    // study, no frontier exploration. This prevents runaway token usage.
 
-        for (const desire of strongDesires.slice(0, 2)) {
-          const topic = this.extractTopicFromDesire(desire.description);
-          if (topic) {
-            candidates.push({
-              action: "desire_driven_study",
-              reason: `Inner desire: "${desire.description.slice(0, 60)}"`,
-              priority: 70 + Math.round(desire.intensity * 20), // 70-90
-              topic,
-            });
-          }
-        }
-      }
-    }
-
-    // 2. Capability gap study — react to known weaknesses
-    if (this.capabilityScanner && now - this.lastCapScanTime > 2 * HOUR_MS) {
-      const scanResult = this.capabilityScanner.scan();
-      const topGaps = scanResult.gaps.slice(0, 3);
-      for (const gap of topGaps) {
-        if (gap.suggestion) {
-          candidates.push({
-            action: "gap_driven_study",
-            reason: `Capability gap: ${gap.description.slice(0, 60)}`,
-            priority: 60 + gap.priority * 5,
-            topic: gap.description,
-          });
-        }
-      }
-    }
-
-    // 3. Autonomous skill synthesis — proactively create skills for known gaps
-    // This is the KEY missing piece: the owl doesn't just study, it BUILDS capabilities.
-    // Analyzes the capability ledger for recurring failures, inner life for capability desires,
-    // and proactively synthesizes skills WITHOUT waiting for a user to hit the gap.
+    // 1. Autonomous skill synthesis — ONLY when synthesis queue has
+    //    targets from actual conversation failures (capability gaps).
+    //    No 3-hour proactive scan — only real failures trigger this.
     if (
       this.deps.skillsDir &&
-      this.deps.capabilityLedger &&
-      this.skillsCreatedToday < 3 && // Max 3 skills per day to prevent spam
-      now - this.lastAutonomousSynthesisTime > 3 * HOUR_MS
+      this.skillsCreatedToday < 3 &&
+      this.synthesisQueue.length > 0
     ) {
       candidates.push({
         action: "autonomous_skill_synthesis",
-        reason: "Proactively build skills for known capability gaps",
-        priority: 75, // Higher than study — building > reading
+        reason: `${this.synthesisQueue.length} queued synthesis target(s) from conversation failures`,
+        priority: 85,
       });
     }
 
-    // 4. Self-reflection — review past failures, generate new desires and goals
-    // The owl thinks: "What went wrong? What should I learn? What tools do I need?"
-    // This feeds the desire system, which drives future study and synthesis.
-    if (
-      this.deps.sessionStore &&
-      this.deps.innerLife &&
-      now - this.lastSelfReflectionTime > 6 * HOUR_MS
-    ) {
-      candidates.push({
-        action: "self_reflection",
-        reason: "Reflect on past interactions to identify growth areas",
-        priority: 65,
-      });
-    }
-
-    // 5. DNA evolution — sync accumulated learning into personality
-    // Trigger after every 5 study sessions to compound growth
-    if (
-      this.deps.evolutionEngine &&
-      this.studySessionsSinceDnaSync >= 5 &&
-      now - this.lastDnaEvolutionTime > 2 * HOUR_MS
-    ) {
-      candidates.push({
-        action: "dna_evolution",
-        reason: `${this.studySessionsSinceDnaSync} study sessions since last DNA sync`,
-        priority: 58,
-      });
-    }
-
-    // 6. Reflexion (dream) — learn from mistakes
-    // Run at most once every 4 hours
+    // 2. Reflexion (dream) — learn from past mistakes
+    //    Lightweight: extracts behavioral patches so errors aren't repeated.
+    //    Run at most once every 4 hours.
     if (this.deps.reflexionEngine && now - this.lastReflexionTime > 4 * HOUR_MS) {
       candidates.push({
         action: "reflexion_dream",
@@ -408,58 +469,22 @@ export class CognitiveLoop {
       });
     }
 
-    // 5. Pattern mining — crystallize skills from repeated tool sequences
-    // Run at most once every 6 hours
+    // 3. DNA evolution — sync accumulated learning into personality
+    //    Low cost (no LLM). Trigger after 5+ study sessions.
     if (
-      this.deps.sessionStore &&
-      this.deps.skillsRegistry &&
-      this.deps.skillsDir &&
-      now - this.lastPatternMineTime > 6 * HOUR_MS
+      this.deps.evolutionEngine &&
+      this.studySessionsSinceDnaSync >= 5 &&
+      now - this.lastDnaEvolutionTime > 2 * HOUR_MS
     ) {
       candidates.push({
-        action: "pattern_mining",
-        reason: "Mine successful tool patterns into reusable skills",
+        action: "dna_evolution",
+        reason: `${this.studySessionsSinceDnaSync} study sessions since last DNA sync`,
         priority: 50,
       });
     }
 
-    // 6. Memory consolidation — extract persistent facts from sessions
-    // Run at most once every 8 hours (replaces ProactivePinger's 3 AM job)
-    if (
-      this.deps.sessionStore &&
-      now - this.lastMemoryConsolidationTime > 8 * HOUR_MS
-    ) {
-      candidates.push({
-        action: "memory_consolidation",
-        reason: "Consolidate conversation memories into persistent storage",
-        priority: 45,
-      });
-    }
-
-    // 7. Skill evolution — improve existing low-quality skills
-    // Run at most once every 12 hours
-    if (
-      this.deps.skillsRegistry &&
-      now - this.lastSkillEvolveTime > 12 * HOUR_MS
-    ) {
-      candidates.push({
-        action: "skill_evolution",
-        reason: "Critique and improve existing skills",
-        priority: 40,
-      });
-    }
-
-    // 8. Capability scan — discover unused features
-    if (this.capabilityScanner && now - this.lastCapScanTime > 4 * HOUR_MS) {
-      candidates.push({
-        action: "capability_scan",
-        reason: "Discover unused platform capabilities",
-        priority: 35,
-      });
-    }
-
-    // 9. Tool pruning — fix or archive failing synthesized tools
-    // Run at most once every 8 hours (replaces ProactivePinger's 4h job)
+    // 4. Tool pruning — fix or archive failing synthesized tools
+    //    Run at most once every 8 hours.
     if (
       this.deps.capabilityLedger &&
       now - this.lastToolPruneTime > 8 * HOUR_MS
@@ -467,18 +492,31 @@ export class CognitiveLoop {
       candidates.push({
         action: "tool_pruning",
         reason: "Scan synthesized tools for failures and prune/fix them",
-        priority: 32,
+        priority: 40,
       });
     }
 
-    // 10. Frontier exploration — deepen knowledge in weak areas
-    if (this.deps.learningOrchestrator) {
+    // 5. Memory consolidation — extract persistent facts from sessions
+    //    Run at most once every 8 hours.
+    if (
+      this.deps.sessionStore &&
+      now - this.lastMemoryConsolidationTime > 8 * HOUR_MS
+    ) {
       candidates.push({
-        action: "frontier_exploration",
-        reason: "Explore and deepen knowledge in weakest domains",
-        priority: 30,
+        action: "memory_consolidation",
+        reason: "Consolidate conversation memories into persistent storage",
+        priority: 35,
       });
     }
+
+    // ─── REMOVED (proactive token burners) ──────────────────────
+    // desire_driven_study    — studied random desires
+    // gap_driven_study       — proactive capability gap exploration
+    // self_reflection        — generated new desires (fed more random study)
+    // pattern_mining         — mined patterns into skills proactively
+    // skill_evolution        — critiqued/rewrote skills proactively
+    // capability_scan        — discovered unused features proactively
+    // frontier_exploration   — deep-researched random knowledge graph topics
 
     if (candidates.length === 0) {
       return { action: "idle", reason: "Nothing to do", priority: 0 };
@@ -733,8 +771,8 @@ export class CognitiveLoop {
    * but triggered proactively from the cognitive loop.
    */
   private async executeAutonomousSkillSynthesis(): Promise<string> {
-    if (!this.deps.skillsDir || !this.deps.capabilityLedger) {
-      return "Missing skillsDir or capability ledger";
+    if (!this.deps.skillsDir) {
+      return "Missing skillsDir";
     }
 
     const { ToolSynthesizer } = await import("../evolution/synthesizer.js");
@@ -754,19 +792,55 @@ export class CognitiveLoop {
       }
     }
 
-    // ── Source 1: Capability ledger failures → skill synthesis targets ──
+    // ── Priority source: Drain the synthesis queue (conversation-driven) ──
     const gapTargets: Array<{ userRequest: string; description: string }> = [];
 
-    await this.deps.capabilityLedger.load();
-    const allTools = this.deps.capabilityLedger.listAll();
-    const failingTools = allTools.filter(
-      (t) => t.status === "active" && (t.consecutiveFailures ?? 0) >= 2,
+    // Expire stale queue entries (older than 24 hours)
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    this.synthesisQueue = this.synthesisQueue.filter(
+      (t) => Date.now() - t.addedAt < DAY_MS,
     );
-    for (const tool of failingTools.slice(0, 2)) {
+
+    // Queue targets get first priority — these came from real user interactions
+    for (const queued of this.synthesisQueue.splice(0, 3)) {
       gapTargets.push({
-        userRequest: tool.description,
-        description: `Recurring failure in "${tool.toolName}": ${tool.rationale}`,
+        userRequest: queued.userRequest,
+        description: `${queued.source}: ${queued.description}`,
       });
+    }
+
+    // ── Source 1: Capability ledger failures → skill synthesis targets ──
+    if (this.deps.capabilityLedger) {
+      await this.deps.capabilityLedger.load();
+      const allTools = this.deps.capabilityLedger.listAll();
+      const failingTools = allTools.filter(
+        (t) => t.status === "active" && (t.consecutiveFailures ?? 0) >= 2,
+      );
+      for (const tool of failingTools.slice(0, 2)) {
+        gapTargets.push({
+          userRequest: tool.description,
+          description: `Recurring failure in "${tool.toolName}": ${tool.rationale}`,
+        });
+      }
+    }
+
+    // ── Source 1b: Skill tracker — frequently used but failing skills ──
+    // These are skills that get selected (user needs match) but never succeed,
+    // indicating the skill content is broken or inadequate. Re-synthesize them.
+    try {
+      const { SkillTracker } = await import("../skills/tracker.js");
+      const workspacePath = this.deps.config.workspace || "./workspace";
+      const tracker = new SkillTracker(workspacePath);
+      await tracker.load();
+      const failingSkills = tracker.getFailingSkills(3, 0.3);
+      for (const { name, stats } of failingSkills.slice(0, 2)) {
+        gapTargets.push({
+          userRequest: name.replace(/_/g, " "),
+          description: `Skill "${name}" selected ${stats.selectionCount}x but success rate is ${(stats.successRate * 100).toFixed(0)}% — needs re-synthesis`,
+        });
+      }
+    } catch {
+      // Non-fatal — skill tracker may not exist yet
     }
 
     // ── Source 2: Inner life desires that look like capabilities ──
@@ -774,11 +848,7 @@ export class CognitiveLoop {
       const state = this.deps.innerLife.getState();
       if (state) {
         const capabilityDesires = state.desires.filter(
-          (d) =>
-            d.intensity >= 0.5 &&
-            /\b(ability|tool|skill|capability|automate|create|build|send|fetch|control|access)\b/i.test(
-              d.description,
-            ),
+          (d) => d.intensity >= 0.5 && isCapabilityDesire(d.description),
         );
         for (const desire of capabilityDesires.slice(0, 2)) {
           gapTargets.push({
@@ -801,6 +871,41 @@ export class CognitiveLoop {
           });
         }
       }
+    }
+
+    // ── Source 4: User profile capability clusters (recurring unmet needs) ──
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const workspacePath = this.deps.config.workspace || "./workspace";
+      const profilePath = join(workspacePath, "user-profile.json");
+      if (existsSync(profilePath)) {
+        const raw = await readFile(profilePath, "utf-8");
+        const profile = JSON.parse(raw) as {
+          capabilityClusters?: Record<string, string[]>;
+          topics?: Record<string, number>;
+        };
+        if (profile.capabilityClusters) {
+          // Find high-frequency topics that have unmet capability sub-needs
+          const topicEntries = Object.entries(profile.topics ?? {})
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 3);
+          for (const [topic, _count] of topicEntries) {
+            const cluster = profile.capabilityClusters[topic];
+            if (cluster) {
+              for (const subNeed of cluster.slice(0, 1)) {
+                gapTargets.push({
+                  userRequest: `${topic} ${subNeed}`,
+                  description: `User frequently needs ${topic} capabilities, specifically ${subNeed}`,
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — user profile may not exist
     }
 
     if (gapTargets.length === 0) {
@@ -849,13 +954,12 @@ export class CognitiveLoop {
         created++;
         this.skillsCreatedToday++;
 
-        // Reload the skill into the registry so it's immediately available
+        // Reload the skill into the registry so it's immediately available.
+        // Use registry.loadFromDirectory() directly instead of skillsLoader.load()
+        // to avoid overwriting the loader's directory list (which includes built-in skills).
         if (this.deps.skillsLoader) {
           try {
-            await this.deps.skillsLoader.load({
-              directories: [this.deps.skillsDir],
-              watch: false,
-            });
+            await this.deps.skillsLoader.getRegistry().loadFromDirectory(this.deps.skillsDir);
           } catch {
             // Non-fatal — skill exists on disk for next restart
           }
@@ -964,11 +1068,17 @@ export class CognitiveLoop {
 
       let desiresAdded = 0;
 
-      // Inject capability gaps as desires (high intensity — these drive skill synthesis)
+      // Inject capability gaps as desires AND queue for immediate synthesis
       for (const gap of (analysis.capabilityGaps ?? []).slice(0, 3)) {
         await this.deps.innerLife.addDesire(
           `Build ability to ${gap}`,
           0.7,
+        );
+        // Also queue for immediate synthesis — don't wait for next desire scan
+        this.enqueueSynthesisTarget(
+          gap,
+          `Self-reflection identified capability gap: ${gap}`,
+          "self_reflection",
         );
         desiresAdded++;
       }
@@ -1032,6 +1142,55 @@ export class CognitiveLoop {
       if (topic) {
         graph.touchDomain(topic, "self-study");
         seeded++;
+      }
+    }
+
+    // ── Desire hygiene: decay abstract desires, boost capability desires ──
+    // Abstract desires ("Build a relationship", "Anticipate user needs") can't
+    // produce study topics or synthesis targets, yet they dominate the desire list
+    // at high intensity. Decay them to make room for actionable desires.
+    if (this.deps.innerLife) {
+      const state = this.deps.innerLife.getState();
+      if (state) {
+        let decayed = 0;
+        for (const desire of state.desires) {
+          const topic = this.extractTopicFromDesire(desire.description);
+          const isCap = isCapabilityDesire(desire.description);
+          // If this desire can't produce a study topic AND isn't a capability target,
+          // it's dead weight — decay it
+          if (!topic && !isCap && desire.intensity > 0.3) {
+            desire.intensity = Math.max(0.2, desire.intensity - 0.15);
+            decayed++;
+          }
+        }
+        if (decayed > 0) {
+          await this.deps.innerLife.save();
+          log.engine.info(
+            `[CognitiveLoop] Decayed ${decayed} abstract/unactionable desires`,
+          );
+        }
+      }
+
+      // Inject capability-oriented desires if none exist.
+      // These drive autonomous skill synthesis — without them, the owl
+      // only learns knowledge (pellets) but never builds capabilities (skills).
+      const freshState = this.deps.innerLife.getState();
+      const hasCapabilityDesires = freshState?.desires.some((d) =>
+        isCapabilityDesire(d.description),
+      );
+
+      if (!hasCapabilityDesires) {
+        const bootstrapDesires = [
+          "Build ability to automate recurring tasks the user asks for",
+          "Develop skills for file and document management",
+          "Create tools for information retrieval and summarization",
+        ];
+        for (const desc of bootstrapDesires) {
+          await this.deps.innerLife.addDesire(desc, 0.5);
+        }
+        log.engine.info(
+          `[CognitiveLoop] Injected ${bootstrapDesires.length} bootstrap capability desires`,
+        );
       }
     }
 

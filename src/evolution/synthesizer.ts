@@ -250,6 +250,17 @@ export class ToolSynthesizer {
       content = bestContent;
     }
 
+    // Validate that the content has valid SKILL.md structure before writing
+    // Must contain YAML frontmatter with --- delimiters and a name: field
+    const hasFrontmatter = /^---\s*\n[\s\S]*?\n---/m.test(content);
+    const hasName = /^name:\s*\S+/m.test(content);
+    if (!hasFrontmatter || !hasName) {
+      throw new Error(
+        `Synthesized SKILL.md is malformed (frontmatter=${hasFrontmatter}, name=${hasName}). ` +
+        `Refusing to write invalid content to disk.`,
+      );
+    }
+
     // Extract skill name from frontmatter and normalize to generic form
     const nameMatch = content.match(/^name:\s*(\S+)/m);
     const rawName = nameMatch ? nameMatch[1] : "synthesized_skill";

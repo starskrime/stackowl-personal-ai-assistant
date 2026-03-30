@@ -1,62 +1,91 @@
 ---
 name: manage_todo
 description: Create, list, complete, and delete items in a local todo list stored as a markdown file
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "✅"
+parameters:
+  action:
+    type: string
+    description: "Action: add, complete, delete, or list"
+    default: "list"
+  task:
+    type: string
+    description: "Task description"
+required: [action]
+steps:
+  - id: init_file
+    tool: ShellTool
+    args:
+      command: "test -f ~/stackowl_todos.md || echo '# Todo List\n' > ~/stackowl_todos.md"
+      mode: "local"
+    timeout_ms: 5000
+  - id: read_todos
+    tool: ShellTool
+    args:
+      command: "cat ~/stackowl_todos.md"
+      mode: "local"
+    timeout_ms: 5000
+  - id: add_task
+    tool: ShellTool
+    args:
+      command: "echo '- [ ] {{task}}' >> ~/stackowl_todos.md"
+      mode: "local"
+    timeout_ms: 5000
+    optional: true
+  - id: complete_task
+    tool: ShellTool
+    args:
+      command: "sed -i '' 's/- \\[ \\] {{task}}/- [x] {{task}}/' ~/stackowl_todos.md"
+      mode: "local"
+    timeout_ms: 5000
+    optional: true
+  - id: delete_task
+    tool: ShellTool
+    args:
+      command: "sed -i '' '/{{task}}/d' ~/stackowl_todos.md"
+      mode: "local"
+    timeout_ms: 5000
+    optional: true
 ---
 
 # Manage Todo List
 
 Manage a persistent todo list stored at `~/stackowl_todos.md`.
 
-## Steps
+## Usage
 
-1. **Read the current todo file:**
+```bash
+/manage_todo action=<add|complete|delete|list> task=<task>
+```
 
-   ```bash
-   run_shell_command("cat ~/stackowl_todos.md 2>/dev/null || echo '# Todo List'")
-   ```
+## Parameters
 
-2. **Perform the requested action:**
-
-   **Add a task:**
-
-   ```bash
-   run_shell_command("echo '- [ ] <task description>' >> ~/stackowl_todos.md")
-   ```
-
-   **Complete a task** (change `[ ]` to `[x]`):
-
-   ```bash
-   run_shell_command("sed -i '' 's/- \[ \] <task>/- [x] <task>/' ~/stackowl_todos.md")
-   ```
-
-   **Delete a task:**
-
-   ```bash
-   run_shell_command("sed -i '' '/<task>/d' ~/stackowl_todos.md")
-   ```
-
-   **List all tasks:**
-
-   ```bash
-   run_shell_command("cat ~/stackowl_todos.md")
-   ```
-
-3. **Show updated list** to the user after any modification.
+- **action**: Action: add, complete, delete, or list (default: list)
+- **task**: Task description
 
 ## Examples
 
 ### Add a task
 
-```bash
-run_shell_command("echo '- [ ] Buy groceries' >> ~/stackowl_todos.md")
+```
+action=add
+task=Buy groceries
 ```
 
 ### Complete a task
 
-```bash
-run_shell_command("sed -i '' 's/- \[ \] Buy groceries/- [x] Buy groceries/' ~/stackowl_todos.md")
+```
+action=complete
+task=Buy groceries
+```
+
+### Delete a task
+
+```
+action=delete
+task=Buy groceries
 ```
 
 ## Error Handling

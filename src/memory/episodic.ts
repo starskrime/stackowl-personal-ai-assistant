@@ -30,6 +30,42 @@ export interface Episode {
   sentiment?: "positive" | "neutral" | "frustrated" | "happy";
   userMessageCount: number;
   embedding?: number[];
+  /** Park et al. importance score (0-1). Higher = more significant interaction. */
+  importance?: number;
+  /** Whether this episode has been compressed (old episodes lose keyFacts/embedding) */
+  compressed?: boolean;
+  /** Whether this episode is archived (excluded from active search) */
+  archived?: boolean;
+}
+
+/**
+ * Compute importance score for an episode (0-1).
+ * Based on Park et al. heuristics for memory significance.
+ */
+function computeImportance(
+  userMessageCount: number,
+  hasDecision: boolean,
+  hasCommitment: boolean,
+  sentiment: string,
+  totalMessageCount: number,
+): number {
+  let score = 0.3; // Baseline
+
+  // Decisions and commitments are high-importance
+  if (hasDecision) score += 0.2;
+  if (hasCommitment) score += 0.2;
+
+  // Multi-turn deep discussion
+  if (totalMessageCount >= 10) score += 0.15;
+  else if (totalMessageCount >= 5) score += 0.1;
+
+  // Strong sentiment (frustrated or happy) is more memorable
+  if (sentiment === "frustrated" || sentiment === "happy") score += 0.1;
+
+  // Very short interactions are less important
+  if (userMessageCount <= 1) score -= 0.1;
+
+  return Math.max(0.1, Math.min(1.0, score));
 }
 
 export class EpisodicMemory {
@@ -62,6 +98,11 @@ export class EpisodicMemory {
       );
     }
     this.loaded = true;
+
+    // Run decay on load to compress/archive old episodes
+    if (this.episodes.size > 0) {
+      this.runDecay();
+    }
   }
 
   async save(): Promise<void> {
@@ -280,5 +321,286 @@ Return ONLY a valid JSON object, no markdown or explanation.`;
       }
     }
     return { total: this.episodes.size, topics };
+  }
+
+  // ─── Phase 3: Segment-Based Extraction ──────────────────────────
+
+  /**
+   * Extract an episode from a message slice (segment).
+   * Unlike extractFromSession(), this takes raw messages + metadata
+   * so it can be called for mid-session segments.
+   */
+  async extractFromMessages(
+    messages: Array<{ role: string; content: string }>,
+    sessionId: string,
+    owlName: string,
+    provider: ModelProvider,
+  ): Promise<Episode | null> {
+    if (messages.length < 2) return null;
+
+    const userMessages = messages
+      .filter((m) => m.role === "user")
+      .map((m) => m.content);
+
+    if (userMessages.length === 0) return null;
+
+    try {
+      const systemPrompt = `You are an episodic memory extractor for a personal AI assistant.
+Given a conversation transcript, extract a narrative episode that captures:
+- What the user was trying to accomplish (not just "what they asked")
+- Whether commitments were made
+- The emotional tone of the interaction
+- Whether this seems like an ongoing project or a one-off question
+
+Return a JSON object:
+- summary: 1-3 sentence narrative summary (write as if describing to a colleague what happened)
+- keyFacts: array of 2-5 specific facts (decisions made, information shared, tools used)
+- topics: array of topic tags
+- sentiment: "positive" | "neutral" | "frustrated" | "happy"
+- hasDecision: boolean (was something decided?)
+- hasCommitment: boolean (did the assistant promise to do something?)
+
+Return ONLY a valid JSON object, no markdown.`;
+
+      const transcript = messages
+        .map((m) => `${m.role}: ${m.content.slice(0, 300)}`)
+        .slice(-20) // Cap at last 20 messages
+        .join("\n---\n");
+
+      const response = await provider.chat(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Conversation:\n${transcript}` },
+        ],
+        undefined,
+        { temperature: 0.3, maxTokens: 500 },
+      );
+
+      const text = response.content.trim();
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return null;
+
+      const parsed = JSON.parse(match[0]) as {
+        summary?: string;
+        keyFacts?: string[];
+        topics?: string[];
+        sentiment?: string;
+        hasDecision?: boolean;
+        hasCommitment?: boolean;
+      };
+
+      if (!parsed.summary) return null;
+
+      // Compute importance score
+      const importance = computeImportance(
+        userMessages.length,
+        parsed.hasDecision ?? false,
+        parsed.hasCommitment ?? false,
+        parsed.sentiment ?? "neutral",
+        messages.length,
+      );
+
+      const episode: Episode = {
+        id: `ep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        sessionId,
+        owlName,
+        date: Date.now(),
+        summary: parsed.summary,
+        keyFacts: parsed.keyFacts ?? [],
+        topics: parsed.topics ?? [],
+        sentiment: (parsed.sentiment as Episode["sentiment"]) ?? "neutral",
+        userMessageCount: userMessages.length,
+        importance,
+      };
+
+      // Try to compute embedding
+      try {
+        const embedResp = await provider.embed(parsed.summary);
+        if (embedResp.embedding?.length) {
+          episode.embedding = embedResp.embedding;
+        }
+      } catch {
+        // Embedding is optional
+      }
+
+      this.episodes.set(episode.id, episode);
+      await this.save();
+      log.engine.info(
+        `[EpisodicMemory] Extracted segment episode (importance=${importance.toFixed(2)}): "${episode.summary.slice(0, 60)}"`,
+      );
+      return episode;
+    } catch (err) {
+      log.engine.warn(
+        `[EpisodicMemory] Segment extraction failed: ${err instanceof Error ? err.message : err}`,
+      );
+      // Save a minimal episode with metadata only (no LLM)
+      return this.saveMinimalEpisode(messages, sessionId, owlName);
+    }
+  }
+
+  /**
+   * Fallback: save a minimal episode when LLM extraction fails.
+   * Uses TF-IDF-style keyword extraction instead.
+   */
+  private saveMinimalEpisode(
+    messages: Array<{ role: string; content: string }>,
+    sessionId: string,
+    owlName: string,
+  ): Episode {
+    const userMessages = messages
+      .filter((m) => m.role === "user")
+      .map((m) => m.content);
+
+    // Simple topic extraction from frequent words
+    const text = userMessages.join(" ").toLowerCase();
+    const words = text.match(/\b[a-z]{4,}\b/g) ?? [];
+    const STOPWORDS = new Set([
+      "this", "that", "with", "from", "have", "been", "they", "were",
+      "will", "would", "could", "should", "about", "your", "what",
+      "when", "where", "which", "there", "their", "some", "just",
+      "like", "more", "also", "than", "them", "very", "into",
+      "want", "need", "help", "please", "know", "think", "make",
+    ]);
+    const freq = new Map<string, number>();
+    for (const w of words) {
+      if (!STOPWORDS.has(w)) freq.set(w, (freq.get(w) ?? 0) + 1);
+    }
+    const topics = [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([w]) => w);
+
+    const episode: Episode = {
+      id: `ep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      sessionId,
+      owlName,
+      date: Date.now(),
+      summary: `User discussed: ${topics.join(", ") || "various topics"} (${userMessages.length} messages)`,
+      keyFacts: [],
+      topics,
+      sentiment: "neutral",
+      userMessageCount: userMessages.length,
+      importance: 0.3, // Low importance for minimal episodes
+    };
+
+    this.episodes.set(episode.id, episode);
+    this.save().catch(() => {});
+    log.engine.info(
+      `[EpisodicMemory] Saved minimal episode (LLM unavailable): "${episode.summary.slice(0, 60)}"`,
+    );
+    return episode;
+  }
+
+  // ─── Phase 3: Park et al. Retrieval Scoring ─────────────────────
+
+  /**
+   * Search episodes using Park et al. retrieval scoring:
+   *   score = recency_decay × importance × relevance
+   *
+   * Falls back to keyword search when no embeddings available.
+   */
+  async searchWithScoring(
+    query: string,
+    limit = 5,
+    provider?: ModelProvider,
+    threshold = 0.3,
+  ): Promise<Array<Episode & { retrievalScore: number }>> {
+    const now = Date.now();
+    const episodes = [...this.episodes.values()].filter(
+      (ep) => !ep.archived,
+    );
+    if (episodes.length === 0) return [];
+
+    const lower = query.toLowerCase();
+
+    // Compute keyword relevance for all episodes
+    const keywordScores = new Map<string, number>();
+    for (const ep of episodes) {
+      let score = 0;
+      if (ep.summary.toLowerCase().includes(lower)) score += 0.5;
+      if (ep.topics.some((t) => t.toLowerCase().includes(lower))) score += 0.3;
+      if (ep.keyFacts.some((f) => f.toLowerCase().includes(lower))) score += 0.2;
+      // Partial word matching
+      const queryWords = lower.split(/\s+/).filter((w) => w.length >= 3);
+      for (const word of queryWords) {
+        if (ep.summary.toLowerCase().includes(word)) score += 0.1;
+        if (ep.topics.some((t) => t.toLowerCase().includes(word))) score += 0.1;
+      }
+      keywordScores.set(ep.id, Math.min(score, 1.0));
+    }
+
+    // Try to get semantic scores via embedding
+    let queryEmbedding: number[] = [];
+    if (provider) {
+      try {
+        const resp = await provider.embed(query);
+        queryEmbedding = resp.embedding ?? [];
+      } catch {
+        // Fall through to keyword-only
+      }
+    }
+
+    // Score each episode
+    const scored = episodes.map((ep) => {
+      const hoursSince = (now - ep.date) / (1000 * 60 * 60);
+      const recency = Math.pow(0.99, hoursSince);
+      const importance = ep.importance ?? 0.5;
+
+      let relevance = keywordScores.get(ep.id) ?? 0;
+      if (queryEmbedding.length > 0 && ep.embedding?.length) {
+        const cosSim = this.cosineSimilarity(queryEmbedding, ep.embedding);
+        relevance = Math.max(relevance, cosSim);
+      }
+
+      const retrievalScore = recency + importance + relevance;
+      return { ...ep, retrievalScore };
+    });
+
+    return scored
+      .filter((ep) => ep.retrievalScore >= threshold)
+      .sort((a, b) => b.retrievalScore - a.retrievalScore)
+      .slice(0, limit);
+  }
+
+  // ─── Phase 3: Episode Decay ─────────────────────────────────────
+
+  /**
+   * Run decay on old episodes:
+   *   - 30+ days old with importance < 0.5: compress (drop keyFacts + embedding)
+   *   - 90+ days old with importance < 0.3: archive (excluded from search)
+   *
+   * Call this on load() or periodically.
+   */
+  runDecay(): { compressed: number; archived: number } {
+    const now = Date.now();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    let compressed = 0;
+    let archived = 0;
+
+    for (const ep of this.episodes.values()) {
+      const ageDays = (now - ep.date) / DAY_MS;
+
+      if (ageDays > 90 && (ep.importance ?? 0.5) < 0.3 && !ep.archived) {
+        ep.archived = true;
+        ep.compressed = true;
+        ep.keyFacts = [];
+        ep.embedding = undefined;
+        archived++;
+      } else if (ageDays > 30 && (ep.importance ?? 0.5) < 0.5 && !ep.compressed) {
+        ep.compressed = true;
+        ep.keyFacts = [];
+        ep.embedding = undefined;
+        compressed++;
+      }
+    }
+
+    if (compressed > 0 || archived > 0) {
+      log.engine.info(
+        `[EpisodicMemory] Decay: ${compressed} compressed, ${archived} archived`,
+      );
+      this.save().catch(() => {});
+    }
+
+    return { compressed, archived };
   }
 }

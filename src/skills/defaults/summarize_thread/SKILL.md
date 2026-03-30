@@ -1,32 +1,51 @@
 ---
 name: summarize_thread
 description: Summarize a long email thread or chat conversation into key points, decisions, and action items
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "📌"
+parameters:
+  file_path:
+    type: string
+    description: "Path to the thread file (leave empty to paste text)"
+  text:
+    type: string
+    description: "Thread text content (use this or file_path)"
+  primary_language:
+    type: string
+    description: "Primary language of the thread"
+    default: "en"
+required: []
+steps:
+  - id: read_file
+    tool: ReadFileTool
+    args:
+      path: "{{file_path}}"
+    optional: true
+  - id: generate_summary
+    type: llm
+    prompt: "Summarize the following email/chat thread:\n\nThread content:\n{{text || read_file.output}}\n\nExtract and structure:\n- **Key points** (3–5 bullet points)\n- **Decisions made** (if any)\n- **Action items** with owners\n- **Unresolved questions**\n- **Overall sentiment/tone**\n\nIf thread is longer than 10000 chars, process in chunks and create a meta-summary."
+    depends_on: [read_file]
+    inputs: [text, read_file.output, primary_language]
 ---
 
 # Summarize Thread
 
 Condense a long email or chat thread into a structured summary.
 
-## Steps
+## Usage
 
-1. **Receive the thread content** from the user (pasted text, file path, or email).
+```bash
+/summarize_thread file_path=~/Downloads/email_thread.txt
+/summarize_thread text="Long email thread content..." primary_language=en
+```
 
-2. **If provided as a file, read it:**
+## Parameters
 
-   ```bash
-   read_file("<file_path>")
-   ```
-
-3. **Extract and structure:**
-   - **Key points** (3–5 bullet points)
-   - **Decisions made** (if any)
-   - **Action items** with owners
-   - **Unresolved questions**
-   - **Overall sentiment/tone**
-
-4. **Present the summary** in a clean format.
+- **file_path**: Path to the thread file (leave empty to paste text)
+- **text**: Thread text content (use this or file_path)
+- **primary_language**: Primary language of the thread (default: en)
 
 ## Examples
 

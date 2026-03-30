@@ -73,6 +73,13 @@ export class LearningOrchestrator {
   private reflexionEngine?: MemoryReflexionEngine;
   private selfHealer?: SelfHealer;
 
+  /**
+   * Callback for notifying external systems (e.g., CognitiveLoop) about
+   * capability gaps discovered during conversation analysis. This bridges
+   * the knowledge system (pellets) with the skill system (SKILL.md synthesis).
+   */
+  private onCapabilityGap?: (gap: string, description: string) => void;
+
   private cycles: LearningCycle[] = [];
   private stats: LearningStats = {
     totalCycles: 0,
@@ -117,6 +124,16 @@ export class LearningOrchestrator {
     }
   }
 
+  /**
+   * Register a callback for capability gaps discovered from conversations.
+   * The CognitiveLoop uses this to feed gaps into its synthesis queue.
+   */
+  setCapabilityGapCallback(
+    cb: (gap: string, description: string) => void,
+  ): void {
+    this.onCapabilityGap = cb;
+  }
+
   async processConversation(messages: ChatMessage[]): Promise<LearningCycle> {
     const cycleId = `reactive_${Date.now()}`;
     const startTime = Date.now();
@@ -144,43 +161,36 @@ export class LearningOrchestrator {
         return this.recordCycle(cycle);
       }
 
+      // Notify CognitiveLoop about capability gaps for skill synthesis.
+      // Knowledge gaps like "couldn't send email" or "didn't know how to
+      // automate file backup" become synthesis targets.
+      if (this.onCapabilityGap && insights.knowledgeGaps.length > 0) {
+        for (const gap of insights.knowledgeGaps) {
+          this.onCapabilityGap(
+            gap,
+            `Conversation analysis: assistant couldn't do "${gap}"`,
+          );
+        }
+      }
+
       await this.graphManager.load();
 
-      const fusion = await this.fusionEngine.fuse([insights], {
-        domains: this.graphManager["graph"].domains,
-        studyQueue: [],
-        lastUpdated: "",
-      } as any);
+      const graph = this.graphManager.getGraph();
+      const fusion = await this.fusionEngine.fuse([insights], graph);
 
       cycle.topicsPrioritized = fusion.fusedTopics.length;
       cycle.criticalTopics = fusion.stats.criticalCount;
 
       await this.reflexionEngine?.consolidate(messages, cycleId);
 
-      // Two-tier synthesis:
-      //   Tier 1 (urgency >= 25 or priority override): Full synthesis into pellets
-      //   Tier 2 (urgency < 25): Register in knowledge graph for future study
-      // This ensures questions and domains get synthesized immediately while
-      // casual topic mentions still enter the study pipeline for later.
-      const synthesizableTopics = fusion.fusedTopics.filter(
-        (t: FusedTopic) => t.urgency >= 25 || t.priorityOverride === "critical" || t.priorityOverride === "high",
-      );
-      const touchOnlyTopics = fusion.fusedTopics.filter(
-        (t: FusedTopic) => t.urgency < 25 && t.priorityOverride !== "critical" && t.priorityOverride !== "high",
-      );
-
-      if (synthesizableTopics.length > 0 && this.synthesizer) {
-        const report = await this.synthesizer.synthesize(synthesizableTopics);
-        cycle.synthesisReport = report;
-        this.stats.totalTopicsStudied += report.successful;
-        this.stats.totalPelletsCreated += report.pelletsCreated;
+      // Register ALL topics in the knowledge graph — NO automatic synthesis.
+      // Learning only happens when the assistant fails at something and the
+      // CognitiveLoop picks up the queued synthesis target. This prevents
+      // burning tokens on proactive learning after every conversation.
+      for (const topic of fusion.fusedTopics) {
+        this.graphManager.touchDomain(topic.normalizedName, "conversation");
       }
-
-      // Always register remaining topics in the knowledge graph for future study
-      if (touchOnlyTopics.length > 0) {
-        for (const topic of touchOnlyTopics) {
-          this.graphManager.touchDomain(topic.normalizedName, "conversation");
-        }
+      if (fusion.fusedTopics.length > 0) {
         await this.graphManager.save();
       }
 
@@ -206,80 +216,25 @@ export class LearningOrchestrator {
     return this.recordCycle(cycle);
   }
 
+  /**
+   * Proactive learning session — DISABLED.
+   * Previously deep-researched random knowledge graph topics, burning tokens.
+   * Learning now only happens reactively (on failure via synthesis queue).
+   * Kept as no-op for backward compatibility.
+   */
   async runProactiveSession(): Promise<LearningCycle> {
-    const cycleId = `proactive_${Date.now()}`;
-    const startTime = Date.now();
-
-    const cycle: LearningCycle = {
-      id: cycleId,
+    const now = new Date().toISOString();
+    return this.recordCycle({
+      id: `proactive_${Date.now()}`,
       trigger: "scheduled",
-      startedAt: new Date().toISOString(),
+      startedAt: now,
+      completedAt: now,
       insightsExtracted: 0,
       topicsPrioritized: 0,
       criticalTopics: 0,
       durationMs: 0,
-      success: false,
-    };
-
-    try {
-      await this.graphManager.load();
-      const queuedTopics = this.graphManager.getStudyQueue(5);
-
-      if (queuedTopics.length === 0) {
-        cycle.success = true;
-        cycle.durationMs = Date.now() - startTime;
-        return this.recordCycle(cycle);
-      }
-
-      const fusedTopics: FusedTopic[] = queuedTopics.map((name) => ({
-        id: name,
-        normalizedName: name,
-        displayName: name,
-        urgency: 50,
-        sourceSignals: ["topic"] as const,
-        originalSignals: [name],
-        lastSeen: new Date().toISOString(),
-        failureCount: 0,
-        relatedDomains: [],
-        synthesisStrategy: "q_and_a" as const,
-        priorityOverride: "high" as const,
-        sourceInsights: [],
-      }));
-
-      cycle.topicsPrioritized = fusedTopics.length;
-
-      if (this.synthesizer) {
-        const report = await this.synthesizer.synthesize(fusedTopics);
-        cycle.synthesisReport = report;
-        this.stats.totalTopicsStudied += report.successful;
-        this.stats.totalPelletsCreated += report.pelletsCreated;
-      }
-
-      const daysSinceReflex = this.getDaysSinceLastReflexion();
-      if (daysSinceReflex >= 7) {
-        cycle.reflexionResult = await this.reflexionEngine?.reflex();
-      }
-
-      cycle.success = true;
-    } catch (err) {
-      const errClass = classifyError(err);
-      log.evolution.error(
-        `[Orchestrator] Proactive learning FAILED (${errClass}):\n` +
-          `${err instanceof Error ? `${err.message}\n${err.stack}` : err}`,
-      );
-      cycle.error = String(err);
-      if (this.selfHealer && errClass !== "parse") {
-        await this.selfHealer.heal({
-          subsystem: "learning",
-          operation: "proactive",
-          error: err instanceof Error ? err : new Error(String(err)),
-        });
-      }
-    }
-
-    cycle.completedAt = new Date().toISOString();
-    cycle.durationMs = Date.now() - startTime;
-    return this.recordCycle(cycle);
+      success: true,
+    });
   }
 
   async learnTopic(

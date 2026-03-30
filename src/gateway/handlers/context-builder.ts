@@ -13,12 +13,25 @@ import type { EngineContext } from "../../engine/runtime.js";
 import type { MicroLearner } from "../../learning/micro-learner.js";
 import type { SkillContextInjector } from "../../skills/injector.js";
 import type { AttemptLog } from "../../memory/attempt-log.js";
+import type { UserMentalModel } from "../../cognition/user-mental-model.js";
+import {
+  computeTemporalContext,
+  formatTemporalPrompt,
+  loadPreviousSession,
+} from "../../cognition/temporal-context.js";
 
 export class ContextBuilder {
+  /** Cache previous session lookup per session ID to avoid repeated disk reads */
+  private prevSessionCache: Map<
+    string,
+    { session: Session | null; cachedAt: number }
+  > = new Map();
+
   constructor(
     private ctx: GatewayContext,
     private microLearner: MicroLearner | null,
     private skillInjector: SkillContextInjector | null,
+    private userMentalModel: UserMentalModel | null = null,
   ) {}
 
   async build(
@@ -28,6 +41,38 @@ export class ContextBuilder {
     isolatedTask: boolean = false,
     attemptLog?: AttemptLog,
   ): Promise<EngineContext> {
+    // ─── Temporal Context (Phase 1 — zero LLM cost) ──────────────
+    let temporalContext = "";
+    try {
+      const timezone =
+        (this.ctx.config as any).timezone ??
+        Intl.DateTimeFormat().resolvedOptions().timeZone;
+      // Cache previous session for 10 minutes to avoid repeated disk reads
+      const CACHE_TTL = 10 * 60 * 1000;
+      let previousSession: Session | null = null;
+      const cached = this.prevSessionCache.get(session.id);
+      if (cached && Date.now() - cached.cachedAt < CACHE_TTL) {
+        previousSession = cached.session;
+      } else {
+        previousSession = await loadPreviousSession(
+          this.ctx.sessionStore,
+          session.id,
+        );
+        this.prevSessionCache.set(session.id, {
+          session: previousSession,
+          cachedAt: Date.now(),
+        });
+      }
+      const snapshot = computeTemporalContext(
+        session,
+        previousSession,
+        timezone,
+      );
+      temporalContext = formatTemporalPrompt(snapshot);
+    } catch {
+      // Non-fatal — temporal context is supplementary
+    }
+
     const preferencesContext =
       this.ctx.preferenceStore?.toContextString() ?? "";
 
@@ -121,6 +166,12 @@ export class ContextBuilder {
       inferredPrefsContext = this.ctx.preferenceModel.toContextString();
     }
 
+    // User mental model — behavioral state inference
+    let mentalModelContext = "";
+    if (this.userMentalModel) {
+      mentalModelContext = this.userMentalModel.toContextString();
+    }
+
     // Echo chamber awareness
     let echoChamberContext = "";
     if (this.ctx.echoChamberDetector) {
@@ -162,6 +213,23 @@ export class ContextBuilder {
       intentContext = this.ctx.intentStateMachine.toContextString();
     }
 
+    // Working context — what's happening right now in this session
+    let workingCtxString = "";
+    if (this.ctx.workingContextManager) {
+      const wc = this.ctx.workingContextManager.get(session.id);
+      if (wc) {
+        workingCtxString = wc.toContextString();
+      }
+    }
+
+    // Conversational ground state — shared facts, decisions, open questions
+    let groundStateContext = "";
+    if (this.ctx.groundState) {
+      const userId = session.id.split(":")[1] || session.id;
+      this.ctx.groundState.setSession(session.id);
+      groundStateContext = this.ctx.groundState.toContextString(userId);
+    }
+
     // Assistant vs Reactive mode
     const hasActiveItems =
       (this.ctx.intentStateMachine?.getActive().length ?? 0) > 0 ||
@@ -200,6 +268,12 @@ The user has no active tasks right now. Be concise and helpful:
     let episodicContext = "";
 
     if (userMessage) {
+      // Detect temporal recall triggers — boost episode search when user references past
+      const TEMPORAL_TRIGGERS = /\b(?:yesterday|last time|before|remember when|as I said|we discussed|you told me|earlier|previously|last week|other day)\b/i;
+      const hasTemporalTrigger = TEMPORAL_TRIGGERS.test(userMessage);
+      const episodeLimit = hasTemporalTrigger ? 5 : 3;
+      const episodeThreshold = hasTemporalTrigger ? 0.2 : 0.3;
+
       const [factResults, episodeResults] = await Promise.all([
         this.ctx.factStore
           ? withTimeout(
@@ -208,7 +282,12 @@ The user has no active tasks right now. Be concise and helpful:
           : Promise.resolve(null),
         this.ctx.episodicMemory
           ? withTimeout(
-              this.ctx.episodicMemory.search(userMessage, 3),
+              this.ctx.episodicMemory.searchWithScoring(
+                userMessage,
+                episodeLimit,
+                this.ctx.provider ?? undefined,
+                episodeThreshold,
+              ),
             ).catch(() => null)
           : Promise.resolve(null),
       ]);
@@ -231,15 +310,16 @@ The user has no active tasks right now. Be concise and helpful:
           episodeResults
             .map(
               (ep) =>
-                `  <episode date="${new Date(ep.date).toLocaleDateString()}" sentiment="${ep.sentiment ?? "neutral"}">${ep.summary}</episode>`,
+                `  <episode date="${new Date(ep.date).toLocaleDateString()}" sentiment="${ep.sentiment ?? "neutral"}" importance="${(ep.importance ?? 0.5).toFixed(1)}">${ep.summary}</episode>`,
             )
             .join("\n") +
           "\n</past_episodes>\n";
       }
     }
 
-    // Merge all context signals
+    // Merge all context signals — temporal context first (frames everything else)
     const enrichedMemoryContext = [
+      temporalContext,
       this.ctx.memoryContext ?? "",
       ambientContext,
       knowledgeContext,
@@ -247,10 +327,13 @@ The user has no active tasks right now. Be concise and helpful:
       collabContext,
       userProfileContext,
       inferredPrefsContext,
+      mentalModelContext,
       echoChamberContext,
       behavioralPatchContext,
       socraticContext,
       intentContext,
+      workingCtxString,
+      groundStateContext,
       factContext,
       episodicContext,
       modeDirective,

@@ -1,41 +1,62 @@
 ---
 name: web_research
 description: Perform deep multi-source research on a topic using web search, article crawling, and synthesis
+command-dispatch: tool
+command-tool: google_search
 openclaw:
   emoji: "🔬"
+parameters:
+  topic:
+    type: string
+    description: "Research topic or question"
+required: [topic]
+steps:
+  - id: search_overview
+    tool: google_search
+    args:
+      query: "{{topic}} overview"
+    timeout_ms: 15000
+  - id: search_latest
+    tool: google_search
+    args:
+      query: "{{topic}} latest research 2026"
+    timeout_ms: 15000
+  - id: search_proscons
+    tool: google_search
+    args:
+      query: "{{topic}} pros and cons"
+    timeout_ms: 15000
+  - id: crawl_article
+    tool: WebCrawlTool
+    args:
+      url: "{{article_url}}"
+    timeout_ms: 30000
+    optional: true
+  - id: synthesize
+    type: llm
+    prompt: "Synthesize comprehensive research findings on '{{topic}}' into a structured report with:\n\n1. Executive Summary (2-3 sentences)\n2. Key Findings (bullet points)\n3. Different Perspectives\n4. Sources with URLs\n\nSearch results overview: {{search_overview.output}}\nLatest research: {{search_latest.output}}\nPros and cons: {{search_proscons.output}}\n{{#if crawl_article.output}}Crawled article: {{crawl_article.output}}{{/if}}"
+    depends_on: [search_overview, search_latest, search_proscons, crawl_article]
+    inputs: [search_overview.output, search_latest.output, search_proscons.output, crawl_article.output]
 ---
 
 # Web Research
 
 Conduct comprehensive research on a topic.
 
-## Steps
+## Usage
 
-1. **Run multiple targeted searches:**
-   ```
-   web_search query="<topic> overview"
-   web_search query="<topic> latest research 2026"
-   web_search query="<topic> pros and cons"
-   ```
-2. **Crawl top 2-3 articles for depth:**
-   ```
-   web_crawl url="<article_url>"
-   ```
-   If blocked, fall back to `scrapling_fetch url="<article_url>"`.
-3. **Synthesize findings** into a structured report:
-   - Executive summary (2-3 sentences)
-   - Key findings (bullet points)
-   - Different perspectives
-   - Sources with URLs
-4. **Present** to the user.
+```bash
+/web_research topic="WebAssembly use cases"
+```
+
+## Parameters
+
+- **topic**: Research topic or question
 
 ## Examples
 
-### Research a technology
-
 ```
-web_search query="WebAssembly use cases 2026"
-web_crawl url="<top_result_url>"
+web_research topic="WebAssembly use cases 2026"
 ```
 
 ## Error Handling

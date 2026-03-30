@@ -1,34 +1,51 @@
 ---
 name: wikipedia_summary
 description: Fetch and summarize a Wikipedia article on a given topic with key facts and context
+command-dispatch: tool
+command-tool: google_search
 openclaw:
   emoji: "📚"
+parameters:
+  topic:
+    type: string
+    description: "Topic to search on Wikipedia"
+required: [topic]
+steps:
+  - id: search_wikipedia
+    tool: google_search
+    args:
+      query: "{{topic}} site:en.wikipedia.org"
+    timeout_ms: 15000
+  - id: crawl_article
+    tool: WebCrawlTool
+    args:
+      url: "https://en.wikipedia.org/wiki/{{topic}}"
+    timeout_ms: 30000
+  - id: summarize
+    type: llm
+    prompt: "Extract and summarize key facts from this Wikipedia article on '{{topic}}'. Provide:\n- 3-5 paragraph summary with dates and context\n- Key facts as bullet points\n- Note if this is a disambiguation page and which article was chosen\n\nArticle content: {{crawl_article.output}}\nSearch results: {{search_wikipedia.output}}"
+    depends_on: [search_wikipedia, crawl_article]
+    inputs: [crawl_article.output, search_wikipedia.output]
 ---
 
 # Wikipedia Summary
 
 Get quick summaries from Wikipedia.
 
-## Steps
+## Usage
 
-1. **Search Wikipedia:**
-   ```
-   web_search query="<topic> site:en.wikipedia.org"
-   ```
-2. **Crawl the article:**
-   ```
-   web_crawl url="https://en.wikipedia.org/wiki/<topic>"
-   ```
-   If blocked: `scrapling_fetch url="<url>"`
-3. **Extract and summarize:** key facts, dates, context (3-5 paragraphs).
+```bash
+/wikipedia_summary topic="Quantum computing"
+```
+
+## Parameters
+
+- **topic**: Topic to search on Wikipedia
 
 ## Examples
 
-### Summarize a topic
-
 ```
-web_search query="Quantum computing site:en.wikipedia.org"
-web_crawl url="https://en.wikipedia.org/wiki/Quantum_computing"
+wikipedia_summary topic="Quantum computing"
 ```
 
 ## Error Handling

@@ -1,54 +1,59 @@
 ---
 name: goal_setter
 description: Define personal or professional goals with milestones, deadlines, and progress tracking
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🎯"
+parameters:
+  title:
+    type: string
+    description: "Goal title"
+  target_date:
+    type: string
+    description: "Target completion date"
+  milestones:
+    type: string
+    description: "Comma-separated milestones"
+required: [title]
+steps:
+  - id: init_file
+    tool: ShellTool
+    args:
+      command: "test -f ~/stackowl_goals.md || echo '# Goals\n' > ~/stackowl_goals.md"
+      mode: "local"
+    timeout_ms: 5000
+  - id: add_goal
+    tool: WriteFileTool
+    args:
+      path: "~/stackowl_goals.md"
+      content: "## 🎯 {{title}}\n\n**Target Date:** {{target_date}}\n**Status:** In Progress\n\n### Milestones\n\n- [ ] {{milestones}}\n\n### Progress Notes\n\n- $(date +%Y-%m-%d): Goal created\n"
 ---
 
 # Goal Setter
 
 Create and track goals with milestones stored in `~/stackowl_goals.md`.
 
-## Steps
+## Usage
 
-1. **Collect goal details:**
-   - Goal title
-   - Target date
-   - Key milestones (3–5 checkpoints)
+```bash
+/goal_setter title=<title> target_date=<date> milestones=<milestones>
+```
 
-2. **Format the goal:**
+## Parameters
 
-   ```markdown
-   ## 🎯 <Goal Title>
-
-   **Target Date:** <date>
-   **Status:** In Progress
-
-   ### Milestones
-
-   - [ ] <milestone 1> — by <date>
-   - [ ] <milestone 2> — by <date>
-   - [ ] <milestone 3> — by <date>
-
-   ### Progress Notes
-
-   - <date>: Goal created
-   ```
-
-3. **Append to goals file:**
-
-   ```bash
-   run_shell_command("cat >> ~/stackowl_goals.md << 'GOAL'\n<formatted goal>\nGOAL")
-   ```
-
-4. **Confirm** the goal was saved.
+- **title**: Goal title
+- **target_date**: Target completion date
+- **milestones**: Comma-separated milestones
 
 ## Examples
 
 ### Set a learning goal
 
-```bash
-run_shell_command("echo '## 🎯 Learn Rust\n**Target:** June 2026\n- [ ] Complete Rust book\n- [ ] Build CLI tool\n- [ ] Contribute to open source' >> ~/stackowl_goals.md")
+```
+title=Learn Rust
+target_date=2026-06-01
+milestones="Complete Rust book, Build CLI tool, Contribute to open source"
 ```
 
 ## Error Handling

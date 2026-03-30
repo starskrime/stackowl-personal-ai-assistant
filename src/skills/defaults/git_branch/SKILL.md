@@ -1,53 +1,84 @@
 ---
 name: git_branch
 description: Create, switch, list, or delete git branches with naming convention enforcement
+command-dispatch: tool
+command-tool: ShellTool
 openclaw:
   emoji: "🌿"
+parameters:
+  action:
+    type: string
+    description: "Action: list, create, switch, or delete"
+  branch_name:
+    type: string
+    description: "Name of the branch"
+required: [action]
+steps:
+  - id: list_branches
+    tool: ShellTool
+    args:
+      command: "git branch -a"
+      mode: "local"
+    timeout_ms: 10000
+    optional: true
+  - id: create_branch
+    tool: ShellTool
+    args:
+      command: "git checkout -b {{branch_name}}"
+      mode: "local"
+    timeout_ms: 10000
+    optional: true
+  - id: switch_branch
+    tool: ShellTool
+    args:
+      command: "git checkout {{branch_name}}"
+      mode: "local"
+    timeout_ms: 10000
+    optional: true
+  - id: delete_branch
+    tool: ShellTool
+    args:
+      command: "git branch -d {{branch_name}}"
+      mode: "local"
+    timeout_ms: 10000
+    optional: true
 ---
 
 # Git Branch Management
 
 Create, switch, list, and delete git branches.
 
-## Steps
+## Usage
 
-1. **List existing branches:**
+```bash
+/git_branch action=<list|create|switch|delete> branch_name=<name>
+```
 
-   ```bash
-   run_shell_command("git branch -a")
-   ```
+## Parameters
 
-2. **Create a new branch:**
-
-   ```bash
-   run_shell_command("git checkout -b <branch_name>")
-   ```
-
-   Enforce naming: `<type>/<description>` (e.g., `feature/add-auth`, `fix/login-bug`)
-
-3. **Switch branches:**
-
-   ```bash
-   run_shell_command("git checkout <branch_name>")
-   ```
-
-4. **Delete a branch:**
-   ```bash
-   run_shell_command("git branch -d <branch_name>")
-   ```
+- **action**: Action: list, create, switch, or delete
+- **branch_name**: Name of the branch
 
 ## Examples
 
 ### Create feature branch
 
-```bash
-run_shell_command("git checkout -b feature/add-notifications")
+```
+action=create
+branch_name=feature/add-notifications
 ```
 
 ### List all branches
 
-```bash
-run_shell_command("git branch -a --sort=-committerdate")
+```
+action=list
+```
+
+### Switch to a branch
+
+```
+action=switch
+branch_name=develop
 ```
 
 ## Error Handling

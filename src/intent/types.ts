@@ -55,4 +55,19 @@ export interface Intent {
   updatedAt: number;
   lastActiveAt: number;
   linkedGoalId?: string;
+
+  // ─── NarrativeThread extension (set when promoted) ──────────
+  isThread?: boolean;
+  /** Session IDs that contributed to this thread */
+  sessions?: string[];
+  /** Cross-session summary of the thread */
+  summary?: string;
+  /** Where we left off */
+  progress?: string;
+  /** What should happen next */
+  nextSteps?: string[];
+  /** What's preventing progress */
+  blockers?: string[];
+  /** How many times the user returned to this thread */
+  resumeCount?: number;
 }
