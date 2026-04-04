@@ -9,6 +9,21 @@ import { log } from "../logger.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { SkillParameter } from "./types.js";
 
+/**
+ * Thrown when required parameters couldn't be extracted from the user message.
+ * The executor uses this to tell the model to ask the user for the missing info
+ * instead of hard-failing.
+ */
+export class MissingParamsError extends Error {
+  constructor(public readonly missingParams: string[]) {
+    super(
+      `Missing required parameters: ${missingParams.join(", ")}. ` +
+        `Ask the user to provide: ${missingParams.join(", ")}.`,
+    );
+    this.name = "MissingParamsError";
+  }
+}
+
 export class SkillParamExtractor {
   constructor(private provider: ModelProvider) {}
 
@@ -62,34 +77,42 @@ export class SkillParamExtractor {
 
       // Apply defaults and type coercion
       const result: Record<string, unknown> = {};
+      const missing: string[] = [];
       for (const [name, def] of paramEntries) {
-        if (name in extracted) {
+        if (name in extracted && extracted[name] !== null && extracted[name] !== undefined && extracted[name] !== "") {
           result[name] = this.coerce(extracted[name], def.type);
         } else if (def.default !== undefined) {
           result[name] = def.default;
         } else if (def.required !== false) {
-          throw new Error(
-            `Required parameter "${name}" not found in message: "${userMessage}"`,
-          );
+          missing.push(`"${name}" (${def.description})`);
         }
+      }
+
+      if (missing.length > 0) {
+        throw new MissingParamsError(missing);
       }
 
       return result;
     } catch (err) {
+      // Re-throw MissingParamsError as-is — the executor will handle it
+      if (err instanceof MissingParamsError) throw err;
+
       // On LLM failure, apply defaults only
       log.engine.warn(
         `[ParamExtractor] LLM extraction failed, using defaults: ` +
           `${err instanceof Error ? err.message : err}`,
       );
       const result: Record<string, unknown> = {};
+      const missing: string[] = [];
       for (const [name, def] of paramEntries) {
         if (def.default !== undefined) {
           result[name] = def.default;
         } else if (def.required !== false) {
-          throw new Error(
-            `Required parameter "${name}" could not be extracted and has no default`,
-          );
+          missing.push(`"${name}" (${def.description})`);
         }
+      }
+      if (missing.length > 0) {
+        throw new MissingParamsError(missing);
       }
       return result;
     }

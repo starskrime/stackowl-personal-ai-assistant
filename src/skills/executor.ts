@@ -45,12 +45,35 @@ const DEFAULT_STEP_TIMEOUT = 30000;
 
 // ─── Implementation ─────────────────────────────────────────────
 
+/**
+ * Maps SKILL.md class-style tool names to actual registry names.
+ * SKILL.md files use "ShellTool", "ReadFileTool" etc. but the
+ * registry stores "run_shell_command", "read_file" etc.
+ */
+const TOOL_ALIASES: Record<string, string> = {
+  ShellTool: "run_shell_command",
+  ReadFileTool: "read_file",
+  WriteFileTool: "write_file",
+  EditFileTool: "edit_file",
+  WebFetchTool: "web_crawl",
+  WebCrawlTool: "web_crawl",
+  SearchTool: "google_search",
+  GoogleSearchTool: "google_search",
+  ScreenshotTool: "take_screenshot",
+  SendFileTool: "send_file",
+};
+
 export class SkillExecutor {
   constructor(
     private toolRegistry: ToolRegistry,
     private provider: ModelProvider,
     private cwd: string,
   ) {}
+
+  /** Resolve a SKILL.md tool name to its registry name */
+  private resolveToolName(name: string): string {
+    return TOOL_ALIASES[name] ?? name;
+  }
 
   /**
    * Execute a structured skill with extracted parameters.
@@ -282,10 +305,11 @@ export class SkillExecutor {
       }
     }
 
+    const resolvedToolName = this.resolveToolName(step.tool);
     log.tool.info(
-      `[SkillExecutor] Calling tool "${step.tool}" for step "${step.id}"`,
+      `[SkillExecutor] Calling tool "${resolvedToolName}" for step "${step.id}"`,
     );
-    return this.toolRegistry.execute(step.tool, resolvedArgs, {
+    return this.toolRegistry.execute(resolvedToolName, resolvedArgs, {
       cwd: this.cwd,
     });
   }

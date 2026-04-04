@@ -1,6 +1,6 @@
 ---
 name: mouse_control
-description: Control mouse cursor movement, clicks, and drags on macOS using CLI tools
+description: "Control mouse cursor movement, clicks, and drags on macOS. Actions: status, move, click, double_click, right_click, drag, scroll"
 command-dispatch: tool
 command-tool: ShellTool
 openclaw:
@@ -9,119 +9,138 @@ openclaw:
 parameters:
   action:
     type: string
-    description: "Action: move, click, double_click, right_click, drag, scroll"
-    default: "click"
+    description: "Action: status, move, click, double_click, right_click, drag, scroll"
+    default: "status"
   x:
     type: number
-    description: "X coordinate (for move/drag actions)"
+    description: "X coordinate (pixels from left, default: current)"
+    default: 0
   y:
     type: number
-    description: "Y coordinate (for move/drag actions)"
+    description: "Y coordinate (pixels from top, default: current)"
+    default: 0
   amount:
     type: number
-    description: "Scroll amount (negative=down, positive=up)"
+    description: "Scroll amount (negative=down, positive=up, default: 3)"
+    default: 3
 required: []
 steps:
   - id: get_mouse_pos
     tool: ShellTool
     args:
-      command: "echo $(/usr/bin/python3 -c 'import Quartz; p=Quartz.NSEvent.mouseLocation(); print(int(p.x), int(1080-p.y))')"
-      mode: "local"
+      command: "/usr/bin/python3 -c 'import Quartz; p=Quartz.NSEvent.mouseLocation(); print(int(p.x), int(1080-p.y))'"
+    mode: "local"
     timeout_ms: 5000
-  - id: move_mouse
+  - id: do_status
     tool: ShellTool
     args:
-      command: "/usr/bin/python3 -c 'import Quartz; Quartz.CGEvent.post(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, Quartz.CGPoint({{x}}, 1080-{{y}}), 0))'"
-      mode: "local"
-    timeout_ms: 5000
-  - id: left_click
+      command: "echo 'Current mouse position: ({{get_mouse_pos}})'"
+    mode: "local"
+    timeout_ms: 3000
+  - id: do_move
     tool: ShellTool
     args:
-      command: "/usr/bin/python3 -c 'import Quartz; e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, Quartz.CGPoint({{x}}, 1080-{{y}}), 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e); e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, Quartz.CGPoint({{x}}, 1080-{{y}}), 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e)'"
-      mode: "local"
+      command: "/usr/bin/python3 -c 'import Quartz; p=Quartz.CGPoint({{x}}, 1080-{{y}}); e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, p, 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e)'"
+    mode: "local"
     timeout_ms: 5000
-  - id: double_click
+  - id: do_click
+    tool: ShellTool
+    args:
+      command: "/usr/bin/python3 -c 'import Quartz; p=Quartz.CGPoint({{x}}, 1080-{{y}}); e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, p, 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e); e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, p, 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e)'"
+    mode: "local"
+    timeout_ms: 5000
+  - id: do_double_click
     tool: ShellTool
     args:
       command: "/usr/bin/python3 -c 'import Quartz; p=Quartz.CGPoint({{x}}, 1080-{{y}}); [Quartz.CGEvent.post(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(None, t, p, 0)) for t in [Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp]*2]'"
-      mode: "local"
+    mode: "local"
     timeout_ms: 5000
-  - id: right_click
+  - id: do_right_click
     tool: ShellTool
     args:
-      command: "/usr/bin/python3 -c 'import Quartz; e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventRightMouseDown, Quartz.CGPoint({{x}}, 1080-{{y}}), 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e); e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventRightMouseUp, Quartz.CGPoint({{x}}, 1080-{{y}}), 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e)'"
-      mode: "local"
+      command: "/usr/bin/python3 -c 'import Quartz; p=Quartz.CGPoint({{x}}, 1080-{{y}}); e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventRightMouseDown, p, 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e); e=Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventRightMouseUp, p, 0); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e)'"
+    mode: "local"
     timeout_ms: 5000
-  - id: drag_mouse
-    tool: ShellTool
-    args:
-      command: "/usr/bin/python3 -c 'import Quartz; p1=Quartz.CGPoint({{x}}, 1080-{{y}}); [Quartz.CGEvent.post(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(None, t, p1, 0)) for t in [Quartz.kCGEventLeftMouseDown]]; [Quartz.CGEvent.post(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDragged, Quartz.CGPoint({{x}}, 1080-{{y}}), 0))]; Quartz.CGEvent.post(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, Quartz.CGPoint({{x}}, 1080-{{y}}), 0))'"
-      mode: "local"
-    timeout_ms: 5000
-  - id: scroll
+  - id: do_scroll
     tool: ShellTool
     args:
       command: "/usr/bin/python3 -c 'import Quartz; e=Quartz.CGEventCreateScrollWheelEvent2(None, Quartz.kCGScrollWheelEventId, 1, {{amount}}); Quartz.CGEvent.post(Quartz.kCGHIDEventTap, e)'"
-      mode: "local"
+    mode: "local"
     timeout_ms: 5000
   - id: analyze
     type: llm
-    prompt: "Mouse control action: '{{action}}' at position ({{x}}, {{y}})\n\nCurrent mouse position: {{get_mouse_pos.output}}\n\nProvide confirmation of action performed."
+    prompt: "Mouse action '{{action}}' completed. Position: {{get_mouse_pos}}"
     depends_on: [get_mouse_pos]
     inputs: [get_mouse_pos.output]
 ---
 
 # Mouse Control
 
-Control mouse cursor movement and clicks on macOS.
+Control mouse cursor on macOS - move, click, scroll.
 
 ## Usage
 
-Click at coordinates:
+Get current position (default):
+```
+/mouse_control
+```
+
+Move cursor:
+```
+action=move
+x=500
+y=300
+```
+
+Click at position:
 ```
 action=click
 x=500
-y=500
+y=300
 ```
 
-Move to position:
+Scroll down:
+```
+action=scroll
+amount=5
+```
+
+## Parameters
+
+- **action**: status (default), move, click, double_click, right_click, scroll
+- **x**: X coordinate (default: current position)
+- **y**: Y coordinate (default: current position)
+- **amount**: Scroll amount, negative=down (default: 3)
+
+## Examples
+
+### Show mouse position
+```
+action=status
+```
+
+### Move to center
 ```
 action=move
+x=960
+y=540
+```
+
+### Click at coordinates
+```
+action=click
 x=100
 y=100
 ```
 
-Double click:
-```
-action=double_click
-x=500
-y=500
-```
-
-Right click:
-```
-action=right_click
-x=500
-y=500
-```
-
-Scroll:
+### Scroll
 ```
 action=scroll
-amount=-10
+amount=-5
 ```
-
-## Actions
-
-- **move**: Move cursor to (x, y)
-- **click**: Left click at (x, y)
-- **double_click**: Double click at (x, y)
-- **right_click**: Right click at (x, y)
-- **drag**: Drag from current to (x, y)
-- **scroll**: Scroll wheel (negative=down, positive=up)
 
 ## Notes
 
-- Coordinates are screen pixels from top-left
-- Y is inverted (0 = top of screen in most contexts)
-- Requires accessibility permissions for some operations
+- Coordinates: X from left, Y from top (macOS inverts Y)
+- Use mouse_position skill to find current coordinates first
+- Requires Accessibility permission in System Settings

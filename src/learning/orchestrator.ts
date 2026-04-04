@@ -183,14 +183,35 @@ export class LearningOrchestrator {
 
       await this.reflexionEngine?.consolidate(messages, cycleId);
 
-      // Register ALL topics in the knowledge graph — NO automatic synthesis.
-      // Learning only happens when the assistant fails at something and the
-      // CognitiveLoop picks up the queued synthesis target. This prevents
-      // burning tokens on proactive learning after every conversation.
-      for (const topic of fusion.fusedTopics) {
-        this.graphManager.touchDomain(topic.normalizedName, "conversation");
+      // Two-tier synthesis:
+      //   Tier 1 (urgency >= 25 or priority override): Full synthesis into pellets
+      //     HARD CAP: max 2 topics per cycle to prevent token burn (300-500 calls)
+      //   Tier 2 (urgency < 25): Register in knowledge graph for future study
+      // This is reactive — only runs after actual user conversations, not proactively.
+      const MAX_SYNTHESIZE_TOPICS = 2;
+      const synthesizableTopics = fusion.fusedTopics
+        .filter(
+          (t: FusedTopic) => t.urgency >= 25 || t.priorityOverride === "critical" || t.priorityOverride === "high",
+        )
+        .sort((a: FusedTopic, b: FusedTopic) => b.urgency - a.urgency)
+        .slice(0, MAX_SYNTHESIZE_TOPICS);
+      const touchOnlyTopics = fusion.fusedTopics.filter(
+        (t: FusedTopic) =>
+          !synthesizableTopics.includes(t),
+      );
+
+      if (synthesizableTopics.length > 0 && this.synthesizer) {
+        const report = await this.synthesizer.synthesize(synthesizableTopics);
+        cycle.synthesisReport = report;
+        this.stats.totalTopicsStudied += report.successful;
+        this.stats.totalPelletsCreated += report.pelletsCreated;
       }
-      if (fusion.fusedTopics.length > 0) {
+
+      // Register remaining topics in the knowledge graph for future reference
+      if (touchOnlyTopics.length > 0) {
+        for (const topic of touchOnlyTopics) {
+          this.graphManager.touchDomain(topic.normalizedName, "conversation");
+        }
         await this.graphManager.save();
       }
 
@@ -357,11 +378,4 @@ export class LearningOrchestrator {
     return cycle;
   }
 
-  private getDaysSinceLastReflexion(): number {
-    const lastReflex = this.reflexionEngine?.getStats().lastReflex;
-    if (!lastReflex || lastReflex === "never") return 999;
-    return (
-      (Date.now() - new Date(lastReflex).getTime()) / (1000 * 60 * 60 * 24)
-    );
-  }
 }

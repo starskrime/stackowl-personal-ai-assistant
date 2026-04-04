@@ -769,7 +769,15 @@ export class OwlGateway {
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
     let dynamicSkillsContext = "";
     let injectedSkillNames: string[] = [];
-    if (this.skillInjector) {
+    // Skip skill routing for short/greeting messages — these are conversational,
+    // not actionable tasks. BM25 produces false positives on short strings
+    // (e.g. "hi" matching email_send).
+    const isConversational =
+      text.trim().length < 15 ||
+      /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|gm|gn)\b/i.test(
+        text.trim(),
+      );
+    if (this.skillInjector && !isConversational) {
       const relevantMatches =
         await this.skillInjector.getRelevantMatches(text);
       const relevantSkills = relevantMatches.map((m) => m.skill);
@@ -779,7 +787,7 @@ export class OwlGateway {
         const topSkill = topMatch.skill;
         if (
           this.skillInjector.canExecuteStructured(topSkill) &&
-          topMatch.score >= 0.5
+          topMatch.score >= 0.7
         ) {
           log.engine.info(`Structured skill execution: ${topSkill.name}`);
           const emoji = topSkill.metadata.openclaw?.emoji || "⚡";

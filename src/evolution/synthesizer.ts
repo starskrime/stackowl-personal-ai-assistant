@@ -23,7 +23,7 @@ import { SkillCritic } from "../skills/critic.js";
 import { SkillParser } from "../skills/parser.js";
 import { log } from "../logger.js";
 
-const MAX_SYNTHESIS_RETRIES = 3;
+const MAX_SYNTHESIS_RETRIES = 1;
 const MIN_QUALITY_THRESHOLD = 0.6;
 const TARGET_QUALITY_THRESHOLD = 0.75;
 

@@ -50,6 +50,12 @@ interface DiagnosisResponse {
     | "external_dependency"
     | "skip";
   explanation: string;
+  /** Multi-hypothesis reasoning: all considered causes with likelihoods */
+  hypotheses?: Array<{
+    cause: string;
+    likelihood: number;
+    impliedFix: string;
+  }>;
   fix?: {
     file: string;
     type: "replace" | "write_json" | "delete_file";
@@ -135,8 +141,17 @@ export class SelfHealer {
         runtimeContext,
       );
 
+      if (diagnosis.hypotheses && diagnosis.hypotheses.length > 0) {
+        const hyps = diagnosis.hypotheses
+          .sort((a, b) => b.likelihood - a.likelihood)
+          .map((h, i) => `  ${i + 1}. [${(h.likelihood * 100).toFixed(0)}%] ${h.cause}`)
+          .join("\n");
+        log.evolution.evolve(
+          `[SelfHealer] Hypotheses:\n${hyps}`,
+        );
+      }
       log.evolution.evolve(
-        `[SelfHealer] Diagnosis: ${diagnosis.rootCause} → action: ${diagnosis.action}`,
+        `[SelfHealer] Selected: ${diagnosis.rootCause} → action: ${diagnosis.action}`,
       );
 
       // Step 5: Apply the fix
@@ -400,13 +415,17 @@ export class SelfHealer {
       `RUNTIME CONTEXT:\n${runtimeContext}\n\n` +
       `DIAGNOSE AND FIX:\n` +
       `1. Read and understand ALL the code above\n` +
-      `2. Identify the root cause of the error\n` +
-      `3. Determine the minimal fix\n\n` +
+      `2. Generate 3-5 possible root causes (hypotheses)\n` +
+      `3. For each hypothesis, assess likelihood (0-1) and what fix it implies\n` +
+      `4. Pick the most likely hypothesis and prescribe its fix\n\n` +
       `Return ONLY valid JSON:\n` +
       `{\n` +
-      `  "rootCause": "one sentence explaining what's actually broken",\n` +
+      `  "hypotheses": [\n` +
+      `    { "cause": "possible root cause", "likelihood": 0.0-1.0, "impliedFix": "what fix this implies" }\n` +
+      `  ],\n` +
+      `  "rootCause": "the most likely hypothesis — one sentence",\n` +
       `  "action": "config_fix|data_cleanup|code_patch|restart_needed|external_dependency|skip",\n` +
-      `  "explanation": "detailed explanation of what went wrong and why your fix will work",\n` +
+      `  "explanation": "why you chose this hypothesis over others, and why this fix will work",\n` +
       `  "fix": {\n` +
       `    "file": "relative path from project root",\n` +
       `    "type": "replace|write_json|delete_file",\n` +
@@ -426,6 +445,7 @@ export class SelfHealer {
       `  }\n` +
       `}\n\n` +
       `RULES:\n` +
+      `- You MUST generate 3-5 hypotheses before choosing one\n` +
       `- Only include the fix type that applies (fix, configFix, or dataCleanup)\n` +
       `- For "skip": the error is expected/transient and no fix is needed\n` +
       `- For "external_dependency": the problem is outside our control (API down, network)\n` +

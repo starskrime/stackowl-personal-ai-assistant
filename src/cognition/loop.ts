@@ -170,14 +170,21 @@ export class CognitiveLoop {
   private actionsToday: number = 0;
   private lastDayKey: string = "";
   private lastReflexionTime: number = 0;
-  private lastCapScanTime: number = 0;
-  private lastPatternMineTime: number = 0;
-  private lastSkillEvolveTime: number = 0;
   private lastMemoryConsolidationTime: number = 0;
   private lastToolPruneTime: number = 0;
   private lastDnaEvolutionTime: number = 0;
-  private lastSelfReflectionTime: number = 0;
-  private lastAutonomousSynthesisTime: number = 0;
+  // Cooldown timestamps — written by execute methods, read by decide() when
+  // proactive actions are re-enabled. Kept to avoid losing state tracking.
+  // @ts-expect-error TS6133 — assigned in execute, read when proactive actions enabled
+  private lastCapScanTime = 0;
+  // @ts-expect-error TS6133
+  private lastPatternMineTime = 0;
+  // @ts-expect-error TS6133
+  private lastSkillEvolveTime = 0;
+  // @ts-expect-error TS6133
+  private lastSelfReflectionTime = 0;
+  // @ts-expect-error TS6133
+  private lastAutonomousSynthesisTime = 0;
   private studySessionsSinceDnaSync: number = 0;
   private skillsCreatedToday: number = 0;
   private history: CognitiveTickResult[] = [];
@@ -918,8 +925,10 @@ export class CognitiveLoop {
       ? this.deps.skillsRegistry.listEnabled().map((s) => s.name.toLowerCase())
       : [];
 
+    // Hard cap: synthesize at most 2 skills per cycle to prevent token burn.
+    // Gap targets are already priority-sorted (queue first, then ledger, etc.)
     let created = 0;
-    for (const target of gapTargets) {
+    for (const target of gapTargets.slice(0, 2)) {
       // Skip if a skill with a similar name already exists
       const targetWords = target.userRequest.toLowerCase().split(/\s+/);
       const alreadyCovered = existingSkills.some((name) =>
@@ -1117,6 +1126,7 @@ export class CognitiveLoop {
    * on a fresh install — without this, getStudyQueue() returns [] and the
    * entire proactive learning pipeline stalls.
    */
+  // @ts-ignore — kept for potential manual invocation
   private async seedKnowledgeGraphFromDesires(): Promise<void> {
     if (!this.deps.innerLife || !this.deps.config) return;
 

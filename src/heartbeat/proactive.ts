@@ -17,8 +17,7 @@ import type { LearningEngine } from "../learning/self-study.js";
 import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
-import { SkillEvolver } from "../skills/evolver.js";
-import { PatternMiner } from "../skills/pattern-miner.js";
+// SkillEvolver and PatternMiner imports removed — proactive learning disabled
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { SessionStore } from "../memory/store.js";
 import type { AutonomousPlanner } from "./planner.js";
@@ -113,8 +112,7 @@ export class ProactivePinger {
   private lastMorningBriefDate: string = "";
   private lastConsolidationDate: string = "";
   private lastSelfStudyDate: string = "";
-  private lastDreamTime: number = 0;
-  private lastSkillEvolutionDate: string = "";
+  // lastDreamTime and lastSkillEvolutionDate removed — proactive learning disabled
   private unansweredPings: number = 0;
 
   constructor(context: PingContext, config?: Partial<PingConfig>) {
@@ -552,7 +550,6 @@ export class ProactivePinger {
    * Knowledge Council — owls learn independently, then brainstorm and validate.
    * Runs weekly during quiet hours (3 AM on Sundays by default).
    */
-  private lastCouncilDate = "";
   private async maybeKnowledgeCouncil(): Promise<void> {
     // DISABLED — Knowledge Council burned tokens proactively.
     // Learning now only happens reactively (on actual failures).

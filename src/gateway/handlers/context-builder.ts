@@ -10,6 +10,7 @@ import type { Session } from "../../memory/store.js";
 import type { GatewayContext } from "../types.js";
 import type { GatewayCallbacks } from "../types.js";
 import type { EngineContext } from "../../engine/runtime.js";
+import { DiagnosticEngine } from "../../engine/diagnostic-engine.js";
 import type { MicroLearner } from "../../learning/micro-learner.js";
 import type { SkillContextInjector } from "../../skills/injector.js";
 import type { AttemptLog } from "../../memory/attempt-log.js";
@@ -367,6 +368,7 @@ The user has no active tasks right now. Be concise and helpful:
       questManager: this.ctx.questManager,
       capsuleManager: this.ctx.capsuleManager,
       innerLife: this.ctx.innerLife,
+      diagnosticEngine: new DiagnosticEngine(this.ctx.provider),
     };
   }
 }

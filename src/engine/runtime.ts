@@ -25,6 +25,8 @@ import { GapDetector } from "../evolution/detector.js";
 import { log } from "../logger.js";
 import type { OwlInnerLife, InnerMonologue } from "../owls/inner-life.js";
 import { DNADecisionLayer } from "../owls/decision-layer.js";
+import { DiagnosticEngine } from "./diagnostic-engine.js";
+import type { DiagnosticInput } from "./diagnostic-engine.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -92,6 +94,8 @@ export interface EngineContext {
   backgroundTaskId?: string;
   /** RAG-based pellet search — replaces brute-force pellet injection */
   pelletSearch?: import("../pellets/search.js").PelletSearch;
+  /** Diagnostic engine for multi-hypothesis error analysis */
+  diagnosticEngine?: DiagnosticEngine;
 }
 
 export interface PendingCapabilityGap {
@@ -893,44 +897,42 @@ ${userMessage}
                   (toolFailStreak[toolCall.name] ?? 0) + 1;
                 const streak = toolFailStreak[toolCall.name];
 
-                const hasHint = toolResult.includes("[SYSTEM DIAGNOSTIC HINT:");
-                const hintNote = hasHint
-                  ? `\n⚠️ THE RESULT ABOVE CONTAINS A [SYSTEM DIAGNOSTIC HINT] — THIS IS CRITICAL. ` +
-                    `Read the hint carefully. It tells you exactly what went wrong and what tool or approach to use instead. ` +
-                    `You MUST follow it. Do not repeat the same action that produced this hint.`
-                  : "";
-
                 const errorClass = classifyToolError(toolResult);
-                const errorClassNote =
-                  errorClass === "NON-RETRYABLE"
-                    ? `\n⛔ ERROR CLASS: [NON-RETRYABLE] — This failure will repeat regardless of how you retry it. ` +
-                      `Do NOT call "${toolCall.name}" again with any variation of these arguments. ` +
-                      `Switch tools or approach entirely, or tell the user it cannot be done in this environment.`
-                    : `\n♻️ ERROR CLASS: [TRANSIENT] — This may be a temporary issue (network, rate-limit). ` +
-                      `Try a different tool or approach rather than retrying the same call immediately.`;
 
-                const analysisPrompt =
-                  `[SYSTEM OVERRIDE: ERROR ANALYSIS REQUIRED — failure #${streak}]\n` +
-                  `Tool: "${toolCall.name}"\n` +
-                  `Result: ${isSoftFailure ? "returned non-zero exit code or diagnostic hint (soft failure)" : "threw an exception (hard failure)"}\n` +
-                  errorClassNote +
-                  "\n\n" +
-                  `You MUST step back and reason through this before your next action:\n` +
-                  `1. Read the full tool result above — the error is described there.\n` +
-                  `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
-                  `3. Do NOT retry the same command with the same arguments.\n` +
-                  `4. If the tool requires something unavailable here (e.g. curl in a no-network sandbox), ` +
-                  `USE A DIFFERENT TOOL (e.g. google_search for web search, web_crawl for URL fetching).\n` +
-                  hintNote +
-                  "\n\n" +
-                  (streak >= MAX_TOOL_FAIL_STREAK
-                    ? `🛑 CRITICAL: This tool has failed ${streak} consecutive times. ` +
-                      `DO NOT call "${toolCall.name}" again under any circumstances. ` +
-                      `Switch to a completely different approach or tool NOW.`
-                    : `Choose a different approach for your next tool call.`);
+                // ── DiagnosticEngine: multi-hypothesis error analysis ──
+                // Instead of blindly injecting "try something else", we
+                // generate 3-5 candidate fixes, score them, and tell the
+                // model exactly which fix to execute and why.
+                let analysisPrompt: string;
+
+                if (context.diagnosticEngine && streak <= MAX_TOOL_FAIL_STREAK) {
+                  try {
+                    const diagnosticInput: DiagnosticInput = {
+                      toolName: toolCall.name,
+                      toolArgs: toolCall.arguments,
+                      toolResult,
+                      failStreak: streak,
+                      failureType: isHardFailure ? "hard" : "soft",
+                      errorClass,
+                      recentMessages: messages.slice(-8),
+                      userIntent: userMessage,
+                    };
+
+                    const diagnosis = await context.diagnosticEngine.diagnose(diagnosticInput);
+                    analysisPrompt = context.diagnosticEngine.formatDirective(diagnosis, diagnosticInput);
+                  } catch (diagErr) {
+                    log.engine.warn(
+                      `[DiagnosticEngine] Failed, using legacy prompt: ${diagErr instanceof Error ? diagErr.message : String(diagErr)}`,
+                    );
+                    analysisPrompt = this.buildLegacyErrorPrompt(toolCall, toolResult, isSoftFailure, errorClass, streak, MAX_TOOL_FAIL_STREAK);
+                  }
+                } else {
+                  // Legacy fallback: no DiagnosticEngine or past max streak
+                  analysisPrompt = this.buildLegacyErrorPrompt(toolCall, toolResult, isSoftFailure, errorClass, streak, MAX_TOOL_FAIL_STREAK);
+                }
 
                 log.engine.warn(
-                  `Tool "${toolCall.name}" ${isSoftFailure ? "soft-failed" : "hard-failed"} (streak: ${streak}) — injecting self-healing directive`,
+                  `Tool "${toolCall.name}" ${isSoftFailure ? "soft-failed" : "hard-failed"} (streak: ${streak}) — injecting diagnostic directive`,
                 );
 
                 messages.push({
@@ -1712,5 +1714,54 @@ steps. Follow them precisely — they are your primary instructions for this tas
           }
         : undefined,
     };
+  }
+
+  /**
+   * Legacy error prompt — used when DiagnosticEngine is unavailable or
+   * when the fail streak exceeds the max (at which point we want a hard stop).
+   */
+  private buildLegacyErrorPrompt(
+    toolCall: ToolCall,
+    toolResult: string,
+    isSoftFailure: boolean,
+    errorClass: "NON-RETRYABLE" | "TRANSIENT",
+    streak: number,
+    maxStreak: number = 2,
+  ): string {
+    const hasHint = toolResult.includes("[SYSTEM DIAGNOSTIC HINT:");
+    const hintNote = hasHint
+      ? `\n⚠️ THE RESULT ABOVE CONTAINS A [SYSTEM DIAGNOSTIC HINT] — THIS IS CRITICAL. ` +
+        `Read the hint carefully. It tells you exactly what went wrong and what tool or approach to use instead. ` +
+        `You MUST follow it. Do not repeat the same action that produced this hint.`
+      : "";
+
+    const errorClassNote =
+      errorClass === "NON-RETRYABLE"
+        ? `\n⛔ ERROR CLASS: [NON-RETRYABLE] — This failure will repeat regardless of how you retry it. ` +
+          `Do NOT call "${toolCall.name}" again with any variation of these arguments. ` +
+          `Switch tools or approach entirely, or tell the user it cannot be done in this environment.`
+        : `\n♻️ ERROR CLASS: [TRANSIENT] — This may be a temporary issue (network, rate-limit). ` +
+          `Try a different tool or approach rather than retrying the same call immediately.`;
+
+    return (
+      `[SYSTEM OVERRIDE: ERROR ANALYSIS REQUIRED — failure #${streak}]\n` +
+      `Tool: "${toolCall.name}"\n` +
+      `Result: ${isSoftFailure ? "returned non-zero exit code or diagnostic hint (soft failure)" : "threw an exception (hard failure)"}\n` +
+      errorClassNote +
+      "\n\n" +
+      `You MUST step back and reason through this before your next action:\n` +
+      `1. Read the full tool result above — the error is described there.\n` +
+      `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
+      `3. Do NOT retry the same command with the same arguments.\n` +
+      `4. If the tool requires something unavailable here (e.g. curl in a no-network sandbox), ` +
+      `USE A DIFFERENT TOOL (e.g. google_search for web search, web_crawl for URL fetching).\n` +
+      hintNote +
+      "\n\n" +
+      (streak >= maxStreak
+        ? `🛑 CRITICAL: This tool has failed ${streak} consecutive times. ` +
+          `DO NOT call "${toolCall.name}" again under any circumstances. ` +
+          `Switch to a completely different approach or tool NOW.`
+        : `Choose a different approach for your next tool call.`)
+    );
   }
 }

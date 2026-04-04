@@ -1,6 +1,6 @@
 ---
 title: Cold start migration test
-generated_at: '2026-03-30T01:52:04.970Z'
+generated_at: '2026-03-31T23:30:29.296Z'
 source: test
 owls: []
 tags:

@@ -128,6 +128,20 @@ export class SkillContextInjector {
             `${JSON.stringify(parameters)}`,
         );
       } catch (err) {
+        const { MissingParamsError } = await import("./param-extractor.js");
+        if (err instanceof MissingParamsError) {
+          // Soft failure: tell the model what's missing so it can ask the user
+          return {
+            skillName: skill.name,
+            status: "needs_input" as "failed",
+            stepResults: [],
+            finalOutput:
+              `I need more information to run "${skill.name}". ` +
+              `Please ask the user for: ${err.missingParams.join(", ")}.`,
+            totalDurationMs: Date.now() - startTime,
+            parameters: {},
+          };
+        }
         const errorMsg = err instanceof Error ? err.message : String(err);
         this.tracker.recordFailure(skill.name, Date.now() - startTime);
         return {

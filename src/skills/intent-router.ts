@@ -62,7 +62,7 @@ export class IntentRouter {
   private cache: Map<string, IntentMatch[]> = new Map();
   private static readonly MAX_CACHE = 200;
   private static readonly AMBIGUITY_THRESHOLD = 0.2; // 20% score difference = ambiguous
-  private static readonly MIN_SCORE = 0.1; // minimum BM25 score to consider
+  private static readonly MIN_SCORE = 0.25; // minimum BM25 score to consider (raised from 0.1 to filter noise)
 
   constructor(
     registry: SkillsRegistry,

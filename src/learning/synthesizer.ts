@@ -44,11 +44,19 @@ export interface SynthesisReport {
 
 const MAX_PELLETS = 2000;
 const EVICT_COUNT = 10;
-const Q_AND_A_QUESTIONS = 3;
-const WEB_RESEARCH_MAX_URLS = 5;
+const Q_AND_A_QUESTIONS = 1;
+const WEB_RESEARCH_MAX_URLS = 2;
+/**
+ * Hard cap on LLM calls per synthesize() invocation.
+ * Prevents runaway token burn from nested loops.
+ * With cap of 4: 1 question-gen + 1 answer + 2 web extractions = 4 calls max.
+ */
+const MAX_LLM_CALLS_PER_CYCLE = 4;
 
 export class KnowledgeSynthesizer {
   private graphManager: KnowledgeGraphManager;
+  /** LLM call counter — reset at the start of each synthesize() call */
+  private llmCallCount = 0;
 
   constructor(
     private provider: ModelProvider,
@@ -60,11 +68,30 @@ export class KnowledgeSynthesizer {
     this.graphManager = new KnowledgeGraphManager(workspacePath);
   }
 
+  /** Budget-guarded LLM call. Throws if budget exhausted. */
+  private async budgetedChat(
+    messages: Parameters<ModelProvider["chat"]>[0],
+    model?: string,
+    options?: Parameters<ModelProvider["chat"]>[2],
+  ): ReturnType<ModelProvider["chat"]> {
+    if (this.llmCallCount >= MAX_LLM_CALLS_PER_CYCLE) {
+      throw new Error(
+        `LLM budget exhausted (${MAX_LLM_CALLS_PER_CYCLE} calls). Stopping synthesis to prevent token burn.`,
+      );
+    }
+    this.llmCallCount++;
+    log.evolution.info(
+      `[Synthesizer] LLM call ${this.llmCallCount}/${MAX_LLM_CALLS_PER_CYCLE}`,
+    );
+    return this.provider.chat(messages, model, options);
+  }
+
   async synthesize(
     topics: FusedTopic[],
     context?: SynthesisContext["recentMessages"],
   ): Promise<SynthesisReport> {
     const startTime = Date.now();
+    this.llmCallCount = 0; // Reset budget for this cycle
     await this.graphManager.load();
 
     const report: SynthesisReport = {
@@ -200,7 +227,7 @@ export class KnowledgeSynthesizer {
     const prompt = `Generate ${Q_AND_A_QUESTIONS} targeted questions about "${topic.displayName}".\n\nContext: ${context || "No prior context."}\n\nRules: Focus on HOW to do it. Be specific. Return ONLY a JSON array of strings.`;
 
     try {
-      const response = await this.provider.chat([
+      const response = await this.budgetedChat([
         {
           role: "system",
           content:
@@ -228,7 +255,7 @@ export class KnowledgeSynthesizer {
     question: string,
   ): Promise<{ pellet: Pellet; relatedTopics: string[] }> {
     const prompt = `Question: "${question}"\n\nWrite a concise knowledge card (max 150 words).\n\n**Answer:**\n**How to do it:**\n**Example:**\n\nEnd with: RELATED_JSON: ["topic1", "topic2", "topic3"]`;
-    const response = await this.provider.chat(
+    const response = await this.budgetedChat(
       [
         {
           role: "system",
@@ -369,7 +396,7 @@ export class KnowledgeSynthesizer {
     const pellets: Pellet[] = [];
     const prompt = `Based on this content from ${source}, extract 2-3 key points about "${topic.displayName}". Return a JSON array of objects with "key_point" and "how_to".`;
     try {
-      const response = await this.provider.chat([
+      const response = await this.budgetedChat([
         {
           role: "system",
           content: "You are a knowledge extraction assistant.",
@@ -435,7 +462,8 @@ export class KnowledgeSynthesizer {
       }
     }
 
-    if (pellets.length === 0) return this.runWebResearch(topic);
+    // Previously cascaded to runWebResearch() here, burning 5+ LLM calls.
+    // Now we just return empty — the topic stays in the knowledge graph for future study.
 
     return {
       pipeline: "document_digest",
@@ -492,7 +520,7 @@ export class KnowledgeSynthesizer {
   private async runQuickLookup(topic: FusedTopic): Promise<SynthesisResult> {
     const prompt = `Give ONE sentence answer about "${topic.displayName}". Be practical. Return ONLY the sentence.`;
     try {
-      const response = await this.provider.chat([
+      const response = await this.budgetedChat([
         { role: "system", content: "Be concise. One sentence only." },
         { role: "user", content: prompt },
       ]);
@@ -529,44 +557,17 @@ export class KnowledgeSynthesizer {
     }
   }
 
+  /**
+   * Deep research — DOWNGRADED to single Q&A pipeline.
+   * Previously ran Q&A + web research in parallel (9+ LLM calls per topic).
+   * Now just delegates to Q&A (2 LLM calls: 1 question-gen + 1 answer).
+   * This prevents the 300-500 call token burn from nested loops.
+   */
   private async runDeepResearch(topic: FusedTopic): Promise<SynthesisResult> {
-    log.evolution.evolve(`[Synthesizer] Deep research: ${topic.displayName}`);
-    const [qResult, webResult] = await Promise.allSettled([
-      this.runQAndA(topic),
-      this.runWebResearch(topic).catch(
-        () =>
-          ({
-            pipeline: "web_research",
-            topic: topic.displayName,
-            pellets: [],
-            relatedTopics: [],
-            sources: [],
-            confidence: 0,
-            learnedAt: new Date().toISOString(),
-            durationMs: 0,
-            success: false,
-          }) as SynthesisResult,
-      ),
-    ]);
-
-    const allPellets = [
-      ...(qResult.status === "fulfilled" ? qResult.value.pellets : []),
-      ...(webResult.status === "fulfilled" ? webResult.value.pellets : []),
-    ];
-    const sources =
-      webResult.status === "fulfilled" ? webResult.value.sources : [];
-
-    return {
-      pipeline: "deep_research",
-      topic: topic.displayName,
-      pellets: allPellets,
-      relatedTopics: [],
-      sources,
-      confidence: allPellets.length > 0 ? 0.9 : 0,
-      learnedAt: new Date().toISOString(),
-      durationMs: 0,
-      success: allPellets.length > 0,
-    };
+    log.evolution.info(`[Synthesizer] Deep research (capped): ${topic.displayName}`);
+    const result = await this.runQAndA(topic);
+    result.pipeline = "deep_research";
+    return result;
   }
 
   private createPellet(
