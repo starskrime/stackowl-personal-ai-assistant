@@ -21,6 +21,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Test coverage reports
+coverage/
+
 # Session data (optional — uncomment to exclude)
 # workspace/sessions/
 # workspace/memory/embeddings.json

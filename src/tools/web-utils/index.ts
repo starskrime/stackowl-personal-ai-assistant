@@ -3,3 +3,4 @@ export { LinkPreviewTool } from "./link-preview.js";
 export { RSSFeedTool } from "./rss-feed.js";
 export { YouTubeSearchTool } from "./youtube-search.js";
 export { BookmarkManagerTool } from "./bookmark-manager.js";
+export { WebImageSearchTool } from "./image-search.js";

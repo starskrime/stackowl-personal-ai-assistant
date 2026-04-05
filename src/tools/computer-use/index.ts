@@ -1,29 +1,45 @@
 /**
- * StackOwl — Computer Use Tool
+ * StackOwl — Computer Use Tool (Cross-Platform)
  *
  * Full desktop automation: mouse, keyboard, screenshots, app control,
  * UI element discovery, multi-step planning, workflow recipes, and
  * screen state diffing.
+ *
+ * Platforms: macOS · Windows · Linux (X11 / Wayland)
  *
  * Workflow:
  *   1. analyze_screen → see what's on screen as text with [ref:N] coordinates
  *   2. click / type / key → interact with UI elements
  *   3. analyze_screen → verify result
  *
- * Advanced:
- *   - plan_and_execute → AI plans multi-step sequence, executes with verification
- *   - screen_diff → compare before/after states to detect changes
- *   - wait_for_element → poll until a target element appears
- *   - analyze_region → read only a specific area of the screen
- *   - list_recipes / save_recipe → manage reusable workflows
+ * Human-like mode (human_like: true):
+ *   - Mouse: Bézier-curved paths + Gaussian jitter + Fitts-law timing
+ *   - Keyboard: WPM-distributed delays + typo+correction simulation
+ *   - Pre-click hover pause, between-action thinking pauses
  *
- * Requires macOS Accessibility permissions.
+ * macOS: Persistent JXA worker process (~5ms/action, was ~700ms).
+ * Windows: PowerShell + inline C# Win32 SendInput.
+ * Linux: xdotool (X11) or ydotool (Wayland).
  */
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import * as mac from "./macos.js";
+import { DriverManager } from "./driver/manager.js";
+import {
+  generateHumanPath,
+  humanizeTarget,
+  humanMoveDuration,
+  stepDelays,
+  preClickHover,
+  thinkingPause,
+} from "./human/motion.js";
+import {
+  expandTypingSequence,
+  preTypePause,
+  DEFAULT_TYPING_PROFILE,
+} from "./human/typing.js";
 import {
   readScreen,
   readScreenRegion,
@@ -59,16 +75,17 @@ export const ComputerUseTool: ToolImplementation = {
   definition: {
     name: "computer_use",
     description:
-      "Control the computer like a human — move mouse, click, type, press keys, scroll, " +
+      "Control the computer like a real human — move mouse naturally, click, type, press keys, scroll, " +
       "open apps/URLs, drag, read what's on screen, plan multi-step workflows, and learn from successful sequences. " +
+      "Works on macOS, Windows, and Linux. " +
       "BEST FOR: any desktop interaction, filling forms, web browsing (bypasses ALL bot detection), " +
       "automating repetitive tasks. " +
       "WORKFLOW: analyze_screen → read text output with [ref:N] click coordinates → click/type → analyze_screen to verify. " +
       "ADVANCED: Use plan_and_execute for multi-step tasks — it plans, executes with verification, and saves as a reusable recipe. " +
       "Use screen_diff to see what changed. Use wait_for_element to wait for UI to load. " +
+      "Set human_like:true for undetectable automation (Bézier curves, realistic typing speed, natural pauses). " +
       "analyze_screen returns a TEXT description of everything visible (buttons, links, text fields, content) " +
-      "with coordinates — NO vision model needed, works with any text model. " +
-      "Requires macOS Accessibility permissions.",
+      "with coordinates — NO vision model needed, works with any text model.",
     parameters: {
       type: "object",
       properties: {
@@ -184,7 +201,8 @@ export const ComputerUseTool: ToolImplementation = {
                 height: number;
               })
             : undefined;
-          await mac.screenshot(outPath, region);
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.screenshot(outPath, region);
 
           if (!existsSync(outPath)) {
             return "Screenshot failed — file not created. Ensure macOS screencapture is available.";
@@ -368,31 +386,47 @@ export const ComputerUseTool: ToolImplementation = {
         }
 
         // ── Mouse Click ─────────────────────────────────────────────
-        case "click": {
-          const x = args.x as number;
-          const y = args.y as number;
-          if (x == null || y == null)
-            return "Error: click requires x and y coordinates.";
-          await mac.mouseClick(x, y, "left", 1);
-          return `Clicked at (${x}, ${y})`;
-        }
-
-        case "double_click": {
-          const x = args.x as number;
-          const y = args.y as number;
-          if (x == null || y == null)
-            return "Error: double_click requires x and y coordinates.";
-          await mac.mouseClick(x, y, "left", 2);
-          return `Double-clicked at (${x}, ${y})`;
-        }
-
+        case "click":
+        case "double_click":
         case "right_click": {
-          const x = args.x as number;
-          const y = args.y as number;
-          if (x == null || y == null)
-            return "Error: right_click requires x and y coordinates.";
-          await mac.mouseClick(x, y, "right", 1);
-          return `Right-clicked at (${x}, ${y})`;
+          const rawX = args.x as number;
+          const rawY = args.y as number;
+          if (rawX == null || rawY == null)
+            return `Error: ${action} requires x and y coordinates.`;
+
+          const humanLike = args.human_like as boolean;
+          const driver = await DriverManager.getInstance().getDriver();
+
+          // Determine click type
+          const button = action === "right_click" ? "right" : "left";
+          const count = action === "double_click" ? 2 : 1;
+
+          if (humanLike) {
+            // Apply Bézier move + target jitter + pre-click hover
+            const current = await driver.getCursorPosition();
+            const target = humanizeTarget({ x: rawX, y: rawY });
+            const path = generateHumanPath(current, target);
+            const dur = humanMoveDuration(current, target);
+            const delays = stepDelays(dur, path.length);
+
+            for (let i = 0; i < path.length; i++) {
+              await driver.mouseMove(path[i].x, path[i].y);
+              await new Promise((r) => setTimeout(r, delays[i]));
+            }
+            // Pre-click hover pause
+            await new Promise((r) => setTimeout(r, preClickHover()));
+            await driver.mouseClick(target.x, target.y, button, count);
+          } else {
+            await driver.mouseClick(rawX, rawY, button, count);
+          }
+
+          const label =
+            action === "double_click"
+              ? "Double-clicked"
+              : action === "right_click"
+                ? "Right-clicked"
+                : "Clicked";
+          return `${label} at (${rawX}, ${rawY})`;
         }
 
         // ── Mouse Move ──────────────────────────────────────────────
@@ -401,7 +435,8 @@ export const ComputerUseTool: ToolImplementation = {
           const y = args.y as number;
           if (x == null || y == null)
             return "Error: move requires x and y coordinates.";
-          await mac.mouseMove(x, y);
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.mouseMove(x, y);
           return `Moved cursor to (${x}, ${y})`;
         }
 
@@ -410,8 +445,19 @@ export const ComputerUseTool: ToolImplementation = {
           const y = args.y as number;
           if (x == null || y == null)
             return "Error: move_smooth requires x and y coordinates.";
-          const steps = (args.amount as number) || 25;
-          await mac.mouseMoveSmooth(x, y, steps, steps * 12);
+          const driver = await DriverManager.getInstance().getDriver();
+          const current = await driver.getCursorPosition();
+          const target = { x, y };
+          const path = generateHumanPath(current, target, {
+            curveIntensity: 0.35,
+            overshoot: true,
+          });
+          const dur = humanMoveDuration(current, target);
+          const delays = stepDelays(dur, path.length);
+          for (let i = 0; i < path.length; i++) {
+            await driver.mouseMove(path[i].x, path[i].y);
+            await new Promise((r) => setTimeout(r, delays[i]));
+          }
           return `Smoothly moved cursor to (${x}, ${y})`;
         }
 
@@ -424,7 +470,8 @@ export const ComputerUseTool: ToolImplementation = {
           if (x == null || y == null || toX == null || toY == null) {
             return "Error: drag requires x, y, to_x, and to_y coordinates.";
           }
-          await mac.mouseDrag(x, y, toX, toY);
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.mouseDrag(x, y, toX, toY);
           return `Dragged from (${x}, ${y}) to (${toX}, ${toY})`;
         }
 
@@ -435,7 +482,8 @@ export const ComputerUseTool: ToolImplementation = {
           if (!["up", "down", "left", "right"].includes(dir)) {
             return `Error: scroll direction must be up, down, left, or right. Got "${dir}".`;
           }
-          await mac.scroll(dir as "up" | "down" | "left" | "right", amt);
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.scroll(dir as "up" | "down" | "left" | "right", amt);
           return `Scrolled ${dir} by ${amt}`;
         }
 
@@ -444,7 +492,20 @@ export const ComputerUseTool: ToolImplementation = {
           const text = args.text as string;
           if (!text) return "Error: type requires text parameter.";
           const humanLike = args.human_like as boolean;
-          await mac.typeText(text, humanLike ? 50 + Math.random() * 80 : 0);
+          const driver = await DriverManager.getInstance().getDriver();
+
+          if (humanLike) {
+            // Pre-type focus pause
+            await new Promise((r) => setTimeout(r, preTypePause()));
+            // Expand into per-char keystroke sequence with realistic timing
+            const keystrokes = expandTypingSequence(text, DEFAULT_TYPING_PROFILE);
+            for (const ks of keystrokes) {
+              await new Promise((r) => setTimeout(r, ks.delay));
+              await driver.typeChar(ks.char);
+            }
+          } else {
+            await driver.typeText(text);
+          }
           return `Typed: "${text.length > 80 ? text.slice(0, 80) + "..." : text}"`;
         }
 
@@ -457,7 +518,8 @@ export const ComputerUseTool: ToolImplementation = {
           const modifiers = modifiersRaw
             ? modifiersRaw.split(",").map((m) => m.trim())
             : [];
-          await mac.pressKey(key, modifiers);
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.pressKey(key, modifiers);
           const modStr = modifiers.length > 0 ? modifiers.join("+") + "+" : "";
           return `Pressed: ${modStr}${key}`;
         }
@@ -467,7 +529,11 @@ export const ComputerUseTool: ToolImplementation = {
           const combo = args.key as string;
           if (!combo)
             return "Error: hotkey requires key parameter (e.g., 'cmd+c', 'cmd+shift+s').";
-          await mac.hotkey(combo);
+          const parts = combo.toLowerCase().split("+").map((p) => p.trim());
+          const key = parts.pop()!;
+          const modifiers = parts;
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.pressKey(key, modifiers);
           return `Pressed hotkey: ${combo}`;
         }
 
@@ -476,19 +542,22 @@ export const ComputerUseTool: ToolImplementation = {
           const appName = args.text as string;
           if (!appName)
             return "Error: open_app requires text parameter with app name.";
-          await mac.openApp(appName);
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.openApp(appName);
           return `Opened/activated: ${appName}`;
         }
 
         case "open_url": {
           const url = args.text as string;
           if (!url) return "Error: open_url requires text parameter with URL.";
-          await mac.openUrl(url);
+          const driver = await DriverManager.getInstance().getDriver();
+          await driver.openUrl(url);
           return `Opened URL in default browser: ${url}`;
         }
 
         case "front_app": {
-          const name = await mac.getFrontApp();
+          const driver = await DriverManager.getInstance().getDriver();
+          const name = await driver.getFrontApp();
           return `Front application: ${name}`;
         }
 
@@ -524,20 +593,30 @@ export const ComputerUseTool: ToolImplementation = {
 
         // ── Info ────────────────────────────────────────────────────
         case "cursor_position": {
-          const pos = await mac.getCursorPosition();
+          const driver = await DriverManager.getInstance().getDriver();
+          const pos = await driver.getCursorPosition();
           return `Cursor position: (${Math.round(pos.x)}, ${Math.round(pos.y)})`;
         }
 
         case "screen_size": {
-          const dims = await mac.getScreenSize();
-          return `Screen: ${dims.width}x${dims.height} pixels (scale factor: ${dims.scaleFactor}x, effective resolution: ${dims.width * dims.scaleFactor}x${dims.height * dims.scaleFactor})`;
+          const driver = await DriverManager.getInstance().getDriver();
+          const dims = await driver.getScreenSize();
+          return `Screen: ${dims.width}x${dims.height} pixels (scale factor: ${dims.scaleFactor}x)`;
         }
 
         // ── Wait ────────────────────────────────────────────────────
         case "wait": {
           const ms = (args.amount as number) || 1000;
-          await mac.wait(ms);
+          await new Promise((r) => setTimeout(r, ms));
           return `Waited ${ms}ms`;
+        }
+
+        // ── Think (human-like pause) ─────────────────────────────────
+        case "think_pause": {
+          const complexity = (args.text as "instant" | "simple" | "reading" | "complex") || "simple";
+          const ms = thinkingPause(complexity);
+          await new Promise((r) => setTimeout(r, ms));
+          return `Paused ${ms}ms (${complexity})`;
         }
 
         default:
@@ -555,7 +634,7 @@ export const ComputerUseTool: ToolImplementation = {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
 
-      // Detect accessibility permission errors
+      // macOS: Accessibility permission error
       if (
         msg.includes("not allowed assistive access") ||
         msg.includes("accessibility")
@@ -563,7 +642,26 @@ export const ComputerUseTool: ToolImplementation = {
         return (
           `PERMISSION ERROR: macOS Accessibility access is required.\n` +
           `Go to: System Settings → Privacy & Security → Accessibility\n` +
-          `Add and enable the terminal app (Terminal, iTerm2, or VS Code) that is running StackOwl.\n` +
+          `Add and enable the terminal app (Terminal, iTerm2, or VS Code) running StackOwl.\n` +
+          `Original error: ${msg}`
+        );
+      }
+
+      // Linux: missing xdotool
+      if (msg.includes("xdotool") && msg.includes("not found")) {
+        return (
+          `TOOL NOT FOUND: xdotool is required for Linux automation.\n` +
+          `Install: sudo apt install xdotool scrot\n` +
+          `Wayland: sudo apt install ydotool\n` +
+          `Original error: ${msg}`
+        );
+      }
+
+      // Windows: PowerShell error
+      if (msg.includes("powershell") || msg.includes("SendInput")) {
+        return (
+          `WINDOWS ERROR: Desktop automation failed.\n` +
+          `Ensure PowerShell is available and the terminal has permission to send input.\n` +
           `Original error: ${msg}`
         );
       }

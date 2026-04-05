@@ -12,7 +12,9 @@ export const ImageGenerationTool: ToolImplementation = {
   definition: {
     name: "image_generation",
     description:
-      "Generate images from text descriptions using AI (DALL-E). Requires OPENAI_API_KEY environment variable.",
+      "ONLY use this to CREATE a brand-new AI-generated image from a text description (DALL-E). " +
+      "Do NOT use this to find, search for, or download existing real photos from the internet — use web_image_search for that. " +
+      "Requires OPENAI_API_KEY environment variable.",
     parameters: {
       type: "object",
       properties: {

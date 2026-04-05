@@ -503,10 +503,9 @@ export class TelegramAdapter implements ChannelAdapter {
     const MAX_EDIT_FAILURES = 3;
     const THROTTLE_MS = 1000;
 
-    // Convert a streaming chunk to HTML inline — escapes special chars then
-    // applies bold/italic/code so the live message renders correctly even if
-    // the final edit never fires. Tables/headings are NOT converted here
-    // (they span lines; the final edit handles them via renderContent).
+    // Convert a streaming chunk to HTML inline — used only for the initial
+    // message creation (first few chars). All throttled edits use renderContent
+    // on the full pureContent so tables/headings are always converted.
     const chunkToHtml = (raw: string): string =>
       this.escHtml(raw)
         .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
@@ -514,13 +513,19 @@ export class TelegramAdapter implements ChannelAdapter {
         .replace(/`(.+?)`/g, "<code>$1</code>");
 
     const flushEdit = async () => {
-      if (!messageId || !displayText || editFailures >= MAX_EDIT_FAILURES)
+      if (!messageId || !pureContent || editFailures >= MAX_EDIT_FAILURES)
         return;
+      // Render the full accumulated content so every throttled edit shows
+      // properly converted tables, headings, blockquotes — not just inline markdown.
+      // This means the streaming display is always fully formatted, not just the final edit.
+      const rendered = hasToolStatus
+        ? displayText // tool status lines mixed in — keep as-is (already HTML)
+        : this.renderContent(pureContent);
       try {
         await this.bot.api.editMessageText(
           chatId,
           messageId,
-          displayText, // already HTML — no escaping needed
+          rendered,
           { parse_mode: "HTML" },
         );
         lastEditTime = Date.now();

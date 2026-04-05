@@ -71,6 +71,7 @@ import {
   RSSFeedTool,
   YouTubeSearchTool,
   BookmarkManagerTool,
+  WebImageSearchTool,
 } from "./tools/web-utils/index.js";
 // ── Dev tools ──
 import {
@@ -285,6 +286,7 @@ async function bootstrap() {
     RSSFeedTool,
     YouTubeSearchTool,
     BookmarkManagerTool,
+    WebImageSearchTool,
     // ── Dev ──
     DockerTool,
     GitTool,

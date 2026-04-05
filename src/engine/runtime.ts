@@ -543,6 +543,9 @@ ${userMessage}
         `Do NOT use tools to verify or double-check answers you are already confident in.\n` +
         `3. TOOL SELECTION GUIDE:\n` +
         `   - Need current info (news, prices, status)? → google_search FIRST, then web_crawl a specific result URL\n` +
+        `   - Want to find/download real photos or images from the internet? → web_image_search FIRST, then send_file with the image URL\n` +
+        `   - Want to CREATE a new AI-generated image from scratch? → image_generation (DALL-E)\n` +
+        `   - CRITICAL: NEVER use image_generation to find existing photos/news images — that tool generates NEW AI art only\n` +
         `   - Need to read a specific URL? → web_crawl (fast, text-only) or browser (if site blocks crawlers or needs interaction)\n` +
         `   - Need to interact with a website (fill forms, click buttons)? → browser tool\n` +
         `   - BLOCKED by bot detection / CAPTCHA / 403? → Escalation: web_crawl → scrapling_fetch (anti-bot, TLS spoofing, Cloudflare bypass) → computer_use (real mouse/keyboard, undetectable)\n` +
