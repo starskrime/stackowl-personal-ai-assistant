@@ -322,30 +322,64 @@ export class TelegramAdapter implements ChannelAdapter {
         const msgId = streamCtx.status.messageId;
 
         if (msgId && streamed) {
-          // Streaming delivered content via an editable Telegram message.
-          // Edit that message to add the owl header + final formatted text
-          // so the user sees exactly one message with the owl name on top.
-          const fullHtml =
-            `${owlHeader}\n\n` +
-            this.renderContent(response.content);
-          try {
-            await this.bot.api.editMessageText(
-              ctx.chat.id,
-              msgId,
-              fullHtml,
-              { parse_mode: "HTML" },
-            );
-          } catch (editErr) {
-            // Edit failed (too long, deleted, etc.) — send as fresh chunked message
-            log.telegram.warn(
-              `[Telegram] Final edit failed: ${editErr instanceof Error ? editErr.message : editErr}`,
-            );
-            await this.sendChunked(ctx.chat.id, fullHtml).catch(() => {
-              // Last resort: plain text
-              this.bot.api
-                .sendMessage(ctx.chat.id, this.stripInternalTags(response.content))
+          // Streaming delivered content — replace with fully formatted version.
+          const fullHtml = `${owlHeader}\n\n` + this.renderContent(response.content);
+
+          if (fullHtml.length <= 4096) {
+            // Short response: edit in place (single clean message)
+            try {
+              await this.bot.api.editMessageText(
+                ctx.chat.id,
+                msgId,
+                fullHtml,
+                { parse_mode: "HTML" },
+              );
+            } catch (editErr) {
+              log.telegram.warn(
+                `[Telegram] Final edit failed: ${editErr instanceof Error ? editErr.message : editErr}`,
+              );
+              // Delete the raw streaming message so user doesn't see both versions
+              await this.bot.api.deleteMessage(ctx.chat.id, msgId).catch(() => {});
+              await this.sendChunked(ctx.chat.id, fullHtml).catch(() => {
+                this.bot.api
+                  .sendMessage(ctx.chat.id, this.stripInternalTags(response.content))
+                  .catch(() => {});
+              });
+            }
+          } else {
+            // Long response (> 4096 chars): split into chunks.
+            // Edit the streaming message with the first chunk, send the rest fresh.
+            const chunks = this.splitMessage(fullHtml, 3800);
+            try {
+              await this.bot.api.editMessageText(
+                ctx.chat.id,
+                msgId,
+                chunks[0]!,
+                { parse_mode: "HTML" },
+              );
+            } catch {
+              // Edit failed — delete streaming message and start fresh
+              await this.bot.api.deleteMessage(ctx.chat.id, msgId).catch(() => {});
+              await this.bot.api
+                .sendMessage(ctx.chat.id, chunks[0]!, { parse_mode: "HTML" })
                 .catch(() => {});
-            });
+            }
+            // Send remaining chunks
+            for (let i = 1; i < Math.min(chunks.length, 5); i++) {
+              await new Promise((r) => setTimeout(r, 400));
+              await this.bot.api
+                .sendMessage(ctx.chat.id, chunks[i]!, { parse_mode: "HTML" })
+                .catch(() => {});
+            }
+            if (chunks.length > 5) {
+              await this.bot.api
+                .sendMessage(
+                  ctx.chat.id,
+                  `<i>...${chunks.length - 5} more sections omitted...</i>`,
+                  { parse_mode: "HTML" },
+                )
+                .catch(() => {});
+            }
           }
           streamCtx.status.finalResponseSent = true;
         } else {
@@ -469,6 +503,16 @@ export class TelegramAdapter implements ChannelAdapter {
     const MAX_EDIT_FAILURES = 3;
     const THROTTLE_MS = 1000;
 
+    // Convert a streaming chunk to HTML inline — escapes special chars then
+    // applies bold/italic/code so the live message renders correctly even if
+    // the final edit never fires. Tables/headings are NOT converted here
+    // (they span lines; the final edit handles them via renderContent).
+    const chunkToHtml = (raw: string): string =>
+      this.escHtml(raw)
+        .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+        .replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, "<i>$1</i>")
+        .replace(/`(.+?)`/g, "<code>$1</code>");
+
     const flushEdit = async () => {
       if (!messageId || !displayText || editFailures >= MAX_EDIT_FAILURES)
         return;
@@ -476,7 +520,7 @@ export class TelegramAdapter implements ChannelAdapter {
         await this.bot.api.editMessageText(
           chatId,
           messageId,
-          this.escHtml(displayText),
+          displayText, // already HTML — no escaping needed
           { parse_mode: "HTML" },
         );
         lastEditTime = Date.now();
@@ -509,8 +553,9 @@ export class TelegramAdapter implements ChannelAdapter {
             displayText += "\n\n";
             contentStarted = true;
           }
-          displayText += chunk;
-          pureContent += chunk;
+          // displayText is HTML — convert inline markdown as we accumulate
+          displayText += chunkToHtml(chunk);
+          pureContent += chunk; // pureContent stays plain text for dedup detection
           // Keep status in sync so the post-handle code can detect
           // that streaming delivered content — the done event may
           // fire after handle() returns.
@@ -521,7 +566,7 @@ export class TelegramAdapter implements ChannelAdapter {
             try {
               const sent = await this.bot.api.sendMessage(
                 chatId,
-                this.escHtml(displayText) || "...",
+                displayText || "...", // already HTML
                 { parse_mode: "HTML" },
               );
               messageId = sent.message_id;
@@ -588,18 +633,18 @@ export class TelegramAdapter implements ChannelAdapter {
      * (edit-in-place) instead of as separate Telegram messages.
      */
     const pushToolStatus = (msg: string) => {
-      // Clean markdown bold/code for plain display
-      const clean = msg
-        .replace(/\*\*(.+?)\*\*/g, "$1")
-        .replace(/`(.+?)`/g, "$1");
-      displayText += `\n${clean}`;
+      // Escape and convert tool status to HTML before appending
+      const html = this.escHtml(msg)
+        .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+        .replace(/`(.+?)`/g, "<code>$1</code>");
+      displayText += `\n${html}`;
       hasToolStatus = true;
       flushEdit().catch(() => {});
 
       // If no streaming message exists yet, create one
       if (!messageId) {
         this.bot.api
-          .sendMessage(chatId!, this.escHtml(displayText) || "...", {
+          .sendMessage(chatId!, displayText || "...", { // already HTML
             parse_mode: "HTML",
           })
           .then((sent) => {
