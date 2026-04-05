@@ -897,6 +897,7 @@ export class OwlGateway {
       dynamicSkillsContext,
       isIsolatedTask,
       this.attemptLogs.get(message.sessionId),
+      message.channelId,
     );
 
     const orchestrator = this.getOrchestrator();
@@ -2255,6 +2256,7 @@ export class OwlGateway {
     dynamicSkillsContext: string = "",
     isolatedTask: boolean = false,
     attemptLog?: import("../memory/attempt-log.js").AttemptLog,
+    channelId?: string,
   ): Promise<EngineContext> {
     return this.contextBuilder.build(
       session,
@@ -2262,6 +2264,7 @@ export class OwlGateway {
       dynamicSkillsContext,
       isolatedTask,
       attemptLog,
+      channelId,
     );
   }
 

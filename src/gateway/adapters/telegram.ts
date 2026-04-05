@@ -21,6 +21,7 @@ import { log } from "../../logger.js";
 import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
 import type { StreamEvent } from "../../providers/base.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
+import { convertTables } from "../formatters/table-converter.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -255,9 +256,7 @@ export class TelegramAdapter implements ChannelAdapter {
               if (!stripped) return;
 
               try {
-                const html = this.escHtml(stripped)
-                  .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
-                  .replace(/`(.+?)`/g, "<code>$1</code>");
+                const html = this.renderContent(stripped);
                 await ctx.reply(html, { parse_mode: "HTML" });
                 await ctx.api.sendChatAction(ctx.chat.id, "typing");
               } catch (err) {
@@ -328,7 +327,7 @@ export class TelegramAdapter implements ChannelAdapter {
           // so the user sees exactly one message with the owl name on top.
           const fullHtml =
             `${owlHeader}\n\n` +
-            this.escHtml(this.stripInternalTags(response.content));
+            this.renderContent(response.content);
           try {
             await this.bot.api.editMessageText(
               ctx.chat.id,
@@ -336,11 +335,17 @@ export class TelegramAdapter implements ChannelAdapter {
               fullHtml,
               { parse_mode: "HTML" },
             );
-          } catch {
-            // Edit failed (message too old, deleted, etc.) — no duplicate
+          } catch (editErr) {
+            // Edit failed (too long, deleted, etc.) — send as fresh chunked message
             log.telegram.warn(
-              "[Telegram] Final edit with owl header failed",
+              `[Telegram] Final edit failed: ${editErr instanceof Error ? editErr.message : editErr}`,
             );
+            await this.sendChunked(ctx.chat.id, fullHtml).catch(() => {
+              // Last resort: plain text
+              this.bot.api
+                .sendMessage(ctx.chat.id, this.stripInternalTags(response.content))
+                .catch(() => {});
+            });
           }
           streamCtx.status.finalResponseSent = true;
         } else {
@@ -628,25 +633,53 @@ export class TelegramAdapter implements ChannelAdapter {
       .trim();
   }
 
-  private formatResponse(response: GatewayResponse): string {
-    const stripped = this.stripInternalTags(response.content);
-    return `${response.owlEmoji} *${this.esc(response.owlName)}*\n\n${this.esc(stripped)}`;
+  /**
+   * Prepare content for Telegram HTML rendering:
+   * 1. Strip internal engine tags
+   * 2. Convert any markdown tables to Telegram-friendly format
+   * 3. Escape HTML special characters
+   *
+   * All three rendering paths (streaming final edit, non-streaming send,
+   * sendToUser/broadcast) use this single method.
+   */
+  /**
+   * Prepare content for Telegram HTML rendering — single pass:
+   * 1. Strip internal engine tags
+   * 2. Convert markdown tables, headings, blockquotes → plain text + markdown bold
+   * 3. HTML-escape the whole result (safe — no HTML in input at this point)
+   * 4. Apply markdown bold/code → HTML tags
+   */
+  private renderContent(text: string): string {
+    const clean = this.stripInternalTags(text);
+    const converted = convertTables(clean); // plain text + **bold** only, no HTML
+    return this.escHtml(converted)
+      .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+      .replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, "<i>$1</i>")
+      .replace(/`(.+?)`/g, "<code>$1</code>");
   }
 
-  private async sendChunked(chatId: number, text: string): Promise<void> {
-    if (text.length <= 4096) {
-      await this.bot.api.sendMessage(chatId, text, {
-        parse_mode: "MarkdownV2",
-      });
+  private formatResponse(response: GatewayResponse): string {
+    const owlHeader = `${this.escHtml(response.owlEmoji ?? "")} <b>${this.escHtml(response.owlName)}</b>`;
+    return `${owlHeader}\n\n${this.renderContent(response.content)}`;
+  }
+
+  private async sendChunked(
+    chatId: number,
+    html: string,
+    parseMode: "HTML" | "MarkdownV2" = "HTML",
+  ): Promise<void> {
+    const MAX_LEN = 4096;
+    const CHUNK_LEN = 3800;
+    const MAX_CHUNKS = 5;
+
+    if (html.length <= MAX_LEN) {
+      await this.bot.api.sendMessage(chatId, html, { parse_mode: parseMode });
       return;
     }
 
-    const chunks = this.splitMessage(text, 3800);
-    const MAX_CHUNKS = 5;
+    const chunks = this.splitMessage(html, CHUNK_LEN);
     for (let i = 0; i < Math.min(chunks.length, MAX_CHUNKS); i++) {
-      await this.bot.api.sendMessage(chatId, chunks[i], {
-        parse_mode: "MarkdownV2",
-      });
+      await this.bot.api.sendMessage(chatId, chunks[i], { parse_mode: parseMode });
       if (i < Math.min(chunks.length, MAX_CHUNKS) - 1) {
         await new Promise((r) => setTimeout(r, 1000));
       }
@@ -654,8 +687,8 @@ export class TelegramAdapter implements ChannelAdapter {
     if (chunks.length > MAX_CHUNKS) {
       await this.bot.api.sendMessage(
         chatId,
-        `_...[${chunks.length - MAX_CHUNKS} chunks omitted]..._`,
-        { parse_mode: "MarkdownV2" },
+        `<i>...${chunks.length - MAX_CHUNKS} more chunks omitted...</i>`,
+        { parse_mode: "HTML" },
       );
     }
   }

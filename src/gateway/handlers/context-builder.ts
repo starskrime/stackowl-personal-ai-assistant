@@ -50,6 +50,7 @@ export class ContextBuilder {
     dynamicSkillsContext: string = "",
     isolatedTask: boolean = false,
     attemptLog?: AttemptLog,
+    channelId?: string,
   ): Promise<EngineContext> {
     // ─── Temporal Context (Phase 1 — zero LLM cost) ──────────────
     let temporalContext = "";
@@ -348,10 +349,21 @@ The user has no active tasks right now. Be concise and helpful:
       }
     }
 
+    // ─── Channel format hint ──────────────────────────────────
+    // Injected when the channel cannot render markdown tables.
+    // Primary prevention — keeps LLM output table-free from the start.
+    const channelFormatHint =
+      channelId === "telegram"
+        ? "Formatting rules for this channel: never use markdown tables (| col | col |). " +
+          "For structured data or comparisons, use bold labels and bullet points: **Label:** value. " +
+          "For lists use numbered or bulleted lists. Keep responses concise."
+        : "";
+
     // ─── Assemble enriched context (triage applied) ───────────
     // Order: temporal (frames time) → mode → memory → conditional signals
     const enrichedMemoryContext = [
       temporalContext,
+      channelFormatHint,
       this.ctx.memoryContext ?? "",
       modeDirective,
       behavioralPatchContext,
