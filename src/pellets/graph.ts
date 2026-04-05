@@ -107,10 +107,10 @@ export class PelletGraph {
       this.addNode(pellet);
     }
 
-    // Phase 2: Create edges
+    // Phase 2: Create edges (BM25 yields every 50 pellets to avoid blocking the event loop)
     this.buildTagEdges(pellets);
     this.buildConceptEdges(pellets);
-    this.buildBm25Edges(pellets);
+    await this.buildBm25Edges(pellets);
 
     this.built = true;
     const elapsed = Date.now() - start;
@@ -364,8 +364,9 @@ export class PelletGraph {
     }
   }
 
-  private buildBm25Edges(pellets: Pellet[]): void {
-    for (const pellet of pellets) {
+  private async buildBm25Edges(pellets: Pellet[]): Promise<void> {
+    for (let i = 0; i < pellets.length; i++) {
+      const pellet = pellets[i];
       const query = `${pellet.title} ${pellet.content.slice(0, 200)}`;
       const selfScore = this.tfidf.selfScore({
         title: pellet.title,
@@ -389,6 +390,11 @@ export class PelletGraph {
             "bm25",
           );
         }
+      }
+
+      // Yield every 50 pellets so the event loop stays responsive during startup
+      if (i % 50 === 49) {
+        await new Promise<void>(r => setImmediate(r));
       }
     }
   }

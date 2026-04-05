@@ -20,7 +20,8 @@
   "workspace": "./workspace",
   "gateway": {
     "port": 3077,
-    "host": "127.0.0.1"
+    "host": "127.0.0.1",
+    "outputMode": "normal"
   },
   "parliament": {
     "maxRounds": 3,

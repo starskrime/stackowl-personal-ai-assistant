@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Persona Engine</title>
+  <style>
+    :root {
+      --bg: #0f0f13; --surface: #18181f; --surface2: #22222e;
+      --border: #2e2e3e; --text: #e8e8f0; --muted: #8888a0;
+      --accent: #7c6af7; --green: #4ade80; --red: #f87171; --yellow: #fbbf24;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p { color: var(--muted); font-size: 0.82rem; }
+    .layout { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh - 60px); }
+    .sidebar { border-right: 1px solid var(--border); padding: 16px; }
+    .main { padding: 20px; }
+    .sidebar-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 10px; }
+    .persona-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; margin-bottom: 4px; border: 1px solid transparent; transition: all 0.12s; }
+    .persona-item:hover { background: var(--surface); border-color: var(--border); }
+    .persona-item.active { background: rgba(124,106,247,0.12); border-color: var(--accent); }
+    .persona-name { font-weight: 600; }
+    .persona-id { font-size: 0.72rem; color: var(--muted); }
+    button { padding: 7px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.83rem; font-weight: 600; transition: all 0.15s; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: #6a5ae0; }
+    .btn-sm { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); padding: 5px 10px; font-size: 0.75rem; }
+    .btn-sm:hover { color: var(--text); }
+    .btn-danger { background: rgba(248,113,113,0.15); color: var(--red); border: 1px solid rgba(248,113,113,0.3); }
+    .btn-danger:hover { background: rgba(248,113,113,0.25); }
+    input, select, textarea { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 6px; font-size: 0.85rem; outline: none; width: 100%; }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+    .card-title { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+    .user-bar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+    .label { font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
+    .trait-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .trait-name { font-size: 0.78rem; color: var(--muted); width: 90px; flex-shrink: 0; }
+    .trait-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .trait-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.4s; }
+    .trait-val { font-size: 0.73rem; color: var(--muted); width: 30px; text-align: right; }
+    .delta-pos { color: var(--green); font-size: 0.72rem; }
+    .delta-neg { color: var(--red); font-size: 0.72rem; }
+    .delta-zero { color: var(--muted); font-size: 0.72rem; }
+    .badge { display: inline-flex; padding: 2px 7px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; }
+    .badge-accent { background: rgba(124,106,247,0.15); color: var(--accent); }
+    .badge-green { background: rgba(74,222,128,0.12); color: var(--green); }
+    .snap-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+    .snap-row:last-child { border-bottom: none; }
+    .prompt-box { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 0.8rem; line-height: 1.6; color: var(--muted); white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+    .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty { text-align: center; padding: 40px; color: var(--muted); font-size: 0.85rem; }
+    .tab-row { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+    .tab { padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; color: var(--muted); }
+    .tab.active { background: rgba(124,106,247,0.12); color: var(--text); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .form-field { margin-bottom: 10px; }
+    @media (max-width: 700px) { .layout { grid-template-columns: 1fr; } .sidebar { border-right: none; border-bottom: 1px solid var(--border); } }
+  </style>
+</head>
+<body>
+  <header>
+    <span style="font-size:1.5rem">🎭</span>
+    <div>
+      <h1>Persona Engine</h1>
+      <p>DNA-based AI personas, calibrated per user</p>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div class="sidebar">
+      <div class="sidebar-title">Personas</div>
+      <div id="persona-list"><div class="empty">No personas</div></div>
+      <div style="margin-top:12px">
+        <button class="btn-sm" style="width:100%" onclick="showCreateModal()">+ New Persona</button>
+      </div>
+    </div>
+
+    <div class="main">
+      <div id="no-selection" class="empty" style="padding:80px 20px">
+        <div style="font-size:2.5rem;margin-bottom:10px">🎭</div>
+        <p>Select a persona from the sidebar, or create one.</p>
+      </div>
+
+      <div id="persona-view" style="display:none">
+        <div class="user-bar">
+          <div style="flex:1">
+            <div class="label">User ID</div>
+            <input id="user-id" type="text" value="user-001" placeholder="user ID" />
+          </div>
+          <button class="btn-primary" style="margin-top:18px" onclick="loadUserView()">Load</button>
+        </div>
+
+        <div class="tab-row">
+          <div class="tab active" onclick="showTab('traits')">Traits</div>
+          <div class="tab" onclick="showTab('prompt')">System Prompt</div>
+          <div class="tab" onclick="showTab('snapshots')">Snapshots</div>
+          <div class="tab" onclick="showTab('analytics')">Analytics</div>
+        </div>
+
+        <div id="tab-traits" class="tab-panel active">
+          <div class="card">
+            <div class="card-title">
+              <span>Evolved Traits</span>
+              <div style="display:flex;gap:6px">
+                <button class="btn-sm" onclick="takeSnapshot()">📸 Snapshot</button>
+                <button class="btn-danger btn-sm" onclick="resetPersona()">↩ Reset</button>
+              </div>
+            </div>
+            <div id="traits-display"></div>
+          </div>
+        </div>
+
+        <div id="tab-prompt" class="tab-panel">
+          <div class="card">
+            <div class="card-title">System Prompt for this User</div>
+            <div class="prompt-box" id="prompt-box">—</div>
+          </div>
+        </div>
+
+        <div id="tab-snapshots" class="tab-panel">
+          <div class="card">
+            <div class="card-title">Snapshots</div>
+            <div id="snapshots-list"><div class="empty">No snapshots</div></div>
+          </div>
+        </div>
+
+        <div id="tab-analytics" class="tab-panel">
+          <div class="card">
+            <div class="card-title">Analytics</div>
+            <div id="analytics-display"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Modal -->
+  <div id="modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;display:flex;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:560px;max-width:96vw;max-height:90vh;overflow-y:auto">
+      <div style="font-size:1rem;font-weight:700;margin-bottom:16px">New Persona Definition</div>
+      <div class="grid-2">
+        <div class="form-field"><div class="label">ID (slug)</div><input id="new-id" placeholder="brand-voice-v1" /></div>
+        <div class="form-field"><div class="label">Name</div><input id="new-name" placeholder="Brand Voice" /></div>
+      </div>
+      <div class="form-field"><div class="label">Description</div><input id="new-desc" placeholder="Friendly support voice for SaaS product" /></div>
+      <div class="form-field">
+        <div class="label">System Prompt Template <span style="color:var(--muted);font-size:0.72rem">(use {{warmth}}, {{formality}}, etc.)</span></div>
+        <textarea id="new-prompt" rows="4" placeholder="You are a {{warmth}} and {{formality}} assistant..."></textarea>
+      </div>
+      <div style="margin-bottom:10px;font-size:0.8rem;color:var(--muted)">Base Traits (0–1)</div>
+      <div class="grid-2">
+        <div class="form-field"><div class="label">Warmth</div><input id="t-warmth" type="number" min="0" max="1" step="0.05" value="0.7" /></div>
+        <div class="form-field"><div class="label">Formality</div><input id="t-formality" type="number" min="0" max="1" step="0.05" value="0.5" /></div>
+        <div class="form-field"><div class="label">Humor</div><input id="t-humor" type="number" min="0" max="1" step="0.05" value="0.3" /></div>
+        <div class="form-field"><div class="label">Verbosity</div><input id="t-verbosity" type="number" min="0" max="1" step="0.05" value="0.5" /></div>
+        <div class="form-field"><div class="label">Proactivity</div><input id="t-proactivity" type="number" min="0" max="1" step="0.05" value="0.5" /></div>
+        <div class="form-field"><div class="label">Empathy</div><input id="t-empathy" type="number" min="0" max="1" step="0.05" value="0.6" /></div>
+        <div class="form-field"><div class="label">Directness</div><input id="t-directness" type="number" min="0" max="1" step="0.05" value="0.5" /></div>
+        <div class="form-field"><div class="label">Creativity</div><input id="t-creativity" type="number" min="0" max="1" step="0.05" value="0.5" /></div>
+      </div>
+      <div class="form-field"><div class="label">Challenge Level</div>
+        <select id="t-challenge"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="relentless">Relentless</option></select>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn-primary" onclick="createPersona()">Create</button>
+        <button class="btn-sm" onclick="hideModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let selectedPersonaId = null;
+    let currentRendered = null;
+
+    async function fetchPersonas() {
+      const res = await fetch('/personas');
+      const list = await res.json();
+      const el = document.getElementById('persona-list');
+      if (!list.length) { el.innerHTML = '<div class="empty">No personas</div>'; return; }
+      el.innerHTML = list.map(p => `
+        <div class="persona-item${selectedPersonaId === p.id ? ' active' : ''}" onclick="selectPersona('${p.id}')">
+          <div class="persona-name">${esc(p.name)}</div>
+          <div class="persona-id">${esc(p.id)}</div>
+        </div>`).join('');
+    }
+
+    async function selectPersona(id) {
+      selectedPersonaId = id;
+      document.getElementById('no-selection').style.display = 'none';
+      document.getElementById('persona-view').style.display = 'block';
+      fetchPersonas();
+      await loadUserView();
+    }
+
+    async function loadUserView() {
+      if (!selectedPersonaId) return;
+      const uid = document.getElementById('user-id').value.trim();
+      if (!uid) return;
+      try {
+        const [rendered, analytics] = await Promise.all([
+          fetch(`/personas/${selectedPersonaId}/render/${uid}`).then(r => r.json()),
+          fetch(`/personas/${selectedPersonaId}/analytics/${uid}`).then(r => r.json()),
+        ]);
+        currentRendered = rendered;
+        renderTraits(rendered.traits, analytics);
+        document.getElementById('prompt-box').textContent = rendered.systemPrompt;
+        renderAnalytics(analytics);
+        renderSnapshots(await loadSnapshots(uid));
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    async function loadSnapshots(uid) {
+      try {
+        const exported = await fetch(`/personas/${selectedPersonaId}/export/${uid}`).then(r => r.json());
+        return exported.state?.snapshots ?? [];
+      } catch { return []; }
+    }
+
+    function renderTraits(traits, analytics) {
+      const el = document.getElementById('traits-display');
+      const NUMERIC = ['warmth','formality','humor','verbosity','proactivity','empathy','directness','creativity'];
+      const deltas = {};
+      for (const d of (analytics.traitDeltas || [])) { deltas[d.trait] = d.delta; }
+      el.innerHTML = NUMERIC.map(t => {
+        const val = (traits[t] ?? 0);
+        const d = deltas[t];
+        const deltaHtml = d !== undefined
+          ? `<span class="${d > 0.01 ? 'delta-pos' : d < -0.01 ? 'delta-neg' : 'delta-zero'}">${d > 0 ? '+' : ''}${typeof d === 'number' ? d.toFixed(2) : d}</span>`
+          : '';
+        return `<div class="trait-row">
+          <div class="trait-name">${t}</div>
+          <div class="trait-bar"><div class="trait-fill" style="width:${(val*100).toFixed(0)}%"></div></div>
+          <div class="trait-val">${(val).toFixed(2)}</div>
+          ${deltaHtml}
+        </div>`;
+      }).join('') + `
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <span class="badge badge-accent">${esc(traits.challengeLevel)}</span>
+          <span class="badge badge-accent">${esc(traits.teachingStyle)}</span>
+          <span class="badge badge-accent">${esc(traits.riskTolerance)}</span>
+          <span class="badge badge-green">Gen ${analytics.generation}</span>
+          <span class="badge" style="background:var(--surface2);color:var(--muted)">${analytics.interactionCount} interactions</span>
+        </div>`;
+    }
+
+    function renderAnalytics(analytics) {
+      const el = document.getElementById('analytics-display');
+      const noChange = analytics.traitDeltas.filter(d => d.delta !== 0 && d.delta !== 'unchanged').length === 0;
+      el.innerHTML = `
+        <div style="margin-bottom:12px;font-size:0.85rem;color:var(--muted);line-height:1.5">${esc(analytics.evolutionSummary)}</div>
+        ${analytics.topDomains.length > 0 ? `
+          <div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">Top domains</div>
+          ${analytics.topDomains.map(d => `<div class="trait-row">
+            <div class="trait-name">${esc(d.domain)}</div>
+            <div class="trait-bar"><div class="trait-fill" style="width:${(d.expertise*100).toFixed(0)}%"></div></div>
+            <div class="trait-val">${d.expertise.toFixed(2)}</div>
+          </div>`).join('')}` : ''}
+        ${!noChange ? `
+          <div style="font-size:0.75rem;color:var(--muted);margin:10px 0 6px">Trait drift from base</div>
+          ${analytics.traitDeltas.map(d => `
+            <div style="display:flex;justify-content:space-between;font-size:0.8rem;padding:3px 0;border-bottom:1px solid var(--border)">
+              <span style="color:var(--muted)">${esc(d.trait)}</span>
+              <span>${esc(String(d.base))} → <strong>${esc(String(d.current))}</strong>
+                <span class="${typeof d.delta === 'number' && d.delta > 0 ? 'delta-pos' : 'delta-neg'}"> (${typeof d.delta === 'number' && d.delta > 0 ? '+' : ''}${esc(String(d.delta))})</span>
+              </span>
+            </div>`).join('')}
+        ` : '<div style="color:var(--muted);font-size:0.83rem">No trait drift yet — persona matches base.</div>'}
+      `;
+    }
+
+    function renderSnapshots(snapshots) {
+      const el = document.getElementById('snapshots-list');
+      if (!snapshots.length) { el.innerHTML = '<div class="empty">No snapshots yet</div>'; return; }
+      el.innerHTML = snapshots.slice().reverse().map(s => `
+        <div class="snap-row">
+          <div>
+            <div style="font-size:0.83rem;font-weight:600">${esc(s.reason)}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(s.takenAt).toLocaleString()} · Gen ${s.generation}</div>
+          </div>
+          <button class="btn-sm" onclick="doRollback('${s.snapshotId}')">↩ Restore</button>
+        </div>`).join('');
+    }
+
+    async function takeSnapshot() {
+      const uid = document.getElementById('user-id').value.trim();
+      const reason = prompt('Snapshot label:', 'Before A/B test');
+      if (!reason) return;
+      await fetch(`/personas/${selectedPersonaId}/snapshot/${uid}`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ reason }),
+      });
+      await loadUserView();
+    }
+
+    async function doRollback(snapshotId) {
+      if (!confirm('Restore this snapshot?')) return;
+      const uid = document.getElementById('user-id').value.trim();
+      await fetch(`/personas/${selectedPersonaId}/rollback/${uid}`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ snapshotId }),
+      });
+      await loadUserView();
+    }
+
+    async function resetPersona() {
+      if (!confirm('Reset to base traits?')) return;
+      const uid = document.getElementById('user-id').value.trim();
+      await fetch(`/personas/${selectedPersonaId}/reset/${uid}`, { method: 'POST', headers: {'Content-Type':'application/json'} });
+      await loadUserView();
+    }
+
+    function showTab(name) {
+      document.querySelectorAll('.tab').forEach((t, i) => {
+        const names = ['traits','prompt','snapshots','analytics'];
+        t.classList.toggle('active', names[i] === name);
+      });
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    function showCreateModal() { document.getElementById('modal-bg').style.display = 'flex'; }
+    function hideModal() { document.getElementById('modal-bg').style.display = 'none'; }
+
+    async function createPersona() {
+      const traits = {
+        warmth: +document.getElementById('t-warmth').value,
+        formality: +document.getElementById('t-formality').value,
+        humor: +document.getElementById('t-humor').value,
+        verbosity: +document.getElementById('t-verbosity').value,
+        proactivity: +document.getElementById('t-proactivity').value,
+        empathy: +document.getElementById('t-empathy').value,
+        directness: +document.getElementById('t-directness').value,
+        creativity: +document.getElementById('t-creativity').value,
+        challengeLevel: document.getElementById('t-challenge').value,
+        teachingStyle: 'adaptive',
+        riskTolerance: 'moderate',
+        domainExpertise: {},
+      };
+      const def = {
+        id: document.getElementById('new-id').value.trim(),
+        name: document.getElementById('new-name').value.trim(),
+        description: document.getElementById('new-desc').value.trim(),
+        systemPromptTemplate: document.getElementById('new-prompt').value.trim(),
+        baseTraits: traits,
+        bounds: {},
+        decayRatePerWeek: 0.02,
+        version: '1.0.0',
+        createdAt: new Date().toISOString(),
+      };
+      if (!def.id || !def.name) { alert('ID and name required'); return; }
+      await fetch('/personas', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(def) });
+      hideModal();
+      await fetchPersonas();
+      selectPersona(def.id);
+    }
+
+    function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    fetchPersonas();
+  </script>
+</body>
+</html>

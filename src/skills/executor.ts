@@ -412,7 +412,9 @@ export class SkillExecutor {
   // ─── Helpers ──────────────────────────────────────────────────
 
   /**
-   * Interpolate {{param}} and {{stepId.output}} templates in a string.
+   * Interpolate {{param}} and {{stepId.output}} / {{stepId.stdout}} templates in a string.
+   * Supports any field suffix (.output, .stdout, .result, etc.) — all resolve to the
+   * step's captured output string, since structured steps produce a single output value.
    */
   private interpolate(
     template: string,
@@ -422,10 +424,11 @@ export class SkillExecutor {
     return template.replace(
       /\{\{(\w+(?:\.\w+)?)\}\}/g,
       (match, key: string) => {
-        // Check if it's a step output reference: stepId.output
+        // Check if it's a step output reference: stepId.<anyField>
         if (key.includes(".")) {
-          const [stepId, field] = key.split(".");
-          if (field === "output") {
+          const [stepId] = key.split(".");
+          // Any dotted reference to a known step resolves to its output
+          if (outputs.has(stepId)) {
             return outputs.get(stepId) ?? match;
           }
         }

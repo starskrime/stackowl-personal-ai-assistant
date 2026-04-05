@@ -140,6 +140,71 @@ Respond strictly in the following JSON format:
   }
 
   /**
+   * Record a specific failure immediately (called by PostProcessor after each response).
+   * Unlike dream() which scans history, this accepts structured failure context directly
+   * and generates a behavioral patch without waiting for idle time.
+   */
+  async reflectOnFailure(context: {
+    userMessage: string;
+    toolsAttempted: string;
+    reason: string;
+    sessionId: string;
+  }): Promise<void> {
+    const failureKey = `immediate:${context.sessionId}:${context.reason}:${context.userMessage.slice(0, 40)}`;
+    if (this.processedFailures.has(failureKey)) return;
+
+    try {
+      const prompt = `You are the self-reflection module for an autonomous AI assistant.
+A response just failed. Analyze the failure and generate a behavioral heuristic to avoid it next time.
+
+USER MESSAGE: ${context.userMessage}
+TOOLS ATTEMPTED: ${context.toolsAttempted}
+FAILURE REASON: ${context.reason}
+
+Extract a single, concise Behavioral Heuristic that the assistant should follow to avoid this type of failure.
+
+Respond strictly in the following JSON format:
+{
+  "analysis": "Brief explanation of what went wrong",
+  "heuristic": "The concrete rule to follow next time"
+}`;
+
+      const response = await this.provider.chat(
+        [{ role: "system", content: prompt }],
+        undefined,
+        { temperature: 0.2 },
+      );
+
+      const match = response.content.match(/\{[\s\S]*\}/);
+      if (!match) return;
+
+      const parsed = JSON.parse(match[0]);
+      if (parsed.heuristic && parsed.heuristic.length > 5) {
+        await this.pelletStore.save({
+          id: `patch_${Date.now()}`,
+          title: `Reflexion: ${parsed.heuristic.slice(0, 40)}...`,
+          generatedAt: new Date().toISOString(),
+          source: "ReflexionEngine:immediate",
+          owls: ["system"],
+          tags: ["reflexion", "behavioral-patch", "rule", context.reason],
+          content: parsed.heuristic,
+          version: 1,
+        });
+        log.evolution.info(
+          `[Reflexion:immediate] Patch generated for ${context.reason}: "${parsed.heuristic.slice(0, 60)}"`,
+        );
+        this.processedFailures.add(failureKey);
+        if (this.processedFailures.size > 200) {
+          const oldest = this.processedFailures.values().next().value;
+          if (oldest) this.processedFailures.delete(oldest);
+        }
+      }
+    } catch (error: any) {
+      log.evolution.warn(`[Reflexion:immediate] Failed: ${error.message}`);
+    }
+  }
+
+  /**
    * Detect successful interactions (user satisfaction signals) and
    * extract the approach as a positive behavioral pattern.
    */

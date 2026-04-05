@@ -192,6 +192,14 @@ export class OwlInnerLife {
   private state: OwlInnerState | null = null;
   private statePath: string;
 
+  /**
+   * The most recently computed inner monologue.
+   * Updated asynchronously after each response — available for the NEXT request.
+   * This avoids blocking the main response path on an extra LLM call.
+   */
+  private lastMonologue: InnerMonologue | null = null;
+  private pendingThink: Promise<void> | null = null;
+
   constructor(
     private provider: ModelProvider,
     private owl: OwlInstance,
@@ -231,6 +239,39 @@ export class OwlInnerLife {
    */
   getState(): OwlInnerState | null {
     return this.state;
+  }
+
+  /**
+   * Return the last computed inner monologue (from the previous turn).
+   * Used to inject prior inner state into the current system prompt
+   * without blocking on a new LLM call.
+   */
+  getLastMonologue(): InnerMonologue | null {
+    return this.lastMonologue;
+  }
+
+  /**
+   * Fire-and-forget: compute the inner monologue for the current message
+   * in the background, after the main response has already been sent.
+   * The result is stored as lastMonologue and will be used in the NEXT request.
+   */
+  thinkInBackground(
+    userMessage: string,
+    sessionHistory: import("../providers/base.js").ChatMessage[],
+  ): void {
+    // Don't stack pending thinks — if one is already running, skip
+    if (this.pendingThink) return;
+
+    this.pendingThink = this.think(userMessage, sessionHistory)
+      .then((monologue) => {
+        this.lastMonologue = monologue;
+      })
+      .catch(() => {
+        // Non-fatal — inner monologue is supplementary
+      })
+      .finally(() => {
+        this.pendingThink = null;
+      });
   }
 
   /**

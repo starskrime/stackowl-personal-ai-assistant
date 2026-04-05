@@ -58,6 +58,7 @@ import {
   getSegmentMessages,
 } from "../memory/session-segmenter.js";
 import { UserMentalModel } from "../cognition/user-mental-model.js";
+import { OutputFilter, resolveOutputMode } from "./output-filter.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -324,10 +325,14 @@ export class OwlGateway {
     if (!message.channelId || message.channelId.length > 64) {
       throw new Error("Invalid channel ID");
     }
+    // Apply output mode filter — normal mode suppresses onProgress and non-text stream events
+    const outputMode = resolveOutputMode(this.ctx.config.gateway);
+    const filteredCallbacks = new OutputFilter(outputMode).apply(callbacks);
+
     const laneKey = `${message.channelId}:${message.sessionId}`;
     const prev = this.lanes.get(laneKey) ?? Promise.resolve();
     const next = prev.then(async () => {
-      const response = await this.handleInLane(message, callbacks);
+      const response = await this.handleInLane(message, filteredCallbacks);
       return this.applyStuckTaskCheck(laneKey, response);
     });
     // Store only the tail; GC cleans up resolved promises automatically
@@ -769,35 +774,41 @@ export class OwlGateway {
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
     let dynamicSkillsContext = "";
     let injectedSkillNames: string[] = [];
-    // Skip skill routing for short/greeting messages — these are conversational,
-    // not actionable tasks. BM25 produces false positives on short strings
-    // (e.g. "hi" matching email_send).
+    // Skip skill routing unless the message looks like an action request.
+    // The IntentRouter's 5-tier pipeline (BM25 + semantic re-rank + LLM call)
+    // adds 1–3 seconds of latency and is wasted on conversational messages.
+    //
+    // Pre-filter: require at least one action verb keyword AND a non-trivial message.
+    // Conversational messages ("hi", "thanks", "what do you think?") skip entirely.
+    const SKILL_ACTION_KEYWORDS = /\b(find|search|create|write|generate|check|analyze|run|scan|fix|build|compare|convert|code|script|calculate|translate|download|fetch|get|show|list|send|open|launch|install|deploy|test|debug|monitor|schedule|remind|automate|summarize|extract|format|parse|execute|compile|scan|audit|review|design)\b/i;
     const isConversational =
       text.trim().length < 15 ||
       /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|gm|gn)\b/i.test(
         text.trim(),
-      );
+      ) ||
+      !SKILL_ACTION_KEYWORDS.test(text);
     if (this.skillInjector && !isConversational) {
       const relevantMatches =
         await this.skillInjector.getRelevantMatches(text);
       const relevantSkills = relevantMatches.map((m) => m.skill);
       if (relevantMatches.length > 0) {
-        // Check if top skill is structured AND high confidence — execute directly
+        // Auto-execution is DISABLED: BM25 scores are unnormalized (can be 5-15+),
+        // so keyword-based confidence thresholds cannot reliably distinguish
+        // "find a laptop" from "find duplicate files". Instead, skills are always
+        // injected as context hints and the LLM decides whether to use them.
+        // Explicit invocation via /skill_name still triggers direct execution (above).
         const topMatch = relevantMatches[0];
         const topSkill = topMatch.skill;
-        if (
-          this.skillInjector.canExecuteStructured(topSkill) &&
-          topMatch.score >= 0.7
-        ) {
+        if (false && this.skillInjector!.canExecuteStructured(topSkill)) {
           log.engine.info(`Structured skill execution: ${topSkill.name}`);
           const emoji = topSkill.metadata.openclaw?.emoji || "⚡";
           if (callbacks.onProgress) {
-            await callbacks.onProgress(
+            await callbacks.onProgress!(
               `${emoji} **Executing skill:** \`${topSkill.name}\` — ${topSkill.description}`,
             );
           }
 
-          const result = await this.skillInjector.executeStructuredSkill(
+          const result = await this.skillInjector!.executeStructuredSkill(
             topSkill,
             message.text,
             callbacks.onProgress,
@@ -2171,9 +2182,23 @@ export class OwlGateway {
   /**
    * Fire-and-forget tasks that run after every response.
    * Delegates to the extracted PostProcessor (Improvement #4).
+   * Also triggers async inner monologue computation for the NEXT request
+   * so the hot path doesn't block on an extra LLM call.
    */
   private postProcess(messages: ChatMessage[], sessionId?: string): void {
     this.postProcessor.process(messages, sessionId);
+
+    // Async inner monologue — compute for the last user message so it's
+    // ready for injection in the NEXT request (see runtime.ts getLastMonologue)
+    if (this.ctx.innerLife) {
+      const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+      if (lastUserMsg?.content) {
+        this.ctx.innerLife.thinkInBackground(
+          typeof lastUserMsg.content === "string" ? lastUserMsg.content : "",
+          messages,
+        );
+      }
+    }
   }
 
   // ─── Private: Engine Context ─────────────────────────────────

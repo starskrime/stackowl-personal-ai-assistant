@@ -125,6 +125,17 @@ export class CLIAdapter implements ChannelAdapter {
       log.cli.incoming(this.userId, input);
       this.gateway.getCognitiveLoop()?.notifyUserActivity();
 
+      // Track whether streaming already delivered the response to stdout.
+      // If it did, skip printResponse to avoid printing the answer twice.
+      let streamedContent = false;
+      const streamHandler = this.createStreamHandler();
+      const trackingHandler = async (event: import("../../providers/base.js").StreamEvent) => {
+        await streamHandler(event);
+        if (event.type === "text_delta" && event.content.replace(/\[DONE\]/g, "").length > 0) {
+          streamedContent = true;
+        }
+      };
+
       const response = await this.gateway.handle(
         {
           id: makeMessageId(),
@@ -161,12 +172,19 @@ export class CLIAdapter implements ChannelAdapter {
               );
             });
           },
-          onStreamEvent: this.createStreamHandler(),
+          onStreamEvent: trackingHandler,
         },
       );
 
       log.cli.outgoing(this.userId, response.content);
-      this.printResponse(response);
+      // Only print the full response if streaming did NOT already deliver it.
+      // Streaming + printResponse = duplicate output.
+      if (!streamedContent) {
+        this.printResponse(response);
+      } else {
+        console.log(""); // ensure prompt appears on a new line
+        if (this.rl) this.rl.prompt();
+      }
 
       if (response.usage) {
         console.log(

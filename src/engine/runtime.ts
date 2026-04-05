@@ -122,6 +122,10 @@ export interface EngineResponse {
   };
   /** Set when the engine detected a capability gap that needs user approval to resolve */
   pendingCapabilityGap?: PendingCapabilityGap;
+  /** True when the ReAct loop hit MAX_TOOL_ITERATIONS or broke due to repeated failures */
+  loopExhausted?: boolean;
+  /** Number of tool failures during this run (for quality signal) */
+  toolFailureCount?: number;
 }
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -383,22 +387,15 @@ export class OwlEngine {
     // tool prioritization, risk tolerance. Previously computed but never used.
     const dnaDecisions = DNADecisionLayer.decide(owl, userMessage);
 
-    // 1b. Inner Monologue — the owl thinks about the message through its personality
-    let innerMonologue: InnerMonologue | undefined;
-    if (context.innerLife) {
-      try {
-        innerMonologue = await context.innerLife.think(
-          userMessage,
-          sessionHistory,
-        );
-        log.engine.info(
-          `[InnerLife] ${owl.persona.name} thinks: "${innerMonologue.thoughts.slice(0, 100)}..." → ${innerMonologue.responseIntent.slice(0, 80)}`,
-        );
-      } catch (err) {
-        log.engine.warn(
-          `[InnerLife] Monologue failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
+    // 1b. Inner Monologue — use the PREVIOUS turn's monologue (computed async after
+    // the last response). This avoids blocking the current response on an extra LLM call.
+    // thinkInBackground() is fired after the response is sent (in gateway/core.ts),
+    // so by the time the user sends their next message the monologue is ready.
+    const innerMonologue = context.innerLife?.getLastMonologue() ?? undefined;
+    if (innerMonologue) {
+      log.engine.debug(
+        `[InnerLife] Using cached monologue: "${innerMonologue.thoughts.slice(0, 80)}..."`,
+      );
     }
 
     // 2. Build system prompt (async — may inject pellets + memory + skills)
@@ -418,6 +415,7 @@ export class OwlEngine {
       attemptLogBlock,
       context.innerLife,
       innerMonologue,
+      context.pelletSearch,
     );
 
     // Append DNA-driven style directive from DNADecisionLayer
@@ -563,8 +561,8 @@ ${userMessage}
         `not in your current toolset. This helps the system learn and build missing capabilities. ` +
         `Do NOT use this for knowledge gaps or tasks solvable with existing tools/shell commands.\n` +
         `7. NEVER call the same tool with the same arguments twice — the result is already in your context.\n` +
-        `8. SKILLS FIRST: If a <skill> block is present in your system prompt, it means a learned capability ` +
-        `matches this request. Follow the skill's steps EXACTLY instead of improvising. Skills are optimized playbooks.`;
+        `8. SKILLS: If a <skill> block is present in your system prompt, consider it a helpful playbook. ` +
+        `Use it ONLY if the skill genuinely matches what the user asked for. If unsure, ignore it and answer naturally.`;
     }
 
     const messages: ChatMessage[] = [
@@ -976,6 +974,50 @@ ${userMessage}
 
         if (shouldBreakLoop) break;
 
+        // ── Per-iteration pellet injection ────────────────────────────────
+        // Re-query pellets after each tool observation so the model benefits
+        // from knowledge that only becomes relevant once tool results arrive.
+        // Example: user asks about laptops → tool fetches specs → pellets about
+        // "LLM hardware requirements" are now relevant and should be surfaced.
+        if (context.pelletSearch) {
+          try {
+            // Build query from the most recent tool result(s) added this iteration
+            const recentToolMsgs = messages
+              .slice(-6)
+              .filter((m) => m.role === "tool")
+              .map((m) => (typeof m.content === "string" ? m.content : ""))
+              .filter(Boolean)
+              .join(" ")
+              .slice(0, 500); // keep query concise
+
+            if (recentToolMsgs.length > 20) {
+              const pelletResults = await context.pelletSearch.search(
+                recentToolMsgs,
+                3,
+                0.08,
+              );
+              if (pelletResults.length > 0) {
+                const pelletBlock =
+                  "\n<iteration_knowledge>\n" +
+                  "Relevant knowledge surfaced by latest tool results:\n" +
+                  pelletResults
+                    .map(
+                      (p) =>
+                        `  [${p.domain}] ${p.content.slice(0, 300)}${p.content.length > 300 ? "..." : ""}`,
+                    )
+                    .join("\n") +
+                  "\n</iteration_knowledge>";
+                messages.push({ role: "system", content: pelletBlock });
+                log.engine.debug(
+                  `[PelletSearch] Injected ${pelletResults.length} pellet(s) at iteration ${iterations}`,
+                );
+              }
+            }
+          } catch {
+            // Non-fatal — pellet injection is supplementary
+          }
+        }
+
         // If we've failed multiple tool calls in a row across the whole loop,
         // it's highly likely the local model is hallucinating or stuck.
         // Try to trigger a fallback router switch to a heavier cloud model.
@@ -1305,6 +1347,8 @@ ${userMessage}
             completionTokens: response.usage.completionTokens,
           }
         : undefined,
+      loopExhausted: loopBrokenEarly || iterations >= MAX_TOOL_ITERATIONS,
+      toolFailureCount: globalConsecutiveFailures,
     };
   }
 
@@ -1369,6 +1413,7 @@ ${userMessage}
     attemptLogBlock?: string,
     innerLife?: OwlInnerLife,
     innerMonologue?: InnerMonologue,
+    pelletSearch?: import("../pellets/search.js").PelletSearch,
   ): Promise<string> {
     const { persona, dna } = owl;
 
@@ -1455,26 +1500,23 @@ ${userMessage}
     // Skills — injected only when present (always-on + relevant per-message)
     if (skillsContext?.trim()) {
       prompt += `
-## Skills — YOUR LEARNED CAPABILITIES
+## Skills — AVAILABLE PLAYBOOKS
 
-CRITICAL DIRECTIVE: The skills below are step-by-step playbooks that the system has matched
-to the user's current request based on semantic analysis. You MUST follow the matched skill's
-instructions exactly, step-by-step, using the specified tool calls. Do NOT skip steps, do NOT
-improvise your own approach, and do NOT ignore the skill. If a skill is present here, it is the
-CORRECT approach for this request. Treat each skill as a mandatory checklist.
+The skills below are step-by-step playbooks that MAY be relevant to the user's request.
+Use a skill ONLY if it genuinely matches what the user is asking for. If the skill is for
+a different domain or does not fit the request, IGNORE it and answer naturally.
+A skill match is a hint, not a mandate — use your judgment.
 
 ${skillsContext}
-
-REMINDER: You MUST use the skills above for this request. Each skill contains tested, production-grade
-steps. Follow them precisely — they are your primary instructions for this task.
 `;
     }
 
-    // Persistent memory — cap at 1500 chars to control prompt size
+    // Persistent memory — cap at 3000 chars (raised from 1500 — context triage
+    // now limits signal count so each signal gets meaningful space)
     if (memoryContext?.trim()) {
-      const mem = memoryContext.slice(0, 1500);
+      const mem = memoryContext.slice(0, 3000);
       prompt += `\n## Memory\n${mem}`;
-      if (memoryContext.length > 1500) prompt += "\n...[truncated]";
+      if (memoryContext.length > 3000) prompt += "\n...[truncated]";
       prompt += "\n";
     }
 
@@ -1486,22 +1528,36 @@ steps. Follow them precisely — they are your primary instructions for this tas
     }
 
     // Relevant pellets — inject top 3, capped at 400 chars each.
-    // Hard limit prevents context explosion when pellet store is large.
-    if (pelletStore && userMessage) {
+    // Uses PelletSearch (normalized TF-IDF cosine similarity) when available,
+    // falling back to pelletStore.searchWithGraph (BM25 + graph traversal).
+    if (userMessage && (pelletSearch || pelletStore)) {
       try {
-        const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(
-          0,
-          3,
-        );
-        if (top.length > 0) {
-          prompt += "\n## Relevant Past Knowledge\n";
-          for (const pellet of top) {
-            prompt += `\n**${pellet.title}**`;
-            if (pellet.tags.length > 0)
-              prompt += ` [${pellet.tags.join(", ")}]`;
-            prompt += `\n${pellet.content.slice(0, 400)}`;
-            if (pellet.content.length > 400) prompt += "\n...[truncated]";
-            prompt += "\n";
+        if (pelletSearch) {
+          // Primary path: normalized TF-IDF cosine similarity — better semantic matching
+          // Threshold raised 0.05 → 0.15 to cut noisy low-confidence pellets
+          const results = await pelletSearch.search(userMessage, 3, 0.15);
+          if (results.length > 0) {
+            prompt += "\n## Relevant Past Knowledge\n";
+            for (const pellet of results) {
+              prompt += `\n**[${pellet.domain}]**`;
+              prompt += `\n${pellet.content.slice(0, 400)}`;
+              if (pellet.content.length > 400) prompt += "\n...[truncated]";
+              prompt += "\n";
+            }
+          }
+        } else if (pelletStore) {
+          // Fallback path: BM25 keyword search + knowledge graph traversal
+          const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(0, 3);
+          if (top.length > 0) {
+            prompt += "\n## Relevant Past Knowledge\n";
+            for (const pellet of top) {
+              prompt += `\n**${pellet.title}**`;
+              if (pellet.tags.length > 0)
+                prompt += ` [${pellet.tags.join(", ")}]`;
+              prompt += `\n${pellet.content.slice(0, 400)}`;
+              if (pellet.content.length > 400) prompt += "\n...[truncated]";
+              prompt += "\n";
+            }
           }
         }
       } catch {

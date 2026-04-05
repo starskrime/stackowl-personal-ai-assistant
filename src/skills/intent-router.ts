@@ -60,9 +60,10 @@ export class IntentRouter {
   private tracker: SkillTracker | null;
   private tfidf: TfIdfEngine;
   private cache: Map<string, IntentMatch[]> = new Map();
+  /** Skill description embedding cache — computed once at startup, reused for every semantic re-rank */
+  private skillEmbeddingCache: Map<string, number[]> = new Map();
   private static readonly MAX_CACHE = 200;
-  private static readonly AMBIGUITY_THRESHOLD = 0.2; // 20% score difference = ambiguous
-  private static readonly MIN_SCORE = 0.25; // minimum BM25 score to consider (raised from 0.1 to filter noise)
+  private static readonly MIN_SCORE = 0.45; // minimum BM25 score to consider — raised to prevent weak keyword false-positives
 
   constructor(
     registry: SkillsRegistry,
@@ -75,6 +76,33 @@ export class IntentRouter {
     // In-memory TF-IDF — no disk persistence (rebuilt on startup)
     this.tfidf = new TfIdfEngine("/dev/null");
     this.reindex();
+  }
+
+  /**
+   * Precompute and cache embeddings for all skill descriptions.
+   * Call once at startup (after provider is ready) to avoid re-computing on every
+   * semantic re-rank. Skill descriptions are static — no need to recompute.
+   */
+  async precomputeEmbeddings(): Promise<void> {
+    if (!this.provider) return;
+    const skills = this.registry.listEnabled();
+    let computed = 0;
+    for (const skill of skills) {
+      const key = `${skill.name}:::${skill.description}`;
+      if (this.skillEmbeddingCache.has(key)) continue;
+      try {
+        const result = await this.provider.embed(`${skill.name} ${skill.description}`);
+        if (result.embedding && result.embedding.length > 0) {
+          this.skillEmbeddingCache.set(key, result.embedding);
+          computed++;
+        }
+      } catch {
+        // Non-fatal — embedding may not be supported
+      }
+    }
+    if (computed > 0) {
+      log.engine.debug(`[IntentRouter] Precomputed ${computed} skill embeddings`);
+    }
   }
 
   /** Rebuild the BM25 index from current registry contents */
@@ -180,15 +208,12 @@ export class IntentRouter {
       );
     }
 
-    // 6. LLM disambiguation (Tier 5) — only if still ambiguous after Tiers 1-4
-    if (
-      this.provider &&
-      matches.length >= 2 &&
-      this.isAmbiguous(matches[0], matches[1])
-    ) {
-      log.engine.info(
-        `[IntentRouter] Ambiguous match: "${matches[0].skill.name}" (${matches[0].score.toFixed(3)}) vs "${matches[1].skill.name}" (${matches[1].score.toFixed(3)}) — requesting LLM disambiguation`,
-      );
+    // 6. LLM semantic validation (Tier 5) — always validates top result.
+    // BM25 scores are unnormalized integers (5-15+), not confidence values,
+    // so high scores do NOT mean "good match". A word like "find" in a user
+    // message easily scores a skill named "duplicate_finder" near the top.
+    // The LLM gate is the only reliable way to catch these false positives.
+    if (this.provider && matches.length > 0) {
       matches = await this.disambiguate(userMessage, matches);
     }
 
@@ -210,14 +235,7 @@ export class IntentRouter {
     return finalResults;
   }
 
-  /** Check whether the top two matches are ambiguous */
-  private isAmbiguous(first: IntentMatch, second: IntentMatch): boolean {
-    if (first.score === 0) return false;
-    const scoreDiff = (first.score - second.score) / first.score;
-    return scoreDiff < IntentRouter.AMBIGUITY_THRESHOLD;
-  }
-
-  /** LLM disambiguation for ambiguous matches */
+  /** LLM semantic validation: confirms top result is relevant, supports "none" answer */
   private async disambiguate(
     userMessage: string,
     candidates: IntentMatch[],
@@ -226,28 +244,37 @@ export class IntentRouter {
 
     // Build a concise prompt listing candidate skills
     const skillList = candidates
-      .slice(0, 8) // Pass top 8 for better disambiguation coverage
+      .slice(0, 8)
       .map((m, i) => `${i + 1}. ${m.skill.name} — ${m.skill.description}`)
       .join("\n");
 
     const prompt = [
-      `Given this user request: "${userMessage}"`,
+      `User request: "${userMessage}"`,
       "",
-      "Which of these skills best matches the request?",
+      "Which of these skills is genuinely useful for this specific request?",
+      "If NONE of them match, respond with exactly: none",
       "",
       skillList,
       "",
-      "Respond with ONLY the skill name that is the best match. Nothing else.",
+      "Respond with ONLY the skill name that matches, or 'none' if no skill is relevant.",
     ].join("\n");
 
     try {
       const response = await this.provider.chat(
         [{ role: "user", content: prompt }],
         undefined,
-        { temperature: 0, maxTokens: 128 },
+        { temperature: 0, maxTokens: 64 },
       );
 
       const chosenName = response.content.trim().toLowerCase();
+
+      // LLM said none of the skills match — return empty list
+      if (chosenName === "none" || chosenName.startsWith("none")) {
+        log.engine.info(
+          `[IntentRouter] LLM rejected all BM25 matches for: "${userMessage.slice(0, 60)}"`,
+        );
+        return [];
+      }
 
       // First try exact match (case-insensitive)
       let chosenIndex = candidates.findIndex(
@@ -264,32 +291,27 @@ export class IntentRouter {
         }
       }
 
-      if (chosenIndex > 0) {
-        // Move the LLM-chosen skill to the top
+      if (chosenIndex >= 0) {
+        // LLM selected a specific skill — return ONLY that one.
+        // BM25 ranked skills that were not chosen are irrelevant and should not be injected.
         const chosen = candidates[chosenIndex];
         chosen.method = "llm";
-        candidates.splice(chosenIndex, 1);
-        candidates.unshift(chosen);
-        log.engine.info(
-          `[IntentRouter] LLM disambiguated to: ${chosen.skill.name}`,
-        );
-      } else if (chosenIndex === 0) {
-        // LLM agreed with BM25 ranking
-        candidates[0].method = "llm";
-        log.engine.debug("[IntentRouter] LLM confirmed BM25 top result");
+        log.engine.info(`[IntentRouter] LLM validated: ${chosen.skill.name}`);
+        return [chosen];
       } else {
-        log.engine.debug(
-          `[IntentRouter] LLM response "${chosenName}" did not match any candidate — keeping BM25 order`,
+        // LLM returned something unrecognizable — treat as no match
+        log.engine.info(
+          `[IntentRouter] LLM response "${chosenName}" unrecognized — skipping skill injection`,
         );
+        return [];
       }
     } catch (err) {
-      // Fall back to BM25 order on any LLM failure
+      // Fall back to BM25 top result only on LLM failure (don't inject noise from all candidates)
       log.engine.debug(
-        `[IntentRouter] LLM disambiguation failed, keeping BM25 order: ${err instanceof Error ? err.message : String(err)}`,
+        `[IntentRouter] LLM validation failed, using BM25 top result only: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return candidates.slice(0, 1);
     }
-
-    return candidates;
   }
 
   /** Fuzzy name match: finds best skill name match using normalized Levenshtein distance */
@@ -372,16 +394,20 @@ export class IntentRouter {
       const scores = await Promise.all(
         candidates.map(async (m) => {
           try {
-            const skillEmbed = await this.provider!.embed(
-              `${m.skill.name} ${m.skill.description}`,
-            );
-            if (!skillEmbed.embedding || skillEmbed.embedding.length === 0) {
-              return 0;
+            // Use cached embedding if available — avoids an LLM call per skill
+            const cacheKey = `${m.skill.name}:::${m.skill.description}`;
+            let skillEmbedding = this.skillEmbeddingCache.get(cacheKey);
+            if (!skillEmbedding) {
+              const skillEmbed = await this.provider!.embed(
+                `${m.skill.name} ${m.skill.description}`,
+              );
+              if (!skillEmbed.embedding || skillEmbed.embedding.length === 0) {
+                return 0;
+              }
+              skillEmbedding = skillEmbed.embedding;
+              this.skillEmbeddingCache.set(cacheKey, skillEmbedding);
             }
-            return this.cosineSimilarity(
-              msgEmbed.embedding,
-              skillEmbed.embedding,
-            );
+            return this.cosineSimilarity(msgEmbed.embedding, skillEmbedding);
           } catch {
             return 0;
           }

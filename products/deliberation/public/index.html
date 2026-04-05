@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deliberation Engine</title>
+  <style>
+    :root {
+      --bg: #0f0f13;
+      --surface: #18181f;
+      --surface2: #22222e;
+      --border: #2e2e3e;
+      --text: #e8e8f0;
+      --muted: #8888a0;
+      --accent: #7c6af7;
+      --accent2: #5c8af7;
+      --for: #4ade80;
+      --against: #f87171;
+      --conditional: #fbbf24;
+      --analysis: #60a5fa;
+      --neutral: #9ca3af;
+      --proceed: #4ade80;
+      --hold: #fbbf24;
+      --abort: #f87171;
+      --revise: #fb923c;
+      --split: #a78bfa;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 24px 32px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 { font-size: 1.4rem; font-weight: 700; }
+    header span { font-size: 1.6rem; }
+    header p { color: var(--muted); font-size: 0.85rem; margin-top: 2px; }
+
+    .container { max-width: 900px; margin: 0 auto; padding: 32px 24px; }
+
+    .input-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
+
+    textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 1rem;
+      padding: 12px 14px;
+      resize: vertical;
+      min-height: 80px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    textarea:focus { border-color: var(--accent); }
+
+    .voices-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .voice-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.82rem;
+      color: var(--muted);
+      transition: all 0.15s;
+      user-select: none;
+    }
+
+    .voice-chip:hover { border-color: var(--accent); color: var(--text); }
+
+    .voice-chip.selected {
+      border-color: var(--accent);
+      background: rgba(124, 106, 247, 0.12);
+      color: var(--text);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+      align-items: center;
+    }
+
+    button {
+      padding: 10px 22px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover { background: #6a5ae0; }
+    .btn-primary:disabled { opacity: 0.5; cursor: default; }
+
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover { color: var(--text); }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .status-dot.active {
+      background: var(--for);
+      animation: pulse 1.2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .debate-output {
+      display: none;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .debate-output.visible { display: flex; }
+
+    .round-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .round-num {
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      width: 22px; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .position-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      animation: slideIn 0.25s ease;
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .position-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .voice-name { font-weight: 600; font-size: 0.95rem; }
+
+    .position-badge {
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-left: auto;
+    }
+
+    .pos-FOR { background: rgba(74, 222, 128, 0.15); color: var(--for); }
+    .pos-AGAINST { background: rgba(248, 113, 113, 0.15); color: var(--against); }
+    .pos-CONDITIONAL { background: rgba(251, 191, 36, 0.15); color: var(--conditional); }
+    .pos-ANALYSIS { background: rgba(96, 165, 250, 0.15); color: var(--analysis); }
+    .pos-NEUTRAL { background: rgba(156, 163, 175, 0.15); color: var(--neutral); }
+
+    .position-text { color: var(--text); line-height: 1.55; font-size: 0.92rem; }
+
+    .challenge-card {
+      background: var(--surface);
+      border: 1px solid rgba(248, 113, 113, 0.25);
+      border-radius: 10px;
+      padding: 16px;
+      animation: slideIn 0.25s ease;
+    }
+
+    .challenge-meta {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .challenge-meta strong { color: var(--text); }
+
+    .synthesis-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      animation: slideIn 0.25s ease;
+    }
+
+    .verdict-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      margin-bottom: 16px;
+    }
+
+    .verdict-PROCEED { background: rgba(74, 222, 128, 0.15); color: var(--proceed); }
+    .verdict-HOLD { background: rgba(251, 191, 36, 0.15); color: var(--hold); }
+    .verdict-ABORT { background: rgba(248, 113, 113, 0.15); color: var(--abort); }
+    .verdict-REVISE { background: rgba(251, 146, 60, 0.15); color: var(--revise); }
+    .verdict-SPLIT { background: rgba(167, 139, 250, 0.15); color: var(--split); }
+
+    .synthesis-text { line-height: 1.65; color: var(--text); font-size: 0.93rem; }
+
+    .meta-row {
+      display: flex;
+      gap: 16px;
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .export-btn {
+      margin-left: auto;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 5px 14px;
+      font-size: 0.8rem;
+    }
+
+    .export-btn:hover { color: var(--text); }
+
+    .section { margin-bottom: 8px; }
+
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+    }
+
+    .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+
+    .error-banner {
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: var(--against);
+      font-size: 0.88rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span>🏛️</span>
+    <div>
+      <h1>Deliberation Engine</h1>
+      <p>Adversarial AI debate for high-stakes decisions</p>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="input-section">
+      <label for="topic-input">Decision or topic to debate</label>
+      <textarea
+        id="topic-input"
+        placeholder="e.g. Should we raise our prices by 30% to improve margins?"
+        rows="3"
+      ></textarea>
+
+      <div style="margin-top: 16px;">
+        <label>Select voices (choose 2–5)</label>
+        <div class="voices-grid" id="voices-grid">
+          <!-- populated by JS -->
+        </div>
+      </div>
+
+      <div class="actions">
+        <span id="status-indicator">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text" style="font-size:0.85rem; color:var(--muted);">Ready</span>
+        </span>
+        <button class="btn-primary" id="debate-btn" onclick="startDebate()">
+          Start Debate
+        </button>
+        <button class="btn-secondary" onclick="clearAll()">Clear</button>
+      </div>
+    </div>
+
+    <div class="debate-output" id="debate-output">
+      <!-- filled dynamically -->
+    </div>
+
+    <div class="empty-state" id="empty-state">
+      <div class="icon">⚖️</div>
+      <p>Enter a decision topic and start a debate.<br>3 rounds of adversarial analysis.</p>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+
+    const VOICES = [
+      { id: 'devils_advocate', name: "Devil's Advocate", emoji: '😈' },
+      { id: 'legal_risk',      name: 'Legal Risk',        emoji: '⚖️' },
+      { id: 'financial_risk',  name: 'Financial Risk',    emoji: '💸' },
+      { id: 'user_advocate',   name: 'User Advocate',     emoji: '👤' },
+      { id: 'optimist',        name: 'Optimist',          emoji: '🌟' },
+      { id: 'pessimist',       name: 'Pessimist',         emoji: '⚠️' },
+      { id: 'technical_reviewer', name: 'Tech Reviewer',  emoji: '🔧' },
+      { id: 'ethicist',        name: 'Ethicist',          emoji: '🧭' },
+    ];
+
+    // Default selection
+    let selectedVoices = new Set(['devils_advocate', 'legal_risk', 'financial_risk', 'user_advocate', 'optimist']);
+
+    // Render voice chips
+    const grid = document.getElementById('voices-grid');
+    VOICES.forEach(v => {
+      const chip = document.createElement('div');
+      chip.className = 'voice-chip' + (selectedVoices.has(v.id) ? ' selected' : '');
+      chip.id = 'chip-' + v.id;
+      chip.innerHTML = `<span>${v.emoji}</span><span>${v.name}</span>`;
+      chip.onclick = () => toggleVoice(v.id, chip);
+      grid.appendChild(chip);
+    });
+
+    function toggleVoice(id, chip) {
+      if (selectedVoices.has(id)) {
+        if (selectedVoices.size <= 2) return; // min 2
+        selectedVoices.delete(id);
+        chip.classList.remove('selected');
+      } else {
+        if (selectedVoices.size >= 5) return; // max 5
+        selectedVoices.add(id);
+        chip.classList.add('selected');
+      }
+    }
+
+    function setStatus(text, active = false) {
+      document.getElementById('status-text').textContent = text;
+      document.getElementById('status-dot').className = 'status-dot' + (active ? ' active' : '');
+    }
+
+    function clearAll() {
+      document.getElementById('topic-input').value = '';
+      document.getElementById('debate-output').innerHTML = '';
+      document.getElementById('debate-output').classList.remove('visible');
+      document.getElementById('empty-state').style.display = 'block';
+      setStatus('Ready');
+    }
+
+    function appendSection(html) {
+      const out = document.getElementById('debate-output');
+      out.classList.add('visible');
+      document.getElementById('empty-state').style.display = 'none';
+      const div = document.createElement('div');
+      div.className = 'section';
+      div.innerHTML = html;
+      out.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return div;
+    }
+
+    let round1Container = null;
+    let round2Container = null;
+
+    function ensureRoundContainer(round, label) {
+      const id = `round-container-${round}`;
+      let el = document.getElementById(id);
+      if (!el) {
+        const wrapper = appendSection(`
+          <div id="${id}">
+            <div class="round-header">
+              <div class="round-num">${round}</div>
+              ${label}
+            </div>
+            <div id="round-items-${round}"></div>
+          </div>
+        `);
+        el = document.getElementById(id);
+      }
+      return document.getElementById(`round-items-${round}`);
+    }
+
+    function renderPosition(pos) {
+      const container = ensureRoundContainer(1, 'Initial Positions');
+      const div = document.createElement('div');
+      div.className = 'position-card';
+      div.style.marginBottom = '10px';
+      div.innerHTML = `
+        <div class="position-header">
+          <span style="font-size:1.2rem">${pos.voiceEmoji}</span>
+          <span class="voice-name">${pos.voiceName}</span>
+          <span class="position-badge pos-${pos.position}">${pos.position}</span>
+        </div>
+        <div class="position-text">${escHtml(pos.argument)}</div>
+      `;
+      container.appendChild(div);
+    }
+
+    function renderChallenge(ch) {
+      const container = ensureRoundContainer(2, 'Cross-Examination');
+      const div = document.createElement('div');
+      div.className = 'challenge-card';
+      div.style.marginBottom = '10px';
+      div.innerHTML = `
+        <div class="challenge-meta">
+          <strong>${ch.voiceEmoji} ${ch.voiceName}</strong> challenging
+          <strong>${escHtml(ch.targetVoiceName)}</strong>
+        </div>
+        <div class="position-text">${escHtml(ch.challenge)}</div>
+      `;
+      container.appendChild(div);
+    }
+
+    function renderSynthesis(verdict, synthesis) {
+      const verdictEmojis = { PROCEED:'✅', HOLD:'⏸️', ABORT:'🛑', REVISE:'✏️', SPLIT:'🔀' };
+      appendSection(`
+        <div class="round-header">
+          <div class="round-num">3</div>
+          Synthesis &amp; Verdict
+        </div>
+        <div class="synthesis-card">
+          <div class="verdict-banner verdict-${verdict}">
+            ${verdictEmojis[verdict] || '📋'} ${verdict}
+          </div>
+          <div class="synthesis-text">${escHtml(synthesis).replace(/\n/g, '<br>')}</div>
+        </div>
+      `);
+    }
+
+    function renderComplete(result) {
+      const dur = (result.durationMs / 1000).toFixed(1);
+      const meta = appendSection(`
+        <div class="meta-row">
+          <span>⏱ ${dur}s</span>
+          <span>👥 ${result.voices.length} voices</span>
+          <span>📋 ${result.positions.length} positions</span>
+          <button class="export-btn" onclick='exportMarkdown(${JSON.stringify(result).replace(/'/g, "&#39;")})'>
+            ↓ Export Markdown
+          </button>
+        </div>
+      `);
+    }
+
+    function exportMarkdown(result) {
+      const lines = [`# 🏛️ Deliberation: ${result.topic}`, `**Verdict:** ${result.verdict}`, ''];
+      lines.push('## Round 1 — Initial Positions');
+      result.positions.forEach(p => {
+        lines.push(`**${p.voiceEmoji} ${p.voiceName}** [${p.position}]`);
+        lines.push(`> ${p.argument}`);
+        lines.push('');
+      });
+      if (result.challenges.length > 0) {
+        lines.push('## Round 2 — Cross-Examination');
+        result.challenges.forEach(c => {
+          lines.push(`**${c.voiceEmoji} ${c.voiceName}** → *challenging ${c.targetVoiceName}*`);
+          lines.push(`> ${c.challenge}`);
+          lines.push('');
+        });
+      }
+      lines.push('## Round 3 — Synthesis');
+      lines.push(result.synthesis);
+
+      const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `deliberation-${Date.now()}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function startDebate() {
+      const topic = document.getElementById('topic-input').value.trim();
+      if (!topic) { alert('Please enter a topic.'); return; }
+      if (selectedVoices.size < 2) { alert('Select at least 2 voices.'); return; }
+
+      const btn = document.getElementById('debate-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Debating…';
+
+      document.getElementById('debate-output').innerHTML = '';
+      document.getElementById('debate-output').classList.remove('visible');
+      document.getElementById('empty-state').style.display = 'none';
+
+      setStatus('Connecting…', true);
+
+      try {
+        const resp = await fetch(`${API}/debate/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic, voiceIds: [...selectedVoices] }),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ error: resp.statusText }));
+          throw new Error(err.error || resp.statusText);
+        }
+
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            const lines = part.split('\n');
+            let event = 'message', data = '';
+            for (const line of lines) {
+              if (line.startsWith('event: ')) event = line.slice(7).trim();
+              if (line.startsWith('data: ')) data = line.slice(6).trim();
+            }
+            if (!data) continue;
+
+            try {
+              const parsed = JSON.parse(data);
+              if (event === 'round_start') setStatus(`Round ${parsed.round}: ${parsed.label}`, true);
+              else if (event === 'position') renderPosition(parsed);
+              else if (event === 'challenge') renderChallenge(parsed);
+              else if (event === 'synthesis') renderSynthesis(parsed.verdict, parsed.synthesis);
+              else if (event === 'complete') renderComplete(parsed);
+              else if (event === 'error') {
+                appendSection(`<div class="error-banner">Error: ${escHtml(parsed.error)}</div>`);
+              }
+            } catch {}
+          }
+        }
+
+        setStatus('Complete');
+      } catch (err) {
+        appendSection(`<div class="error-banner">Error: ${escHtml(err.message)}</div>`);
+        setStatus('Error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Start Debate';
+      }
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // Allow Enter in textarea to start debate (Ctrl+Enter)
+    document.getElementById('topic-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) startDebate();
+    });
+  </script>
+</body>
+</html>

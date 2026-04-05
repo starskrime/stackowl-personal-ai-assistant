@@ -1,6 +1,6 @@
 ---
 name: port_scanner
-description: Scan for open network ports on localhost or a specified host to check service availability
+description: Network port scanning tool — use only when user explicitly asks to scan ports, check open TCP ports, or diagnose network service availability on a specific IP or hostname
 command-dispatch: tool
 command-tool: ShellTool
 openclaw:

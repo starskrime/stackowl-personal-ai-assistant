@@ -11,6 +11,7 @@ import type { GatewayContext } from "../types.js";
 import type { GatewayCallbacks } from "../types.js";
 import type { EngineContext } from "../../engine/runtime.js";
 import { DiagnosticEngine } from "../../engine/diagnostic-engine.js";
+import { PelletSearch } from "../../pellets/search.js";
 import type { MicroLearner } from "../../learning/micro-learner.js";
 import type { SkillContextInjector } from "../../skills/injector.js";
 import type { AttemptLog } from "../../memory/attempt-log.js";
@@ -28,12 +29,20 @@ export class ContextBuilder {
     { session: Session | null; cachedAt: number }
   > = new Map();
 
+  /** Lazily-created PelletSearch instance (normalized TF-IDF cosine similarity) */
+  private pelletSearch: PelletSearch | null = null;
+
   constructor(
     private ctx: GatewayContext,
     private microLearner: MicroLearner | null,
     private skillInjector: SkillContextInjector | null,
     private userMentalModel: UserMentalModel | null = null,
-  ) {}
+  ) {
+    // Eagerly create PelletSearch when pelletStore is available
+    if (ctx.pelletStore) {
+      this.pelletSearch = new PelletSearch(ctx.pelletStore);
+    }
+  }
 
   async build(
     session: Session,
@@ -97,141 +106,43 @@ export class ContextBuilder {
 
     const finalSkillsContext = skillsContext + dynamicSkillsContext;
 
-    // Ambient context
-    let ambientContext = "";
-    if (this.ctx.contextMesh) {
-      ambientContext = this.ctx.contextMesh.toContextBlock(5);
-    }
-
-    // Knowledge graph
-    let knowledgeContext = "";
-    if (this.ctx.knowledgeReasoner && session.messages.length > 0) {
-      const lastUserMsg = [...session.messages]
+    // ─── Context Triage — only inject what's relevant ────────────
+    // Instead of dumping 20+ signals into every prompt, score each signal
+    // and include only what's relevant to this specific message.
+    const userMessage =
+      [...session.messages]
         .reverse()
-        .find((m) => m.role === "user");
-      if (lastUserMsg) {
-        const nodes = this.ctx.knowledgeGraph?.search(lastUserMsg.content, 3);
-        if (nodes && nodes.length > 0) {
-          knowledgeContext =
-            "\n<knowledge_context>\n" +
-            nodes
-              .map(
-                (n) =>
-                  `  <fact domain="${n.domain}" confidence="${n.confidence}">${n.title}: ${n.content}</fact>`,
-              )
-              .join("\n") +
-            "\n</knowledge_context>\n";
-        }
-      }
-    }
+        .find((m) => m.role === "user")?.content ?? "";
 
-    // Predictive queue
-    let predictiveContext = "";
-    if (this.ctx.predictiveQueue) {
-      const ready = this.ctx.predictiveQueue.getReadyTasks();
-      if (ready.length > 0) {
-        predictiveContext =
-          "\n<predicted_tasks>\n" +
-          ready
-            .map(
-              (t) =>
-                `  <task confidence="${t.confidence.toFixed(2)}">${t.action}</task>`,
-            )
-            .join("\n") +
-          "\n</predicted_tasks>\n";
-      }
-    }
+    const MEMORY_TIMEOUT = 2_000;
+    const withTimeout = <T>(promise: Promise<T>): Promise<T | null> =>
+      Promise.race([
+        promise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), MEMORY_TIMEOUT)),
+      ]);
 
-    // Collab context
-    let collabContext = "";
-    if (this.ctx.collabManager) {
-      const userSessions = this.ctx.collabManager.getUserSessions(
-        session.id.split(":")[1] || session.id,
-      );
-      if (userSessions.length > 0) {
-        collabContext = this.ctx.collabManager.buildCollabContext(
-          userSessions[0].id,
-        );
-      }
-    }
+    // ── Temporal recall detection ──────────────────────────────
+    const TEMPORAL_TRIGGERS = /\b(?:yesterday|last time|before|remember when|as I said|we discussed|you told me|earlier|previously|last week|other day)\b/i;
+    const hasTemporalTrigger = TEMPORAL_TRIGGERS.test(userMessage);
 
-    // User profile
-    let userProfileContext = "";
-    if (this.microLearner) {
-      userProfileContext = this.microLearner.toContextString();
-    }
+    // ── Frustration / emotional signal detection ───────────────
+    const FRUSTRATION_SIGNALS = /\b(?:still|again|already told|why.*keep|not working|broken|frustrated|fix this|you always|you never)\b/i;
+    const hasFrustration = FRUSTRATION_SIGNALS.test(userMessage);
 
-    // Inferred preferences (behavioral)
-    let inferredPrefsContext = "";
-    if (this.ctx.preferenceModel) {
-      inferredPrefsContext = this.ctx.preferenceModel.toContextString();
-    }
+    // ── Opinion / debate request detection ────────────────────
+    const OPINION_SIGNALS = /\b(?:what do you think|your opinion|agree|disagree|is it true|do you believe|controversial|debate|best|worst)\b/i;
+    const isOpinionRequest = OPINION_SIGNALS.test(userMessage);
 
-    // User mental model — behavioral state inference
-    let mentalModelContext = "";
-    if (this.userMentalModel) {
-      mentalModelContext = this.userMentalModel.toContextString();
-    }
+    // ── Conversational message detection (no context needed) ──
+    const isConversational = userMessage.length < 80 &&
+      !/\b(?:find|search|create|write|generate|check|analyze|run|scan|build|calculate|translate|download|fetch|get|show|list)\b/i.test(userMessage);
 
-    // Echo chamber awareness
-    let echoChamberContext = "";
-    if (this.ctx.echoChamberDetector) {
-      echoChamberContext = this.ctx.echoChamberDetector.toContextString();
-    }
+    // ── Session depth ──────────────────────────────────────────
+    const sessionDepth = session.messages.filter(m => m.role === "user").length;
 
-    // Behavioral patches — rules learned from past mistakes (via ReflexionEngine)
-    // These are injected so the owl doesn't repeat the same errors.
-    let behavioralPatchContext = "";
-    if (this.ctx.pelletStore) {
-      try {
-        const allPellets = await this.ctx.pelletStore.listAll();
-        const patches = allPellets
-          .filter((p) => p.tags?.includes("behavioral-patch"))
-          .slice(0, 5); // Most recent 5 patches
-        if (patches.length > 0) {
-          behavioralPatchContext =
-            "\n<learned_rules>\n" +
-            "Rules learned from past mistakes — follow these to avoid repeating errors:\n" +
-            patches
-              .map((p) => `  <rule>${p.content.slice(0, 300)}</rule>`)
-              .join("\n") +
-            "\n</learned_rules>\n";
-        }
-      } catch {
-        // Non-fatal — patches are supplementary context
-      }
-    }
+    // ─── Always-included signals ──────────────────────────────
 
-    // Socratic mode
-    let socraticContext = "";
-    if (this.ctx.socraticEngine) {
-      socraticContext = this.ctx.socraticEngine.toContextString(session.id);
-    }
-
-    // Active intents
-    let intentContext = "";
-    if (this.ctx.intentStateMachine) {
-      intentContext = this.ctx.intentStateMachine.toContextString();
-    }
-
-    // Working context — what's happening right now in this session
-    let workingCtxString = "";
-    if (this.ctx.workingContextManager) {
-      const wc = this.ctx.workingContextManager.get(session.id);
-      if (wc) {
-        workingCtxString = wc.toContextString();
-      }
-    }
-
-    // Conversational ground state — shared facts, decisions, open questions
-    let groundStateContext = "";
-    if (this.ctx.groundState) {
-      const userId = session.id.split(":")[1] || session.id;
-      this.ctx.groundState.setSession(session.id);
-      groundStateContext = this.ctx.groundState.toContextString(userId);
-    }
-
-    // Assistant vs Reactive mode
+    // Mode directive (ASSISTANT vs REACTIVE) — always relevant
     const hasActiveItems =
       (this.ctx.intentStateMachine?.getActive().length ?? 0) > 0 ||
       (this.ctx.commitmentTracker?.getPending().length ?? 0) > 0 ||
@@ -252,36 +163,155 @@ The user has no active tasks right now. Be concise and helpful:
 - Don't add unnecessary fluff
 - If you complete a task, confirm completion briefly`;
 
-    // ─── FactStore + EpisodicMemory retrieval ───────────────────
-    const userMessage =
-      [...session.messages]
-        .reverse()
-        .find((m) => m.role === "user")?.content ?? "";
+    // Behavioral patches — always inject (top 3, prevents repeated errors)
+    let behavioralPatchContext = "";
+    if (this.ctx.pelletStore) {
+      try {
+        const allPellets = await this.ctx.pelletStore.listAll();
+        const patches = allPellets
+          .filter((p) => p.tags?.includes("behavioral-patch"))
+          .slice(0, 3); // Top 3 only (was 5)
+        if (patches.length > 0) {
+          behavioralPatchContext =
+            "\n<learned_rules>\n" +
+            "Rules learned from past mistakes — follow these to avoid repeating errors:\n" +
+            patches
+              .map((p) => `  <rule>${p.content.slice(0, 200)}</rule>`)
+              .join("\n") +
+            "\n</learned_rules>\n";
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
 
-    const MEMORY_TIMEOUT = 2_000;
-    const withTimeout = <T>(promise: Promise<T>): Promise<T | null> =>
-      Promise.race([
-        promise,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), MEMORY_TIMEOUT)),
-      ]);
+    // Socratic mode — only inject when active for this session
+    let socraticContext = "";
+    if (this.ctx.socraticEngine?.isActive(session.id)) {
+      socraticContext = this.ctx.socraticEngine.toContextString(session.id);
+    }
 
+    // ─── Conditionally-included signals ──────────────────────
+
+    // Active intents — only when there ARE active intents
+    let intentContext = "";
+    const activeIntents = this.ctx.intentStateMachine?.getActive() ?? [];
+    if (activeIntents.length > 0) {
+      intentContext = this.ctx.intentStateMachine!.toContextString();
+    }
+
+    // Working context — only when session has tool activity (not first message)
+    let workingCtxString = "";
+    if (this.ctx.workingContextManager && sessionDepth > 1) {
+      const wc = this.ctx.workingContextManager.get(session.id);
+      if (wc) {
+        workingCtxString = wc.toContextString();
+      }
+    }
+
+    // Ground state — only in established conversations (10+ exchanges)
+    let groundStateContext = "";
+    if (this.ctx.groundState && sessionDepth >= 10) {
+      const userId = session.id.split(":")[1] || session.id;
+      this.ctx.groundState.setSession(session.id);
+      groundStateContext = this.ctx.groundState.toContextString(userId);
+    }
+
+    // User mental model — only when frustration signals detected
+    let mentalModelContext = "";
+    if (this.userMentalModel && hasFrustration) {
+      mentalModelContext = this.userMentalModel.toContextString();
+    }
+
+    // Echo chamber — only when user asks for opinions/debate
+    let echoChamberContext = "";
+    if (this.ctx.echoChamberDetector && isOpinionRequest) {
+      echoChamberContext = this.ctx.echoChamberDetector.toContextString();
+    }
+
+    // Predictive queue — only when high-confidence predictions exist
+    let predictiveContext = "";
+    if (this.ctx.predictiveQueue) {
+      const ready = this.ctx.predictiveQueue.getReadyTasks()
+        .filter((t) => t.confidence >= 0.7);
+      if (ready.length > 0) {
+        predictiveContext =
+          "\n<predicted_tasks>\n" +
+          ready
+            .map(
+              (t) =>
+                `  <task confidence="${t.confidence.toFixed(2)}">${t.action}</task>`,
+            )
+            .join("\n") +
+          "\n</predicted_tasks>\n";
+      }
+    }
+
+    // User profile — only for non-conversational messages (action requests)
+    let userProfileContext = "";
+    if (this.microLearner && !isConversational) {
+      userProfileContext = this.microLearner.toContextString();
+    }
+
+    // Inferred preferences — only for action requests
+    let inferredPrefsContext = "";
+    if (this.ctx.preferenceModel && !isConversational) {
+      inferredPrefsContext = this.ctx.preferenceModel.toContextString();
+    }
+
+    // Knowledge graph — only for non-conversational messages
+    let knowledgeContext = "";
+    if (this.ctx.knowledgeReasoner && !isConversational && userMessage) {
+      const nodes = this.ctx.knowledgeGraph?.search(userMessage, 3);
+      if (nodes && nodes.length > 0) {
+        knowledgeContext =
+          "\n<knowledge_context>\n" +
+          nodes
+            .map(
+              (n) =>
+                `  <fact domain="${n.domain}" confidence="${n.confidence}">${n.title}: ${n.content}</fact>`,
+            )
+            .join("\n") +
+          "\n</knowledge_context>\n";
+      }
+    }
+
+    // Collab context — only when active collab sessions exist
+    let collabContext = "";
+    if (this.ctx.collabManager) {
+      const userSessions = this.ctx.collabManager.getUserSessions(
+        session.id.split(":")[1] || session.id,
+      );
+      if (userSessions.length > 0) {
+        collabContext = this.ctx.collabManager.buildCollabContext(
+          userSessions[0].id,
+        );
+      }
+    }
+
+    // Ambient context — skip for conversational messages
+    let ambientContext = "";
+    if (this.ctx.contextMesh && !isConversational) {
+      ambientContext = this.ctx.contextMesh.toContextBlock(5);
+    }
+
+    // ─── FactStore + EpisodicMemory retrieval ─────────────────
+    // Facts: retrieve only when keyword overlap suggests relevance
+    // Episodes: retrieve when temporal trigger detected OR non-trivial message
     let factContext = "";
     let episodicContext = "";
 
-    if (userMessage) {
-      // Detect temporal recall triggers — boost episode search when user references past
-      const TEMPORAL_TRIGGERS = /\b(?:yesterday|last time|before|remember when|as I said|we discussed|you told me|earlier|previously|last week|other day)\b/i;
-      const hasTemporalTrigger = TEMPORAL_TRIGGERS.test(userMessage);
-      const episodeLimit = hasTemporalTrigger ? 5 : 3;
-      const episodeThreshold = hasTemporalTrigger ? 0.2 : 0.3;
+    if (userMessage && !isConversational) {
+      const episodeLimit = hasTemporalTrigger ? 5 : 2;
+      const episodeThreshold = hasTemporalTrigger ? 0.2 : 0.35; // Raised from 0.3
 
       const [factResults, episodeResults] = await Promise.all([
         this.ctx.factStore
           ? withTimeout(
-              (async () => this.ctx.factStore!.search(userMessage, undefined, 5))(),
+              (async () => this.ctx.factStore!.search(userMessage, undefined, 3))(), // Reduced from 5
             ).catch(() => null)
           : Promise.resolve(null),
-        this.ctx.episodicMemory
+        this.ctx.episodicMemory && (hasTemporalTrigger || sessionDepth > 1)
           ? withTimeout(
               this.ctx.episodicMemory.searchWithScoring(
                 userMessage,
@@ -318,26 +348,30 @@ The user has no active tasks right now. Be concise and helpful:
       }
     }
 
-    // Merge all context signals — temporal context first (frames everything else)
+    // ─── Assemble enriched context (triage applied) ───────────
+    // Order: temporal (frames time) → mode → memory → conditional signals
     const enrichedMemoryContext = [
       temporalContext,
       this.ctx.memoryContext ?? "",
-      ambientContext,
-      knowledgeContext,
-      predictiveContext,
-      collabContext,
-      userProfileContext,
-      inferredPrefsContext,
-      mentalModelContext,
-      echoChamberContext,
+      modeDirective,
       behavioralPatchContext,
-      socraticContext,
-      intentContext,
-      workingCtxString,
-      groundStateContext,
+      // Memory signals (high relevance)
       factContext,
       episodicContext,
-      modeDirective,
+      // Conditional signals (injected only when relevant per triage above)
+      intentContext,
+      workingCtxString,
+      socraticContext,
+      knowledgeContext,
+      userProfileContext,
+      inferredPrefsContext,
+      predictiveContext,
+      collabContext,
+      ambientContext,
+      // Low-frequency signals (injected only in specific circumstances)
+      mentalModelContext,
+      echoChamberContext,
+      groundStateContext,
     ]
       .filter(Boolean)
       .join("\n");
@@ -349,6 +383,7 @@ The user has no active tasks right now. Be concise and helpful:
       config: this.ctx.config,
       toolRegistry: this.ctx.toolRegistry,
       pelletStore: this.ctx.pelletStore,
+      pelletSearch: this.pelletSearch ?? undefined,
       capabilityLedger: this.ctx.capabilityLedger,
       cwd: this.ctx.cwd,
       memoryContext: enrichedMemoryContext || undefined,

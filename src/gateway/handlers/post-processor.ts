@@ -46,6 +46,9 @@ export class PostProcessor {
       usage?: { promptTokens: number; completionTokens: number };
       model?: string;
       provider?: string;
+      /** Quality signals from EngineResponse — used to record failures */
+      loopExhausted?: boolean;
+      toolFailureCount?: number;
     },
   ): void {
     this.messageCount++;
@@ -393,6 +396,45 @@ export class PostProcessor {
       if (this.coordinator && this.messageCount % 15 === 0) {
         const profile = this.coordinator.getMicroLearnerProfile();
         this.ctx.patternAnalyzer?.enrichFromProfile(profile);
+      }
+    }
+
+    // ── Response Quality Signal ────────────────────────────────
+    // When the engine got stuck (loop exhausted or repeated tool failures),
+    // record it in ReflexionEngine so it generates a behavioral patch.
+    // This feeds the learning loop with quality feedback, not just "what was said".
+    if (
+      this.ctx.reflexionEngine &&
+      (metadata?.loopExhausted || (metadata?.toolFailureCount ?? 0) >= 3)
+    ) {
+      const lastUserMsg = [...messages]
+        .reverse()
+        .find((m) => m.role === "user");
+      if (lastUserMsg) {
+        const toolsAttempted = metadata?.toolsUsed?.join(", ") ?? "unknown";
+        const reason = metadata?.loopExhausted
+          ? "loop_exhausted"
+          : `tool_failures_${metadata?.toolFailureCount}`;
+
+        this.taskQueue.enqueue("quality-reflexion", async () => {
+          try {
+            await this.ctx.reflexionEngine!.reflectOnFailure({
+              userMessage: typeof lastUserMsg.content === "string"
+                ? lastUserMsg.content.slice(0, 200)
+                : "",
+              toolsAttempted,
+              reason,
+              sessionId: sessionId ?? "unknown",
+            });
+            log.engine.info(
+              `[PostProcessor:quality] Recorded failure for reflexion: ${reason} (tools: ${toolsAttempted})`,
+            );
+          } catch (err) {
+            log.engine.warn(
+              `[PostProcessor:quality] Reflexion recording failed: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        });
       }
     }
 

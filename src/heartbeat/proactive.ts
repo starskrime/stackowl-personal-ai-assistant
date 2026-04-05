@@ -95,11 +95,11 @@ const DEFAULT_PING_CONFIG: PingConfig = {
 };
 
 // Minimum time between ANY two pings (prevents spam even with short intervals)
-const MIN_PING_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const MIN_PING_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
 // Stop sending check-ins after this many unanswered pings.
 // Resets when the user sends a message (via notifyUserActivity).
-const MAX_UNANSWERED_PINGS = 2;
+const MAX_UNANSWERED_PINGS = 1;
 
 // ─── Proactive Pinger ────────────────────────────────────────────
 
@@ -190,12 +190,7 @@ export class ProactivePinger {
     }, 60 * 1000);
     this.timers.push(skillEvoTimer);
 
-    // Send a greeting on start — but respect quiet hours
-    if (!this.isQuietHours()) {
-      this.sendGreeting().catch((err) => {
-        console.error("[ProactivePinger] Greeting error:", err);
-      });
-    }
+    // No startup greeting — avoids spamming "what's on your plate" on every restart
   }
 
   /**
@@ -240,26 +235,6 @@ export class ProactivePinger {
     return (
       hour >= this.config.quietHoursStart && hour < this.config.quietHoursEnd
     );
-  }
-
-  /**
-   * Send an initial greeting when the bot starts.
-   */
-  private async sendGreeting(): Promise<void> {
-    const hour = new Date().getHours();
-    let timeOfDay: string;
-
-    if (hour < 12) timeOfDay = "morning";
-    else if (hour < 17) timeOfDay = "afternoon";
-    else timeOfDay = "evening";
-
-    const prompt =
-      `Generate a brief, warm greeting for the user. It's ${timeOfDay}. ` +
-      `You are their personal executive assistant owl, always by their side. ` +
-      `Keep it to 1-2 sentences. Be natural, not robotic. ` +
-      `If you have context about what they were working on, briefly reference it.`;
-
-    await this.generateAndSend(prompt, "check_in");
   }
 
   /**
@@ -342,52 +317,9 @@ export class ProactivePinger {
       }
     }
 
-    // Randomize: only proceed if we've passed a random threshold within the interval window.
-    // This makes pinging feel organic — sometimes 15 min, sometimes 35 min.
-    const intervalMs = this.config.checkInIntervalMinutes * 60 * 1000;
-    const timeSincePing = now - this.lastPingTime;
-    // Probability of pinging increases linearly from 0 at MIN_COOLDOWN to 1.0 at 2x interval
-    const probability = Math.min(
-      1.0,
-      (timeSincePing - MIN_PING_COOLDOWN_MS) / (intervalMs * 2),
-    );
-    if (Math.random() > probability) return;
-
-    const hour = new Date().getHours();
-    const recentHistory = this.context.getRecentHistory?.() ?? [];
-
-    let prompt: string;
-
-    if (recentHistory.length > 0) {
-      // Has recent context — generate a contextual follow-up
-      const lastTopics = recentHistory
-        .filter((m) => m.role === "user")
-        .slice(-3)
-        .map((m) => m.content)
-        .join("; ");
-
-      prompt =
-        `The user has been working on: "${lastTopics}". ` +
-        `Generate a brief proactive check-in. Options: ` +
-        `follow up on something they mentioned, suggest a break if it's been a while, ` +
-        `offer a related idea, or ask if they need anything. ` +
-        `Keep it to 1-2 sentences. Be natural.`;
-    } else {
-      // No recent context — generic check-in
-      if (hour >= 12 && hour <= 13) {
-        prompt =
-          "Remind the user about lunch in a casual, caring way. 1 sentence.";
-      } else if (hour >= 17 && hour <= 18) {
-        prompt =
-          "Ask the user if they want a summary of what they accomplished today. 1 sentence.";
-      } else {
-        prompt =
-          "Generate a brief check-in asking if the user needs anything. " +
-          "Be warm but not annoying. 1 sentence.";
-      }
-    }
-
-    await this.generateAndSend(prompt, "check_in");
+    // No real content to share — skip. Generic check-ins ("what's on your plate?")
+    // are noise. Only ping when there's something worth saying (handled above via
+    // ProactiveIntentionLoop or stale-goal follow-ups).
   }
 
   /**
@@ -418,12 +350,34 @@ export class ProactivePinger {
       "Saturday",
     ][now.getDay()];
 
+    // Gather real context: stale goals and recent history summary
+    let goalContext = "";
+    try {
+      const staleGoals = this.context.goalGraph?.getStale(1) ?? [];
+      if (staleGoals.length > 0) {
+        goalContext = `Active goals: ${staleGoals.map((g) => `"${g.title}" (${g.progress}%)`).join(", ")}.`;
+      }
+    } catch { /* non-critical */ }
+
+    const recentHistory = this.context.getRecentHistory?.() ?? [];
+    const lastUserMessages = recentHistory
+      .filter((m) => m.role === "user")
+      .slice(-3)
+      .map((m) => (typeof m.content === "string" ? m.content.slice(0, 100) : ""))
+      .filter(Boolean);
+    const historyContext = lastUserMessages.length > 0
+      ? `Recent activity: ${lastUserMessages.join(" | ")}.`
+      : "";
+
+    // Skip morning brief if there's nothing real to say
+    if (!goalContext && !historyContext) return;
+
     const prompt =
-      `It's ${dayOfWeek} morning. Generate a warm morning brief for the user. Include: ` +
-      `1) A greeting, ` +
-      `2) If you have context from recent conversations, mention what's pending or what they might want to focus on today, ` +
-      `3) A motivational note or interesting thought. ` +
-      `Keep it concise — 3-5 sentences max. Make it feel like a real assistant briefing.`;
+      `It's ${dayOfWeek} morning. Generate a concise morning brief (2-3 sentences max). ` +
+      (goalContext ? `Context: ${goalContext} ` : "") +
+      (historyContext ? `${historyContext} ` : "") +
+      `Reference the actual context above — do not invent generic motivational filler. ` +
+      `Sound like a real assistant who knows what the user is working on.`;
 
     await this.generateAndSend(prompt, "morning_brief");
   }

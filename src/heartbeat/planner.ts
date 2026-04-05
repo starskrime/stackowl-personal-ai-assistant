@@ -255,17 +255,24 @@ export class AutonomousPlanner {
       });
     }
 
-    // ── 7. General check-in (low priority during active hours) ──
+    // ── 7. Goal-driven check-in (only when there's a specific stale goal) ──
+    // Generic "what's on your plate?" check-ins are removed — they're noise.
+    // Only check in when there's a concrete goal that has gone stale.
     if (!isQuiet) {
       const topGoal = this.goalGraph.getTopPriority();
-      candidates.push({
-        type: "check_in",
-        priority: 20,
-        description: topGoal
-          ? `Check in — top goal: "${topGoal.title}" (${topGoal.progress}%)`
-          : "General check-in",
-        goalId: topGoal?.id,
-      });
+      if (topGoal && topGoal.progress < 100) {
+        const hoursSinceActive =
+          (Date.now() - topGoal.lastActiveAt) / (1000 * 60 * 60);
+        // Only check in if the goal has been idle for > 4 hours
+        if (hoursSinceActive > 4) {
+          candidates.push({
+            type: "check_in",
+            priority: 20,
+            description: `Check in — stale goal: "${topGoal.title}" (${topGoal.progress}%, idle ${Math.round(hoursSinceActive)}h)`,
+            goalId: topGoal.id,
+          });
+        }
+      }
     }
 
     // ── 8. Pattern mining → crystallize new skills ──

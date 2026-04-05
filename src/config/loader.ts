@@ -22,7 +22,13 @@ export interface StackOwlConfig {
       maxPerMinute: number;
       maxPerHour: number;
     };
-    /** Suppress internal reasoning/thinking messages from being sent to channels. Default: true. */
+    /**
+     * Output verbosity mode.
+     * - "normal" (default): users see only the final answer. No tool status, no thinking indicators.
+     * - "debug": full visibility — tool start/finish, _Thinking..._ headers, iteration markers.
+     */
+    outputMode?: "normal" | "debug";
+    /** @deprecated Use outputMode instead. Kept for backwards compatibility. */
     suppressThinkingMessages?: boolean;
   };
   parliament: {
@@ -236,6 +242,7 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   gateway: {
     port: 3077,
     host: "127.0.0.1",
+    outputMode: "normal",
     suppressThinkingMessages: true,
   },
   parliament: {

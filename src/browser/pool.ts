@@ -265,13 +265,16 @@ export class BrowserPool {
     }
 
     // Kill any stale Chrome processes holding this profile directory.
-    // This handles the case where a previous Node process was killed without
-    // graceful shutdown and left Chrome running.
+    // Match on the --user-data-dir flag value (unique per profile) rather than
+    // the binary name, which varies by OS ("Google Chrome for Testing", "chromium", etc.).
+    const escapedDir = profileDir.replace(/'/g, "'\\''");
     try {
       execSync(
-        `pkill -f 'chrome.*${profileDir.replace(/'/g, "'\\''")}' 2>/dev/null || true`,
+        `pkill -f 'user-data-dir=${escapedDir}' 2>/dev/null || true`,
         { stdio: "ignore" },
       );
+      // Give the OS ~500ms to reap the process before we attempt to lock the profile
+      await new Promise(r => setTimeout(r, 500));
     } catch {
       /* ignore */
     }
