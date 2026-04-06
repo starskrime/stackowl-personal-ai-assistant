@@ -46,6 +46,7 @@ import {
   SystemControlsTool,
   MusicControlTool,
   IMessageTool,
+  AirDropTool,
 } from "./tools/macos/index.js";
 // ── Utility tools ──
 import {
@@ -265,6 +266,7 @@ async function bootstrap() {
     SystemControlsTool,
     MusicControlTool,
     IMessageTool,
+    AirDropTool,
     // ── Utilities ──
     CalculatorTool,
     TimerTool,

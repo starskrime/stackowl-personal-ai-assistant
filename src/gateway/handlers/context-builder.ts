@@ -408,6 +408,7 @@ The user has no active tasks right now. Be concise and helpful:
       onProgress: callbacks.onProgress,
       onStreamEvent: callbacks.onStreamEvent,
       sendFile: callbacks.onFile,
+      channelName: channelId,
       providerRegistry: this.ctx.providerRegistry,
       memorySearcher: this.ctx.memorySearcher,
       echoChamberDetector: this.ctx.echoChamberDetector,

@@ -153,13 +153,19 @@ export const SendFileTool: ToolImplementation = {
     // Check channel has file sending capability
     const sendFile = context.engineContext?.sendFile;
     if (!sendFile) {
-      // CLI fallback — just confirm the file exists and where it is
+      // No channel callback — suggest native delivery options
       const kind = IMAGE_EXTS.has(ext)
         ? "image"
         : DOC_EXTS.has(ext)
           ? "document"
           : "file";
-      return `[CLI] ${kind} ready at: ${resolved} (${sizeKb}KB). Open it manually — file sending is only supported in Telegram.`;
+      return (
+        `[No channel] ${kind} ready at: ${resolved} (${sizeKb}KB).\n` +
+        `To deliver this file, you can:\n` +
+        `  • AirDrop to a nearby device: airdrop(file_path:"${resolved}")\n` +
+        `  • Send via iMessage: imessage(action:"send_attachment", to:"+1...", file_path:"${resolved}")\n` +
+        `  • Open it directly: computer_use(action:"open_url", text:"${resolved}")`
+      );
     }
 
     try {

@@ -46,6 +46,22 @@ export interface ExecutionResult {
   completedSteps: RecipeStep[];
 }
 
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+/**
+ * Actions that should produce a visible screen change when they succeed.
+ * If we detect no change after one of these, we retry once before continuing.
+ * Wait/scroll/open_app etc. are excluded — no change from those is normal.
+ */
+const RETRYABLE_ACTIONS = new Set([
+  "click",
+  "double_click",
+  "right_click",
+  "ax_click",
+  "key",
+  "hotkey",
+]);
+
 // ─── Action Planner ──────────────────────────────────────────────────────────
 
 export class ActionPlanner {
@@ -190,21 +206,50 @@ export class ActionPlanner {
       // Brief wait for UI to settle
       await new Promise((resolve) => setTimeout(resolve, 300));
 
-      // Verify step if verification criteria provided
+      // Verify step + retry-on-no-change
       if (step.verify) {
+        const beforeScreen = lastScreen; // snapshot captured before this step's action
         try {
           const afterScreen = await readScreen();
-          const diff = lastScreen
-            ? diffScreenStates(lastScreen, afterScreen)
+          const diff = beforeScreen
+            ? diffScreenStates(beforeScreen, afterScreen)
             : null;
 
-          if (diff && !diff.hasChanges) {
+          if (diff && !diff.hasChanges && RETRYABLE_ACTIONS.has(step.action)) {
+            // No visible change after a click/key — UI may not have responded.
+            // Retry once after a longer settle period before giving up.
             log.engine.debug(
-              `[ActionPlanner] Step ${i + 1}: no visible screen change (may be expected)`,
+              `[ActionPlanner] Step ${i + 1} (${step.action}): no screen change — retrying once`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 400));
+
+            try {
+              await executeAction(step.action, step.args);
+              await new Promise((resolve) => setTimeout(resolve, 300));
+
+              const retryScreen = await readScreen();
+              const retryDiff = beforeScreen
+                ? diffScreenStates(beforeScreen, retryScreen)
+                : null;
+              if (retryDiff && !retryDiff.hasChanges) {
+                log.engine.warn(
+                  `[ActionPlanner] Step ${i + 1}: still no screen change after retry — action may have failed silently`,
+                );
+              } else {
+                log.engine.debug(
+                  `[ActionPlanner] Step ${i + 1}: retry succeeded — screen changed`,
+                );
+              }
+            } catch {
+              // Retry threw — non-fatal, continue with original result
+            }
+          } else if (diff && !diff.hasChanges) {
+            log.engine.debug(
+              `[ActionPlanner] Step ${i + 1}: no visible screen change (expected for ${step.action})`,
             );
           }
         } catch {
-          // Verification failed but step might still be ok
+          // Verification read failed — non-fatal, continue
         }
       }
 

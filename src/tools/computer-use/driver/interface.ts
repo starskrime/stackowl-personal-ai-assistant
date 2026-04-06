@@ -91,6 +91,22 @@ export interface IOSDriver {
   openUrl(url: string): Promise<void>;
   getFrontApp(): Promise<string>;
 
+  // ─── Accessibility Actions ────────────────────────────────────
+
+  /**
+   * Activate a UI element directly via the platform's accessibility API.
+   * More reliable than coordinate-based clicking — no DPI/position drift,
+   * works even if the window moves or scrolls between readScreen() and the click.
+   *
+   * Optional: not all platforms implement this (Linux AT-SPI is fragile).
+   * Falls back to coordinate clicking when unavailable.
+   *
+   * @param appName    The process/app name (e.g. "Safari", "Finder")
+   * @param elementLabel  Partial match against element title or description
+   * @param role       Optional AX role filter (e.g. "AXButton", "AXLink")
+   */
+  axPress?(appName: string, elementLabel: string, role?: string): Promise<void>;
+
   // ─── Timing ──────────────────────────────────────────────────
 
   /** Sleep for duration ms (driver-native, avoids JS timer imprecision) */

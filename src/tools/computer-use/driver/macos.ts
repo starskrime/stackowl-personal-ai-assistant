@@ -204,6 +204,74 @@ function dispatch(cmd) {
       return String(front.name());
     }
 
+    // ── AX Direct Press ──────────────────────────────────────
+    // Activates a UI element by walking the AX tree and calling
+    // AXPress (or the first available AX action) directly.
+    // More reliable than coordinate clicking — no DPI drift, no
+    // coordinate offset if the window moved between readScreen() and click.
+    case 'ap': {
+      var apApp   = cmd.app;
+      var apLabel = cmd.label ? String(cmd.label).toLowerCase() : null;
+      var apRole  = cmd.role  ? String(cmd.role)  : null;
+      var apProc  = SE.processes.byName(apApp);
+      var apCount = 0;
+
+      var pressEl = function(el, depth) {
+        if (depth > 8 || apCount > 400) return false;
+        apCount++;
+        try {
+          var r   = '';  try { r   = el.role();        } catch(er) {}
+          var lbl = '';  try { lbl = el.title() || ''; } catch(er) {}
+          if (!lbl)      { try { lbl = el.description() || ''; } catch(er) {} }
+
+          var rMatch = !apRole  || r === apRole;
+          var lMatch = apLabel  ? (lbl.toLowerCase().indexOf(apLabel) !== -1) : false;
+
+          if (rMatch && lMatch) {
+            // Try AXPress first (standard button/link action)
+            try { el.actions.byName('AXPress').perform(); return true; } catch(er) {}
+            // Fallback: use first available AX action (AXDefaultAction, AXOpen, etc.)
+            try {
+              var acts = el.actions();
+              if (acts.length > 0) { acts[0].perform(); return true; }
+            } catch(er) {}
+          }
+
+          // Recurse into children
+          try {
+            var ch = el.uiElements();
+            for (var ci = 0; ci < ch.length; ci++) {
+              if (pressEl(ch[ci], depth + 1)) return true;
+            }
+          } catch(er) {}
+        } catch(er) {}
+        return false;
+      };
+
+      var apFound = false;
+      try {
+        var apWins = apProc.windows();
+        for (var aw = 0; aw < apWins.length && !apFound; aw++) {
+          apFound = pressEl(apWins[aw], 0);
+        }
+        // Also try menu bar items if not found in windows
+        if (!apFound) {
+          try {
+            var mb = apProc.menuBars();
+            for (var am = 0; am < mb.length && !apFound; am++) {
+              apFound = pressEl(mb[am], 0);
+            }
+          } catch(er) {}
+        }
+      } catch(er) {}
+
+      if (!apFound) {
+        throw new Error('ax_press: element "' + (cmd.label||'') + '" not found in ' + apApp +
+          ' (searched ' + apCount + ' elements)');
+      }
+      return 'ok';
+    }
+
     default:
       throw new Error('Unknown action: ' + cmd.a);
   }
@@ -461,6 +529,18 @@ export class MacOSDriver implements IOSDriver {
 
   async getFrontApp(): Promise<string> {
     return (await this.send({ a: "fa" })) as string;
+  }
+
+  /**
+   * Activate a UI element by label via the macOS Accessibility API.
+   * Walks the AX tree of `appName`, finds the element whose title/description
+   * contains `elementLabel` (case-insensitive), and fires AXPress on it.
+   *
+   * No coordinates needed — reliable across Retina displays, window moves,
+   * and DPI scaling. ~5-30ms (persistent worker, no spawn overhead).
+   */
+  async axPress(appName: string, elementLabel: string, role?: string): Promise<void> {
+    await this.send({ a: "ap", app: appName, label: elementLabel, role });
   }
 
   async sleep(ms: number): Promise<void> {

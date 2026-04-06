@@ -424,15 +424,19 @@ function renumberRefs(elements: ScreenElement[], nextRef: () => number): void {
 
 /**
  * Wait for a specific element to appear on screen.
- * Polls every `intervalMs` until an element matching the criteria is found
- * or `timeoutMs` is exceeded.
+ *
+ * Uses exponential backoff polling (50ms → 100ms → 200ms → 400ms → 800ms → 1000ms cap)
+ * instead of a fixed interval. Most UI transitions complete in < 200ms — the old
+ * fixed 500ms interval wasted ~400ms per wait on average.
+ *
+ * @param timeoutMs  Total time to wait before returning null (default 10s)
  */
 export async function waitForElement(
   criteria: { text?: string; role?: string; app?: string },
   timeoutMs = 10_000,
-  intervalMs = 500,
 ): Promise<ScreenElement | null> {
   const deadline = Date.now() + timeoutMs;
+  let interval = 50; // Start fast — most UI transitions are < 200ms
 
   while (Date.now() < deadline) {
     try {
@@ -442,7 +446,12 @@ export async function waitForElement(
     } catch {
       // AX read failed — retry
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(interval, remaining)),
+    );
+    interval = Math.min(interval * 2, 1_000); // Double each poll, cap at 1s
   }
   return null;
 }

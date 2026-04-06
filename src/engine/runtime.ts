@@ -96,6 +96,12 @@ export interface EngineContext {
   pelletSearch?: import("../pellets/search.js").PelletSearch;
   /** Diagnostic engine for multi-hypothesis error analysis */
   diagnosticEngine?: DiagnosticEngine;
+  /**
+   * Name of the active delivery channel (e.g. "telegram", "cli", "web").
+   * Injected into the system prompt so the LLM knows which channel it is
+   * operating in and can give accurate advice when channel-specific operations fail.
+   */
+  channelName?: string;
 }
 
 export interface PendingCapabilityGap {
@@ -355,7 +361,7 @@ export class OwlEngine {
       context;
     const toolsUsed: string[] = [];
     const gapDetector = new GapDetector();
-    const MAX_TOOL_ITERATIONS =
+    let MAX_TOOL_ITERATIONS =
       config.engine?.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
 
     // Track if a missing-tool gap was encountered during the ReAct loop
@@ -416,6 +422,7 @@ export class OwlEngine {
       context.innerLife,
       innerMonologue,
       context.pelletSearch,
+      context.channelName,
     );
 
     // Append DNA-driven style directive from DNADecisionLayer
@@ -599,6 +606,12 @@ ${userMessage}
       userMessage: enableRouting ? userMessage : undefined,
     });
 
+    // Boost iteration limit for automation sessions — computer_use is sequential
+    // by nature (analyze → act → analyze → act …) and routinely needs 20-40 steps.
+    if (tools?.some((t) => t.name === "computer_use")) {
+      MAX_TOOL_ITERATIONS = Math.max(MAX_TOOL_ITERATIONS, 40);
+    }
+
     if (tools && tools.length > 0) {
       // Per-tool consecutive failure tracker for this ReAct session
       const toolFailStreak: Record<string, number> = {};
@@ -618,6 +631,11 @@ ${userMessage}
       const recentToolNames: string[] = [];
       const TOOL_WINDOW_SIZE = 12;
       const TOOL_WINDOW_MAX_REPEATS = 6;
+
+      // Tools that are legitimately called many times in sequence — exempt from
+      // the sliding-window check. computer_use is inherently sequential:
+      // analyze → click → analyze → type → analyze → … is normal automation.
+      const SEQUENTIAL_USE_TOOLS = new Set(["computer_use", "web_crawl"]);
 
       // ReAct loop with tools — use streaming when available
       log.engine.llmRequest(optimalModel, messages);
@@ -715,7 +733,7 @@ ${userMessage}
           const repeatCount = recentToolNames.filter(
             (n) => n === toolCall.name,
           ).length;
-          if (repeatCount > TOOL_WINDOW_MAX_REPEATS) {
+          if (repeatCount > TOOL_WINDOW_MAX_REPEATS && !SEQUENTIAL_USE_TOOLS.has(toolCall.name)) {
             log.engine.warn(
               `Sliding-window loop detected: "${toolCall.name}" called ${repeatCount}x in last ${recentToolNames.length} calls — forcing stop`,
             );
@@ -1417,6 +1435,7 @@ ${userMessage}
     innerLife?: OwlInnerLife,
     innerMonologue?: InnerMonologue,
     pelletSearch?: import("../pellets/search.js").PelletSearch,
+    channelName?: string,
   ): Promise<string> {
     const { persona, dna } = owl;
 
@@ -1425,7 +1444,11 @@ ${userMessage}
 
     prompt += "## Host Environment\n";
     prompt += `- OS Platform: ${process.platform}\n`;
-    prompt += `- OS Architecture: ${process.arch}\n\n`;
+    prompt += `- OS Architecture: ${process.arch}\n`;
+    if (channelName) {
+      prompt += `- Active channel: ${channelName}\n`;
+    }
+    prompt += "\n";
 
     // DNA behavioral directives — concrete instructions, not just labels
     prompt += "## Behavioral Directives (from your evolved DNA)\n\n";

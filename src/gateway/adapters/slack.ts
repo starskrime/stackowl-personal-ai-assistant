@@ -237,9 +237,16 @@ export class SlackAdapter implements ChannelAdapter {
                   title: caption ?? basename(filePath),
                 });
               } catch (err) {
-                log.slack.warn(
-                  `File upload failed: ${err instanceof Error ? err.message : err}`,
-                );
+                const raw = err instanceof Error ? err.message : String(err);
+                log.slack.warn(`File upload failed: ${raw}`);
+                if (raw.includes("invalid_auth") || raw.includes("token_revoked") || raw.includes("401")) {
+                  throw new Error(
+                    `Slack API error: bot token is invalid or revoked. ` +
+                    `The user is already connected via Slack — no reinstall needed. ` +
+                    `Update 'slack.botToken' in stackowl.config.json with a fresh token from your Slack app settings.`,
+                  );
+                }
+                throw new Error(`Slack file upload failed: ${raw}`);
               }
             },
             askInstall: async (deps: string[]) => {

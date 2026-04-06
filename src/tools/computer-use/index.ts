@@ -50,6 +50,7 @@ import {
 import { diffScreenStates } from "./screen-diff.js";
 import { RecipeStore } from "./recipes.js";
 import { ActionPlanner } from "./planner.js";
+import { BrowserBridge } from "./browser/cdp.js";
 import type { ScreenState } from "./screen-reader.js";
 
 export {
@@ -61,6 +62,7 @@ export { readScreenRegion, waitForElement } from "./screen-reader.js";
 export { diffScreenStates } from "./screen-diff.js";
 export { RecipeStore } from "./recipes.js";
 export { ActionPlanner } from "./planner.js";
+export { BrowserBridge } from "./browser/cdp.js";
 export type { ScreenState, ScreenElement } from "./screen-reader.js";
 export type { ScreenDiff } from "./screen-diff.js";
 export type { Recipe, RecipeStep } from "./recipes.js";
@@ -92,19 +94,22 @@ export const ComputerUseTool: ToolImplementation = {
         action: {
           type: "string",
           description:
-            "Action to perform. One of: " +
+            "Action to perform. Desktop: " +
             "screenshot, analyze_screen, analyze_region, screen_diff, " +
-            "click, double_click, right_click, " +
+            "click, double_click, right_click, ax_click, " +
             "move, move_smooth, drag, scroll, " +
             "type, key, hotkey, " +
             "open_app, open_url, front_app, " +
             "find_elements, wait_for_element, cursor_position, screen_size, wait, " +
             "plan_and_execute, list_recipes. " +
-            "PREFER analyze_screen over screenshot — it returns a text description of everything " +
-            "on screen (buttons, text fields, links with click coordinates) without needing vision. " +
-            "Use plan_and_execute for complex multi-step tasks (opens app, navigates, fills forms, etc.). " +
-            "Use screen_diff after an action to see what changed. " +
-            "Use wait_for_element when you need to wait for a page/dialog to load.",
+            "Browser/CDP (for Chrome/Safari/Firefox tasks): " +
+            "browser_connect, browser_launch, browser_click, browser_type, " +
+            "browser_navigate, browser_get_dom, browser_eval, browser_screenshot, browser_disconnect. " +
+            "ROUTING GUIDE: " +
+            "- In a web browser? Use browser_* actions (DOM-based, 10x faster/reliable vs AX tree). " +
+            "- Know the button/link label? Use ax_click (no coordinate drift, works despite DPI/scaling). " +
+            "- Native desktop app? Use analyze_screen → click/type (AX tree grounding). " +
+            "- Multi-step workflow? Use plan_and_execute.",
         },
         x: {
           type: "number",
@@ -163,7 +168,25 @@ export const ComputerUseTool: ToolImplementation = {
         role: {
           type: "string",
           description:
-            "UI element role filter for find_elements/wait_for_element (e.g., AXButton, AXTextField, AXLink)",
+            "UI element role filter for find_elements/wait_for_element (e.g., AXButton, AXTextField, AXLink). " +
+            "Also used by ax_click to narrow the AX tree search.",
+        },
+        selector: {
+          type: "string",
+          description:
+            "CSS selector for browser_* actions (e.g., '#submit-btn', 'input[name=q]', 'button.primary'). " +
+            "Used by browser_click and browser_type. If omitted, browser_click falls back to text matching.",
+        },
+        port: {
+          type: "number",
+          description:
+            "CDP port for browser_connect (default 9222). Chrome must be running with --remote-debugging-port=<port>.",
+        },
+        script: {
+          type: "string",
+          description:
+            "JavaScript expression for browser_eval, evaluated in the page context. " +
+            "Return value must be JSON-serializable. Example: 'document.title'",
         },
         human_like: {
           type: "boolean",
@@ -619,16 +642,121 @@ export const ComputerUseTool: ToolImplementation = {
           return `Paused ${ms}ms (${complexity})`;
         }
 
+        // ── AX Direct Press ──────────────────────────────────────────
+        // Activates a UI element by label via the accessibility API.
+        // No coordinates needed — immune to DPI/Retina drift, window movement.
+        // PREFER this over click when you know the element's visible label.
+        case "ax_click": {
+          const appName = args.app_name as string | undefined;
+          const label = args.text as string | undefined;
+          const role = args.role as string | undefined;
+
+          if (!label) return "Error: ax_click requires text parameter (element label to find).";
+          if (!appName) return "Error: ax_click requires app_name parameter (e.g., 'Safari', 'Finder').";
+
+          const driver = await DriverManager.getInstance().getDriver();
+          if (!driver.axPress) {
+            // Driver doesn't support AX press — fall back to coordinate-based click
+            // via analyze_screen to locate the element first
+            return (
+              "ax_click not supported on this platform. " +
+              "Use analyze_screen to find coordinates, then click(x, y)."
+            );
+          }
+
+          await driver.axPress(appName, label, role);
+          return `AX-pressed: "${label}" in ${appName}${role ? ` (role: ${role})` : ""}`;
+        }
+
+        // ── Browser / CDP Actions ─────────────────────────────────────
+        // Use these when the front app is a web browser.
+        // They talk directly to the browser DOM via CDP — no AX tree,
+        // no screenshots needed. Much faster and more reliable for web.
+
+        case "browser_connect": {
+          const port = (args.port as number) || 9222;
+          await BrowserBridge.getInstance().connect(port);
+          return (
+            `Connected to Chrome via CDP on port ${port}.\n` +
+            `Use browser_get_dom to see the current page, browser_click/browser_type to interact.`
+          );
+        }
+
+        case "browser_launch": {
+          const url = args.text as string | undefined;
+          await BrowserBridge.getInstance().launch(url, false);
+          return (
+            `Launched Chromium${url ? ` and navigated to: ${url}` : " (blank page)"}.\n` +
+            `Use browser_get_dom to see the page, browser_click/browser_type to interact.\n` +
+            `Use browser_navigate to go to a URL.`
+          );
+        }
+
+        case "browser_disconnect": {
+          await BrowserBridge.getInstance().disconnect();
+          return "Browser CDP connection closed.";
+        }
+
+        case "browser_navigate": {
+          const url = args.text as string;
+          if (!url) return "Error: browser_navigate requires text parameter with URL.";
+          const nav = await BrowserBridge.getInstance().navigate(url);
+          return `Navigated to: ${nav.url}\nPage title: ${nav.title}`;
+        }
+
+        case "browser_get_dom": {
+          // Returns structured text snapshot of the current web page.
+          // Equivalent to analyze_screen for web content — buttons, links, inputs, headings.
+          const text = await BrowserBridge.getInstance().getPageText();
+          return text;
+        }
+
+        case "browser_click": {
+          const selector = args.selector as string | undefined;
+          const text = args.text as string | undefined;
+          if (!selector && !text) {
+            return "Error: browser_click requires selector (CSS) or text (visible text) parameter.";
+          }
+          await BrowserBridge.getInstance().click(selector, text);
+          return `Browser clicked: ${selector ? `selector "${selector}"` : `text "${text}"`}`;
+        }
+
+        case "browser_type": {
+          const selector = args.selector as string;
+          const text = args.text as string;
+          if (!selector) return "Error: browser_type requires selector parameter.";
+          if (text == null) return "Error: browser_type requires text parameter.";
+          await BrowserBridge.getInstance().fill(selector, text);
+          return `Browser typed into "${selector}": "${text.length > 60 ? text.slice(0, 60) + "..." : text}"`;
+        }
+
+        case "browser_eval": {
+          const script = args.script as string;
+          if (!script) return "Error: browser_eval requires script parameter.";
+          const result = await BrowserBridge.getInstance().evaluate(script);
+          return `Result: ${JSON.stringify(result, null, 2)}`;
+        }
+
+        case "browser_screenshot": {
+          const cwd = context.cwd || process.cwd();
+          const outDir = resolve(cwd, "screenshots");
+          const outPath = join(outDir, `browser_${Date.now()}.png`);
+          await BrowserBridge.getInstance().screenshot(outPath);
+          return `Browser screenshot saved: ${outPath}\nUse send_file to deliver to user.`;
+        }
+
         default:
           return (
             `Unknown action: "${action}". Available actions:\n` +
-            `  Mouse: click, double_click, right_click, move, move_smooth, drag, scroll\n` +
-            `  Keyboard: type, key, hotkey\n` +
-            `  Apps: open_app, open_url, front_app\n` +
-            `  Screen: screenshot, analyze_screen, analyze_region, screen_diff\n` +
-            `  Elements: find_elements, wait_for_element, cursor_position, screen_size\n` +
-            `  Automation: plan_and_execute, list_recipes\n` +
-            `  Utility: wait`
+            `  Desktop mouse: click, double_click, right_click, ax_click, move, move_smooth, drag, scroll\n` +
+            `  Desktop keyboard: type, key, hotkey\n` +
+            `  Desktop apps: open_app, open_url, front_app\n` +
+            `  Desktop screen: screenshot, analyze_screen, analyze_region, screen_diff\n` +
+            `  Desktop elements: find_elements, wait_for_element, cursor_position, screen_size\n` +
+            `  Desktop automation: plan_and_execute, list_recipes\n` +
+            `  Browser (CDP): browser_connect, browser_launch, browser_navigate, browser_get_dom,\n` +
+            `                  browser_click, browser_type, browser_eval, browser_screenshot, browser_disconnect\n` +
+            `  Utility: wait, think_pause`
           );
       }
     } catch (error) {

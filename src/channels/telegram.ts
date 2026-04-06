@@ -419,6 +419,7 @@ export class TelegramChannel {
         toolRegistry: this.config.toolRegistry,
         capabilityLedger: this.config.capabilityLedger,
         cwd: this.config.cwd,
+        channelName: "telegram",
         attemptLog,
         onProgress: async (msg: string) => {
           try {
@@ -445,16 +446,28 @@ export class TelegramChannel {
             ".webp",
           ]);
           const ext = extname(filePath).toLowerCase();
-          if (IMAGE_EXTS.has(ext)) {
-            await ctx.replyWithPhoto(
-              new InputFile(filePath),
-              caption ? { caption } : {},
-            );
-          } else {
-            await ctx.replyWithDocument(
-              new InputFile(filePath),
-              caption ? { caption } : {},
-            );
+          try {
+            if (IMAGE_EXTS.has(ext)) {
+              await ctx.replyWithPhoto(
+                new InputFile(filePath),
+                caption ? { caption } : {},
+              );
+            } else {
+              await ctx.replyWithDocument(
+                new InputFile(filePath),
+                caption ? { caption } : {},
+              );
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("401") || msg.toLowerCase().includes("unauthorized")) {
+              throw new Error(
+                `Telegram API error: bot token is invalid or has been revoked. ` +
+                `The user is already connected via Telegram — no new bot is needed. ` +
+                `Ask them to generate a fresh token from @BotFather and update 'telegram.botToken' in stackowl.config.json.`,
+              );
+            }
+            throw new Error(`Telegram file send failed: ${msg}`);
           }
         },
       });

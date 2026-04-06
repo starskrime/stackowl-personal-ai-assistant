@@ -6,7 +6,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "../../tools/registry.js";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 export class SessionsListTool implements ToolImplementation {
@@ -111,11 +111,27 @@ Examples:
     }
 
     try {
-      const sessionPath = join(
-        this.workspacePath,
-        "sessions",
-        `${sessionKey}.json`,
-      );
+      const sessionsDir = join(this.workspacePath, "sessions");
+      let resolvedKey = sessionKey;
+
+      // "main", "latest", "current" → resolve to most recently modified session
+      if (["main", "latest", "current"].includes(sessionKey.toLowerCase())) {
+        const files = await readdir(sessionsDir).catch(() => [] as string[]);
+        const jsonFiles = files.filter((f) => f.endsWith(".json"));
+        if (jsonFiles.length === 0) {
+          return JSON.stringify({ error: `No sessions found in ${sessionsDir}` });
+        }
+        const withMtime = await Promise.all(
+          jsonFiles.map(async (f) => {
+            const s = await stat(join(sessionsDir, f)).catch(() => null);
+            return { f, mtime: s?.mtimeMs ?? 0 };
+          }),
+        );
+        withMtime.sort((a, b) => b.mtime - a.mtime);
+        resolvedKey = withMtime[0].f.replace(/\.json$/, "");
+      }
+
+      const sessionPath = join(sessionsDir, `${resolvedKey}.json`);
       const content = await readFile(sessionPath, "utf-8");
       const session = JSON.parse(content);
 
@@ -126,7 +142,7 @@ Examples:
           content: m.content?.slice(0, 500) || "",
         }));
 
-      return JSON.stringify({ sessionKey, messages }, null, 2);
+      return JSON.stringify({ sessionKey: resolvedKey, messages }, null, 2);
     } catch (error) {
       return JSON.stringify({ error: `Session not found: ${String(error)}` });
     }

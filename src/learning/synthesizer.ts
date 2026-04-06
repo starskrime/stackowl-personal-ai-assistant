@@ -53,10 +53,13 @@ const WEB_RESEARCH_MAX_URLS = 2;
  */
 const MAX_LLM_CALLS_PER_CYCLE = 4;
 
+/** Per-call LLM budget — isolated per synthesize() invocation to prevent race conditions. */
+interface LlmBudget {
+  count: number;
+}
+
 export class KnowledgeSynthesizer {
   private graphManager: KnowledgeGraphManager;
-  /** LLM call counter — reset at the start of each synthesize() call */
-  private llmCallCount = 0;
 
   constructor(
     private provider: ModelProvider,
@@ -70,18 +73,19 @@ export class KnowledgeSynthesizer {
 
   /** Budget-guarded LLM call. Throws if budget exhausted. */
   private async budgetedChat(
+    budget: LlmBudget,
     messages: Parameters<ModelProvider["chat"]>[0],
     model?: string,
     options?: Parameters<ModelProvider["chat"]>[2],
   ): ReturnType<ModelProvider["chat"]> {
-    if (this.llmCallCount >= MAX_LLM_CALLS_PER_CYCLE) {
+    if (budget.count >= MAX_LLM_CALLS_PER_CYCLE) {
       throw new Error(
         `LLM budget exhausted (${MAX_LLM_CALLS_PER_CYCLE} calls). Stopping synthesis to prevent token burn.`,
       );
     }
-    this.llmCallCount++;
+    budget.count++;
     log.evolution.info(
-      `[Synthesizer] LLM call ${this.llmCallCount}/${MAX_LLM_CALLS_PER_CYCLE}`,
+      `[Synthesizer] LLM call ${budget.count}/${MAX_LLM_CALLS_PER_CYCLE}`,
     );
     return this.provider.chat(messages, model, options);
   }
@@ -91,7 +95,7 @@ export class KnowledgeSynthesizer {
     context?: SynthesisContext["recentMessages"],
   ): Promise<SynthesisReport> {
     const startTime = Date.now();
-    this.llmCallCount = 0; // Reset budget for this cycle
+    const budget: LlmBudget = { count: 0 }; // Per-call budget — isolated from concurrent invocations
     await this.graphManager.load();
 
     const report: SynthesisReport = {
@@ -116,7 +120,7 @@ export class KnowledgeSynthesizer {
         const result = await this.synthesizeSingle({
           topic,
           recentMessages: context,
-        });
+        }, budget);
         if (result.success) {
           report.successful++;
           report.pelletsCreated += result.pellets.length;
@@ -158,17 +162,17 @@ export class KnowledgeSynthesizer {
     return report;
   }
 
-  async synthesizeSingle(ctx: SynthesisContext): Promise<SynthesisResult> {
+  async synthesizeSingle(ctx: SynthesisContext, budget: LlmBudget): Promise<SynthesisResult> {
     const startTime = Date.now();
     const { topic } = ctx;
     let result: SynthesisResult;
 
     switch (topic.synthesisStrategy) {
       case "deep_research":
-        result = await this.runDeepResearch(topic);
+        result = await this.runDeepResearch(topic, budget);
         break;
       case "web_research":
-        result = await this.runWebResearch(topic);
+        result = await this.runWebResearch(topic, budget);
         break;
       case "document_digest":
         result = await this.runDocumentDigest(topic);
@@ -177,30 +181,31 @@ export class KnowledgeSynthesizer {
         result = await this.runRepoAnalysis(topic);
         break;
       case "q_and_a":
-        result = await this.runQAndA(topic);
+        result = await this.runQAndA(topic, budget);
         break;
       case "quick_lookup":
-        result = await this.runQuickLookup(topic);
+        result = await this.runQuickLookup(topic, budget);
         break;
       default:
-        result = await this.runQAndA(topic);
+        result = await this.runQAndA(topic, budget);
     }
 
     result.durationMs = Date.now() - startTime;
     return result;
   }
 
-  private async runQAndA(topic: FusedTopic): Promise<SynthesisResult> {
+  private async runQAndA(topic: FusedTopic, budget: LlmBudget): Promise<SynthesisResult> {
     const pellets: Pellet[] = [];
     const allRelatedTopics: string[] = [];
     await this.ensureCapacity(EVICT_COUNT);
-    const questions = await this.generateQuestions(topic);
+    const questions = await this.generateQuestions(topic, budget);
 
     for (const question of questions.slice(0, Q_AND_A_QUESTIONS)) {
       try {
         const { pellet, relatedTopics } = await this.answerAndStore(
           topic,
           question,
+          budget,
         );
         pellets.push(pellet);
         allRelatedTopics.push(...relatedTopics);
@@ -222,12 +227,12 @@ export class KnowledgeSynthesizer {
     };
   }
 
-  private async generateQuestions(topic: FusedTopic): Promise<string[]> {
+  private async generateQuestions(topic: FusedTopic, budget: LlmBudget): Promise<string[]> {
     const context = topic.originalSignals.join("; ");
     const prompt = `Generate ${Q_AND_A_QUESTIONS} targeted questions about "${topic.displayName}".\n\nContext: ${context || "No prior context."}\n\nRules: Focus on HOW to do it. Be specific. Return ONLY a JSON array of strings.`;
 
     try {
-      const response = await this.budgetedChat([
+      const response = await this.budgetedChat(budget, [
         {
           role: "system",
           content:
@@ -253,9 +258,11 @@ export class KnowledgeSynthesizer {
   private async answerAndStore(
     topic: FusedTopic,
     question: string,
+    budget: LlmBudget,
   ): Promise<{ pellet: Pellet; relatedTopics: string[] }> {
     const prompt = `Question: "${question}"\n\nWrite a concise knowledge card (max 150 words).\n\n**Answer:**\n**How to do it:**\n**Example:**\n\nEnd with: RELATED_JSON: ["topic1", "topic2", "topic3"]`;
     const response = await this.budgetedChat(
+      budget,
       [
         {
           role: "system",
@@ -276,13 +283,13 @@ export class KnowledgeSynthesizer {
     return { pellet, relatedTopics };
   }
 
-  private async runWebResearch(topic: FusedTopic): Promise<SynthesisResult> {
+  private async runWebResearch(topic: FusedTopic, budget: LlmBudget): Promise<SynthesisResult> {
     const pellets: Pellet[] = [];
     const sources: string[] = [];
     await this.ensureCapacity(EVICT_COUNT * 2);
     const urls = await this.findRelevantUrls(topic);
 
-    if (urls.length === 0) return this.runQAndA(topic);
+    if (urls.length === 0) return this.runQAndA(topic, budget);
 
     for (const url of urls.slice(0, WEB_RESEARCH_MAX_URLS)) {
       try {
@@ -292,6 +299,7 @@ export class KnowledgeSynthesizer {
             topic,
             content,
             url,
+            budget,
           );
           pellets.push(...extractedPellets);
           sources.push(url);
@@ -392,11 +400,12 @@ export class KnowledgeSynthesizer {
     topic: FusedTopic,
     content: string,
     source: string,
+    budget: LlmBudget,
   ): Promise<Pellet[]> {
     const pellets: Pellet[] = [];
     const prompt = `Based on this content from ${source}, extract 2-3 key points about "${topic.displayName}". Return a JSON array of objects with "key_point" and "how_to".`;
     try {
-      const response = await this.budgetedChat([
+      const response = await this.budgetedChat(budget, [
         {
           role: "system",
           content: "You are a knowledge extraction assistant.",
@@ -517,10 +526,10 @@ export class KnowledgeSynthesizer {
     };
   }
 
-  private async runQuickLookup(topic: FusedTopic): Promise<SynthesisResult> {
+  private async runQuickLookup(topic: FusedTopic, budget: LlmBudget): Promise<SynthesisResult> {
     const prompt = `Give ONE sentence answer about "${topic.displayName}". Be practical. Return ONLY the sentence.`;
     try {
-      const response = await this.budgetedChat([
+      const response = await this.budgetedChat(budget, [
         { role: "system", content: "Be concise. One sentence only." },
         { role: "user", content: prompt },
       ]);
@@ -563,9 +572,9 @@ export class KnowledgeSynthesizer {
    * Now just delegates to Q&A (2 LLM calls: 1 question-gen + 1 answer).
    * This prevents the 300-500 call token burn from nested loops.
    */
-  private async runDeepResearch(topic: FusedTopic): Promise<SynthesisResult> {
+  private async runDeepResearch(topic: FusedTopic, budget: LlmBudget): Promise<SynthesisResult> {
     log.evolution.info(`[Synthesizer] Deep research (capped): ${topic.displayName}`);
-    const result = await this.runQAndA(topic);
+    const result = await this.runQAndA(topic, budget);
     result.pipeline = "deep_research";
     return result;
   }
