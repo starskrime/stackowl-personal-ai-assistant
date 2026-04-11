@@ -149,6 +149,47 @@ export class SlackAdapter implements ChannelAdapter {
     log.slack.info("Slack adapter stopped.");
   }
 
+  async deliverFile(userId: string, filePath: string, caption?: string): Promise<void> {
+    // userId for Slack is the user ID — open a DM channel to deliver the file
+    try {
+      // Try to find an active channel for this user; fallback to DM
+      let channelId: string | undefined;
+      for (const ch of this.activeChannels) {
+        // activeChannels may include DM channels starting with 'D'
+        if (ch.startsWith("D")) {
+          channelId = ch;
+          break;
+        }
+      }
+
+      if (!channelId) {
+        // Open a DM with the user
+        const dm = await this.app.client.conversations.open({ users: userId });
+        channelId = dm.channel?.id;
+      }
+
+      if (!channelId) {
+        log.slack.warn(`deliverFile: could not resolve channel for user ${userId}`);
+        return;
+      }
+
+      await this.app.client.files.uploadV2({
+        channel_id: channelId,
+        file: createReadStream(filePath),
+        filename: basename(filePath),
+        title: caption ?? basename(filePath),
+      });
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      if (raw.includes("invalid_auth") || raw.includes("token_revoked")) {
+        throw new Error(
+          `Slack bot token is invalid or revoked. Update 'slack.botToken' in stackowl.config.json.`,
+        );
+      }
+      throw new Error(`Slack file delivery failed: ${raw}`);
+    }
+  }
+
   // ─── Bot handlers ─────────────────────────────────────────────
 
   private setupHandlers(): void {
@@ -226,28 +267,6 @@ export class SlackAdapter implements ChannelAdapter {
           {
             onProgress: async (progressMsg: string) => {
               streamCtx.pushToolStatus(progressMsg);
-            },
-            onFile: async (filePath: string, caption?: string) => {
-              try {
-                await client.files.uploadV2({
-                  channel_id: msg.channel,
-                  thread_ts: threadTs,
-                  file: createReadStream(filePath),
-                  filename: basename(filePath),
-                  title: caption ?? basename(filePath),
-                });
-              } catch (err) {
-                const raw = err instanceof Error ? err.message : String(err);
-                log.slack.warn(`File upload failed: ${raw}`);
-                if (raw.includes("invalid_auth") || raw.includes("token_revoked") || raw.includes("401")) {
-                  throw new Error(
-                    `Slack API error: bot token is invalid or revoked. ` +
-                    `The user is already connected via Slack — no reinstall needed. ` +
-                    `Update 'slack.botToken' in stackowl.config.json with a fresh token from your Slack app settings.`,
-                  );
-                }
-                throw new Error(`Slack file upload failed: ${raw}`);
-              }
             },
             askInstall: async (deps: string[]) => {
               await say({

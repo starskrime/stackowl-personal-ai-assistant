@@ -20,6 +20,7 @@ import { PelletGenerator } from "../pellets/generator.js";
 import type { PelletStore } from "../pellets/store.js";
 import { assignPerspectives, buildPerspectivePrompt } from "./perspectives.js";
 import type { PerspectiveOverlay } from "./perspectives.js";
+import type { MemoryDatabase } from "../memory/db.js";
 import { log } from "../logger.js";
 
 export class ParliamentOrchestrator {
@@ -29,17 +30,20 @@ export class ParliamentOrchestrator {
   private pelletGenerator: PelletGenerator;
   private pelletStore: PelletStore;
   private toolRegistry?: ToolRegistry;
+  private db?: MemoryDatabase;
 
   constructor(
     provider: ModelProvider,
     config: StackOwlConfig,
     pelletStore: PelletStore,
     toolRegistry?: ToolRegistry,
+    db?: MemoryDatabase,
   ) {
     this.provider = provider;
     this.config = config;
     this.pelletStore = pelletStore;
     this.toolRegistry = toolRegistry;
+    this.db = db;
     this.engine = new OwlEngine();
     this.pelletGenerator = new PelletGenerator();
   }
@@ -73,6 +77,30 @@ export class ParliamentOrchestrator {
       `[Parliament] Convened: "${config.topic}" with ${config.participants.length} owls`,
     );
 
+    // Pre-load cross-owl learnings related to this topic (Phase 6)
+    // Injects shared knowledge from previous Parliament sessions and remember() calls.
+    if (this.db) {
+      try {
+        const learnings = this.db.owlLearnings.search(config.topic, 5);
+        if (learnings.length > 0) {
+          const knowledgeBlock =
+            "\n[Pre-loaded cross-owl knowledge on this topic]:\n" +
+            learnings.map((l) => `  - ${l.learning} (from ${l.owlName})`).join("\n") +
+            "\n";
+          // Inject into context messages so all owls see it
+          session.config.contextMessages = [
+            ...session.config.contextMessages,
+            { role: "system" as const, content: knowledgeBlock },
+          ];
+          log.engine.info(
+            `[Parliament] Injected ${learnings.length} cross-owl learnings for "${config.topic}"`,
+          );
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     try {
       await this.runRound1(session, perspectives, cb);
       await this.runRound2(session, perspectives, cb);
@@ -99,6 +127,22 @@ export class ParliamentOrchestrator {
         log.engine.error(
           `[Parliament] Failed to generate pellet: ${pelletError}`,
         );
+      }
+
+      // Write debate outcomes to owl_learnings for each participant (Phase 6)
+      // Enables knowledge sharing: what was debated gets searchable by any owl.
+      if (this.db && session.synthesis) {
+        try {
+          const insight = `Parliament on "${config.topic}" (verdict: ${session.verdict ?? "n/a"}): ${session.synthesis.slice(0, 200)}`;
+          for (const owl of config.participants) {
+            this.db.owlLearnings.add(owl.persona.name, insight, "insight", session.id, 0.8);
+          }
+          log.engine.info(
+            `[Parliament] Wrote debate outcome to owl_learnings for ${config.participants.length} owls`,
+          );
+        } catch {
+          // Non-fatal
+        }
       }
 
       return session;

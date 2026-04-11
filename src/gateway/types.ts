@@ -39,8 +39,6 @@ export interface GatewayMessage {
 export interface GatewayCallbacks {
   /** Called with intermediate progress updates (typing indicators, tool status) */
   onProgress?: (text: string) => Promise<void>;
-  /** Called when the engine wants to send a file/image to the user */
-  onFile?: (filePath: string, caption?: string) => Promise<void>;
   /** Called when tool synthesis needs npm deps — adapter decides how to prompt user */
   askInstall?: (deps: string[]) => Promise<boolean>;
   /**
@@ -106,6 +104,12 @@ export interface ChannelAdapter {
 
   /** Graceful shutdown. */
   stop(): void;
+
+  /**
+   * Called by the gateway to deliver a file to a specific user.
+   * Adapters that don't support file delivery can omit this.
+   */
+  deliverFile?(userId: string, filePath: string, caption?: string): Promise<void>;
 }
 
 // ─── Gateway Context ─────────────────────────────────────────────
@@ -171,6 +175,9 @@ import type { FactStore } from "../memory/fact-store.js";
 import type { FactExtractor } from "../memory/fact-extractor.js";
 import type { MemoryRetriever } from "../memory/memory-retriever.js";
 import type { MemoryFeedback } from "../memory/memory-feedback.js";
+import type { FeedbackStore } from "../feedback/store.js";
+import type { ConversationDigestManager } from "../memory/conversation-digest.js";
+import type { MemoryDatabase } from "../memory/db.js";
 
 export interface GatewayContext {
   provider: ModelProvider;
@@ -227,6 +234,9 @@ export interface GatewayContext {
   memoryRetriever?: MemoryRetriever;
   memoryFeedback?: MemoryFeedback;
 
+  // ─── Response Feedback (👍/👎) ────────────────────────────────
+  feedbackStore?: FeedbackStore;
+
   // ─── Architecture Improvements ─────────────────────────────
   eventBus?: EventBus;
   taskQueue?: TaskQueue;
@@ -265,4 +275,13 @@ export interface GatewayContext {
   episodicMemory?: EpisodicMemory;
   goalGraph?: GoalGraph;
   proactiveLoop?: ProactiveIntentionLoop;
+
+  // ─── L1 Working Memory (Conversation Digest) ────────────────
+  digestManager?: ConversationDigestManager;
+
+  // ─── SQLite Memory Database (replaces all JSON file stores) ──
+  db?: MemoryDatabase;
+
+  // ─── Message Compressor (Phase 2 — batch summarization) ──────
+  compressor?: import("../memory/compressor.js").MessageCompressor;
 }

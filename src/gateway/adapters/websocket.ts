@@ -107,6 +107,14 @@ export class WebSocketAdapter implements ChannelAdapter {
     log.engine.info("[WS] WebSocket adapter stopped");
   }
 
+  async deliverFile(userId: string, filePath: string, caption?: string): Promise<void> {
+    for (const [ws, uid] of this.clients) {
+      if (uid === userId && ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: "file", path: filePath, caption }));
+      }
+    }
+  }
+
   private async handleMessage(
     ws: WebSocket,
     userId: string,
@@ -133,11 +141,6 @@ export class WebSocketAdapter implements ChannelAdapter {
         onStreamEvent: async (event: StreamEvent) => {
           if (ws.readyState === ws.OPEN) {
             ws.send(JSON.stringify({ type: "stream", event }));
-          }
-        },
-        onFile: async (filePath: string, caption?: string) => {
-          if (ws.readyState === ws.OPEN) {
-            ws.send(JSON.stringify({ type: "file", path: filePath, caption }));
           }
         },
       },

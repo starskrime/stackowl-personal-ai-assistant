@@ -100,11 +100,22 @@ export class LearningOrchestrator {
     workspacePath: string,
     providerRegistry?: ProviderRegistry,
   ) {
+    // Resolve synthesis provider — use config.synthesis.provider if registered
+    const synthesisProviderName = config.synthesis?.provider ?? "anthropic";
+    let synthesisProvider = provider;
+    if (providerRegistry) {
+      try {
+        synthesisProvider = providerRegistry.get(synthesisProviderName);
+      } catch {
+        // synthesis provider not registered — fall back to default
+      }
+    }
+
     this.extractor = new ConversationExtractor(provider);
     this.fusionEngine = new TopicFusionEngine();
     this.graphManager = new KnowledgeGraphManager(workspacePath);
     this.synthesizer = new KnowledgeSynthesizer(
-      provider,
+      synthesisProvider,
       owl,
       config,
       pelletStore,
@@ -112,7 +123,7 @@ export class LearningOrchestrator {
     );
     this.reflexionEngine = new MemoryReflexionEngine(
       workspacePath,
-      provider,
+      synthesisProvider,
       owl,
     );
     if (providerRegistry) {

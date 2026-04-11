@@ -23,6 +23,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../logger.js";
+import type { ModelProvider } from "../providers/base.js";
+import type { MemoryDatabase } from "./db.js";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -57,6 +59,8 @@ export interface StoredFact {
   accessCount: number;
   confirmedBy?: string;
   contradictedBy?: string[];
+  /** Optional embedding vector for semantic search */
+  embedding?: number[];
 }
 
 export interface FactConflictResult {
@@ -96,10 +100,12 @@ export class FactStore {
   private filePath: string;
   private loaded = false;
   private config: FactStoreConfig;
+  private db?: MemoryDatabase;
 
-  constructor(workspacePath: string, config: Partial<FactStoreConfig> = {}) {
+  constructor(workspacePath: string, config: Partial<FactStoreConfig> = {}, db?: MemoryDatabase) {
     this.filePath = join(workspacePath, "memory", "facts.json");
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.db = db;
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────
@@ -107,14 +113,22 @@ export class FactStore {
   async load(): Promise<void> {
     if (this.loaded) return;
     try {
-      if (existsSync(this.filePath)) {
+      if (this.db) {
+        // Load from SQLite DB
+        const dbFacts = this.db.facts.getAllForUser();
+        for (const f of dbFacts) {
+          // Map db.Fact → StoredFact (compatible, owlName is extra in db.Fact)
+          this.facts.set(f.id, f as unknown as StoredFact);
+        }
+        log.engine.info(`[FactStore] Loaded ${this.facts.size} facts from SQLite`);
+      } else if (existsSync(this.filePath)) {
         const raw = await readFile(this.filePath, "utf-8");
         const data = JSON.parse(raw) as FactStoreData;
         for (const fact of data.facts) {
           this.facts.set(fact.id, fact);
         }
         log.engine.info(
-          `[FactStore] Loaded ${this.facts.size} facts (config: defaultTtlDays=${this.config.defaultTtlDays})`,
+          `[FactStore] Loaded ${this.facts.size} facts from JSON (config: defaultTtlDays=${this.config.defaultTtlDays})`,
         );
       }
     } catch (err) {
@@ -126,6 +140,17 @@ export class FactStore {
   }
 
   async save(): Promise<void> {
+    if (this.db) {
+      // Write to SQLite (upsert all in-memory facts)
+      for (const fact of this.facts.values()) {
+        this.db.facts.upsert(fact);
+      }
+      // Rebuild FTS index to keep search current
+      this.db.rebuildFactsFts();
+      log.engine.debug(`[FactStore] Synced ${this.facts.size} facts to SQLite`);
+      return;
+    }
+
     const dir = join(this.filePath, "..");
     if (!existsSync(dir)) await mkdir(dir, { recursive: true });
 
@@ -322,6 +347,96 @@ export class FactStore {
         r.fact.accessCount++;
         return r.fact;
       });
+  }
+
+  /**
+   * Semantic search using embeddings (LlamaIndex retriever pattern).
+   * Falls back to keyword search when provider is unavailable or embed fails.
+   * This is the primary reason "yt-dlp works for Instagram reels" was invisible
+   * when searching "download video from instagram" — keyword had 0 overlap.
+   */
+  async semanticSearch(
+    query: string,
+    provider: ModelProvider,
+    userId?: string,
+    limit = 5,
+  ): Promise<StoredFact[]> {
+    await this.load();
+
+    const candidates = userId
+      ? this.getActiveForUser(userId)
+      : [...this.facts.values()].filter((f) => f.confidence > 0);
+
+    if (candidates.length === 0) return [];
+
+    try {
+      const { embedding: queryVec } = await provider.embed(query);
+
+      const scored: Array<{ fact: StoredFact; score: number }> = [];
+      for (const fact of candidates) {
+        // Facts without embeddings get a keyword score fallback
+        if (!fact.embedding || fact.embedding.length === 0) {
+          const kw = this.keywordScore(query, fact);
+          if (kw > 0) scored.push({ fact, score: kw * 0.5 }); // lower weight than semantic
+          continue;
+        }
+        const sim = this.cosineSimilarity(queryVec, fact.embedding);
+        if (sim > 0.3) scored.push({ fact, score: sim });
+      }
+
+      return scored
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map((r) => {
+          r.fact.accessCount++;
+          return r.fact;
+        });
+    } catch {
+      // Embedding failed — fall back to keyword
+      return this.search(query, userId, limit);
+    }
+  }
+
+  /**
+   * Embed and store a fact's vector when adding it, so future semantic
+   * searches can compare without re-embedding all facts on every query.
+   */
+  async addWithEmbedding(
+    fact: Omit<StoredFact, "id" | "createdAt" | "updatedAt" | "accessCount">,
+    provider?: ModelProvider,
+  ): Promise<StoredFact> {
+    if (provider) {
+      try {
+        const { embedding } = await provider.embed(fact.fact);
+        (fact as any).embedding = embedding;
+      } catch {
+        // Non-fatal — store without embedding
+      }
+    }
+    return this.add(fact);
+  }
+
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length || a.length === 0) return 0;
+    let dot = 0, normA = 0, normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
+  private keywordScore(query: string, fact: StoredFact): number {
+    const lower = query.toLowerCase();
+    const terms = lower.split(/\s+/).filter(Boolean);
+    const haystack = `${fact.fact} ${fact.entity ?? ""}`.toLowerCase();
+    let score = 0;
+    for (const term of terms) {
+      if (haystack.includes(term)) score += 1;
+    }
+    return terms.length > 0 ? score / terms.length : 0;
   }
 
   /**

@@ -51,6 +51,7 @@ export class ContextBuilder {
     isolatedTask: boolean = false,
     attemptLog?: AttemptLog,
     channelId?: string,
+    userId?: string,
   ): Promise<EngineContext> {
     // ─── Temporal Context (Phase 1 — zero LLM cost) ──────────────
     let temporalContext = "";
@@ -201,12 +202,34 @@ The user has no active tasks right now. Be concise and helpful:
       intentContext = this.ctx.intentStateMachine!.toContextString();
     }
 
-    // Working context — only when session has tool activity (not first message)
-    let workingCtxString = "";
-    if (this.ctx.workingContextManager && sessionDepth > 1) {
-      const wc = this.ctx.workingContextManager.get(session.id);
-      if (wc) {
-        workingCtxString = wc.toContextString();
+    // Compressed history summary (Phase 2) — replaces the oldest messages
+    // with a structured summary (~300 tokens vs ~8,000 for 40 raw messages).
+    // Only injected when a summary exists for this session.
+    let compressionSummaryContext = "";
+    if (this.ctx.compressor && this.ctx.db) {
+      try {
+        compressionSummaryContext = this.ctx.compressor.buildContext(
+          session.id,
+          session.messages,
+        );
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Conversation digest (L1 working memory) — persisted semantic snapshot of
+    // what was found/decided/failed in the previous turn. Injected FIRST so the
+    // model always knows "what I just did" before reading raw history.
+    // Replaces WorkingContext which was in-memory only and lost on restart.
+    let digestContext = "";
+    if (this.ctx.digestManager && sessionDepth > 0) {
+      try {
+        const digest = await this.ctx.digestManager.load(session.id);
+        if (digest && (digest.artifacts.length > 0 || digest.decisions.length > 0 || digest.failed.length > 0 || digest.task)) {
+          digestContext = this.ctx.digestManager.toContextString(digest);
+        }
+      } catch {
+        // Non-fatal
       }
     }
 
@@ -309,7 +332,12 @@ The user has no active tasks right now. Be concise and helpful:
       const [factResults, episodeResults] = await Promise.all([
         this.ctx.factStore
           ? withTimeout(
-              (async () => this.ctx.factStore!.search(userMessage, undefined, 3))(), // Reduced from 5
+              // Use semantic (embedding) search when provider available — finds
+              // "yt-dlp for instagram" when searching "download video from social media".
+              // Falls back to keyword search automatically inside semanticSearch().
+              this.ctx.provider
+                ? this.ctx.factStore.semanticSearch(userMessage, this.ctx.provider, undefined, 3)
+                : (async () => this.ctx.factStore!.search(userMessage, undefined, 3))(),
             ).catch(() => null)
           : Promise.resolve(null),
         this.ctx.episodicMemory && (hasTemporalTrigger || sessionDepth > 1)
@@ -349,6 +377,26 @@ The user has no active tasks right now. Be concise and helpful:
       }
     }
 
+    // ─── Cross-owl learnings (Phase 5) ───────────────────────
+    // Inject skills/insights this owl (and any owl) has accumulated.
+    // Enables knowledge sharing: if owl A learned how to fix X, owl B knows too.
+    let owlLearningsContext = "";
+    if (this.ctx.db && userMessage && !isConversational) {
+      try {
+        const learnings = this.ctx.db.owlLearnings.search(userMessage, 3);
+        if (learnings.length > 0) {
+          owlLearningsContext =
+            "\n<owl_learnings>\n" +
+            learnings
+              .map((l) => `  <learning owl="${l.owlName}" category="${l.category}">${l.learning}</learning>`)
+              .join("\n") +
+            "\n</owl_learnings>\n";
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     // ─── Channel format hint ──────────────────────────────────
     // Injected when the channel cannot render markdown tables.
     // Primary prevention — keeps LLM output table-free from the start.
@@ -360,19 +408,21 @@ The user has no active tasks right now. Be concise and helpful:
         : "";
 
     // ─── Assemble enriched context (triage applied) ───────────
-    // Order: temporal (frames time) → mode → memory → conditional signals
+    // Order: digest (what I just did) → temporal → mode → memory → conditional
     const enrichedMemoryContext = [
+      digestContext,              // L1: what was found/decided/failed in last turn — FIRST
+      compressionSummaryContext,  // L2: compressed history of older messages
       temporalContext,
       channelFormatHint,
       this.ctx.memoryContext ?? "",
       modeDirective,
       behavioralPatchContext,
       // Memory signals (high relevance)
+      owlLearningsContext,  // Cross-owl shared knowledge (Phase 5)
       factContext,
       episodicContext,
       // Conditional signals (injected only when relevant per triage above)
       intentContext,
-      workingCtxString,
       socraticContext,
       knowledgeContext,
       userProfileContext,
@@ -407,7 +457,7 @@ The user has no active tasks right now. Be concise and helpful:
       attemptLog,
       onProgress: callbacks.onProgress,
       onStreamEvent: callbacks.onStreamEvent,
-      sendFile: callbacks.onFile,
+      pendingFiles: [],
       channelName: channelId,
       providerRegistry: this.ctx.providerRegistry,
       memorySearcher: this.ctx.memorySearcher,
@@ -416,7 +466,30 @@ The user has no active tasks right now. Be concise and helpful:
       questManager: this.ctx.questManager,
       capsuleManager: this.ctx.capsuleManager,
       innerLife: this.ctx.innerLife,
-      diagnosticEngine: new DiagnosticEngine(this.ctx.provider),
+      diagnosticEngine: new DiagnosticEngine(this.resolveSynthesisProvider()),
+      // L3 memory access for remember() / recall() tools
+      factStore: this.ctx.factStore,
+      episodicMemory: this.ctx.episodicMemory,
+      userId,
+      db: this.ctx.db,
+      sessionId: session.id,
     };
+  }
+
+  /**
+   * Resolve the provider designated for synthesis/analysis tasks.
+   * Reads config.synthesis.provider and looks it up in the registry.
+   * Falls back to the default provider if not registered.
+   */
+  private resolveSynthesisProvider() {
+    const providerName = this.ctx.config.synthesis?.provider ?? "anthropic";
+    if (this.ctx.providerRegistry) {
+      try {
+        return this.ctx.providerRegistry.get(providerName);
+      } catch {
+        // synthesis provider not registered — fall back silently
+      }
+    }
+    return this.ctx.provider;
   }
 }

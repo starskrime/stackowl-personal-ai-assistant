@@ -52,6 +52,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private chatIdsPath: string;
   private processedUpdates = new Map<string, number>();
   private updateCleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private userToChatId: Map<string, number> = new Map();
 
   constructor(
     private gateway: OwlGateway,
@@ -137,6 +138,33 @@ export class TelegramAdapter implements ChannelAdapter {
     log.telegram.info("Telegram adapter stopped.");
   }
 
+  async deliverFile(userId: string, filePath: string, caption?: string): Promise<void> {
+    const chatId = this.userToChatId.get(userId) ?? [...this.activeChatIds][0];
+    if (!chatId) {
+      log.telegram.warn(`deliverFile: no chatId found for user ${userId}`);
+      return;
+    }
+    const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+    const isUrl = filePath.startsWith("http://") || filePath.startsWith("https://");
+    const ext = extname(isUrl ? new URL(filePath).pathname : filePath).toLowerCase();
+    const payload = isUrl ? filePath : new InputFile(filePath);
+    try {
+      if (IMAGE_EXTS.has(ext)) {
+        await this.bot.api.sendPhoto(chatId, payload, caption ? { caption } : {});
+      } else {
+        await this.bot.api.sendDocument(chatId, payload, caption ? { caption } : {});
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("401") || msg.toLowerCase().includes("unauthorized")) {
+        throw new Error(
+          `Telegram bot token is invalid or expired (401). Update 'telegram.botToken' in stackowl.config.json.`,
+        );
+      }
+      throw new Error(`Telegram file delivery failed: ${msg}`);
+    }
+  }
+
   // ─── Bot handlers ─────────────────────────────────────────────
 
   private setupHandlers(): void {
@@ -194,6 +222,7 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!text || text.startsWith("/")) return;
 
       this.trackChat(ctx.chat.id);
+      this.userToChatId.set(String(userId), ctx.chat.id);
 
       // Deduplicate Telegram retries — set key IMMEDIATELY before processing starts,
       // so that retries arriving while the first attempt is still streaming are blocked.
@@ -262,35 +291,6 @@ export class TelegramAdapter implements ChannelAdapter {
               } catch (err) {
                 log.telegram.warn(
                   `onProgress failed: ${err instanceof Error ? err.message : err}`,
-                );
-              }
-            },
-            onFile: async (filePath: string, caption?: string) => {
-              const IMAGE_EXTS = new Set([
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".gif",
-                ".webp",
-              ]);
-              // Parse extension from URL or path
-              const urlObj = filePath.startsWith("http")
-                ? new URL(filePath)
-                : null;
-              const pathname = urlObj ? urlObj.pathname : filePath;
-              const ext = extname(pathname).toLowerCase();
-
-              const isUrl =
-                filePath.startsWith("http://") ||
-                filePath.startsWith("https://");
-              const payload: any = isUrl ? filePath : new InputFile(filePath);
-
-              if (IMAGE_EXTS.has(ext)) {
-                await ctx.replyWithPhoto(payload, caption ? { caption } : {});
-              } else {
-                await ctx.replyWithDocument(
-                  payload,
-                  caption ? { caption } : {},
                 );
               }
             },
@@ -389,6 +389,31 @@ export class TelegramAdapter implements ChannelAdapter {
           streamCtx.status.finalResponseSent = true;
         }
 
+        // ─── Feedback buttons ─────────────────────────────────
+        // Send 👍/👎 inline keyboard after each response so the user can
+        // signal whether the answer was helpful. The gateway uses this to
+        // boost or retire success-recipe facts in the FactStore.
+        const feedbackId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        this.gateway.registerFeedback(feedbackId, {
+          sessionId: makeSessionId(this.id, String(userId)),
+          userId: String(userId),
+          userMessage: text.slice(0, 150),
+          assistantSummary: response.content.slice(0, 200),
+          toolsUsed: response.toolsUsed ?? [],
+        });
+        await this.bot.api
+          .sendMessage(ctx.chat.id, "—", {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: "👍", callback_data: `fb:like:${feedbackId}` },
+                  { text: "👎", callback_data: `fb:dislike:${feedbackId}` },
+                ],
+              ],
+            },
+          })
+          .catch(() => {}); // Non-fatal if delivery fails
+
         if (response.usage) {
           await ctx.reply(
             `_${response.usage.promptTokens}→${response.usage.completionTokens} tokens_`,
@@ -402,6 +427,43 @@ export class TelegramAdapter implements ChannelAdapter {
           "Something went wrong. Please try again or use /reset to start fresh.",
         );
       }
+    });
+
+    // ─── Feedback button handler ──────────────────────────────
+    // Handles 👍/👎 button presses from inline keyboards attached to responses.
+    this.bot.on("callback_query:data", async (ctx) => {
+      const data = ctx.callbackQuery.data ?? "";
+      if (!data.startsWith("fb:")) return;
+
+      const parts = data.split(":");
+      const signal = parts[1] as "like" | "dislike";
+      const feedbackId = parts.slice(2).join(":"); // feedbackId may contain colons
+
+      if ((signal !== "like" && signal !== "dislike") || !feedbackId) {
+        await ctx.answerCallbackQuery();
+        return;
+      }
+
+      // Dismiss loading spinner on the button
+      await ctx.answerCallbackQuery({
+        text: signal === "like" ? "👍 Thanks!" : "👎 Got it, I'll improve.",
+      });
+
+      // Replace the button message with a plain confirmation
+      try {
+        await ctx.editMessageText(
+          signal === "like" ? "👍 Helpful" : "👎 Not helpful",
+        );
+      } catch {
+        // Message too old to edit — ignore
+      }
+
+      // Forward to gateway for learning integration
+      await this.gateway.recordFeedback(feedbackId, signal).catch((err) => {
+        log.telegram.warn(
+          `recordFeedback failed: ${err instanceof Error ? err.message : err}`,
+        );
+      });
     });
 
     this.bot.catch((err) => {

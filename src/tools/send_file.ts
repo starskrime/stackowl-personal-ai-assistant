@@ -150,30 +150,13 @@ export const SendFileTool: ToolImplementation = {
     const name = basename(resolved);
     const sizeKb = Math.round(stat.size / 1024);
 
-    // Check channel has file sending capability
-    const sendFile = context.engineContext?.sendFile;
-    if (!sendFile) {
-      // No channel callback — suggest native delivery options
-      const kind = IMAGE_EXTS.has(ext)
-        ? "image"
-        : DOC_EXTS.has(ext)
-          ? "document"
-          : "file";
-      return (
-        `[No channel] ${kind} ready at: ${resolved} (${sizeKb}KB).\n` +
-        `To deliver this file, you can:\n` +
-        `  • AirDrop to a nearby device: airdrop(file_path:"${resolved}")\n` +
-        `  • Send via iMessage: imessage(action:"send_attachment", to:"+1...", file_path:"${resolved}")\n` +
-        `  • Open it directly: computer_use(action:"open_url", text:"${resolved}")`
-      );
+    // Queue file for delivery via pendingFiles
+    const pendingFiles = context.engineContext?.pendingFiles;
+    if (!Array.isArray(pendingFiles)) {
+      return `File ready at: ${resolved} (${sizeKb} KB). No active delivery channel — file is saved locally.`;
     }
-
-    try {
-      await sendFile(resolved, caption || undefined);
-      const kind = IMAGE_EXTS.has(ext) ? "image" : "file";
-      return `Successfully sent ${kind} "${name}" (${sizeKb}KB) to the user.`;
-    } catch (err) {
-      return `Failed to send file: ${err instanceof Error ? err.message : String(err)}`;
-    }
+    pendingFiles.push({ path: resolved, caption: caption || undefined });
+    const kind = IMAGE_EXTS.has(ext) ? "image" : DOC_EXTS.has(ext) ? "document" : "file";
+    return `${kind} "${name}" (${sizeKb} KB) queued for delivery to the user.`;
   },
 };

@@ -101,6 +101,7 @@ export class SummonParliamentTool implements ToolImplementation {
         config,
         pelletStore,
         context.engineContext.toolRegistry,
+        (context.engineContext as any).db,
       );
 
       const session = await orchestrator.convene({

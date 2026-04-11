@@ -133,6 +133,7 @@ import { MutationTracker } from "./owls/mutation-tracker.js";
 import { SelfLearningCoordinator } from "./learning/coordinator.js";
 import { MemorySearcher } from "./memory-threads/searcher.js";
 import { RecallMemoryTool } from "./tools/recall.js";
+import { RememberTool } from "./tools/remember.js";
 import { EchoChamberDetector } from "./echo-chamber/detector.js";
 import { EchoCheckTool } from "./tools/echo-check.js";
 import { JournalGenerator } from "./growth-journal/generator.js";
@@ -166,6 +167,7 @@ import { WorkingContextManager } from "./memory/working-context.js";
 import { EpisodicMemory } from "./memory/episodic.js";
 import { FactStore } from "./memory/fact-store.js";
 import { FactExtractor } from "./memory/fact-extractor.js";
+import { MemoryDatabase } from "./memory/db.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
 import { GoalGraph } from "./goals/graph.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
@@ -314,6 +316,7 @@ async function bootstrap() {
     ScraplingTool,
     // ── Memory & Recall ──
     new RecallMemoryTool(),
+    new RememberTool(),
     // ── Growth & Wisdom ──
     new EchoCheckTool(),
     new GrowthJournalTool(),
@@ -373,12 +376,21 @@ async function bootstrap() {
   const microLearner = new MicroLearner(workspacePath);
   await microLearner.load().catch(() => {});
 
+  // SQLite Memory Database — single source of truth for all persistent memory.
+  // Created early so FactStore, EpisodicMemory, and FeedbackStore can use it.
+  // The gateway will reuse this instance (ctx.db) instead of creating its own.
+  const memoryDb = new MemoryDatabase(workspacePath);
+  // One-time JSON migration (fire-and-forget)
+  memoryDb.importFromJson(workspacePath).catch((err) =>
+    console.warn(`[MemoryDatabase] JSON import failed: ${err}`),
+  );
+
   // Episodic Memory — LLM-extracted session summaries for cross-session recall
-  const episodicMemory = new EpisodicMemory(workspacePath);
+  const episodicMemory = new EpisodicMemory(workspacePath, undefined, memoryDb);
   await episodicMemory.load();
 
   // Fact Store — Mem0-inspired structured fact memory with conflict resolution
-  const factStore = new FactStore(workspacePath);
+  const factStore = new FactStore(workspacePath, {}, memoryDb);
   await factStore.load();
 
   // Knowledge Graph — entity relationships with semantic search
@@ -444,6 +456,7 @@ async function bootstrap() {
     owlRegistry,
     () => microLearner.getProfile(),
     episodicMemory,
+    memoryDb,
   );
 
   // Apply DNA decay for all owls if overdue (runs at most once per week per owl)
@@ -642,6 +655,7 @@ async function bootstrap() {
     preferenceModel,
     mutationTracker,
     workingContextManager,
+    memoryDb,
     episodicMemory,
     factStore,
     factExtractor,
@@ -913,6 +927,7 @@ async function buildGateway(
     commitmentTracker: b.commitmentTracker,
     preferenceModel: b.preferenceModel,
     workingContextManager: b.workingContextManager,
+    db: b.memoryDb,
     episodicMemory: b.episodicMemory,
     factStore: b.factStore,
     factExtractor: b.factExtractor,
@@ -990,7 +1005,7 @@ async function parliamentCommand(topic?: string) {
     process.exit(1);
   }
 
-  const { providerRegistry, owlRegistry, config, pelletStore, toolRegistry } =
+  const { providerRegistry, owlRegistry, config, pelletStore, toolRegistry, memoryDb } =
     await bootstrap();
   const provider = providerRegistry.getDefault();
 
@@ -1024,6 +1039,7 @@ async function parliamentCommand(topic?: string) {
     config,
     pelletStore,
     toolRegistry,
+    memoryDb,
   );
 
   try {

@@ -30,6 +30,11 @@ import type { DiagnosticInput } from "./diagnostic-engine.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
+export interface PendingFile {
+  path: string;
+  caption?: string;
+}
+
 export interface EngineContext {
   provider: ModelProvider;
   owl: OwlInstance;
@@ -51,8 +56,8 @@ export interface EngineContext {
   preferencesContext?: string;
   /** Skills context to inject into system prompt (from SkillContextInjector.formatForSystemPrompt()) */
   skillsContext?: string;
-  /** Channel-provided callback to send a file/image to the user. Path must be absolute. */
-  sendFile?: (filePath: string, caption?: string) => Promise<void>;
+  /** Files queued for delivery by send_file tool calls during this run */
+  pendingFiles?: PendingFile[];
   /** Skills registry — used by CapabilityNeedAssessor to check coverage before synthesis */
   skillsRegistry?: import("../skills/registry.js").SkillsRegistry;
   /** Skill usage tracker — records selection, success, failure events */
@@ -102,6 +107,16 @@ export interface EngineContext {
    * operating in and can give accurate advice when channel-specific operations fail.
    */
   channelName?: string;
+  /** FactStore — for remember() tool write path and recall() tool read path */
+  factStore?: import("../memory/fact-store.js").FactStore;
+  /** EpisodicMemory — for recall() tool read path */
+  episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
+  /** Active userId — used by remember/recall tools for per-user scoping */
+  userId?: string;
+  /** SQLite DB — gives tools direct write access to owl_learnings etc. */
+  db?: import("../memory/db.js").MemoryDatabase;
+  /** Session identifier — passed from the gateway, used for TaskState scoping */
+  sessionId?: string;
 }
 
 export interface PendingCapabilityGap {
@@ -132,6 +147,8 @@ export interface EngineResponse {
   loopExhausted?: boolean;
   /** Number of tool failures during this run (for quality signal) */
   toolFailureCount?: number;
+  /** Files queued for delivery by send_file tool calls during this run */
+  pendingFiles: PendingFile[];
 }
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -435,6 +452,59 @@ export class OwlEngine {
         dnaStyleDirective
       : systemPrompt;
 
+    // 2c. TaskState — initialize or load for this session and inject into system prompt.
+    // TaskState is the model's persistent structured working memory: what the goal is,
+    // which approaches have been tried and failed (NEVER retry these), and a step log.
+    // It survives context compression because it's in SQLite, not the context window.
+    let taskState: import("../memory/db.js").TaskState | null = null;
+    let taskStateBlock = "";
+    if (context.db && context.sessionId) {
+      try {
+        taskState = context.db.taskStates.get(context.sessionId);
+        if (!taskState) {
+          // First message in this session — create a new task state
+          const now = new Date().toISOString();
+          taskState = {
+            sessionId: context.sessionId,
+            owlName: owl.persona.name,
+            goal: userMessage.slice(0, 300),
+            plannedApproaches: [],
+            eliminatedApproaches: [],
+            stepLog: [],
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          };
+          context.db.taskStates.save(taskState);
+        }
+        const hasTaskContext =
+          taskState.eliminatedApproaches.length > 0 ||
+          taskState.stepLog.length > 0 ||
+          taskState.plannedApproaches.length > 0;
+        if (hasTaskContext) {
+          taskStateBlock =
+            `\n\n<task_state>\n` +
+            `Goal: ${taskState.goal}\n` +
+            (taskState.plannedApproaches.length > 0
+              ? `Known failure patterns (avoid these):\n${taskState.plannedApproaches.map((a) => `  ⚠ ${a}`).join("\n")}\n`
+              : "") +
+            (taskState.eliminatedApproaches.length > 0
+              ? `ELIMINATED this session (do NOT retry):\n${taskState.eliminatedApproaches.map((a) => `  ✗ ${a}`).join("\n")}\n`
+              : "") +
+            (taskState.stepLog.length > 0
+              ? `Recent steps (newest first):\n${taskState.stepLog.slice(0, 5).map((s) => `  ✓ ${s}`).join("\n")}\n`
+              : "") +
+            `</task_state>`;
+        }
+      } catch {
+        // Non-fatal — TaskState is optional enrichment
+      }
+    }
+
+    const finalSystemPromptWithTaskState = taskStateBlock
+      ? finalSystemPrompt + taskStateBlock
+      : finalSystemPrompt;
+
     // 2b. Sanitize history — remove references to tools that no longer exist.
     // Stale tool calls from defunct tools poison the context and confuse local models.
     const currentToolDefs = toolRegistry?.getAllDefinitions();
@@ -576,7 +646,7 @@ ${userMessage}
     }
 
     const messages: ChatMessage[] = [
-      { role: "system", content: finalSystemPrompt },
+      { role: "system", content: finalSystemPromptWithTaskState },
       ...historyToUse,
       { role: "user", content: finalUserMessage },
     ];
@@ -610,6 +680,41 @@ ${userMessage}
     // by nature (analyze → act → analyze → act …) and routinely needs 20-40 steps.
     if (tools?.some((t) => t.name === "computer_use")) {
       MAX_TOOL_ITERATIONS = Math.max(MAX_TOOL_ITERATIONS, 40);
+    }
+
+    // ── PLAN phase ────────────────────────────────────────────────────────────
+    // Runs once on the first turn of each session (when plannedApproaches is empty).
+    // Queries ApproachLibrary for known failures across the available tools,
+    // then pre-populates TaskState.plannedApproaches with a "what to avoid" list.
+    // No LLM call needed — this is purely data-driven from past outcomes.
+    if (
+      context.db &&
+      context.sessionId &&
+      taskState &&
+      taskState.plannedApproaches.length === 0 &&
+      tools && tools.length > 0
+    ) {
+      try {
+        const avoidList: string[] = [];
+        const seenTools = new Set<string>();
+        for (const tool of tools.slice(0, 12)) {
+          if (seenTools.has(tool.name)) continue;
+          seenTools.add(tool.name);
+          const failures = context.db.approachLibrary.getRecentFailuresForTool(tool.name, 3);
+          for (const f of failures) {
+            avoidList.push(`${tool.name}(${f.argsSummary.slice(0, 80)}): ${f.failureReason?.slice(0, 150) ?? "failed"}`);
+          }
+        }
+        if (avoidList.length > 0) {
+          taskState.plannedApproaches = avoidList.map((a) => `AVOID: ${a}`);
+          context.db.taskStates.save(taskState);
+          log.engine.debug(
+            `[PLAN] Pre-populated ${avoidList.length} known-failure(s) into TaskState for session ${context.sessionId}`,
+          );
+        }
+      } catch {
+        // Non-fatal
+      }
     }
 
     if (tools && tools.length > 0) {
@@ -753,6 +858,43 @@ ${userMessage}
         // Phase 2: Execute eligible tools in parallel
         const executableActions = actions.filter((a) => a.kind === "execute");
         const toolCtx = { cwd: cwd || process.cwd(), engineContext: context };
+
+        // ── ApproachLibrary pre-execution recall ──────────────────────────
+        // Before running tools, check if we've seen failures for these tool names
+        // across past sessions. Inject a warning so the model doesn't repeat them.
+        if (context.db && executableActions.length > 0) {
+          const taskKw = userMessage.slice(0, 100).toLowerCase();
+          const warningLines: string[] = [];
+          const seenToolWarnings = new Set<string>();
+          for (const a of executableActions) {
+            const tn = a.toolCall.name;
+            if (seenToolWarnings.has(tn)) continue;
+            seenToolWarnings.add(tn);
+            const pastFailures = context.db.approachLibrary.getRecentFailuresForTool(tn, 3);
+            if (pastFailures.length > 0) {
+              for (const f of pastFailures) {
+                warningLines.push(
+                  `  • ${tn}(${f.argsSummary}): FAILED — ${f.failureReason ?? "unknown reason"} [task: ${f.taskKeywords}]`,
+                );
+              }
+            }
+          }
+          if (warningLines.length > 0) {
+            messages.push({
+              role: "system",
+              content:
+                `[APPROACH LIBRARY — Known Failure Patterns]\n` +
+                `The following tool approaches have failed in previous sessions. ` +
+                `If your current plan matches any of these, choose a DIFFERENT approach:\n` +
+                warningLines.join("\n"),
+            });
+            log.engine.debug(
+              `[ApproachLibrary] Injected ${warningLines.length} past failure warning(s) before tool execution`,
+            );
+          }
+          // Also record task keywords for this batch (used when recording outcomes below)
+          (context as any)._approachTaskKw = taskKw;
+        }
 
         // Fire all tool executions concurrently
         const executionResults = new Map<
@@ -902,6 +1044,37 @@ ${userMessage}
                   .catch((err) =>
                     log.engine.warn(`CapabilityLedger save failed: ${err}`),
                   );
+              }
+
+              // ── ApproachLibrary recording + TaskState update ─────────
+              // Persist outcome so future sessions know what succeeded/failed.
+              // Also update the session's TaskState so the model can see what
+              // was tried and what was eliminated within the current task.
+              if (context.db) {
+                try {
+                  const owlName = context.owl?.persona?.name ?? "default";
+                  const taskKw = ((context as any)._approachTaskKw as string | undefined) ?? userMessage.slice(0, 100).toLowerCase();
+                  const argsSummary = safeStringify(toolCall.arguments).slice(0, 300);
+                  context.db.approachLibrary.record(
+                    owlName,
+                    toolCall.name,
+                    taskKw,
+                    argsSummary,
+                    isAnyFailure ? "failure" : "success",
+                    isAnyFailure ? toolResult.slice(0, 400) : undefined,
+                  );
+                  // TaskState: eliminate failed approaches, log successful ones
+                  if (context.sessionId) {
+                    const approachId = `${toolCall.name}(${argsSummary.slice(0, 80)})`;
+                    if (isAnyFailure) {
+                      context.db.taskStates.eliminateApproach(context.sessionId, approachId);
+                    } else {
+                      context.db.taskStates.appendStep(context.sessionId, `${approachId} → success`);
+                    }
+                  }
+                } catch {
+                  // Non-fatal
+                }
               }
 
               if (isAnyFailure) {
@@ -1301,6 +1474,7 @@ ${userMessage}
           missingToolName,
           userMessage,
         ),
+        pendingFiles: context.pendingFiles ?? [],
       };
     }
 
@@ -1350,6 +1524,7 @@ ${userMessage}
               }
             : undefined,
           pendingCapabilityGap: nlGap,
+          pendingFiles: context.pendingFiles ?? [],
         };
       }
     }
@@ -1370,6 +1545,7 @@ ${userMessage}
         : undefined,
       loopExhausted: loopBrokenEarly || iterations >= MAX_TOOL_ITERATIONS,
       toolFailureCount: globalConsecutiveFailures,
+      pendingFiles: context.pendingFiles ?? [],
     };
   }
 
@@ -1652,6 +1828,27 @@ ${skillsContext}
           "- DO NOT emit for: facts/knowledge (use search), analysis, conversational replies, or tasks " +
           "solvable with run_shell_command.\n" +
           "- When in doubt, emit the gap — the system will validate before acting on it.\n";
+
+        // Add memory management instructions when remember tool is available
+        const hasRemember = tools.some((t) => t.name === "remember");
+        const hasRecall = tools.some((t) => t.name === "recall_memory" || t.name === "recall");
+        if (hasRemember || hasRecall) {
+          prompt += "\n**Long-Term Memory:**\n";
+          if (hasRemember) {
+            prompt +=
+              "- After completing a task successfully, call remember() with what worked:\n" +
+              '  remember("yt-dlp --output %(title)s.mp4 works for Instagram reels", "skill")\n' +
+              "- When the user states a preference, call remember():\n" +
+              '  remember("User prefers MP4 format for video downloads", "preference")\n' +
+              "- Memory you store is available in ALL future conversations.\n";
+          }
+          if (hasRecall) {
+            prompt +=
+              "- Before starting a task you might have done before, call recall_memory() to check:\n" +
+              '  recall_memory("instagram video download")\n' +
+              "- This retrieves facts, past approaches, and conversation history about that topic.\n";
+          }
+        }
       }
     }
 
@@ -1795,6 +1992,7 @@ ${skillsContext}
             completionTokens: synthResponse.usage.completionTokens,
           }
         : undefined,
+      pendingFiles: context.pendingFiles ?? [],
     };
   }
 

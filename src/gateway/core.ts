@@ -23,8 +23,8 @@ import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
 import { SkillTracker } from "../skills/tracker.js";
 import { log } from "../logger.js";
-import { MemoryConsolidator } from "../memory/consolidator.js";
-import { MemoryReflexionEngine } from "../memory/reflexion.js";
+// MemoryConsolidator and MemoryReflexionEngine retired (Phase 3 L3 consolidation).
+// Replaced by FactStore + ConversationDigest. Imports removed to prevent dead-code warnings.
 import { PreferenceDetector } from "../preferences/detector.js";
 import { MicroLearner } from "../learning/micro-learner.js";
 import { ProactiveAnticipator } from "../learning/anticipator.js";
@@ -58,6 +58,10 @@ import {
   getSegmentMessages,
 } from "../memory/session-segmenter.js";
 import { UserMentalModel } from "../cognition/user-mental-model.js";
+import { ConversationDigestManager } from "../memory/conversation-digest.js";
+import { MemoryDatabase } from "../memory/db.js";
+import { MessageCompressor } from "../memory/compressor.js";
+import { FeedbackStore } from "../feedback/store.js";
 import { OutputFilter, resolveOutputMode } from "./output-filter.js";
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -125,6 +129,23 @@ export class OwlGateway {
 
   /** User mental model — infers user state from behavioral signals */
   private userMentalModel: UserMentalModel | null = null;
+
+  /**
+   * Pending feedback contexts — keyed by feedbackId sent to channel adapters.
+   * Adapters register a context after sending a response, then call recordFeedback()
+   * when the user presses 👍/👎. Entries expire after 24 hours.
+   */
+  private pendingFeedback: Map<
+    string,
+    {
+      sessionId: string;
+      userId: string;
+      userMessage: string;
+      assistantSummary: string;
+      toolsUsed: string[];
+      createdAt: number;
+    }
+  > = new Map();
 
   constructor(public ctx: GatewayContext) {
     this.engine = new OwlEngine();
@@ -264,6 +285,39 @@ export class OwlGateway {
       log.engine.info(
         `Skill injector initialized with ${registry.listEnabled().length} skills (BM25 + usage tracking)`,
       );
+    }
+
+    // Auto-initialize SQLite MemoryDatabase if not provided.
+    // Opens workspace/memory/stackowl.db, creates all tables, imports existing JSON.
+    if (!ctx.db) {
+      const workspacePath = ctx.cwd ?? process.cwd();
+      ctx.db = new MemoryDatabase(workspacePath);
+      // One-time JSON migration (fire-and-forget, non-blocking)
+      ctx.db.importFromJson(workspacePath).catch((err) =>
+        log.engine.warn(`[MemoryDatabase] JSON import failed: ${err}`),
+      );
+      log.engine.info("[memory] MemoryDatabase (SQLite) initialized");
+    }
+
+    // Auto-initialize MessageCompressor (Phase 2 — batch summarization every 20 msgs)
+    if (!ctx.compressor && ctx.db) {
+      ctx.compressor = new MessageCompressor(ctx.db, ctx.provider);
+      log.engine.info("[memory] MessageCompressor initialized (batch size: 20)");
+    }
+
+    // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
+    // Always enabled — requires no config, no external deps, writes to workspace/memory/digests/.
+    if (!ctx.digestManager) {
+      const workspacePath = ctx.cwd ?? process.cwd();
+      ctx.digestManager = new ConversationDigestManager(workspacePath);
+      log.engine.info("[memory] ConversationDigestManager initialized (L1 working memory)");
+    }
+
+    // Auto-initialize FeedbackStore using the DB (Phase 3 — no more feedback.json)
+    if (!ctx.feedbackStore && ctx.db) {
+      const workspacePath = ctx.cwd ?? process.cwd();
+      ctx.feedbackStore = new FeedbackStore(workspacePath, ctx.db, ctx.owl.persona.name);
+      log.engine.info("[memory] FeedbackStore initialized (SQLite)");
     }
 
     // Wire learning orchestrator → cognitive loop gap bridge.
@@ -515,6 +569,12 @@ export class OwlGateway {
           response.content,
         );
         this.postProcess(session.messages, session.id);
+        // Deliver any files queued during skill run
+        await this.deliverPendingFiles(
+          response.pendingFiles ?? [],
+          message.channelId,
+          message.userId,
+        );
         return toGatewayResponse(response);
       } else {
         // Unknown skill — list available ones
@@ -898,6 +958,7 @@ export class OwlGateway {
       isIsolatedTask,
       this.attemptLogs.get(message.sessionId),
       message.channelId,
+      message.userId,
     );
 
     const orchestrator = this.getOrchestrator();
@@ -918,6 +979,7 @@ export class OwlGateway {
       modelUsed: "",
       newMessages: [],
       usage: orchResult.usage,
+      pendingFiles: engineCtx.pendingFiles ?? [],
     };
 
     // Capability gap detected — try to synthesize the missing tool and retry
@@ -945,7 +1007,11 @@ export class OwlGateway {
       false,
       response.content,
     );
-    this.postProcess(session.messages, session.id);
+    this.postProcess(session.messages, session.id, {
+      toolsUsed: response.toolsUsed ?? [],
+      userId: message.userId,
+      channelId: message.channelId,
+    });
 
     // Update working context with owl's response
     if (this.ctx.workingContextManager) {
@@ -1009,6 +1075,13 @@ export class OwlGateway {
       }
     }
 
+    // Deliver any files queued by send_file tool calls during this run
+    await this.deliverPendingFiles(
+      engineCtx.pendingFiles ?? [],
+      message.channelId,
+      message.userId,
+    );
+
     return toGatewayResponse(response);
   }
 
@@ -1023,6 +1096,9 @@ export class OwlGateway {
     if (!cache) return;
 
     const messages = cache.session.messages;
+
+    // Clear L1 digest — session is ending, next session starts fresh
+    this.ctx.digestManager?.delete(sessionId).catch(() => {});
 
     // Episodic memory extraction — extract episode from full session on explicit end
     if (this.ctx.episodicMemory && messages.length >= 4) {
@@ -1041,20 +1117,10 @@ export class OwlGateway {
       }
     }
 
-    // Memory consolidation
-    try {
-      const consolidator = new MemoryConsolidator(
-        this.ctx.provider,
-        this.ctx.owl,
-        this.ctx.cwd ?? process.cwd(),
-      );
-      await consolidator.extractAndAppend(messages);
-      log.engine.info("Memory consolidated.");
-    } catch (err) {
-      log.engine.warn(
-        `Memory consolidation failed: ${err instanceof Error ? err.message : err}`,
-      );
-    }
+    // Legacy memory.md append-only consolidation — retired.
+    // Replaced by FactStore (structured, searchable, semantic) + ConversationDigest (L1).
+    // The MemoryConsolidator wrote raw text to memory.md which was injected unsearchably.
+    // FactStore.add() + PostProcessor "victory lap" cover the same ground with structure.
 
     // Reactive learning (new orchestrator if available, fallback to legacy)
     if (this.ctx.learningOrchestrator) {
@@ -1081,22 +1147,11 @@ export class OwlGateway {
       }
     }
 
-    // Reflexion-based memory consolidation (structured JSON, replaces append-only memory.md)
-    if (this.ctx.learningOrchestrator) {
-      try {
-        const reflexion = new MemoryReflexionEngine(
-          this.ctx.cwd ?? process.cwd(),
-          this.ctx.provider,
-          this.ctx.owl,
-        );
-        await reflexion.consolidate(messages, sessionId);
-        log.engine.info("[endSession:reflexion] ✓ memory consolidated");
-      } catch (err) {
-        log.engine.warn(
-          `[endSession:reflexion] ✗ failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
+    // ReflexionEngine consolidation — retired (Phase 3 L3 consolidation).
+    // MemoryReflexionEngine is a duplicate of FactStore: structured entries, keyword search,
+    // written post-session. FactStore now owns this job with embedding-based search.
+    // Behavioral patches (failure signals) still flow through ReflexionEngine in PostProcessor
+    // only when ctx.reflexionEngine is explicitly configured — not created ad-hoc here.
 
     // Inner Life reflection — the owl thinks about its session
     if (this.ctx.innerLife) {
@@ -1191,6 +1246,105 @@ export class OwlGateway {
           `[endSession] ${names[i]} save failed: ${result.reason instanceof Error ? result.reason.message : result.reason}`,
         );
       }
+    }
+  }
+
+  // ─── Response Feedback (👍/👎) ────────────────────────────────
+
+  /**
+   * Register a pending feedback context after sending a response.
+   * Called by channel adapters after they deliver the response and the
+   * feedback keyboard. feedbackId is the callback_data key sent with buttons.
+   */
+  registerFeedback(
+    feedbackId: string,
+    context: {
+      sessionId: string;
+      userId: string;
+      userMessage: string;
+      assistantSummary: string;
+      toolsUsed: string[];
+    },
+  ): void {
+    this.pendingFeedback.set(feedbackId, { ...context, createdAt: Date.now() });
+  }
+
+  /**
+   * Record a 👍/👎 signal from the user.
+   * Called by channel adapters when the user presses a feedback button.
+   *
+   * Like → confirm the success recipe with boosted confidence (source: confirmed)
+   * Dislike → record negative fact + queue user request for re-synthesis
+   */
+  async recordFeedback(
+    feedbackId: string,
+    signal: "like" | "dislike",
+  ): Promise<void> {
+    const ctx = this.pendingFeedback.get(feedbackId);
+    if (!ctx) return; // expired or unknown
+    this.pendingFeedback.delete(feedbackId); // one-shot
+
+    const { sessionId, userId, userMessage, assistantSummary, toolsUsed } = ctx;
+
+    // Persist to FeedbackStore
+    if (this.ctx.feedbackStore) {
+      await this.ctx.feedbackStore.record({
+        id: feedbackId,
+        sessionId,
+        userId,
+        signal,
+        userMessage,
+        assistantSummary,
+        toolsUsed,
+        timestamp: new Date().toISOString(),
+      }).catch((err) => {
+        log.engine.warn(`[Feedback] FeedbackStore.record failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
+
+    // Record owl performance metric (Phase 4 — data-driven DNA evolution)
+    if (this.ctx.db) {
+      const owlName = this.ctx.owl.persona.name;
+      const metric = signal === "like" ? "feedback_like" : "feedback_dislike";
+      const topic = userMessage.slice(0, 80);
+      this.ctx.db.owlPerf.record(owlName, sessionId, userId, metric, topic);
+    }
+
+    if (signal === "like") {
+      // User confirmed this worked — write a high-confidence skill fact
+      if (this.ctx.factStore && toolsUsed.length > 0) {
+        await this.ctx.factStore.add({
+          userId,
+          fact: `User confirmed: I successfully handled "${userMessage}" using [${toolsUsed.join(", ")}]`,
+          entity: toolsUsed[0],
+          category: "skill",
+          confidence: 0.95,
+          source: "confirmed",
+          expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(), // 180 days
+        }).catch(() => {});
+      }
+      log.engine.info(`[Feedback] 👍 confirmed for session ${sessionId}`);
+    } else {
+      // User rejected this response — record it and queue for re-synthesis
+      if (this.ctx.factStore) {
+        await this.ctx.factStore.add({
+          userId,
+          fact: `User rejected my response to: "${userMessage}". My approach did not satisfy them.`,
+          entity: toolsUsed[0] ?? "unknown",
+          category: "skill",
+          confidence: 0.9,
+          source: "confirmed",
+          expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+        }).catch(() => {});
+      }
+
+      // Queue the user's request for background synthesis — find a better approach
+      this.ctx.cognitiveLoop?.enqueueSynthesisTarget(
+        userMessage.slice(0, 100),
+        `User disliked response to: "${userMessage.slice(0, 80)}"`,
+        "conversation",
+      );
+      log.engine.info(`[Feedback] 👎 dislike for session ${sessionId}, queued for re-synthesis`);
     }
   }
 
@@ -2072,7 +2226,17 @@ export class OwlGateway {
         true,
         retryResponse.content,
       );
-      this.postProcess(session.messages, session.id);
+      this.postProcess(session.messages, session.id, {
+        toolsUsed: retryResponse.toolsUsed ?? [],
+        userId: message.userId,
+        channelId: message.channelId,
+      });
+      // Deliver any files queued during the retry run
+      await this.deliverPendingFiles(
+        retryResponse.pendingFiles ?? [],
+        message.channelId,
+        message.userId,
+      );
       return toGatewayResponse(retryResponse);
     } catch (err) {
       log.evolution.error(
@@ -2159,15 +2323,59 @@ export class OwlGateway {
     const activeIds = new Set<string>();
     for (const [key, cache] of this.sessions) {
       if (now - cache.lastActivity > SESSION_TIMEOUT_MS) {
+        // Option B: fire endSession before evicting so episodic memory extraction,
+        // learning pipeline, and DNA evolution all run for sessions that end without
+        // an explicit /quit (e.g. Telegram users who just go silent).
+        // endSession() captures session.messages synchronously before its first await,
+        // so it's safe to delete from the map immediately after — the messages reference
+        // is already captured by the time the async work begins.
+        if (cache.session.messages.length >= 2) {
+          this.endSession(key).catch((err) => {
+            log.engine.warn(
+              `[session-evict] endSession failed for "${key}": ${err instanceof Error ? err.message : err}`,
+            );
+          });
+        }
         this.sessions.delete(key);
         this.stuckStreak.delete(key);
         this.attemptLogs.delete(key);
-        log.engine.info(`[session-evict] Evicted stale session "${key}"`);
+        log.engine.info(`[session-evict] Evicted stale session "${key}" (endSession triggered)`);
       } else {
         activeIds.add(key);
       }
     }
     this.attemptLogs.pruneStale(activeIds);
+
+    // Evict pending feedback older than 24 hours
+    const FEEDBACK_TTL = 24 * 60 * 60 * 1000;
+    for (const [id, fb] of this.pendingFeedback) {
+      if (now - fb.createdAt > FEEDBACK_TTL) this.pendingFeedback.delete(id);
+    }
+  }
+
+  // ─── Private: File Delivery ──────────────────────────────────
+
+  /**
+   * Deliver any files queued in pendingFiles by the send_file tool during a run.
+   * Uses the adapter's deliverFile method if available — gracefully skips if not.
+   */
+  private async deliverPendingFiles(
+    files: import("../engine/runtime.js").PendingFile[],
+    channelId: string,
+    userId: string,
+  ): Promise<void> {
+    if (!files.length) return;
+    const adapter = this.adapters.get(channelId);
+    if (!adapter?.deliverFile) return;
+    for (const file of files) {
+      try {
+        await adapter.deliverFile(userId, file.path, file.caption);
+      } catch (err) {
+        log.engine.warn(
+          `[${channelId}] File delivery to ${userId} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   }
 
   // ─── Private: Post-processing ────────────────────────────────
@@ -2186,8 +2394,18 @@ export class OwlGateway {
    * Also triggers async inner monologue computation for the NEXT request
    * so the hot path doesn't block on an extra LLM call.
    */
-  private postProcess(messages: ChatMessage[], sessionId?: string): void {
-    this.postProcessor.process(messages, sessionId);
+  private postProcess(
+    messages: ChatMessage[],
+    sessionId?: string,
+    metadata?: {
+      toolsUsed?: string[];
+      userId?: string;
+      channelId?: string;
+      loopExhausted?: boolean;
+      toolFailureCount?: number;
+    },
+  ): void {
+    this.postProcessor.process(messages, sessionId, metadata);
 
     // Async inner monologue — compute for the last user message so it's
     // ready for injection in the NEXT request (see runtime.ts getLastMonologue)
@@ -2257,6 +2475,7 @@ export class OwlGateway {
     isolatedTask: boolean = false,
     attemptLog?: import("../memory/attempt-log.js").AttemptLog,
     channelId?: string,
+    userId?: string,
   ): Promise<EngineContext> {
     return this.contextBuilder.build(
       session,
@@ -2265,6 +2484,7 @@ export class OwlGateway {
       isolatedTask,
       attemptLog,
       channelId,
+      userId,
     );
   }
 

@@ -344,6 +344,7 @@ export class StackOwlServer {
         this.config,
         this.pelletStore,
         this.gateway.getToolRegistry(),
+        this.gateway.ctx.db,
       );
 
       const participants = owlNames
@@ -532,11 +533,6 @@ export class StackOwlServer {
         onStreamEvent: async (event: StreamEvent) => {
           if (client.ws.readyState === client.ws.OPEN) {
             this.send(client.ws, { type: "stream", event });
-          }
-        },
-        onFile: async (filePath: string, caption?: string) => {
-          if (client.ws.readyState === client.ws.OPEN) {
-            this.send(client.ws, { type: "file", path: filePath, caption });
           }
         },
       },

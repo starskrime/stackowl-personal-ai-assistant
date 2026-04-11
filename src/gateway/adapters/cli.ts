@@ -104,6 +104,10 @@ export class CLIAdapter implements ChannelAdapter {
     this.rl?.close();
   }
 
+  async deliverFile(_userId: string, filePath: string, caption?: string): Promise<void> {
+    console.log(`\n[File ready: ${filePath}${caption ? ` — ${caption}` : ""}]\n`);
+  }
+
   private drainQueue(): void {
     if (this.processing || this.messageQueue.length === 0) return;
     const input = this.messageQueue.shift()!;
@@ -147,10 +151,6 @@ export class CLIAdapter implements ChannelAdapter {
         {
           onProgress: async (msg: string) => {
             console.log(chalk.dim(`  ⋯ ${msg}`));
-          },
-          // CLI: no file-sending capability in terminal
-          onFile: async (filePath: string) => {
-            console.log(chalk.dim(`  [File ready: ${filePath}]`));
           },
           askInstall: async (deps: string[]) => {
             return new Promise<boolean>((resolve) => {

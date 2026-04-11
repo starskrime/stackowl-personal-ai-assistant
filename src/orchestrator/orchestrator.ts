@@ -423,6 +423,7 @@ export class TaskOrchestrator {
       this.config,
       this.pelletStore,
       this.toolRegistry,
+      baseContext.db,
     );
 
     const session = await orchestrator.convene({

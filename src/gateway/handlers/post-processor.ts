@@ -91,6 +91,33 @@ export class PostProcessor {
       );
     }
 
+    // ── Owl performance recording (Phase 4 — data-driven DNA evolution) ──────
+    // Records tool outcomes and loop quality to owl_performance table.
+    // Used by Phase 5 to drive DNA evolution from real metrics, not LLM guesses.
+    if (this.ctx.db && sessionId) {
+      const owlName = metadata?.owlName ?? this.ctx.owl.persona.name;
+      const userId = metadata?.userId ?? "default";
+      const topic = (() => {
+        const m = [...messages].reverse().find((msg) => msg.role === "user");
+        return typeof m?.content === "string" ? m.content.slice(0, 80) : undefined;
+      })();
+
+      if (metadata?.loopExhausted) {
+        this.ctx.db.owlPerf.record(owlName, sessionId, userId, "loop_exhausted", topic);
+      } else if ((metadata?.toolsUsed?.length ?? 0) > 0) {
+        // Response used tools and didn't exhaust — task completed
+        this.ctx.db.owlPerf.record(owlName, sessionId, userId, "task_completed", topic);
+      }
+
+      // Record per-tool failures from this response
+      const failCount = metadata?.toolFailureCount ?? 0;
+      if (failCount > 0) {
+        this.ctx.db.owlPerf.record(owlName, sessionId, userId, "tool_failure", topic, failCount);
+      } else if ((metadata?.toolsUsed?.length ?? 0) > 0) {
+        this.ctx.db.owlPerf.record(owlName, sessionId, userId, "tool_success", topic);
+      }
+    }
+
     // Learning — prefer new orchestrator (TopicFusion + Synthesis), fallback to legacy
     if (this.ctx.learningOrchestrator) {
       this.taskQueue.enqueue("learning-orchestrator", async () => {
@@ -396,6 +423,103 @@ export class PostProcessor {
       if (this.coordinator && this.messageCount % 15 === 0) {
         const profile = this.coordinator.getMicroLearnerProfile();
         this.ctx.patternAnalyzer?.enrichFromProfile(profile);
+      }
+    }
+
+    // ── Message compression — every 20 messages, summarize batch ─
+    // Triggered when session crosses a batch boundary (20, 40, 60...).
+    // Writes structured summary → SQLite summaries table.
+    // key_facts → facts + owl_learnings. Saves ~74% on history tokens.
+    if (this.ctx.compressor && this.ctx.db && sessionId && metadata?.userId) {
+      const msgCount = this.ctx.db.messages.countSession(sessionId);
+      if (msgCount > 0 && msgCount % 20 === 0) {
+        this.taskQueue.enqueue("compress", async () => {
+          try {
+            const result = await this.ctx.compressor!.compress(
+              sessionId,
+              metadata.userId!,
+              metadata.owlName ?? this.ctx.owl.persona.name,
+              messages,
+            );
+            if (result) {
+              log.engine.info(
+                `[PostProcessor:compress] Batch compressed — ${result.factsWritten} facts, ` +
+                `${result.learningsWritten} learnings, ~${result.tokensSaved} tokens saved`,
+              );
+            }
+          } catch (err) {
+            log.engine.warn(
+              `[PostProcessor:compress] Failed: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        });
+      }
+    }
+
+    // ── L1 Digest update — runs every turn, zero LLM cost ────────
+    // Updates the ConversationDigest with URLs found, files written,
+    // commands run, decisions made, and failures from this response.
+    // The digest is injected at the TOP of the next prompt so the model
+    // knows what it just produced without re-parsing raw tool results.
+    if (this.ctx.digestManager && sessionId) {
+      this.taskQueue.enqueue("digest-update", async () => {
+        try {
+          await this.ctx.digestManager!.update(sessionId, messages);
+        } catch (err) {
+          log.engine.warn(
+            `[PostProcessor:digest] Update failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      });
+    }
+
+    // ── Option A: Victory lap — record successful tool use ─────
+    // When tools were used and the response looks successful, write a fact
+    // to factStore describing what worked. Next session, when a similar request
+    // arrives, the context builder's factStore search retrieves this and the
+    // assistant knows it has done this before and how.
+    if (
+      this.ctx.factStore &&
+      (metadata?.toolsUsed?.length ?? 0) > 0 &&
+      !metadata?.loopExhausted &&
+      (metadata?.toolFailureCount ?? 0) < 2
+    ) {
+      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+      const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
+      if (lastUserMsg && lastAssistantMsg) {
+        const userRequest =
+          typeof lastUserMsg.content === "string"
+            ? lastUserMsg.content.slice(0, 150)
+            : "";
+        const summary =
+          typeof lastAssistantMsg.content === "string"
+            ? lastAssistantMsg.content.slice(0, 200)
+            : "";
+        const tools = metadata!.toolsUsed!.join(", ");
+
+        this.taskQueue.enqueue("success-recipe", async () => {
+          try {
+            await this.ctx.factStore!.add({
+              userId: metadata?.userId ?? "default",
+              fact: `I successfully handled "${userRequest}" using [${tools}]. Result: ${summary}`,
+              entity: metadata!.toolsUsed![0],
+              category: "skill",
+              confidence: 0.85,
+              source: "inferred",
+              expiresAt: new Date(
+                Date.now() + 90 * 24 * 60 * 60 * 1000, // 90 days
+              ).toISOString(),
+            });
+            await this.ctx.factStore!.save();
+            log.engine.info(
+              `[PostProcessor:success-recipe] Recorded success using [${tools}]`,
+            );
+          } catch (err) {
+            log.engine.warn(
+              `[PostProcessor:success-recipe] Failed: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        });
       }
     }
 

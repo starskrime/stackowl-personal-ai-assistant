@@ -10,6 +10,7 @@ import type { SessionStore } from "../memory/store.js";
 import type { OwlRegistry } from "./registry.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { StackOwlConfig } from "../config/loader.js";
+import type { MemoryDatabase } from "../memory/db.js";
 import { log } from "../logger.js";
 
 // Max user+assistant messages sent to the LLM for analysis.
@@ -26,6 +27,7 @@ export class OwlEvolutionEngine {
     | import("../learning/micro-learner.js").UserProfile
     | null;
   private episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
+  private db?: MemoryDatabase;
 
   constructor(
     provider: ModelProvider,
@@ -36,6 +38,7 @@ export class OwlEvolutionEngine {
       | import("../learning/micro-learner.js").UserProfile
       | null,
     episodicMemory?: import("../memory/episodic.js").EpisodicMemory,
+    db?: MemoryDatabase,
   ) {
     this.provider = provider;
     this.config = config;
@@ -43,6 +46,7 @@ export class OwlEvolutionEngine {
     this.owlRegistry = owlRegistry;
     this.userProfileProvider = userProfileProvider;
     this.episodicMemory = episodicMemory;
+    this.db = db;
   }
 
   /**
@@ -235,10 +239,33 @@ export class OwlEvolutionEngine {
       }
     }
 
+    // Build performance metrics section (Phase 5 — data-driven evolution)
+    let performanceSection = "";
+    if (this.db) {
+      try {
+        const perf = this.db.owlPerf.getSummary(owlName, 30);
+        if (perf.totalInteractions > 0) {
+          performanceSection =
+            `\nPERFORMANCE METRICS (last 30 days, ${perf.totalInteractions} interactions):\n` +
+            `- User satisfaction (👍 ratio): ${(perf.likeRatio * 100).toFixed(0)}%\n` +
+            `- Tool success rate: ${(perf.toolSuccessRate * 100).toFixed(0)}%\n` +
+            `- Loop exhaustion rate: ${(perf.loopExhaustionRate * 100).toFixed(0)}%\n` +
+            (perf.topTopics.length > 0 ? `- Top requested topics: ${perf.topTopics.slice(0, 5).join(", ")}\n` : "") +
+            `\nUse these metrics to inform your mutations:\n` +
+            `- Low satisfaction (<60%) → consider adjusting verbosity or challengeLevel\n` +
+            `- High tool failure (>20%) → consider noting tool limitations in preferences\n` +
+            `- High loop exhaustion (>10%) → reduce complexity, simplify approach\n\n`;
+        }
+      } catch {
+        // Non-fatal — metrics may not exist yet
+      }
+    }
+
     const prompt =
       `You are the subconscious of "${owl.persona.name}", analyzing a recent conversation to learn and evolve.\n\n` +
       `CURRENT DNA STATE:\n${JSON.stringify(owl.dna, null, 2)}\n\n` +
       profileSection +
+      performanceSection +
       memorySection +
       this.buildEvolutionHistorySection(owl) +
       `RECENT CONVERSATION (last ${relevantMessages.length} turns):\n${transcript}\n\n` +

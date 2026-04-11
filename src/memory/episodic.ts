@@ -18,6 +18,7 @@ import { join } from "node:path";
 import type { ModelProvider } from "../providers/base.js";
 import type { Session } from "./store.js";
 import { log } from "../logger.js";
+import type { MemoryDatabase } from "./db.js";
 
 export interface Episode {
   id: string;
@@ -73,24 +74,44 @@ export class EpisodicMemory {
   private filePath: string;
   private loaded = false;
   private provider?: ModelProvider;
+  private db?: MemoryDatabase;
 
-  constructor(workspacePath: string, provider?: ModelProvider) {
+  constructor(workspacePath: string, provider?: ModelProvider, db?: MemoryDatabase) {
     this.filePath = join(workspacePath, "memory", "episodes.json");
     this.provider = provider;
+    this.db = db;
   }
 
   async load(): Promise<void> {
     if (this.loaded) return;
     try {
-      if (existsSync(this.filePath)) {
+      if (this.db) {
+        // Load from SQLite DB
+        const dbEpisodes = this.db.episodes.getAll();
+        for (const ep of dbEpisodes) {
+          // Map db.Episode → local Episode (compatible shapes, extra fields default)
+          this.episodes.set(ep.id, {
+            id: ep.id,
+            sessionId: ep.sessionId,
+            owlName: ep.owlName,
+            date: new Date(ep.createdAt).getTime(),
+            summary: ep.summary,
+            keyFacts: ep.keyFacts,
+            topics: ep.topics,
+            sentiment: ep.sentiment as Episode["sentiment"],
+            userMessageCount: 0,
+            embedding: ep.embedding,
+            importance: ep.importance,
+          });
+        }
+        log.engine.info(`[EpisodicMemory] Loaded ${this.episodes.size} episodes from SQLite`);
+      } else if (existsSync(this.filePath)) {
         const data = await readFile(this.filePath, "utf-8");
         const parsed = JSON.parse(data) as Episode[];
         for (const ep of parsed) {
           this.episodes.set(ep.id, ep);
         }
-        log.engine.info(
-          `[EpisodicMemory] Loaded ${this.episodes.size} episodes`,
-        );
+        log.engine.info(`[EpisodicMemory] Loaded ${this.episodes.size} episodes from JSON`);
       }
     } catch (err) {
       log.engine.warn(
@@ -106,6 +127,27 @@ export class EpisodicMemory {
   }
 
   async save(): Promise<void> {
+    if (this.db) {
+      // Write to SQLite (upsert all in-memory episodes)
+      for (const ep of this.episodes.values()) {
+        this.db.episodes.upsert({
+          id: ep.id,
+          sessionId: ep.sessionId ?? "unknown",
+          userId: "default",
+          owlName: ep.owlName,
+          summary: ep.summary,
+          keyFacts: ep.keyFacts,
+          topics: ep.topics,
+          sentiment: ep.sentiment ?? "neutral",
+          importance: ep.importance ?? 0.5,
+          embedding: ep.embedding,
+          createdAt: ep.date ? new Date(ep.date).toISOString() : new Date().toISOString(),
+        });
+      }
+      log.engine.debug(`[EpisodicMemory] Synced ${this.episodes.size} episodes to SQLite`);
+      return;
+    }
+
     const dir = join(this.filePath, "..");
     if (!existsSync(dir)) await mkdir(dir, { recursive: true });
     await writeFile(
