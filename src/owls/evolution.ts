@@ -261,11 +261,77 @@ export class OwlEvolutionEngine {
       }
     }
 
+    // ── Phase D: Trajectory summary (reward-weighted data) ────────
+    // Replaces raw impression-based evolution with quantitative reward signals.
+    // The LLM now sees which task types produced high vs low reward, not just
+    // "did the conversation seem good or bad".
+    let trajectorySection = "";
+    if (this.db) {
+      try {
+        const recentTrajectories = this.db.trajectories.getRecent(owlName, 50);
+        if (recentTrajectories.length > 0) {
+          const avgReward = recentTrajectories.reduce((s, t) => s + t.reward, 0) / recentTrajectories.length;
+
+          // Group by tool pattern to find high vs low reward domains
+          const toolRewards = new Map<string, number[]>();
+          for (const t of recentTrajectories) {
+            const toolKey = t.toolsUsed.slice(0, 2).join("+") || "no_tools";
+            const existing = toolRewards.get(toolKey) ?? [];
+            existing.push(t.reward);
+            toolRewards.set(toolKey, existing);
+          }
+          const toolAvgs = [...toolRewards.entries()]
+            .map(([key, rewards]) => ({
+              key,
+              avg: rewards.reduce((s, r) => s + r, 0) / rewards.length,
+              count: rewards.length,
+            }))
+            .sort((a, b) => b.avg - a.avg);
+
+          const highReward = toolAvgs.filter((t) => t.avg > 0.3 && t.count >= 2).slice(0, 3);
+          const lowReward = toolAvgs.filter((t) => t.avg < -0.1 && t.count >= 2).slice(0, 3);
+
+          trajectorySection = `\nTRAJECTORY ANALYSIS (last ${recentTrajectories.length} interactions):\n`;
+          trajectorySection += `- Average reward: ${avgReward >= 0 ? "+" : ""}${avgReward.toFixed(2)} (scale: -1.0 worst → +1.0 best)\n`;
+
+          if (highReward.length > 0) {
+            trajectorySection += `- High-reward patterns (reinforce these):\n`;
+            for (const t of highReward) {
+              trajectorySection += `  • ${t.key}: avg ${t.avg >= 0 ? "+" : ""}${t.avg.toFixed(2)} (${t.count}x)\n`;
+            }
+          }
+          if (lowReward.length > 0) {
+            trajectorySection += `- Low-reward patterns (failure domains — add targeted rules to fix):\n`;
+            for (const t of lowReward) {
+              trajectorySection += `  • ${t.key}: avg ${t.avg.toFixed(2)} (${t.count}x)\n`;
+            }
+          }
+
+          // Add bad trajectory examples for context
+          const badExamples = this.db.trajectories.getLowReward(owlName, 3, -0.1);
+          if (badExamples.length > 0) {
+            trajectorySection += `\nWorst recent failures:\n`;
+            for (const t of badExamples) {
+              trajectorySection += `  - "${t.userMessage.slice(0, 100)}" → ${t.outcome} (reward: ${t.reward.toFixed(2)})\n`;
+            }
+          }
+
+          trajectorySection +=
+            `\nUse trajectory data to:\n` +
+            `- Reinforce traits that correlate with high-reward outcomes\n` +
+            `- Suggest "promptRules" for low-reward failure domains (e.g. specific tool guidance)\n\n`;
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     const prompt =
       `You are the subconscious of "${owl.persona.name}", analyzing a recent conversation to learn and evolve.\n\n` +
       `CURRENT DNA STATE:\n${JSON.stringify(owl.dna, null, 2)}\n\n` +
       profileSection +
       performanceSection +
+      trajectorySection +
       memorySection +
       this.buildEvolutionHistorySection(owl) +
       `RECENT CONVERSATION (last ${relevantMessages.length} turns):\n${transcript}\n\n` +
@@ -275,7 +341,8 @@ export class OwlEvolutionEngine {
       `- Did they reject your advice, or accept it?\n` +
       `- Based on their topics and tool usage, what expertise should you develop to serve them better?\n` +
       `- What communication style would best match their personality?\n` +
-      `- Look at your evolution history — what worked and what didn't? Avoid repeating failed mutations.\n\n` +
+      `- Look at your evolution history — what worked and what didn't? Avoid repeating failed mutations.\n` +
+      `- Look at trajectory low-reward patterns — what concrete rules would fix those failure domains?\n\n` +
       `Return a JSON object with proposed mutations to your DNA. Schema:\n` +
       `{\n` +
       `  "newPreferences": { "prefers_rust": 0.9, "hates_boilerplate": 0.8 }, // Add or update 0.0 to 1.0\n` +
@@ -288,8 +355,12 @@ export class OwlEvolutionEngine {
       `    "adviceAccepted": true,\n` +
       `    "challengesGiven": 1\n` +
       `  },\n` +
+      `  "promptRules": ["For media downloads: always try yt-dlp via run_shell_command first."],\n` +
       `  "evolutionReasoning": "User explicitly asked for shorter answers and chose Rust over Go."\n` +
       `}\n\n` +
+      `promptRules: Targeted behavioral rules derived from low-reward failure patterns. ` +
+      `Add ONLY when trajectory data shows a clear repeated failure that a specific rule would fix. ` +
+      `Each rule under 120 chars. Max 3 rules. Omit if no clear failure pattern found.\n\n` +
       `Output ONLY valid JSON.`;
 
     const response = await this.provider.chat(
@@ -382,6 +453,31 @@ export class OwlEvolutionEngine {
           );
         }
         changed = true;
+      }
+
+      // ── Phase D3: Reward-derived prompt rules ─────────────────
+      // The LLM can now suggest targeted rules derived from low-reward failure domains.
+      // These are appended to dna.promptSections and injected into every future prompt.
+      if (Array.isArray(mutations.promptRules) && mutations.promptRules.length > 0) {
+        const newRules = (mutations.promptRules as string[])
+          .filter((r) => typeof r === "string" && r.length > 10)
+          .map((r) => r.slice(0, 120))
+          .slice(0, 3);
+
+        if (newRules.length > 0) {
+          const existing = owl.dna.promptSections ?? [];
+          const merged = [...existing];
+          for (const rule of newRules) {
+            // Deduplicate by first 30 chars
+            if (!merged.some((r) => r.slice(0, 30).toLowerCase() === rule.slice(0, 30).toLowerCase())) {
+              merged.push(rule);
+            }
+          }
+          // Cap at 10 to keep prompt compact
+          owl.dna.promptSections = merged.slice(-10);
+          logEntries.push(`Added ${newRules.length} prompt rule(s) from trajectory analysis`);
+          changed = true;
+        }
       }
 
       // Trait bounds — prevent extreme drift

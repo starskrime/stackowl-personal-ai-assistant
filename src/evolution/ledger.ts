@@ -48,6 +48,11 @@ export interface CapabilitySnapshot {
 export class CapabilityLedger {
   private manifest: Manifest = { version: 1, tools: [] };
   private loaded = false;
+  private db?: import("../memory/db.js").MemoryDatabase;
+
+  setDb(db: import("../memory/db.js").MemoryDatabase): void {
+    this.db = db;
+  }
 
   async load(): Promise<void> {
     if (!existsSync(MANIFEST_PATH)) {
@@ -102,7 +107,6 @@ export class CapabilityLedger {
     record.lastUsedAt = new Date().toISOString();
     if (success) {
       record.consecutiveFailures = 0;
-      // Restore to active if it was marked failed but is working again
       if (record.status === "failed") record.status = "active";
     } else {
       record.consecutiveFailures = (record.consecutiveFailures ?? 0) + 1;
@@ -112,6 +116,14 @@ export class CapabilityLedger {
     }
 
     await this.save();
+
+    // Mirror usage counts into SynthesisMemory (keyed by file path)
+    if (this.db) {
+      try {
+        const filePath = join(SYNTHESIZED_DIR, record.fileName);
+        this.db.synthesisMemory.recordUse(filePath, success);
+      } catch { /* non-fatal */ }
+    }
   }
 
   async retire(toolName: string): Promise<boolean> {

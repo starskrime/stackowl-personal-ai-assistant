@@ -18,6 +18,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { Session } from "../memory/store.js";
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
+import { PromptOptimizer } from "../engine/prompt-optimizer.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
@@ -711,24 +712,25 @@ export class OwlGateway {
           break;
 
         case "FRESH_START":
-          // Full context flush
+          // Soft context boundary — do NOT wipe session.messages.
+          // The model needs history to answer back-references ("what was your last response?").
+          // We inject a directive so it knows this is a fresh task, but history stays readable.
           if (activeIntent) {
             intentSM!.transition(activeIntent.id, "abandoned", "Fresh start — user returning or resetting");
           }
-          session.messages = [];
           this.attemptLogs.delete(message.sessionId);
-          await this.ctx.sessionStore.saveSession(session);
           if (wc) wc.clear();
 
           // Build fresh start directive
-          const prevTopic = previousSession
-            ? previousSession.messages
-                .filter((m) => m.role === "user")
-                .slice(-1)[0]?.content?.slice(0, 100)
-            : null;
-          freshStartDirective = `[SYSTEM DIRECTIVE: Context has been flushed. You are starting a fresh task.]`;
-          if (prevTopic && temporalSnapshot.isReturningUser) {
-            freshStartDirective += `\n[Previous session context: User was last discussing "${prevTopic}"]`;
+          const prevTopic = session.messages
+            .filter((m) => m.role === "user")
+            .slice(-1)[0]?.content?.slice(0, 100)
+            ?? previousSession?.messages
+              .filter((m) => m.role === "user")
+              .slice(-1)[0]?.content?.slice(0, 100);
+          freshStartDirective = `[SYSTEM DIRECTIVE: You are starting a new task. Prior conversation history is available for reference but treat this as a fresh request.]`;
+          if (prevTopic) {
+            freshStartDirective += `\n[Previous context: User was last discussing "${prevTopic}"]`;
           }
           break;
       }
@@ -742,9 +744,9 @@ export class OwlGateway {
         session.messages,
       );
       if (freshStartDirective) {
-        session.messages = [];
+        // Do NOT wipe session.messages — preserve history for back-references.
+        // Only clear working context and attempt logs.
         this.attemptLogs.delete(message.sessionId);
-        await this.ctx.sessionStore.saveSession(session);
         if (this.ctx.workingContextManager) {
           this.ctx.workingContextManager.getOrCreate(message.sessionId).clear();
         }
@@ -1308,6 +1310,26 @@ export class OwlGateway {
       const metric = signal === "like" ? "feedback_like" : "feedback_dislike";
       const topic = userMessage.slice(0, 80);
       this.ctx.db.owlPerf.record(owlName, sessionId, userId, metric, topic);
+
+      // Phase B — update trajectory reward with the feedback signal
+      try {
+        this.ctx.db.trajectories.applyFeedback(sessionId, signal);
+      } catch { /* non-fatal */ }
+
+      // Phase E2 — delayed Parliament verdict validation
+      // When we know the outcome (like = correct, dislike = wrong), validate
+      // any unvalidated Parliament verdicts from this session.
+      try {
+        const pendingVerdicts = this.ctx.db.parliamentVerdicts.getPendingValidation(5);
+        const sessionVerdicts = pendingVerdicts.filter(
+          (v) => v.sessionId === sessionId,
+        );
+        const validationSignal = signal === "like" ? "correct" as const : "wrong" as const;
+        const rewardDelta = signal === "like" ? 0.5 : -0.5;
+        for (const v of sessionVerdicts) {
+          this.ctx.db.parliamentVerdicts.validate(v.id, validationSignal, rewardDelta);
+        }
+      } catch { /* non-fatal */ }
     }
 
     if (signal === "like") {
@@ -2406,6 +2428,33 @@ export class OwlGateway {
     },
   ): void {
     this.postProcessor.process(messages, sessionId, metadata);
+
+    // ── Phase C: PromptOptimizer trigger check ────────────────────
+    // Fire-and-forget — runs after enough bad trajectories accumulate.
+    // Never blocks the user response.
+    if (this.ctx.db && this.ctx.owlRegistry && this.ctx.provider) {
+      const owlName = this.ctx.owl.persona.name;
+      const defaultModel =
+        (this.ctx.config as any).providers?.anthropic?.defaultModel ??
+        "claude-sonnet-4-6";
+      setImmediate(() => {
+        try {
+          const optimizer = new PromptOptimizer(
+            this.ctx.db!,
+            this.ctx.owlRegistry!,
+            this.ctx.provider!,
+            defaultModel,
+          );
+          if (optimizer.shouldRun(owlName)) {
+            optimizer.run(owlName).catch((err) => {
+              log.engine.warn(`[PromptOptimizer] Background run failed: ${err}`);
+            });
+          }
+        } catch {
+          // Non-fatal
+        }
+      });
+    }
 
     // Async inner monologue — compute for the last user message so it's
     // ready for injection in the NEXT request (see runtime.ts getLastMonologue)

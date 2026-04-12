@@ -286,7 +286,7 @@ Reward is computed automatically — never relies on model calling `remember()`.
 
 ---
 
-### ⏳ Phase C — PromptOptimizer (APO-lite)
+### ✅ Phase C — PromptOptimizer (APO-lite)
 
 **WHY we are doing this:**
 The owl keeps failing at the same types of tasks session after session. DNA evolution runs, personality traits change (it becomes less verbose, more challenging) — but the tool selection errors don't improve. Why? Because **DNA evolves personality, not instructions.**
@@ -350,7 +350,7 @@ CREATE TABLE prompt_optimization_log (
 
 ---
 
-### ⏳ Phase D — DNA Evolution Upgrade
+### ✅ Phase D — DNA Evolution Upgrade
 
 **WHY we are doing this:**
 DNA evolution currently runs by sending the last N conversation messages to an LLM and asking: *"What should change about this owl's personality?"* This is essentially random mutation with a guess. The LLM reads words — it cannot tell whether the interactions it's reading were successful or not. It mutates traits in directions that feel plausible, not directions that are empirically correlated with better outcomes.
@@ -400,7 +400,7 @@ This is lighter than PromptOptimizer's full beam search. Where PromptOptimizer r
 
 ---
 
-### ⏳ Phase E — Parliament Evolution
+### ✅ Phase E — Parliament Evolution
 
 **WHY we are doing this:**
 Parliament currently exists as a tool you can summon for big decisions. It produces high-quality structured debate and synthesized verdicts. But it has a fundamental flaw: **it never learns whether its verdicts were correct.**
@@ -485,11 +485,11 @@ The synthesis decision gains multi-perspective review at the cost of 4–6 LLM c
 |-------|------|-----------|--------|--------------------------|
 | 1–6 | SQLite Migration | — | ✅ Done | Cross-session memory, compressed context, data-driven DNA |
 | 1–3 | Task Execution Engine | SQLite | ✅ Done | Never repeats failed approaches |
-| A | SynthesisMemory | SQLite | ⏳ Next | Owl stops saying "I can't create tools" |
-| B | TrajectoryStore + RewardEngine | Task Engine | ⏳ | System has quality scores on every interaction |
-| C | PromptOptimizer | Phase B | ⏳ | System prompts improve automatically from failures |
-| D | DNA Evolution Upgrade | Phase B | ⏳ | Trait mutations are reward-guided, not guessed |
-| E | Parliament Evolution | Phases B + C | ⏳ | Parliament learns from its verdicts, Lite for frequent use |
+| A | SynthesisMemory | SQLite | ✅ Done | Owl stops saying "I can't create tools" |
+| B | TrajectoryStore + RewardEngine | Task Engine | ✅ Done | System has quality scores on every interaction |
+| C | PromptOptimizer | Phase B | ✅ Done | System prompts improve automatically from failures |
+| D | DNA Evolution Upgrade | Phase B | ✅ Done | Trait mutations are reward-guided, not guessed |
+| E | Parliament Evolution | Phases B + C | ✅ Done | Parliament learns from its verdicts, Lite for frequent use |
 
 ---
 

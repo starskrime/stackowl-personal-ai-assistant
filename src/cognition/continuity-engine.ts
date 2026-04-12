@@ -68,12 +68,12 @@ function temporalLayer(
     // 30min-4h
     return { bias: "TOPIC_SWITCH", confidence: 0.5 };
   }
-  if (gapMs < 24 * 60 * 60 * 1000) {
-    // 4h-24h
-    return { bias: "FRESH_START", confidence: 0.6 };
+  if (gapMs < 72 * 60 * 60 * 1000) {
+    // 4h-72h — same/next day return; let Layer 3 decide, don't assume fresh start
+    return { bias: "TOPIC_SWITCH", confidence: 0.5 };
   }
-  // > 24h
-  return { bias: "FRESH_START", confidence: 0.9 };
+  // > 72h — genuinely stale
+  return { bias: "FRESH_START", confidence: 0.8 };
 }
 
 function parseGapMs(gapStr: string): number {

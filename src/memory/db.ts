@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 7;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -178,6 +178,30 @@ export interface TaskState {
   createdAt: string;
 }
 
+export interface SynthesisRecord {
+  id: string;
+  owlName: string;
+  /** What the user asked for that triggered synthesis */
+  capabilityDescription: string;
+  /** "skill" (SKILL.md) | "typescript" (compiled tool) | "existing_tool_reuse" */
+  synthesisApproach: "skill" | "typescript" | "existing_tool_reuse";
+  /** Existing tools/shell commands the synthesized skill orchestrates */
+  toolsItUses: string[];
+  /** Path to the created file on disk */
+  outputPath?: string;
+  /** Why this approach was chosen over alternatives */
+  creationReasoning?: string;
+  /** What was attempted before the final approach — captures first-try failures */
+  whatFailedFirst?: string;
+  successCount: number;
+  failCount: number;
+  /** "active" | "retired" | "superseded" */
+  status: string;
+  sourceSessionId?: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
 export interface ApproachRecord {
   id: string;
   owlName: string;
@@ -186,6 +210,76 @@ export interface ApproachRecord {
   argsSummary: string;
   outcome: "success" | "failure";
   failureReason?: string;
+  createdAt: string;
+}
+
+export interface Trajectory {
+  id: string;
+  sessionId: string;
+  owlName: string;
+  userId?: string;
+  /** The user's message that started this ReAct loop */
+  userMessage: string;
+  /** Number of tool-call iterations completed */
+  totalTurns: number;
+  /** Unique tool names invoked */
+  toolsUsed: string[];
+  outcome: "success" | "failure" | "abandoned";
+  /** Scalar reward in [-1.0, 1.0] computed by RewardEngine */
+  reward: number;
+  /** Per-signal contributions to the reward */
+  rewardBreakdown: Record<string, number>;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface TrajectoryTurn {
+  id: string;
+  trajectoryId: string;
+  turnIndex: number;
+  toolName: string;
+  /** Truncated JSON of call arguments */
+  argsSnapshot: string;
+  /** Truncated result string */
+  resultSnapshot: string;
+  success: boolean;
+  durationMs?: number;
+  createdAt: string;
+}
+
+export type ParliamentVerdictSignal = "PROCEED" | "HOLD" | "ABORT" | "REVISE";
+export type ParliamentValidationSignal = "correct" | "wrong" | "partial";
+
+export interface ParliamentVerdictRecord {
+  id: string;
+  sessionId: string;
+  topic: string;
+  verdict: ParliamentVerdictSignal;
+  synthesis?: string;
+  participants: string[];
+  /** 1 when the outcome has been observed via trajectory reward */
+  validated: number;
+  validationSignal?: ParliamentValidationSignal;
+  /** Reward from the trajectory that followed this verdict */
+  validationReward?: number;
+  createdAt: string;
+}
+
+export interface PromptOptimizationRecord {
+  id: string;
+  owlName: string;
+  /** The original system prompt that was optimized */
+  originalPrompt: string;
+  /** The winning improved system prompt */
+  improvedPrompt: string;
+  /** Textual gradient — WHY the original prompt failed */
+  critique?: string;
+  /** Score of the winning candidate from the evaluator */
+  winnerScore?: number;
+  /** How many bad trajectories triggered this run */
+  trajectoriesUsed: number;
+  /** 1 when this prompt has been applied to the owl's DNA */
+  applied: number;
   createdAt: string;
 }
 
@@ -205,6 +299,10 @@ export class MemoryDatabase {
   readonly owlLearnings: OwlLearningsRepo;
   readonly approachLibrary: ApproachLibraryRepo;
   readonly taskStates: TaskStatesRepo;
+  readonly synthesisMemory: SynthesisMemoryRepo;
+  readonly trajectories: TrajectoriesRepo;
+  readonly promptOptimization: PromptOptimizationRepo;
+  readonly parliamentVerdicts: ParliamentVerdictsRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -230,8 +328,12 @@ export class MemoryDatabase {
     this.feedback        = new FeedbackRepo(this.db);
     this.owlPerf         = new OwlPerfRepo(this.db);
     this.owlLearnings    = new OwlLearningsRepo(this.db);
-    this.approachLibrary = new ApproachLibraryRepo(this.db);
-    this.taskStates      = new TaskStatesRepo(this.db);
+    this.approachLibrary    = new ApproachLibraryRepo(this.db);
+    this.taskStates         = new TaskStatesRepo(this.db);
+    this.synthesisMemory    = new SynthesisMemoryRepo(this.db);
+    this.trajectories       = new TrajectoriesRepo(this.db);
+    this.promptOptimization = new PromptOptimizationRepo(this.db);
+    this.parliamentVerdicts = new ParliamentVerdictsRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
@@ -406,6 +508,27 @@ export class MemoryDatabase {
         content_rowid='rowid'
       );
 
+      -- Synthesis memory: what the owl has built, why, and whether it worked.
+      -- Injected at session start as owl self-knowledge — fixes "I can't create tools" responses.
+      CREATE TABLE IF NOT EXISTS synthesis_memory (
+        id                      TEXT PRIMARY KEY,
+        owl_name                TEXT NOT NULL DEFAULT 'default',
+        capability_description  TEXT NOT NULL,
+        synthesis_approach      TEXT NOT NULL DEFAULT 'skill',
+        tools_it_uses           TEXT NOT NULL DEFAULT '[]',
+        output_path             TEXT,
+        creation_reasoning      TEXT,
+        what_failed_first       TEXT,
+        success_count           INTEGER NOT NULL DEFAULT 0,
+        fail_count              INTEGER NOT NULL DEFAULT 0,
+        status                  TEXT NOT NULL DEFAULT 'active',
+        source_session_id       TEXT,
+        created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+        last_used_at            TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_syn_owl    ON synthesis_memory(owl_name);
+      CREATE INDEX IF NOT EXISTS idx_syn_status ON synthesis_memory(status);
+
       -- Per-session task state: goal, planned approaches, eliminated approaches, step log.
       -- Persists across context compression so the model always knows what it tried.
       CREATE TABLE IF NOT EXISTS task_states (
@@ -436,6 +559,75 @@ export class MemoryDatabase {
       CREATE INDEX IF NOT EXISTS idx_appr_tool    ON approach_library(tool_name);
       CREATE INDEX IF NOT EXISTS idx_appr_outcome ON approach_library(outcome);
       CREATE INDEX IF NOT EXISTS idx_appr_owl     ON approach_library(owl_name);
+
+      -- Trajectory store: turn-by-turn traces of every ReAct loop.
+      -- Each trajectory captures what the model tried, the outcome, and
+      -- a scalar reward. Used by APO to identify bad runs for critique.
+      CREATE TABLE IF NOT EXISTS trajectories (
+        id               TEXT PRIMARY KEY,
+        session_id       TEXT NOT NULL,
+        owl_name         TEXT NOT NULL DEFAULT 'default',
+        user_id          TEXT,
+        user_message     TEXT NOT NULL DEFAULT '',
+        total_turns      INTEGER NOT NULL DEFAULT 0,
+        tools_used       TEXT NOT NULL DEFAULT '[]',
+        outcome          TEXT NOT NULL DEFAULT 'success',
+        reward           REAL NOT NULL DEFAULT 0.0,
+        reward_breakdown TEXT NOT NULL DEFAULT '{}',
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_traj_session ON trajectories(session_id);
+      CREATE INDEX IF NOT EXISTS idx_traj_owl     ON trajectories(owl_name);
+      CREATE INDEX IF NOT EXISTS idx_traj_reward  ON trajectories(reward);
+
+      -- Individual tool invocations within a trajectory
+      CREATE TABLE IF NOT EXISTS trajectory_turns (
+        id              TEXT PRIMARY KEY,
+        trajectory_id   TEXT NOT NULL REFERENCES trajectories(id),
+        turn_index      INTEGER NOT NULL,
+        tool_name       TEXT NOT NULL,
+        args_snapshot   TEXT NOT NULL DEFAULT '',
+        result_snapshot TEXT NOT NULL DEFAULT '',
+        success         INTEGER NOT NULL DEFAULT 1,
+        duration_ms     INTEGER,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_turn_traj ON trajectory_turns(trajectory_id);
+
+      -- APO-lite prompt optimization log: captures each optimization run outcome.
+      -- Applied prompts become the new owl system prompt (via promptSections in DNA).
+      CREATE TABLE IF NOT EXISTS prompt_optimization_log (
+        id                  TEXT PRIMARY KEY,
+        owl_name            TEXT NOT NULL,
+        original_prompt     TEXT NOT NULL,
+        improved_prompt     TEXT NOT NULL,
+        critique            TEXT,
+        winner_score        REAL,
+        trajectories_used   INTEGER DEFAULT 0,
+        applied             INTEGER DEFAULT 0,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_opt_owl     ON prompt_optimization_log(owl_name);
+      CREATE INDEX IF NOT EXISTS idx_opt_applied ON prompt_optimization_log(applied);
+
+      -- Parliament verdict tracking: remembers past verdicts and validates them
+      -- against the rewards that followed. Parliament enters debates knowing its
+      -- own track record on similar topics.
+      CREATE TABLE IF NOT EXISTS parliament_verdicts (
+        id                  TEXT PRIMARY KEY,
+        session_id          TEXT NOT NULL,
+        topic               TEXT NOT NULL,
+        verdict             TEXT NOT NULL,
+        synthesis           TEXT,
+        participants        TEXT NOT NULL DEFAULT '[]',
+        validated           INTEGER NOT NULL DEFAULT 0,
+        validation_signal   TEXT,
+        validation_reward   REAL,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pv_topic     ON parliament_verdicts(topic);
+      CREATE INDEX IF NOT EXISTS idx_pv_validated ON parliament_verdicts(validated);
     `);
   }
 
@@ -475,6 +667,101 @@ export class MemoryDatabase {
           created_at              TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at              TEXT NOT NULL DEFAULT (datetime('now'))
         );
+      `);
+    }
+    if (current < 4) {
+      // v4: synthesis_memory table
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS synthesis_memory (
+          id                      TEXT PRIMARY KEY,
+          owl_name                TEXT NOT NULL DEFAULT 'default',
+          capability_description  TEXT NOT NULL,
+          synthesis_approach      TEXT NOT NULL DEFAULT 'skill',
+          tools_it_uses           TEXT NOT NULL DEFAULT '[]',
+          output_path             TEXT,
+          creation_reasoning      TEXT,
+          what_failed_first       TEXT,
+          success_count           INTEGER NOT NULL DEFAULT 0,
+          fail_count              INTEGER NOT NULL DEFAULT 0,
+          status                  TEXT NOT NULL DEFAULT 'active',
+          source_session_id       TEXT,
+          created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at            TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_syn_owl    ON synthesis_memory(owl_name);
+        CREATE INDEX IF NOT EXISTS idx_syn_status ON synthesis_memory(status);
+      `);
+    }
+    if (current < 5) {
+      // v5: trajectories + trajectory_turns tables
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS trajectories (
+          id               TEXT PRIMARY KEY,
+          session_id       TEXT NOT NULL,
+          owl_name         TEXT NOT NULL DEFAULT 'default',
+          user_id          TEXT,
+          user_message     TEXT NOT NULL DEFAULT '',
+          total_turns      INTEGER NOT NULL DEFAULT 0,
+          tools_used       TEXT NOT NULL DEFAULT '[]',
+          outcome          TEXT NOT NULL DEFAULT 'success',
+          reward           REAL NOT NULL DEFAULT 0.0,
+          reward_breakdown TEXT NOT NULL DEFAULT '{}',
+          created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_traj_session ON trajectories(session_id);
+        CREATE INDEX IF NOT EXISTS idx_traj_owl     ON trajectories(owl_name);
+        CREATE INDEX IF NOT EXISTS idx_traj_reward  ON trajectories(reward);
+
+        CREATE TABLE IF NOT EXISTS trajectory_turns (
+          id              TEXT PRIMARY KEY,
+          trajectory_id   TEXT NOT NULL REFERENCES trajectories(id),
+          turn_index      INTEGER NOT NULL,
+          tool_name       TEXT NOT NULL,
+          args_snapshot   TEXT NOT NULL DEFAULT '',
+          result_snapshot TEXT NOT NULL DEFAULT '',
+          success         INTEGER NOT NULL DEFAULT 1,
+          duration_ms     INTEGER,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_turn_traj ON trajectory_turns(trajectory_id);
+      `);
+    }
+    if (current < 6) {
+      // v6: prompt_optimization_log table
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS prompt_optimization_log (
+          id                  TEXT PRIMARY KEY,
+          owl_name            TEXT NOT NULL,
+          original_prompt     TEXT NOT NULL,
+          improved_prompt     TEXT NOT NULL,
+          critique            TEXT,
+          winner_score        REAL,
+          trajectories_used   INTEGER DEFAULT 0,
+          applied             INTEGER DEFAULT 0,
+          created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_opt_owl     ON prompt_optimization_log(owl_name);
+        CREATE INDEX IF NOT EXISTS idx_opt_applied ON prompt_optimization_log(applied);
+      `);
+    }
+    if (current < 7) {
+      // v7: parliament_verdicts table
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS parliament_verdicts (
+          id                  TEXT PRIMARY KEY,
+          session_id          TEXT NOT NULL,
+          topic               TEXT NOT NULL,
+          verdict             TEXT NOT NULL,
+          synthesis           TEXT,
+          participants        TEXT NOT NULL DEFAULT '[]',
+          validated           INTEGER NOT NULL DEFAULT 0,
+          validation_signal   TEXT,
+          validation_reward   REAL,
+          created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_pv_topic     ON parliament_verdicts(topic);
+        CREATE INDEX IF NOT EXISTS idx_pv_validated ON parliament_verdicts(validated);
       `);
     }
     if (current < SCHEMA_VERSION) {
@@ -1240,6 +1527,138 @@ class TaskStatesRepo {
   }
 }
 
+class SynthesisMemoryRepo {
+  constructor(private db: Database.Database) {}
+
+  /** Record a new synthesis event immediately after a skill/tool is created */
+  record(entry: {
+    owlName: string;
+    capabilityDescription: string;
+    synthesisApproach: SynthesisRecord["synthesisApproach"];
+    toolsItUses?: string[];
+    outputPath?: string;
+    creationReasoning?: string;
+    whatFailedFirst?: string;
+    sourceSessionId?: string;
+  }): void {
+    const id = `syn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    this.db.prepare(`
+      INSERT INTO synthesis_memory
+        (id, owl_name, capability_description, synthesis_approach, tools_it_uses,
+         output_path, creation_reasoning, what_failed_first, source_session_id)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    `).run(
+      id,
+      entry.owlName,
+      entry.capabilityDescription.slice(0, 500),
+      entry.synthesisApproach,
+      JSON.stringify(entry.toolsItUses ?? []),
+      entry.outputPath ?? null,
+      entry.creationReasoning ? entry.creationReasoning.slice(0, 600) : null,
+      entry.whatFailedFirst ? entry.whatFailedFirst.slice(0, 300) : null,
+      entry.sourceSessionId ?? null,
+    );
+  }
+
+  /** Called each time a synthesized skill/tool is invoked */
+  recordUse(outputPath: string, success: boolean): void {
+    const col = success ? "success_count" : "fail_count";
+    this.db.prepare(`
+      UPDATE synthesis_memory SET
+        ${col} = ${col} + 1,
+        last_used_at = datetime('now')
+      WHERE output_path = ? AND status = 'active'
+    `).run(outputPath);
+
+    // Auto-retire if fail_count >= 5
+    if (!success) {
+      this.db.prepare(`
+        UPDATE synthesis_memory SET status = 'retired'
+        WHERE output_path = ? AND fail_count >= 5
+      `).run(outputPath);
+    }
+  }
+
+  /** Get all active synthesis records for an owl — used for self-knowledge injection */
+  getActiveForOwl(owlName: string): SynthesisRecord[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM synthesis_memory
+      WHERE owl_name = ? AND status = 'active'
+      ORDER BY success_count DESC, created_at DESC
+      LIMIT 20
+    `).all(owlName) as any[];
+    return rows.map(rowToSynthesis);
+  }
+
+  /** Get all active records across all owls — for cross-owl self-knowledge */
+  getAllActive(): SynthesisRecord[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM synthesis_memory WHERE status = 'active'
+      ORDER BY success_count DESC, created_at DESC LIMIT 30
+    `).all() as any[];
+    return rows.map(rowToSynthesis);
+  }
+}
+
+class PromptOptimizationRepo {
+  constructor(private db: Database.Database) {}
+
+  store(
+    owlName: string,
+    originalPrompt: string,
+    improvedPrompt: string,
+    critique?: string,
+    winnerScore?: number,
+    trajectoriesUsed = 0,
+  ): string {
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO prompt_optimization_log
+        (id, owl_name, original_prompt, improved_prompt, critique, winner_score, trajectories_used)
+      VALUES (?,?,?,?,?,?,?)
+    `).run(
+      id, owlName,
+      originalPrompt.slice(0, 8000),
+      improvedPrompt.slice(0, 8000),
+      critique ? critique.slice(0, 2000) : null,
+      winnerScore ?? null,
+      trajectoriesUsed,
+    );
+    return id;
+  }
+
+  markApplied(id: string): void {
+    this.db.prepare(`UPDATE prompt_optimization_log SET applied = 1 WHERE id = ?`).run(id);
+  }
+
+  /** Get the most recent unapplied optimization for an owl */
+  getPendingForOwl(owlName: string): PromptOptimizationRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT * FROM prompt_optimization_log
+      WHERE owl_name = ? AND applied = 0
+      ORDER BY created_at DESC LIMIT 1
+    `).get(owlName) as any;
+    return row ? rowToPromptOptimization(row) : undefined;
+  }
+
+  /** Timestamp of the last optimization run for this owl (applied or not) */
+  getLastRunAt(owlName: string): string | undefined {
+    const row = this.db.prepare(`
+      SELECT created_at FROM prompt_optimization_log
+      WHERE owl_name = ? ORDER BY created_at DESC LIMIT 1
+    `).get(owlName) as any;
+    return row?.created_at ?? undefined;
+  }
+
+  getRecent(owlName: string, limit = 10): PromptOptimizationRecord[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM prompt_optimization_log WHERE owl_name = ?
+      ORDER BY created_at DESC LIMIT ?
+    `).all(owlName, limit) as any[];
+    return rows.map(rowToPromptOptimization);
+  }
+}
+
 class ApproachLibraryRepo {
   constructor(private db: Database.Database) {}
 
@@ -1291,6 +1710,202 @@ class ApproachLibraryRepo {
       ORDER BY created_at DESC LIMIT ?
     `).all(toolName, limit) as any[];
     return rows.map(rowToApproach);
+  }
+}
+
+class ParliamentVerdictsRepo {
+  constructor(private db: Database.Database) {}
+
+  /** Record a new Parliament verdict */
+  record(
+    sessionId: string,
+    topic: string,
+    verdict: ParliamentVerdictSignal,
+    participants: string[],
+    synthesis?: string,
+  ): string {
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO parliament_verdicts (id, session_id, topic, verdict, participants, synthesis)
+      VALUES (?,?,?,?,?,?)
+    `).run(
+      id, sessionId,
+      topic.slice(0, 400),
+      verdict,
+      JSON.stringify(participants),
+      synthesis ? synthesis.slice(0, 1000) : null,
+    );
+    return id;
+  }
+
+  /** Validate a verdict when the trajectory outcome is known */
+  validate(
+    id: string,
+    validationSignal: ParliamentValidationSignal,
+    validationReward: number,
+  ): void {
+    this.db.prepare(`
+      UPDATE parliament_verdicts
+      SET validated = 1, validation_signal = ?, validation_reward = ?
+      WHERE id = ?
+    `).run(validationSignal, validationReward, id);
+  }
+
+  /**
+   * Find past verdicts on topics similar to the given query.
+   * Simple keyword overlap — no embeddings needed for MVP.
+   */
+  findRelated(topic: string, limit = 5): ParliamentVerdictRecord[] {
+    // Tokenize topic into meaningful words
+    const words = topic
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 4)
+      .slice(0, 10);
+
+    if (words.length === 0) {
+      const rows = this.db.prepare(
+        `SELECT * FROM parliament_verdicts ORDER BY created_at DESC LIMIT ?`
+      ).all(limit) as any[];
+      return rows.map(rowToParliamentVerdict);
+    }
+
+    // SQLite LIKE query per keyword — combine with OR
+    const conditions = words.map(() => `topic LIKE ?`).join(" OR ");
+    const params = words.map((w) => `%${w}%`);
+    const rows = this.db.prepare(
+      `SELECT * FROM parliament_verdicts WHERE (${conditions}) ORDER BY created_at DESC LIMIT ?`
+    ).all(...params, limit) as any[];
+    return rows.map(rowToParliamentVerdict);
+  }
+
+  /** Get all unvalidated verdicts that need outcome tracking */
+  getPendingValidation(limit = 20): ParliamentVerdictRecord[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM parliament_verdicts WHERE validated = 0 ORDER BY created_at ASC LIMIT ?`
+    ).all(limit) as any[];
+    return rows.map(rowToParliamentVerdict);
+  }
+
+  getRecent(limit = 20): ParliamentVerdictRecord[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM parliament_verdicts ORDER BY created_at DESC LIMIT ?`
+    ).all(limit) as any[];
+    return rows.map(rowToParliamentVerdict);
+  }
+}
+
+class TrajectoriesRepo {
+  constructor(private db: Database.Database) {}
+
+  /** Start a new trajectory — returns the trajectory id */
+  begin(
+    sessionId: string,
+    owlName: string,
+    userMessage: string,
+    userId?: string,
+  ): string {
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO trajectories (id, session_id, owl_name, user_id, user_message)
+      VALUES (?,?,?,?,?)
+    `).run(id, sessionId, owlName, userId ?? null, userMessage.slice(0, 500));
+    return id;
+  }
+
+  /** Record one tool invocation turn */
+  recordTurn(
+    trajectoryId: string,
+    turnIndex: number,
+    toolName: string,
+    argsSnapshot: string,
+    resultSnapshot: string,
+    success: boolean,
+    durationMs?: number,
+  ): void {
+    this.db.prepare(`
+      INSERT INTO trajectory_turns
+        (id, trajectory_id, turn_index, tool_name, args_snapshot, result_snapshot, success, duration_ms)
+      VALUES (?,?,?,?,?,?,?,?)
+    `).run(
+      uuidv4(), trajectoryId, turnIndex, toolName,
+      argsSnapshot.slice(0, 300),
+      resultSnapshot.slice(0, 400),
+      success ? 1 : 0,
+      durationMs ?? null,
+    );
+  }
+
+  /** Finalize the trajectory with outcome + reward after the ReAct loop ends */
+  complete(
+    trajectoryId: string,
+    outcome: Trajectory["outcome"],
+    reward: number,
+    rewardBreakdown: Record<string, number>,
+    toolsUsed: string[],
+    totalTurns: number,
+  ): void {
+    this.db.prepare(`
+      UPDATE trajectories
+      SET outcome = ?, reward = ?, reward_breakdown = ?,
+          tools_used = ?, total_turns = ?, completed_at = datetime('now')
+      WHERE id = ?
+    `).run(
+      outcome,
+      Math.max(-1, Math.min(1, reward)), // clamp to [-1, 1]
+      JSON.stringify(rewardBreakdown),
+      JSON.stringify([...new Set(toolsUsed)]),
+      totalTurns,
+      trajectoryId,
+    );
+  }
+
+  /**
+   * Update reward when a 👍/👎 signal arrives after the response was sent.
+   * Applies the delta on top of whatever reward was computed at loop end.
+   */
+  applyFeedback(sessionId: string, signal: "like" | "dislike"): void {
+    const delta = signal === "like" ? 0.5 : -0.5;
+    const row = this.db.prepare(`
+      SELECT id, reward, reward_breakdown FROM trajectories
+      WHERE session_id = ? ORDER BY created_at DESC LIMIT 1
+    `).get(sessionId) as any;
+    if (!row) return;
+
+    const breakdown: Record<string, number> = JSON.parse(row.reward_breakdown ?? "{}");
+    breakdown["feedback"] = delta;
+    const newReward = Math.max(-1, Math.min(1, (row.reward as number) + delta));
+    this.db.prepare(`
+      UPDATE trajectories SET reward = ?, reward_breakdown = ? WHERE id = ?
+    `).run(newReward, JSON.stringify(breakdown), row.id);
+  }
+
+  /** Recent trajectories for this owl — used by APO to find bad runs */
+  getRecent(owlName: string, limit = 20): Trajectory[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM trajectories WHERE owl_name = ?
+      ORDER BY created_at DESC LIMIT ?
+    `).all(owlName, limit) as any[];
+    return rows.map(rowToTrajectory);
+  }
+
+  /** Trajectories with reward below threshold — APO critique targets */
+  getLowReward(owlName: string, limit = 10, threshold = -0.1): Trajectory[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM trajectories WHERE owl_name = ? AND reward < ?
+      ORDER BY reward ASC LIMIT ?
+    `).all(owlName, threshold, limit) as any[];
+    return rows.map(rowToTrajectory);
+  }
+
+  /** All turns for a given trajectory — for detailed APO critique */
+  getTurns(trajectoryId: string): TrajectoryTurn[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM trajectory_turns WHERE trajectory_id = ?
+      ORDER BY turn_index ASC
+    `).all(trajectoryId) as any[];
+    return rows.map(rowToTrajectoryTurn);
   }
 }
 
@@ -1431,6 +2046,25 @@ function rowToTaskState(r: any): TaskState {
   };
 }
 
+function rowToSynthesis(r: any): SynthesisRecord {
+  return {
+    id: r.id,
+    owlName: r.owl_name,
+    capabilityDescription: r.capability_description,
+    synthesisApproach: r.synthesis_approach,
+    toolsItUses: JSON.parse(r.tools_it_uses ?? "[]"),
+    outputPath: r.output_path ?? undefined,
+    creationReasoning: r.creation_reasoning ?? undefined,
+    whatFailedFirst: r.what_failed_first ?? undefined,
+    successCount: r.success_count,
+    failCount: r.fail_count,
+    status: r.status,
+    sourceSessionId: r.source_session_id ?? undefined,
+    createdAt: r.created_at,
+    lastUsedAt: r.last_used_at ?? undefined,
+  };
+}
+
 function rowToApproach(r: any): ApproachRecord {
   return {
     id: r.id,
@@ -1440,6 +2074,66 @@ function rowToApproach(r: any): ApproachRecord {
     argsSummary: r.args_summary,
     outcome: r.outcome,
     failureReason: r.failure_reason ?? undefined,
+    createdAt: r.created_at,
+  };
+}
+
+function rowToParliamentVerdict(r: any): ParliamentVerdictRecord {
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    topic: r.topic,
+    verdict: r.verdict,
+    synthesis: r.synthesis ?? undefined,
+    participants: JSON.parse(r.participants ?? "[]"),
+    validated: r.validated,
+    validationSignal: r.validation_signal ?? undefined,
+    validationReward: r.validation_reward ?? undefined,
+    createdAt: r.created_at,
+  };
+}
+
+function rowToPromptOptimization(r: any): PromptOptimizationRecord {
+  return {
+    id: r.id,
+    owlName: r.owl_name,
+    originalPrompt: r.original_prompt,
+    improvedPrompt: r.improved_prompt,
+    critique: r.critique ?? undefined,
+    winnerScore: r.winner_score ?? undefined,
+    trajectoriesUsed: r.trajectories_used,
+    applied: r.applied,
+    createdAt: r.created_at,
+  };
+}
+
+function rowToTrajectory(r: any): Trajectory {
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    owlName: r.owl_name,
+    userId: r.user_id ?? undefined,
+    userMessage: r.user_message,
+    totalTurns: r.total_turns,
+    toolsUsed: JSON.parse(r.tools_used ?? "[]"),
+    outcome: r.outcome,
+    reward: r.reward,
+    rewardBreakdown: JSON.parse(r.reward_breakdown ?? "{}"),
+    createdAt: r.created_at,
+    completedAt: r.completed_at ?? undefined,
+  };
+}
+
+function rowToTrajectoryTurn(r: any): TrajectoryTurn {
+  return {
+    id: r.id,
+    trajectoryId: r.trajectory_id,
+    turnIndex: r.turn_index,
+    toolName: r.tool_name,
+    argsSnapshot: r.args_snapshot,
+    resultSnapshot: r.result_snapshot,
+    success: r.success === 1,
+    durationMs: r.duration_ms ?? undefined,
     createdAt: r.created_at,
   };
 }

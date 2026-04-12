@@ -29,3 +29,4 @@ coverage/
 # workspace/memory/embeddings.json
 workspace/*
 src/tools/synthesized/*
+session.tmp

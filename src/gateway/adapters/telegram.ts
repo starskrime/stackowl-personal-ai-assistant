@@ -252,12 +252,32 @@ export class TelegramAdapter implements ChannelAdapter {
 
       log.telegram.incoming(`user:${userId}`, text);
 
+      // Immediate acknowledgment — lets the user know the message was received
+      // before any LLM processing begins. The stream handler will edit this
+      // same message with real content so no extra message is created.
+      const ACK_MESSAGES = [
+        "Got it, let me check...",
+        "On it...",
+        "Let me think about that...",
+        "Working on it...",
+        "Give me a sec...",
+      ];
+      const ackText = ACK_MESSAGES[Math.floor(Math.random() * ACK_MESSAGES.length)]!;
+      let ackMessageId: number | undefined;
+      try {
+        const ackMsg = await ctx.api.sendMessage(ctx.chat.id, `<i>${this.escHtml(ackText)}</i>`, { parse_mode: "HTML" });
+        ackMessageId = ackMsg.message_id;
+      } catch {
+        // Non-fatal — proceed without ack
+      }
+
       try {
         const owl = this.gateway.getOwl();
         const owlHeader = `${owl.persona.emoji} <b>${this.escHtml(owl.persona.name)}</b>`;
         const streamCtx = this.createStreamHandler(
           ctx,
           this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true,
+          ackMessageId,
         );
         const response = await this.gateway.handle(
           {
@@ -402,7 +422,7 @@ export class TelegramAdapter implements ChannelAdapter {
           toolsUsed: response.toolsUsed ?? [],
         });
         await this.bot.api
-          .sendMessage(ctx.chat.id, "—", {
+          .sendMessage(ctx.chat.id, "Was this helpful?", {
             reply_markup: {
               inline_keyboard: [
                 [
@@ -526,6 +546,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private createStreamHandler(
     ctx: Context,
     suppressThinking: boolean,
+    initialMessageId?: number,
   ): {
     handler: (event: StreamEvent) => Promise<void>;
     status: {
@@ -553,7 +574,10 @@ export class TelegramAdapter implements ChannelAdapter {
         suppressThinking,
       };
 
-    let messageId: number | null = null;
+    let messageId: number | null = initialMessageId ?? null;
+    if (messageId) {
+      status.messageId = messageId;
+    }
     let displayText = ""; // Full text shown in Telegram (includes tool status)
     let pureContent = ""; // Only text_delta content (no tool noise)
     let lastEditTime = 0;

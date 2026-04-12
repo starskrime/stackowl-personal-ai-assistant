@@ -59,6 +59,12 @@ export interface OwlDNA {
   };
 
   evolutionLog: EvolutionEntry[];
+  /**
+   * APO-optimized prompt sections appended after DNA behavioral directives.
+   * Written by PromptOptimizer (Phase C) when it finds persistent failure patterns.
+   * Format: one rule per string, e.g. "For media downloads: always try yt-dlp first."
+   */
+  promptSections?: string[];
 }
 
 export interface EvolutionEntry {

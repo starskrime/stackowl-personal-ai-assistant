@@ -22,6 +22,7 @@ import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
 import { ModelRouter } from "./router.js";
 import { GapDetector } from "../evolution/detector.js";
+import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
 import type { OwlInnerLife, InnerMonologue } from "../owls/inner-life.js";
 import { DNADecisionLayer } from "../owls/decision-layer.js";
@@ -383,6 +384,22 @@ export class OwlEngine {
 
     // Track if a missing-tool gap was encountered during the ReAct loop
     let missingToolName: string | undefined;
+
+    // ── TrajectoryStore — begin a new trace for this ReAct loop ───
+    let trajectoryId: string | undefined;
+    let trajectoryTurnIndex = 0;
+    let trajectoryToolSuccessCount = 0;
+    let trajectoryToolFailureCount = 0;
+    if (context.db && context.sessionId) {
+      try {
+        trajectoryId = context.db.trajectories.begin(
+          context.sessionId,
+          owl.persona.name,
+          userMessage,
+          context.userId,
+        );
+      } catch { /* non-fatal */ }
+    }
 
     // 1. Determine optimal model (heuristic, no LLM call)
     let routeDecision = ModelRouter.route(userMessage, config);
@@ -1046,6 +1063,24 @@ ${userMessage}
                   );
               }
 
+              // ── TrajectoryStore — record this tool turn ───────────────
+              if (trajectoryId && context.db) {
+                try {
+                  const argSnap = safeStringify(toolCall.arguments).slice(0, 300);
+                  const resSnap = toolResult.slice(0, 400);
+                  context.db.trajectories.recordTurn(
+                    trajectoryId,
+                    trajectoryTurnIndex++,
+                    toolCall.name,
+                    argSnap,
+                    resSnap,
+                    !isAnyFailure,
+                  );
+                  if (isAnyFailure) trajectoryToolFailureCount++;
+                  else trajectoryToolSuccessCount++;
+                } catch { /* non-fatal */ }
+              }
+
               // ── ApproachLibrary recording + TaskState update ─────────
               // Persist outcome so future sessions know what succeeded/failed.
               // Also update the session's TaskState so the model can see what
@@ -1478,6 +1513,28 @@ ${userMessage}
       };
     }
 
+    // ── Finalize trajectory — compute reward + persist ────────────
+    if (trajectoryId && context.db) {
+      try {
+        const rewardEngine = new RewardEngine();
+        const isLoopExhausted = loopBrokenEarly || iterations >= MAX_TOOL_ITERATIONS;
+        const { reward, breakdown, outcome } = rewardEngine.compute({
+          loopExhausted: iterations >= MAX_TOOL_ITERATIONS,
+          loopBrokenEarly,
+          toolSuccessCount: trajectoryToolSuccessCount,
+          toolFailureCount: trajectoryToolFailureCount,
+        });
+        context.db.trajectories.complete(
+          trajectoryId,
+          isLoopExhausted && trajectoryToolSuccessCount === 0 ? "failure" : outcome,
+          reward,
+          breakdown,
+          toolsUsed,
+          trajectoryTurnIndex,
+        );
+      } catch { /* non-fatal */ }
+    }
+
     // 8. Gap detection
     //    Always check for explicit structured markers [CAPABILITY_GAP: ...].
     //    Run NLP detection unless in retry mode — the model may use tools (e.g. search)
@@ -1680,6 +1737,18 @@ ${userMessage}
       for (const [domain, score] of topExpertise) {
         prompt += `- ${domain}: ${Math.round(score * 100)}%\n`;
       }
+    }
+
+    // APO-optimized prompt sections — concrete rules learned from failure patterns
+    // Written by PromptOptimizer (Phase C). Injected just before inner life / preferences
+    // so they appear close to the behavioral directives they augment.
+    if (dna.promptSections && dna.promptSections.length > 0) {
+      prompt += "\n## Learned Behavioral Rules (from optimization)\n";
+      prompt += "These rules were derived from repeated failure patterns — follow them precisely:\n";
+      for (const rule of dna.promptSections) {
+        prompt += `- ${rule}\n`;
+      }
+      prompt += "\n";
     }
 
     // Inner Life — owl's persistent inner state (mood, desires, opinions)

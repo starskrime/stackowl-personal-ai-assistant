@@ -219,10 +219,21 @@ type PooledBrowser = Awaited<ReturnType<BrowserPool["acquire"]>>;
 
 /**
  * Acquire a connected browser from the pool.
+ * Lazily initializes the pool on first call — no browsers are launched at startup.
  * Returns null if pool is unavailable or browser is disconnected.
  */
 async function acquireBrowser(): Promise<PooledBrowser | null> {
-  if (!browserPool?.isReady) return null;
+  if (!browserPool) return null;
+  // Lazy init: launch browsers on first actual request
+  if (!browserPool.isReady) {
+    try {
+      await browserPool.init();
+    } catch (err) {
+      log.engine.warn(`[SmartFetch] Browser pool init failed: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+    if (!browserPool.isReady) return null;
+  }
   try {
     const pooled = await browserPool.acquire();
     if (!pooled?.browser?.connected) {

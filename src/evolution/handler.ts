@@ -62,15 +62,21 @@ export class EvolutionHandler {
   private synthesizer: ToolSynthesizer;
   private ledger: CapabilityLedger;
   private loader: DynamicToolLoader;
+  private db?: import("../memory/db.js").MemoryDatabase;
+  private owlRegistry?: import("../owls/registry.js").OwlRegistry;
 
   constructor(
     synthesizer: ToolSynthesizer,
     ledger: CapabilityLedger,
     loader: DynamicToolLoader,
+    db?: import("../memory/db.js").MemoryDatabase,
+    owlRegistry?: import("../owls/registry.js").OwlRegistry,
   ) {
     this.synthesizer = synthesizer;
     this.ledger = ledger;
     this.loader = loader;
+    this.db = db;
+    this.owlRegistry = owlRegistry;
   }
 
   /**
@@ -382,6 +388,77 @@ export class EvolutionHandler {
         };
       }
 
+      // ── E5: Parliament Lite gate for synthesis design decisions ─────
+      // Route through Parliament Lite before building to get multi-perspective
+      // review: can we avoid synthesis? If not, what's the cleanest design?
+      // Cost: 4–6 LLM calls — worthwhile for a hard-to-reverse persistent file.
+      if (this.owlRegistry) {
+        const allOwls = this.owlRegistry.listOwls();
+        if (allOwls.length >= 2) {
+          try {
+            const { ParliamentLite } = await import("../parliament/lite.js");
+            const lite = new ParliamentLite(
+              synthesisProvider,
+              context.config,
+              this.db,
+            );
+
+            // Build recall context from past verdicts on related topics
+            let recallContext: string | undefined;
+            if (this.db) {
+              const pastVerdicts = this.db.parliamentVerdicts.findRelated(originalMessage, 3);
+              const validated = pastVerdicts.filter((v) => v.validated);
+              if (validated.length > 0) {
+                recallContext = validated
+                  .map((v) => `  • "${v.topic.slice(0, 80)}" → ${v.verdict} → ${v.validationSignal ?? "pending"}`)
+                  .join("\n");
+              }
+            }
+
+            const result = await lite.deliberate({
+              topic: `Synthesis decision: ${originalMessage.slice(0, 100)}`,
+              question: `Should we synthesize a new skill/tool for this capability gap, and what's the best design?`,
+              context:
+                `User request: ${originalMessage.slice(0, 300)}\n\n` +
+                `Proposed tool name: ${proposal.toolName}\n` +
+                `Rationale: ${proposal.rationale}\n` +
+                `Description: ${proposal.description}\n\n` +
+                `Available tools: ${toolNames.slice(0, 20).join(", ")}\n\n` +
+                `Design question: Is a SKILL.md (shell-based playbook) the right approach, ` +
+                `or should we answer directly with existing tools?`,
+              owls: [allOwls[0], allOwls[1]],
+              recallContext,
+            });
+
+            if (result.verdict === "ABORT") {
+              // Parliament says: answer directly, no synthesis needed
+              await progress(`🏛️ Parliament Lite: Don't synthesize — ${result.synthesis.slice(0, 100)}`);
+              const abortResponse = await engine.run(originalMessage, {
+                ...context,
+                skipGapDetection: true,
+              });
+              return {
+                filePath: "",
+                response: abortResponse,
+                depsToInstall: [],
+                depsInstalled: false,
+              };
+            }
+
+            if (result.verdict === "REVISE" && result.synthesis) {
+              // Parliament has design guidance — incorporate into proposal rationale
+              proposal.rationale += ` [Parliament design guidance: ${result.synthesis.slice(0, 200)}]`;
+              await progress(`🏛️ Parliament Lite guidance: ${result.synthesis.slice(0, 100)}`);
+            } else if (result.verdict === "PROCEED" || result.verdict === "HOLD") {
+              await progress(`🏛️ Parliament Lite: Proceed with synthesis`);
+            }
+          } catch (err) {
+            // Non-fatal — continue with synthesis if Parliament Lite fails
+            log.evolution.warn(`[E5] Parliament Lite gate failed, continuing: ${err}`);
+          }
+        }
+      }
+
       // assessment.verdict === 'SYNTHESIZE' — genuine gap confirmed
       return this.buildWithSkill(
         proposal,
@@ -452,6 +529,20 @@ export class EvolutionHandler {
     await progress(
       `📚 Skill will be available for future sessions automatically.`,
     );
+
+    // ── SynthesisMemory: record what was built and why ────────────
+    if (this.db) {
+      try {
+        this.db.synthesisMemory.record({
+          owlName: context.owl.persona.name,
+          capabilityDescription: originalMessage.slice(0, 400),
+          synthesisApproach: "skill",
+          outputPath: skill.filePath,
+          creationReasoning: proposal.rationale,
+          sourceSessionId: context.sessionId,
+        });
+      } catch { /* non-fatal */ }
+    }
     await progress(`🔄 Retrying your request with the new skill...`);
 
     // Inject the skill instructions directly into the retry context
@@ -553,6 +644,21 @@ export class EvolutionHandler {
         await this.loader.loadOne(filePath, context.toolRegistry);
         await progress(`✅ ${proposal.toolName} registered.`);
         await this.ledger.record(proposal);
+
+        // ── SynthesisMemory: record TypeScript tool synthesis ─────
+        if (this.db) {
+          try {
+            this.db.synthesisMemory.record({
+              owlName: context.owl.persona.name,
+              capabilityDescription: originalMessage.slice(0, 400),
+              synthesisApproach: "typescript",
+              outputPath: filePath,
+              creationReasoning: proposal.rationale,
+              whatFailedFirst: lastError,
+              sourceSessionId: context.sessionId,
+            });
+          } catch { /* non-fatal */ }
+        }
         break;
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);

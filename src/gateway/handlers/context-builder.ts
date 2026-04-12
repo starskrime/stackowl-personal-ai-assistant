@@ -233,6 +233,33 @@ The user has no active tasks right now. Be concise and helpful:
       }
     }
 
+    // ─── Synthesis self-knowledge (Phase A) ──────────────────────
+    // Tells the owl what tools/skills it has synthesized before.
+    // Prevents "I cannot create or persist tools" responses.
+    // Injected as an identity block at the TOP of the system prompt.
+    let synthesisKnowledgeContext = "";
+    if (this.ctx.db) {
+      try {
+        const owlName = this.ctx.owl.persona.name;
+        const synthesized = this.ctx.db.synthesisMemory.getActiveForOwl(owlName);
+        if (synthesized.length > 0) {
+          const lines = synthesized.map((s) => {
+            const uses = s.successCount + s.failCount;
+            return `  • ${s.capabilityDescription.slice(0, 120)} (${s.synthesisApproach}, ${uses} use${uses !== 1 ? "s" : ""})`;
+          });
+          synthesisKnowledgeContext =
+            `\n[Your Synthesis History]\n` +
+            `You are running inside StackOwl — an autonomous agent that CAN build new tools.\n` +
+            `You have previously built these capabilities:\n` +
+            lines.join("\n") + "\n" +
+            `When you encounter a task without a matching tool, output [CAPABILITY_GAP: description] to trigger synthesis.\n` +
+            `Do NOT say you cannot persist or create tools — you have already done it.\n`;
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     // Ground state — only in established conversations (10+ exchanges)
     let groundStateContext = "";
     if (this.ctx.groundState && sessionDepth >= 10) {
@@ -410,6 +437,7 @@ The user has no active tasks right now. Be concise and helpful:
     // ─── Assemble enriched context (triage applied) ───────────
     // Order: digest (what I just did) → temporal → mode → memory → conditional
     const enrichedMemoryContext = [
+      synthesisKnowledgeContext,  // L0: owl self-knowledge — what tools it can build (identity block)
       digestContext,              // L1: what was found/decided/failed in last turn — FIRST
       compressionSummaryContext,  // L2: compressed history of older messages
       temporalContext,

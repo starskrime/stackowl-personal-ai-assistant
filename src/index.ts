@@ -182,18 +182,18 @@ async function bootstrap() {
   // Initialize file-based session log (overwrites on each restart)
   initFileLog(workspacePath);
 
-  // Initialize persistent browser pool (warm Chromium instances with stealth)
+  // Create browser pool config — browsers are launched lazily on first request,
+  // not on startup, to avoid blocking startup and wasting resources.
   let browserPool: BrowserPool | undefined;
   if (config.browser?.enabled !== false) {
     browserPool = new BrowserPool({
       poolSize: config.browser?.poolSize ?? 2,
-      warmUp: config.browser?.warmUp ?? true,
+      warmUp: config.browser?.warmUp ?? false,
       stealthMode: config.browser?.stealthMode ?? true,
       userDataDir: resolve(workspacePath, ".browser-data"),
       proxy: config.browser?.proxy,
       headless: config.browser?.headless ?? true,
     });
-    await browserPool.init();
     initSmartFetch(browserPool);
   }
 
@@ -468,7 +468,8 @@ async function bootstrap() {
   const synthesizer = new ToolSynthesizer();
   const ledger = new CapabilityLedger();
   const loader = new DynamicToolLoader(ledger);
-  const evolution = new EvolutionHandler(synthesizer, ledger, loader);
+  const evolution = new EvolutionHandler(synthesizer, ledger, loader, memoryDb, owlRegistry);
+  ledger.setDb(memoryDb);
 
   // Load any previously synthesized tools into the registry
   const synthesizedCount = await loader.loadAll(toolRegistry);

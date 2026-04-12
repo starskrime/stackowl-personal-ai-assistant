@@ -77,6 +77,38 @@ export class ParliamentOrchestrator {
       `[Parliament] Convened: "${config.topic}" with ${config.participants.length} owls`,
     );
 
+    // ── E3: Parliament recall — inject past verdicts on related topics ───
+    // Parliament now enters debates knowing its own track record on similar questions.
+    if (this.db) {
+      try {
+        const pastVerdicts = this.db.parliamentVerdicts.findRelated(config.topic, 5);
+        if (pastVerdicts.length > 0) {
+          const validatedVerdicts = pastVerdicts.filter((v) => v.validated);
+          if (validatedVerdicts.length > 0) {
+            const verdictBlock =
+              "\n[Past Parliament decisions on similar topics]:\n" +
+              validatedVerdicts
+                .map(
+                  (v) =>
+                    `  • "${v.topic.slice(0, 80)}" → ${v.verdict}` +
+                    (v.validationSignal ? ` → ${v.validationSignal.toUpperCase()}` : "") +
+                    (v.synthesis ? `: ${v.synthesis.slice(0, 100)}` : ""),
+                )
+                .join("\n") + "\n";
+            session.config.contextMessages = [
+              ...session.config.contextMessages,
+              { role: "system" as const, content: verdictBlock },
+            ];
+            log.engine.info(
+              `[Parliament] Injected ${validatedVerdicts.length} past verdict(s) for recall`,
+            );
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     // Pre-load cross-owl learnings related to this topic (Phase 6)
     // Injects shared knowledge from previous Parliament sessions and remember() calls.
     if (this.db) {
@@ -127,6 +159,22 @@ export class ParliamentOrchestrator {
         log.engine.error(
           `[Parliament] Failed to generate pellet: ${pelletError}`,
         );
+      }
+
+      // ── E2: Record verdict in parliament_verdicts for recall + delayed validation ──
+      if (this.db && session.verdict) {
+        try {
+          this.db.parliamentVerdicts.record(
+            session.id,
+            config.topic,
+            session.verdict as import("../memory/db.js").ParliamentVerdictSignal,
+            config.participants.map((p) => p.persona.name),
+            session.synthesis,
+          );
+          log.engine.info(`[Parliament] Recorded verdict "${session.verdict}" for topic: ${config.topic.slice(0, 60)}`);
+        } catch {
+          // Non-fatal
+        }
       }
 
       // Write debate outcomes to owl_learnings for each participant (Phase 6)
