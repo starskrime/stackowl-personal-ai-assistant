@@ -1,4 +1,4 @@
-import type { ModelProvider } from "../providers/base.js";
+import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { EventBus } from "../events/bus.js";
 import { log } from "../logger.js";
@@ -55,11 +55,11 @@ export class ManagerEngine {
       // Re-architect the prompt to guarantee it comes from a System persona.
       // This enforces that the LLM knows it is generating a proactive message to the user,
       // avoiding the "No follow-up on my end" inversion bug.
-      const messages = [
+      const messages: ChatMessage[] = [
         {
           role: "system",
-          content: `You are ${this.ctx.owl.persona.name}, the user's AI assistant. 
-The user is currently idle. Proactively evaluate the following internal thought context and compose 
+          content: `You are ${this.ctx.owl.persona.name}, the user's AI assistant.
+The user is currently idle. Proactively evaluate the following internal thought context and compose
 a friendly, concise outreach message to the user based on it.
 Do NOT roleplay as if the user sent this context to you. You are initializing the conversation.`,
         },

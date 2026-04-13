@@ -116,9 +116,17 @@ export interface StackOwlConfig {
     sandboxMode: boolean;
   };
   pellets?: {
+    /**
+     * Embedding model for semantic pellet search.
+     * Requires Ollama running locally with the model pulled.
+     * Default: "nomic-embed-text" (768-dim, fast, accurate)
+     */
+    embeddingModel?: string;
     dedup?: {
       enabled?: boolean;
+      /** Cosine similarity threshold to trigger LLM check. Default: 0.65 */
       similarityThreshold?: number;
+      /** Cosine similarity above which to auto-skip. Default: 0.85 */
       skipThreshold?: number;
       useLlm?: boolean;
       maxCandidates?: number;

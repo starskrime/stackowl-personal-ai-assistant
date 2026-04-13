@@ -487,6 +487,15 @@ main() {
 
   write_pid_to_session "$$"
 
+  # Free port 3000 if a stale process is holding it
+  local stale_pid
+  stale_pid=$(lsof -ti :3000 2>/dev/null || true)
+  if [[ -n "$stale_pid" ]]; then
+    log_info "Freeing port 3000 (stale pid $stale_pid)..."
+    kill -9 "$stale_pid" 2>/dev/null || true
+    sleep 0.5
+  fi
+
   cd "$SCRIPT_DIR"
   exec npx tsx src/index.ts $LAUNCH_MODE
 }

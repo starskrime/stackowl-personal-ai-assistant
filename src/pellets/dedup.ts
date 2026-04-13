@@ -13,9 +13,14 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
-import type { TfIdfEngine } from "./tfidf.js";
 import type { Pellet } from "./store.js";
 import { log } from "../logger.js";
+
+/** Semantic similarity search callback — provided by LancePelletStore */
+export type SimilarFn = (
+  pellet: Pellet,
+  limit: number,
+) => Promise<Array<{ pellet: Pellet; score: number }>>;
 
 // ─── JSON Sanitizer ─────────────────────────────────────────────
 
@@ -96,8 +101,10 @@ export interface DedupConfig {
 
 export const DEFAULT_DEDUP_CONFIG: DedupConfig = {
   enabled: true,
-  similarityThreshold: 0.4,
-  skipThreshold: 0.8,
+  /** Cosine similarity threshold to trigger LLM check (was 0.4 BM25-normalized) */
+  similarityThreshold: 0.65,
+  /** Cosine similarity above which to auto-skip without LLM */
+  skipThreshold: 0.85,
   useLlm: true,
   maxCandidates: 3,
 };
@@ -108,8 +115,8 @@ export class PelletDeduplicator {
   private config: DedupConfig;
 
   constructor(
-    private tfidf: TfIdfEngine,
-    private getPellet: (id: string) => Promise<Pellet | null>,
+    /** Vector similarity search function — provided by LancePelletStore */
+    private searchSimilar: SimilarFn,
     private provider?: ModelProvider,
     config?: Partial<DedupConfig>,
   ) {
@@ -136,58 +143,41 @@ export class PelletDeduplicator {
   }
 
   private async doEvaluate(incoming: Pellet): Promise<DedupResult> {
-    // Build a search query from the incoming pellet's key fields
-    const query = `${incoming.title} ${incoming.content.slice(0, 200)}`;
-
-    // Compute self-score for normalization
-    const selfScore = this.tfidf.selfScore({
-      title: incoming.title,
-      tags: incoming.tags.join(" "),
-      content: incoming.content,
-    });
-
-    if (selfScore <= 0) {
+    if (!incoming.title && !incoming.content) {
       return { verdict: "CREATE", reasoning: "no indexable content" };
     }
 
-    // Search for similar existing pellets
-    const candidates = this.tfidf
-      .search(query, this.config.maxCandidates + 1)
-      .filter((r) => r.id !== incoming.id); // exclude self if re-saving
+    // Vector similarity search — scores are cosine similarity (0–1)
+    const candidates = await this.searchSimilar(
+      incoming,
+      this.config.maxCandidates,
+    );
 
     if (candidates.length === 0) {
       return { verdict: "CREATE", reasoning: "no similar pellets found" };
     }
 
-    // Normalize the best candidate's score
     const best = candidates[0];
-    const similarity = best.score / selfScore;
+    const similarity = best.score;
 
     log.engine.debug(
-      `[PelletDedup] Best match: "${best.id}" (similarity=${similarity.toFixed(3)}, raw=${best.score.toFixed(2)}/${selfScore.toFixed(2)})`,
+      `[PelletDedup] Best match: "${best.pellet.id}" (cosine_sim=${similarity.toFixed(3)})`,
     );
 
     if (similarity < this.config.similarityThreshold) {
       return {
         verdict: "CREATE",
-        reasoning: `similarity ${similarity.toFixed(2)} below threshold ${this.config.similarityThreshold}`,
+        reasoning: `cosine similarity ${similarity.toFixed(2)} below threshold ${this.config.similarityThreshold}`,
       };
     }
 
-    // Fetch the full existing pellet
-    const existing = await this.getPellet(best.id);
-    if (!existing) {
-      return {
-        verdict: "CREATE",
-        reasoning: "matched pellet not found on disk",
-      };
-    }
+    const existing = best.pellet;
 
     // High similarity without LLM — auto-skip
     if (similarity >= this.config.skipThreshold && !this.config.useLlm) {
       return {
         verdict: "SKIP",
-        reasoning: `similarity ${similarity.toFixed(2)} above skip threshold; existing pellet covers this`,
+        reasoning: `cosine similarity ${similarity.toFixed(2)} above skip threshold; existing pellet covers this`,
         targetPelletId: existing.id,
       };
     }

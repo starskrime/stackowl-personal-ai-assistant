@@ -55,11 +55,12 @@ export const WebCrawlTool: ToolImplementation = {
       if (result.blocked) {
         return (
           `BLOCKED: ${url} — bot/CAPTCHA protection detected (${result.blockType || "unknown"}).\n` +
-          `The smart fetch layer tried HTTP and stealth browser but was blocked.\n` +
-          `Escalation path:\n` +
-          `1. scrapling_fetch(url, mode='stealth') — external anti-bot scraping\n` +
-          `2. scrapling_fetch(url, mode='dynamic') — full browser with anti-detection\n` +
-          `3. computer_use(action='open_url') — real desktop browser, undetectable`
+          `The smart fetch layer tried HTTP → stealth Chromium → CamoFox (Firefox) and was still blocked.\n` +
+          `Try these escalation options:\n` +
+          `1. camofox(action='navigate', url='${url}') — interactive Firefox session; can click through consent dialogs or CAPTCHAs\n` +
+          `2. scrapling_fetch(url, mode='stealth') — external anti-bot scraping service\n` +
+          `3. scrapling_fetch(url, mode='dynamic') — full browser with anti-detection patches\n` +
+          `4. computer_use(action='open_url') — real desktop browser, fully undetectable`
         );
       }
 

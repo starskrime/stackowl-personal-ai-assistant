@@ -595,7 +595,6 @@ export class OwlEngine {
       attemptLogBlock,
       context.innerLife,
       innerMonologue,
-      context.pelletSearch,
       context.channelName,
     );
 
@@ -796,6 +795,7 @@ You manage a massive suite of platform capabilities. Escalate logically:
 - **Fast First:** Use rapid utility tools (shell, calculator, native macOS tools) before heavy browsers.
 - **Defensive Actuation (Safety First):** When writing files, deleting data, or mutating the host environment, operate with a "Zero-Trust" mindset. Always back up files before overwriting them. Anticipate that commands might fail, and always write clean-up logic so you don't leave the user's system in a broken state.
 - **Anti-Bot Override:** If web requests fail due to CAPTCHA or Cloudflare locks, immediately escalate to anti-bot tools (\`scrapling_fetch\`, \`camofox\`) or visual \`computer_use\`.
+- **Knowledge First:** Before answering questions from memory or starting complex tasks, call \`pellet_recall(action='search', query='...')\` to check accumulated knowledge. Don't guess what you might know — look it up.
 - **Parliament Summons:** If you are conceptually stuck on a massive workflow problem and pivoting fails, use the \`summon_parliament\` tool to call upon a council of your specialized sub-agents for collective brainstorming.
 - **Independent Verification:** Do not trust blind execution. ALWAYS run a sandbox test or verification check to prove your logic works before telling the user you are finished.
 
@@ -1478,7 +1478,7 @@ You manage a massive suite of platform capabilities. Escalate logically:
                 verdict = await runSelfAssessment(provider, {
                   lastToolName: lastExecutedToolName,
                   lastToolResult: String(lastToolResult),
-                  recentToolResults: recentResults,
+                  recentToolResults: recentToolNames,
                   userMessage,
                   iterationsUsed: iterations,
                   maxIterations: maxForTask,
@@ -1515,7 +1515,7 @@ You manage a massive suite of platform capabilities. Escalate logically:
         // from knowledge that only becomes relevant once tool results arrive.
         // Example: user asks about laptops → tool fetches specs → pellets about
         // "LLM hardware requirements" are now relevant and should be surfaced.
-        if (context.pelletSearch) {
+        if (context.pelletStore) {
           try {
             // Build query from the most recent tool result(s) added this iteration
             const recentToolMsgs = messages
@@ -1524,13 +1524,13 @@ You manage a massive suite of platform capabilities. Escalate logically:
               .map((m) => (typeof m.content === "string" ? m.content : ""))
               .filter(Boolean)
               .join(" ")
-              .slice(0, 500); // keep query concise
+              .slice(0, 500);
 
             if (recentToolMsgs.length > 20) {
-              const pelletResults = await context.pelletSearch.search(
+              const pelletResults = await context.pelletStore.search(
                 recentToolMsgs,
                 3,
-                0.08,
+                0.45, // cosine similarity threshold
               );
               if (pelletResults.length > 0) {
                 const pelletBlock =
@@ -1539,13 +1539,13 @@ You manage a massive suite of platform capabilities. Escalate logically:
                   pelletResults
                     .map(
                       (p) =>
-                        `  [${p.domain}] ${p.content.slice(0, 300)}${p.content.length > 300 ? "..." : ""}`,
+                        `  [${p.tags[0] ?? "general"}] ${p.title}: ${p.content.slice(0, 300)}${p.content.length > 300 ? "..." : ""}`,
                     )
                     .join("\n") +
                   "\n</iteration_knowledge>";
                 messages.push({ role: "system", content: pelletBlock });
                 log.engine.debug(
-                  `[PelletSearch] Injected ${pelletResults.length} pellet(s) at iteration ${iterations}`,
+                  `[PelletStore] Injected ${pelletResults.length} pellet(s) at iteration ${iterations}`,
                 );
               }
             }
@@ -1977,7 +1977,6 @@ You manage a massive suite of platform capabilities. Escalate logically:
     attemptLogBlock?: string,
     innerLife?: OwlInnerLife,
     innerMonologue?: InnerMonologue,
-    pelletSearch?: import("../pellets/search.js").PelletSearch,
     channelName?: string,
   ): Promise<string> {
     const { persona, dna } = owl;
@@ -2109,41 +2108,21 @@ ${skillsContext}
       prompt += `\n${attemptLogBlock}\n`;
     }
 
-    // Relevant pellets — inject top 3, capped at 400 chars each.
-    // Uses PelletSearch (normalized TF-IDF cosine similarity) when available,
-    // falling back to pelletStore.searchWithGraph (BM25 + graph traversal).
-    if (userMessage && (pelletSearch || pelletStore)) {
+    // Relevant pellets — semantic search + graph expansion, top 5, 500 chars each.
+    // pelletStore.searchWithGraph() uses LanceDB cosine similarity + Kuzu graph traversal.
+    if (userMessage && pelletStore) {
       try {
-        if (pelletSearch) {
-          // Primary path: normalized TF-IDF cosine similarity — better semantic matching
-          // Threshold raised 0.05 → 0.15 to cut noisy low-confidence pellets
-          const results = await pelletSearch.search(userMessage, 3, 0.15);
-          if (results.length > 0) {
-            prompt += "\n## Relevant Past Knowledge\n";
-            for (const pellet of results) {
-              prompt += `\n**[${pellet.domain}]**`;
-              prompt += `\n${pellet.content.slice(0, 400)}`;
-              if (pellet.content.length > 400) prompt += "\n...[truncated]";
-              prompt += "\n";
-            }
+        const results = await pelletStore.searchWithGraph(userMessage, 5);
+        if (results.length > 0) {
+          prompt += "\n## Relevant Past Knowledge\n";
+          for (const pellet of results) {
+            prompt += `\n**${pellet.title}**`;
+            if (pellet.tags.length > 0) prompt += ` [${pellet.tags.join(", ")}]`;
+            prompt += `\n${pellet.content.slice(0, 500)}`;
+            if (pellet.content.length > 500) prompt += "\n...[truncated]";
+            prompt += "\n";
           }
-        } else if (pelletStore) {
-          // Fallback path: BM25 keyword search + knowledge graph traversal
-          const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(
-            0,
-            3,
-          );
-          if (top.length > 0) {
-            prompt += "\n## Relevant Past Knowledge\n";
-            for (const pellet of top) {
-              prompt += `\n**${pellet.title}**`;
-              if (pellet.tags.length > 0)
-                prompt += ` [${pellet.tags.join(", ")}]`;
-              prompt += `\n${pellet.content.slice(0, 400)}`;
-              if (pellet.content.length > 400) prompt += "\n...[truncated]";
-              prompt += "\n";
-            }
-          }
+          prompt += "\n*Use `pellet_recall` to search for more specific knowledge.*\n";
         }
       } catch {
         /* non-fatal */

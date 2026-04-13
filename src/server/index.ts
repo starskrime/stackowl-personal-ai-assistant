@@ -700,7 +700,17 @@ export class StackOwlServer {
    * Start the server.
    */
   start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.httpServer.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          console.warn(
+            `\n⚠️  Port ${this.port} already in use — web control plane skipped. Kill the old process or change the port in config.`,
+          );
+          resolve(); // non-fatal: continue without web server
+        } else {
+          reject(err);
+        }
+      });
       this.httpServer.listen(this.port, () => {
         console.log(
           `\n🌐 StackOwl Control Plane running at http://localhost:${this.port}`,

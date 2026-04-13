@@ -8,7 +8,6 @@
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
-import { OwlEngine } from "../engine/runtime.js";
 import { MemoryConsolidator } from "./consolidation.js";
 import { ToolPruner } from "../evolution/pruner.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -21,7 +20,6 @@ import type { ReflexionEngine } from "../evolution/reflexion.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { SessionStore } from "../memory/store.js";
 import type { AutonomousPlanner } from "./planner.js";
-import { ManagerEngine } from "../engine/manager.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -112,7 +110,6 @@ const MAX_UNANSWERED_PINGS = 1;
 export class ProactivePinger {
   private config: PingConfig;
   private context: PingContext;
-  private engine: OwlEngine;
   private timers: NodeJS.Timeout[] = [];
   private lastPingTime: number = 0;
   private lastMorningBriefDate: string = "";
@@ -121,21 +118,9 @@ export class ProactivePinger {
   // lastDreamTime and lastSkillEvolutionDate removed — proactive learning disabled
   private unansweredPings: number = 0;
 
-  private manager: ManagerEngine | null = null;
-
   constructor(context: PingContext, config?: Partial<PingConfig>) {
     this.config = { ...DEFAULT_PING_CONFIG, ...config };
     this.context = context;
-    this.engine = new OwlEngine();
-    
-    if (this.context.eventBus) {
-      this.manager = new ManagerEngine({
-        provider: this.context.provider,
-        owl: this.context.owl,
-        eventBus: this.context.eventBus,
-        sendToUser: this.context.sendToUser,
-      });
-    }
   }
 
   /**

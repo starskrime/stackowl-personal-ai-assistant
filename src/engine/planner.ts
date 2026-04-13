@@ -264,6 +264,8 @@ export class TaskPlanner {
       }
     }
     return lines.join("\n");
+  }
+
   /**
    * Dynamically replan mid-flight based on a stuck step or new information.
    */

@@ -4,11 +4,24 @@
  * Initializes the StackOwl system and starts the CLI interface.
  */
 
+// ── Global crash guards ───────────────────────────────────────────
+// Without these, unhandled rejections silently kill the process on Node 22+.
+process.on("uncaughtException", (err) => {
+  console.error("\n[FATAL] Uncaught exception — process will exit:");
+  console.error(err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("\n[FATAL] Unhandled promise rejection — process will exit:");
+  console.error(reason);
+  process.exit(1);
+});
+
 import { resolve } from "node:path";
 import { program } from "commander";
 import chalk from "chalk";
 // log imported by adapters/gateway internally
-import { initFileLog } from "./logger.js";
+import { initFileLog, log } from "./logger.js";
 import { loadConfig } from "./config/loader.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
@@ -135,6 +148,8 @@ import { SelfLearningCoordinator } from "./learning/coordinator.js";
 import { MemorySearcher } from "./memory-threads/searcher.js";
 import { RecallMemoryTool } from "./tools/recall.js";
 import { RememberTool } from "./tools/remember.js";
+import { PelletRecallTool } from "./tools/pellet-recall.js";
+import { initEmbedder } from "./pellets/embedder.js";
 import { EchoChamberDetector } from "./echo-chamber/detector.js";
 import { EchoCheckTool } from "./tools/echo-check.js";
 import { JournalGenerator } from "./growth-journal/generator.js";
@@ -331,6 +346,7 @@ async function bootstrap() {
     // ── Memory & Recall ──
     new RecallMemoryTool(),
     new RememberTool(),
+    PelletRecallTool,
     // ── Growth & Wisdom ──
     new EchoCheckTool(),
     new GrowthJournalTool(),
@@ -343,6 +359,10 @@ async function bootstrap() {
   await sessionStore.init();
 
   // Initialize pellet store (with AI-powered deduplication)
+  // Initialize pellet embedder (Ollama nomic-embed-text) before PelletStore
+  // so vector search is available from the first save/search call.
+  initEmbedder(providerRegistry.getDefault());
+
   const pelletStore = new PelletStore(
     workspacePath,
     providerRegistry.getDefault(),
@@ -350,7 +370,7 @@ async function bootstrap() {
   );
   await pelletStore.init();
 
-  // Build knowledge graph in background (non-blocking)
+  // Build/refresh knowledge graph in background (non-blocking)
   pelletStore
     .buildGraph()
     .catch((err) =>
@@ -388,7 +408,7 @@ async function bootstrap() {
 
   // Micro-Learner — per-message lightweight signal extraction
   const microLearner = new MicroLearner(workspacePath);
-  await microLearner.load().catch(() => {});
+  await microLearner.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
   // SQLite Memory Database — single source of truth for all persistent memory.
   // Created early so FactStore, EpisodicMemory, and FeedbackStore can use it.
@@ -423,7 +443,7 @@ async function bootstrap() {
     workspacePath,
     providerRegistry.getDefault(),
   );
-  await memorySearcher.loadIndex().catch(() => {});
+  await memorySearcher.loadIndex().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
   // Echo Chamber Detector — bias analysis on conversation history
   const echoChamberDetector = new EchoChamberDetector(
@@ -431,7 +451,7 @@ async function bootstrap() {
     providerRegistry.getDefault(),
     workspacePath,
   );
-  await echoChamberDetector.load().catch(() => {});
+  await echoChamberDetector.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
   // Growth Journal Generator
   const journalGenerator = new JournalGenerator(
@@ -477,7 +497,7 @@ async function bootstrap() {
 
   // Apply DNA decay for all owls if overdue (runs at most once per week per owl)
   for (const o of owlRegistry.listOwls()) {
-    await evolutionEngine.applyDecayIfNeeded(o.persona.name).catch(() => {});
+    await evolutionEngine.applyDecayIfNeeded(o.persona.name).catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
   }
 
   // Self-improvement system
@@ -531,20 +551,20 @@ async function bootstrap() {
 
   // ── Infrastructure Profile ──
   const infraProfile = new InfraProfileStore(workspacePath);
-  await infraProfile.load().catch(() => {});
+  await infraProfile.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
   const infraDetector = new InfraDetector(infraProfile);
 
   // ── App Connectors ──
   const connectorResolver = new ConnectorResolver(workspacePath);
-  await connectorResolver.load().catch(() => {});
+  await connectorResolver.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
   // ── Workflow Chains ──
   const workflowStore = new WorkflowChainStore(workspacePath);
-  await workflowStore.load().catch(() => {});
+  await workflowStore.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
   // ── Health Monitoring ──
   const healthChecker = new HealthChecker(workspacePath);
-  await healthChecker.load().catch(() => {});
+  await healthChecker.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
   // ── Intent State Machine ──
   const intentStateMachine = new IntentStateMachine(workspacePath);
@@ -723,7 +743,7 @@ async function buildGateway(
 
   // Owl Inner Life — persistent desires, mood, opinions, inner monologue
   const innerLife = new OwlInnerLife(provider, owl, b.workspacePath);
-  await innerLife.load().catch(() => {});
+  await innerLife.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
   console.log(chalk.dim(`  [Inner Life loaded for ${owl.persona.name}]`));
 
   // Knowledge Council — group learning & peer review sessions
@@ -1179,23 +1199,11 @@ async function pelletsCommand(opts: {
   // ─── Knowledge Graph ─────────────────────────────────────────
   if (opts.graph) {
     console.log(chalk.cyan("🕸️  Building knowledge graph...\n"));
-    const graph = await pelletStore.buildGraph();
-    const stats = graph.getStats();
+    await pelletStore.buildGraph();
+    const stats = await pelletStore.kuzuGraph.getStats();
     console.log(chalk.bold("Graph Stats:"));
     console.log(`  Nodes (pellets): ${stats.nodes}`);
     console.log(`  Edges (links):   ${stats.edges}`);
-    console.log(`  Clusters:        ${stats.clusters}`);
-    console.log(`  Avg degree:      ${stats.avgDegree}`);
-
-    const clusters = graph.getClusters();
-    if (clusters.length > 0) {
-      console.log(chalk.bold("\nTop Knowledge Clusters:"));
-      for (const cluster of clusters.slice(0, 10)) {
-        console.log(
-          `  [${cluster.size} pellets] ${chalk.cyan(cluster.topTags.join(", "))}`,
-        );
-      }
-    }
     return;
   }
 
@@ -1204,16 +1212,15 @@ async function pelletsCommand(opts: {
     console.log(
       chalk.cyan(`🔗 Finding pellets related to "${opts.related}"...\n`),
     );
-    const graph = await pelletStore.buildGraph();
-    const related = graph.findRelatedByQuery(opts.related, 10);
-    if (related.length === 0) {
+    const results = await pelletStore.searchWithGraph(opts.related as string, 10);
+    if (results.length === 0) {
       console.log(chalk.dim("No related pellets found."));
       return;
     }
-    for (const r of related) {
+    for (const r of results) {
       console.log(
         `${chalk.bold(r.title)} ${chalk.dim(`(${r.id})`)}` +
-          ` — weight: ${r.weight.toFixed(1)}, hops: ${r.hops}, via: ${r.sources.join(", ")}`,
+          ` — tags: ${r.tags.join(", ")}`,
       );
     }
     return;

@@ -11,7 +11,6 @@ import type { GatewayContext } from "../types.js";
 import type { GatewayCallbacks } from "../types.js";
 import type { EngineContext } from "../../engine/runtime.js";
 import { DiagnosticEngine } from "../../engine/diagnostic-engine.js";
-import { PelletSearch } from "../../pellets/search.js";
 import type { MicroLearner } from "../../learning/micro-learner.js";
 import type { SkillContextInjector } from "../../skills/injector.js";
 import type { AttemptLog } from "../../memory/attempt-log.js";
@@ -30,20 +29,12 @@ export class ContextBuilder {
     { session: Session | null; cachedAt: number }
   > = new Map();
 
-  /** Lazily-created PelletSearch instance (normalized TF-IDF cosine similarity) */
-  private pelletSearch: PelletSearch | null = null;
-
   constructor(
     private ctx: GatewayContext,
     private microLearner: MicroLearner | null,
     private skillInjector: SkillContextInjector | null,
     private userMentalModel: UserMentalModel | null = null,
-  ) {
-    // Eagerly create PelletSearch when pelletStore is available
-    if (ctx.pelletStore) {
-      this.pelletSearch = new PelletSearch(ctx.pelletStore);
-    }
-  }
+  ) {}
 
   async build(
     session: Session,
@@ -620,7 +611,7 @@ The user has no active tasks right now. Be concise and helpful:
       config: this.ctx.config,
       toolRegistry: this.ctx.toolRegistry,
       pelletStore: this.ctx.pelletStore,
-      pelletSearch: this.pelletSearch ?? undefined,
+      // pelletSearch removed — runtime.ts uses pelletStore.search() directly
       capabilityLedger: this.ctx.capabilityLedger,
       cwd: this.ctx.cwd,
       memoryContext: enrichedMemoryContext || undefined,
