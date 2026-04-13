@@ -568,6 +568,7 @@ export class TelegramAdapter implements ChannelAdapter {
       owlRegistry: self.gateway.getOwlRegistry(),
       goalGraph: self.gateway.getGoalGraph(),
       proactiveLoop: self.gateway.getProactiveLoop(),
+      eventBus: self.gateway.getEventBus(),
       sendToUser: async (message: string) => {
         await self.broadcast({
           content: message,

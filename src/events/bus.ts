@@ -76,6 +76,16 @@ export interface EventPayloads {
     recoverable: boolean;
   };
 
+  // ─── Agent State & Ping Events ────────────────────────────
+  "agent:state_change": {
+    sessionId: string;
+    state: "IDLE" | "PLANNING" | "EXECUTING";
+  };
+  "agent:ping_request": {
+    prompt: string;
+    type: string;
+  };
+
   // ─── Plugin Events ──────────────────────────────────────────
   "plugin:loaded": {
     name: string;

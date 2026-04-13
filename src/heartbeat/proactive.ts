@@ -21,6 +21,7 @@ import type { ReflexionEngine } from "../evolution/reflexion.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { SessionStore } from "../memory/store.js";
 import type { AutonomousPlanner } from "./planner.js";
+import { ManagerEngine } from "../engine/manager.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -75,7 +76,10 @@ export interface PingContext {
   /** Proactive intention loop — returns prioritized proactive items */
   proactiveLoop?: import("../intent/proactive-loop.js").ProactiveIntentionLoop;
   /** Autonomous planner — priority-based action scheduler driven by GoalGraph */
+  /** Autonomous planner — priority-based action scheduler driven by GoalGraph */
   autonomousPlanner?: AutonomousPlanner;
+  /** Global event bus */
+  eventBus?: import("../events/bus.js").EventBus;
 }
 
 export type PingType =
@@ -117,10 +121,21 @@ export class ProactivePinger {
   // lastDreamTime and lastSkillEvolutionDate removed — proactive learning disabled
   private unansweredPings: number = 0;
 
+  private manager: ManagerEngine | null = null;
+
   constructor(context: PingContext, config?: Partial<PingConfig>) {
     this.config = { ...DEFAULT_PING_CONFIG, ...config };
     this.context = context;
     this.engine = new OwlEngine();
+    
+    if (this.context.eventBus) {
+      this.manager = new ManagerEngine({
+        provider: this.context.provider,
+        owl: this.context.owl,
+        eventBus: this.context.eventBus,
+        sendToUser: this.context.sendToUser,
+      });
+    }
   }
 
   /**
@@ -361,15 +376,27 @@ export class ProactivePinger {
       }
     } catch { /* non-critical */ }
 
-    const recentHistory = this.context.getRecentHistory?.() ?? [];
-    const lastUserMessages = recentHistory
-      .filter((m) => m.role === "user")
-      .slice(-3)
-      .map((m) => (typeof m.content === "string" ? m.content.slice(0, 100) : ""))
-      .filter(Boolean);
-    const historyContext = lastUserMessages.length > 0
-      ? `Recent activity: ${lastUserMessages.join(" | ")}.`
-      : "";
+    // Use episodic memory to fetch semantic thematic clustering instead of raw text
+    let historyContext = "";
+    if (this.context.episodicMemory) {
+      const threads = this.context.episodicMemory.getThematicThreads(3);
+      if (threads.length > 0) {
+        historyContext = `Top ongoing topics:\n` + threads.map(t => `- ${t}`).join("\n");
+      }
+    }
+    
+    // Fallback: if no episodes available, use recent session raw history
+    if (!historyContext) {
+      const recentHistory = this.context.getRecentHistory?.() ?? [];
+      const lastUserMessages = recentHistory
+        .filter((m) => m.role === "user")
+        .slice(-3)
+        .map((m) => (typeof m.content === "string" ? m.content.slice(0, 100) : ""))
+        .filter(Boolean);
+      historyContext = lastUserMessages.length > 0
+        ? `Recent activity: ${lastUserMessages.join(" | ")}.`
+        : "";
+    }
 
     // Skip morning brief if there's nothing real to say
     if (!goalContext && !historyContext) return;
@@ -584,19 +611,19 @@ export class ProactivePinger {
 
       const fullPrompt = episodicPrefix ? episodicPrefix + prompt : prompt;
 
-      const response = await this.engine.run(fullPrompt, {
-        provider: this.context.provider,
-        owl: this.context.owl,
-        sessionHistory: this.context.getRecentHistory?.() ?? [],
-        config: this.context.config,
-        toolRegistry: this.context.toolRegistry,
-        cwd: this.context.config.workspace,
-        skipGapDetection: true, // Proactive messages are pre-generated — never evolve on them
-      });
-
-      await this.context.sendToUser(response.content);
-      this.lastPingTime = Date.now();
-      this.unansweredPings++;
+      if (this.context.eventBus) {
+        // Dispatch to task queue instead of running synchronously
+        this.context.eventBus.emit("agent:ping_request", {
+          prompt: fullPrompt,
+          type: _type,
+        });
+        
+        // Pings are unanswered until the user replies
+        this.lastPingTime = Date.now();
+        this.unansweredPings++;
+      } else {
+        console.warn("[ProactivePinger] EventBus not available, dropping ping.");
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[ProactivePinger] Failed to generate ping: ${msg}`);

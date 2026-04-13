@@ -14,6 +14,7 @@ import { ProviderRegistry } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { ShellTool } from "./tools/shell.js";
+import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
 import { DuckDuckGoSearchTool } from "./tools/search.js";
@@ -237,6 +238,7 @@ async function bootstrap() {
   toolRegistry.registerAll([
     // ── Core tools ──
     ShellTool,
+    SandboxTool,
     ReadFileTool,
     WriteFileTool,
     EditFileTool,

@@ -475,29 +475,46 @@ export class OwlGateway {
     message: GatewayMessage,
     callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse> {
-    // Run middleware before hooks
-    const mwCtx: MiddlewareContext = {
-      sessionId: message.sessionId,
-      channelId: message.channelId,
-      userId: message.userId,
-    };
-    for (const mw of this.middleware) {
-      if (mw.before) {
-        const shortCircuit = await mw.before(message, mwCtx);
-        if (shortCircuit) return shortCircuit;
-      }
+    if (this.ctx.eventBus && message.sessionId) {
+      this.ctx.eventBus.emit("agent:state_change", {
+        sessionId: message.sessionId,
+        state: "EXECUTING",
+      });
     }
 
-    const response = await this.handleCore(message, callbacks);
+    try {
+      // Run middleware before hooks
+      const mwCtx: MiddlewareContext = {
+        sessionId: message.sessionId,
+        channelId: message.channelId,
+        userId: message.userId,
+      };
+      for (const mw of this.middleware) {
+        if (mw.before) {
+          const shortCircuit = await mw.before(message, mwCtx);
+          if (shortCircuit) return shortCircuit;
+        }
+      }
 
-    // Run middleware after hooks
-    let finalResponse = response;
-    for (const mw of this.middleware) {
-      if (mw.after) {
-        finalResponse = await mw.after(message, finalResponse, mwCtx);
+      const response = await this.handleCore(message, callbacks);
+
+      // Run middleware after hooks
+      let finalResponse = response;
+      for (const mw of this.middleware) {
+        if (mw.after) {
+          finalResponse = await mw.after(message, finalResponse, mwCtx);
+        }
+      }
+      return finalResponse;
+      
+    } finally {
+      if (this.ctx.eventBus && message.sessionId) {
+        this.ctx.eventBus.emit("agent:state_change", {
+          sessionId: message.sessionId,
+          state: "IDLE",
+        });
       }
     }
-    return finalResponse;
   }
 
   private async handleCore(
@@ -1651,6 +1668,10 @@ export class OwlGateway {
 
   getOwl() {
     return this.ctx.owl;
+  }
+
+  getEventBus() {
+    return this.ctx.eventBus;
   }
   getProvider() {
     return this.ctx.provider;

@@ -604,6 +604,48 @@ Return ONLY a valid JSON object, no markdown.`;
       .slice(0, limit);
   }
 
+  // ─── Semantic Clustering ────────────────────────────────────────
+
+  /**
+   * Fetch the top thematic threads (clusters) from active memory.
+   * Clusters recent episodes by topic importance to provide an overarching narrative.
+   */
+  getThematicThreads(limit = 3): string[] {
+    const recent = this.getRecent(50).filter(ep => !ep.archived);
+    if (!recent.length) return [];
+    
+    // Cluster by topic, weighted by episode importance and recency
+    const topicScores = new Map<string, number>();
+    const now = Date.now();
+    for (const ep of recent) {
+      const daysOld = (now - ep.date) / (1000 * 60 * 60 * 24);
+      const recencyWeight = Math.max(0.1, 1 - (daysOld * 0.05)); // Decays slowly over 20 days
+      const score = (ep.importance ?? 0.5) * recencyWeight;
+      
+      for (const t of ep.topics) {
+        topicScores.set(t, (topicScores.get(t) ?? 0) + score);
+      }
+    }
+
+    const topTopics = [...topicScores.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([t]) => t);
+      
+    // Find representative summaries for the top topics
+    const threads: string[] = [];
+    for (const t of topTopics) {
+      const epsForTopic = recent.filter(ep => ep.topics.includes(t));
+      // Sort to get the most important/recent episode for the topic
+      epsForTopic.sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0));
+      if (epsForTopic[0]) {
+        threads.push(`[Topic: ${t.toUpperCase()}] ${epsForTopic[0].summary}`);
+      }
+    }
+    
+    return threads;
+  }
+
   // ─── Phase 3: Episode Decay ─────────────────────────────────────
 
   /**

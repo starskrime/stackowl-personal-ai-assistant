@@ -264,5 +264,48 @@ export class TaskPlanner {
       }
     }
     return lines.join("\n");
+  /**
+   * Dynamically replan mid-flight based on a stuck step or new information.
+   */
+  async replan(
+    currentPlan: TaskPlan,
+    recentObservations: string,
+    model?: string,
+  ): Promise<TaskPlan> {
+    const prompt =
+      `You are a dynamic replanner. The current task is stuck or requires adaptation.\n\n` +
+      `Current Plan Goal: ${currentPlan.goal}\n` +
+      `Completed/Pending Steps Summary:\n${JSON.stringify(currentPlan.steps, null, 2)}\n\n` +
+      `Recent Observations/Errors causing replan:\n${recentObservations}\n\n` +
+      `Formulate a modified JSON plan array for the remaining steps. ` +
+      `You must output ONLY a valid JSON object matching the original TaskPlan schema, integrating the new necessary steps.`;
+
+    try {
+      const response = await this.provider.chat(
+        [
+          {
+            role: "system",
+            content: "You are a dynamic task replanner. Output ONLY valid JSON.",
+          },
+          { role: "user", content: prompt },
+        ],
+        model,
+        { temperature: 0.2 },
+      );
+
+      let jsonStr = response.content.trim();
+      if (jsonStr.startsWith("```json")) jsonStr = jsonStr.replace(/^```json/, "").replace(/```$/, "").trim();
+      else if (jsonStr.startsWith("```")) jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "").trim();
+      
+      const parsed = JSON.parse(jsonStr);
+      return {
+        goal: parsed.goal || currentPlan.goal,
+        estimatedComplexity: parsed.estimatedComplexity || currentPlan.estimatedComplexity,
+        steps: parsed.steps || currentPlan.steps,
+      };
+    } catch {
+      log.engine.warn("[Planner] Replanning failed — returning original plan");
+      return currentPlan;
+    }
   }
 }
