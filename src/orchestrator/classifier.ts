@@ -32,6 +32,7 @@ function makeDefault(owlName: string): TaskStrategy {
     strategy: "STANDARD",
     reasoning: "Default strategy",
     confidence: 0.5,
+    depth: "quick",
     owlAssignments: [{ owlName, role: "lead", reasoning: "Default owl" }],
   };
 }
@@ -41,6 +42,7 @@ function makeDirect(owlName: string): TaskStrategy {
     strategy: "DIRECT",
     reasoning: "Trivial message, no tools needed",
     confidence: 1.0,
+    depth: "quick",
     owlAssignments: [{ owlName, role: "lead", reasoning: "Default owl" }],
   };
 }
@@ -61,6 +63,125 @@ function formatOwlsForPrompt(owls: OwlInstance[]): string {
       return `- ${owl.persona.name} (${owl.persona.type}): specialties=[${specialties}], challenge=${owl.dna.evolvedTraits.challengeLevel}${expertise ? `, expertise=[${expertise}]` : ""}`;
     })
     .join("\n");
+}
+
+// ─── Research Intent Detection ─────────────────────────────────
+
+const RESEARCH_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  // Explicit research verbs
+  {
+    pattern:
+      /\b(do research|research|investigate|deep.?(?:search|dive|look)|look into)\b/i,
+    label: "research-verb",
+  },
+  // Comparison queries
+  {
+    pattern: /\bcompare\s+[^?]+\s+(?:vs|versus|against|and)\s+[^?]+/i,
+    label: "comparison",
+  },
+  // Multi-part / thorough queries
+  {
+    pattern:
+      /\b(tell me everything|explain in depth|comprehensive|thorough|complete picture|full analysis)\b/i,
+    label: "thorough",
+  },
+  // Multi-question (3+ ?)
+  { pattern: /\?.*\?.*\?/s, label: "multi-question" },
+  // Long research questions (50+ words with multiple keywords)
+  { pattern: /^(.{200,})$/s, label: "long-research" },
+  // "How do I..." with multiple sub-questions
+  { pattern: /\b(how\s+do\s+(?:i|we|they))\b.*\?/i, label: "how-to-deep" },
+  // "Everything about" queries
+  { pattern: /\beverything\s+about\b/i, label: "everything-about" },
+];
+
+const RESEARCH_KEYWORD_COUNT = 3;
+
+function detectResearchIntent(text: string): {
+  isDeep: boolean;
+  reason: string;
+  subtopics: string[];
+} {
+  const trimmed = text.trim();
+  const matchedLabels: string[] = [];
+
+  for (const { pattern, label } of RESEARCH_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      matchedLabels.push(label);
+    }
+  }
+
+  // Count research-action keywords
+  const researchKeywords = trimmed.match(
+    /\b(search|find|lookup|check|analyze|compare|investigate|research|explore|review|evaluate|assess|examine|look up|gather|collect)\b/gi,
+  );
+  const keywordCount = researchKeywords ? researchKeywords.length : 0;
+
+  // Word count check
+  const wordCount = trimmed.split(/\s+/).length;
+
+  // Extract subtopics: split on "and", ",", ";" that are near research content
+  const subtopicSplit = trimmed
+    .split(/\s*(?:,|;|\band\b|\bvs\.?\b|\bversus\b)\s*/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 10 && s.length < 100);
+
+  // Multi-subtopic detection: 3+ distinct comma/and-separated concepts
+  const hasMultiSubtopics = subtopicSplit.length >= 3;
+
+  // Decision logic
+  if (
+    matchedLabels.includes("research-verb") ||
+    matchedLabels.includes("comparison")
+  ) {
+    return {
+      isDeep: true,
+      reason: matchedLabels.includes("comparison")
+        ? "comparison query detected"
+        : "explicit research request",
+      subtopics: subtopicSplit.slice(0, 5),
+    };
+  }
+
+  if (
+    matchedLabels.includes("thorough") ||
+    matchedLabels.includes("everything-about")
+  ) {
+    return {
+      isDeep: true,
+      reason: "thorough/comprehensive request",
+      subtopics: subtopicSplit.slice(0, 5),
+    };
+  }
+
+  if (matchedLabels.includes("multi-question") && wordCount >= 30) {
+    return {
+      isDeep: true,
+      reason: `multi-question research (${matchedLabels.join(", ")})`,
+      subtopics: subtopicSplit.slice(0, 5),
+    };
+  }
+
+  if (
+    matchedLabels.includes("long-research") &&
+    keywordCount >= RESEARCH_KEYWORD_COUNT
+  ) {
+    return {
+      isDeep: true,
+      reason: `long research query (${wordCount} words, ${keywordCount} research keywords)`,
+      subtopics: subtopicSplit.slice(0, 5),
+    };
+  }
+
+  if (hasMultiSubtopics && keywordCount >= 2 && wordCount >= 40) {
+    return {
+      isDeep: true,
+      reason: `multi-subtopic research (${subtopicSplit.length} distinct aspects)`,
+      subtopics: subtopicSplit.slice(0, 5),
+    };
+  }
+
+  return { isDeep: false, reason: "", subtopics: [] };
 }
 
 // ─── Classify Strategy ───────────────────────────────────────
@@ -197,14 +318,36 @@ export async function classifyStrategy(
       }
     }
 
+    const researchSignal = detectResearchIntent(userMessage);
+
     log.engine.info(
       `[Classifier] "${userMessage.slice(0, 60)}..." → ${parsed.strategy} ` +
         `(confidence: ${parsed.confidence?.toFixed(2)}) ` +
         `owls: [${parsed.owlAssignments.map((a) => a.owlName).join(", ")}] ` +
-        `reason: ${parsed.reasoning}`,
+        `reason: ${parsed.reasoning}` +
+        (researchSignal.isDeep
+          ? ` [DEEP RESEARCH: ${researchSignal.reason}]`
+          : ""),
     );
 
-    return parsed;
+    return {
+      strategy: parsed.strategy ?? "STANDARD",
+      reasoning: parsed.reasoning ?? "Default strategy",
+      confidence: parsed.confidence ?? 0.5,
+      depth: researchSignal.isDeep ? "deep" : "quick",
+      researchSignal: researchSignal.isDeep
+        ? {
+            reason: researchSignal.reason,
+            subtopics: researchSignal.subtopics,
+            autoDetected: true,
+          }
+        : undefined,
+      owlAssignments: parsed.owlAssignments ?? [
+        { owlName: defaultOwl, role: "lead", reasoning: "Default" },
+      ],
+      subtasks: parsed.subtasks,
+      parliamentConfig: parsed.parliamentConfig,
+    };
   } catch (err) {
     log.engine.warn(
       `[Classifier] Failed: ${err instanceof Error ? err.message : String(err)}, defaulting to STANDARD`,

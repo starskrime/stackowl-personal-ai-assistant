@@ -203,7 +203,7 @@ export class CapabilityNeedAssessor {
     // ── Fast-path: if the engine explicitly declared a gap, trust it ──
     // The engine already tried all available tools and determined they can't
     // handle the request. Running the LLM assessor would just second-guess
-    // that decision (often incorrectly, e.g. seeing "google_search" and
+    // that decision (often incorrectly, e.g. seeing "duckduckgo_search" and
     // concluding it covers "open Chrome browser").
     if (gapDescription) {
       return {

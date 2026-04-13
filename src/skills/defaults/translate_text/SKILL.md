@@ -2,7 +2,7 @@
 name: translate_text
 description: Translate text between languages using web-based translation services
 command-dispatch: tool
-command-tool: google_search
+command-tool: duckduckgo_search
 openclaw:
   emoji: "🌐"
 parameters:
@@ -19,7 +19,7 @@ parameters:
 required: [text, target_language]
 steps:
   - id: translate
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "translate '{{text}}' from {{source_language}} to {{target_language}}"
     timeout_ms: 15000

@@ -15,6 +15,11 @@
 
 import { log } from "../logger.js";
 import type { BrowserPool } from "./pool.js";
+import {
+  initCamoFoxClient,
+  getCamoFoxClient,
+} from "./camofox-client.js";
+import type { CamoFoxClientConfig } from "./camofox-client.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -35,7 +40,7 @@ export interface FetchResult {
   text: string;
   length: number;
   /** Which tier resolved the request */
-  source: "fetch" | "browser" | "browser-retry";
+  source: "fetch" | "browser" | "browser-retry" | "camofox";
   /** True if all tiers failed to bypass blocking */
   blocked: boolean;
   /** Blocking type if detected */
@@ -53,6 +58,15 @@ let browserPool: BrowserPool | null = null;
 export function initSmartFetch(pool: BrowserPool): void {
   browserPool = pool;
   log.engine.info("[SmartFetch] Initialized with browser pool");
+}
+
+/**
+ * Wire the smart fetch layer to a CamoFox server.
+ * Call once during bootstrap if camofox.enabled is true.
+ */
+export function initCamoFox(config: CamoFoxClientConfig): void {
+  initCamoFoxClient(config);
+  log.engine.info(`[SmartFetch] CamoFox Tier 4 enabled at ${config.baseUrl}`);
 }
 
 // ─── Realistic headers ──────────────────────────────────────────
@@ -444,6 +458,47 @@ export async function webFetch(
       }
     } finally {
       browserPool!.release(pooled);
+    }
+  }
+
+  // ─── Tier 4: CamoFox anti-detection browser ───────────────
+  const camoFox = getCamoFoxClient();
+  if (camoFox) {
+    log.engine.info(`[SmartFetch] Escalating to CamoFox Tier 4 for ${url}`);
+    let tabId: string | null = null;
+    const userId = "stackowl-smartfetch";
+    try {
+      const tab = await camoFox.createTab(userId, url);
+      tabId = tab.tabId;
+      const snap = await camoFox.snapshot(tabId, userId);
+      // Convert accessibility snapshot to plain text (good enough for content extraction)
+      const text = snap.snapshot
+        .replace(/\[[\w\s]+\]\s*/g, "") // strip [role] labels
+        .replace(/\be\d+\b/g, "")        // strip eN refs
+        .replace(/\s{2,}/g, " ")
+        .trim();
+
+      const trimmed =
+        text.length > maxLength
+          ? text.slice(0, maxLength) + "\n\n... [truncated]"
+          : text;
+
+      return {
+        title: snap.url,
+        url: snap.url,
+        text: trimmed,
+        length: text.length,
+        source: "camofox",
+        blocked: false,
+      };
+    } catch (err) {
+      log.engine.warn(
+        `[SmartFetch] CamoFox Tier 4 failed for ${url}: ${err instanceof Error ? err.message : err}`,
+      );
+    } finally {
+      if (tabId) {
+        await camoFox.closeTab(tabId, userId).catch(() => {});
+      }
     }
   }
 

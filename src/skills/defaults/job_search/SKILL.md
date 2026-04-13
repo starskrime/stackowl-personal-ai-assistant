@@ -19,12 +19,12 @@ parameters:
 required: [role]
 steps:
   - id: search_primary
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{role}} jobs {{location}} {{experience_level}} 2026"
       num: 10
   - id: search_remote
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{role}} remote jobs hiring now"
       num: 10

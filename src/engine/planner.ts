@@ -57,6 +57,103 @@ export class TaskPlanner {
   constructor(private provider: ModelProvider) {}
 
   /**
+   * Create a research plan — decomposes a research topic into
+   * fact-gathering → comparison → analysis → synthesis phases.
+   */
+  async createDeepResearchPlan(
+    userMessage: string,
+    subtopics: string[],
+    availableTools: ToolDefinition[],
+  ): Promise<TaskPlan> {
+    const toolNames = availableTools.map((t) => `${t.name}: ${t.description}`);
+
+    const subtopicList =
+      subtopics.length > 0
+        ? `Identified research subtopics:\n${subtopics
+            .map((s, i) => `${i + 1}. ${s}`)
+            .join("\n")}\n\n`
+        : "";
+
+    const prompt =
+      `You are a research planner. Decompose a research request into phased steps.\n\n` +
+      `${subtopicList}` +
+      `USER REQUEST: ${userMessage}\n\n` +
+      `AVAILABLE TOOLS:\n${toolNames.join("\n")}\n\n` +
+      `Create a research plan with these phases:\n` +
+      `Phase 1: Fact-Gathering — gather primary facts, definitions, overview\n` +
+      `Phase 2: Deep-Dive — explore each subtopic with targeted searches\n` +
+      `Phase 3: Comparison/Analysis — compare findings, identify contradictions\n` +
+      `Phase 4: Synthesis — produce comprehensive, well-structured answer\n\n` +
+      `Respond with ONLY valid JSON:\n` +
+      `{\n` +
+      `  "goal": "one-line summary of the research goal",\n` +
+      `  "estimatedComplexity": "simple" | "moderate" | "complex",\n` +
+      `  "steps": [\n` +
+      `    {\n` +
+      `      "id": 1,\n` +
+      `      "description": "what to research in this step",\n` +
+      `      "toolsNeeded": ["tool_name"],\n` +
+      `      "dependsOn": []\n` +
+      `    }\n` +
+      `  ]\n` +
+      `}\n\n` +
+      `Maximum 8 steps. Output ONLY valid JSON.`;
+
+    try {
+      const response = await this.provider.chat(
+        [
+          {
+            role: "system",
+            content: "You are a research planner. Output only valid JSON.",
+          },
+          { role: "user", content: prompt },
+        ],
+        undefined,
+        { temperature: 0.1 },
+      );
+
+      let jsonStr = response.content.trim();
+      if (jsonStr.startsWith("```json"))
+        jsonStr = jsonStr
+          .replace(/^```json/, "")
+          .replace(/```$/, "")
+          .trim();
+      else if (jsonStr.startsWith("```"))
+        jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "").trim();
+
+      const parsed = JSON.parse(jsonStr);
+      return {
+        goal: parsed.goal ?? userMessage.slice(0, 100),
+        estimatedComplexity: parsed.estimatedComplexity ?? "complex",
+        steps: (parsed.steps ?? []).map((s: any, i: number) => ({
+          id: s.id ?? i + 1,
+          description: s.description ?? "",
+          toolsNeeded: s.toolsNeeded ?? [],
+          dependsOn: s.dependsOn ?? [],
+          status: "pending" as const,
+        })),
+      };
+    } catch (err) {
+      log.engine.warn(
+        `[ResearchPlanner] Failed to parse plan: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        goal: userMessage.slice(0, 100),
+        estimatedComplexity: "complex",
+        steps: [
+          {
+            id: 1,
+            description: "Research " + userMessage.slice(0, 80),
+            toolsNeeded: [],
+            dependsOn: [],
+            status: "pending",
+          },
+        ],
+      };
+    }
+  }
+
+  /**
    * Generate a plan by asking the LLM to decompose the task.
    */
   async createPlan(

@@ -102,7 +102,8 @@ const CONTINUATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   // Anaphora — references to prior context
   { pattern: /^(?:it|that|this|those|the thing)\b/i, label: "anaphora" },
   {
-    pattern: /\b(?:what (?:we|you) (?:discussed|said|mentioned|talked about))\b/i,
+    pattern:
+      /\b(?:what (?:we|you) (?:discussed|said|mentioned|talked about))\b/i,
     label: "reference",
   },
   // Sequence markers
@@ -131,7 +132,8 @@ const CONTINUATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
 const BREAK_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   // Greetings (standalone, not mid-sentence)
   {
-    pattern: /^(?:hi|hello|hey|good morning|good afternoon|good evening|yo|sup)[\s,.!]?$/i,
+    pattern:
+      /^(?:hi|hello|hey|good morning|good afternoon|good evening|yo|sup)[\s,.!]?$/i,
     label: "greeting",
   },
   // Explicit topic change
@@ -202,11 +204,10 @@ Return ONLY one letter (A, B, C, or D):`;
 
   try {
     const result = await Promise.race([
-      provider.chat(
-        [{ role: "user", content: prompt }],
-        undefined,
-        { temperature: 0, maxTokens: 5 },
-      ),
+      provider.chat([{ role: "user", content: prompt }], undefined, {
+        temperature: 0,
+        maxTokens: 5,
+      }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("timeout")), 2000),
       ),
@@ -230,6 +231,26 @@ Return ONLY one letter (A, B, C, or D):`;
 
 // ─── Combined Engine ─────────────────────────────────────────────
 
+function extractLastAssistantMessage(
+  messages: Array<{ role: string; content: string }>,
+): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      return messages[i].content;
+    }
+  }
+  return undefined;
+}
+
+function summarize(text: string): string {
+  const stripped = text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/\n+/g, " ")
+    .trim();
+  if (stripped.length <= 120) return stripped;
+  return stripped.slice(0, 117) + "...";
+}
+
 /**
  * Classify an incoming message's relationship to the conversation.
  *
@@ -242,6 +263,8 @@ export async function classifyContinuity(
   snapshot: TemporalSnapshot,
   provider?: ModelProvider,
 ): Promise<ContinuityResult> {
+  const lastAssistantMessage = extractLastAssistantMessage(session.messages);
+
   // Layer 1: Temporal
   const temporal = temporalLayer(snapshot, session.messages.length > 0);
 
@@ -252,6 +275,7 @@ export async function classifyContinuity(
       confidence: 0.95,
       reason: "No prior messages in session",
       layerUsed: 1,
+      priorTopicSummary: undefined,
     };
   }
 
@@ -268,10 +292,7 @@ export async function classifyContinuity(
     if (linguistic.bias === temporal.bias || temporal.confidence < 0.6) {
       // Agree or temporal is weak — trust linguistic
       finalClass = linguistic.bias;
-      finalConfidence = Math.min(
-        0.95,
-        temporal.confidence + 0.2,
-      );
+      finalConfidence = Math.min(0.95, temporal.confidence + 0.2);
       reason = `Linguistic markers: ${linguistic.markers.join(", ")}`;
     } else {
       // Disagree — need Layer 3
@@ -293,6 +314,9 @@ export async function classifyContinuity(
       confidence: finalConfidence,
       reason,
       layerUsed: linguistic.bias !== null ? 2 : 1,
+      priorTopicSummary: lastAssistantMessage
+        ? summarize(lastAssistantMessage)
+        : undefined,
     };
   }
 
@@ -311,6 +335,9 @@ export async function classifyContinuity(
       confidence: 0.8,
       reason: `LLM classification: ${semanticResult} (temporal: ${temporal.bias}, linguistic: ${linguistic.bias ?? "none"})`,
       layerUsed: 3,
+      priorTopicSummary: lastAssistantMessage
+        ? summarize(lastAssistantMessage)
+        : undefined,
     };
   }
 
@@ -320,5 +347,8 @@ export async function classifyContinuity(
     confidence: finalConfidence,
     reason: reason + " (no LLM fallback available)",
     layerUsed: linguistic.bias !== null ? 2 : 1,
+    priorTopicSummary: lastAssistantMessage
+      ? summarize(lastAssistantMessage)
+      : undefined,
   };
 }

@@ -138,21 +138,36 @@ export class TelegramAdapter implements ChannelAdapter {
     log.telegram.info("Telegram adapter stopped.");
   }
 
-  async deliverFile(userId: string, filePath: string, caption?: string): Promise<void> {
+  async deliverFile(
+    userId: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
     const chatId = this.userToChatId.get(userId) ?? [...this.activeChatIds][0];
     if (!chatId) {
       log.telegram.warn(`deliverFile: no chatId found for user ${userId}`);
       return;
     }
     const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
-    const isUrl = filePath.startsWith("http://") || filePath.startsWith("https://");
-    const ext = extname(isUrl ? new URL(filePath).pathname : filePath).toLowerCase();
+    const isUrl =
+      filePath.startsWith("http://") || filePath.startsWith("https://");
+    const ext = extname(
+      isUrl ? new URL(filePath).pathname : filePath,
+    ).toLowerCase();
     const payload = isUrl ? filePath : new InputFile(filePath);
     try {
       if (IMAGE_EXTS.has(ext)) {
-        await this.bot.api.sendPhoto(chatId, payload, caption ? { caption } : {});
+        await this.bot.api.sendPhoto(
+          chatId,
+          payload,
+          caption ? { caption } : {},
+        );
       } else {
-        await this.bot.api.sendDocument(chatId, payload, caption ? { caption } : {});
+        await this.bot.api.sendDocument(
+          chatId,
+          payload,
+          caption ? { caption } : {},
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -262,10 +277,15 @@ export class TelegramAdapter implements ChannelAdapter {
         "Working on it...",
         "Give me a sec...",
       ];
-      const ackText = ACK_MESSAGES[Math.floor(Math.random() * ACK_MESSAGES.length)]!;
+      const ackText =
+        ACK_MESSAGES[Math.floor(Math.random() * ACK_MESSAGES.length)]!;
       let ackMessageId: number | undefined;
       try {
-        const ackMsg = await ctx.api.sendMessage(ctx.chat.id, `<i>${this.escHtml(ackText)}</i>`, { parse_mode: "HTML" });
+        const ackMsg = await ctx.api.sendMessage(
+          ctx.chat.id,
+          `<i>${this.escHtml(ackText)}</i>`,
+          { parse_mode: "HTML" },
+        );
         ackMessageId = ackMsg.message_id;
       } catch {
         // Non-fatal — proceed without ack
@@ -343,26 +363,29 @@ export class TelegramAdapter implements ChannelAdapter {
 
         if (msgId && streamed) {
           // Streaming delivered content — replace with fully formatted version.
-          const fullHtml = `${owlHeader}\n\n` + this.renderContent(response.content);
+          const fullHtml =
+            `${owlHeader}\n\n` + this.renderContent(response.content);
 
           if (fullHtml.length <= 4096) {
             // Short response: edit in place (single clean message)
             try {
-              await this.bot.api.editMessageText(
-                ctx.chat.id,
-                msgId,
-                fullHtml,
-                { parse_mode: "HTML" },
-              );
+              await this.bot.api.editMessageText(ctx.chat.id, msgId, fullHtml, {
+                parse_mode: "HTML",
+              });
             } catch (editErr) {
               log.telegram.warn(
                 `[Telegram] Final edit failed: ${editErr instanceof Error ? editErr.message : editErr}`,
               );
               // Delete the raw streaming message so user doesn't see both versions
-              await this.bot.api.deleteMessage(ctx.chat.id, msgId).catch(() => {});
+              await this.bot.api
+                .deleteMessage(ctx.chat.id, msgId)
+                .catch(() => {});
               await this.sendChunked(ctx.chat.id, fullHtml).catch(() => {
                 this.bot.api
-                  .sendMessage(ctx.chat.id, this.stripInternalTags(response.content))
+                  .sendMessage(
+                    ctx.chat.id,
+                    this.stripInternalTags(response.content),
+                  )
                   .catch(() => {});
               });
             }
@@ -379,7 +402,9 @@ export class TelegramAdapter implements ChannelAdapter {
               );
             } catch {
               // Edit failed — delete streaming message and start fresh
-              await this.bot.api.deleteMessage(ctx.chat.id, msgId).catch(() => {});
+              await this.bot.api
+                .deleteMessage(ctx.chat.id, msgId)
+                .catch(() => {});
               await this.bot.api
                 .sendMessage(ctx.chat.id, chunks[0]!, { parse_mode: "HTML" })
                 .catch(() => {});
@@ -460,14 +485,26 @@ export class TelegramAdapter implements ChannelAdapter {
       const feedbackId = parts.slice(2).join(":"); // feedbackId may contain colons
 
       if ((signal !== "like" && signal !== "dislike") || !feedbackId) {
-        await ctx.answerCallbackQuery();
+        try {
+          await ctx.answerCallbackQuery();
+        } catch {
+          /* query expired — ignore */
+        }
         return;
       }
 
       // Dismiss loading spinner on the button
-      await ctx.answerCallbackQuery({
-        text: signal === "like" ? "👍 Thanks!" : "👎 Got it, I'll improve.",
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: signal === "like" ? "👍 Thanks!" : "👎 Got it, I'll improve.",
+        });
+      } catch (err) {
+        // "query is too old" — Telegram already timed out the client response.
+        // This is harmless; the feedback was still processed via recordFeedback().
+        log.telegram.debug(
+          `answerCallbackQuery expired (non-fatal): ${(err as Error).message}`,
+        );
+      }
 
       // Replace the button message with a plain confirmation
       try {
@@ -487,7 +524,17 @@ export class TelegramAdapter implements ChannelAdapter {
     });
 
     this.bot.catch((err) => {
-      log.telegram.error(`Bot error: ${err.message}`);
+      const msg = (err as Error).message ?? String(err);
+      if (
+        msg.includes("query is too old") ||
+        msg.includes("query ID is invalid")
+      ) {
+        log.telegram.debug(
+          `Telegram callback query expired (non-fatal): ${msg}`,
+        );
+        return;
+      }
+      log.telegram.error(`Bot error: ${msg}`);
     });
   }
 
@@ -516,6 +563,7 @@ export class TelegramAdapter implements ChannelAdapter {
       skillsRegistry: self.gateway.getSkillsLoader()?.getRegistry(),
       skillsDir,
       sessionStore: self.gateway.getSessionStore(),
+      episodicMemory: self.gateway.getEpisodicMemory(),
       knowledgeCouncil: self.gateway.getKnowledgeCouncil(),
       owlRegistry: self.gateway.getOwlRegistry(),
       goalGraph: self.gateway.getGoalGraph(),
@@ -608,12 +656,9 @@ export class TelegramAdapter implements ChannelAdapter {
         ? displayText // tool status lines mixed in — keep as-is (already HTML)
         : this.renderContent(pureContent);
       try {
-        await this.bot.api.editMessageText(
-          chatId,
-          messageId,
-          rendered,
-          { parse_mode: "HTML" },
-        );
+        await this.bot.api.editMessageText(chatId, messageId, rendered, {
+          parse_mode: "HTML",
+        });
         lastEditTime = Date.now();
         editFailures = 0;
       } catch (err) {
@@ -735,7 +780,8 @@ export class TelegramAdapter implements ChannelAdapter {
       // If no streaming message exists yet, create one
       if (!messageId) {
         this.bot.api
-          .sendMessage(chatId!, displayText || "...", { // already HTML
+          .sendMessage(chatId!, displayText || "...", {
+            // already HTML
             parse_mode: "HTML",
           })
           .then((sent) => {
@@ -815,7 +861,9 @@ export class TelegramAdapter implements ChannelAdapter {
 
     const chunks = this.splitMessage(html, CHUNK_LEN);
     for (let i = 0; i < Math.min(chunks.length, MAX_CHUNKS); i++) {
-      await this.bot.api.sendMessage(chatId, chunks[i], { parse_mode: parseMode });
+      await this.bot.api.sendMessage(chatId, chunks[i], {
+        parse_mode: parseMode,
+      });
       if (i < Math.min(chunks.length, MAX_CHUNKS) - 1) {
         await new Promise((r) => setTimeout(r, 1000));
       }

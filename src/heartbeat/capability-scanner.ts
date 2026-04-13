@@ -168,7 +168,7 @@ export class CapabilityScanner {
     // Core tools that should have skills
     const importantTools = [
       "web_crawl",
-      "google_search",
+      "duckduckgo_search",
       "generate_image",
       "send_telegram_message",
       "send_file",

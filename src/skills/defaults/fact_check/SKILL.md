@@ -12,17 +12,17 @@ parameters:
 required: [claim]
 steps:
   - id: search_primary
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{claim}} fact check"
       num: 5
   - id: search_evidence
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{claim}} evidence"
       num: 5
   - id: search_authoritative
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{claim}} snopes OR politifact OR reuters"
       num: 5
@@ -30,7 +30,12 @@ steps:
     type: llm
     prompt: "Based on the search results for the claim '{{claim}}', evaluate the claim and present a verdict: Confirmed (supported by multiple reliable sources), Partially true (context matters), False (contradicted by evidence), or Unverifiable (insufficient evidence). Cite the sources found."
     depends_on: [search_primary, search_evidence, search_authoritative]
-    inputs: [search_primary.output, search_evidence.output, search_authoritative.output]
+    inputs:
+      [
+        search_primary.output,
+        search_evidence.output,
+        search_authoritative.output,
+      ]
 ---
 
 # Fact Check

@@ -238,7 +238,7 @@ export class TrustChain {
     if (
       name === "web_crawl" ||
       name === "web_fetch" ||
-      name === "google_search"
+      name === "duckduckgo_search"
     )
       return "web_fetch";
     if (name === "scrapling_fetch") return "web_scrape";

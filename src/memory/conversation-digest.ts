@@ -41,16 +41,22 @@ export interface ConversationDigest {
   /** Things still unresolved */
   openQuestions: string[];
   updatedAt: string;
+  /** Verbatim text of the last assistant response — for FOLLOW_UP/CONTINUATION context */
+  lastAssistantResponse?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────
 
 const URL_PATTERN = /https?:\/\/[^\s"'<>\])\}]+/g;
-const FILE_WRITTEN_PATTERN = /(?:wrote|created|saved|written)\s+(?:file\s+)?["']?([^\s"'<>]+\.[a-z]{2,6})["']?/gi;
+const FILE_WRITTEN_PATTERN =
+  /(?:wrote|created|saved|written)\s+(?:file\s+)?["']?([^\s"'<>]+\.[a-z]{2,6})["']?/gi;
 const COMMAND_PATTERN = /(?:running|executed|ran)\s*[`"]([^`"]{5,80})[`"]/gi;
-const DECISION_PATTERN = /(?:I(?:'ll| will| am going to)?\s+use\s+|using\s+|chosen?\s+approach[:\s]+|decided\s+to\s+use\s+)([^\n.]{5,80})/gi;
-const FAILURE_PATTERN = /(?:failed|error:|didn['']t work|try\s+again|attempt\s+\d+|retry|not\s+supported|permission\s+denied|404|403|500)[\s:]+([^\n.]{5,120})/gi;
-const OPEN_Q_PATTERN = /(?:unclear|not\s+sure|need\s+to\s+(?:check|confirm|ask|verify)|(?:do\s+you\s+want|would\s+you\s+prefer|which|should\s+I))[^\n.?]{5,100}[?]/gi;
+const DECISION_PATTERN =
+  /(?:I(?:'ll| will| am going to)?\s+use\s+|using\s+|chosen?\s+approach[:\s]+|decided\s+to\s+use\s+)([^\n.]{5,80})/gi;
+const FAILURE_PATTERN =
+  /(?:failed|error:|didn['']t work|try\s+again|attempt\s+\d+|retry|not\s+supported|permission\s+denied|404|403|500)[\s:]+([^\n.]{5,120})/gi;
+const OPEN_Q_PATTERN =
+  /(?:unclear|not\s+sure|need\s+to\s+(?:check|confirm|ask|verify)|(?:do\s+you\s+want|would\s+you\s+prefer|which|should\s+I))[^\n.?]{5,100}[?]/gi;
 
 const MAX_ARTIFACTS = 12;
 const MAX_DECISIONS = 6;
@@ -137,6 +143,15 @@ export class ConversationDigestManager {
     const failed = this.extractFailures(textToMine, existing.failed);
     const openQuestions = this.extractOpenQuestions(textToMine);
 
+    // Capture verbatim last assistant response for follow-up continuity
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    const lastAssistantResponse =
+      typeof lastAssistant?.content === "string"
+        ? lastAssistant.content.slice(0, 2000)
+        : existing.lastAssistantResponse;
+
     const digest: ConversationDigest = {
       sessionId,
       task,
@@ -145,6 +160,7 @@ export class ConversationDigestManager {
       failed,
       openQuestions,
       updatedAt: new Date().toISOString(),
+      lastAssistantResponse,
     };
 
     await this.save(digest);
@@ -163,11 +179,18 @@ export class ConversationDigestManager {
       lines.push(`  <current_task>${digest.task}</current_task>`);
     }
 
+    // NOTE: lastAssistantResponse is intentionally NOT emitted here.
+    // It is injected by the ContextBuilder's continuityContext block for
+    // CONTINUATION/FOLLOW_UP classifications only (where it's actually needed).
+    // Emitting it here AND there causes ~1500-token duplication per follow-up turn.
+
     if (digest.artifacts.length > 0) {
       lines.push("  <artifacts_from_last_response>");
       for (const a of digest.artifacts) {
         const label = a.label ? ` label="${a.label}"` : "";
-        lines.push(`    <artifact type="${a.type}"${label}>${a.value}</artifact>`);
+        lines.push(
+          `    <artifact type="${a.type}"${label}>${a.value}</artifact>`,
+        );
       }
       lines.push("  </artifacts_from_last_response>");
     }
@@ -211,6 +234,7 @@ export class ConversationDigestManager {
       failed: [],
       openQuestions: [],
       updatedAt: new Date().toISOString(),
+      lastAssistantResponse: undefined,
     };
   }
 

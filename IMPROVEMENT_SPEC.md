@@ -9,13 +9,13 @@
 
 Noctua's self-report diagnosed generic LLM limitations (knowledge cutoff, no files, no memory). These are **not the actual problems with this codebase**. StackOwl already has:
 
-| Self-Report Says "Missing" | Reality |
-|---|---|
-| No persistent memory | ✓ 5 memory systems active: episodic, fact-store, working context, reflexion, knowledge graph |
-| No internet/real-time info | ✓ GoogleSearchTool, WebCrawlTool, BrowserTool with anti-bot pool all registered |
-| No file access | ✓ ReadFileTool, WriteFileTool, EditFileTool, ShellTool all working |
-| No code execution | ✓ ShellTool runs arbitrary shell commands |
-| No learning from mistakes | ✓ LearningOrchestrator, ReflexionEngine, behavioral patches all active |
+| Self-Report Says "Missing" | Reality                                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------- |
+| No persistent memory       | ✓ 5 memory systems active: episodic, fact-store, working context, reflexion, knowledge graph |
+| No internet/real-time info | ✓ DuckDuckGoSearchTool, WebCrawlTool, BrowserTool with anti-bot pool all registered          |
+| No file access             | ✓ ReadFileTool, WriteFileTool, EditFileTool, ShellTool all working                           |
+| No code execution          | ✓ ShellTool runs arbitrary shell commands                                                    |
+| No learning from mistakes  | ✓ LearningOrchestrator, ReflexionEngine, behavioral patches all active                       |
 
 **The real problems are architectural, not capability gaps.**
 
@@ -54,6 +54,7 @@ A single user message triggers **3 serial LLM calls before the response**:
 3. `OwlEngine.run()` — main response + tool calls
 
 Plus background work competing for the same API quota:
+
 - `CognitiveLoop` fires every 15 min
 - `LearningOrchestrator.processConversation()` runs after every response
 - `EpisodicMemory` extraction after every response
@@ -66,6 +67,7 @@ For cloud APIs: 3 calls = 3× the cost.
 ### Problem 3 — Skill System Overhead vs. Value (MEDIUM IMPACT)
 
 160+ skills loaded. Every message goes through:
+
 1. BM25 retrieval (fast, in-memory)
 2. Usage-weighted re-ranking
 3. Semantic re-ranking (2 embedding calls)
@@ -81,6 +83,7 @@ Structured skill auto-execution is permanently disabled (`if (false && ...)`). T
 ### Problem 4 — Memory Retrieved But Not Used (MEDIUM IMPACT)
 
 Memory retrieval fires for every message but the retrieved content is diluted:
+
 - Episodic memory: up to 5 episodes injected
 - Fact store: up to 5 facts injected
 - Pellets: up to 3 pellets injected
@@ -94,6 +97,7 @@ All of this lands in `enrichedMemoryContext` which is **capped at 1500 chars** i
 ### Problem 5 — No Response Quality Feedback Loop (HIGH IMPACT)
 
 The system learns **what was said** but not **whether it was useful**:
+
 - `LearningOrchestrator` extracts topics from every conversation regardless of quality
 - `EpisodicMemory` stores summaries of every session regardless of outcome
 - There is no signal for "this response was bad, learn from it"
@@ -107,6 +111,7 @@ Result: The assistant accumulates knowledge volume but not response quality impr
 ### Problem 6 — OSCAR Complexity vs. Value (LOW IMPACT)
 
 OSCAR (computer use) is ~100 files across 15 subdirectories — roughly 30% of the codebase's total complexity. It is registered as `ComputerUseTool` but:
+
 - Desktop automation is fragile by nature (UI changes break it)
 - No reliable test results in production
 - The value-to-complexity ratio is very low for a personal assistant
@@ -132,6 +137,7 @@ OSCAR (computer use) is ~100 files across 15 subdirectories — roughly 30% of t
 **Fix:** Score each signal by relevance to the current message. Inject only top 4–5.
 
 **Always inject:**
+
 - Temporal context (cheap, always relevant)
 - Mode directive (ASSISTANT vs REACTIVE)
 - DNA behavioral directives
@@ -139,16 +145,17 @@ OSCAR (computer use) is ~100 files across 15 subdirectories — roughly 30% of t
 
 **Inject only when relevant:**
 
-| Signal | Condition |
-|---|---|
-| Pellets | Score > 0.15 (current threshold 0.05 is too noisy) |
-| Episodic memory | Temporal trigger word detected OR score > 0.35 |
-| Facts | Keyword overlap with message > 50% |
-| Skills | LLM validation passes (already gated) |
-| Intent context | Only when there ARE active intents |
+| Signal          | Condition                                           |
+| --------------- | --------------------------------------------------- |
+| Pellets         | Score > 0.15 (current threshold 0.05 is too noisy)  |
+| Episodic memory | Temporal trigger word detected OR score > 0.35      |
+| Facts           | Keyword overlap with message > 50%                  |
+| Skills          | LLM validation passes (already gated)               |
+| Intent context  | Only when there ARE active intents                  |
 | Inner monologue | Only when inner life state has changed this session |
 
 **Remove from always-included:**
+
 - Echo chamber analysis (inject only on contentious opinion requests)
 - User mental model (inject only on frustration signals)
 - Predictive queue (inject only when confidence > 0.7)
@@ -188,7 +195,8 @@ User message arrives
 
 ```typescript
 // Fast pre-filter — only route if message looks like an action request
-const SKILL_TRIGGER = /\b(find|search|create|write|generate|check|analyze|run|scan|fix|build|compare|convert|code|script|calculate|translate)\b/i;
+const SKILL_TRIGGER =
+  /\b(find|search|create|write|generate|check|analyze|run|scan|fix|build|compare|convert|code|script|calculate|translate)\b/i;
 
 if (!SKILL_TRIGGER.test(userMessage)) {
   return []; // Skip IntentRouter entirely
@@ -212,8 +220,8 @@ Also: **cache skill embeddings at startup** instead of recomputing on every sema
 ```typescript
 // In PostProcessor:
 const quality = {
-  loopExhausted: response.loopExhausted,  // model got stuck
-  toolFailures: response.toolsUsed.filter(t => t.failed).length,
+  loopExhausted: response.loopExhausted, // model got stuck
+  toolFailures: response.toolsUsed.filter((t) => t.failed).length,
   emptyContent: !response.content.trim(),
   // future: thumbs up/down from user
 };
@@ -223,7 +231,7 @@ if (quality.loopExhausted || quality.toolFailures > 2) {
   await reflexionEngine.recordFailure({
     message: userMessage,
     approach: response.toolsUsed,
-    reason: "loop_exhausted_or_repeated_failures"
+    reason: "loop_exhausted_or_repeated_failures",
   });
 }
 ```
@@ -239,6 +247,7 @@ if (quality.loopExhausted || quality.toolFailures > 2) {
 **Problem:** 1500-char cap on 20+ signals = ~75 chars each = useless.
 
 **Fix:**
+
 - Raise budget to **3000 chars**
 - Reduce to 3 signals: episodic (top 2 at 400 chars each), facts (top 3 at 200 chars each), behavioral patches (top 3 at 150 chars each)
 - Each signal gets enough space to actually mean something
@@ -257,12 +266,15 @@ if (quality.loopExhausted || quality.toolFailures > 2) {
 function selectRelevantTools(message: string, allTools: ToolDef[]): ToolDef[] {
   const hasURL = /https?:\/\//.test(message);
   const hasPath = /\/[a-z]|\.[a-z]{2,4}$/.test(message);
-  const hasMemory = /\b(remember|recall|what did|last time|before)\b/i.test(message);
+  const hasMemory = /\b(remember|recall|what did|last time|before)\b/i.test(
+    message,
+  );
 
-  if (hasURL) return filter(allTools, ["web_crawl", "google_search", "browser"]);
+  if (hasURL)
+    return filter(allTools, ["web_crawl", "duckduckgo_search", "browser"]);
   if (hasPath) return filter(allTools, ["read", "write", "edit", "shell"]);
   if (hasMemory) return filter(allTools, ["memory_search", ...top10ByUsage]);
-  return top15ByRecentUsage(allTools);  // Default: most-used tools
+  return top15ByRecentUsage(allTools); // Default: most-used tools
 }
 ```
 
@@ -277,6 +289,7 @@ function selectRelevantTools(message: string, allTools: ToolDef[]): ToolDef[] {
 **Problem:** Even when proactive messages DO fire (morning brief, goal follow-up), they're generic.
 
 **Fix:**
+
 - **Morning brief:** Pull stale goals + last 3 topics + today's date → generate specific agenda with action items, not "Good morning!"
 - **Goal check-in:** Show current progress %, last action taken, AND offer one specific concrete next step
 - **Commitment follow-up:** Reference the specific commitment, remind what was agreed, offer to execute
@@ -287,17 +300,17 @@ function selectRelevantTools(message: string, allTools: ToolDef[]): ToolDef[] {
 
 ## PART 4: WHAT TO DEPRIORITIZE / CONSIDER REMOVING
 
-| Feature | Why |
-|---|---|
-| OSCAR computer use | 30% of codebase complexity, fragile, no proven production value |
-| Echo chamber detector in every prompt | Rarely relevant; adds noise; inject only on demand |
-| Constellation miner | Redundant with CognitiveLoop pattern mining |
-| Predictive queue | Low-confidence items add prompt noise, rarely useful |
-| Knowledge Council | Already disabled; keep disabled |
-| Growth Journal generator | Not core to usefulness |
-| Quests/Time Capsules | Gamification overhead, low practical value |
-| ACP (Agent-to-Agent protocol) | No concrete use case yet |
-| Inner monologue in hot path | See S2 |
+| Feature                               | Why                                                             |
+| ------------------------------------- | --------------------------------------------------------------- |
+| OSCAR computer use                    | 30% of codebase complexity, fragile, no proven production value |
+| Echo chamber detector in every prompt | Rarely relevant; adds noise; inject only on demand              |
+| Constellation miner                   | Redundant with CognitiveLoop pattern mining                     |
+| Predictive queue                      | Low-confidence items add prompt noise, rarely useful            |
+| Knowledge Council                     | Already disabled; keep disabled                                 |
+| Growth Journal generator              | Not core to usefulness                                          |
+| Quests/Time Capsules                  | Gamification overhead, low practical value                      |
+| ACP (Agent-to-Agent protocol)         | No concrete use case yet                                        |
+| Inner monologue in hot path           | See S2                                                          |
 
 ---
 
@@ -317,13 +330,13 @@ function selectRelevantTools(message: string, allTools: ToolDef[]): ToolDef[] {
 The assistant's **intelligence ceiling** is set by the base model.  
 The **effective intelligence** — what the user actually experiences — is determined by:
 
-| What user feels | Root cause | Fix |
-|---|---|---|
-| Slow responses | 3 serial LLM calls before reply | S2: async inner monologue |
-| Ignores past context | 20 signals compete for 1500 chars | S1 + S5: triage + budget |
-| Uses wrong tools | 70+ tools in prompt = noise | S6: preselect tools |
-| Doesn't improve over time | No quality feedback signal | S4: record failures |
-| Annoying pings | Fixed | S7: meaningful content only |
-| Wrong skill activated | Fixed (IntentRouter LLM gate) | S3: lazy routing |
+| What user feels           | Root cause                        | Fix                         |
+| ------------------------- | --------------------------------- | --------------------------- |
+| Slow responses            | 3 serial LLM calls before reply   | S2: async inner monologue   |
+| Ignores past context      | 20 signals compete for 1500 chars | S1 + S5: triage + budget    |
+| Uses wrong tools          | 70+ tools in prompt = noise       | S6: preselect tools         |
+| Doesn't improve over time | No quality feedback signal        | S4: record failures         |
+| Annoying pings            | Fixed                             | S7: meaningful content only |
+| Wrong skill activated     | Fixed (IntentRouter LLM gate)     | S3: lazy routing            |
 
 None of these require a better model. They require better signal selection.

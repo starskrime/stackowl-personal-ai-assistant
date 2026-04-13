@@ -186,7 +186,7 @@ YOUR EXPERTISE: ${expertise || "general"}
 For each approach, provide:
 1. A short name (2-4 words)
 2. A brief description (1-2 sentences)
-3. Which tools it would use (from: run_shell_command, web_crawl, google_search, read_file, write_file, generate_image, send_telegram_message, send_file)
+3. Which tools it would use (from: run_shell_command, web_crawl, duckduckgo_search, read_file, write_file, generate_image, send_telegram_message, send_file)
 4. Complexity rating (1-5)
 5. What makes this approach different/better than the obvious one
 

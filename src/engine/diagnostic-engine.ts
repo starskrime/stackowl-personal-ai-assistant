@@ -39,7 +39,12 @@ export interface DiagnosticResult {
   /** Root cause analysis */
   rootCause: string;
   /** Error classification */
-  errorClass: "retryable" | "non-retryable" | "environmental" | "logic" | "unknown";
+  errorClass:
+    | "retryable"
+    | "non-retryable"
+    | "environmental"
+    | "logic"
+    | "unknown";
   /** All candidate fixes, sorted by score descending */
   candidates: CandidateFix[];
   /** The recommended fix (highest score) */
@@ -216,7 +221,10 @@ export class DiagnosticEngine {
   private parseResponse(raw: string): DiagnosticResult {
     let jsonStr = raw.trim();
     if (jsonStr.startsWith("```")) {
-      jsonStr = jsonStr.replace(/^```json?/, "").replace(/```$/, "").trim();
+      jsonStr = jsonStr
+        .replace(/^```json?/, "")
+        .replace(/```$/, "")
+        .trim();
     }
     // Strip trailing commas (but NOT JS-style comments — they'd break URLs like https://)
     jsonStr = jsonStr.replace(/,\s*([}\]])/g, "$1");
@@ -262,14 +270,25 @@ export class DiagnosticEngine {
     // Generate rejection reasons for non-recommended candidates
     const rejectionReasons = candidates.map((c) => {
       if (c === recommended) return "";
-      if (c.risk > recommended.risk + 0.2) return `Too risky (${(c.risk * 100).toFixed(0)}% risk)`;
-      if (c.likelihood < recommended.likelihood - 0.2) return `Low likelihood (${(c.likelihood * 100).toFixed(0)}%)`;
-      if (c.feasibility < recommended.feasibility - 0.2) return `Hard to execute (${(c.feasibility * 100).toFixed(0)}% feasibility)`;
+      if (c.risk > recommended.risk + 0.2)
+        return `Too risky (${(c.risk * 100).toFixed(0)}% risk)`;
+      if (c.likelihood < recommended.likelihood - 0.2)
+        return `Low likelihood (${(c.likelihood * 100).toFixed(0)}%)`;
+      if (c.feasibility < recommended.feasibility - 0.2)
+        return `Hard to execute (${(c.feasibility * 100).toFixed(0)}% feasibility)`;
       return `Lower composite score (${c.score.toFixed(2)} vs ${recommended.score.toFixed(2)})`;
     });
 
-    const validClasses = ["retryable", "non-retryable", "environmental", "logic", "unknown"] as const;
-    const errorClass = validClasses.includes(parsed.errorClass as typeof validClasses[number])
+    const validClasses = [
+      "retryable",
+      "non-retryable",
+      "environmental",
+      "logic",
+      "unknown",
+    ] as const;
+    const errorClass = validClasses.includes(
+      parsed.errorClass as (typeof validClasses)[number],
+    )
       ? (parsed.errorClass as DiagnosticResult["errorClass"])
       : "unknown";
 
@@ -287,7 +306,10 @@ export class DiagnosticEngine {
    * When LLM diagnosis fails (provider down, parse error, etc.),
    * fall back to heuristic-based diagnosis using error patterns.
    */
-  private heuristicFallback(input: DiagnosticInput, elapsed: number): DiagnosticResult {
+  private heuristicFallback(
+    input: DiagnosticInput,
+    elapsed: number,
+  ): DiagnosticResult {
     const result = input.toolResult.toLowerCase();
     const candidates: CandidateFix[] = [];
 
@@ -295,7 +317,8 @@ export class DiagnosticEngine {
     if (result.includes("permission denied") || result.includes("eacces")) {
       candidates.push({
         label: "Fix permissions",
-        reasoning: "The tool lacks filesystem permissions. Try with elevated access or a different path.",
+        reasoning:
+          "The tool lacks filesystem permissions. Try with elevated access or a different path.",
         action: `Check file permissions for the target path, or use a path the assistant has write access to.`,
         likelihood: 0.7,
         feasibility: 0.6,
@@ -305,10 +328,15 @@ export class DiagnosticEngine {
     }
 
     // Heuristic 2: File not found
-    if (result.includes("no such file") || result.includes("enoent") || result.includes("not found")) {
+    if (
+      result.includes("no such file") ||
+      result.includes("enoent") ||
+      result.includes("not found")
+    ) {
       candidates.push({
         label: "Verify path exists",
-        reasoning: "Target file or directory doesn't exist. Search for the correct path first.",
+        reasoning:
+          "Target file or directory doesn't exist. Search for the correct path first.",
         action: `Use a file search tool to find the correct path before retrying.`,
         likelihood: 0.8,
         feasibility: 0.9,
@@ -318,11 +346,16 @@ export class DiagnosticEngine {
     }
 
     // Heuristic 3: Network / API errors
-    if (result.includes("fetch failed") || result.includes("econnrefused") || result.includes("timeout")) {
+    if (
+      result.includes("fetch failed") ||
+      result.includes("econnrefused") ||
+      result.includes("timeout")
+    ) {
       candidates.push({
         label: "Network issue — try alternative",
-        reasoning: "Network request failed. Use a different tool or approach that doesn't require network.",
-        action: `Switch to an offline approach or a different network tool. If fetching a URL, try web_crawl or google_search instead.`,
+        reasoning:
+          "Network request failed. Use a different tool or approach that doesn't require network.",
+        action: `Switch to an offline approach or a different network tool. If fetching a URL, try web_crawl or duckduckgo_search instead.`,
         likelihood: 0.6,
         feasibility: 0.8,
         risk: 0.1,
@@ -331,10 +364,14 @@ export class DiagnosticEngine {
     }
 
     // Heuristic 4: Command not found / wrong tool
-    if (result.includes("command not found") || result.includes("not recognized")) {
+    if (
+      result.includes("command not found") ||
+      result.includes("not recognized")
+    ) {
       candidates.push({
         label: "Use different tool",
-        reasoning: "The command isn't available in this environment. Use a built-in tool instead.",
+        reasoning:
+          "The command isn't available in this environment. Use a built-in tool instead.",
         action: `Check available tools and use a built-in alternative (e.g., web_crawl instead of curl).`,
         likelihood: 0.85,
         feasibility: 0.9,
@@ -344,7 +381,10 @@ export class DiagnosticEngine {
     }
 
     // Heuristic 5: JSON parse errors
-    if (result.includes("json") && (result.includes("parse") || result.includes("syntax"))) {
+    if (
+      result.includes("json") &&
+      (result.includes("parse") || result.includes("syntax"))
+    ) {
       candidates.push({
         label: "Fix malformed input",
         reasoning: "Tool received invalid JSON. Fix the arguments and retry.",
@@ -359,7 +399,8 @@ export class DiagnosticEngine {
     // Always include a "tell user" fallback
     candidates.push({
       label: "Report to user",
-      reasoning: "If the error is fundamental, honestly tell the user what failed and why.",
+      reasoning:
+        "If the error is fundamental, honestly tell the user what failed and why.",
       action: `Stop retrying and explain to the user: the tool "${input.toolName}" failed because of "${input.toolResult.slice(0, 100)}". Ask if they want to try a different approach.`,
       likelihood: 1.0,
       feasibility: 1.0,
@@ -371,7 +412,8 @@ export class DiagnosticEngine {
     if (candidates.length <= 1) {
       candidates.unshift({
         label: "Try different approach",
-        reasoning: "The current approach failed. Rethink the strategy entirely.",
+        reasoning:
+          "The current approach failed. Rethink the strategy entirely.",
         action: `Abandon "${input.toolName}" and use a completely different tool or method to achieve the user's goal.`,
         likelihood: 0.5,
         feasibility: 0.7,
@@ -389,7 +431,8 @@ export class DiagnosticEngine {
 
     return {
       rootCause: `Heuristic diagnosis: tool "${input.toolName}" failed (${input.failureType})`,
-      errorClass: input.errorClass === "NON-RETRYABLE" ? "non-retryable" : "unknown",
+      errorClass:
+        input.errorClass === "NON-RETRYABLE" ? "non-retryable" : "unknown",
       candidates,
       recommended,
       rejectionReasons,

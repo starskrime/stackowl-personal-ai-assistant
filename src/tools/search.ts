@@ -6,6 +6,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { camoFoxSearch } from "./camofox.js";
 
 interface SearchResult {
   title: string;
@@ -13,9 +14,61 @@ interface SearchResult {
   snippet: string;
 }
 
-export const GoogleSearchTool: ToolImplementation = {
+/**
+ * Parse a CamoFox accessibility snapshot as search results.
+ * The snapshot format is: "[role] text [link eN] anchor-text ..."
+ * We extract links with surrounding text as title+snippet pairs.
+ */
+function parseSnapshotAsSearchResults(query: string, snapshot: string): string {
+  // Extract lines containing links
+  const lines = snapshot.split("\n").map((l) => l.trim()).filter(Boolean);
+  const results: SearchResult[] = [];
+
+  for (let i = 0; i < lines.length && results.length < 10; i++) {
+    const line = lines[i];
+    // Look for patterns like: [link eN] Title  followed by a URL on the next line
+    const linkMatch = line.match(/\[link\s+e\d+\]\s*(.+)/);
+    if (!linkMatch) continue;
+
+    const title = linkMatch[1].replace(/\[.*?\]/g, "").trim();
+    if (!title || title.length < 4) continue;
+
+    // Find URL in nearby lines
+    let url = "";
+    for (let j = i + 1; j <= i + 3 && j < lines.length; j++) {
+      const urlMatch = lines[j].match(/https?:\/\/\S+/);
+      if (urlMatch) {
+        url = urlMatch[0].replace(/[,)]$/, "");
+        break;
+      }
+    }
+    if (!url) continue;
+
+    // Use next non-URL line as snippet
+    const snippet =
+      lines
+        .slice(i + 1, i + 4)
+        .find((l) => !l.startsWith("http") && l.length > 20)
+        ?.replace(/\[.*?\]/g, "")
+        .trim() ?? "";
+
+    results.push({ title, url, snippet });
+  }
+
+  if (results.length === 0) {
+    return `Search results for: "${query}" [via camofox]\n\n${snapshot.slice(0, 2000)}`;
+  }
+
+  const lines2 = results.map(
+    (r, i) =>
+      `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet || "(no snippet)"}`,
+  );
+  return `Search results for: "${query}" [via camofox]\n\n${lines2.join("\n\n")}`;
+}
+
+export const DuckDuckGoSearchTool: ToolImplementation = {
   definition: {
-    name: "google_search",
+    name: "duckduckgo_search",
     description:
       "Search the web for information. Returns titles, URLs, and snippets. " +
       "Use this as your FIRST step when you need current/real-time information " +
@@ -123,6 +176,23 @@ export const GoogleSearchTool: ToolImplementation = {
       }
 
       if (results.length === 0) {
+        // Detect CAPTCHA / bot-block and fall back to CamoFox @google_search
+        const lHtml = html.toLowerCase();
+        const isCaptcha =
+          lHtml.includes("captcha") ||
+          lHtml.includes("verify you are human") ||
+          lHtml.includes("unusual traffic") ||
+          lHtml.includes("robot") ||
+          lHtml.includes("blocked") ||
+          lHtml.includes("please complete the security check");
+
+        if (isCaptcha) {
+          const camoSnapshot = await camoFoxSearch("@google_search", query);
+          if (camoSnapshot) {
+            return parseSnapshotAsSearchResults(query, camoSnapshot);
+          }
+        }
+
         return `No results found for "${query}". Try a different search term.`;
       }
 

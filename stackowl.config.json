@@ -65,5 +65,12 @@
   "synthesis": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-6"
+  },
+  "camofox": {
+    "enabled": true,
+    "baseUrl": "http://localhost:9377",
+    "apiKey": null,
+    "defaultUserId": "stackowl",
+    "defaultTimeout": 30000
   }
 }

@@ -12,17 +12,17 @@ parameters:
 required: [product]
 steps:
   - id: search_amazon
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{product}} price Amazon"
       num: 5
   - id: search_bestbuy
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{product}} price Best Buy"
       num: 5
   - id: search_walmart
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{product}} price Walmart"
       num: 5

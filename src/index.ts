@@ -16,9 +16,8 @@ import { ToolRegistry } from "./tools/registry.js";
 import { ShellTool } from "./tools/shell.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
-import { GoogleSearchTool } from "./tools/search.js";
+import { DuckDuckGoSearchTool } from "./tools/search.js";
 import { WebCrawlTool } from "./tools/web.js";
-import { MemoryConsolidator } from "./memory/consolidator.js";
 import { SessionStore } from "./memory/store.js";
 import { StackOwlEventBus } from "./events/index.js";
 import { TaskQueue } from "./queue/index.js";
@@ -103,6 +102,7 @@ import {
 import { ComputerUseTool } from "./tools/computer-use/index.js";
 // ── Anti-bot Web Scraping ──
 import { ScraplingTool } from "./tools/web-scrapling.js";
+import { CamoFoxTool } from "./tools/camofox.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -146,7 +146,7 @@ import { ConstellationMiner } from "./constellations/miner.js";
 import { SocraticEngine } from "./socratic/engine.js";
 import { join } from "node:path";
 // ── Persistent Browser Pool ──
-import { BrowserPool, initSmartFetch } from "./browser/index.js";
+import { BrowserPool, initSmartFetch, initCamoFox } from "./browser/index.js";
 // ── New Feature Modules (Phase 1-3) ──
 import { InfraProfileStore, InfraDetector } from "./infra/index.js";
 import { ConnectorResolver } from "./connectors/index.js";
@@ -197,6 +197,16 @@ async function bootstrap() {
     initSmartFetch(browserPool);
   }
 
+  // Initialize CamoFox (Tier 4 anti-detection browser)
+  if (config.camofox?.enabled) {
+    initCamoFox({
+      baseUrl: config.camofox.baseUrl ?? "http://localhost:9377",
+      apiKey: config.camofox.apiKey,
+      defaultUserId: config.camofox.defaultUserId ?? "stackowl",
+      defaultTimeout: config.camofox.defaultTimeout ?? 30000,
+    });
+  }
+
   // Initialize provider registry
   const providerRegistry = new ProviderRegistry();
   for (const [name, providerConf] of Object.entries(config.providers)) {
@@ -231,7 +241,7 @@ async function bootstrap() {
     WriteFileTool,
     EditFileTool,
     // ── Web & search ──
-    GoogleSearchTool,
+    DuckDuckGoSearchTool,
     WebCrawlTool,
     new WebSearchTool(
       "brave",
@@ -314,6 +324,8 @@ async function bootstrap() {
     ComputerUseTool,
     // ── Anti-bot Web Scraping ──
     ScraplingTool,
+    // ── Anti-detection Browser (CamoFox / Firefox) ──
+    CamoFoxTool,
     // ── Memory & Recall ──
     new RecallMemoryTool(),
     new RememberTool(),
@@ -381,9 +393,11 @@ async function bootstrap() {
   // The gateway will reuse this instance (ctx.db) instead of creating its own.
   const memoryDb = new MemoryDatabase(workspacePath);
   // One-time JSON migration (fire-and-forget)
-  memoryDb.importFromJson(workspacePath).catch((err) =>
-    console.warn(`[MemoryDatabase] JSON import failed: ${err}`),
-  );
+  memoryDb
+    .importFromJson(workspacePath)
+    .catch((err) =>
+      console.warn(`[MemoryDatabase] JSON import failed: ${err}`),
+    );
 
   // Episodic Memory — LLM-extracted session summaries for cross-session recall
   const episodicMemory = new EpisodicMemory(workspacePath, undefined, memoryDb);
@@ -468,7 +482,13 @@ async function bootstrap() {
   const synthesizer = new ToolSynthesizer();
   const ledger = new CapabilityLedger();
   const loader = new DynamicToolLoader(ledger);
-  const evolution = new EvolutionHandler(synthesizer, ledger, loader, memoryDb, owlRegistry);
+  const evolution = new EvolutionHandler(
+    synthesizer,
+    ledger,
+    loader,
+    memoryDb,
+    owlRegistry,
+  );
   ledger.setDb(memoryDb);
 
   // Load any previously synthesized tools into the registry
@@ -554,7 +574,10 @@ async function bootstrap() {
 
   // ── Ground State View (Phase 4) ──
   const { GroundStateView } = await import("./cognition/ground-state.js");
-  const groundState = new GroundStateView(factStore, providerRegistry.getDefault());
+  const groundState = new GroundStateView(
+    factStore,
+    providerRegistry.getDefault(),
+  );
 
   // ── Goal Graph ──
   const goalGraph = new GoalGraph(workspacePath);
@@ -677,12 +700,14 @@ async function buildGateway(
   >,
 ): Promise<OwlGateway> {
   const provider = b.providerRegistry.getDefault();
-  const memoryContext = await MemoryConsolidator.loadMemory(b.workspacePath);
-  if (memoryContext) {
-    console.log(chalk.dim("  [Memory loaded from previous sessions]"));
-  }
 
-  // Load reflexion-based structured memory (supplements append-only memory.md)
+  // Legacy memory.md retired (Phase 3) — replaced by structured memory:
+  // FactStore (semantic facts) + ConversationDigest (L1 session memory) +
+  // MemoryRetriever (episodic + reflexion search). ContextBuilder queries these
+  // on every message. Do NOT load memory.md — it is unsearchable and obsolete.
+  // MemoryConsolidator.loadMemory() is no longer called.
+
+  // Load reflexion-based structured memory (Phase 3 replacement for memory.md)
   let reflexionContext = "";
   try {
     const reflexion = new MemoryReflexionEngine(b.workspacePath, provider, owl);
@@ -888,8 +913,7 @@ async function buildGateway(
     preferenceStore: b.preferenceStore,
     reflexionEngine: b.reflexionEngine,
     skillsLoader: b.skillsLoader,
-    memoryContext:
-      [memoryContext, reflexionContext].filter(Boolean).join("\n") || undefined,
+    memoryContext: reflexionContext || undefined,
     cwd: b.workspacePath,
     providerRegistry: b.providerRegistry,
     microLearner: b.microLearner,
@@ -1006,8 +1030,14 @@ async function parliamentCommand(topic?: string) {
     process.exit(1);
   }
 
-  const { providerRegistry, owlRegistry, config, pelletStore, toolRegistry, memoryDb } =
-    await bootstrap();
+  const {
+    providerRegistry,
+    owlRegistry,
+    config,
+    pelletStore,
+    toolRegistry,
+    memoryDb,
+  } = await bootstrap();
   const provider = providerRegistry.getDefault();
 
   // Pick 3-4 owls for the debate (default to Noctua, Archimedes, Scrooge, and Socrates if available)

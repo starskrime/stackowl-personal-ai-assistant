@@ -31,12 +31,25 @@ export interface SubTask {
   toolsNeeded: string[];
 }
 
+export interface ResearchSignal {
+  /** Why deep research mode was triggered */
+  reason: string;
+  /** Subtopics identified in the research query */
+  subtopics: string[];
+  /** Whether this was auto-detected vs user-explicit */
+  autoDetected: boolean;
+}
+
 export interface TaskStrategy {
   strategy: StrategyType;
   /** LLM's explanation of why this strategy was chosen */
   reasoning: string;
   /** 0-1 confidence score */
   confidence: number;
+  /** Depth mode: "quick" (default) or "deep" (multi-iteration research) */
+  depth: "quick" | "deep";
+  /** Research signal — present when depth="deep" */
+  researchSignal?: ResearchSignal;
   owlAssignments: OwlAssignment[];
   /** Subtasks for PLANNED and SWARM strategies */
   subtasks?: SubTask[];

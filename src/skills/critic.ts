@@ -82,27 +82,41 @@ export class SkillCritic {
 
   /**
    * Evaluate a skill. Uses a single LLM call for all three dimensions.
-   * Falls back to heuristic scoring if the LLM call fails.
+   * Falls back to heuristic scoring only if retry also fails.
    */
   async critique(skill: Skill): Promise<CritiqueResult> {
     try {
       return await this.critiqueWithLLM(skill);
     } catch (err) {
       log.engine.warn(
-        `[SkillCritic] LLM critique failed for "${skill.name}", using heuristic: ${err instanceof Error ? err.message : String(err)}`,
+        `[SkillCritic] LLM critique failed for "${skill.name}": ${err instanceof Error ? err.message : String(err)} — retrying with correction`,
       );
-      return this.critiqueHeuristic(skill);
+      try {
+        return await this.critiqueWithLLM(skill, /* retry */ true);
+      } catch (retryErr) {
+        log.engine.warn(
+          `[SkillCritic] Retry also failed for "${skill.name}", using heuristic: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+        );
+        return this.critiqueHeuristic(skill);
+      }
     }
   }
 
-  private async critiqueWithLLM(skill: Skill): Promise<CritiqueResult> {
+  private async critiqueWithLLM(
+    skill: Skill,
+    retry = false,
+  ): Promise<CritiqueResult> {
+    const retryDirective = retry
+      ? `\n\n[RETRY] The previous response was not valid JSON. Return ONLY the JSON object — no markdown, no code fences, no explanation. Keep the response under 400 characters so it doesn't get truncated.`
+      : "";
+
     const prompt =
       `You are a quality evaluator for AI assistant skills (SKILL.md files).\n` +
       `Rate the following skill on three dimensions (each 0.0–1.0) and give specific feedback.\n\n` +
       `SKILL:\n` +
       `Name: ${skill.name}\n` +
       `Description: ${skill.description}\n` +
-      `Instructions:\n${skill.instructions.slice(0, 800)}\n\n` +
+      `Instructions:\n${skill.instructions.slice(0, 300)}\n\n` +
       `Scoring dimensions:\n` +
       `1. NAME_CLARITY (0-1): Would a user's natural phrasing ("send me weather", "take a screenshot")\n` +
       `   trigger this skill by keyword? Generic names (skill_1, synthesized_skill, handler) = 0.0.\n` +
@@ -119,12 +133,12 @@ export class SkillCritic {
       `  "instruction_clarity": { "score": 0.0, "feedback": "exact issue and how to fix it" },\n` +
       `  "trigger_precision": { "score": 0.0, "feedback": "exact issue and how to fix it" },\n` +
       `  "rewrite_directive": "One paragraph telling the rewriter exactly what to change and why"\n` +
-      `}`;
+      `}${retryDirective}`;
 
     const response = await this.provider.chat(
       [{ role: "user", content: prompt }],
       undefined,
-      { temperature: 0, maxTokens: 512 },
+      { temperature: 0, maxTokens: 350 },
     );
 
     const match = response.content.match(/\{[\s\S]*\}/);

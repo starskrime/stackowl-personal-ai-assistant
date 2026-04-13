@@ -64,6 +64,8 @@ export interface PingContext {
   skillsDir?: string;
   /** Session store used by PatternMiner to read conversation history */
   sessionStore?: SessionStore;
+  /** Episodic memory — used to give proactive messages cross-session context */
+  episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
   /** Knowledge Council for automated group learning sessions */
   knowledgeCouncil?: import("../parliament/knowledge-council.js").KnowledgeCouncil;
   /** Owl registry for council sessions */
@@ -538,13 +540,51 @@ export class ProactivePinger {
 
   /**
    * Generate a proactive message using the LLM and send it.
+   * Injects recent episodic memory (if available) so the message references
+   * real past context instead of sending vague generic follow-ups.
    */
   private async generateAndSend(
     prompt: string,
     _type: PingType,
   ): Promise<void> {
     try {
-      const response = await this.engine.run(prompt, {
+      // ── Episodic context injection ──────────────────────────────────
+      // When the proactive engine runs, it doesn't go through the ContextBuilder,
+      // so episodic memory is NOT automatically injected. We query it here and
+      // prepend it to the prompt so the model knows what actually happened recently.
+      let episodicPrefix = "";
+      if (this.context.episodicMemory) {
+        try {
+          const episodes = await Promise.race([
+            this.context.episodicMemory.searchWithScoring(
+              prompt.slice(0, 150), // use the prompt itself as query
+              3,
+              this.context.provider,
+              0.1, // low threshold — proactive messages need broad recall
+            ),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("timeout")), 2000),
+            ),
+          ]);
+          if (episodes.length > 0) {
+            episodicPrefix =
+              "<past_sessions>\n" +
+              episodes
+                .map(
+                  (ep) =>
+                    `  <session date="${new Date(ep.date).toLocaleDateString()}">${ep.summary}</session>`,
+                )
+                .join("\n") +
+              "\n</past_sessions>\n\n";
+          }
+        } catch {
+          // Non-fatal — proceed without episodes
+        }
+      }
+
+      const fullPrompt = episodicPrefix ? episodicPrefix + prompt : prompt;
+
+      const response = await this.engine.run(fullPrompt, {
         provider: this.context.provider,
         owl: this.context.owl,
         sessionHistory: this.context.getRecentHistory?.() ?? [],

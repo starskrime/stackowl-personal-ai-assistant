@@ -542,7 +542,7 @@ describe("CapabilityScanner", () => {
         mockToolRegWithTools.getAllDefinitions as ReturnType<typeof vi.fn>
       ).mockReturnValue([
         { name: "web_crawl", description: "Crawl web" },
-        { name: "google_search", description: "Search Google" },
+        { name: "duckduckgo_search", description: "Search Google" },
       ]);
 
       const mockSkillsRegWithSkills = makeMockSkillsRegistry();
@@ -653,7 +653,7 @@ describe("CapabilityScanner", () => {
       const mockToolRegWithTools = makeMockToolRegistry();
       (
         mockToolRegWithTools.getAllDefinitions as ReturnType<typeof vi.fn>
-      ).mockReturnValue([{ name: "web_crawl" }, { name: "google_search" }]);
+      ).mockReturnValue([{ name: "web_crawl" }, { name: "duckduckgo_search" }]);
 
       const mockSkillsRegWithSkills = makeMockSkillsRegistry();
       (
@@ -765,7 +765,7 @@ describe("CapabilityScanner", () => {
       const mockToolReg = makeMockToolRegistry();
       (
         mockToolReg.getAllDefinitions as ReturnType<typeof vi.fn>
-      ).mockReturnValue([{ name: "web_crawl" }, { name: "google_search" }]);
+      ).mockReturnValue([{ name: "web_crawl" }, { name: "duckduckgo_search" }]);
 
       const mockSkillsReg = makeMockSkillsRegistry();
       (mockSkillsReg.listEnabled as ReturnType<typeof vi.fn>).mockReturnValue(

@@ -184,6 +184,21 @@ export interface StackOwlConfig {
     /** Enable/disable the loop. Default: true */
     enabled?: boolean;
   };
+  /** Research behavior configuration */
+  research?: {
+    /** Auto-detect deep research from message content. Default: true */
+    autoDeep?: boolean;
+    /** Self-check interval (tool call count between self-assessments). Default: 5 */
+    selfCheckInterval?: number;
+    /** Max iterations for deep research tasks (soft cap). Default: 40 */
+    maxIterations?: number;
+    /** Enable diminishing returns detection. Default: true */
+    enableDiminishingReturns?: boolean;
+    /** String similarity threshold for diminishing returns (0-1). Default: 0.7 */
+    similarityThreshold?: number;
+    /** Switch to cloud provider after N consecutive failures. Default: 2 */
+    cloudFallbackAfter?: number;
+  };
   /** Persistent browser pool for anti-bot web fetching */
   browser?: {
     /** Number of warm browser instances. Default: 2. Each uses ~100-200MB RAM. */
@@ -198,6 +213,19 @@ export interface StackOwlConfig {
     headless?: boolean;
     /** Enable the browser pool. Default: true */
     enabled?: boolean;
+  };
+  /** CamoFox anti-detection browser configuration */
+  camofox?: {
+    /** Enable the CamoFox tool and Tier 4 smart-fetch escalation. Default: false */
+    enabled?: boolean;
+    /** CamoFox server base URL. Default: "http://localhost:9377" */
+    baseUrl?: string;
+    /** Bearer token if CAMOFOX_API_KEY is set on the server. Default: null */
+    apiKey?: string | null;
+    /** Default userId for sessions. Default: "stackowl" */
+    defaultUserId?: string;
+    /** Request timeout in ms. Default: 30000 */
+    defaultTimeout?: number;
   };
   /** Telegram bot configuration */
   telegram?: {
@@ -289,6 +317,14 @@ const DEFAULT_CONFIG: StackOwlConfig = {
     provider: "anthropic",
     model: "claude-sonnet-4-5-20241022",
   },
+  research: {
+    autoDeep: true,
+    selfCheckInterval: 5,
+    maxIterations: 40,
+    enableDiminishingReturns: true,
+    similarityThreshold: 0.7,
+    cloudFallbackAfter: 2,
+  },
 };
 
 // ─── Loader ──────────────────────────────────────────────────────
@@ -364,6 +400,10 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
       synthesis: {
         ...DEFAULT_CONFIG.synthesis!,
         ...(userConfig.synthesis || {}),
+      },
+      research: {
+        ...DEFAULT_CONFIG.research!,
+        ...(userConfig.research || {}),
       },
     };
 

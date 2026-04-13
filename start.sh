@@ -83,6 +83,44 @@ has_slack() {
   " 2>/dev/null
 }
 
+camofox_enabled() {
+  # Returns 0 (true) if camofox.enabled === true in config
+  node -e "
+    try {
+      const c = JSON.parse(require('fs').readFileSync('$CONFIG_FILE', 'utf8'));
+      process.exit(c.camofox && c.camofox.enabled === true ? 0 : 1);
+    } catch { process.exit(1); }
+  " 2>/dev/null
+}
+
+camofox_url() {
+  # Prints the configured CamoFox base URL (default: http://localhost:9377)
+  node -e "
+    try {
+      const c = JSON.parse(require('fs').readFileSync('$CONFIG_FILE', 'utf8'));
+      console.log((c.camofox && c.camofox.baseUrl) || 'http://localhost:9377');
+    } catch { console.log('http://localhost:9377'); }
+  " 2>/dev/null
+}
+
+write_camofox_config() {
+  # Writes camofox config block into stackowl.config.json
+  local base_url="$1"
+  node -e "
+    const fs = require('fs');
+    let c = {};
+    try { c = JSON.parse(fs.readFileSync('$CONFIG_FILE', 'utf8')); } catch {}
+    c.camofox = { enabled: true, baseUrl: '$base_url', apiKey: null, defaultUserId: 'stackowl', defaultTimeout: 30000 };
+    fs.writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2));
+  "
+}
+
+camofox_server_running() {
+  # Returns 0 (true) if CamoFox server responds at the given URL
+  local url="$1"
+  curl -sf --connect-timeout 2 "${url}/tabs" -o /dev/null 2>/dev/null
+}
+
 # ─── Session ────────────────────────────────────────────────────
 
 save_session() {
@@ -133,6 +171,9 @@ check_prerequisites() {
 
   # ── Python & Scrapling (anti-bot web scraping) ──
   install_scrapling
+
+  # ── CamoFox (anti-detection Firefox browser) ──
+  setup_camofox
 }
 
 install_scrapling() {
@@ -187,6 +228,140 @@ exit(0 if has_chromium else 1)
   fi
 
   log_info "Scrapling ready (basic + stealth + dynamic modes)"
+}
+
+# ─── CamoFox Setup ──────────────────────────────────────────────
+
+setup_camofox() {
+  echo ""
+  echo -e "${DIM}─────────────────────────────────────────────────${RESET}"
+  log_step "CamoFox — Anti-detection Firefox browser"
+
+  if camofox_enabled; then
+    # Already configured — just make sure the server is up
+    local url
+    url=$(camofox_url)
+    echo -e "  ${DIM}Configured: $url${RESET}"
+
+    if camofox_server_running "$url"; then
+      log_info "CamoFox server is running at $url"
+    else
+      log_warn "CamoFox server not running at $url"
+      echo ""
+      echo -e "  ${BOLD}Start it now?${RESET}"
+      echo -e "  ${BOLD}1)${RESET} Yes — launch via npx in background"
+      echo -e "  ${BOLD}2)${RESET} Yes — show Docker command (I'll run it myself)"
+      echo -e "  ${BOLD}3)${RESET} No — skip (tool will show an error if used)"
+      echo ""
+      read -rp "$(echo -e "${CYAN}Choice [1-3]:${RESET} ")" cf_choice
+      case "$cf_choice" in
+        1) start_camofox_npx "$url" ;;
+        2) show_camofox_docker "$url" ;;
+        *) log_warn "CamoFox server not started — camofox tool will be unavailable." ;;
+      esac
+    fi
+
+  else
+    # Not configured — offer to set it up
+    echo -e "  ${DIM}Passes Cloudflare/Google bot detection that breaks Chromium.${RESET}"
+    echo -e "  ${DIM}Enables: camofox tool, Tier 4 smart-fetch escalation, DDG CAPTCHA fallback.${RESET}"
+    echo ""
+    read -rp "$(echo -e "${CYAN}Enable CamoFox? [y/N]:${RESET} ")" cf_yn
+    case "$cf_yn" in
+      [yY]*)
+        echo ""
+        echo -e "  ${BOLD}How to run CamoFox?${RESET}"
+        echo -e "  ${BOLD}1)${RESET} npx (easiest — runs locally, no install needed)"
+        echo -e "  ${BOLD}2)${RESET} Docker (isolated, great for servers)"
+        echo -e "  ${BOLD}3)${RESET} Already running — just configure the URL"
+        echo ""
+        read -rp "$(echo -e "${CYAN}Choice [1-3]:${RESET} ")" cf_mode
+        case "$cf_mode" in
+          1)
+            write_camofox_config "http://localhost:9377"
+            log_info "CamoFox configured (http://localhost:9377)"
+            start_camofox_npx "http://localhost:9377"
+            ;;
+          2)
+            write_camofox_config "http://localhost:9377"
+            log_info "CamoFox configured (http://localhost:9377)"
+            show_camofox_docker "http://localhost:9377"
+            ;;
+          3)
+            echo ""
+            read -rp "$(echo -e "${CYAN}CamoFox base URL [http://localhost:9377]:${RESET} ")" cf_url
+            cf_url="${cf_url:-http://localhost:9377}"
+            write_camofox_config "$cf_url"
+            log_info "CamoFox configured ($cf_url)"
+            if ! camofox_server_running "$cf_url"; then
+              log_warn "Cannot reach $cf_url — make sure the server is running before using the camofox tool."
+            fi
+            ;;
+          *)
+            write_camofox_config "http://localhost:9377"
+            log_info "CamoFox configured (http://localhost:9377)"
+            start_camofox_npx "http://localhost:9377"
+            ;;
+        esac
+        ;;
+      *)
+        log_dim "CamoFox skipped. You can enable it later by adding camofox.enabled=true to stackowl.config.json."
+        ;;
+    esac
+  fi
+}
+
+start_camofox_npx() {
+  local url="$1"
+  local port
+  port=$(echo "$url" | grep -oP ':\K\d+' || echo "9377")
+
+  # Check if camofox-browser is installed globally or locally
+  if command -v camofox-browser &>/dev/null; then
+    log_step "Starting CamoFox server in background (camofox-browser --port $port)..."
+    CAMOFOX_PORT="$port" camofox-browser &>/tmp/camofox.log &
+  elif [ -f "$SCRIPT_DIR/node_modules/.bin/camofox-browser" ]; then
+    log_step "Starting CamoFox server in background..."
+    CAMOFOX_PORT="$port" "$SCRIPT_DIR/node_modules/.bin/camofox-browser" &>/tmp/camofox.log &
+  else
+    log_step "Installing camofox-browser..."
+    npm install -g camofox-browser 2>&1 | tail -2
+    if command -v camofox-browser &>/dev/null; then
+      CAMOFOX_PORT="$port" camofox-browser &>/tmp/camofox.log &
+    else
+      log_warn "Could not install camofox-browser. Try: npm install -g camofox-browser"
+      log_dim  "Then run: camofox-browser"
+      return
+    fi
+  fi
+
+  local cf_pid=$!
+  # Wait up to 8s for the server to become ready
+  local waited=0
+  while [ $waited -lt 8 ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if camofox_server_running "$url"; then
+      log_info "CamoFox server started (PID $cf_pid, port $port) — logs: /tmp/camofox.log"
+      return
+    fi
+  done
+
+  log_warn "CamoFox server didn't respond after ${waited}s — it may still be starting."
+  log_dim  "Check logs: tail -f /tmp/camofox.log"
+}
+
+show_camofox_docker() {
+  local url="$1"
+  local port
+  port=$(echo "$url" | grep -oP ':\K\d+' || echo "9377")
+  echo ""
+  log_step "Run this Docker command (in a separate terminal):"
+  echo ""
+  echo -e "  ${BOLD}docker run -d --name camofox -p ${port}:9377 jojoinc/camofox:latest${RESET}"
+  echo ""
+  log_dim "Or with Docker Compose — see: https://github.com/jo-inc/camofox-browser"
+  log_dim "CamoFox will be available at $url after the container starts."
 }
 
 # ─── Launch Mode Selection ───────────────────────────────────────

@@ -102,6 +102,10 @@ export interface EngineContext {
   pelletSearch?: import("../pellets/search.js").PelletSearch;
   /** Diagnostic engine for multi-hypothesis error analysis */
   diagnosticEngine?: DiagnosticEngine;
+  /** Depth mode: "quick" (default) or "deep" (multi-iteration research with self-check) */
+  depth?: "quick" | "deep";
+  /** Override max tool iterations for deep research (default: 40 vs 15 for quick) */
+  maxIterations?: number;
   /**
    * Name of the active delivery channel (e.g. "telegram", "cli", "web").
    * Injected into the system prompt so the LLM knows which channel it is
@@ -156,6 +160,8 @@ export interface EngineResponse {
 
 /** Default max iterations — overridable via config.engine.maxToolIterations */
 const DEFAULT_MAX_TOOL_ITERATIONS = 15;
+/** Deep research max iterations — 40 as per research config */
+const DEFAULT_DEEP_MAX_TOOL_ITERATIONS = 40;
 
 /**
  * OpenCLAW-style completion signal.
@@ -178,6 +184,78 @@ function stripDoneSignal(content: string): string {
   const lastNewline = content.lastIndexOf("\n");
   if (lastNewline === -1) return "";
   return content.slice(0, lastNewline).trim();
+}
+
+// ─── Self-Assessment Engine ───────────────────────────────────
+
+type SelfCheckVerdict = "CONTINUE" | "PIVOT" | "SYNTHESIZE";
+
+interface SelfCheckInput {
+  lastToolName: string;
+  lastToolResult: string;
+  recentToolResults: string[];
+  userMessage: string;
+  iterationsUsed: number;
+  maxIterations: number;
+  similarityThreshold: number;
+}
+
+function shouldSkipSelfCheck(iterations: number, interval: number): boolean {
+  return iterations === 0 || (iterations + 1) % interval !== 0;
+}
+
+function detectDiminishingReturns(
+  results: string[],
+  threshold: number,
+): boolean {
+  if (results.length < 3) return false;
+  const last3 = results.slice(-3);
+  const sim = (a: string, b: string) => {
+    const wordsA = new Set(a.match(/\b[a-z]{3,}\b/gi) ?? []);
+    const wordsB = new Set(b.match(/\b[a-z]{3,}\b/gi) ?? []);
+    const intersection = [...wordsA].filter((w) => wordsB.has(w)).length;
+    const union = wordsA.size + wordsB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
+  };
+  const s12 = sim(last3[0], last3[1]);
+  const s23 = sim(last3[1], last3[2]);
+  return s12 >= threshold && s23 >= threshold;
+}
+
+async function runSelfAssessment(
+  provider: ModelProvider,
+  input: SelfCheckInput,
+): Promise<SelfCheckVerdict> {
+  const prompt =
+    `You are a research progress assessor. After a tool execution, assess whether the research is making progress.\n\n` +
+    `Original user request: ${input.userMessage.slice(0, 200)}\n` +
+    `Last tool used: ${input.lastToolName}\n` +
+    `Last tool result (first 300 chars): ${input.lastToolResult.slice(0, 300)}\n` +
+    `Iterations used: ${input.iterationsUsed}/${input.maxIterations}\n\n` +
+    `Assess:\n` +
+    `1. Am I finding NEW information or repeating what I already know?\n` +
+    `2. Is my answer getting more complete or am I hitting diminishing returns?\n` +
+    `3. Should I continue this research path, pivot to a different angle, or synthesize now?\n\n` +
+    `Respond with ONLY one word: CONTINUE if I should keep researching, PIVOT if I should change approach, SYNTHESIZE if I have enough to answer the user.`;
+
+  try {
+    const result = await Promise.race([
+      provider.chat([{ role: "user", content: prompt }], undefined, {
+        temperature: 0,
+        maxTokens: 10,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("self-check timeout")), 3000),
+      ),
+    ]);
+    const verdict = result.content.trim().toUpperCase();
+    if (verdict.startsWith("CONTINUE")) return "CONTINUE";
+    if (verdict.startsWith("PIVOT")) return "PIVOT";
+    if (verdict.startsWith("SYNTHESIZE")) return "SYNTHESIZE";
+    return "CONTINUE";
+  } catch {
+    return "CONTINUE";
+  }
 }
 
 function safeStringify(args: unknown): string {
@@ -380,7 +458,10 @@ export class OwlEngine {
     const toolsUsed: string[] = [];
     const gapDetector = new GapDetector();
     let MAX_TOOL_ITERATIONS =
-      config.engine?.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
+      context.maxIterations ??
+      (context.depth === "deep"
+        ? (config.research?.maxIterations ?? 40)
+        : DEFAULT_MAX_TOOL_ITERATIONS);
 
     // Track if a missing-tool gap was encountered during the ReAct loop
     let missingToolName: string | undefined;
@@ -398,8 +479,14 @@ export class OwlEngine {
           userMessage,
           context.userId,
         );
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     }
+
+    // ── Tool result buffer for diminishing returns detection ──
+    const toolResultsBuffer: string[] = [];
+    let deeperExtended = false;
 
     // 1. Determine optimal model (heuristic, no LLM call)
     let routeDecision = ModelRouter.route(userMessage, config);
@@ -509,7 +596,10 @@ export class OwlEngine {
               ? `ELIMINATED this session (do NOT retry):\n${taskState.eliminatedApproaches.map((a) => `  ✗ ${a}`).join("\n")}\n`
               : "") +
             (taskState.stepLog.length > 0
-              ? `Recent steps (newest first):\n${taskState.stepLog.slice(0, 5).map((s) => `  ✓ ${s}`).join("\n")}\n`
+              ? `Recent steps (newest first):\n${taskState.stepLog
+                  .slice(0, 5)
+                  .map((s) => `  ✓ ${s}`)
+                  .join("\n")}\n`
               : "") +
             `</task_state>`;
         }
@@ -623,11 +713,19 @@ Focus ONLY on the user's current request below. If the previous context is irrel
 `;
     }
 
-    let finalUserMessage =
-      taskIsolationDirective +
-      `<NEW_TASK>
+    let finalUserMessage: string;
+    if (isNewTask || context.isolatedTask) {
+      finalUserMessage =
+        taskIsolationDirective +
+        `<NEW_TASK>
 ${userMessage}
 </NEW_TASK>`;
+    } else {
+      // For continuations and follow-ups, use the message as-is.
+      // Wrapping in <NEW_TASK> causes the LLM to treat every follow-up as
+      // an independent task with no prior context, breaking back-references.
+      finalUserMessage = userMessage;
+    }
     if (toolRegistry && toolRegistry.getAllDefinitions().length > 0) {
       finalUserMessage +=
         `\n\n[SYSTEM DIRECTIVE — ReAct Rules]\n` +
@@ -636,7 +734,7 @@ ${userMessage}
         `2. USE TOOLS only when you genuinely need information you do not already have. ` +
         `Do NOT use tools to verify or double-check answers you are already confident in.\n` +
         `3. TOOL SELECTION GUIDE:\n` +
-        `   - Need current info (news, prices, status)? → google_search FIRST, then web_crawl a specific result URL\n` +
+        `   - Need current info (news, prices, status)? → duckduckgo_search FIRST, then web_crawl a specific result URL\n` +
         `   - Want to find/download real photos or images from the internet? → web_image_search FIRST, then send_file with the image URL\n` +
         `   - Want to CREATE a new AI-generated image from scratch? → image_generation (DALL-E)\n` +
         `   - CRITICAL: NEVER use image_generation to find existing photos/news images — that tool generates NEW AI art only\n` +
@@ -649,7 +747,7 @@ ${userMessage}
         `   - Need math calculations? → calculator (accurate, no guessing)\n` +
         `   - Need weather, time, calendar, reminders? → use the dedicated tools (weather, apple_calendar, apple_reminders)\n` +
         `   - Need user context from past sessions? → memory_search\n` +
-        `   - google_search and web_search are equivalent — use ONE, never both for the same query\n` +
+        `   - duckduckgo_search and web_search are equivalent — use ONE, never both for the same query\n` +
         `4. SEARCH DISCIPLINE: After 2 searches on the same topic, STOP and synthesize an answer from what you have. ` +
         `Rephrase your query instead of repeating similar searches. If web_crawl returns blocked/empty content, try a DIFFERENT URL.\n` +
         `5. SIGNAL COMPLETION: when your response is the final answer, append [DONE] at the very end. ` +
@@ -709,7 +807,8 @@ ${userMessage}
       context.sessionId &&
       taskState &&
       taskState.plannedApproaches.length === 0 &&
-      tools && tools.length > 0
+      tools &&
+      tools.length > 0
     ) {
       try {
         const avoidList: string[] = [];
@@ -717,9 +816,14 @@ ${userMessage}
         for (const tool of tools.slice(0, 12)) {
           if (seenTools.has(tool.name)) continue;
           seenTools.add(tool.name);
-          const failures = context.db.approachLibrary.getRecentFailuresForTool(tool.name, 3);
+          const failures = context.db.approachLibrary.getRecentFailuresForTool(
+            tool.name,
+            3,
+          );
           for (const f of failures) {
-            avoidList.push(`${tool.name}(${f.argsSummary.slice(0, 80)}): ${f.failureReason?.slice(0, 150) ?? "failed"}`);
+            avoidList.push(
+              `${tool.name}(${f.argsSummary.slice(0, 80)}): ${f.failureReason?.slice(0, 150) ?? "failed"}`,
+            );
           }
         }
         if (avoidList.length > 0) {
@@ -809,6 +913,27 @@ ${userMessage}
           break;
         }
 
+        // ── [DEEPER] extension signal ─────────────────────────────────
+        // If the model writes [DEEPER] (not [DONE]), it wants more iterations.
+        // Extend the budget by 10, once per task. Then continue normally.
+        const contentLower = (response.content ?? "").toLowerCase();
+        if (
+          contentLower.includes("[deeper]") &&
+          !deeperExtended &&
+          context.depth === "deep"
+        ) {
+          log.engine.info(
+            "[SelfCheck] [DEEPER] received — extending iteration budget by 10",
+          );
+          MAX_TOOL_ITERATIONS = Math.min(MAX_TOOL_ITERATIONS + 10, 60);
+          deeperExtended = true;
+          // Remove the [DEEPER] marker from content so it doesn't show to user
+          response = {
+            ...response,
+            content: response.content.replace(/\[DEEPER\]/gi, "").trim(),
+          };
+        }
+
         iterations++;
 
         if (response.content && context.onProgress) {
@@ -834,7 +959,7 @@ ${userMessage}
           | { kind: "execute"; toolCall: ToolCall };
 
         const actions: ToolAction[] = [];
-        for (const toolCall of response.toolCalls) {
+        for (const toolCall of response.toolCalls ?? []) {
           log.tool.toolCall(toolCall.name, toolCall.arguments);
 
           // ── Duplicate tool call guard ──────────────────────────────
@@ -855,7 +980,10 @@ ${userMessage}
           const repeatCount = recentToolNames.filter(
             (n) => n === toolCall.name,
           ).length;
-          if (repeatCount > TOOL_WINDOW_MAX_REPEATS && !SEQUENTIAL_USE_TOOLS.has(toolCall.name)) {
+          if (
+            repeatCount > TOOL_WINDOW_MAX_REPEATS &&
+            !SEQUENTIAL_USE_TOOLS.has(toolCall.name)
+          ) {
             log.engine.warn(
               `Sliding-window loop detected: "${toolCall.name}" called ${repeatCount}x in last ${recentToolNames.length} calls — forcing stop`,
             );
@@ -887,7 +1015,8 @@ ${userMessage}
             const tn = a.toolCall.name;
             if (seenToolWarnings.has(tn)) continue;
             seenToolWarnings.add(tn);
-            const pastFailures = context.db.approachLibrary.getRecentFailuresForTool(tn, 3);
+            const pastFailures =
+              context.db.approachLibrary.getRecentFailuresForTool(tn, 3);
             if (pastFailures.length > 0) {
               for (const f of pastFailures) {
                 warningLines.push(
@@ -959,6 +1088,10 @@ ${userMessage}
             }
           }
         }
+
+        // ── Track last executed tool for self-check (outside switch scope) ──
+        let lastExecutedToolName: string | undefined;
+        let lastToolResult: string | undefined;
 
         // Phase 3: Process results sequentially (maintains message order & error handling)
         for (const action of actions) {
@@ -1032,6 +1165,8 @@ ${userMessage}
               if (!execResult) continue;
 
               toolResult = execResult.result;
+              lastExecutedToolName = toolCall.name;
+              lastToolResult = toolResult;
               const isHardFailure = execResult.isHardFailure;
 
               if (isHardFailure) {
@@ -1066,7 +1201,10 @@ ${userMessage}
               // ── TrajectoryStore — record this tool turn ───────────────
               if (trajectoryId && context.db) {
                 try {
-                  const argSnap = safeStringify(toolCall.arguments).slice(0, 300);
+                  const argSnap = safeStringify(toolCall.arguments).slice(
+                    0,
+                    300,
+                  );
                   const resSnap = toolResult.slice(0, 400);
                   context.db.trajectories.recordTurn(
                     trajectoryId,
@@ -1078,7 +1216,9 @@ ${userMessage}
                   );
                   if (isAnyFailure) trajectoryToolFailureCount++;
                   else trajectoryToolSuccessCount++;
-                } catch { /* non-fatal */ }
+                } catch {
+                  /* non-fatal */
+                }
               }
 
               // ── ApproachLibrary recording + TaskState update ─────────
@@ -1088,8 +1228,13 @@ ${userMessage}
               if (context.db) {
                 try {
                   const owlName = context.owl?.persona?.name ?? "default";
-                  const taskKw = ((context as any)._approachTaskKw as string | undefined) ?? userMessage.slice(0, 100).toLowerCase();
-                  const argsSummary = safeStringify(toolCall.arguments).slice(0, 300);
+                  const taskKw =
+                    ((context as any)._approachTaskKw as string | undefined) ??
+                    userMessage.slice(0, 100).toLowerCase();
+                  const argsSummary = safeStringify(toolCall.arguments).slice(
+                    0,
+                    300,
+                  );
                   context.db.approachLibrary.record(
                     owlName,
                     toolCall.name,
@@ -1102,9 +1247,15 @@ ${userMessage}
                   if (context.sessionId) {
                     const approachId = `${toolCall.name}(${argsSummary.slice(0, 80)})`;
                     if (isAnyFailure) {
-                      context.db.taskStates.eliminateApproach(context.sessionId, approachId);
+                      context.db.taskStates.eliminateApproach(
+                        context.sessionId,
+                        approachId,
+                      );
                     } else {
-                      context.db.taskStates.appendStep(context.sessionId, `${approachId} → success`);
+                      context.db.taskStates.appendStep(
+                        context.sessionId,
+                        `${approachId} → success`,
+                      );
                     }
                   }
                 } catch {
@@ -1132,7 +1283,10 @@ ${userMessage}
                 // model exactly which fix to execute and why.
                 let analysisPrompt: string;
 
-                if (context.diagnosticEngine && streak <= MAX_TOOL_FAIL_STREAK) {
+                if (
+                  context.diagnosticEngine &&
+                  streak <= MAX_TOOL_FAIL_STREAK
+                ) {
                   try {
                     const diagnosticInput: DiagnosticInput = {
                       toolName: toolCall.name,
@@ -1145,17 +1299,35 @@ ${userMessage}
                       userIntent: userMessage,
                     };
 
-                    const diagnosis = await context.diagnosticEngine.diagnose(diagnosticInput);
-                    analysisPrompt = context.diagnosticEngine.formatDirective(diagnosis, diagnosticInput);
+                    const diagnosis =
+                      await context.diagnosticEngine.diagnose(diagnosticInput);
+                    analysisPrompt = context.diagnosticEngine.formatDirective(
+                      diagnosis,
+                      diagnosticInput,
+                    );
                   } catch (diagErr) {
                     log.engine.warn(
                       `[DiagnosticEngine] Failed, using legacy prompt: ${diagErr instanceof Error ? diagErr.message : String(diagErr)}`,
                     );
-                    analysisPrompt = this.buildLegacyErrorPrompt(toolCall, toolResult, isSoftFailure, errorClass, streak, MAX_TOOL_FAIL_STREAK);
+                    analysisPrompt = this.buildLegacyErrorPrompt(
+                      toolCall,
+                      toolResult,
+                      isSoftFailure,
+                      errorClass,
+                      streak,
+                      MAX_TOOL_FAIL_STREAK,
+                    );
                   }
                 } else {
                   // Legacy fallback: no DiagnosticEngine or past max streak
-                  analysisPrompt = this.buildLegacyErrorPrompt(toolCall, toolResult, isSoftFailure, errorClass, streak, MAX_TOOL_FAIL_STREAK);
+                  analysisPrompt = this.buildLegacyErrorPrompt(
+                    toolCall,
+                    toolResult,
+                    isSoftFailure,
+                    errorClass,
+                    streak,
+                    MAX_TOOL_FAIL_STREAK,
+                  );
                 }
 
                 log.engine.warn(
@@ -1195,6 +1367,10 @@ ${userMessage}
                   toolCallId: toolCall.id,
                   name: toolCall.name,
                 });
+
+                // ── Tool result buffer for diminishing returns detection ──
+                toolResultsBuffer.push(toolResult);
+                if (toolResultsBuffer.length > 5) toolResultsBuffer.shift();
               }
               continue;
             }
@@ -1202,6 +1378,75 @@ ${userMessage}
         }
 
         if (shouldBreakLoop) break;
+
+        // ── Self-check every N iterations (deep research only) ────────────
+        if (context.depth === "deep") {
+          const researchConfig = config.research ?? {};
+          const selfCheckInterval = researchConfig.selfCheckInterval ?? 5;
+          const similarityThreshold = researchConfig.similarityThreshold ?? 0.7;
+
+          if (!shouldSkipSelfCheck(iterations, selfCheckInterval)) {
+            const recentResults = toolResultsBuffer.slice(-3);
+            const diminishing =
+              researchConfig.enableDiminishingReturns !== false
+                ? detectDiminishingReturns(recentResults, similarityThreshold)
+                : false;
+
+            let verdict: SelfCheckVerdict = "CONTINUE";
+
+            if (diminishing) {
+              log.engine.info(
+                `[SelfCheck] Diminishing returns detected (similarity ≥ ${similarityThreshold}) — forcing PIVOT`,
+              );
+              verdict = "PIVOT";
+            } else if (lastExecutedToolName && lastToolResult) {
+              const maxForTask =
+                context.maxIterations ??
+                config.research?.maxIterations ??
+                DEFAULT_DEEP_MAX_TOOL_ITERATIONS;
+              const budgetConsumed = iterations / maxForTask;
+              const SYNTHESIZE_EARLY_THRESHOLD = 0.3;
+
+              if (budgetConsumed < SYNTHESIZE_EARLY_THRESHOLD) {
+                log.engine.info(
+                  `[SelfCheck] Budget ${(budgetConsumed * 100).toFixed(0)}% consumed (iter ${iterations}/${maxForTask}) — too early to synthesize. Forcing CONTINUE until ${(SYNTHESIZE_EARLY_THRESHOLD * 100).toFixed(0)}% threshold.`,
+                );
+                verdict = "CONTINUE";
+              } else {
+                verdict = await runSelfAssessment(provider, {
+                  lastToolName: lastExecutedToolName,
+                  lastToolResult: String(lastToolResult),
+                  recentToolResults: recentResults,
+                  userMessage,
+                  iterationsUsed: iterations,
+                  maxIterations: maxForTask,
+                  similarityThreshold,
+                });
+                log.engine.info(
+                  `[SelfCheck] Verdict: ${verdict} (iter ${iterations}/${maxForTask}, ${(budgetConsumed * 100).toFixed(0)}% budget)`,
+                );
+              }
+            }
+
+            if (verdict === "SYNTHESIZE") {
+              // Tell the model to stop and write final answer — then break the loop.
+              messages.push({
+                role: "system",
+                content: `You have gathered sufficient information. Stop calling tools and write your final comprehensive answer now. Append [DONE] at the end.`,
+              });
+              shouldBreakLoop = true;
+            } else if (verdict === "PIVOT") {
+              // Inject redirect directive but DO NOT break — let the model try a
+              // different approach on the next iteration. Breaking here would exit
+              // the loop before the model has a chance to pivot.
+              messages.push({
+                role: "system",
+                content: `Your current approach is not yielding new information. Pivot to a different angle, search with different terms, or take a completely different approach. Do NOT repeat the same tool calls.`,
+              });
+              // shouldBreakLoop stays false — loop continues with new direction
+            }
+          }
+        }
 
         // ── Per-iteration pellet injection ────────────────────────────────
         // Re-query pellets after each tool observation so the model benefits
@@ -1517,7 +1762,8 @@ ${userMessage}
     if (trajectoryId && context.db) {
       try {
         const rewardEngine = new RewardEngine();
-        const isLoopExhausted = loopBrokenEarly || iterations >= MAX_TOOL_ITERATIONS;
+        const isLoopExhausted =
+          loopBrokenEarly || iterations >= MAX_TOOL_ITERATIONS;
         const { reward, breakdown, outcome } = rewardEngine.compute({
           loopExhausted: iterations >= MAX_TOOL_ITERATIONS,
           loopBrokenEarly,
@@ -1526,13 +1772,17 @@ ${userMessage}
         });
         context.db.trajectories.complete(
           trajectoryId,
-          isLoopExhausted && trajectoryToolSuccessCount === 0 ? "failure" : outcome,
+          isLoopExhausted && trajectoryToolSuccessCount === 0
+            ? "failure"
+            : outcome,
           reward,
           breakdown,
           toolsUsed,
           trajectoryTurnIndex,
         );
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     }
 
     // 8. Gap detection
@@ -1547,9 +1797,7 @@ ${userMessage}
       context.skipGapDetection && !hasExplicitMarker;
 
     if (shouldSkipNlpDetection) {
-      log.evolution.debug(
-        `Skipping NLP gap detection (retry mode)`,
-      );
+      log.evolution.debug(`Skipping NLP gap detection (retry mode)`);
     } else {
       log.evolution.debug(`Checking response for capability gap...`);
       const nlGap = await gapDetector.detectFromResponse(
@@ -1744,7 +1992,8 @@ ${userMessage}
     // so they appear close to the behavioral directives they augment.
     if (dna.promptSections && dna.promptSections.length > 0) {
       prompt += "\n## Learned Behavioral Rules (from optimization)\n";
-      prompt += "These rules were derived from repeated failure patterns — follow them precisely:\n";
+      prompt +=
+        "These rules were derived from repeated failure patterns — follow them precisely:\n";
       for (const rule of dna.promptSections) {
         prompt += `- ${rule}\n`;
       }
@@ -1818,7 +2067,10 @@ ${skillsContext}
           }
         } else if (pelletStore) {
           // Fallback path: BM25 keyword search + knowledge graph traversal
-          const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(0, 3);
+          const top = (await pelletStore.searchWithGraph(userMessage, 5)).slice(
+            0,
+            3,
+          );
           if (top.length > 0) {
             prompt += "\n## Relevant Past Knowledge\n";
             for (const pellet of top) {
@@ -1847,7 +2099,7 @@ ${skillsContext}
         // Group tools by category for better understanding
         const toolGuides: Record<string, string[]> = {
           "Web & Browser": [
-            "google_search - Search the web for current information",
+            "duckduckgo_search - Search the web for current information",
             "web_crawl - Get content from a URL",
             "web_search - Search the web",
             "browser - Full browser automation",
@@ -1900,7 +2152,9 @@ ${skillsContext}
 
         // Add memory management instructions when remember tool is available
         const hasRemember = tools.some((t) => t.name === "remember");
-        const hasRecall = tools.some((t) => t.name === "recall_memory" || t.name === "recall");
+        const hasRecall = tools.some(
+          (t) => t.name === "recall_memory" || t.name === "recall",
+        );
         if (hasRemember || hasRecall) {
           prompt += "\n**Long-Term Memory:**\n";
           if (hasRemember) {
@@ -2103,7 +2357,7 @@ ${skillsContext}
       `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
       `3. Do NOT retry the same command with the same arguments.\n` +
       `4. If the tool requires something unavailable here (e.g. curl in a no-network sandbox), ` +
-      `USE A DIFFERENT TOOL (e.g. google_search for web search, web_crawl for URL fetching).\n` +
+      `USE A DIFFERENT TOOL (e.g. duckduckgo_search for web search, web_crawl for URL fetching).\n` +
       hintNote +
       "\n\n" +
       (streak >= maxStreak

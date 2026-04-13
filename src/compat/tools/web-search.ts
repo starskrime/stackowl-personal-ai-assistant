@@ -56,7 +56,7 @@ export class WebSearchTool implements ToolImplementation {
 
   definition = {
     name: "web_search",
-    description: `Search the web using Brave Search (premium) with DuckDuckGo fallback. Identical purpose to google_search — use EITHER one, not both. Returns title, URL, and snippet. Results are cached for 15 minutes. After 2 searches on the same topic, STOP searching and work with results you have.`,
+    description: `Search the web using Brave Search (premium) with DuckDuckGo fallback. Identical purpose to duckduckgo_search — use EITHER one, not both. Returns title, URL, and snippet. Results are cached for 15 minutes. After 2 searches on the same topic, STOP searching and work with results you have.`,
     parameters: {
       type: "object" as const,
       properties: {
@@ -101,7 +101,7 @@ export class WebSearchTool implements ToolImplementation {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
 
-      // If API fails, suggest using google_search tool instead
+      // If API fails, suggest using duckduckgo_search tool instead
       if (
         msg.includes("422") ||
         msg.includes("401") ||
@@ -109,8 +109,8 @@ export class WebSearchTool implements ToolImplementation {
       ) {
         return (
           `ERROR: Search API not available (${msg}).\n\n` +
-          `Use the 'google_search' tool instead for web search:\n` +
-          `google_search query="${query}"`
+          `Use the 'duckduckgo_search' tool instead for web search:\n` +
+          `duckduckgo_search query="${query}"`
         );
       }
 

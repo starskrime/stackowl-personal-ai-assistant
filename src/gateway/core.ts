@@ -225,7 +225,12 @@ export class OwlGateway {
       ctx.costTracker ?? null,
       innerLifeBridge,
     );
-    this.contextBuilder = new ContextBuilder(ctx, this.microLearner, null, this.userMentalModel);
+    this.contextBuilder = new ContextBuilder(
+      ctx,
+      this.microLearner,
+      null,
+      this.userMentalModel,
+    );
 
     // Built-in middleware
     this.middleware.push(new LoggingMiddleware());
@@ -294,16 +299,20 @@ export class OwlGateway {
       const workspacePath = ctx.cwd ?? process.cwd();
       ctx.db = new MemoryDatabase(workspacePath);
       // One-time JSON migration (fire-and-forget, non-blocking)
-      ctx.db.importFromJson(workspacePath).catch((err) =>
-        log.engine.warn(`[MemoryDatabase] JSON import failed: ${err}`),
-      );
+      ctx.db
+        .importFromJson(workspacePath)
+        .catch((err) =>
+          log.engine.warn(`[MemoryDatabase] JSON import failed: ${err}`),
+        );
       log.engine.info("[memory] MemoryDatabase (SQLite) initialized");
     }
 
     // Auto-initialize MessageCompressor (Phase 2 — batch summarization every 20 msgs)
     if (!ctx.compressor && ctx.db) {
       ctx.compressor = new MessageCompressor(ctx.db, ctx.provider);
-      log.engine.info("[memory] MessageCompressor initialized (batch size: 20)");
+      log.engine.info(
+        "[memory] MessageCompressor initialized (batch size: 20)",
+      );
     }
 
     // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
@@ -311,13 +320,19 @@ export class OwlGateway {
     if (!ctx.digestManager) {
       const workspacePath = ctx.cwd ?? process.cwd();
       ctx.digestManager = new ConversationDigestManager(workspacePath);
-      log.engine.info("[memory] ConversationDigestManager initialized (L1 working memory)");
+      log.engine.info(
+        "[memory] ConversationDigestManager initialized (L1 working memory)",
+      );
     }
 
     // Auto-initialize FeedbackStore using the DB (Phase 3 — no more feedback.json)
     if (!ctx.feedbackStore && ctx.db) {
       const workspacePath = ctx.cwd ?? process.cwd();
-      ctx.feedbackStore = new FeedbackStore(workspacePath, ctx.db, ctx.owl.persona.name);
+      ctx.feedbackStore = new FeedbackStore(
+        workspacePath,
+        ctx.db,
+        ctx.owl.persona.name,
+      );
       log.engine.info("[memory] FeedbackStore initialized (SQLite)");
     }
 
@@ -326,7 +341,11 @@ export class OwlGateway {
     // forward them to the cognitive loop's synthesis queue so skills get built.
     if (ctx.learningOrchestrator && ctx.cognitiveLoop) {
       ctx.learningOrchestrator.setCapabilityGapCallback((gap, description) => {
-        ctx.cognitiveLoop!.enqueueSynthesisTarget(gap, description, "conversation");
+        ctx.cognitiveLoop!.enqueueSynthesisTarget(
+          gap,
+          description,
+          "conversation",
+        );
       });
     }
 
@@ -623,7 +642,9 @@ export class OwlGateway {
       );
 
       // Use fastest available provider for Layer 3 (semantic disambiguation)
-      let fastProvider: import("../providers/base.js").ModelProvider | undefined;
+      let fastProvider:
+        | import("../providers/base.js").ModelProvider
+        | undefined;
       if (this.ctx.providerRegistry) {
         try {
           fastProvider = this.ctx.providerRegistry.get("anthropic");
@@ -662,7 +683,10 @@ export class OwlGateway {
             if (matchedThread) {
               intentSM.resumeThread(matchedThread.id, message.sessionId);
               if (wc) {
-                wc.set("threadResumed", `Resuming thread: ${matchedThread.summary ?? matchedThread.description}`);
+                wc.set(
+                  "threadResumed",
+                  `Resuming thread: ${matchedThread.summary ?? matchedThread.description}`,
+                );
               }
               // Fire-and-forget: refresh thread summary from recent messages
               this.refreshThreadSummary(matchedThread.id, session.messages);
@@ -695,13 +719,20 @@ export class OwlGateway {
           this.userMentalModel?.recordTopicSwitch();
           // Pause active intent, clear working context topic
           if (activeIntent) {
-            intentSM!.transition(activeIntent.id, "abandoned", "Topic switch detected");
+            intentSM!.transition(
+              activeIntent.id,
+              "abandoned",
+              "Topic switch detected",
+            );
           }
           if (wc) {
             const prevTopic = wc.getCurrentTopic();
             wc.clear();
             if (prevTopic) {
-              wc.set("continuityHint", `Previous topic was: ${prevTopic}. User has switched to a new topic.`);
+              wc.set(
+                "continuityHint",
+                `Previous topic was: ${prevTopic}. User has switched to a new topic.`,
+              );
             }
           }
           // Archive ground state — expire open questions, keep decisions
@@ -716,18 +747,25 @@ export class OwlGateway {
           // The model needs history to answer back-references ("what was your last response?").
           // We inject a directive so it knows this is a fresh task, but history stays readable.
           if (activeIntent) {
-            intentSM!.transition(activeIntent.id, "abandoned", "Fresh start — user returning or resetting");
+            intentSM!.transition(
+              activeIntent.id,
+              "abandoned",
+              "Fresh start — user returning or resetting",
+            );
           }
           this.attemptLogs.delete(message.sessionId);
           if (wc) wc.clear();
 
           // Build fresh start directive
-          const prevTopic = session.messages
-            .filter((m) => m.role === "user")
-            .slice(-1)[0]?.content?.slice(0, 100)
-            ?? previousSession?.messages
+          const prevTopic =
+            session.messages
               .filter((m) => m.role === "user")
-              .slice(-1)[0]?.content?.slice(0, 100);
+              .slice(-1)[0]
+              ?.content?.slice(0, 100) ??
+            previousSession?.messages
+              .filter((m) => m.role === "user")
+              .slice(-1)[0]
+              ?.content?.slice(0, 100);
           freshStartDirective = `[SYSTEM DIRECTIVE: You are starting a new task. Prior conversation history is available for reference but treat this as a fresh request.]`;
           if (prevTopic) {
             freshStartDirective += `\n[Previous context: User was last discussing "${prevTopic}"]`;
@@ -755,48 +793,90 @@ export class OwlGateway {
 
     // ─── Episodic Memory: Segment Extraction (Phase 3) ──────────
     // When a gap or topic switch is detected, extract episodes from completed segments.
+    // Also trigger when session has grown significantly since last extraction (Step 4).
     // Fire-and-forget — don't block the response.
-    if (
+    const lastExtractedAt =
+      (session.metadata as any).episodicLastExtractedAt ?? 0;
+    const messagesSinceLastExtraction =
+      lastExtractedAt === 0
+        ? session.messages.length
+        : session.messages.length -
+          ((session.metadata as any).episodicExtractedUpTo ?? 0);
+
+    const shouldExtract =
       this.ctx.episodicMemory &&
-      continuityResult &&
-      ["TOPIC_SWITCH", "FRESH_START"].includes(continuityResult.classification) &&
-      session.messages.length >= 4
-    ) {
-      this.runBackground("episode-extract", (async () => {
-        try {
-          const extractedUpTo = (session.metadata as any).episodicExtractedUpTo ?? 0;
-          const segments = getUnextractedSegments(session, extractedUpTo);
+      session.messages.length >= 4 &&
+      ((continuityResult &&
+        ["TOPIC_SWITCH", "FRESH_START"].includes(
+          continuityResult.classification,
+        )) ||
+        messagesSinceLastExtraction >= 6);
 
-          for (const segment of segments.slice(0, 2)) { // Max 2 segments per trigger
-            const segMessages = getSegmentMessages(session, segment);
-            if (segMessages.length < 3) continue;
+    if (shouldExtract) {
+      this.runBackground(
+        "episode-extract",
+        (async () => {
+          try {
+            const extractedUpTo =
+              (session.metadata as any).episodicExtractedUpTo ?? 0;
+            const segments = getUnextractedSegments(session, extractedUpTo);
 
-            await this.ctx.episodicMemory!.extractFromMessages(
-              segMessages,
-              session.id,
-              this.ctx.owl.persona.name,
-              this.ctx.provider,
+            // For short sessions with no completed segments, extract from recent messages
+            const doShortSessionExtract =
+              segments.length === 0 &&
+              lastExtractedAt === 0 &&
+              session.messages.length >= 4;
+
+            if (doShortSessionExtract) {
+              const recentMessages = session.messages.slice(
+                Math.max(0, session.messages.length - 8),
+              );
+              await this.ctx.episodicMemory!.extractFromMessages(
+                recentMessages,
+                session.id,
+                this.ctx.owl.persona.name,
+                this.ctx.provider,
+              );
+              (session.metadata as any).episodicLastExtractedAt = Date.now();
+            } else {
+              for (const segment of segments.slice(0, 2)) {
+                // Max 2 segments per trigger
+                const segMessages = getSegmentMessages(session, segment);
+                if (segMessages.length < 3) continue;
+
+                await this.ctx.episodicMemory!.extractFromMessages(
+                  segMessages,
+                  session.id,
+                  this.ctx.owl.persona.name,
+                  this.ctx.provider,
+                );
+
+                // Track extraction progress in session metadata
+                (session.metadata as any).episodicExtractedUpTo =
+                  segment.endIndex + 1;
+              }
+            }
+
+            if (segments.length > 0 || doShortSessionExtract) {
+              await this.ctx.sessionStore.saveSession(session);
+            }
+          } catch (err) {
+            log.engine.warn(
+              `[EpisodicMemory] Segment extraction failed: ${err instanceof Error ? err.message : err}`,
             );
-
-            // Track extraction progress in session metadata
-            (session.metadata as any).episodicExtractedUpTo = segment.endIndex + 1;
           }
-
-          if (segments.length > 0) {
-            await this.ctx.sessionStore.saveSession(session);
-          }
-        } catch (err) {
-          log.engine.warn(
-            `[EpisodicMemory] Segment extraction failed: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-      })());
+        })(),
+      );
     }
 
     // Abandon stale intents (no activity in 30+ minutes)
     if (this.ctx.intentStateMachine) {
       for (const stale of this.ctx.intentStateMachine.getStale()) {
-        this.ctx.intentStateMachine.transition(stale.id, "abandoned", "Stale — no activity for 30+ minutes");
+        this.ctx.intentStateMachine.transition(
+          stale.id,
+          "abandoned",
+          "Stale — no activity for 30+ minutes",
+        );
       }
     }
 
@@ -842,7 +922,8 @@ export class OwlGateway {
     //
     // Pre-filter: require at least one action verb keyword AND a non-trivial message.
     // Conversational messages ("hi", "thanks", "what do you think?") skip entirely.
-    const SKILL_ACTION_KEYWORDS = /\b(find|search|create|write|generate|check|analyze|run|scan|fix|build|compare|convert|code|script|calculate|translate|download|fetch|get|show|list|send|open|launch|install|deploy|test|debug|monitor|schedule|remind|automate|summarize|extract|format|parse|execute|compile|scan|audit|review|design)\b/i;
+    const SKILL_ACTION_KEYWORDS =
+      /\b(find|search|create|write|generate|check|analyze|run|scan|fix|build|compare|convert|code|script|calculate|translate|download|fetch|get|show|list|send|open|launch|install|deploy|test|debug|monitor|schedule|remind|automate|summarize|extract|format|parse|execute|compile|scan|audit|review|design)\b/i;
     const isConversational =
       text.trim().length < 15 ||
       /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|gm|gn)\b/i.test(
@@ -850,8 +931,7 @@ export class OwlGateway {
       ) ||
       !SKILL_ACTION_KEYWORDS.test(text);
     if (this.skillInjector && !isConversational) {
-      const relevantMatches =
-        await this.skillInjector.getRelevantMatches(text);
+      const relevantMatches = await this.skillInjector.getRelevantMatches(text);
       const relevantSkills = relevantMatches.map((m) => m.skill);
       if (relevantMatches.length > 0) {
         // Auto-execution is DISABLED: BM25 scores are unnormalized (can be 5-15+),
@@ -961,6 +1041,7 @@ export class OwlGateway {
       this.attemptLogs.get(message.sessionId),
       message.channelId,
       message.userId,
+      continuityResult ?? null,
     );
 
     const orchestrator = this.getOrchestrator();
@@ -1290,18 +1371,22 @@ export class OwlGateway {
 
     // Persist to FeedbackStore
     if (this.ctx.feedbackStore) {
-      await this.ctx.feedbackStore.record({
-        id: feedbackId,
-        sessionId,
-        userId,
-        signal,
-        userMessage,
-        assistantSummary,
-        toolsUsed,
-        timestamp: new Date().toISOString(),
-      }).catch((err) => {
-        log.engine.warn(`[Feedback] FeedbackStore.record failed: ${err instanceof Error ? err.message : err}`);
-      });
+      await this.ctx.feedbackStore
+        .record({
+          id: feedbackId,
+          sessionId,
+          userId,
+          signal,
+          userMessage,
+          assistantSummary,
+          toolsUsed,
+          timestamp: new Date().toISOString(),
+        })
+        .catch((err) => {
+          log.engine.warn(
+            `[Feedback] FeedbackStore.record failed: ${err instanceof Error ? err.message : err}`,
+          );
+        });
     }
 
     // Record owl performance metric (Phase 4 — data-driven DNA evolution)
@@ -1314,50 +1399,68 @@ export class OwlGateway {
       // Phase B — update trajectory reward with the feedback signal
       try {
         this.ctx.db.trajectories.applyFeedback(sessionId, signal);
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
 
       // Phase E2 — delayed Parliament verdict validation
       // When we know the outcome (like = correct, dislike = wrong), validate
       // any unvalidated Parliament verdicts from this session.
       try {
-        const pendingVerdicts = this.ctx.db.parliamentVerdicts.getPendingValidation(5);
+        const pendingVerdicts =
+          this.ctx.db.parliamentVerdicts.getPendingValidation(5);
         const sessionVerdicts = pendingVerdicts.filter(
           (v) => v.sessionId === sessionId,
         );
-        const validationSignal = signal === "like" ? "correct" as const : "wrong" as const;
+        const validationSignal =
+          signal === "like" ? ("correct" as const) : ("wrong" as const);
         const rewardDelta = signal === "like" ? 0.5 : -0.5;
         for (const v of sessionVerdicts) {
-          this.ctx.db.parliamentVerdicts.validate(v.id, validationSignal, rewardDelta);
+          this.ctx.db.parliamentVerdicts.validate(
+            v.id,
+            validationSignal,
+            rewardDelta,
+          );
         }
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     }
 
     if (signal === "like") {
       // User confirmed this worked — write a high-confidence skill fact
       if (this.ctx.factStore && toolsUsed.length > 0) {
-        await this.ctx.factStore.add({
-          userId,
-          fact: `User confirmed: I successfully handled "${userMessage}" using [${toolsUsed.join(", ")}]`,
-          entity: toolsUsed[0],
-          category: "skill",
-          confidence: 0.95,
-          source: "confirmed",
-          expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(), // 180 days
-        }).catch(() => {});
+        await this.ctx.factStore
+          .add({
+            userId,
+            fact: `User confirmed: I successfully handled "${userMessage}" using [${toolsUsed.join(", ")}]`,
+            entity: toolsUsed[0],
+            category: "skill",
+            confidence: 0.95,
+            source: "confirmed",
+            expiresAt: new Date(
+              Date.now() + 180 * 24 * 60 * 60 * 1000,
+            ).toISOString(), // 180 days
+          })
+          .catch(() => {});
       }
       log.engine.info(`[Feedback] 👍 confirmed for session ${sessionId}`);
     } else {
       // User rejected this response — record it and queue for re-synthesis
       if (this.ctx.factStore) {
-        await this.ctx.factStore.add({
-          userId,
-          fact: `User rejected my response to: "${userMessage}". My approach did not satisfy them.`,
-          entity: toolsUsed[0] ?? "unknown",
-          category: "skill",
-          confidence: 0.9,
-          source: "confirmed",
-          expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
-        }).catch(() => {});
+        await this.ctx.factStore
+          .add({
+            userId,
+            fact: `User rejected my response to: "${userMessage}". My approach did not satisfy them.`,
+            entity: toolsUsed[0] ?? "unknown",
+            category: "skill",
+            confidence: 0.9,
+            source: "confirmed",
+            expiresAt: new Date(
+              Date.now() + 90 * 24 * 60 * 60 * 1000,
+            ).toISOString(),
+          })
+          .catch(() => {});
       }
 
       // Queue the user's request for background synthesis — find a better approach
@@ -1366,7 +1469,9 @@ export class OwlGateway {
         `User disliked response to: "${userMessage.slice(0, 80)}"`,
         "conversation",
       );
-      log.engine.info(`[Feedback] 👎 dislike for session ${sessionId}, queued for re-synthesis`);
+      log.engine.info(
+        `[Feedback] 👎 dislike for session ${sessionId}, queued for re-synthesis`,
+      );
     }
   }
 
@@ -1594,6 +1699,9 @@ export class OwlGateway {
   }
   getSessionStore() {
     return this.ctx.sessionStore;
+  }
+  getEpisodicMemory() {
+    return this.ctx.episodicMemory;
   }
   getKnowledgeCouncil() {
     return this.ctx.knowledgeCouncil;
@@ -2361,7 +2469,9 @@ export class OwlGateway {
         this.sessions.delete(key);
         this.stuckStreak.delete(key);
         this.attemptLogs.delete(key);
-        log.engine.info(`[session-evict] Evicted stale session "${key}" (endSession triggered)`);
+        log.engine.info(
+          `[session-evict] Evicted stale session "${key}" (endSession triggered)`,
+        );
       } else {
         activeIds.add(key);
       }
@@ -2447,7 +2557,9 @@ export class OwlGateway {
           );
           if (optimizer.shouldRun(owlName)) {
             optimizer.run(owlName).catch((err) => {
-              log.engine.warn(`[PromptOptimizer] Background run failed: ${err}`);
+              log.engine.warn(
+                `[PromptOptimizer] Background run failed: ${err}`,
+              );
             });
           }
         } catch {
@@ -2459,7 +2571,9 @@ export class OwlGateway {
     // Async inner monologue — compute for the last user message so it's
     // ready for injection in the NEXT request (see runtime.ts getLastMonologue)
     if (this.ctx.innerLife) {
-      const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+      const lastUserMsg = [...messages]
+        .reverse()
+        .find((m) => m.role === "user");
       if (lastUserMsg?.content) {
         this.ctx.innerLife.thinkInBackground(
           typeof lastUserMsg.content === "string" ? lastUserMsg.content : "",
@@ -2525,6 +2639,9 @@ export class OwlGateway {
     attemptLog?: import("../memory/attempt-log.js").AttemptLog,
     channelId?: string,
     userId?: string,
+    continuityResult?:
+      | import("../cognition/continuity-engine.js").ContinuityResult
+      | null,
   ): Promise<EngineContext> {
     return this.contextBuilder.build(
       session,
@@ -2534,6 +2651,7 @@ export class OwlGateway {
       attemptLog,
       channelId,
       userId,
+      continuityResult,
     );
   }
 
@@ -2650,12 +2768,12 @@ export class OwlGateway {
                 type: "time_delay" as const,
               },
               {
-                pattern:
-                  /(?:稍后|等一下|回头|晚点).{0,20}(?:再说|再|再说)/i,
+                pattern: /(?:稍后|等一下|回头|晚点).{0,20}(?:再说|再|再说)/i,
                 type: "time_delay" as const,
               },
               {
-                pattern: /(?:when|if|once)\s+.{0,30}(?:available|ready|done|finished|back)/i,
+                pattern:
+                  /(?:when|if|once)\s+.{0,30}(?:available|ready|done|finished|back)/i,
                 type: "context_change" as const,
               },
             ];
@@ -2749,7 +2867,11 @@ export class OwlGateway {
     if (isTask) return "task";
 
     // Question patterns
-    if (/[吗？?]|^(?:what|how|why|when|where|who|which|is there|are there|do you|does|can i|should)\b/.test(lower))
+    if (
+      /[吗？?]|^(?:what|how|why|when|where|who|which|is there|are there|do you|does|can i|should)\b/.test(
+        lower,
+      )
+    )
       return "question";
 
     // Information patterns
@@ -2768,7 +2890,9 @@ export class OwlGateway {
     // Extract the relevant sentence containing commitment language
     const sentences = response.split(/[。！？.!?]/);
     for (const s of sentences) {
-      if (/我会|I'll|I will|I'm going to|let me|我会帮|我会检查|我会提醒/.test(s)) {
+      if (
+        /我会|I'll|I will|I'm going to|let me|我会帮|我会检查|我会提醒/.test(s)
+      ) {
         return s.trim().slice(0, 200);
       }
     }

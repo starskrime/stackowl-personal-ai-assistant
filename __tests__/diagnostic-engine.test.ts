@@ -39,23 +39,25 @@ const VALID_LLM_RESPONSE = JSON.stringify({
   candidates: [
     {
       label: "Use web_crawl tool",
-      reasoning: "web_crawl is a built-in tool that can fetch URLs without curl",
+      reasoning:
+        "web_crawl is a built-in tool that can fetch URLs without curl",
       action: "Call web_crawl with url='https://example.com'",
       likelihood: 0.9,
       feasibility: 0.95,
       risk: 0.05,
     },
     {
-      label: "Use google_search",
+      label: "Use duckduckgo_search",
       reasoning: "Search for the content instead of fetching directly",
-      action: "Call google_search with query='example.com homepage'",
+      action: "Call duckduckgo_search with query='example.com homepage'",
       likelihood: 0.6,
       feasibility: 0.9,
       risk: 0.1,
     },
     {
       label: "Tell user curl unavailable",
-      reasoning: "Inform user that curl is not available and suggest alternatives",
+      reasoning:
+        "Inform user that curl is not available and suggest alternatives",
       action: "Respond to user explaining the limitation",
       likelihood: 1.0,
       feasibility: 1.0,

@@ -2,7 +2,7 @@
 name: trending_topics
 description: Discover what topics are currently trending on social media, news, and search engines
 command-dispatch: tool
-command-tool: google_search
+command-tool: duckduckgo_search
 openclaw:
   emoji: "📈"
 parameters:
@@ -17,17 +17,17 @@ parameters:
 required: []
 steps:
   - id: search_trending
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "trending topics today"
     timeout_ms: 15000
   - id: search_twitter
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "what's trending on Twitter today"
     timeout_ms: 15000
   - id: search_google_trends
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "Google Trends today"
     timeout_ms: 15000
@@ -35,7 +35,12 @@ steps:
     type: llm
     prompt: "Categorize and present the top 10 trending topics from the search results. Group them by category (News & Politics, Technology, Entertainment, Sports) and provide brief context for each:\n\nGeneral trends: {{search_trending.output}}\nTwitter trends: {{search_twitter.output}}\nGoogle Trends: {{search_google_trends.output}}\n\nUser region: {{region}}\nCategory filter: {{category}}"
     depends_on: [search_trending, search_twitter, search_google_trends]
-    inputs: [search_trending.output, search_twitter.output, search_google_trends.output]
+    inputs:
+      [
+        search_trending.output,
+        search_twitter.output,
+        search_google_trends.output,
+      ]
 ---
 
 # Trending Topics

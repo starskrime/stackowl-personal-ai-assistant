@@ -109,7 +109,11 @@ export interface ChannelAdapter {
    * Called by the gateway to deliver a file to a specific user.
    * Adapters that don't support file delivery can omit this.
    */
-  deliverFile?(userId: string, filePath: string, caption?: string): Promise<void>;
+  deliverFile?(
+    userId: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void>;
 }
 
 // ─── Gateway Context ─────────────────────────────────────────────
@@ -178,6 +182,7 @@ import type { MemoryFeedback } from "../memory/memory-feedback.js";
 import type { FeedbackStore } from "../feedback/store.js";
 import type { ConversationDigestManager } from "../memory/conversation-digest.js";
 import type { MemoryDatabase } from "../memory/db.js";
+import type { MemoryBus } from "../memory/bus.js";
 
 export interface GatewayContext {
   provider: ModelProvider;
@@ -233,6 +238,7 @@ export interface GatewayContext {
   factExtractor?: FactExtractor;
   memoryRetriever?: MemoryRetriever;
   memoryFeedback?: MemoryFeedback;
+  memoryBus?: MemoryBus;
 
   // ─── Response Feedback (👍/👎) ────────────────────────────────
   feedbackStore?: FeedbackStore;

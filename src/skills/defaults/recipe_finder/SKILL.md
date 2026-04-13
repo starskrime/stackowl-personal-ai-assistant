@@ -24,7 +24,7 @@ parameters:
 required: [ingredients]
 steps:
   - id: search_recipes
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "recipe with {{ingredients}} {{diet}} {{cuisine}} {{if(max_time > 0, 'under ' + max_time + ' minutes', '')}}"
       num: 5

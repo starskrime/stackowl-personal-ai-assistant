@@ -2,7 +2,7 @@
 name: web_research
 description: Perform deep multi-source research on a topic using web search, article crawling, and synthesis
 command-dispatch: tool
-command-tool: google_search
+command-tool: duckduckgo_search
 openclaw:
   emoji: "🔬"
 parameters:
@@ -12,17 +12,17 @@ parameters:
 required: [topic]
 steps:
   - id: search_overview
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{topic}} overview"
     timeout_ms: 15000
   - id: search_latest
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{topic}} latest research 2026"
     timeout_ms: 15000
   - id: search_proscons
-    tool: google_search
+    tool: duckduckgo_search
     args:
       query: "{{topic}} pros and cons"
     timeout_ms: 15000
@@ -36,7 +36,13 @@ steps:
     type: llm
     prompt: "Synthesize comprehensive research findings on '{{topic}}' into a structured report with:\n\n1. Executive Summary (2-3 sentences)\n2. Key Findings (bullet points)\n3. Different Perspectives\n4. Sources with URLs\n\nSearch results overview: {{search_overview.output}}\nLatest research: {{search_latest.output}}\nPros and cons: {{search_proscons.output}}\n{{#if crawl_article.output}}Crawled article: {{crawl_article.output}}{{/if}}"
     depends_on: [search_overview, search_latest, search_proscons, crawl_article]
-    inputs: [search_overview.output, search_latest.output, search_proscons.output, crawl_article.output]
+    inputs:
+      [
+        search_overview.output,
+        search_latest.output,
+        search_proscons.output,
+        crawl_article.output,
+      ]
 ---
 
 # Web Research

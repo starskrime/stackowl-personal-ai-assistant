@@ -12,11 +12,11 @@ export const WebCrawlTool: ToolImplementation = {
   definition: {
     name: "web_crawl",
     description:
-      "Fetch and extract text content from a specific URL. Use this AFTER google_search " +
+      "Fetch and extract text content from a specific URL. Use this AFTER duckduckgo_search " +
       "to read a page you found, or when you already know the exact URL. " +
       "Returns cleaned text (no HTML). Good for: articles, documentation, API docs, data pages. " +
-      "Automatically escalates to a stealth browser when sites block simple HTTP requests. " +
-      "NOT for interactive sites (forms, SPAs, login-gated pages) — use the browser tool for those. " +
+      "Automatically escalates: HTTP → stealth Chromium → CamoFox (Firefox, anti-detection). " +
+      "For interactive sites (forms, SPAs, login flows, clicking buttons) use the camofox tool instead. " +
       "Limit: 25KB text.",
     parameters: {
       type: "object",

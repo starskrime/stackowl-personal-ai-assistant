@@ -62,17 +62,17 @@ const DOMAIN_TOOL_MAP: Record<string, string[]> = {
   kubernetes: ["run_shell_command"],
 
   // Research & Communication
-  research: ["web_crawl", "google_search", "read_file"],
+  research: ["web_crawl", "duckduckgo_search", "read_file"],
   writing: ["write_file", "read_file"],
   communication: ["send_telegram_message", "send_file"],
 
   // Data & Finance
   data_analysis: ["run_shell_command", "read_file", "write_file"],
-  finance: ["google_search", "web_crawl", "read_file"],
-  market_analysis: ["google_search", "web_crawl"],
+  finance: ["duckduckgo_search", "web_crawl", "read_file"],
+  market_analysis: ["duckduckgo_search", "web_crawl"],
 
   // Media
-  image: ["generate_image", "send_file", "google_search"],
+  image: ["generate_image", "send_file", "duckduckgo_search"],
   media: ["generate_image", "send_file", "web_crawl"],
 };
 

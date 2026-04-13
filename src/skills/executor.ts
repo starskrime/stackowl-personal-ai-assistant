@@ -57,8 +57,8 @@ const TOOL_ALIASES: Record<string, string> = {
   EditFileTool: "edit_file",
   WebFetchTool: "web_crawl",
   WebCrawlTool: "web_crawl",
-  SearchTool: "google_search",
-  GoogleSearchTool: "google_search",
+  SearchTool: "duckduckgo_search",
+  DuckDuckGoSearchTool: "duckduckgo_search",
   ScreenshotTool: "take_screenshot",
   SendFileTool: "send_file",
 };
@@ -174,9 +174,7 @@ export class SkillExecutor {
     const completedSteps = [...states.values()].filter(
       (s) => s.status === "success",
     );
-    const lastLlmStep = completedSteps.findLast(
-      (s) => s.step.type === "llm",
-    );
+    const lastLlmStep = completedSteps.findLast((s) => s.step.type === "llm");
     if (lastLlmStep?.output) {
       finalOutput = lastLlmStep.output;
     } else if (completedSteps.length > 0) {

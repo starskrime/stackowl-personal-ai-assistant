@@ -130,7 +130,7 @@ export class ToolSynthesizer {
           `  - write_file(path, content): writes content to a file\n` +
           `  - edit_file(path, old_text, new_text): edit a file by replacing text\n` +
           `  - web_crawl(url): fetches a URL and returns text content\n` +
-          `  - google_search(query): search Google and return results\n` +
+          `  - duckduckgo_search(query): search Google and return results\n` +
           `  - scrapling_fetch(url, mode): anti-bot web scraping (modes: basic, stealth, dynamic)\n` +
           `  - computer_use(action, ...): desktop automation — mouse, keyboard, screenshots, app control\n` +
           `  - take_screenshot(): capture the screen\n` +
@@ -257,7 +257,7 @@ export class ToolSynthesizer {
     if (!hasFrontmatter || !hasName) {
       throw new Error(
         `Synthesized SKILL.md is malformed (frontmatter=${hasFrontmatter}, name=${hasName}). ` +
-        `Refusing to write invalid content to disk.`,
+          `Refusing to write invalid content to disk.`,
       );
     }
 

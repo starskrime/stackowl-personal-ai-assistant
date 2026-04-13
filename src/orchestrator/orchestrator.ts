@@ -88,6 +88,17 @@ export class TaskOrchestrator {
     baseContext: EngineContext,
     callbacks: GatewayCallbacks,
   ): Promise<OrchestrationResult> {
+    // Deep research path — pre-injects pellets, uses extended iterations,
+    // and runs evaluator-optimizer synthesis at the end.
+    if (strategy.depth === "deep") {
+      return this.executeDeepResearch(
+        userMessage,
+        baseContext,
+        strategy,
+        callbacks,
+      );
+    }
+
     switch (strategy.strategy) {
       case "DIRECT":
         return this.executeDirect(userMessage, baseContext);
@@ -125,6 +136,134 @@ export class TaskOrchestrator {
       default:
         return this.executeStandard(userMessage, baseContext);
     }
+  }
+
+  // ─── DEEP RESEARCH ─────────────────────────────────────────────
+
+  /**
+   * Deep research execution — pre-injects pellets, uses extended iterations,
+   * and runs an evaluator-optimizer synthesis at the end.
+   */
+  async executeDeepResearch(
+    userMessage: string,
+    baseContext: EngineContext,
+    strategy: TaskStrategy,
+    callbacks: GatewayCallbacks,
+  ): Promise<OrchestrationResult> {
+    const researchConfig = this.config.research ?? {};
+    const maxIterations = researchConfig.maxIterations ?? 40;
+    const subtopics = strategy.researchSignal?.subtopics ?? [];
+
+    if (callbacks.onProgress) {
+      const reason = strategy.researchSignal?.reason ?? "deep research";
+      await callbacks.onProgress(
+        `🔬 **Deep Research Mode** — ${reason}${subtopics.length > 0 ? ` (${subtopics.length} subtopics)` : ""}`,
+      );
+    }
+
+    // ── Pre-inject relevant pellets ───────────────────────────
+    let pelletContext = "";
+    if (this.pelletStore) {
+      try {
+        const query = subtopics.length > 0 ? subtopics.join(" ") : userMessage;
+        const results = await this.pelletStore.searchWithGraph(query, 3);
+        if (results.length > 0) {
+          pelletContext = results
+            .map((r) => `## ${r.title}\n${r.content}\n`)
+            .join("\n");
+          if (callbacks.onProgress) {
+            await callbacks.onProgress(
+              `📚 Pre-injecting ${results.length} relevant pellet(s) from prior knowledge`,
+            );
+          }
+        }
+      } catch (err) {
+        log.engine.warn(`[DeepResearch] Pellet pre-injection failed: ${err}`);
+      }
+    }
+
+    // ── Build research context ─────────────────────────────────
+    const researchPrompt =
+      (pelletContext
+        ? `## Prior Knowledge (read-only, do not repeat)\n${pelletContext}\n\n`
+        : "") +
+      `## Your Task\n${userMessage}\n\n` +
+      `You are conducting deep research. Use the tools available to find comprehensive information. ` +
+      `Check your findings against multiple sources where possible. ` +
+      `When you have gathered sufficient evidence, write a thorough, well-structured response.`;
+
+    // ── Execute with extended iteration budget ───────────────
+    // NOTE: pelletContext is already embedded in researchPrompt above.
+    // Do NOT also inject it into sessionHistory — that causes double injection
+    // (model sees the same pellets twice, wasting tokens).
+    const deepContext: EngineContext = {
+      ...baseContext,
+      maxIterations,
+      depth: "deep",
+      sessionHistory: baseContext.sessionHistory,
+      skipGapDetection: true,
+    };
+
+    const response = await this.engine.run(researchPrompt, deepContext);
+
+    // ── Evaluator-optimizer: ask "what's missing?" ───────────
+    if (
+      strategy.researchSignal?.subtopics &&
+      strategy.researchSignal.subtopics.length > 1
+    ) {
+      try {
+        if (callbacks.onProgress) {
+          await callbacks.onProgress(`🔍 **Evaluator: checking for gaps...**`);
+        }
+        const gapsPrompt =
+          `You just completed research on: ${userMessage}\n\n` +
+          `Your findings covered: ${strategy.researchSignal.subtopics.join(", ")}\n\n` +
+          `Review your answer and identify: what aspects are NOT covered? What questions would make this research more complete?\n` +
+          `Respond with a brief gap analysis (2-3 sentences max) or "none" if you covered the topic thoroughly.`;
+
+        const gapsResponse = await this.provider.chat(
+          [{ role: "user", content: gapsPrompt }],
+          undefined,
+          { temperature: 0, maxTokens: 200 },
+        );
+
+        const gapsText = gapsResponse.content.trim().toLowerCase();
+        if (gapsText !== "none" && gapsText.length > 10) {
+          if (callbacks.onProgress) {
+            await callbacks.onProgress(
+              `📋 **Gap Analysis:** ${gapsResponse.content.slice(0, 200)}`,
+            );
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // ── Proactive "while I was in there" offer ──────────────
+    if (callbacks.onProgress) {
+      const proactivePrompt =
+        `Based on the research just completed about "${userMessage}", identify one surprising or interesting finding that the user might want to know about but didn't explicitly ask.\n` +
+        `Respond with ONLY the finding in 1-2 sentences, or "none" if nothing notable was found.`;
+
+      try {
+        const proactiveResponse = await this.provider.chat(
+          [{ role: "user", content: proactivePrompt }],
+          undefined,
+          { temperature: 0.3, maxTokens: 100 },
+        );
+        const finding = proactiveResponse.content.trim();
+        if (finding !== "none" && finding.length > 10) {
+          await callbacks.onProgress(
+            `💡 **While I was researching:** ${finding}\n_(Reply with "tell me more" to explore this)_`,
+          );
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    return toOrchResult(response, "STANDARD");
   }
 
   // ─── DIRECT ──────────────────────────────────────────────────
