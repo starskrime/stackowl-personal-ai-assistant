@@ -47,6 +47,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
   private bot: Bot;
   private pinger: ProactivePinger | null = null;
+  private _backgroundWorker: import("../../agent/background-worker.js").BackgroundWorker | null = null;
   private activeChatIds: Set<number> = new Set();
   private userState: Map<number, UserState> = new Map();
   private chatIdsPath: string;
@@ -579,6 +580,27 @@ export class TelegramAdapter implements ChannelAdapter {
       },
     });
     this.pinger.start();
+
+    // Attach BackgroundWorker to pinger (Phase 2 — agentic loop)
+    const db = self.gateway.getDb?.();
+    const pelletStore = self.gateway.getPelletStore?.();
+    const toolRegistry = self.gateway.getToolRegistry();
+    if (db && pelletStore && toolRegistry && config) {
+      import("../../agent/background-worker.js").then(({ BackgroundWorker }) => {
+        const worker = new BackgroundWorker({
+          db,
+          pelletStore,
+          provider: self.gateway.getProvider(),
+          owl,
+          toolRegistry,
+          config,
+          eventBus: self.gateway.getEventBus(),
+          briefingTarget: undefined,
+        });
+        self._backgroundWorker = worker;
+        self.pinger!.setBackgroundWorker(worker);
+      }).catch(() => {});
+    }
   }
 
   // ─── Streaming (edit-in-place) ──────────────────────────────────
@@ -842,6 +864,10 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   private formatResponse(response: GatewayResponse): string {
+    // Pre-formatted HTML (agent-watch, system messages) — send as-is, no header
+    if (response.preformatted) {
+      return response.content;
+    }
     const owlHeader = `${this.escHtml(response.owlEmoji ?? "")} <b>${this.escHtml(response.owlName)}</b>`;
     return `${owlHeader}\n\n${this.renderContent(response.content)}`;
   }
@@ -959,5 +985,10 @@ export class TelegramAdapter implements ChannelAdapter {
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+  }
+
+  /** Returns the background worker instance (if running). */
+  getBackgroundWorker() {
+    return this._backgroundWorker;
   }
 }

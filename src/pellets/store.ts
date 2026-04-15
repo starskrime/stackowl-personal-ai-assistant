@@ -167,6 +167,14 @@ export class PelletStore {
     }
   }
 
+  // ─── Count ─────────────────────────────────────────────────────
+
+  /** Total number of pellets in the store. */
+  async count(): Promise<number> {
+    await this.init();
+    return this.lance.count();
+  }
+
   // ─── Write ─────────────────────────────────────────────────────
 
   /**

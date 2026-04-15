@@ -140,6 +140,10 @@ export class LancePelletStore {
       };
       this.table = await this.db.createTable(LancePelletStore.TABLE, [sentinel]);
       await this.table.delete(`id = '${sentinel.id}'`);
+      // Re-open after sentinel deletion — LanceDB in-memory table reference loses
+      // its vector field schema when all rows are deleted from a newly-created table.
+      // Opening from disk restores the correct Arrow schema.
+      this.table = await this.db.openTable(LancePelletStore.TABLE);
       log.engine.info(
         `[LanceStore] Created table "${LancePelletStore.TABLE}" (dim=${dim})`,
       );
@@ -158,12 +162,24 @@ export class LancePelletStore {
     const vec = vector ?? (await embed(pelletToEmbedText(pellet))) ?? new Array<number>(getEmbeddingDim()).fill(0);
     const row = pelletToRow(pellet, vec);
 
-    // LanceDB mergeInsert: update if id matches, insert otherwise
-    await this.table!
-      .mergeInsert("id")
-      .whenMatchedUpdateAll()
-      .whenNotMatchedInsertAll()
-      .execute([row]);
+    // LanceDB mergeInsert: update if id matches, insert otherwise.
+    // Falls back to add() when the table is empty — mergeInsert incorrectly
+    // reports "Found field not in schema: vector.0" on a freshly-created empty table.
+    try {
+      await this.table!
+        .mergeInsert("id")
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute([row]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("not in schema") || msg.includes("schema")) {
+        // Empty table edge case — direct add fallback
+        await this.table!.add([row]);
+      } else {
+        throw err;
+      }
+    }
   }
 
   /** Delete a pellet by id. */

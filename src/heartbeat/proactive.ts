@@ -117,10 +117,16 @@ export class ProactivePinger {
   private lastSelfStudyDate: string = "";
   // lastDreamTime and lastSkillEvolutionDate removed — proactive learning disabled
   private unansweredPings: number = 0;
+  private _backgroundWorker: import("../agent/background-worker.js").BackgroundWorker | null = null;
 
   constructor(context: PingContext, config?: Partial<PingConfig>) {
     this.config = { ...DEFAULT_PING_CONFIG, ...config };
     this.context = context;
+  }
+
+  /** Attach the background worker so the timer loop can drive it. */
+  setBackgroundWorker(worker: import("../agent/background-worker.js").BackgroundWorker): void {
+    this._backgroundWorker = worker;
   }
 
   /**
@@ -133,6 +139,17 @@ export class ProactivePinger {
     this.stop();
 
     console.log("[ProactivePinger] 🔔 Proactive pinging started");
+
+    // Background worker tick — executes pending agent tasks autonomously.
+    // Runs every 5 minutes, skips quiet hours so it doesn't wake up the user.
+    const workerTimer = setInterval(() => {
+      if (this._backgroundWorker && !this.isQuietHours()) {
+        this._backgroundWorker.tick().catch((err) => {
+          console.error("[ProactivePinger] Background worker tick error:", err);
+        });
+      }
+    }, 5 * 60 * 1000); // every 5 minutes
+    this.timers.push(workerTimer);
 
     // Unified tick: try the AutonomousPlanner first (if available).
     // If the planner executes an action, skip manual check-in and morning brief

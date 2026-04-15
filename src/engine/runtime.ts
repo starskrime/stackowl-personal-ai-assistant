@@ -819,6 +819,8 @@ You manage a massive suite of platform capabilities. Escalate logically:
 - **Playbooks:** \`<skill>\` blocks are curated workflows. Follow them tightly if they align with the goal.`;
     }
 
+    log.engine.info(`[Runtime] System prompt length: ${finalSystemPromptWithTaskState.length} chars, history: ${historyToUse.length} msgs`);
+
     const messages: ChatMessage[] = [
       { role: "system", content: finalSystemPromptWithTaskState },
       ...historyToUse,

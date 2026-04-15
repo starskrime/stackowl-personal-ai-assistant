@@ -562,6 +562,13 @@ export class PostProcessor {
       }
     }
 
+    // Goal extraction (every 3 messages) — detect persistent goals from conversation
+    this.maybeExtractGoals(
+      messages,
+      sessionId ?? "unknown",
+      metadata?.userId ?? "default",
+    );
+
     // Periodic persistence (every 10 messages)
     if (this.messageCount % 10 === 0) {
       if (this.ctx.patternAnalyzer) {
@@ -586,5 +593,94 @@ export class PostProcessor {
 
   getMessageCount(): number {
     return this.messageCount;
+  }
+
+  /**
+   * Attach a GoalExtractor so PostProcessor can detect persistent goals.
+   * Called during gateway setup when db + provider are available.
+   */
+  setGoalExtractor(extractor: import("../../agent/goal-extractor.js").GoalExtractor): void {
+    this._goalExtractor = extractor;
+  }
+
+  private _goalExtractor: import("../../agent/goal-extractor.js").GoalExtractor | null = null;
+
+  /** Extract goals from conversation every 3 messages. */
+  private maybeExtractGoals(messages: ChatMessage[], sessionId: string, userId: string): void {
+    if (!this._goalExtractor) return;
+    if (this.messageCount % 3 !== 0) return;
+    const extractor = this._goalExtractor;
+    this.taskQueue.enqueue("goal-extraction", async () => {
+      await extractor.extractFromConversation(messages, sessionId, userId);
+    });
+  }
+
+  // ─── Gap Learning Feedback ────────────────────────────────────
+
+  /** Pellet ID from the most recent gap learning — used to absorb user corrections. */
+  private _lastGapPelletId: string | null = null;
+
+  /**
+   * Register a pellet ID from a gap learning event.
+   * The next user message will be checked for corrections.
+   */
+  setLastGapPelletId(pelletId: string): void {
+    this._lastGapPelletId = pelletId;
+  }
+
+  /**
+   * After a gap-learning response, check if the user is giving feedback.
+   * Saves corrections and confirmations as pellets so the learning improves.
+   */
+  absorbGapFeedback(messages: ChatMessage[], _sessionId: string): void {
+    if (!this._lastGapPelletId || !this.ctx.pelletStore) return;
+
+    // Find the latest user message
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser || typeof lastUser.content !== "string") return;
+
+    const userText = lastUser.content.trim().toLowerCase();
+    const pelletId = this._lastGapPelletId;
+
+    // Detect feedback signals
+    const isCorrectionSignal = /\b(actually|no[,.]|that'?s wrong|incorrect|not quite|wrong|you should|let me correct|correction|not right|mistake)\b/.test(userText);
+    const isPositiveSignal = /\b(correct|right|good|great|perfect|yes|exactly|spot on|well done|good job|learned well|keep that)\b/.test(userText);
+
+    if (!isCorrectionSignal && !isPositiveSignal) {
+      this._lastGapPelletId = null;
+      return;
+    }
+
+    const pelletStore = this.ctx.pelletStore;
+    const owlName = this.ctx.owl.persona.name;
+
+    this.taskQueue.enqueue("gap-feedback", async () => {
+      if (isCorrectionSignal) {
+        // Save the correction as a new pellet linking to the original
+        const correctionPellet = {
+          id: `gap-correction-${Date.now()}`,
+          title: `Gap Learning Correction (ref: ${pelletId.slice(0, 8)})`,
+          generatedAt: new Date().toISOString(),
+          source: "user-correction",
+          owls: [owlName],
+          tags: ["gap_correction", "user_feedback", "auto_learned"],
+          version: 1,
+          content: [
+            `## User Correction`,
+            lastUser.content,
+            ``,
+            `## References`,
+            `Corrects gap-learning pellet: ${pelletId}`,
+          ].join("\n"),
+        };
+        await pelletStore.save(correctionPellet, { skipDedup: true });
+        log.engine.info(`[PostProcessor] Gap correction saved for pellet ${pelletId}`);
+      } else if (isPositiveSignal) {
+        // Confirmation — just log it (dedup will handle reinforcement naturally)
+        log.engine.info(`[PostProcessor] Gap learning confirmed by user for pellet ${pelletId}`);
+      }
+    });
+
+    this._lastGapPelletId = null;
   }
 }

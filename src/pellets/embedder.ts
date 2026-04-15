@@ -1,68 +1,88 @@
 /**
  * StackOwl — Pellet Embedder
  *
- * Thin wrapper around the configured provider's embed() call.
- * Initialized once at startup; used by LancePelletStore and KuzuPelletGraph.
+ * Runs embeddings fully in-process using fastembed + ONNX runtime.
+ * No external server (no Ollama), no API key, no extra cost.
  *
- * - Uses Ollama nomic-embed-text by default (768-dim, local, fast)
- * - In-process LRU cache (1 000 entries) avoids re-embedding identical text
- * - Graceful degradation: returns null when provider is unavailable
+ * Model: BAAI/bge-small-en-v1.5 (~50 MB, 384-dim, downloads once on first use)
+ * Cache: LRU 1 000 entries — avoids re-embedding identical text
+ * Graceful degradation: returns null on any failure so the rest of the
+ * system keeps working (search just returns empty results).
  */
 
-import type { ModelProvider } from "../providers/base.js";
 import { log } from "../logger.js";
 
 // ─── State ───────────────────────────────────────────────────────
 
-let _provider: ModelProvider | null = null;
+let _embedder: import("fastembed").FlagEmbedding | null = null;
 let _dim: number | null = null;
+let _initPromise: Promise<void> | null = null;
+
 const _cache = new Map<string, number[]>();
 const MAX_CACHE = 1_000;
 
 // ─── Init ────────────────────────────────────────────────────────
 
-export function initEmbedder(provider: ModelProvider): void {
-  _provider = provider;
-  _cache.clear();
-  log.engine.info("[Embedder] Initialized (Ollama nomic-embed-text)");
+/**
+ * Initialize the in-process embedder.
+ * Downloads the model on first call (~50 MB, cached in ~/.cache/fastembed).
+ * Safe to call multiple times — only initializes once.
+ */
+export async function initEmbedder(): Promise<void> {
+  if (_embedder) return;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
+    try {
+      const { FlagEmbedding, EmbeddingModel } = await import("fastembed");
+      log.engine.info("[Embedder] Loading in-process embedding model (first run may download ~50 MB)...");
+      _embedder = await FlagEmbedding.init({
+        model: EmbeddingModel.BGESmallENV15,
+      });
+      // Probe dimension with a dummy embed
+      const probe = await _embedder.queryEmbed("probe");
+      _dim = probe.length;
+      log.engine.info(`[Embedder] Ready — model: BGE-small-en-v1.5, dim: ${_dim}`);
+    } catch (err) {
+      log.engine.warn(`[Embedder] Failed to initialize: ${err instanceof Error ? err.message : err}`);
+      _embedder = null;
+    }
+  })();
+
+  return _initPromise;
 }
 
 export function isEmbedderReady(): boolean {
-  return _provider !== null;
+  return _embedder !== null;
 }
 
 export function getEmbeddingDim(): number {
-  return _dim ?? 768; // nomic-embed-text default
+  return _dim ?? 384; // BGE-small-en-v1.5 default
 }
 
 // ─── Embed ───────────────────────────────────────────────────────
 
 /**
  * Embed text into a float vector.
- * Returns null if the provider is unavailable or embedding fails.
+ * Returns null if the embedder is unavailable or embedding fails.
  */
 export async function embed(text: string): Promise<number[] | null> {
-  if (!_provider) return null;
+  if (!_embedder) return null;
 
   const normalized = text.trim().slice(0, 2000);
   if (!normalized) return null;
 
-  // Cache key: first 300 chars (enough for uniqueness, cheap to hash)
   const key = normalized.slice(0, 300);
   if (_cache.has(key)) return _cache.get(key)!;
 
   try {
-    const res = await _provider.embed(normalized);
-    const vec = res?.embedding;
-    if (!vec || vec.length === 0) return null;
+    const raw = await _embedder.queryEmbed(normalized);
+    if (!raw || raw.length === 0) return null;
 
-    // Record dimension on first successful embed
-    if (_dim === null) {
-      _dim = vec.length;
-      log.engine.info(`[Embedder] Detected embedding dim: ${_dim}`);
-    }
+    // fastembed returns Float32Array — convert to plain number[] so LanceDB's
+    // schema inference doesn't treat it as a struct (Array.isArray fails on TypedArrays)
+    const vec: number[] = Array.isArray(raw) ? (raw as number[]) : Array.from(raw as ArrayLike<number>);
 
-    // Evict oldest entries when cache is full
     if (_cache.size >= MAX_CACHE) {
       const firstKey = _cache.keys().next().value;
       if (firstKey !== undefined) _cache.delete(firstKey);
@@ -71,9 +91,7 @@ export async function embed(text: string): Promise<number[] | null> {
     _cache.set(key, vec);
     return vec;
   } catch (err) {
-    log.engine.warn(
-      `[Embedder] embed() failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    log.engine.warn(`[Embedder] embed() failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -83,14 +101,15 @@ export async function embed(text: string): Promise<number[] | null> {
 /**
  * Produce the canonical text to embed for a pellet.
  * Layout: title → tags → first 1 500 chars of content.
- * Keeps token budget reasonable while capturing all semantic dimensions.
  */
 export function pelletToEmbedText(p: {
   title: string;
   tags: string[];
   content: string;
 }): string {
-  return [`title: ${p.title}`, `tags: ${p.tags.join(" ")}`, p.content.slice(0, 1500)].join(
-    "\n",
-  );
+  return [
+    `title: ${p.title}`,
+    `tags: ${p.tags.join(" ")}`,
+    p.content.slice(0, 1500),
+  ].join("\n");
 }

@@ -69,6 +69,12 @@ export interface GatewayResponse {
   usage?: { promptTokens: number; completionTokens: number };
   /** Estimated cost for this response (populated when cost tracking is enabled) */
   estimatedCostUsd?: number;
+  /**
+   * When true, content is already valid Telegram HTML and must be sent as-is —
+   * skips the markdown→HTML conversion pipeline (escaping, table conversion, etc).
+   * Used for system messages (agent-watch, gap-learner) that build HTML directly.
+   */
+  preformatted?: boolean;
 }
 
 // ─── Channel Adapter Interface ───────────────────────────────────

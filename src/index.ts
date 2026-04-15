@@ -150,6 +150,7 @@ import { RecallMemoryTool } from "./tools/recall.js";
 import { RememberTool } from "./tools/remember.js";
 import { PelletRecallTool } from "./tools/pellet-recall.js";
 import { initEmbedder } from "./pellets/embedder.js";
+import { selfSeedIfEmpty } from "./pellets/self-seed.js";
 import { EchoChamberDetector } from "./echo-chamber/detector.js";
 import { EchoCheckTool } from "./tools/echo-check.js";
 import { JournalGenerator } from "./growth-journal/generator.js";
@@ -361,7 +362,7 @@ async function bootstrap() {
   // Initialize pellet store (with AI-powered deduplication)
   // Initialize pellet embedder (Ollama nomic-embed-text) before PelletStore
   // so vector search is available from the first save/search call.
-  initEmbedder(providerRegistry.getDefault());
+  initEmbedder().catch((e) => log.engine.warn("[Init] Embedder: " + (e instanceof Error ? e.message : String(e))));
 
   const pelletStore = new PelletStore(
     workspacePath,
@@ -369,6 +370,17 @@ async function bootstrap() {
     config.pellets?.dedup,
   );
   await pelletStore.init();
+
+  // Self-seed foundational pellets on first startup (empty store)
+  // This gives the model self-knowledge (identity, tools, skills) immediately
+  // after a reset — prevents "acts like generic LLM" regression.
+  selfSeedIfEmpty(
+    pelletStore,
+    workspacePath,
+    toolRegistry.getAllDefinitions().map((t) => t.name),
+  ).catch((e) =>
+    log.engine.warn(`[SelfSeed] Failed (non-fatal): ${e instanceof Error ? e.message : e}`)
+  );
 
   // Build/refresh knowledge graph in background (non-blocking)
   pelletStore
@@ -1715,6 +1727,19 @@ async function allCommand(opts: { owl?: string; port?: string }) {
       );
     });
     console.log(chalk.green(`✓ Channel: 📱 Telegram`));
+  }
+
+  // Agent Watch — supervises Claude Code / OpenCode sessions
+  {
+    const { AgentWatchManager } = await import("./agent-watch/index.js");
+    const agentWatch = new AgentWatchManager({
+      sendToUser: async (userId, channelId, html) => {
+        await gateway.sendProactive(channelId, userId, html, true);
+      },
+    });
+    agentWatch.start();
+    gateway.agentWatch = agentWatch;
+    console.log(chalk.green(`✓ Agent Watch: http://localhost:3111/agent-watch`));
   }
 
   // 5. Start CLI adapter

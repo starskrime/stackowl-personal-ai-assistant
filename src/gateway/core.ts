@@ -44,6 +44,7 @@ import { getReadyMessages } from "../tools/utils/timer.js";
 import { PostProcessor } from "./handlers/post-processor.js";
 import { ContextBuilder } from "./handlers/context-builder.js";
 import { SessionManager } from "./handlers/session-manager.js";
+import { GapLearner } from "../agent/gap-learner.js";
 import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
 import { TaskQueue } from "../queue/task-queue.js";
 import {
@@ -93,6 +94,9 @@ export class OwlGateway {
   /** Track last active channel + user for scheduled message delivery */
   private lastActiveChannel: string | null = null;
   private lastActiveUserId: string | null = null;
+
+  /** Agent Watch — supervises external coding agent sessions */
+  agentWatch: import("../agent-watch/index.js").AgentWatchManager | null = null;
   /** Timer tick interval for scheduled message delivery */
   private timerTickInterval: NodeJS.Timeout | null = null;
 
@@ -102,6 +106,7 @@ export class OwlGateway {
   /** Extracted session manager — used by new code paths, old inline code migrating incrementally */
   sessionManager: SessionManager;
   private taskQueue: TaskQueue;
+  private gapLearner: GapLearner | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -153,6 +158,17 @@ export class OwlGateway {
 
     // Initialize task queue (Improvement #2)
     this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
+
+    // Initialize gap learner — runs when capability gaps are detected
+    if (ctx.pelletStore && ctx.toolRegistry) {
+      this.gapLearner = new GapLearner(
+        ctx.provider,
+        ctx.owl,
+        ctx.config,
+        ctx.toolRegistry,
+        ctx.pelletStore,
+      );
+    }
 
     // Initialize session manager (Improvement #4)
     this.sessionManager = new SessionManager(
@@ -231,6 +247,14 @@ export class OwlGateway {
       null,
       this.userMentalModel,
     );
+
+    // Attach GoalExtractor to PostProcessor (Phase 1)
+    if (ctx.db && ctx.provider) {
+      import("../agent/goal-extractor.js").then(({ GoalExtractor }) => {
+        const extractor = new GoalExtractor(ctx.provider, ctx.db!);
+        this.postProcessor.setGoalExtractor(extractor);
+      }).catch(() => {});
+    }
 
     // Built-in middleware
     this.middleware.push(new LoggingMiddleware());
@@ -522,6 +546,26 @@ export class OwlGateway {
     callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse> {
     const session = await this.getOrCreateSession(message);
+
+    // Check if user is giving feedback on a recent gap-learning response
+    this.postProcessor.absorbGapFeedback(session.messages, session.id);
+
+    // Check if this message is a YES/NO reply to a pending agent-watch question
+    // Must be checked before the feature command handler and before the engine
+    if (this.agentWatch) {
+      const consumed = this.agentWatch.handleTelegramReply(
+        message.userId,
+        message.text,
+      );
+      if (consumed) {
+        return {
+          content: "✅ Decision sent to agent.",
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
+    }
 
     // Check for /reset command - clear session history
     if (message.text.trim().toLowerCase() === "/reset") {
@@ -1596,6 +1640,7 @@ export class OwlGateway {
     channelId: string,
     userId: string,
     text: string,
+    preformatted = false,
   ): Promise<void> {
     const adapter = this.adapters.get(channelId);
     if (!adapter) return;
@@ -1604,6 +1649,7 @@ export class OwlGateway {
       owlName: this.ctx.owl.persona.name,
       owlEmoji: this.ctx.owl.persona.emoji,
       toolsUsed: [],
+      preformatted,
     };
     await adapter.sendToUser(userId, response);
   }
@@ -1670,6 +1716,12 @@ export class OwlGateway {
     return this.ctx.owl;
   }
 
+  getDb() {
+    return this.ctx.db;
+  }
+  getPelletStore() {
+    return this.ctx.pelletStore;
+  }
   getEventBus() {
     return this.ctx.eventBus;
   }
@@ -2131,6 +2183,54 @@ export class OwlGateway {
       return mkResp(this.ctx.knowledgeCouncil.getHistorySummary());
     }
 
+    // ── Agent Watch commands ──────────────────────────────────
+    const mkHtml = (content: string): GatewayResponse => ({
+      content,
+      owlName: owl.persona.name,
+      owlEmoji: owl.persona.emoji,
+      toolsUsed: [],
+      preformatted: true,
+    });
+
+    // "watch my claude code" / "watch my opencode" / "watch" → register and return instructions
+    if (/^(\/watch|watch(\s+(my\s+)?(claude[\s-]*(code)?|opencode|agent|coding\s+agent))?)$/i.test(text)) {
+      if (!this.agentWatch) {
+        return mkResp("Agent Watch is not enabled. Start StackOwl with agent watch support.");
+      }
+      const isOpenCode = /opencode/i.test(text);
+      const agentType = isOpenCode ? "opencode" : "claude-code";
+      const reg = await this.agentWatch.registerUser(
+        message.userId,
+        message.channelId,
+        agentType as import("../agent-watch/formatters/telegram.js").AgentType,
+      );
+      return mkHtml(reg.telegramMessage);
+    }
+
+    // "unwatch" / "/unwatch" → stop watching all sessions for this user
+    if (/^\/?(unwatch|stop watching|stop watch)$/i.test(text)) {
+      if (!this.agentWatch) return mkResp("Agent Watch is not enabled.");
+      const count = await this.agentWatch.unwatchUser(message.userId);
+      return mkResp(
+        count > 0
+          ? `👁 Stopped watching ${count} session(s).`
+          : "No active watch sessions for you.",
+      );
+    }
+
+    // "watch status" / "/watch status"
+    if (/^\/?(watch\s+status|agent\s+status)$/i.test(text)) {
+      if (!this.agentWatch) return mkResp("Agent Watch is not enabled.");
+      const st = this.agentWatch.getStatus();
+      return mkHtml(
+        [
+          `👁 <b>Agent Watch</b>`,
+          `Active sessions: ${st.activeSessions}`,
+          `Pending decisions: ${st.pendingQuestions}`,
+        ].join("\n"),
+      );
+    }
+
     return null;
   }
 
@@ -2319,9 +2419,28 @@ export class OwlGateway {
     const gap = response.pendingCapabilityGap!;
     log.evolution.evolve(`Capability gap: "${gap.description.slice(0, 80)}"`);
 
-    await callbacks.onProgress?.(
-      `🧠 I don't have that capability yet — building it now...`,
-    );
+    // ── Phase 1: Learn first ──────────────────────────────────────
+    // Before synthesizing a new capability, try to fill the knowledge gap
+    // by researching the topic with available tools. Save findings as a pellet
+    // and inject the learning into the retry context.
+    let gapLearning: import("../agent/gap-learner.js").GapLearningResult | null = null;
+    if (this.gapLearner) {
+      gapLearning = await this.gapLearner.learn(gap, callbacks.onProgress);
+      if (gapLearning.learned && gapLearning.enrichedContext) {
+        engineCtx = {
+          ...engineCtx,
+          memoryContext: [engineCtx.memoryContext, gapLearning.enrichedContext]
+            .filter(Boolean)
+            .join("\n\n"),
+        };
+      }
+    }
+
+    if (!gapLearning?.learned) {
+      await callbacks.onProgress?.(
+        `🧠 I don't have that capability yet — building it now...`,
+      );
+    }
 
     try {
       const proposal = await this.ctx.evolution!.designSpec(gap, engineCtx);
@@ -2388,7 +2507,19 @@ export class OwlGateway {
         message.channelId,
         message.userId,
       );
-      return toGatewayResponse(retryResponse);
+
+      // Prepend gap learning note so the user knows what happened
+      const finalResponse = toGatewayResponse(retryResponse);
+      if (gapLearning?.userFacingNote) {
+        finalResponse.content = `${gapLearning.userFacingNote}\n\n---\n\n${finalResponse.content}`;
+      }
+
+      // Register pellet ID so the next user message can be absorbed as feedback
+      if (gapLearning?.pelletId) {
+        this.postProcessor.setLastGapPelletId(gapLearning.pelletId);
+      }
+
+      return finalResponse;
     } catch (err) {
       log.evolution.error(
         `Gap handling failed: ${err instanceof Error ? err.message : err}`,

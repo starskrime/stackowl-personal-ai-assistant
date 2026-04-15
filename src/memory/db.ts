@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -283,6 +283,44 @@ export interface PromptOptimizationRecord {
   createdAt: string;
 }
 
+// ─── Agent Goals & Tasks ─────────────────────────────────────────
+
+export type GoalStatus = "pending" | "active" | "blocked" | "complete" | "abandoned";
+export type TaskStatus = "pending" | "running" | "complete" | "failed" | "blocked";
+export type TaskType   = "research" | "search" | "shell" | "synthesize" | "notify" | "analyze";
+export type RiskLevel  = "low" | "medium" | "high";
+
+export interface AgentGoal {
+  id: string;
+  title: string;
+  description: string;
+  status: GoalStatus;
+  priority: number;       // 1-10
+  createdBy: "user" | "agent" | "event";
+  userId: string;
+  deadline?: string;
+  progress: number;       // 0-100
+  parentId?: string;
+  sourceSessionId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentTask {
+  id: string;
+  goalId: string;
+  description: string;
+  type: TaskType;
+  status: TaskStatus;
+  result?: string;
+  attempts: number;
+  riskLevel: RiskLevel;
+  requiresApproval: boolean;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
 // ─── MemoryDatabase ───────────────────────────────────────────────
 
 export class MemoryDatabase {
@@ -303,6 +341,8 @@ export class MemoryDatabase {
   readonly trajectories: TrajectoriesRepo;
   readonly promptOptimization: PromptOptimizationRepo;
   readonly parliamentVerdicts: ParliamentVerdictsRepo;
+  readonly agentGoals: AgentGoalsRepo;
+  readonly agentTasks: AgentTasksRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -334,6 +374,8 @@ export class MemoryDatabase {
     this.trajectories       = new TrajectoriesRepo(this.db);
     this.promptOptimization = new PromptOptimizationRepo(this.db);
     this.parliamentVerdicts = new ParliamentVerdictsRepo(this.db);
+    this.agentGoals         = new AgentGoalsRepo(this.db);
+    this.agentTasks         = new AgentTasksRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
@@ -628,6 +670,42 @@ export class MemoryDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_pv_topic     ON parliament_verdicts(topic);
       CREATE INDEX IF NOT EXISTS idx_pv_validated ON parliament_verdicts(validated);
+
+      CREATE TABLE IF NOT EXISTS agent_goals (
+        id                TEXT PRIMARY KEY,
+        title             TEXT NOT NULL,
+        description       TEXT NOT NULL,
+        status            TEXT NOT NULL DEFAULT 'pending',
+        priority          INTEGER NOT NULL DEFAULT 5,
+        created_by        TEXT NOT NULL DEFAULT 'user',
+        user_id           TEXT NOT NULL DEFAULT 'default',
+        deadline          TEXT,
+        progress          INTEGER NOT NULL DEFAULT 0,
+        parent_id         TEXT,
+        source_session_id TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_ag_status   ON agent_goals(status);
+      CREATE INDEX IF NOT EXISTS idx_ag_priority ON agent_goals(priority DESC);
+      CREATE INDEX IF NOT EXISTS idx_ag_user     ON agent_goals(user_id);
+
+      CREATE TABLE IF NOT EXISTS agent_tasks (
+        id                TEXT PRIMARY KEY,
+        goal_id           TEXT NOT NULL REFERENCES agent_goals(id),
+        description       TEXT NOT NULL,
+        type              TEXT NOT NULL DEFAULT 'research',
+        status            TEXT NOT NULL DEFAULT 'pending',
+        result            TEXT,
+        attempts          INTEGER NOT NULL DEFAULT 0,
+        risk_level        TEXT NOT NULL DEFAULT 'low',
+        requires_approval INTEGER NOT NULL DEFAULT 0,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at      TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_at_goal    ON agent_tasks(goal_id);
+      CREATE INDEX IF NOT EXISTS idx_at_status  ON agent_tasks(status);
     `);
   }
 
@@ -762,6 +840,46 @@ export class MemoryDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_pv_topic     ON parliament_verdicts(topic);
         CREATE INDEX IF NOT EXISTS idx_pv_validated ON parliament_verdicts(validated);
+      `);
+    }
+    if (current < 8) {
+      // v8: persistent agent goals + tasks (agentic loop foundation)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_goals (
+          id                TEXT PRIMARY KEY,
+          title             TEXT NOT NULL,
+          description       TEXT NOT NULL,
+          status            TEXT NOT NULL DEFAULT 'pending',
+          priority          INTEGER NOT NULL DEFAULT 5,
+          created_by        TEXT NOT NULL DEFAULT 'user',
+          user_id           TEXT NOT NULL DEFAULT 'default',
+          deadline          TEXT,
+          progress          INTEGER NOT NULL DEFAULT 0,
+          parent_id         TEXT,
+          source_session_id TEXT,
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ag_status   ON agent_goals(status);
+        CREATE INDEX IF NOT EXISTS idx_ag_priority ON agent_goals(priority DESC);
+        CREATE INDEX IF NOT EXISTS idx_ag_user     ON agent_goals(user_id);
+
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+          id                TEXT PRIMARY KEY,
+          goal_id           TEXT NOT NULL REFERENCES agent_goals(id),
+          description       TEXT NOT NULL,
+          type              TEXT NOT NULL DEFAULT 'research',
+          status            TEXT NOT NULL DEFAULT 'pending',
+          result            TEXT,
+          attempts          INTEGER NOT NULL DEFAULT 0,
+          risk_level        TEXT NOT NULL DEFAULT 'low',
+          requires_approval INTEGER NOT NULL DEFAULT 0,
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_at_goal    ON agent_tasks(goal_id);
+        CREATE INDEX IF NOT EXISTS idx_at_status  ON agent_tasks(status);
       `);
     }
     if (current < SCHEMA_VERSION) {
@@ -2135,6 +2253,182 @@ function rowToTrajectoryTurn(r: any): TrajectoryTurn {
     success: r.success === 1,
     durationMs: r.duration_ms ?? undefined,
     createdAt: r.created_at,
+  };
+}
+
+// ─── AgentGoalsRepo ───────────────────────────────────────────────
+
+class AgentGoalsRepo {
+  constructor(private db: Database.Database) {}
+
+  create(
+    title: string,
+    description: string,
+    opts: {
+      userId?: string;
+      priority?: number;
+      createdBy?: AgentGoal["createdBy"];
+      deadline?: string;
+      parentId?: string;
+      sourceSessionId?: string;
+    } = {},
+  ): AgentGoal {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`INSERT INTO agent_goals
+        (id, title, description, status, priority, created_by, user_id, deadline, progress, parent_id, source_session_id, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?)`)
+      .run(
+        id, title, description, "pending",
+        opts.priority ?? 5,
+        opts.createdBy ?? "user",
+        opts.userId ?? "default",
+        opts.deadline ?? null,
+        opts.parentId ?? null,
+        opts.sourceSessionId ?? null,
+        now, now,
+      );
+    return this.get(id)!;
+  }
+
+  get(id: string): AgentGoal | undefined {
+    const r = this.db.prepare(`SELECT * FROM agent_goals WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return r ? rowToGoal(r) : undefined;
+  }
+
+  getActive(userId = "default"): AgentGoal[] {
+    return (this.db.prepare(`SELECT * FROM agent_goals WHERE user_id = ? AND status IN ('pending','active') ORDER BY priority DESC, created_at ASC`).all(userId) as Record<string, unknown>[]).map(rowToGoal);
+  }
+
+  getAll(userId = "default"): AgentGoal[] {
+    return (this.db.prepare(`SELECT * FROM agent_goals WHERE user_id = ? ORDER BY created_at DESC`).all(userId) as Record<string, unknown>[]).map(rowToGoal);
+  }
+
+  updateStatus(id: string, status: GoalStatus, progress?: number): void {
+    const now = new Date().toISOString();
+    if (progress !== undefined) {
+      this.db.prepare(`UPDATE agent_goals SET status = ?, progress = ?, updated_at = ? WHERE id = ?`).run(status, progress, now, id);
+    } else {
+      this.db.prepare(`UPDATE agent_goals SET status = ?, updated_at = ? WHERE id = ?`).run(status, now, id);
+    }
+  }
+
+  updateProgress(id: string, progress: number): void {
+    this.db.prepare(`UPDATE agent_goals SET progress = ?, updated_at = ? WHERE id = ?`).run(progress, new Date().toISOString(), id);
+  }
+}
+
+// ─── AgentTasksRepo ───────────────────────────────────────────────
+
+class AgentTasksRepo {
+  constructor(private db: Database.Database) {}
+
+  create(
+    goalId: string,
+    description: string,
+    opts: {
+      type?: TaskType;
+      riskLevel?: RiskLevel;
+      requiresApproval?: boolean;
+    } = {},
+  ): AgentTask {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`INSERT INTO agent_tasks
+        (id, goal_id, description, type, status, attempts, risk_level, requires_approval, created_at, updated_at)
+        VALUES (?,?,?,?,?,0,?,?,?,?)`)
+      .run(
+        id, goalId, description,
+        opts.type ?? "research",
+        "pending",
+        opts.riskLevel ?? "low",
+        opts.requiresApproval ? 1 : 0,
+        now, now,
+      );
+    return this.get(id)!;
+  }
+
+  get(id: string): AgentTask | undefined {
+    const r = this.db.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return r ? rowToTask(r) : undefined;
+  }
+
+  /** Next pending low/medium-risk task, ordered by goal priority then creation time */
+  nextPending(): AgentTask | undefined {
+    const r = this.db.prepare(`
+      SELECT t.* FROM agent_tasks t
+      JOIN agent_goals g ON t.goal_id = g.id
+      WHERE t.status = 'pending'
+        AND t.risk_level IN ('low','medium')
+        AND t.requires_approval = 0
+        AND g.status IN ('pending','active')
+      ORDER BY g.priority DESC, t.created_at ASC
+      LIMIT 1
+    `).get() as Record<string, unknown> | undefined;
+    return r ? rowToTask(r) : undefined;
+  }
+
+  /** Tasks awaiting user approval */
+  pendingApproval(): AgentTask[] {
+    return (this.db.prepare(`SELECT * FROM agent_tasks WHERE status = 'pending' AND requires_approval = 1`).all() as Record<string, unknown>[]).map(rowToTask);
+  }
+
+  forGoal(goalId: string): AgentTask[] {
+    return (this.db.prepare(`SELECT * FROM agent_tasks WHERE goal_id = ? ORDER BY created_at ASC`).all(goalId) as Record<string, unknown>[]).map(rowToTask);
+  }
+
+  markRunning(id: string): void {
+    this.db.prepare(`UPDATE agent_tasks SET status = 'running', attempts = attempts + 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+  }
+
+  markComplete(id: string, result: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`UPDATE agent_tasks SET status = 'complete', result = ?, updated_at = ?, completed_at = ? WHERE id = ?`).run(result, now, now, id);
+  }
+
+  markFailed(id: string, reason: string): void {
+    this.db.prepare(`UPDATE agent_tasks SET status = 'failed', result = ?, updated_at = ? WHERE id = ?`).run(reason, new Date().toISOString(), id);
+  }
+
+  approve(id: string): void {
+    this.db.prepare(`UPDATE agent_tasks SET requires_approval = 0, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+  }
+}
+
+function rowToGoal(r: Record<string, unknown>): AgentGoal {
+  return {
+    id: r["id"] as string,
+    title: r["title"] as string,
+    description: r["description"] as string,
+    status: r["status"] as GoalStatus,
+    priority: r["priority"] as number,
+    createdBy: r["created_by"] as AgentGoal["createdBy"],
+    userId: r["user_id"] as string,
+    deadline: (r["deadline"] as string) || undefined,
+    progress: r["progress"] as number,
+    parentId: (r["parent_id"] as string) || undefined,
+    sourceSessionId: (r["source_session_id"] as string) || undefined,
+    createdAt: r["created_at"] as string,
+    updatedAt: r["updated_at"] as string,
+  };
+}
+
+function rowToTask(r: Record<string, unknown>): AgentTask {
+  return {
+    id: r["id"] as string,
+    goalId: r["goal_id"] as string,
+    description: r["description"] as string,
+    type: r["type"] as TaskType,
+    status: r["status"] as TaskStatus,
+    result: (r["result"] as string) || undefined,
+    attempts: r["attempts"] as number,
+    riskLevel: r["risk_level"] as RiskLevel,
+    requiresApproval: (r["requires_approval"] as number) === 1,
+    createdAt: r["created_at"] as string,
+    updatedAt: r["updated_at"] as string,
+    completedAt: (r["completed_at"] as string) || undefined,
   };
 }
 
