@@ -32,6 +32,17 @@ export interface OpenCodeAdapterConfig {
   sessionId: string;
 }
 
+export interface OpenCodeDiagnosis {
+  reachable: boolean;
+  port: number;
+  reason?: "not_running" | "server_error" | "timeout" | "unknown";
+  detail?: string;
+  /** Whether the opencode binary is installed */
+  installed?: boolean;
+  /** A different port where something responded */
+  altPort?: number;
+}
+
 interface OpenCodeEvent {
   type: string;
   properties?: Record<string, unknown>;
@@ -263,14 +274,76 @@ export class OpenCodeAdapter {
 
   /** Check if OpenCode server is reachable */
   async ping(): Promise<boolean> {
+    const result = await this.diagnose();
+    return result.reachable;
+  }
+
+  /**
+   * Detailed connectivity check.
+   * Returns what's wrong and why, not just true/false.
+   */
+  async diagnose(): Promise<OpenCodeDiagnosis> {
+    // 1. Try the configured port
     try {
       const r = await fetch(`${this.baseUrl}/`, {
         headers: this.headers,
         signal: AbortSignal.timeout(3000),
       });
-      return r.status < 500;
+      if (r.status < 500) {
+        return { reachable: true, port: this.port };
+      }
+      return {
+        reachable: false,
+        port: this.port,
+        reason: "server_error",
+        detail: `Server responded with HTTP ${r.status}`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isRefused = msg.includes("ECONNREFUSED") || msg.includes("Connection refused");
+      const isTimeout = msg.includes("timeout") || msg.includes("AbortError");
+
+      // 2. Check if opencode is installed
+      const installed = await this.checkInstalled();
+
+      // 3. Check if it's running on a different common port
+      const altPort = await this.findAltPort();
+
+      return {
+        reachable: false,
+        port: this.port,
+        reason: isRefused ? "not_running" : isTimeout ? "timeout" : "unknown",
+        detail: msg,
+        installed,
+        altPort,
+      };
+    }
+  }
+
+  private async checkInstalled(): Promise<boolean> {
+    try {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const exec = promisify(execFile);
+      await exec("which", ["opencode"]);
+      return true;
     } catch {
       return false;
     }
+  }
+
+  private async findAltPort(): Promise<number | undefined> {
+    // Check other common ports OpenCode might use
+    for (const port of [3000, 8080, 4097, 4095]) {
+      try {
+        const r = await fetch(`http://localhost:${port}/`, {
+          signal: AbortSignal.timeout(500),
+        });
+        if (r.status < 500) return port;
+      } catch {
+        // not there
+      }
+    }
+    return undefined;
   }
 }

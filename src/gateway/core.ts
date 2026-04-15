@@ -2192,17 +2192,20 @@ export class OwlGateway {
       preformatted: true,
     });
 
-    // "watch my claude code" / "watch my opencode" / "watch" → register and return instructions
-    if (/^(\/watch|watch(\s+(my\s+)?(claude[\s-]*(code)?|opencode|agent|coding\s+agent))?)$/i.test(text)) {
+    // "watch my claude code" / "watch my opencode [port N]" / "watch" → register
+    if (/^(\/watch|watch(\s+(my\s+)?(claude[\s-]*(code)?|opencode|agent|coding\s+agent))?)(\s+port\s+\d+)?$/i.test(text)) {
       if (!this.agentWatch) {
         return mkResp("Agent Watch is not enabled. Start StackOwl with agent watch support.");
       }
       const isOpenCode = /opencode/i.test(text);
       const agentType = isOpenCode ? "opencode" : "claude-code";
+      const portMatch = text.match(/port\s+(\d+)/i);
+      const port = portMatch ? parseInt(portMatch[1]!, 10) : undefined;
       const reg = await this.agentWatch.registerUser(
         message.userId,
         message.channelId,
         agentType as import("../agent-watch/formatters/telegram.js").AgentType,
+        port,
       );
       return mkHtml(reg.telegramMessage);
     }

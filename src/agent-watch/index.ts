@@ -18,7 +18,7 @@ import { Relay } from "./relay.js";
 import { mountAgentWatchRoutes, buildSettingsSnippet, AGENT_WATCH_PORT } from "./server.js";
 import { parseAnswer } from "./answer-parser.js";
 import { formatWatchStarted, formatSessionSummary, type AgentType } from "./formatters/telegram.js";
-import { OpenCodeAdapter } from "./adapters/opencode.js";
+import { OpenCodeAdapter, type OpenCodeDiagnosis } from "./adapters/opencode.js";
 import { log } from "../logger.js";
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -100,11 +100,12 @@ export class AgentWatchManager {
     userId: string,
     channelId: string,
     agentType: AgentType = "claude-code",
+    port?: number,
   ): Promise<WatchRegistration> {
     const token = randomBytes(12).toString("hex");
 
     if (agentType === "opencode") {
-      return this.registerOpenCode(userId, channelId, token);
+      return this.registerOpenCode(userId, channelId, token, port);
     }
     return this.registerClaudeCode(userId, channelId, token);
   }
@@ -125,27 +126,23 @@ export class AgentWatchManager {
     userId: string,
     channelId: string,
     token: string,
+    port?: number,
   ): Promise<WatchRegistration> {
     // Stop any existing OpenCode adapter for this user first
     this.openCodeAdapters.get(userId)?.stop().catch(() => {});
 
-    const adapter = new OpenCodeAdapter({ sessionId: `opencode-${userId}-${Date.now()}` });
+    const adapter = new OpenCodeAdapter({
+      sessionId: `opencode-${userId}-${Date.now()}`,
+      port,
+    });
 
     // ── Validate before claiming to watch ────────────────────────
-    const reachable = await adapter.ping();
-    if (!reachable) {
+    const diagnosis = await adapter.diagnose();
+    if (!diagnosis.reachable) {
       return {
         token,
         agentType: "opencode",
-        telegramMessage: [
-          `❌ <b>Cannot reach OpenCode server</b>`,
-          ``,
-          `OpenCode's HTTP server is not running on <code>http://localhost:4096</code>.`,
-          ``,
-          `Start OpenCode first, then say <b>watch my opencode</b> again.`,
-          ``,
-          `<i>Tip: OpenCode starts the server automatically when you run <code>opencode</code> in your terminal.</i>`,
-        ].join("\n"),
+        telegramMessage: buildOpenCodeErrorMessage(diagnosis),
       };
     }
 
@@ -282,4 +279,63 @@ export class AgentWatchManager {
       `[AgentWatch] User ${userId} added rule: ${toolPattern} → ${decision}`,
     );
   }
+}
+
+// ─── Smart Error Builder ──────────────────────────────────────────
+
+function buildOpenCodeErrorMessage(d: OpenCodeDiagnosis): string {
+  const lines: string[] = [];
+
+  // ── Headline based on what we know ───────────────────────────
+  if (!d.installed) {
+    lines.push(`❌ <b>OpenCode is not installed</b>`);
+    lines.push(``);
+    lines.push(`I couldn't find the <code>opencode</code> command on your system.`);
+    lines.push(``);
+    lines.push(`<b>To install OpenCode:</b>`);
+    lines.push(`1. Run: <code>npm install -g opencode-ai</code>`);
+    lines.push(`   or: <code>curl -fsSL https://opencode.ai/install | bash</code>`);
+    lines.push(`2. Then run <code>opencode</code> in your project directory`);
+    lines.push(`3. Say <b>watch my opencode</b> again`);
+    return lines.join("\n");
+  }
+
+  if (d.reason === "timeout") {
+    lines.push(`⏱ <b>OpenCode server timed out</b>`);
+    lines.push(``);
+    lines.push(`OpenCode is installed but the server on port <code>${d.port}</code> didn't respond in time.`);
+    lines.push(``);
+    lines.push(`<b>Possible causes:</b>`);
+    lines.push(`• OpenCode is starting up — wait a few seconds and try again`);
+    lines.push(`• A firewall is blocking port ${d.port}`);
+    lines.push(`• OpenCode crashed — check your terminal for errors`);
+  } else {
+    // not_running or unknown
+    lines.push(`❌ <b>OpenCode server is not running</b>`);
+    lines.push(``);
+    lines.push(`Nothing is listening on <code>http://localhost:${d.port}</code>.`);
+  }
+
+  // ── Did we find it on another port? ──────────────────────────
+  if (d.altPort) {
+    lines.push(``);
+    lines.push(`💡 <b>I found something running on port ${d.altPort}.</b>`);
+    lines.push(`If that's your OpenCode instance, say:`);
+    lines.push(`<code>watch my opencode port ${d.altPort}</code>`);
+  }
+
+  // ── How to fix ───────────────────────────────────────────────
+  lines.push(``);
+  lines.push(`<b>To start OpenCode:</b>`);
+  lines.push(`1. Open a terminal in your project directory`);
+  lines.push(`2. Run: <code>opencode</code>`);
+  lines.push(`3. Wait for it to start (you'll see a TUI interface)`);
+  lines.push(`4. Come back here and say <b>watch my opencode</b>`);
+
+  if (d.reason === "not_running") {
+    lines.push(``);
+    lines.push(`<i>OpenCode starts its HTTP server automatically on port 4096 when you run it.</i>`);
+  }
+
+  return lines.join("\n");
 }
