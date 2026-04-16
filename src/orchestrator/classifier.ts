@@ -228,12 +228,20 @@ export async function classifyStrategy(
     `- PARLIAMENT: A decision, dilemma, or tradeoff where multiple perspectives genuinely help. Select 2-5 relevant owls.\n` +
     `- SWARM: Multiple INDEPENDENT subtasks that each benefit from a different specialist. Each runs in parallel.\n\n` +
     `RULES:\n` +
-    `- Default to STANDARD when unsure.\n` +
-    `- SPECIALIST only when there's a clear domain match.\n` +
-    `- PARLIAMENT only for genuine dilemmas, NOT factual questions.\n` +
-    `- SWARM only when subtasks are truly independent (no data dependencies).\n` +
-    `- PLANNED when there are sequential dependencies between steps.\n` +
-    `- For PARLIAMENT: assign 2-5 owls based on topic relevance, not always all.\n` +
+    `- PLANNED is REQUIRED (not optional) for ANY request with 3+ distinct sequential steps, ` +
+    `multi-phase workflows, or tasks where the output of one step feeds into the next ` +
+    `(e.g. "build X, then test it", "research Y then write a report", "first create Z then deploy it").\n` +
+    `- PLANNED is REQUIRED when the user says "first... then...", "after that", "step by step", ` +
+    `"phase 1... phase 2", or describes a workflow with clear sequential dependencies.\n` +
+    `- SWARM is REQUIRED when 2+ independent specialist subtasks exist that have absolutely NO data dependency between them.\n` +
+    `- STANDARD is for single-phase requests that need tools but have no sequential dependencies (lookups, single writes, calculations).\n` +
+    `- DIRECT is ONLY for greetings, thanks, trivial one-sentence questions needing zero tools.\n` +
+    `- SPECIALIST when the task clearly belongs to one owl's domain AND is single-phase.\n` +
+    `- PARLIAMENT only for genuine value, ethical, or architectural tradeoff dilemmas — NOT factual questions.\n` +
+    `- When deciding between STANDARD and PLANNED: if you would mentally decompose the task into ` +
+    `sub-steps before executing, choose PLANNED.\n` +
+    `- Never choose STANDARD for a task you would break into phases in your head.\n` +
+    `- For PARLIAMENT: assign 2-5 owls based on topic relevance.\n` +
     `- For SWARM/PLANNED: provide subtasks with id, description, assignedOwl, dependsOn.\n\n` +
     `Respond with ONLY valid JSON:\n` +
     `{\n` +
@@ -283,6 +291,25 @@ export async function classifyStrategy(
         `[Classifier] Invalid strategy "${parsed.strategy}", defaulting to STANDARD`,
       );
       return makeDefault(defaultOwl);
+    }
+
+    // ── Post-parse enforcement: escalate STANDARD → PLANNED when multi-step signals
+    // are present in the user message, regardless of what the LLM classified.
+    // This catches cases where the classifier under-estimates task complexity.
+    const multiStepSignals =
+      /\b(first[\s\S]{0,40}then|after\s+that|next\s+step|step\s+\d|phase\s+\d|followed\s+by|and\s+then|set\s+up[\s\S]{0,30}and[\s\S]{0,30}(deploy|test|run|connect)|build[\s\S]{0,30}then|create[\s\S]{0,30}then|research[\s\S]{0,30}write|analyze[\s\S]{0,30}generate)\b/i;
+    if (
+      parsed.strategy === "STANDARD" &&
+      (parsed.confidence == null || parsed.confidence < 0.75) &&
+      multiStepSignals.test(userMessage)
+    ) {
+      log.engine.info(
+        `[Classifier] Multi-step signals detected in message — escalating STANDARD → PLANNED ` +
+        `(original confidence: ${parsed.confidence?.toFixed(2) ?? "n/a"})`,
+      );
+      parsed.strategy = "PLANNED";
+      parsed.reasoning =
+        `Multi-step sequential signals detected; auto-escalated from STANDARD to PLANNED.`;
     }
 
     // Ensure at least one owl assignment

@@ -39,6 +39,30 @@ function toOrchResult(
   };
 }
 
+/**
+ * Lightweight task-completion detector.
+ * Returns false ONLY when the runtime has explicitly signalled failure via
+ * EXHAUSTION_MARKER. All other responses — including short ones — are treated
+ * as completed, because the runtime's self-correction layer already handles
+ * partial results before marking exhaustion.
+ *
+ * Deliberately conservative: we only escalate when we have a hard signal,
+ * not based on heuristics like response length (which breaks short valid answers).
+ */
+function isTaskComplete(content: string): boolean {
+  // Empty content is a clear failure
+  if (!content || content.trim().length === 0) return false;
+
+  // EXHAUSTION_MARKER is the only reliable programmatic signal from the runtime
+  // that the ReAct loop genuinely gave up after self-correction also failed.
+  if (content.includes("__STACKOWL_EXHAUSTED__")) return false;
+
+  // Everything else is considered a completed (or at least partial) answer.
+  // The self-correction handler in runtime.ts is responsible for recovery
+  // before we ever reach this point.
+  return true;
+}
+
 // ─── Orchestrator ────────────────────────────────────────────
 
 export class TaskOrchestrator {
@@ -280,14 +304,140 @@ export class TaskOrchestrator {
     return toOrchResult(response, "DIRECT");
   }
 
-  // ─── STANDARD ────────────────────────────────────────────────
+  // ─── STANDARD (with goal loop + strategy escalation) ─────────
+  //
+  // Instead of calling engine.run() once and returning whatever comes back,
+  // we run up to MAX_GOAL_ATTEMPTS times, escalating the strategy each time
+  // the previous attempt didn't produce a completed answer:
+  //
+  //   Attempt 1 → STANDARD  (normal single-engine run)
+  //   Attempt 2 → PLANNED   (task planner decomposes into steps)
+  //   Attempt 3 → SWARM     (parallel specialist agents)
+  //
+  // The escalation stops as soon as isTaskComplete() returns true.
 
   private async executeStandard(
     userMessage: string,
     baseContext: EngineContext,
   ): Promise<OrchestrationResult> {
-    const response = await this.engine.run(userMessage, baseContext);
-    return toOrchResult(response, "STANDARD");
+    const MAX_GOAL_ATTEMPTS = 3;
+    const escalationLadder: Array<"STANDARD" | "PLANNED" | "SWARM"> = [
+      "STANDARD",
+      "PLANNED",
+      "SWARM",
+    ];
+
+    let lastResult: OrchestrationResult | null = null;
+
+    for (let attempt = 0; attempt < MAX_GOAL_ATTEMPTS; attempt++) {
+      const currentStrategy = escalationLadder[attempt];
+
+      if (attempt > 0) {
+        log.engine.info(
+          `[GoalLoop] Attempt ${attempt + 1}/${MAX_GOAL_ATTEMPTS} — ` +
+          `previous attempt incomplete, escalating to ${currentStrategy}`,
+        );
+        if (baseContext.onProgress) {
+          await baseContext.onProgress(
+            `🔄 **Retrying with ${currentStrategy} strategy** (attempt ${attempt + 1}/${MAX_GOAL_ATTEMPTS})...`,
+          );
+        }
+      }
+
+      let result: OrchestrationResult;
+
+      if (currentStrategy === "STANDARD") {
+        // Plain engine run
+        const response = await this.engine.run(userMessage, baseContext);
+        result = toOrchResult(response, "STANDARD");
+
+      } else if (currentStrategy === "PLANNED") {
+        // Escalate to wave-based planner — let executePlanned decompose the task
+        const plannedStrategy: TaskStrategy = {
+          strategy: "PLANNED",
+          reasoning: `Auto-escalated from failed STANDARD attempt (goal loop attempt ${attempt + 1})`,
+          confidence: 0.85,
+          depth: baseContext.depth ?? "quick",
+          owlAssignments: [
+            {
+              owlName: baseContext.owl.persona.name,
+              role: "lead",
+              reasoning: "Goal loop escalation",
+            },
+          ],
+          // No pre-built subtasks — executePlanned will call TaskPlanner to generate them
+          subtasks: [],
+        };
+        const callbacks = { onProgress: baseContext.onProgress };
+        result = await this.executePlanned(
+          userMessage,
+          baseContext,
+          plannedStrategy,
+          callbacks,
+        );
+
+      } else {
+        // SWARM: two parallel specialists — one analytical, one executional
+        const swarmStrategy: TaskStrategy = {
+          strategy: "SWARM",
+          reasoning: `Final escalation — parallel specialist attempt (goal loop attempt ${attempt + 1})`,
+          confidence: 0.75,
+          depth: baseContext.depth ?? "quick",
+          owlAssignments: [
+            {
+              owlName: baseContext.owl.persona.name,
+              role: "lead",
+              reasoning: "Goal loop escalation",
+            },
+          ],
+          subtasks: [
+            {
+              id: 1,
+              description: `Analyze and plan: ${userMessage}`,
+              assignedOwl: baseContext.owl.persona.name,
+              dependsOn: [],
+              toolsNeeded: [],
+            },
+            {
+              id: 2,
+              description: `Execute and deliver: ${userMessage}`,
+              assignedOwl: baseContext.owl.persona.name,
+              dependsOn: [],
+              toolsNeeded: [],
+            },
+          ],
+        };
+        const callbacks = { onProgress: baseContext.onProgress };
+        result = await this.executeSwarm(
+          userMessage,
+          baseContext,
+          swarmStrategy,
+          callbacks,
+        );
+      }
+
+      lastResult = result;
+
+      if (isTaskComplete(result.content)) {
+        if (attempt > 0) {
+          log.engine.info(
+            `[GoalLoop] Task completed on attempt ${attempt + 1} using ${currentStrategy} strategy.`,
+          );
+        }
+        return result;
+      }
+
+      log.engine.warn(
+        `[GoalLoop] Attempt ${attempt + 1}/${MAX_GOAL_ATTEMPTS} (${currentStrategy}) ` +
+        `did not produce a complete answer.` +
+        (attempt + 1 < MAX_GOAL_ATTEMPTS
+          ? ` Escalating to ${escalationLadder[attempt + 1]}.`
+          : ` All attempts exhausted — returning last result.`),
+      );
+    }
+
+    // All attempts exhausted — return whatever we have
+    return lastResult!;
   }
 
   // ─── SPECIALIST ──────────────────────────────────────────────

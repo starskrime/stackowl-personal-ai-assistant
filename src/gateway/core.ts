@@ -124,7 +124,7 @@ export class OwlGateway {
    * clarify, pivot, or accept the task can't be done.
    */
   private stuckStreak: Map<string, number> = new Map();
-  private static readonly STUCK_THRESHOLD = 2;
+  private static readonly STUCK_THRESHOLD = 3;
 
   /**
    * Cross-turn attempt logs — one per active session.
@@ -472,13 +472,13 @@ export class OwlGateway {
           `[stuck-task] Session "${sessionKey}" has been stuck for ${streak} consecutive responses. Escalating.`,
         );
         const escalation =
-          `⚠️ **I've been stuck on this task for ${streak} attempts and haven't been able to make progress.**\n\n` +
-          `Here's what I tried:\n${cleanContent}\n\n` +
-          `To move forward, I need you to choose one of these options:\n\n` +
-          `**A) Provide more information or clarify** — if there's something I'm missing or misunderstanding, tell me and I'll try again.\n\n` +
-          `**B) Try a completely different approach** — describe what you'd like me to do differently, and I'll start fresh.\n\n` +
-          `**C) Accept that this can't be done right now** — I'll note the limitation and you can revisit it later.\n\n` +
-          `_Reply with A, B, or C (or just tell me what you'd like to do)._`;
+          `⚠️ **I've tried ${streak} different strategies on this task and still haven't completed it.**\n\n` +
+          `Here's where I got to:\n${cleanContent}\n\n` +
+          `To move forward, I need your help choosing a direction:\n\n` +
+          `**A) Add more context or clarify the goal** — even a small detail often unlocks a new approach.\n\n` +
+          `**B) Describe a specific approach you'd like me to try** — if you have a method in mind, tell me and I'll execute it.\n\n` +
+          `**C) Acknowledge this is a current limitation** — I'll note it and you can revisit it later.\n\n` +
+          `_Reply with A, B, or C (or just describe what you want)._`;
 
         return {
           ...response,
