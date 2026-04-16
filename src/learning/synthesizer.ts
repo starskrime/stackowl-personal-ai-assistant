@@ -162,7 +162,7 @@ export class KnowledgeSynthesizer {
     return report;
   }
 
-  async synthesizeSingle(ctx: SynthesisContext, budget: LlmBudget): Promise<SynthesisResult> {
+  async synthesizeSingle(ctx: SynthesisContext, budget: LlmBudget = { count: 0 }): Promise<SynthesisResult> {
     const startTime = Date.now();
     const { topic } = ctx;
     let result: SynthesisResult;

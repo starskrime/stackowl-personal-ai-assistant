@@ -33,3 +33,4 @@ session.tmp
 
 # Embedding model cache (auto-downloaded, machine-specific)
 local_cache/
+session.tmp

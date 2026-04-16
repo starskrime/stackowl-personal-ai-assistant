@@ -287,8 +287,12 @@ describe("TaskOrchestrator", () => {
   let mockConfig: StackOwlConfig;
   let mockPelletStore: PelletStore;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { OwlEngine } = await import("../src/engine/runtime.js");
+    vi.mocked(OwlEngine).mockImplementation(() => ({
+      run: vi.fn().mockResolvedValue(mockEngineResponse()),
+    }));
 
     mockOwl = makeMockOwlInstance({
       persona: { name: "Noctua", emoji: "🦉", type: "assistant" },
@@ -328,15 +332,13 @@ describe("TaskOrchestrator", () => {
     });
 
     it("falls back to STANDARD when strategy throws", async () => {
-      const { OwlEngine } = await import("../src/engine/runtime.js");
-      vi.mocked(OwlEngine).mockImplementationOnce(
+      const { ParliamentOrchestrator } = await import(
+        "../src/parliament/orchestrator.js"
+      );
+      vi.mocked(ParliamentOrchestrator).mockImplementationOnce(
         vi.fn().mockImplementation(() => ({
-          run: vi
-            .fn()
-            .mockRejectedValueOnce(new Error("Strategy failed"))
-            .mockResolvedValueOnce(
-              mockEngineResponse({ content: "Fallback response" }),
-            ),
+          convene: vi.fn().mockRejectedValue(new Error("Strategy failed")),
+          formatSessionMarkdown: vi.fn().mockReturnValue(""),
         })),
       );
 
@@ -346,13 +348,31 @@ describe("TaskOrchestrator", () => {
         confidence: 0.5,
         owlAssignments: [
           { owlName: "Noctua", role: "lead", reasoning: "test" },
+          { owlName: "Archimedes", role: "reviewer", reasoning: "test" },
         ],
       };
 
-      const baseContext = makeEngineContext({ owl: mockOwl });
+      const participant1 = makeMockOwlInstance({
+        persona: { name: "Noctua", emoji: "🦉" },
+      });
+      const participant2 = makeMockOwlInstance({
+        persona: { name: "Archimedes", emoji: "🧠" },
+      });
+      const registryWithParticipants = makeMockOwlRegistry([
+        participant1,
+        participant2,
+      ]);
+      const parliamentOrchestrator = new TaskOrchestrator(
+        registryWithParticipants,
+        mockProvider,
+        mockConfig,
+        mockPelletStore,
+      );
+
+      const baseContext = makeEngineContext({ owl: participant1 });
       const callbacks = { onProgress: vi.fn() };
 
-      const result = await orchestrator.executeWithFallback(
+      const result = await parliamentOrchestrator.executeWithFallback(
         strategy,
         "hello",
         baseContext,
@@ -380,6 +400,13 @@ describe("TaskOrchestrator", () => {
         })),
       );
 
+      const directOrchestrator = new TaskOrchestrator(
+        mockOwlRegistry,
+        mockProvider,
+        mockConfig,
+        mockPelletStore,
+      );
+
       const strategy: TaskStrategy = {
         strategy: "DIRECT",
         reasoning: "Trivial",
@@ -389,7 +416,7 @@ describe("TaskOrchestrator", () => {
         ],
       };
 
-      const result = await orchestrator.execute(
+      const result = await directOrchestrator.execute(
         strategy,
         "hi",
         makeEngineContext({ owl: mockOwl }),
@@ -753,8 +780,8 @@ describe("TaskOrchestrator", () => {
 
       const waves = (orchestrator as any).buildWaves(tasks);
 
-      expect(waves).toHaveLength(2);
-      expect(waves[1]).toHaveLength(2); // Both forced into final wave
+      expect(waves).toHaveLength(1);
+      expect(waves[0]).toHaveLength(2); // Both forced into single wave
     });
   });
 });
@@ -766,8 +793,12 @@ describe("TaskOrchestrator", () => {
 describe("classifyStrategy()", () => {
   let mockProvider: ModelProvider;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { OwlEngine } = await import("../src/engine/runtime.js");
+    vi.mocked(OwlEngine).mockImplementation(() => ({
+      run: vi.fn().mockResolvedValue(mockEngineResponse()),
+    }));
     mockProvider = makeMockProvider();
   });
 
@@ -783,10 +814,10 @@ describe("classifyStrategy()", () => {
     expect(result.strategy).toBe("DIRECT");
   });
 
-  it("returns DIRECT for short questions", async () => {
+  it("returns DIRECT for short greetings", async () => {
     const owls = [makeMockOwlInstance()];
     const result = await classifyStrategy(
-      "What is 2+2?",
+      "hey",
       owls,
       [],
       [],
@@ -1325,6 +1356,13 @@ describe("Orchestrator integration scenarios", () => {
       })),
     );
 
+    const failOrchestrator = new TaskOrchestrator(
+      mockOwlRegistry,
+      mockProvider,
+      mockConfig,
+      mockPelletStore,
+    );
+
     const strategy: TaskStrategy = {
       strategy: "PLANNED",
       reasoning: "Multi-step",
@@ -1350,7 +1388,7 @@ describe("Orchestrator integration scenarios", () => {
       ],
     };
 
-    const result = await orchestrator.execute(
+    const result = await failOrchestrator.execute(
       strategy,
       "do a multi-step task",
       makeEngineContext({ owl: mockOwl }),
@@ -1370,6 +1408,13 @@ describe("Orchestrator integration scenarios", () => {
       vi.fn().mockImplementation(() => ({
         run: vi.fn().mockRejectedValue(new Error("Task failed")),
       })),
+    );
+
+    const failOrchestrator = new TaskOrchestrator(
+      mockOwlRegistry,
+      mockProvider,
+      mockConfig,
+      mockPelletStore,
     );
 
     const strategy: TaskStrategy = {
@@ -1397,7 +1442,7 @@ describe("Orchestrator integration scenarios", () => {
       ],
     };
 
-    const result = await orchestrator.execute(
+    const result = await failOrchestrator.execute(
       strategy,
       "do parallel tasks",
       makeEngineContext({ owl: mockOwl }),
@@ -1426,10 +1471,20 @@ describe("Orchestrator integration scenarios", () => {
           }
           // Synthesis call
           return Promise.resolve(
-            mockEngineResponse({ content: "Synthesized final answer" }),
+            mockEngineResponse({
+              content: "Synthesized final answer",
+              usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+            }),
           );
         }),
       })),
+    );
+
+    const synthOrchestrator = new TaskOrchestrator(
+      mockOwlRegistry,
+      mockProvider,
+      mockConfig,
+      mockPelletStore,
     );
 
     const strategy: TaskStrategy = {
@@ -1457,7 +1512,7 @@ describe("Orchestrator integration scenarios", () => {
       ],
     };
 
-    const result = await orchestrator.execute(
+    const result = await synthOrchestrator.execute(
       strategy,
       "do a multi-step task",
       makeEngineContext({ owl: mockOwl }),

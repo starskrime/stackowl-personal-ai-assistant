@@ -20,7 +20,6 @@ const GREETING_PATTERNS =
 
 function isTrivia(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.length < 25) return true;
   if (GREETING_PATTERNS.test(trimmed)) return true;
   return false;
 }
