@@ -34,3 +34,7 @@ session.tmp
 # Embedding model cache (auto-downloaded, machine-specific)
 local_cache/
 session.tmp
+.DS_Store
+__tests__/.pellets_test_workspace/
+__tests__/.test_workspace/
+skills-stats.json
