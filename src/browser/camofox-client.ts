@@ -13,6 +13,8 @@
 export interface CamoFoxClientConfig {
   baseUrl: string;
   apiKey?: string | null;
+  /** Session namespace key sent in every request body. Default: "stackowl" */
+  sessionKey?: string;
   defaultUserId?: string;
   defaultTimeout?: number;
 }
@@ -44,14 +46,27 @@ export class CamoFoxClient {
   readonly baseUrl: string;
   private readonly headers: Record<string, string>;
   private readonly timeout: number;
+  private readonly sessionKey: string;
 
   constructor(config: CamoFoxClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.timeout = config.defaultTimeout ?? 30000;
+    this.sessionKey = config.sessionKey ?? crypto.randomUUID();
     this.headers = {
       "Content-Type": "application/json",
       ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
     };
+  }
+
+  /** Inject sessionKey into a body payload. */
+  private withAuth(body: Record<string, unknown>): Record<string, unknown> {
+    return { ...body, sessionKey: this.sessionKey };
+  }
+
+  /** Append sessionKey to URLSearchParams. */
+  private authParams(params: URLSearchParams): URLSearchParams {
+    params.set("sessionKey", this.sessionKey);
+    return params;
   }
 
   // ─── Internal ────────────────────────────────────────────────
@@ -96,21 +111,22 @@ export class CamoFoxClient {
 
   /** Create a new tab. Optionally navigate to `url` immediately. */
   async createTab(userId: string, url?: string): Promise<TabCreateResponse> {
-    return this.req<TabCreateResponse>("POST", "/tabs", {
+    return this.req<TabCreateResponse>("POST", "/tabs", this.withAuth({
       userId,
       ...(url ? { url } : {}),
-    });
+    }));
   }
 
   /** Close a single tab. */
   async closeTab(tabId: string, userId: string): Promise<void> {
-    const params = new URLSearchParams({ userId });
+    const params = this.authParams(new URLSearchParams({ userId }));
     await this.req<unknown>("DELETE", `/tabs/${tabId}?${params}`);
   }
 
   /** Close all tabs for a user. */
   async closeSession(userId: string): Promise<void> {
-    await this.req<unknown>("DELETE", `/sessions/${userId}`);
+    const params = this.authParams(new URLSearchParams({ userId }));
+    await this.req<unknown>("DELETE", `/sessions/${userId}?${params}`);
   }
 
   // ─── Navigation ──────────────────────────────────────────────
@@ -131,23 +147,23 @@ export class CamoFoxClient {
   ): Promise<SnapshotResponse> {
     const macroMatch = url.match(/^(@\w+)\s+(.+)$/s);
     if (macroMatch) {
-      return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/navigate`, {
+      return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/navigate`, this.withAuth({
         userId,
         macro: macroMatch[1],
         query: macroMatch[2].trim(),
-      });
+      }));
     }
-    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/navigate`, {
+    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/navigate`, this.withAuth({
       userId,
       url,
-    });
+    }));
   }
 
   // ─── Interaction ─────────────────────────────────────────────
 
   /** Get current page accessibility snapshot. */
   async snapshot(tabId: string, userId: string): Promise<SnapshotResponse> {
-    const params = new URLSearchParams({ userId });
+    const params = this.authParams(new URLSearchParams({ userId }));
     return this.req<SnapshotResponse>("GET", `/tabs/${tabId}/snapshot?${params}`);
   }
 
@@ -157,10 +173,10 @@ export class CamoFoxClient {
     userId: string,
     ref: string,
   ): Promise<SnapshotResponse> {
-    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/click`, {
+    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/click`, this.withAuth({
       userId,
       ref,
-    });
+    }));
   }
 
   /** Type text into an element by its `eN` reference. */
@@ -171,12 +187,12 @@ export class CamoFoxClient {
     text: string,
     pressEnter?: boolean,
   ): Promise<SnapshotResponse> {
-    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/type`, {
+    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/type`, this.withAuth({
       userId,
       ref,
       text,
       ...(pressEnter !== undefined ? { pressEnter } : {}),
-    });
+    }));
   }
 
   /** Scroll the page. */
@@ -186,11 +202,11 @@ export class CamoFoxClient {
     direction: "up" | "down" | "left" | "right",
     amount?: number,
   ): Promise<SnapshotResponse> {
-    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/scroll`, {
+    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/scroll`, this.withAuth({
       userId,
       direction,
       ...(amount !== undefined ? { amount } : {}),
-    });
+    }));
   }
 
   /** Wait for a CSS selector or a fixed timeout. */
@@ -200,16 +216,16 @@ export class CamoFoxClient {
     selector?: string,
     timeout?: number,
   ): Promise<SnapshotResponse> {
-    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/wait`, {
+    return this.req<SnapshotResponse>("POST", `/tabs/${tabId}/wait`, this.withAuth({
       userId,
       ...(selector ? { selector } : {}),
       ...(timeout !== undefined ? { timeout } : {}),
-    });
+    }));
   }
 
   /** Take a screenshot. Returns base64-encoded PNG. */
   async screenshot(tabId: string, userId: string): Promise<string> {
-    const params = new URLSearchParams({ userId });
+    const params = this.authParams(new URLSearchParams({ userId }));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
 

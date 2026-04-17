@@ -188,6 +188,7 @@ import { MemoryDatabase } from "./memory/db.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
 import { GoalGraph } from "./goals/graph.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
+import { PlanLedger } from "./tasks/plan-ledger.js";
 
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
 
@@ -202,7 +203,7 @@ async function bootstrap() {
   // Create browser pool config — browsers are launched lazily on first request,
   // not on startup, to avoid blocking startup and wasting resources.
   let browserPool: BrowserPool | undefined;
-  if (config.browser?.enabled !== false) {
+  if (config.browser?.enabled !== false && !config.camofox?.enabled) {
     browserPool = new BrowserPool({
       poolSize: config.browser?.poolSize ?? 2,
       warmUp: config.browser?.warmUp ?? false,
@@ -617,6 +618,10 @@ async function bootstrap() {
   const goalGraph = new GoalGraph(workspacePath);
   await goalGraph.load();
 
+  // Plan Ledger — persistent plan state for cross-session resume
+  const planLedger = new PlanLedger(workspacePath);
+  await planLedger.init();
+
   // Register new tools
   const defaultProvider = providerRegistry.getDefault();
   const workflowExecutor = new WorkflowExecutor(
@@ -722,6 +727,8 @@ async function bootstrap() {
     memoryFeedback,
     goalGraph,
     groundState,
+    mcpManager,
+    planLedger,
   };
 }
 
@@ -995,6 +1002,8 @@ async function buildGateway(
     memoryFeedback: b.memoryFeedback,
     goalGraph: b.goalGraph,
     groundState: b.groundState,
+    mcpManager: b.mcpManager,
+    planLedger: b.planLedger,
     proactiveLoop: new ProactiveIntentionLoop(
       b.commitmentTracker,
       b.intentStateMachine,

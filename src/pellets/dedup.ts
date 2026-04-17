@@ -69,6 +69,50 @@ function sanitizeJsonStrings(raw: string): string {
   return out.join("");
 }
 
+// ─── JSON Recovery ────────────────────────────────────────────────
+
+/**
+ * Attempt to rescue a truncated JSON string by closing any open
+ * structures (objects and arrays) that the LLM left dangling when
+ * it hit the token limit mid-response.
+ *
+ * Strategy:
+ *  1. Walk the string tracking bracket depth and string-literal state.
+ *  2. If we end up mid-string, close the string.
+ *  3. Append one closing bracket per unclosed level in reverse order.
+ *
+ * This handles the most common truncation pattern:
+ *   {"verdict":"MERGE","merged_content":"...long text cut off here
+ * → {"verdict":"MERGE","merged_content":"...long text cut off here"}
+ */
+function repairTruncatedJson(raw: string): string {
+  const stack: Array<"{" | "["> = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\" && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{" || ch === "[") { stack.push(ch as "{" | "["); continue; }
+    if (ch === "}" || ch === "]") { stack.pop(); continue; }
+  }
+
+  let result = raw;
+
+  // If we ended mid-string, close it first
+  if (inString) result += '"';
+
+  // Close any open structures in reverse (LIFO)
+  for (let i = stack.length - 1; i >= 0; i--) {
+    result += stack[i] === "{" ? "}" : "]";
+  }
+
+  return result;
+}
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export type DedupVerdict = "CREATE" | "MERGE" | "SUPERSEDE" | "SKIP";
@@ -239,15 +283,78 @@ export class PelletDeduplicator {
           { role: "user", content: prompt },
         ],
         undefined,
-        { temperature: 0, maxTokens: 1024 },
+        // 2048 tokens: enough for a MERGE response with up to 300 words of merged_content
+        // (≈500 tokens content + JSON overhead + reasoning). 1024 caused truncation mid-JSON.
+        { temperature: 0, maxTokens: 2048 },
       );
 
-      let jsonStr = response.content.trim();
+      const result = this.parseDecisionResponse(response.content, existing, incoming, similarity);
+      if (result) return result;
+
+      // ── Retry: ask for minimal JSON only (verdict + reasoning) ─────────────────────────────────
+      // First parse failed. The model produced malformed JSON (embedded newlines,
+      // truncated merged_content, etc.). Ask it to return ONLY verdict + reasoning
+      // so we at least get the dedup decision even if the merged content is lost.
+      log.engine.info(
+        `[PelletDedup] First JSON parse failed — retrying with minimal-output prompt`,
+      );
+      const retryResponse = await this.provider!.chat(
+        [
+          {
+            role: "system",
+            content: "You are a knowledge base curator. Output only valid JSON. Be concise.",
+          },
+          { role: "user", content: prompt },
+          { role: "assistant", content: response.content },
+          {
+            role: "user",
+            content:
+              `Your previous response was not valid JSON. ` +
+              `Reply with ONLY this minimal JSON (no merged_content, no trailing commas, no comments):\n` +
+              `{"verdict": "MERGE or SUPERSEDE or CREATE or SKIP", "reasoning": "one sentence"}`,
+          },
+        ],
+        undefined,
+        { temperature: 0, maxTokens: 128 },
+      );
+
+      const retryResult = this.parseDecisionResponse(
+        retryResponse.content, existing, incoming, similarity,
+      );
+      if (retryResult) return retryResult;
+
+      // Both attempts failed — fall through to heuristic
+      throw new Error("Both LLM attempts produced invalid JSON");
+
+    } catch (err) {
+      log.engine.info(
+        `[PelletDedup] LLM decision failed, using heuristic: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return this.decideHeuristic(incoming, existing, similarity);
+    }
+  }
+
+  /**
+   * Parse and validate a raw LLM response string as a dedup decision.
+   * Returns null if the string cannot be parsed as valid JSON with a known verdict.
+   *
+   * Applies three levels of recovery before giving up:
+   *   1. Markdown fence stripping + comment removal + trailing-comma removal
+   *   2. sanitizeJsonStrings() — fixes control chars inside string values
+   *   3. repairTruncatedJson() — closes open brackets from token-limit truncation
+   */
+  private parseDecisionResponse(
+    raw: string,
+    existing: Pellet,
+    incoming: Pellet,
+    similarity: number,
+  ): DedupResult | null {
+    try {
+      let jsonStr = raw.trim();
+
+      // Strip markdown fences
       if (jsonStr.startsWith("```")) {
-        jsonStr = jsonStr
-          .replace(/^```json?/, "")
-          .replace(/```$/, "")
-          .trim();
+        jsonStr = jsonStr.replace(/^```json?/, "").replace(/```$/, "").trim();
       }
 
       // Strip JS-style comments that LLMs sometimes echo from the prompt
@@ -255,44 +362,45 @@ export class PelletDeduplicator {
       // Strip trailing commas before } or ]
       jsonStr = jsonStr.replace(/,\s*([}\]])/g, "$1");
 
-      // Extract JSON object if embedded in other text
+      // Extract outermost JSON object if embedded in surrounding text
       const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      }
+      if (jsonMatch) jsonStr = jsonMatch[0]!;
 
-      // Sanitize control characters inside JSON string values.
-      // Walk the string tracking whether we're inside quotes; replace
-      // control chars (0x00-0x1f, 0x7f) with spaces when inside a string.
+      // Pass 1: sanitize control characters inside string values
       jsonStr = sanitizeJsonStrings(jsonStr);
 
-      const parsed = JSON.parse(jsonStr);
-      const verdict = this.parseVerdict(parsed.verdict);
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        // Pass 2: try repairing a truncated JSON (e.g. token-limit mid-write)
+        const repaired = repairTruncatedJson(jsonStr);
+        parsed = JSON.parse(repaired); // throws if still invalid — caller catches
+      }
+
+      const verdict = this.parseVerdict(parsed["verdict"] as string);
 
       log.engine.info(
-        `[PelletDedup] LLM verdict: ${verdict} — "${parsed.reasoning}" (similarity=${similarity.toFixed(2)})`,
+        `[PelletDedup] LLM verdict: ${verdict} — "${parsed["reasoning"]}" (similarity=${similarity.toFixed(2)})`,
       );
 
       const result: DedupResult = {
         verdict,
-        reasoning: parsed.reasoning || "LLM decision",
+        reasoning: (parsed["reasoning"] as string) || "LLM decision",
         targetPelletId: existing.id,
       };
 
       if (verdict === "MERGE") {
-        result.mergedContent = parsed.merged_content || incoming.content;
-        result.mergedTitle = parsed.merged_title || existing.title;
-        result.mergedTags = Array.isArray(parsed.merged_tags)
-          ? parsed.merged_tags
+        result.mergedContent = (parsed["merged_content"] as string) || incoming.content;
+        result.mergedTitle   = (parsed["merged_title"] as string)   || existing.title;
+        result.mergedTags    = Array.isArray(parsed["merged_tags"])
+          ? (parsed["merged_tags"] as string[])
           : [...new Set([...existing.tags, ...incoming.tags])];
       }
 
       return result;
-    } catch (err) {
-      log.engine.info(
-        `[PelletDedup] LLM decision failed, using heuristic: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return this.decideHeuristic(incoming, existing, similarity);
+    } catch {
+      return null; // signal to caller to retry or fall back
     }
   }
 

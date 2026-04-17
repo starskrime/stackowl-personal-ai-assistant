@@ -296,4 +296,10 @@ export interface GatewayContext {
 
   // ─── Message Compressor (Phase 2 — batch summarization) ──────
   compressor?: import("../memory/compressor.js").MessageCompressor;
+
+  // ─── MCP Server Manager ─────────────────────────────────────
+  mcpManager?: import("../tools/mcp/manager.js").MCPManager;
+
+  // ─── Plan Ledger (persistent PLANNED/SWARM task state) ───────
+  planLedger?: import("../tasks/plan-ledger.js").PlanLedger;
 }

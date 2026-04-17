@@ -22,6 +22,8 @@ import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
 import type { StreamEvent } from "../../providers/base.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 import { convertTables } from "../formatters/table-converter.js";
+import { TelegramConfigMenu } from "./telegram-config/menu.js";
+import { saveConfig } from "../../config/loader.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -54,6 +56,8 @@ export class TelegramAdapter implements ChannelAdapter {
   private processedUpdates = new Map<string, number>();
   private updateCleanupInterval: ReturnType<typeof setInterval> | null = null;
   private userToChatId: Map<string, number> = new Map();
+  /** Interactive /config menu controller (public for web form token delegation) */
+  public configMenu: TelegramConfigMenu;
 
   constructor(
     private gateway: OwlGateway,
@@ -69,6 +73,31 @@ export class TelegramAdapter implements ChannelAdapter {
     this.chatIdsPath =
       config.chatIdsPath ??
       join(process.cwd(), "workspace", "known_chat_ids.json");
+
+    // ── Config menu (interactive /config command) ────────────────
+    const gwConfig = gateway.getConfig();
+    this.configMenu = new TelegramConfigMenu(
+      () => gateway.getConfig(),
+      async (updated) => {
+        await saveConfig(process.cwd(), updated);
+        // Notify gateway of the config change so runtime picks it up
+        if (typeof (gateway as any).reloadConfig === "function") {
+          await (gateway as any).reloadConfig(updated);
+        }
+      },
+      gwConfig.gateway?.port ?? 3077,
+      {
+        get: (name: string) => {
+          try { return (gateway as any).ctx?.providerRegistry?.get(name) ?? gateway.getProvider(); }
+          catch { return gateway.getProvider(); }
+        },
+        listProviders: () => {
+          try { return (gateway as any).ctx?.providerRegistry?.listProviders() ?? [gwConfig.defaultProvider]; }
+          catch { return [gwConfig.defaultProvider]; }
+        },
+      },
+    );
+
     this.setupHandlers();
   }
 
@@ -208,6 +237,13 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.command("reset", resetHandler);
     this.bot.command("clear", resetHandler);
 
+    // ── /config — Interactive provider & model configuration ────
+    this.bot.command("config", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      this.trackChat(ctx.chat.id);
+      await this.configMenu.handleCommand(ctx);
+    });
+
     this.bot.command("status", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
       const config = this.gateway.getConfig();
@@ -229,6 +265,149 @@ export class TelegramAdapter implements ChannelAdapter {
       await ctx.reply(msg, { parse_mode: "MarkdownV2" });
     });
 
+    // ── /mcp — MCP server management ─────────────────────────────
+    // Usage:
+    //   /mcp                          → show status of all servers
+    //   /mcp status                   → same
+    //   /mcp connect <npm-package>    → dynamically connect npx-published server
+    //   /mcp reconnect <server-name>  → re-establish a dropped connection
+    //   /mcp disconnect <server-name> → remove server and unregister its tools
+    this.bot.command("mcp", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+
+      const mcpManager = this.gateway.getMcpManager();
+      const toolRegistry = this.gateway.getToolRegistry();
+
+      if (!mcpManager) {
+        await ctx.reply(
+          "⚠️ MCP manager is not available. Restart the bot to reinitialise.",
+        );
+        return;
+      }
+
+      const rawArgs = ctx.match?.trim() ?? "";
+      const [sub, ...rest] = rawArgs.split(/\s+/);
+      const arg = rest.join(" ").trim();
+
+      // ── /mcp or /mcp status ───────────────────────────────────
+      if (!sub || sub === "status") {
+        const text = mcpManager.formatStatus();
+        await ctx.reply(text, { parse_mode: "HTML" });
+        return;
+      }
+
+      // ── /mcp connect <npm-package> [args…] ────────────────────
+      if (sub === "connect") {
+        if (!arg) {
+          await ctx.reply(
+            "Usage: <code>/mcp connect &lt;npm-package&gt; [arg1 arg2 …]</code>\n" +
+              "Example: <code>/mcp connect @modelcontextprotocol/server-filesystem ~/Desktop</code>",
+            { parse_mode: "HTML" },
+          );
+          return;
+        }
+        const [pkg, ...pkgArgs] = arg.split(/\s+/);
+        const statusMsg = await ctx.reply(
+          `🔌 Connecting to <code>${pkg}</code>…`,
+          { parse_mode: "HTML" },
+        );
+        try {
+          if (!toolRegistry) throw new Error("Tool registry not available.");
+          const count = await mcpManager.connectNpx(pkg!, toolRegistry, pkgArgs);
+          await ctx.api
+            .editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              `✅ Connected <b>${pkg}</b> — ${count} tool(s) registered.`,
+              { parse_mode: "HTML" },
+            )
+            .catch(() => {});
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.api
+            .editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              `❌ Failed to connect <code>${pkg}</code>:\n<code>${msg}</code>`,
+              { parse_mode: "HTML" },
+            )
+            .catch(() => {});
+        }
+        return;
+      }
+
+      // ── /mcp reconnect <server-name> ──────────────────────────
+      if (sub === "reconnect") {
+        if (!arg) {
+          await ctx.reply(
+            "Usage: <code>/mcp reconnect &lt;server-name&gt;</code>",
+            { parse_mode: "HTML" },
+          );
+          return;
+        }
+        const statusMsg = await ctx.reply(
+          `🔄 Reconnecting <code>${arg}</code>…`,
+          { parse_mode: "HTML" },
+        );
+        try {
+          if (!toolRegistry) throw new Error("Tool registry not available.");
+          const count = await mcpManager.reconnect(arg, toolRegistry);
+          await ctx.api
+            .editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              `✅ Reconnected <b>${arg}</b> — ${count} tool(s) available.`,
+              { parse_mode: "HTML" },
+            )
+            .catch(() => {});
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.api
+            .editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              `❌ Reconnect failed for <code>${arg}</code>:\n<code>${msg}</code>`,
+              { parse_mode: "HTML" },
+            )
+            .catch(() => {});
+        }
+        return;
+      }
+
+      // ── /mcp disconnect <server-name> ─────────────────────────
+      if (sub === "disconnect") {
+        if (!arg) {
+          await ctx.reply(
+            "Usage: <code>/mcp disconnect &lt;server-name&gt;</code>",
+            { parse_mode: "HTML" },
+          );
+          return;
+        }
+        try {
+          if (!toolRegistry) throw new Error("Tool registry not available.");
+          mcpManager.disconnect(arg, toolRegistry);
+          await ctx.reply(
+            `🔌 <b>${arg}</b> disconnected and its tools unregistered.`,
+            { parse_mode: "HTML" },
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.reply(
+            `❌ Disconnect failed:\n<code>${msg}</code>`,
+            { parse_mode: "HTML" },
+          );
+        }
+        return;
+      }
+
+      // Unknown sub-command
+      await ctx.reply(
+        `❓ Unknown sub-command <code>${sub}</code>.\n\n` +
+          `Available: <code>status</code> · <code>connect</code> · <code>reconnect</code> · <code>disconnect</code>`,
+        { parse_mode: "HTML" },
+      );
+    });
+
     this.bot.on("message:text", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
       const userId = ctx.from?.id;
@@ -239,6 +418,13 @@ export class TelegramAdapter implements ChannelAdapter {
 
       this.trackChat(ctx.chat.id);
       this.userToChatId.set(String(userId), ctx.chat.id);
+
+      // ─── Config menu — pending input (URL / API key) ──────
+      // Must intercept BEFORE dedup so the delete-immediately can fire
+      // before the message is recorded in processedUpdates.
+      const configConsumed = await this.configMenu.handleTextInput(ctx, text);
+      if (configConsumed) return;
+      // ─────────────────────────────────────────────────────
 
       // Deduplicate Telegram retries — set key IMMEDIATELY before processing starts,
       // so that retries arriving while the first attempt is still streaming are blocked.
@@ -475,10 +661,21 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // ─── Feedback button handler ──────────────────────────────
-    // Handles 👍/👎 button presses from inline keyboards attached to responses.
+    // ─── Callback query router ─────────────────────────────────
+    // Routes cfg:* to the config menu and fb:* to the feedback handler.
     this.bot.on("callback_query:data", async (ctx) => {
       const data = ctx.callbackQuery.data ?? "";
+
+      // ── Config menu callbacks ────────────────────────────
+      if (data.startsWith("cfg:")) {
+        if (!this.isAllowed(ctx)) {
+          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
+          return;
+        }
+        await this.configMenu.handleCallback(ctx, data);
+        return;
+      }
+
       if (!data.startsWith("fb:")) return;
 
       const parts = data.split(":");
@@ -541,7 +738,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
   // ─── Proactive Pinger ─────────────────────────────────────────
 
-  private startPinger(self: TelegramAdapter): void {
+  private async startPinger(self: TelegramAdapter): Promise<void> {
     const owl = self.gateway.getOwl();
     const config = self.gateway.getConfig();
 
@@ -550,6 +747,16 @@ export class TelegramAdapter implements ChannelAdapter {
     const skillsDir = self.gateway.getSkillsLoader()
       ? join(cwd, "skills")
       : undefined;
+
+    // Build ProactiveJobQueue — persistent SQLite-backed job queue that
+    // replaces the 8 independent setInterval timers with a single worker.
+    let jobQueue: import("../../heartbeat/job-queue.js").ProactiveJobQueue | undefined;
+    try {
+      const { ProactiveJobQueue } = await import("../../heartbeat/job-queue.js");
+      jobQueue = new ProactiveJobQueue(cwd);
+    } catch (err) {
+      log.engine.warn(`[Telegram] ProactiveJobQueue init failed: ${err instanceof Error ? err.message : err}`);
+    }
 
     this.pinger = new ProactivePinger({
       provider: self.gateway.getProvider(),
@@ -570,6 +777,8 @@ export class TelegramAdapter implements ChannelAdapter {
       goalGraph: self.gateway.getGoalGraph(),
       proactiveLoop: self.gateway.getProactiveLoop(),
       eventBus: self.gateway.getEventBus(),
+      jobQueue,
+      userId: "default",
       sendToUser: async (message: string) => {
         await self.broadcast({
           content: message,

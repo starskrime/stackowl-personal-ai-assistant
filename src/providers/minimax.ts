@@ -23,6 +23,18 @@ import type {
   TokenUsage,
 } from "./base.js";
 
+// ─── Resilience constants ─────────────────────────────────────────
+
+/**
+ * Classify and format a non-2xx HTTP error with the response body,
+ * so the caller gets actionable context instead of a bare status code.
+ */
+async function buildHttpError(providerName: string, label: string, res: Response): Promise<Error> {
+  let body = "";
+  try { body = (await res.text()).slice(0, 300); } catch { /* ignore */ }
+  return new Error(`[${providerName}] ${label}: HTTP ${res.status}${body ? " — " + body : ""}`);
+}
+
 function toAnthropicMessages(messages: ChatMessage[]): {
   system: string;
   bodyMessages: Array<{ role: string; content: string | object[] }>;
@@ -292,7 +304,7 @@ export class MiniMaxProvider implements ModelProvider {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      throw new Error(`[${this.name}] Stream failed: HTTP ${res.status}`);
+      throw await buildHttpError(this.name, "Stream failed", res);
     }
 
     let usage: TokenUsage | undefined;
@@ -404,7 +416,7 @@ export class MiniMaxProvider implements ModelProvider {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      throw new Error(`[${this.name}] Stream failed: HTTP ${res.status}`);
+      throw await buildHttpError(this.name, "Stream failed", res);
     }
 
     for await (const chunk of parseAnthropicSSE(res)) {

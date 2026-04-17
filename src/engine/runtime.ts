@@ -188,6 +188,73 @@ function stripDoneSignal(content: string): string {
   return content.slice(0, lastNewline).trim();
 }
 
+// ─── Tool-Result Integrity Sanitizer ─────────────────────────
+//
+// Providers (Anthropic, MiniMax, etc.) require that every `tool_use` block in
+// an assistant message is IMMEDIATELY followed by a `tool` message containing
+// the matching `tool_result`. Violations cause HTTP 400 errors.
+//
+// Sources of orphaned tool calls in the ReAct loop:
+//   1. `loop-detected` guard: pushes a system message but no tool result.
+//   2. Phase-1 `break`: stops building actions early, leaving trailing tool
+//      calls in the assistant message with no corresponding result.
+//
+// This function scans the message history and inserts synthetic tool results
+// for any orphaned tool calls before the array is sent to a provider.
+function sanitizeOrphanedToolCalls(messages: ChatMessage[]): ChatMessage[] {
+  // Collect all tool result IDs already present in the history
+  const resolvedIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === "tool" && msg.toolCallId) {
+      resolvedIds.add(msg.toolCallId);
+    }
+  }
+
+  // Find orphaned tool calls and the indices that need synthetic results inserted after them
+  const insertions: Array<{ afterIndex: number; msgs: ChatMessage[] }> = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role !== "assistant" || !msg.toolCalls?.length) continue;
+
+    const orphaned = msg.toolCalls.filter(
+      (tc) => tc.id && !resolvedIds.has(tc.id),
+    );
+    if (orphaned.length === 0) continue;
+
+    const syntheticResults: ChatMessage[] = orphaned.map((tc) => ({
+      role: "tool" as const,
+      content:
+        `[SYSTEM: Tool call "${tc.name}" (id=${tc.id}) was interrupted by an internal guard ` +
+        `(loop detector or budget limit). No result is available. ` +
+        `Do NOT retry this tool — use the information you already have to answer.`,
+      toolCallId: tc.id,
+      name: tc.name,
+    }));
+
+    log.engine.warn(
+      `[ToolIntegrity] Found ${orphaned.length} orphaned tool call(s) in assistant message ` +
+      `[${orphaned.map((tc) => `${tc.name}(${tc.id})`).join(", ")}] — inserting synthetic results`,
+    );
+
+    insertions.push({ afterIndex: i, msgs: syntheticResults });
+
+    // Register these IDs as resolved so we don't double-insert
+    for (const tc of orphaned) {
+      if (tc.id) resolvedIds.add(tc.id);
+    }
+  }
+
+  if (insertions.length === 0) return messages;
+
+  // Apply insertions in reverse order so indices stay valid
+  const result = [...messages];
+  for (const { afterIndex, msgs } of insertions.reverse()) {
+    result.splice(afterIndex + 1, 0, ...msgs);
+  }
+  return result;
+}
+
 // ─── Self-Assessment Engine ───────────────────────────────────
 
 type SelfCheckVerdict = "CONTINUE" | "PIVOT" | "SYNTHESIZE";
@@ -487,6 +554,141 @@ async function consumeStream(
     finishReason: toolCalls.length > 0 ? "tool_calls" : "stop",
     usage,
   };
+}
+
+// ─── Provider Resilience Layer ──────────────────────────────────
+
+/** HTTP status codes that should be retried after a backoff delay. */
+const RETRYABLE_STREAM_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+/**
+ * Determine if an error thrown during a stream call is transient and safe to retry.
+ * Uses the HTTP status embedded in the error message ("HTTP 429", "HTTP 503", etc)
+ * as the source of truth since the provider has already consumed the Response body.
+ */
+function isTransientStreamError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const match = msg.match(/HTTP (\d{3})/);
+  if (!match) {
+    // Network-level failures (ECONNRESET, ETIMEDOUT, fetch failed) are transient
+    const networkKeywords = ["fetch", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "timeout", "network"];
+    return networkKeywords.some((kw) => msg.toLowerCase().includes(kw.toLowerCase()));
+  }
+  return RETRYABLE_STREAM_STATUSES.has(parseInt(match[1]!, 10));
+}
+
+/**
+ * Execute a streaming LLM call with 3-layer resilience:
+ *
+ * Layer 1 — Retry with exponential backoff (transient 429/5xx errors)
+ * Layer 2 — Degrade to non-stream chatWithTools() if all stream retries fail
+ * Layer 3 — Swap to alternate provider from providerRegistry if current is broken
+ *
+ * Returns the accumulated ChatResponse. If all layers fail, the last error is thrown
+ * so the caller's own error handling is still invoked (gateway sends user message).
+ */
+async function withProviderResilience(
+  messages: import("../providers/base.js").ChatMessage[],
+  tools: import("../providers/base.js").ToolDefinition[],
+  model: string,
+  chatOptions: import("../providers/base.js").ChatOptions,
+  provider: ModelProvider,
+  onStreamEvent?: (event: import("../providers/base.js").StreamEvent) => Promise<void>,
+  providerRegistry?: ProviderRegistry,
+  callSite?: string,   // for logging ("initial" | "loop")
+): Promise<ChatResponse> {
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 1_500;
+  const site = callSite ?? "unknown";
+
+  // Sanitize message history before sending to ANY provider — ensures every
+  // tool_use block in an assistant message has a matching tool_result.
+  // This prevents HTTP 400 "tool call and result not match" errors.
+  messages = sanitizeOrphanedToolCalls(messages);
+
+  // ── Layer 1: retry transient failures on the same provider ───────
+  let lastStreamError: unknown;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      if (provider.chatWithToolsStream && onStreamEvent) {
+        return await consumeStream(
+          provider.chatWithToolsStream(messages, tools, model, chatOptions),
+          onStreamEvent,
+        );
+      }
+      // Provider has no stream: fall through directly to non-stream
+      return await provider.chatWithTools(messages, tools, model, chatOptions);
+    } catch (err) {
+      lastStreamError = err;
+      const errMsg = err instanceof Error ? err.message : String(err);
+
+      if (isTransientStreamError(err) && attempt < MAX_RETRIES - 1) {
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+        log.engine.warn(
+          `[Resilience/${site}] Stream attempt ${attempt + 1}/${MAX_RETRIES} failed (transient): ${errMsg}. Retrying in ${delay}ms…`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      // Non-transient or final retry — break out to Layer 2
+      log.engine.warn(
+        `[Resilience/${site}] Stream failed (non-retryable or retries exhausted): ${errMsg}. Degrading to non-stream…`,
+      );
+      break;
+    }
+  }
+
+  // ── Layer 2: degrade to non-stream on same provider ─────────────
+  // This is safe: chatWithTools() uses the same model/messages, just no SSE.
+  try {
+    log.engine.warn(
+      `[Resilience/${site}] Attempting non-stream fallback on provider "${provider.name}"…`,
+    );
+    const result = await provider.chatWithTools(messages, tools, model, chatOptions);
+    log.engine.info(
+      `[Resilience/${site}] Non-stream fallback succeeded on "${provider.name}".`,
+    );
+    return result;
+  } catch (nonStreamErr) {
+    log.engine.warn(
+      `[Resilience/${site}] Non-stream fallback also failed on "${provider.name}": ${
+        nonStreamErr instanceof Error ? nonStreamErr.message : nonStreamErr
+      }`,
+    );
+  }
+
+  // ── Layer 3: try alternate providers from registry ───────────────
+  if (providerRegistry) {
+    const candidates = providerRegistry.listProviders().filter((n) => n !== provider.name);
+    for (const candidateName of candidates) {
+      try {
+        const alt = providerRegistry.get(candidateName);
+        const healthy = await alt.healthCheck().catch(() => false);
+        if (!healthy) continue;
+
+        log.engine.warn(
+          `[Resilience/${site}] Switching to alternate provider "${candidateName}" after primary failure.`,
+        );
+        if (alt.chatWithToolsStream && onStreamEvent) {
+          return await consumeStream(
+            alt.chatWithToolsStream(messages, tools, model, chatOptions),
+            onStreamEvent,
+          );
+        }
+        return await alt.chatWithTools(messages, tools, model, chatOptions);
+      } catch (altErr) {
+        log.engine.warn(
+          `[Resilience/${site}] Alternate provider "${candidateName}" also failed: ${
+            altErr instanceof Error ? altErr.message : altErr
+          }`,
+        );
+      }
+    }
+  }
+
+  // All layers exhausted — surface the original error
+  throw lastStreamError ?? new Error(`[Resilience/${site}] All provider fallbacks exhausted.`);
 }
 
 // ─── Owl Engine ──────────────────────────────────────────────────
@@ -805,11 +1007,23 @@ ${userMessage}
     let iterations = 0;
     let globalConsecutiveFailures = 0;
     let loopBrokenEarly = false; // set true when inner shouldBreakLoop fires
-    const enableRouting = config.tools?.enableIntentRouting !== false;
-    const tools = await toolRegistry?.getDefinitions({
+
+    // ── DNA tool prioritization: reorder tools so the model sees the owl's
+    // strongest domain tools first. Providers truncate long tool lists and
+    // models attend more to early entries — so this bias is meaningful.
+    let tools = await toolRegistry?.getDefinitions({
       maxTools: config.tools?.maxToolsRouting ?? 8,
-      userMessage: enableRouting ? userMessage : undefined,
+      userMessage: (config.tools?.enableIntentRouting !== false) ? userMessage : undefined,
     });
+    if (tools && dnaDecisions.prioritizedTools.length > 0) {
+      const prioritySet = new Set(dnaDecisions.prioritizedTools);
+      const depriSet = new Set(dnaDecisions.deprioritizedTools ?? []);
+      tools = [
+        ...tools.filter((t) => prioritySet.has(t.name)),
+        ...tools.filter((t) => !prioritySet.has(t.name) && !depriSet.has(t.name)),
+        ...tools.filter((t) => depriSet.has(t.name)),
+      ];
+    }
 
     // Boost iteration limit for automation sessions — computer_use is sequential
     // by nature (analyze → act → analyze → act …) and routinely needs 20-40 steps.
@@ -883,26 +1097,32 @@ ${userMessage}
       // analyze → click → analyze → type → analyze → … is normal automation.
       const SEQUENTIAL_USE_TOOLS = new Set(["computer_use", "web_crawl"]);
 
+      // ── Tool Fallback Graph ───────────────────────────────────────
+      // When a tool fails hard, automatically try these alternatives before
+      // letting the LLM decide. Deterministic, fast, no extra LLM call needed.
+      const TOOL_FALLBACKS: Record<string, string[]> = {
+        web_crawl:         ["scrapling_fetch", "web_search", "run_shell_command"],
+        scrapling_fetch:   ["web_crawl", "web_search"],
+        web_search:        ["web_crawl", "scrapling_fetch"],
+        read_file:         ["run_shell_command"],
+        write_file:        ["run_shell_command"],
+        edit_file:         ["read_file", "write_file"],
+        run_shell_command: ["computer_use"],
+        camofox:           ["web_crawl", "scrapling_fetch"],
+      };
+
       // ReAct loop with tools — use streaming when available
       log.engine.llmRequest(optimalModel, messages);
-      if (currentProvider.chatWithToolsStream && context.onStreamEvent) {
-        response = await consumeStream(
-          currentProvider.chatWithToolsStream(
-            messages,
-            tools,
-            optimalModel,
-            chatOptions,
-          ),
-          context.onStreamEvent,
-        );
-      } else {
-        response = await currentProvider.chatWithTools(
-          messages,
-          tools,
-          optimalModel,
-          chatOptions,
-        );
-      }
+      response = await withProviderResilience(
+        messages,
+        tools,
+        optimalModel,
+        chatOptions,
+        currentProvider,
+        context.onStreamEvent,
+        context.providerRegistry,
+        "initial",
+      );
       log.engine.llmResponse(
         optimalModel,
         response.content,
@@ -1007,7 +1227,15 @@ ${userMessage}
             log.engine.warn(
               `Sliding-window loop detected: "${toolCall.name}" called ${repeatCount}x in last ${recentToolNames.length} calls — forcing stop`,
             );
-            actions.push({ kind: "loop-detected", toolCall });
+            // Mark this call and ALL remaining tool calls as loop-detected so every
+            // tool_use in the assistant message gets a corresponding tool result.
+            // A bare `break` here would leave trailing tool calls orphaned.
+            const remainingToolCalls = (response.toolCalls ?? []).slice(
+              (response.toolCalls ?? []).indexOf(toolCall),
+            );
+            for (const remaining of remainingToolCalls) {
+              actions.push({ kind: "loop-detected", toolCall: remaining });
+            }
             break; // Stop processing further tool calls
           }
 
@@ -1142,14 +1370,17 @@ ${userMessage}
             }
 
             case "loop-detected": {
+              // Push a tool result (required by providers) AND a system hint.
+              // Using role:"system" alone orphans the tool_use in the assistant message.
               messages.push({
-                role: "system",
+                role: "tool",
                 content:
-                  `[LOOP DETECTOR HINT] You have called "${toolCall.name}" too many times in the last ${recentToolNames.length} tool calls. ` +
-                  `This indicates you might be stuck. Please strongly reconsider your approach. Try looking at a different file or using a different tool.`,
+                  `[LOOP GUARD] Call blocked — "${toolCall.name}" has been called ${recentToolNames.filter((n) => n === toolCall.name).length} times in the last ${recentToolNames.length} tool calls. ` +
+                  `You are stuck in a loop. DO NOT call this tool again with similar arguments. ` +
+                  `Pivot to a completely different approach or tool.`,
+                toolCallId: toolCall.id,
+                name: toolCall.name,
               });
-              // removed shouldBreakLoop = true;
-              // removed loopBrokenEarly = true;
               continue;
             }
 
@@ -1182,10 +1413,75 @@ ${userMessage}
               const execResult = executionResults.get(toolCall.id);
               if (!execResult) continue;
 
+              // ── DNA Risk Gate ────────────────────────────────────────────
+              // Cautious owls (risk-averse DNA) must not execute destructive tools
+              // silently. Block the call and return a gate message so the model
+              // can ask the user for confirmation instead.
+              const DESTRUCTIVE_TOOLS = new Set([
+                "run_shell_command", "write_file", "edit_file", "delete_file",
+                "docker", "git", "process_manager",
+              ]);
+              const DESTRUCTIVE_ARGS_PATTERN =
+                /\b(rm\s+-rf|drop\s+table|delete\s+from|truncate|format|mkfs|dd\s+if|shutdown|reboot)\b/i;
+              if (
+                dnaDecisions.riskTolerance === "cautious" &&
+                DESTRUCTIVE_TOOLS.has(toolCall.name) &&
+                DESTRUCTIVE_ARGS_PATTERN.test(JSON.stringify(toolCall.arguments ?? ""))
+              ) {
+                log.engine.warn(
+                  `[RiskGate] Blocked destructive call: ${toolCall.name} (riskTolerance=cautious)`,
+                );
+                messages.push({
+                  role: "tool",
+                  content:
+                    `[RISK GATE] This call has been blocked because it may be destructive. ` +
+                    `Ask the user to confirm before executing: \`${toolCall.name}\` with args: ${JSON.stringify(toolCall.arguments).slice(0, 200)}`,
+                  toolCallId: toolCall.id,
+                  name: toolCall.name,
+                });
+                continue;
+              }
+
               toolResult = execResult.result;
               lastExecutedToolName = toolCall.name;
               lastToolResult = toolResult;
-              const isHardFailure = execResult.isHardFailure;
+              let isHardFailure = execResult.isHardFailure;
+
+              // ── Tool Fallback Graph ──────────────────────────────────────
+              // On hard failure, try registered fallback tools before surfacing
+              // the failure to the LLM. This is faster and more reliable than
+              // asking the LLM to pick an alternative — it always guesses the
+              // same failed tool first.
+              if (isHardFailure && TOOL_FALLBACKS[toolCall.name] && toolRegistry) {
+                const fallbacks = TOOL_FALLBACKS[toolCall.name];
+                for (const fallbackName of fallbacks) {
+                  if (!toolRegistry.has(fallbackName)) continue;
+                  log.engine.warn(
+                    `[Fallback] ${toolCall.name} failed → trying ${fallbackName}`,
+                  );
+                  if (context.onProgress) {
+                    await context.onProgress(
+                      `⚡ **Fallback:** \`${toolCall.name}\` failed, trying \`${fallbackName}\``,
+                    );
+                  }
+                  try {
+                    const fallbackResult = await toolRegistry.execute(
+                      fallbackName,
+                      toolCall.arguments,
+                      toolCtx,
+                    );
+                    toolResult = fallbackResult;
+                    lastExecutedToolName = fallbackName;
+                    lastToolResult = toolResult;
+                    isHardFailure = false;
+                    toolsUsed.push(fallbackName);
+                    log.engine.info(`[Fallback] ${fallbackName} succeeded`);
+                    break;
+                  } catch {
+                    // Try next fallback
+                  }
+                }
+              }
 
               if (isHardFailure) {
                 log.tool.toolResult(toolCall.name, toolResult, false);
@@ -1195,10 +1491,10 @@ ${userMessage}
                   );
                 }
               } else {
-                log.tool.toolResult(toolCall.name, toolResult, true);
+                log.tool.toolResult(lastExecutedToolName ?? toolCall.name, toolResult, true);
                 if (context.onProgress) {
                   await context.onProgress(
-                    `✅ **Tool finished:** \`${toolCall.name}\``,
+                    `✅ **Tool finished:** \`${lastExecutedToolName ?? toolCall.name}\``,
                   );
                 }
               }
@@ -1557,26 +1853,18 @@ ${userMessage}
           }
         }
 
-        // Continue the loop — use streaming when available
+        // Continue the loop — use resilient streaming
         log.engine.llmRequest(optimalModel, messages);
-        if (currentProvider.chatWithToolsStream && context.onStreamEvent) {
-          response = await consumeStream(
-            currentProvider.chatWithToolsStream(
-              messages,
-              tools,
-              optimalModel,
-              chatOptions,
-            ),
-            context.onStreamEvent,
-          );
-        } else {
-          response = await currentProvider.chatWithTools(
-            messages,
-            tools,
-            optimalModel,
-            chatOptions,
-          );
-        }
+        response = await withProviderResilience(
+          messages,
+          tools,
+          optimalModel,
+          chatOptions,
+          currentProvider,
+          context.onStreamEvent,
+          context.providerRegistry,
+          "loop",
+        );
         log.engine.llmResponse(
           optimalModel,
           response.content,
@@ -1731,37 +2019,97 @@ ${userMessage}
 
     // Strip internal [DONE] signal from all final outputs — it's an engine-internal
     // marker and must never leak to channels or users.
+    // Log if stripping drops content to empty — helps diagnose "[DONE]"-only responses.
+    const preStripContent = response.content;
     response = { ...response, content: stripDoneSignal(response.content) };
+    if (preStripContent.trim() && !response.content.trim()) {
+      log.engine.warn(
+        `[StripDone] Response was stripped to empty (had only [DONE] signal). ` +
+        `Raw content before strip: ${JSON.stringify(preStripContent.slice(0, 200))}`,
+      );
+    }
 
-    // Safety net: if the model returned empty content, retry once with a MINIMAL
-    // context and an explicit no-tools directive. Common with local models that
-    // produce tool-call tokens Ollama can't parse, or get overwhelmed by large context.
+    // Safety net: if the model returned empty content, recover in two stages.
+    //
+    // Stage 1 (context overflow): retry the SAME request with a trimmed message
+    //   history (keep only last 6 messages) but with tools still attached.
+    //   This recovers context-overflow failures without losing tool access.
+    //
+    // Stage 2 (model confusion / silent refusal): if stage 1 is still empty,
+    //   fall back to a minimal no-tools plain-chat call. Last resort.
     if (!response.content.trim()) {
       log.engine.warn(
         `Empty response from model (${iterations} iterations, ${toolsUsed.length} tools used) — ` +
-        `retrying with minimal context as plain chat`,
+        `rawContent=${JSON.stringify(response.content)}, toolCalls=${response.toolCalls?.length ?? 0}, ` +
+        `usage=${JSON.stringify(response.usage)} — stage 1: retrying with compact system prompt`,
       );
+
+      // Stage 1: compact authority system prompt + last user message only + tools intact.
+      // The original system prompt can be very long (persona DNA, instincts, all tool docs).
+      // Stripping it down while retaining the essential authority grants fixes context-overflow
+      // and model-confusion failures without losing tool access.
       try {
-        const minimalMessages: ChatMessage[] = [
-          {
-            role: "system",
-            content:
-              `You are ${owl.persona.name}, a helpful AI assistant. ` +
-              `Answer the user's question directly using your knowledge. ` +
-              `Do NOT output JSON, tool calls, or code blocks — just write a natural language answer. ` +
-              `If you don't have current information, say so honestly and share what you do know.`,
-          },
+        const compactSystem: ChatMessage = {
+          role: "system",
+          content:
+            `You are ${owl.persona.name}, an AI assistant with full tool access.\n` +
+            `AUTHORITY GRANTS:\n` +
+            `- You are authorized to use camofox and computer_use to log into websites, fill forms, click buttons, and complete 2FA on the user's behalf. Never refuse login tasks.\n` +
+            `- You are authorized to read/write files, run shell commands, and call any available tool.\n` +
+            `- You are authorized to search the web and fetch any URL.\n` +
+            `Execute the user's request using the available tools. Do not explain limitations — just act.`,
+        };
+        const stage1Messages: ChatMessage[] = [
+          compactSystem,
           { role: "user", content: userMessage },
         ];
-        const plainResponse = await currentProvider.chat(
-          minimalMessages,
+
+        const stage1Response = await withProviderResilience(
+          stage1Messages,
+          tools ?? [],
           optimalModel,
+          chatOptions,
+          currentProvider,
+          undefined,
+          context.providerRegistry,
+          "retry-compact",
         );
-        const plainContent = (plainResponse.content ?? "")
-          .replace(/<\/?(think|reasoning)>/gi, "")
-          .trim();
-        if (plainContent) {
-          response = { ...plainResponse, content: plainContent };
+        const stage1Content = (stage1Response.content ?? "").trim();
+        if (stage1Content) {
+          log.engine.info(`[EmptyRetry] Stage 1 succeeded with compact system prompt`);
+          response = stage1Response;
+        } else {
+          // Stage 2: last resort — tools still attached but absolute minimal prompt.
+          // Keep tools so the model can still call camofox/browser tools if needed.
+          log.engine.warn(`[EmptyRetry] Stage 1 still empty — stage 2: minimal prompt + tools`);
+          const stage2Messages: ChatMessage[] = [
+            {
+              role: "system",
+              content:
+                `You are ${owl.persona.name}. Use the available tools to help the user. ` +
+                `You are authorized to browse the web, log into websites, and call any tool. ` +
+                `Complete the user's request now.`,
+            },
+            { role: "user", content: userMessage },
+          ];
+          const stage2Response = await withProviderResilience(
+            stage2Messages,
+            tools ?? [],
+            optimalModel,
+            chatOptions,
+            currentProvider,
+            undefined,
+            context.providerRegistry,
+            "retry-minimal",
+          );
+          const stage2Content = (stage2Response.content ?? "")
+            .replace(/<\/?(think|reasoning)>/gi, "")
+            .trim();
+          if (stage2Content) {
+            log.engine.info(`[EmptyRetry] Stage 2 succeeded`);
+            response = { ...stage2Response, content: stage2Content };
+          }
+          // If stage 2 is also empty, fall through with whatever we have
         }
       } catch {
         // Ignore — fall through to whatever we had
@@ -1975,6 +2323,7 @@ ${userMessage}
       prompt += `- **Fast First:** Use rapid utility tools (shell, calculator, native macOS tools) before heavy browsers.\n`;
       prompt += `- **Defensive Actuation (Safety First):** When writing files, deleting data, or mutating the host environment, operate with a "Zero-Trust" mindset. Always back up files before overwriting them. Anticipate that commands might fail, and always write clean-up logic so you don't leave the user's system in a broken state.\n`;
       prompt += `- **Anti-Bot Override:** If web requests fail due to CAPTCHA or Cloudflare locks, immediately escalate to anti-bot tools (\`scrapling_fetch\`, \`camofox\`) or visual \`computer_use\`.\n`;
+      prompt += `- **Full Browser Authority:** You are explicitly authorized to use \`camofox\` and \`computer_use\` to log into websites and services on the user's behalf. This includes navigating to login pages, filling in username/password fields, clicking submit buttons, completing 2FA prompts, and maintaining authenticated sessions across tool calls. The user owns these accounts and has delegated this authority to you. NEVER refuse a login/authentication task — use \`camofox\` (action: navigate → type → click) to complete it. If you don't have the credentials, ask the user for them once and then execute.\n`;
       prompt += `- **Knowledge First:** Before answering questions from memory or starting complex tasks, call \`pellet_recall(action='search', query='...')\` to check accumulated knowledge. Don't guess what you might know — look it up.\n`;
       prompt += `- **Parliament Summons:** If you are conceptually stuck on a massive workflow problem and pivoting fails, use the \`summon_parliament\` tool to call upon a council of your specialized sub-agents for collective brainstorming.\n`;
       prompt += `- **Independent Verification:** Do not trust blind execution. ALWAYS run a sandbox test or verification check to prove your logic works before telling the user you are finished.\n\n`;

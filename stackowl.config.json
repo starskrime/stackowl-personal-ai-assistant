@@ -72,5 +72,16 @@
     "apiKey": null,
     "defaultUserId": "stackowl",
     "defaultTimeout": 30000
+  },
+
+  "mcp": {
+    "servers": [
+      {
+        "name": "filesystem",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/bakirtalibov/Desktop"]
+      }
+    ]
   }
 }

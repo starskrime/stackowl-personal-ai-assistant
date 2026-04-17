@@ -446,7 +446,8 @@ export class OpenAICompatProvider implements ModelProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`[${this.name}] Stream failed: HTTP ${res.status}`);
+      const text = await res.text().catch(() => "");
+      throw new Error(`[${this.name}] Stream failed: HTTP ${res.status}${text ? " — " + text.slice(0, 200) : ""}`);
     }
 
     for await (const chunk of parseSSE(res)) {

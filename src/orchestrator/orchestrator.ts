@@ -22,6 +22,7 @@ import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
 import type { TaskStrategy, OrchestrationResult, SubTask } from "./types.js";
 import { log } from "../logger.js";
 import { SwarmBlackboard } from "../swarm/blackboard.js";
+import type { PlanLedger } from "../tasks/plan-ledger.js";
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ export class TaskOrchestrator {
     private config: StackOwlConfig,
     private pelletStore: PelletStore,
     private toolRegistry?: ToolRegistry,
+    private planLedger?: PlanLedger,
   ) {
     this.engine = new OwlEngine();
   }
@@ -478,6 +480,9 @@ export class TaskOrchestrator {
     baseContext: EngineContext,
     strategy: TaskStrategy,
     callbacks: GatewayCallbacks,
+    /** Optional: pre-loaded completedResults for resume path */
+    resumeContext?: Map<number, string>,
+    planId?: string,
   ): Promise<OrchestrationResult> {
     let subtasks = strategy.subtasks;
 
@@ -505,18 +510,54 @@ export class TaskOrchestrator {
     // Build waves from dependency graph
     const waves = this.buildWaves(subtasks);
 
+    // ── PlanLedger: persist plan at start (or reuse existing planId on resume) ──
+    const userId = baseContext.userId ?? "unknown";
+    const sessionId = baseContext.sessionId ?? "unknown";
+    const activePlanId = planId ?? (this.planLedger
+      ? await this.planLedger.createPlan({
+          userId,
+          sessionId,
+          goal: userMessage,
+          strategy: "PLANNED",
+          subtasks,
+          totalWaves: waves.length,
+        })
+      : null);
+
     if (callbacks.onProgress) {
+      const resumeNote = resumeContext && resumeContext.size > 0
+        ? ` (resuming — ${resumeContext.size} steps already done)`
+        : "";
       await callbacks.onProgress(
-        `📋 **Planned execution:** ${subtasks.length} subtasks in ${waves.length} wave(s)`,
+        `📋 **Planned execution:** ${subtasks.length} subtasks in ${waves.length} wave(s)${resumeNote}`,
       );
     }
 
     const allToolsUsed: string[] = [];
     const subtaskResults: OrchestrationResult["subtaskResults"] = [];
-    const completedResults = new Map<number, string>();
+    // Seed completedResults with any prior-session results from resume
+    const completedResults = new Map<number, string>(resumeContext ?? []);
 
     for (let w = 0; w < waves.length; w++) {
       const wave = waves[w];
+
+      // Skip waves whose steps are all already done (resume path)
+      const allDone = wave.every((t) => completedResults.has(t.id));
+      if (allDone) {
+        for (const task of wave) {
+          subtaskResults.push({
+            id: task.id,
+            owlName: task.assignedOwl,
+            status: "done",
+            content: completedResults.get(task.id) ?? "(resumed from prior session)",
+          });
+        }
+        continue;
+      }
+
+      if (activePlanId && this.planLedger) {
+        await this.planLedger.advanceWave(activePlanId, w);
+      }
 
       if (callbacks.onProgress) {
         const taskNames = wave
@@ -530,6 +571,11 @@ export class TaskOrchestrator {
       // Execute all tasks in this wave in parallel
       const results = await Promise.allSettled(
         wave.map(async (task) => {
+          // Skip steps already completed in a prior session
+          if (completedResults.has(task.id)) {
+            return { task, response: null, skipped: true };
+          }
+
           const owl = this.resolveOwl(task.assignedOwl) ?? baseContext.owl;
 
           // Build context with completed results from prior waves
@@ -559,6 +605,7 @@ export class TaskOrchestrator {
           return {
             task,
             response: await this.engine.run(task.description, ctx),
+            skipped: false,
           };
         }),
       );
@@ -566,7 +613,16 @@ export class TaskOrchestrator {
       // Process results
       for (const result of results) {
         if (result.status === "fulfilled") {
-          const { task, response } = result.value;
+          const { task, response, skipped } = result.value;
+          if (skipped || !response) {
+            subtaskResults.push({
+              id: task.id,
+              owlName: task.assignedOwl,
+              status: "done",
+              content: completedResults.get(task.id) ?? "(already done)",
+            });
+            continue;
+          }
           completedResults.set(task.id, response.content);
           allToolsUsed.push(...response.toolsUsed);
           subtaskResults.push({
@@ -575,6 +631,11 @@ export class TaskOrchestrator {
             status: "done",
             content: response.content,
           });
+
+          // Persist step completion to ledger
+          if (activePlanId && this.planLedger) {
+            await this.planLedger.markStepDone(activePlanId, task.id, response.content);
+          }
 
           if (callbacks.onProgress) {
             await callbacks.onProgress(
@@ -590,6 +651,10 @@ export class TaskOrchestrator {
             content: result.reason?.message ?? String(result.reason),
           });
 
+          if (activePlanId && this.planLedger) {
+            await this.planLedger.markStepFailed(activePlanId, task.id);
+          }
+
           if (callbacks.onProgress) {
             await callbacks.onProgress(
               `❌ Step ${task.id} failed: ${task.description.slice(0, 60)}`,
@@ -602,6 +667,9 @@ export class TaskOrchestrator {
     // Final synthesis
     const completedSteps = subtaskResults.filter((r) => r.status === "done");
     if (completedSteps.length === 0) {
+      if (activePlanId && this.planLedger) {
+        await this.planLedger.failPlan(activePlanId);
+      }
       return {
         content:
           "All planned steps failed. Please try rephrasing your request.",
@@ -630,6 +698,11 @@ export class TaskOrchestrator {
       isolatedTask: true,
     });
 
+    // Persist completion
+    if (activePlanId && this.planLedger) {
+      await this.planLedger.completePlan(activePlanId, synthesisResponse.content);
+    }
+
     return {
       content: synthesisResponse.content,
       owlName: synthesisResponse.owlName,
@@ -639,6 +712,40 @@ export class TaskOrchestrator {
       subtaskResults,
       usage: synthesisResponse.usage,
     };
+  }
+
+  /**
+   * Resume an interrupted PLANNED execution from a saved PlanRecord.
+   */
+  async resumePlanned(
+    plan: import("../tasks/plan-ledger.js").PlanRecord,
+    baseContext: EngineContext,
+    callbacks: GatewayCallbacks,
+  ): Promise<OrchestrationResult> {
+    const resumeCtx = this.planLedger!.buildResumeContext(plan);
+    const subtasks = plan.steps.map((s) => ({
+      id: s.stepId,
+      description: s.description,
+      assignedOwl: s.assignedOwl,
+      dependsOn: [] as number[],
+      toolsNeeded: [] as string[],
+    }));
+    const resumeStrategy: TaskStrategy = {
+      strategy: "PLANNED",
+      reasoning: "Resuming interrupted plan",
+      confidence: 1.0,
+      depth: baseContext.depth ?? "quick",
+      owlAssignments: [{ owlName: baseContext.owl.persona.name, role: "lead", reasoning: "Resume" }],
+      subtasks,
+    };
+    return this.executePlanned(
+      plan.goal,
+      baseContext,
+      resumeStrategy,
+      callbacks,
+      resumeCtx,
+      plan.planId,
+    );
   }
 
   // ─── PARLIAMENT ──────────────────────────────────────────────
@@ -763,6 +870,20 @@ export class TaskOrchestrator {
       return this.executeStandard(userMessage, baseContext);
     }
 
+    // ── PlanLedger: persist swarm plan ───────────────────────────
+    const userId = baseContext.userId ?? "unknown";
+    const sessionId = baseContext.sessionId ?? "unknown";
+    const activePlanId = this.planLedger
+      ? await this.planLedger.createPlan({
+          userId,
+          sessionId,
+          goal: userMessage,
+          strategy: "SWARM",
+          subtasks,
+          totalWaves: 1,
+        })
+      : null;
+
     if (callbacks.onProgress) {
       const assignments = subtasks.map((t) => {
         const owl = this.resolveOwl(t.assignedOwl);
@@ -834,6 +955,10 @@ export class TaskOrchestrator {
           status: "done",
           content: response.content,
         });
+        // Persist each swarm step to ledger
+        if (activePlanId && this.planLedger) {
+          await this.planLedger.markStepDone(activePlanId, task.id, response.content);
+        }
       } else {
         const idx = results.indexOf(result);
         const task = subtasks[idx];
@@ -843,12 +968,18 @@ export class TaskOrchestrator {
           status: "failed",
           content: result.reason?.message ?? String(result.reason),
         });
+        if (activePlanId && this.planLedger) {
+          await this.planLedger.markStepFailed(activePlanId, task.id);
+        }
       }
     }
 
     // Synthesis: Noctua merges all specialist results
     const completedResults = subtaskResults.filter((r) => r.status === "done");
     if (completedResults.length === 0) {
+      if (activePlanId && this.planLedger) {
+        await this.planLedger.failPlan(activePlanId);
+      }
       return {
         content: "All swarm tasks failed. Please try rephrasing your request.",
         owlName: baseContext.owl.persona.name,
@@ -883,6 +1014,11 @@ export class TaskOrchestrator {
       skipGapDetection: true,
       isolatedTask: true,
     });
+
+    // Persist swarm completion
+    if (activePlanId && this.planLedger) {
+      await this.planLedger.completePlan(activePlanId, synthesisResponse.content);
+    }
 
     return {
       content: synthesisResponse.content,

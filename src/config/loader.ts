@@ -4,7 +4,7 @@
  * Loads and validates stackowl.config.json.
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -551,4 +551,44 @@ function validateConfig(config: StackOwlConfig): string[] {
   }
 
   return errors;
+}
+
+// ─── Saver ───────────────────────────────────────────────────────
+
+/**
+ * Compute the absolute path to stackowl.config.json for a given base path.
+ * Exported so adapters can pass it to saveConfig() without re-deriving it.
+ */
+export function getConfigPath(basePath: string): string {
+  return join(basePath, "stackowl.config.json");
+}
+
+/**
+ * Atomically write the config to disk.
+ *
+ * Uses a write-to-temp → rename strategy so that a crash during the write
+ * never corrupts the live config file. The rename is atomic on POSIX systems
+ * (single directory), which covers the common macOS / Linux case.
+ *
+ * @param basePath  The directory containing stackowl.config.json (process.cwd()).
+ * @param config    The full config object to persist.
+ */
+export async function saveConfig(
+  basePath: string,
+  config: StackOwlConfig,
+): Promise<void> {
+  const configPath = getConfigPath(basePath);
+  const tmpPath = configPath + ".tmp";
+
+  // Validate before writing — refuse to persist a broken config
+  const errors = validateConfig(config);
+  if (errors.length > 0) {
+    throw new Error(
+      `[saveConfig] Refusing to save invalid config:\n  ${errors.join("\n  ")}`,
+    );
+  }
+
+  const json = JSON.stringify(config, null, 2);
+  await writeFile(tmpPath, json, "utf-8");
+  await rename(tmpPath, configPath);
 }

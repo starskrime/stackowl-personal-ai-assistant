@@ -5,6 +5,7 @@
  * with reminders, morning briefs, ideas, and follow-ups.
  */
 
+import { log } from "../logger.js";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
@@ -49,6 +50,8 @@ export interface PingContext {
   getRecentHistory?: () => ChatMessage[];
   /** The user ID to run consolidation for */
   userId?: string;
+  /** Persistent job queue — replaces the 8 independent setInterval timers */
+  jobQueue?: import("./job-queue.js").ProactiveJobQueue;
   /** Learning engine for proactive self-study sessions */
   learningEngine?: LearningEngine;
   /** New unified learning orchestrator (TopicFusion + Synthesis + Reflexion) */
@@ -131,85 +134,240 @@ export class ProactivePinger {
 
   /**
    * Start the proactive pinging system.
+   *
+   * Previously: 8 independent setInterval timers, each polling its own state,
+   * losing jobs across quiet hours and process restarts.
+   *
+   * Now: a single 30-second worker tick polls the ProactiveJobQueue. Jobs are
+   * persisted to SQLite, survive restarts, respect quiet hours by rescheduling
+   * (not discarding), and execute in priority order.
+   *
+   * On first start, standard recurring jobs are seeded into the queue if they
+   * don't already exist.
    */
   start(): void {
     if (!this.config.enabled) return;
 
-    // Clear any existing timers before starting new ones
     this.stop();
+    console.log("[ProactivePinger] 🔔 Proactive pinging started (queue-driven)");
 
-    console.log("[ProactivePinger] 🔔 Proactive pinging started");
+    const userId = this.context.userId ?? "default";
 
-    // Background worker tick — executes pending agent tasks autonomously.
-    // Runs every 5 minutes, skips quiet hours so it doesn't wake up the user.
+    // ── Seed recurring jobs into queue if not already scheduled ──
+    if (this.context.jobQueue) {
+      this.seedRecurringJobs(userId);
+    }
+
+    // ── Single worker tick every 30 seconds ──────────────────────
+    // Replaces 8 independent timers. Polls the queue, respects quiet hours
+    // by rescheduling jobs rather than skipping them.
     const workerTimer = setInterval(() => {
+      this.tickJobQueue(userId).catch((err) => {
+        console.error("[ProactivePinger] Job queue tick error:", err);
+      });
+    }, 30_000);
+    this.timers.push(workerTimer);
+
+    // ── Background worker (5-minute cycle, unchanged) ────────────
+    // Executes pending AgentTask records (separate from the proactive queue).
+    const bgTimer = setInterval(() => {
       if (this._backgroundWorker && !this.isQuietHours()) {
         this._backgroundWorker.tick().catch((err) => {
           console.error("[ProactivePinger] Background worker tick error:", err);
         });
       }
-    }, 5 * 60 * 1000); // every 5 minutes
-    this.timers.push(workerTimer);
+    }, 5 * 60 * 1000);
+    this.timers.push(bgTimer);
+  }
 
-    // Unified tick: try the AutonomousPlanner first (if available).
-    // If the planner executes an action, skip manual check-in and morning brief
-    // for this tick to avoid duplicate or redundant pings.
-    const unifiedTimer = setInterval(() => {
-      this.tickPlannerThenManual().catch((err) => {
-        console.error("[ProactivePinger] Unified tick error:", err);
+  /**
+   * Seed standard recurring jobs into the queue on startup.
+   * Skips if jobs of each type already exist as pending.
+   */
+  private seedRecurringJobs(userId: string): void {
+    const queue = this.context.jobQueue!;
+
+    // Morning brief — schedule for today at configured hour, or tomorrow if past
+    if (this.config.morningBrief) {
+      const now = new Date();
+      const briefToday = new Date();
+      briefToday.setHours(this.config.morningBriefHour, 0, 0, 0);
+      const briefTime = briefToday > now ? briefToday : new Date(briefToday.getTime() + 86_400_000);
+      queue.schedule({ type: "morning_brief", userId, scheduledAt: briefTime, priority: 8, deduplicate: true });
+    }
+
+    // Check-in — first one in checkInIntervalMinutes
+    const checkInTime = new Date(Date.now() + this.config.checkInIntervalMinutes * 60_000);
+    queue.schedule({ type: "check_in", userId, scheduledAt: checkInTime, priority: 5, deduplicate: true });
+
+    // Memory consolidation — daily at 2 AM
+    const consolidationTime = this.nextDailyAt(2, 0);
+    queue.schedule({ type: "memory_consolidation", userId, scheduledAt: consolidationTime, priority: 3, deduplicate: true });
+
+    // Tool pruning — daily at 3 AM
+    const pruningTime = this.nextDailyAt(3, 0);
+    queue.schedule({ type: "tool_pruning", userId, scheduledAt: pruningTime, priority: 2, deduplicate: true });
+
+    // Self-study — every 6 hours
+    const selfStudyTime = new Date(Date.now() + 6 * 3_600_000);
+    queue.schedule({ type: "self_study", userId, scheduledAt: selfStudyTime, priority: 4, deduplicate: true });
+
+    // Skill evolution — daily at 5 AM
+    const skillEvoTime = this.nextDailyAt(5, 0);
+    queue.schedule({ type: "skill_evolution", userId, scheduledAt: skillEvoTime, priority: 3, deduplicate: true });
+
+    log.engine.info("[ProactivePinger] Seeded recurring jobs into queue");
+  }
+
+  /**
+   * Single worker tick: poll due jobs, respect quiet hours, execute in priority order.
+   * Quiet hours cause rescheduling (to end of quiet window), NOT job loss.
+   */
+  private async tickJobQueue(userId: string): Promise<void> {
+    const queue = this.context.jobQueue;
+    if (!queue) {
+      // Fallback to legacy tick if queue not available
+      await this.tickPlannerThenManual();
+      return;
+    }
+
+    const dueJobs = queue.getDueJobs(5);
+    if (dueJobs.length === 0) return;
+
+    for (const job of dueJobs) {
+      // Quiet hours: reschedule to end of quiet window instead of discarding
+      if (this.isQuietHours()) {
+        const wakeTime = this.nextWakeTime();
+        queue.reschedule(job.id, wakeTime);
+        log.engine.debug(
+          `[ProactivePinger] Quiet hours — rescheduled ${job.type} to ${wakeTime.toISOString()}`,
+        );
+        continue;
+      }
+
+      queue.markRunning(job.id);
+
+      try {
+        await this.executeJob(job);
+        queue.markDone(job.id);
+
+        // Re-enqueue recurring jobs for their next occurrence
+        this.reenqueueRecurring(job, userId, queue);
+
+        log.engine.debug(`[ProactivePinger] Job ${job.type} completed`);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        queue.markFailed(job.id, errMsg);
+        log.engine.warn(`[ProactivePinger] Job ${job.type} failed: ${errMsg}`);
+      }
+    }
+  }
+
+  /**
+   * Execute a single job from the queue.
+   */
+  private async executeJob(job: import("./job-queue.js").ProactiveJob): Promise<void> {
+    switch (job.type) {
+      case "morning_brief":
+        await this.sendMorningBrief();
+        break;
+      case "check_in":
+        await this.sendCheckIn();
+        break;
+      case "memory_consolidation":
+        await this.maybeConsolidateMemory();
+        break;
+      case "tool_pruning":
+        await this.maybePruneTools();
+        break;
+      case "self_study":
+        await this.maybeSelfStudy();
+        break;
+      case "knowledge_council":
+        await this.maybeKnowledgeCouncil();
+        break;
+      case "dream_reflexion":
+        await this.maybeDream();
+        break;
+      case "skill_evolution":
+        await this.maybeEvolveSkills();
+        break;
+      case "goal_check":
+        await this.maybeCheckGoals();
+        break;
+      case "background_task":
+        if (this._backgroundWorker) {
+          await this._backgroundWorker.tick();
+        }
+        break;
+      default:
+        log.engine.warn(`[ProactivePinger] Unknown job type: ${(job as any).type}`);
+    }
+  }
+
+  /**
+   * Re-enqueue a completed recurring job for its next scheduled occurrence.
+   */
+  private reenqueueRecurring(
+    job: import("./job-queue.js").ProactiveJob,
+    userId: string,
+    queue: import("./job-queue.js").ProactiveJobQueue,
+  ): void {
+    const intervals: Partial<Record<import("./job-queue.js").JobType, number>> = {
+      check_in: this.config.checkInIntervalMinutes * 60_000,
+      self_study: 6 * 3_600_000,
+      knowledge_council: 12 * 3_600_000,
+      dream_reflexion: 24 * 3_600_000,
+      background_task: 5 * 60_000,
+    };
+    const dailyAt: Partial<Record<import("./job-queue.js").JobType, [number, number]>> = {
+      morning_brief: [this.config.morningBriefHour, 0],
+      memory_consolidation: [2, 0],
+      tool_pruning: [3, 0],
+      skill_evolution: [5, 0],
+    };
+
+    if (intervals[job.type]) {
+      queue.schedule({
+        type: job.type,
+        userId,
+        scheduledAt: new Date(Date.now() + intervals[job.type]!),
+        priority: job.priority,
+        deduplicate: true,
       });
-    }, 60 * 1000);
-    this.timers.push(unifiedTimer);
-
-    // 🧠 Daily Memory Consolidation timer
-    const consolidationTimer = setInterval(() => {
-      this.maybeConsolidateMemory().catch((err) => {
-        console.error("[ProactivePinger] Memory consolidation error:", err);
+    } else if (dailyAt[job.type]) {
+      const [h, m] = dailyAt[job.type]!;
+      queue.schedule({
+        type: job.type,
+        userId,
+        scheduledAt: this.nextDailyAt(h, m),
+        priority: job.priority,
+        deduplicate: true,
       });
-    }, 60 * 1000);
-    this.timers.push(consolidationTimer);
+    }
+  }
 
-    // 🧹 Autonomous Tool Pruning timer
-    const pruningTimer = setInterval(() => {
-      this.maybePruneTools().catch((err) => {
-        console.error("[ProactivePinger] Tool pruning error:", err);
-      });
-    }, 60 * 1000);
-    this.timers.push(pruningTimer);
+  // ─── Scheduling helpers ─────────────────────────────────────
 
-    // 🧠 Proactive Self-Study timer
-    const selfStudyTimer = setInterval(() => {
-      this.maybeSelfStudy().catch((err) => {
-        console.error("[ProactivePinger] Self-study error:", err);
-      });
-    }, 60 * 1000);
-    this.timers.push(selfStudyTimer);
+  /** Returns the next occurrence of HH:MM (today if not yet passed, else tomorrow) */
+  private nextDailyAt(hour: number, minute: number): Date {
+    const t = new Date();
+    t.setHours(hour, minute, 0, 0);
+    if (t <= new Date()) {
+      t.setDate(t.getDate() + 1);
+    }
+    return t;
+  }
 
-    // 🏛️ Knowledge Council — automated group learning sessions
-    const councilTimer = setInterval(() => {
-      this.maybeKnowledgeCouncil().catch((err) => {
-        console.error("[ProactivePinger] Knowledge Council error:", err);
-      });
-    }, 60 * 1000);
-    this.timers.push(councilTimer);
-
-    // 🧠 Idle-Time Dreaming (Reflexion) timer
-    const dreamTimer = setInterval(() => {
-      this.maybeDream().catch((err) => {
-        console.error("[ProactivePinger] Dream error:", err);
-      });
-    }, 60 * 1000);
-    this.timers.push(dreamTimer);
-
-    // 🌱 Skill Evolution + Pattern Mining timer (5 AM)
-    const skillEvoTimer = setInterval(() => {
-      this.maybeEvolveSkills().catch((err) => {
-        console.error("[ProactivePinger] Skill evolution error:", err);
-      });
-    }, 60 * 1000);
-    this.timers.push(skillEvoTimer);
-
-    // No startup greeting — avoids spamming "what's on your plate" on every restart
+  /** Returns the time when quiet hours end (the next wake window start) */
+  private nextWakeTime(): Date {
+    const now = new Date();
+    const wake = new Date();
+    wake.setHours(this.config.quietHoursEnd, 0, 0, 0);
+    if (wake <= now) {
+      wake.setDate(wake.getDate() + 1);
+    }
+    return wake;
   }
 
   /**
@@ -565,6 +723,45 @@ export class ProactivePinger {
     // DISABLED — Skill evolution and pattern mining burned tokens proactively.
     // Learning now only happens reactively (on actual failures).
     return;
+  }
+
+  // ── Queue-compatible wrappers (called by job executor) ────────
+
+  /** Thin wrapper so job executor can call by job type name */
+  private async sendMorningBrief(): Promise<void> {
+    return this.maybeMorningBrief();
+  }
+
+  /** Thin wrapper so job executor can call by job type name */
+  private async sendCheckIn(): Promise<void> {
+    return this.maybeCheckIn();
+  }
+
+  /**
+   * Check active goals and send a nudge if any are overdue or blocked.
+   * Fires from the job queue on the "goal_check" job type.
+   */
+  private async maybeCheckGoals(): Promise<void> {
+    const graph = this.context.goalGraph;
+    if (!graph) return;
+    try {
+      await graph.load();
+      const stale = graph.getStale(3); // goals not touched in 3 days
+      if (stale.length === 0) return;
+      const goalSummaries = stale
+        .slice(0, 3)
+        .map((g) => `• **${g.title}** — ${g.description.slice(0, 80)}`)
+        .join("\n");
+      await this.context.sendToUser(
+        `📌 **Goal check-in** — you have ${stale.length} goal(s) with no recent progress:\n` +
+        goalSummaries +
+        `\n\nWant me to pick one and start working on it?`,
+      );
+    } catch (err) {
+      log.engine.warn(
+        `[ProactivePinger] Goal check failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   /**

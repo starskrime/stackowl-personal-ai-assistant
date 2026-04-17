@@ -384,6 +384,11 @@ export class OwlGateway {
     log.engine.info(`Channel registered: ${adapter.name} [${adapter.id}]`);
   }
 
+  /** Return all registered channel adapters (used by the server for cross-adapter delegation). */
+  getAdapters(): ChannelAdapter[] {
+    return Array.from(this.adapters.values());
+  }
+
   /** Add a middleware to the pipeline. */
   use(mw: GatewayMiddleware): void {
     this.middleware.push(mw);
@@ -399,6 +404,7 @@ export class OwlGateway {
         this.ctx.config,
         this.ctx.pelletStore!,
         this.ctx.toolRegistry,
+        this.ctx.planLedger,
       );
     }
     return this.taskOrchestrator;
@@ -817,19 +823,62 @@ export class OwlGateway {
           this.attemptLogs.delete(message.sessionId);
           if (wc) wc.clear();
 
-          // Build fresh start directive
-          const prevTopic =
-            session.messages
-              .filter((m) => m.role === "user")
-              .slice(-1)[0]
-              ?.content?.slice(0, 100) ??
-            previousSession?.messages
-              .filter((m) => m.role === "user")
-              .slice(-1)[0]
-              ?.content?.slice(0, 100);
-          freshStartDirective = `[SYSTEM DIRECTIVE: You are starting a new task. Prior conversation history is available for reference but treat this as a fresh request.]`;
-          if (prevTopic) {
-            freshStartDirective += `\n[Previous context: User was last discussing "${prevTopic}"]`;
+          // ── Plan Resume Check ──────────────────────────────────
+          // If PlanLedger has interrupted plans for this user, check whether
+          // the current message is asking about them. If so, offer to resume.
+          if (this.ctx.planLedger) {
+            const runningPlans = this.ctx.planLedger.getRunningPlans(message.userId);
+            if (runningPlans.length > 0) {
+              const plan = runningPlans[0]; // most recent interrupted plan
+              const summary = this.ctx.planLedger.buildResumeSummary(plan);
+              // Check if the user is asking about the previous task
+              const isAskingAboutPrior =
+                /\b(finish|done|complete|continue|resume|status|progress|still|that task|previous|earlier|what happened)\b/i.test(
+                  message.text,
+                );
+              if (isAskingAboutPrior) {
+                // Resume the plan directly
+                log.engine.info(
+                  `[Gateway] Resuming interrupted plan ${plan.planId} for user ${message.userId}`,
+                );
+                const engineCtx = await this.buildEngineContext(
+                  session, callbacks, "", true,
+                  this.attemptLogs.get(message.sessionId),
+                  message.channelId, message.userId, null,
+                );
+                const orchestrator = this.getOrchestrator();
+                const orchResult = await orchestrator.resumePlanned(plan, engineCtx, callbacks);
+                await this.saveSession(session, message.text, [], false, orchResult.content);
+                return {
+                  content: orchResult.content,
+                  owlName: orchResult.owlName,
+                  owlEmoji: orchResult.owlEmoji,
+                  toolsUsed: orchResult.toolsUsed,
+                };
+              } else {
+                // Mention it passively in the fresh start directive
+                freshStartDirective =
+                  `[SYSTEM DIRECTIVE: You are starting a new task. Prior conversation history is available for reference.]\n` +
+                  `[INTERRUPTED TASK: The user had an in-progress task from a previous session. If relevant, mention it:\n${summary}]`;
+              }
+            }
+          }
+
+          if (!freshStartDirective) {
+            // Build fresh start directive (no interrupted plan)
+            const prevTopic =
+              session.messages
+                .filter((m) => m.role === "user")
+                .slice(-1)[0]
+                ?.content?.slice(0, 100) ??
+              previousSession?.messages
+                .filter((m) => m.role === "user")
+                .slice(-1)[0]
+                ?.content?.slice(0, 100);
+            freshStartDirective = `[SYSTEM DIRECTIVE: You are starting a new task. Prior conversation history is available for reference but treat this as a fresh request.]`;
+            if (prevTopic) {
+              freshStartDirective += `\n[Previous context: User was last discussing "${prevTopic}"]`;
+            }
           }
           break;
       }
@@ -1077,13 +1126,47 @@ export class OwlGateway {
 
     // ─── Strategy Classification & Orchestrated Execution ─────
     // Single LLM call replaces both parliament detection and planner routing
-    const strategy = await classifyStrategy(
+    let strategy = await classifyStrategy(
       message.text,
       this.ctx.owlRegistry.listOwls(),
       this.ctx.toolRegistry?.getAllDefinitions().map((t) => t.name) ?? [],
       session.messages.slice(-6),
       this.ctx.provider,
     );
+
+    // ── Confidence Gate ───────────────────────────────────────────
+    // Expensive strategies (PARLIAMENT, SWARM) should not run when the classifier
+    // is uncertain (confidence < 0.5). Low confidence means the model is guessing —
+    // running a 5-owl debate on a misunderstood request wastes tokens and time.
+    //
+    //   < 0.5  → downgrade PARLIAMENT → STANDARD; ask for clarification on SWARM
+    //   < 0.65 → downgrade PARLIAMENT → SPECIALIST (single best-matched owl)
+    if (strategy.confidence != null && strategy.confidence < 0.5) {
+      if (strategy.strategy === "PARLIAMENT") {
+        log.engine.info(
+          `[ConfidenceGate] Downgrading PARLIAMENT → STANDARD (confidence: ${strategy.confidence.toFixed(2)})`,
+        );
+        strategy = { ...strategy, strategy: "STANDARD" };
+      } else if (strategy.strategy === "SWARM") {
+        // Return a clarification question — SWARM on an ambiguous request is expensive
+        log.engine.info(
+          `[ConfidenceGate] Blocking SWARM, requesting clarification (confidence: ${strategy.confidence.toFixed(2)})`,
+        );
+        return {
+          content:
+            `I want to make sure I understand before I send multiple agents on this. ` +
+            `Are you asking me to: _"${strategy.reasoning}"_?\n\nSay yes to proceed, or clarify what you mean.`,
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
+    } else if (strategy.confidence != null && strategy.confidence < 0.65 && strategy.strategy === "PARLIAMENT") {
+      log.engine.info(
+        `[ConfidenceGate] Downgrading PARLIAMENT → SPECIALIST (confidence: ${strategy.confidence.toFixed(2)})`,
+      );
+      strategy = { ...strategy, strategy: "SPECIALIST" };
+    }
 
     if (
       callbacks.onProgress &&
@@ -1736,6 +1819,9 @@ export class OwlGateway {
   }
   getToolRegistry() {
     return this.ctx.toolRegistry;
+  }
+  getMcpManager() {
+    return this.ctx.mcpManager;
   }
   getEvolution() {
     return this.ctx.evolution;

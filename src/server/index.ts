@@ -378,7 +378,113 @@ export class StackOwlServer {
       await this.gateway.broadcastProactive(message);
       res.json({ sent: true, clients: this.adapter.getClientCount() });
     });
+
+    // --- Secure API key entry (Option C path B for Telegram config menu) ---
+    // GET  /config/key?token=xxx  → serves a minimal HTML form (no JS framework)
+    // POST /config/key            → receives the key, forwards to TelegramConfigMenu
+    this.app.get("/config/key", (req, res) => {
+      const token = req.query["token"];
+      if (!token || typeof token !== "string") {
+        res.status(400).send("<h2>Invalid or missing token.</h2>");
+        return;
+      }
+
+      // Minimal, clean HTML form — no external dependencies
+      res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StackOwl — Secure Key Entry</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; background: #0d1117; color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .card {
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 12px; padding: 2rem; width: 100%; max-width: 420px;
+    }
+    .owl { font-size: 2.5rem; margin-bottom: .5rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: .25rem; }
+    p  { font-size: .875rem; color: #8b949e; margin-bottom: 1.5rem; }
+    label { display: block; font-size: .875rem; font-weight: 500; margin-bottom: .375rem; }
+    input {
+      display: block; width: 100%; padding: .625rem .875rem;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      color: #e6edf3; font-size: .875rem; font-family: monospace;
+      margin-bottom: 1rem;
+    }
+    input:focus { outline: none; border-color: #58a6ff; }
+    button {
+      width: 100%; padding: .625rem; background: #238636; border: none;
+      border-radius: 6px; color: #fff; font-size: .9375rem; font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #2ea043; }
+    .note { font-size: .75rem; color: #8b949e; margin-top: 1rem; text-align: center; }
+    .success, .error { padding: .75rem; border-radius: 6px; margin-top: 1rem; font-size: .875rem; }
+    .success { background: #0f2a17; border: 1px solid #238636; color: #3fb950; }
+    .error   { background: #2a1215; border: 1px solid #da3633; color: #f85149; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="owl">🦉</div>
+    <h1>Secure API Key Entry</h1>
+    <p>Enter your API key below. It will be sent directly to your local StackOwl instance and never stored by Telegram.</p>
+    <form id="form" method="POST" action="/config/key">
+      <input type="hidden" name="token" value="${token}">
+      <label for="key">API Key</label>
+      <input type="password" id="key" name="apiKey" placeholder="sk-..." autocomplete="off" required autofocus>
+      <button type="submit">Save Key Securely</button>
+    </form>
+    <div id="result"></div>
+    <p class="note">🔒 This page is only accessible from your local machine.</p>
+  </div>
+  <script>
+    document.getElementById('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = new FormData(e.target);
+      const res  = await fetch('/config/key', { method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ token: data.get('token'), apiKey: data.get('apiKey') }) });
+      const json = await res.json();
+      const div  = document.getElementById('result');
+      if (json.ok) {
+        div.innerHTML = '<div class="success">✅ ' + json.message + ' Return to Telegram and tap "I\\'ve entered the key".</div>';
+        document.getElementById('form').style.display = 'none';
+      } else {
+        div.innerHTML = '<div class="error">❌ ' + json.message + '</div>';
+      }
+    });
+  </script>
+</body>
+</html>`);
+    });
+
+    this.app.post("/config/key", async (req, res) => {
+      const { token, apiKey } = req.body as { token?: string; apiKey?: string };
+      if (!token || !apiKey) {
+        res.status(400).json({ ok: false, message: "token and apiKey are required." });
+        return;
+      }
+
+      // Delegate to the Telegram adapter's config menu token registry
+      const telegramAdapter = this.gateway.getAdapters?.().find(
+        (a: { id: string }) => a.id === "telegram",
+      ) as any;
+      if (!telegramAdapter?.configMenu?.consumeWebFormToken) {
+        res.status(503).json({ ok: false, message: "Telegram adapter not available." });
+        return;
+      }
+
+      const result = await telegramAdapter.configMenu.consumeWebFormToken(token, apiKey);
+      res.json(result);
+    });
   }
+
 
   // ─── WebSocket Control Plane ──────────────────────────────────
 
