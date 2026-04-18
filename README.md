@@ -276,8 +276,8 @@ StackOwl is provider-agnostic. Any OpenAI-compatible endpoint works.
 
 | Provider | Status | Notes |
 |----------|--------|-------|
-| **Ollama** | Fully supported | Local models, zero cost |
 | **Anthropic** | Fully supported | Claude 3.5/4.x |
+| **Ollama** | Fully supported | Local models, zero cost |
 | **OpenAI** | Fully supported | GPT-4o, o1, etc. |
 | **OpenAI-compatible** | Fully supported | Together, Groq, LM Studio, etc. |
 
