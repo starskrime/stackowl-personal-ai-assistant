@@ -138,6 +138,8 @@ import { OwlGateway } from "./gateway/core.js";
 import { TelegramAdapter } from "./gateway/adapters/telegram.js";
 import { SlackAdapter } from "./gateway/adapters/slack.js";
 import { CLIAdapter } from "./gateway/adapters/cli.js";
+import { VoiceChannelAdapter } from "./gateway/adapters/voice.js";
+import { WhisperSTT } from "./voice/stt.js";
 import { PreferenceStore } from "./preferences/store.js";
 import { ReflexionEngine } from "./evolution/reflexion.js";
 import { SkillsLoader } from "./skills/index.js";
@@ -1058,6 +1060,90 @@ async function chatCommand(owlName?: string) {
   await adapter.start();
 }
 
+// ─── Voice Command ───────────────────────────────────────────────
+
+async function voiceCommand(opts: {
+  owl?: string;
+  model?: string;
+  voice?: string;
+  rate?: number;
+}) {
+  const b = await bootstrap();
+
+  const owl = opts.owl
+    ? b.owlRegistry.get(opts.owl)
+    : b.owlRegistry.getDefault();
+  if (!owl) {
+    console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
+    process.exit(1);
+  }
+
+  const provider = b.providerRegistry.getDefault();
+  if (!(await provider.healthCheck())) {
+    console.error(
+      chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`),
+    );
+    process.exit(1);
+  }
+
+  if (process.platform !== "darwin") {
+    console.error(
+      chalk.red("❌ Voice mode currently requires macOS (uses `say` for TTS)."),
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.green(`✓ Connected to ${provider.name}`) +
+      chalk.dim(` (model: ${b.config.defaultModel})`),
+  );
+
+  // Merge: CLI flags > config.voice > defaults
+  const vc = b.config.voice ?? {};
+  const resolvedModel  = (opts.model  ?? vc.model       ?? "base.en") as import("./voice/stt.js").WhisperModel;
+  const resolvedVoice  =  opts.voice  ?? vc.systemVoice ?? "Samantha";
+  const resolvedRate   =  opts.rate   ?? vc.speakRate   ?? 200;
+  const resolvedThresh = vc.silenceThreshold  ?? 500;
+  const resolvedDur    = vc.silenceDurationMs ?? 1500;
+
+  console.log(
+    chalk.dim(`  Model: ${resolvedModel} | Voice: ${resolvedVoice} | Rate: ${resolvedRate} wpm`),
+  );
+
+  // Pre-warm: build whisper.cpp binary + download model before the interactive loop.
+  // Shows real compiler/download output so the user knows what's happening.
+  const stt = new WhisperSTT({ model: resolvedModel });
+  try {
+    await stt.ensureReady();
+  } catch (err) {
+    console.error(chalk.red(`\n❌ Voice setup failed: ${(err as Error).message}`));
+    process.exit(1);
+  }
+  console.log(chalk.green("✓ Voice ready — mic and transcription available\n"));
+
+  const gateway = await buildGateway(b, owl);
+  const adapter = new VoiceChannelAdapter(gateway, {
+    model:             resolvedModel,
+    systemVoice:       resolvedVoice,
+    speakRate:         resolvedRate,
+    silenceThreshold:  resolvedThresh,
+    silenceDurationMs: resolvedDur,
+    sttInstance:       stt,           // reuse the already-warmed instance
+  });
+  gateway.register(adapter);
+
+  await b.perchManager.startAll();
+
+  process.on("SIGINT", async () => {
+    b.perchManager.stopAll();
+    adapter.stop();
+    await b.browserPool?.shutdown();
+    process.exit(0);
+  });
+
+  await adapter.start();
+}
+
 // ─── Parliament Command ──────────────────────────────────────────
 
 async function parliamentCommand(topic?: string) {
@@ -1791,6 +1877,17 @@ program
   .option("-o, --owl <name>", "Owl persona to use")
   .action(async (opts: { owl?: string }) => {
     await chatCommand(opts.owl);
+  });
+
+program
+  .command("voice")
+  .description("Start an offline voice session (mic → Whisper STT → owl → macOS say)")
+  .option("-o, --owl <name>", "Owl persona to use")
+  .option("-m, --model <name>", "Whisper model: tiny.en | base.en | small.en | medium", "base.en")
+  .option("-v, --voice <name>", "macOS voice name (e.g. Samantha, Alex, Karen)", "Samantha")
+  .option("-r, --rate <wpm>", "TTS words-per-minute", (v) => parseInt(v, 10), 200)
+  .action(async (opts: { owl?: string; model?: string; voice?: string; rate?: number }) => {
+    await voiceCommand(opts);
   });
 
 program

@@ -27,6 +27,27 @@ export interface VoiceConfig {
   outputDir?: string;
 }
 
+/** Config for the offline voice channel (stackowl voice command). */
+export interface VoiceChannelConfig {
+  /**
+   * Whisper model for offline STT.
+   * Smaller = faster; larger = more accurate.
+   * First run auto-downloads the model.
+   */
+  model?: "tiny.en" | "base.en" | "small.en" | "medium" | "large";
+  /** macOS voice name passed to `say -v`. Default: "Samantha". */
+  systemVoice?: string;
+  /** Words-per-minute for TTS. Default: 200. */
+  speakRate?: number;
+  /**
+   * RMS energy threshold for VAD silence detection (0–32767).
+   * Raise this in noisy environments. Default: 500.
+   */
+  silenceThreshold?: number;
+  /** Milliseconds of silence that trigger end-of-speech. Default: 1500. */
+  silenceDurationMs?: number;
+}
+
 export interface OwlDna {
   challengeLevel: "low" | "medium" | "high" | "relentless";
   verbosity: "verbose" | "balanced" | "concise";

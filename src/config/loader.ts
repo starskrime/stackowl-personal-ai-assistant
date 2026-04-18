@@ -235,6 +235,19 @@ export interface StackOwlConfig {
     /** Request timeout in ms. Default: 30000 */
     defaultTimeout?: number;
   };
+  /** Voice channel configuration (used by `stackowl voice` and /voice in Telegram) */
+  voice?: {
+    /** Whisper model for offline STT. Default: "base.en". */
+    model?: string;
+    /** macOS voice name passed to `say -v`. Default: "Samantha". */
+    systemVoice?: string;
+    /** TTS speaking rate in words per minute. Default: 200. */
+    speakRate?: number;
+    /** RMS energy level (0–32767) below which audio is silence. Default: 500. */
+    silenceThreshold?: number;
+    /** Milliseconds of continuous silence that trigger end-of-speech. Default: 1500. */
+    silenceDurationMs?: number;
+  };
   /** Telegram bot configuration */
   telegram?: {
     botToken: string;

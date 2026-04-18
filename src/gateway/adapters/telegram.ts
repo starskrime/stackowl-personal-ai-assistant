@@ -23,6 +23,7 @@ import type { StreamEvent } from "../../providers/base.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 import { convertTables } from "../formatters/table-converter.js";
 import { TelegramConfigMenu } from "./telegram-config/menu.js";
+import { TelegramVoiceMenu } from "./telegram-config/voice-menu.js";
 import { saveConfig } from "../../config/loader.js";
 
 // ─── Config ──────────────────────────────────────────────────────
@@ -58,6 +59,8 @@ export class TelegramAdapter implements ChannelAdapter {
   private userToChatId: Map<string, number> = new Map();
   /** Interactive /config menu controller (public for web form token delegation) */
   public configMenu: TelegramConfigMenu;
+  /** Interactive /voice menu controller */
+  private voiceMenu: TelegramVoiceMenu;
 
   constructor(
     private gateway: OwlGateway,
@@ -95,6 +98,17 @@ export class TelegramAdapter implements ChannelAdapter {
           try { return (gateway as any).ctx?.providerRegistry?.listProviders() ?? [gwConfig.defaultProvider]; }
           catch { return [gwConfig.defaultProvider]; }
         },
+      },
+    );
+
+    // ── Voice menu (interactive /voice command) ──────────────────
+    this.voiceMenu = new TelegramVoiceMenu(
+      () => gateway.getConfig(),
+      async (updated) => {
+        await saveConfig(process.cwd(), updated);
+        if (typeof (gateway as any).reloadConfig === "function") {
+          await (gateway as any).reloadConfig(updated);
+        }
       },
     );
 
@@ -242,6 +256,13 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!this.isAllowed(ctx)) return;
       this.trackChat(ctx.chat.id);
       await this.configMenu.handleCommand(ctx);
+    });
+
+    // ── /voice — Interactive voice settings ─────────────────────
+    this.bot.command("voice", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      this.trackChat(ctx.chat.id);
+      await this.voiceMenu.handleCommand(ctx);
     });
 
     this.bot.command("status", async (ctx) => {
@@ -673,6 +694,16 @@ export class TelegramAdapter implements ChannelAdapter {
           return;
         }
         await this.configMenu.handleCallback(ctx, data);
+        return;
+      }
+
+      // ── Voice menu callbacks ─────────────────────────────
+      if (data.startsWith("vcfg:")) {
+        if (!this.isAllowed(ctx)) {
+          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
+          return;
+        }
+        await this.voiceMenu.handleCallback(ctx, data);
         return;
       }
 

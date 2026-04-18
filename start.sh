@@ -9,7 +9,7 @@
 # Next runs:  reads session.tmp → starts immediately, no questions
 # Reset mode: delete session.tmp to be asked again
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+git pull
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -383,16 +383,18 @@ select_launch_mode() {
     echo -e "  ${BOLD}3)${RESET} 💬 Slack only"
     echo -e "  ${BOLD}4)${RESET} 🌐 Web UI"
     echo -e "  ${BOLD}5)${RESET} 🚀 All (CLI + Telegram + Slack + Web)"
+    echo -e "  ${BOLD}6)${RESET} 🎤 Voice (offline mic → Whisper STT → owl → macOS say)"
     echo ""
     while true; do
-      read -rp "$(echo -e "${CYAN}Enter choice [1-5]:${RESET} ")" ch
+      read -rp "$(echo -e "${CYAN}Enter choice [1-6]:${RESET} ")" ch
       case "$ch" in
         1) LAUNCH_MODE="chat"; break ;;
         2) LAUNCH_MODE="telegram"; break ;;
         3) LAUNCH_MODE="slack"; break ;;
         4) LAUNCH_MODE="web"; break ;;
         5) LAUNCH_MODE="all"; break ;;
-        *) log_error "Invalid choice. Enter 1-5." ;;
+        6) LAUNCH_MODE="voice --voice Samantha --model small.en"; break ;;
+        *) log_error "Invalid choice. Enter 1-6." ;;
       esac
     done
   elif $HAS_TG; then
@@ -400,18 +402,20 @@ select_launch_mode() {
     echo -e "  ${BOLD}3)${RESET} 💻+📱 CLI + Telegram"
     echo -e "  ${BOLD}4)${RESET} 🌐 Web UI"
     echo -e "  ${BOLD}5)${RESET} 🚀 All (CLI + Telegram + Web)"
+    echo -e "  ${BOLD}6)${RESET} 🎤 Voice (offline mic → Whisper STT → owl → macOS say)"
     echo ""
     log_dim "Slack not configured — add slack.botToken + slack.appToken to enable it."
     echo ""
     while true; do
-      read -rp "$(echo -e "${CYAN}Enter choice [1-5]:${RESET} ")" ch
+      read -rp "$(echo -e "${CYAN}Enter choice [1-6]:${RESET} ")" ch
       case "$ch" in
         1) LAUNCH_MODE="chat"; break ;;
         2) LAUNCH_MODE="telegram"; break ;;
         3) LAUNCH_MODE="telegram --with-cli"; break ;;
         4) LAUNCH_MODE="web"; break ;;
         5) LAUNCH_MODE="all"; break ;;
-        *) log_error "Invalid choice. Enter 1-5." ;;
+        6) LAUNCH_MODE="voice --voice Samantha --model small.en"; break ;;
+        *) log_error "Invalid choice. Enter 1-6." ;;
       esac
     done
   elif $HAS_SL; then
@@ -419,33 +423,37 @@ select_launch_mode() {
     echo -e "  ${BOLD}3)${RESET} 💻+💬 CLI + Slack"
     echo -e "  ${BOLD}4)${RESET} 🌐 Web UI"
     echo -e "  ${BOLD}5)${RESET} 🚀 All (CLI + Slack + Web)"
+    echo -e "  ${BOLD}6)${RESET} 🎤 Voice (offline mic → Whisper STT → owl → macOS say)"
     echo ""
     log_dim "Telegram not configured — add telegram.botToken to enable it."
     echo ""
     while true; do
-      read -rp "$(echo -e "${CYAN}Enter choice [1-5]:${RESET} ")" ch
+      read -rp "$(echo -e "${CYAN}Enter choice [1-6]:${RESET} ")" ch
       case "$ch" in
         1) LAUNCH_MODE="chat"; break ;;
         2) LAUNCH_MODE="slack"; break ;;
         3) LAUNCH_MODE="slack --with-cli"; break ;;
         4) LAUNCH_MODE="web"; break ;;
         5) LAUNCH_MODE="all"; break ;;
-        *) log_error "Invalid choice. Enter 1-5." ;;
+        6) LAUNCH_MODE="voice --voice Samantha --model small.en"; break ;;
+        *) log_error "Invalid choice. Enter 1-6." ;;
       esac
     done
   else
     echo -e "  ${BOLD}2)${RESET} 🌐 Web UI"
     echo -e "  ${BOLD}3)${RESET} 🚀 All (CLI + Web)"
+    echo -e "  ${BOLD}4)${RESET} 🎤 Voice (offline mic → Whisper STT → owl → macOS say)"
     echo ""
     log_dim "Telegram/Slack not configured — add tokens to stackowl.config.json to enable them."
     echo ""
     while true; do
-      read -rp "$(echo -e "${CYAN}Enter choice [1-3]:${RESET} ")" ch
+      read -rp "$(echo -e "${CYAN}Enter choice [1-4]:${RESET} ")" ch
       case "$ch" in
         1) LAUNCH_MODE="chat"; break ;;
         2) LAUNCH_MODE="web"; break ;;
         3) LAUNCH_MODE="all"; break ;;
-        *) log_error "Invalid choice. Enter 1-3." ;;
+        4) LAUNCH_MODE="voice --voice Samantha --model small.en"; break ;;
+        *) log_error "Invalid choice. Enter 1-4." ;;
       esac
     done
   fi
