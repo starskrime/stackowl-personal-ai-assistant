@@ -504,6 +504,13 @@ main() {
     sleep 0.5
   fi
 
+  # Auto-open the face UI in browser for modes that run a web server
+  case "$LAUNCH_MODE" in
+    web*|all*)
+      (sleep 3 && open "http://localhost:3000/face" 2>/dev/null) &
+      ;;
+  esac
+
   cd "$SCRIPT_DIR"
   exec npx tsx src/index.ts $LAUNCH_MODE
 }

@@ -127,6 +127,29 @@ export interface EventPayloads {
     error: string;
   };
 
+  // ─── Face UI Events ──────────────────────────────────────────
+  "face:state": {
+    /**
+     * idle       — waiting for input
+     * listening  — receiving voice/text from user
+     * thinking   — LLM processing / tool calls in flight
+     * speaking   — streaming response in progress
+     * learning   — a new pellet / knowledge node was added
+     * growing    — owl DNA evolved / capability gained
+     */
+    state: "idle" | "listening" | "thinking" | "speaking" | "learning" | "growing";
+    label?: string;
+  };
+  "face:node_added": {
+    id: string;
+    label: string;
+    tags: string[];
+    source?: string;
+    owls?: string[];
+    excerpt?: string;
+    generatedAt?: string;
+  };
+
   // ─── ACP Events ─────────────────────────────────────────────
   "acp:message:sent": {
     messageId: string;

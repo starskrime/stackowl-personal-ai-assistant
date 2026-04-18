@@ -25,6 +25,8 @@ import { convertTables } from "../formatters/table-converter.js";
 import { TelegramConfigMenu } from "./telegram-config/menu.js";
 import { TelegramVoiceMenu } from "./telegram-config/voice-menu.js";
 import { saveConfig } from "../../config/loader.js";
+import { OggConverter } from "../../voice/ogg-converter.js";
+import { WhisperSTT } from "../../voice/stt.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -61,6 +63,8 @@ export class TelegramAdapter implements ChannelAdapter {
   public configMenu: TelegramConfigMenu;
   /** Interactive /voice menu controller */
   private voiceMenu: TelegramVoiceMenu;
+  /** Whisper STT engine for voice message transcription */
+  private stt: WhisperSTT;
 
   constructor(
     private gateway: OwlGateway,
@@ -111,6 +115,14 @@ export class TelegramAdapter implements ChannelAdapter {
         }
       },
     );
+
+    // ── STT engine for incoming Telegram voice messages ──────────
+    const voiceCfg = gateway.getConfig().voice ?? {};
+    this.stt = new WhisperSTT({
+      model: (voiceCfg.model as any) ?? "base.en",
+      language: "en",
+      removeWavAfter: true,
+    });
 
     this.setupHandlers();
   }
@@ -679,6 +691,137 @@ export class TelegramAdapter implements ChannelAdapter {
         await ctx.reply(
           "Something went wrong. Please try again or use /reset to start fresh.",
         );
+      }
+    });
+
+    // ─── Telegram voice messages (OGG Opus → STT → gateway) ──────
+    this.bot.on("message:voice", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      this.trackChat(ctx.chat.id);
+      this.userToChatId.set(String(userId), ctx.chat.id);
+
+      const voice = ctx.message.voice;
+      log.telegram.info(`Voice message from user:${userId}, duration: ${voice.duration}s`);
+
+      // Show "recording" indicator while we process
+      await ctx.api.sendChatAction(ctx.chat.id, "typing");
+
+      // ── Step 1: Download OGG from Telegram ─────────────────
+      let oggBuffer: Buffer;
+      try {
+        const fileInfo = await ctx.api.getFile(voice.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${this.config.botToken}/${fileInfo.file_path}`;
+        const resp = await fetch(fileUrl);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} downloading voice`);
+        oggBuffer = Buffer.from(await resp.arrayBuffer());
+      } catch (err) {
+        log.telegram.error(`Voice download failed: ${(err as Error).message}`);
+        await ctx.reply("❌ Could not download voice message. Please try again.");
+        return;
+      }
+
+      // ── Step 2: OGG → WAV ──────────────────────────────────
+      let wavPath: string;
+      try {
+        wavPath = await new OggConverter().convert(oggBuffer);
+      } catch (err) {
+        log.telegram.error(`OGG conversion failed: ${(err as Error).message}`);
+        await ctx.reply("❌ Could not process audio format. Please try again.");
+        return;
+      }
+
+      // ── Step 3: Transcribe with Whisper ────────────────────
+      let text: string;
+      try {
+        const statusMsg = await ctx.reply("🎤 <i>Transcribing voice message…</i>", {
+          parse_mode: "HTML",
+        });
+        text = await this.stt.transcribe(wavPath);
+        await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+      } catch (err) {
+        log.telegram.error(`STT failed: ${(err as Error).message}`);
+        await ctx.reply("❌ Transcription failed. Make sure whisper.cpp is set up (run in voice mode first).");
+        return;
+      }
+
+      if (!text.trim()) {
+        await ctx.reply("🔇 <i>Could not hear anything in the voice message.</i>", {
+          parse_mode: "HTML",
+        });
+        return;
+      }
+
+      log.telegram.incoming(`user:${userId}`, `[voice] ${text}`);
+
+      // Echo transcript back so the user sees what was heard
+      await ctx.reply(`🎤 <i>${this.escHtml(text)}</i>`, { parse_mode: "HTML" });
+
+      // ── Step 4: Route through gateway ──────────────────────
+      await ctx.api.sendChatAction(ctx.chat.id, "typing");
+      this.pinger?.notifyUserActivity();
+      this.gateway.getCognitiveLoop()?.notifyUserActivity();
+
+      try {
+        const owl = this.gateway.getOwl();
+        const owlHeader = `${owl.persona.emoji} <b>${this.escHtml(owl.persona.name)}</b>`;
+        const streamCtx = this.createStreamHandler(
+          ctx,
+          this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true,
+          undefined,
+        );
+
+        const response = await this.gateway.handle(
+          {
+            id: makeMessageId(),
+            channelId: this.id,
+            userId: String(userId),
+            sessionId: makeSessionId(this.id, String(userId)),
+            text,
+          },
+          {
+            onProgress: async (msg: string) => {
+              const stripped = this.stripInternalTags(msg);
+              if (!stripped) return;
+              try {
+                await ctx.reply(this.renderContent(stripped), { parse_mode: "HTML" });
+                await ctx.api.sendChatAction(ctx.chat.id, "typing");
+              } catch { /* non-fatal */ }
+            },
+            onStreamEvent: streamCtx.handler,
+          },
+        );
+
+        log.telegram.outgoing(`user:${userId}`, response.content);
+
+        const streamed = streamCtx.status.streamedContent;
+        const msgId = streamCtx.status.messageId;
+
+        if (msgId && streamed) {
+          const fullHtml = `${owlHeader}\n\n` + this.renderContent(response.content);
+          if (fullHtml.length <= 4096) {
+            await this.bot.api.editMessageText(ctx.chat.id, msgId, fullHtml, {
+              parse_mode: "HTML",
+            }).catch(() => {});
+          } else {
+            const chunks = this.splitMessage(fullHtml, 3800);
+            await this.bot.api.editMessageText(ctx.chat.id, msgId, chunks[0]!, {
+              parse_mode: "HTML",
+            }).catch(() => {});
+            for (let i = 1; i < Math.min(chunks.length, 5); i++) {
+              await new Promise((r) => setTimeout(r, 400));
+              await this.bot.api.sendMessage(ctx.chat.id, chunks[i]!, { parse_mode: "HTML" }).catch(() => {});
+            }
+          }
+        } else {
+          await this.sendChunked(ctx.chat.id, this.formatResponse(response));
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        log.telegram.error(`Voice gateway error for user ${userId}: ${msg}`);
+        await ctx.reply("Something went wrong processing your voice message. Please try again.");
       }
     });
 

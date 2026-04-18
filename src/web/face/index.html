@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>StackOwl — Neural Interface</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+    :root{
+      --cyan:#00f5ff; --mag:#ff00aa; --org:#ff8c00; --grn:#00ff88;
+      --pur:#aa00ff;  --red:#ff2244; --blu:#00b4ff; --yel:#ffc800;
+      --panel:rgba(0,8,20,0.90); --border:rgba(0,245,255,0.18);
+      --chat-w:380px; --mem-w:260px; --top-h:50px; --bot-h:34px;
+    }
+    *{margin:0;padding:0;box-sizing:border-box;}
+    html,body{width:100%;height:100%;overflow:hidden;background:#000509;
+      font-family:'Share Tech Mono','Courier New',monospace;color:var(--cyan);}
+
+    /* scanlines */
+    body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:200;
+      background:repeating-linear-gradient(0deg,transparent,transparent 2px,
+      rgba(0,0,0,0.07) 2px,rgba(0,0,0,0.07) 4px);}
+
+    /* grid bg */
+    #grid{position:fixed;inset:0;z-index:0;pointer-events:none;
+      background-image:linear-gradient(rgba(0,245,255,0.035) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(0,245,255,0.035) 1px,transparent 1px);
+      background-size:44px 44px;}
+
+    #graph-wrap{position:fixed;inset:0;z-index:1;}
+
+    /* ── corners ── */
+    .crn{position:fixed;width:36px;height:36px;z-index:50;}
+    .crn::before,.crn::after{content:'';position:absolute;background:var(--cyan);opacity:.6;}
+    .crn.tl{top:10px;left:10px;} .crn.tl::before{top:0;left:0;width:100%;height:2px;}
+    .crn.tl::after{top:0;left:0;width:2px;height:100%;}
+    .crn.tr{top:10px;right:10px;} .crn.tr::before{top:0;right:0;width:100%;height:2px;}
+    .crn.tr::after{top:0;right:0;width:2px;height:100%;}
+    .crn.bl{bottom:10px;left:10px;} .crn.bl::before{bottom:0;left:0;width:100%;height:2px;}
+    .crn.bl::after{bottom:0;left:0;width:2px;height:100%;}
+    .crn.br{bottom:10px;right:10px;} .crn.br::before{bottom:0;right:0;width:100%;height:2px;}
+    .crn.br::after{bottom:0;right:0;width:2px;height:100%;}
+
+    /* ──────────────────── TOP BAR ──────────────────── */
+    #topbar{position:fixed;top:0;left:0;right:0;height:var(--top-h);z-index:60;
+      background:var(--panel);border-bottom:1px solid var(--border);
+      display:flex;align-items:center;gap:16px;padding:0 18px;}
+
+    #owl-id{font-family:'Orbitron',monospace;font-size:12px;font-weight:900;
+      letter-spacing:.2em;color:var(--cyan);text-shadow:0 0 12px var(--cyan);
+      white-space:nowrap;}
+
+    .tsep{width:1px;height:26px;background:var(--border);}
+
+    #state-block{display:flex;align-items:center;gap:8px;}
+    #state-dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);
+      box-shadow:0 0 10px var(--cyan),0 0 20px var(--cyan);transition:background .4s,box-shadow .4s;}
+    #state-dot.blink{animation:blink .8s ease-in-out infinite;}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
+    #state-txt{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;
+      letter-spacing:.28em;text-shadow:0 0 8px currentColor;transition:color .4s;}
+    #state-lbl{font-size:10px;color:rgba(0,245,255,.38);letter-spacing:.04em;
+      max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+    #topbar-right{margin-left:auto;display:flex;align-items:center;gap:18px;
+      font-size:9px;color:rgba(0,245,255,.35);letter-spacing:.08em;}
+    #clock{font-size:11px;color:rgba(0,245,255,.55);}
+
+    /* ──────────────────── MEMORY PANEL (left) ──────────────────── */
+    #mem-panel{position:fixed;top:var(--top-h);left:0;bottom:var(--bot-h);
+      width:var(--mem-w);background:var(--panel);border-right:1px solid var(--border);
+      display:flex;flex-direction:column;z-index:40;overflow:hidden;
+      transition:transform .3s;}
+    #mem-panel.collapsed{transform:translateX(calc(-1 * var(--mem-w) + 28px));}
+
+    .ph{padding:10px 12px 8px;border-bottom:1px solid var(--border);
+      font-family:'Orbitron',monospace;font-size:8px;font-weight:700;
+      letter-spacing:.22em;color:rgba(0,245,255,.45);display:flex;
+      align-items:center;justify-content:space-between;flex-shrink:0;}
+    .ph span{color:var(--cyan);}
+    .ph-btn{background:none;border:none;color:rgba(0,245,255,.4);cursor:pointer;
+      font-size:14px;padding:0 2px;line-height:1;}
+    .ph-btn:hover{color:var(--cyan);}
+
+    #mem-search{margin:7px 9px;background:rgba(0,245,255,.04);
+      border:1px solid var(--border);color:var(--cyan);padding:5px 9px;
+      font-family:inherit;font-size:10px;outline:none;
+      width:calc(100% - 18px);flex-shrink:0;}
+    #mem-search::placeholder{color:rgba(0,245,255,.2);}
+    #mem-search:focus{border-color:var(--cyan);box-shadow:0 0 6px rgba(0,245,255,.18);}
+
+    #mem-list{overflow-y:auto;flex:1;scrollbar-width:thin;
+      scrollbar-color:rgba(0,245,255,.15) transparent;}
+    #mem-list::-webkit-scrollbar{width:3px;}
+    #mem-list::-webkit-scrollbar-thumb{background:rgba(0,245,255,.15);}
+
+    .mi{padding:7px 12px;border-bottom:1px solid rgba(0,245,255,.05);
+      cursor:pointer;transition:background .15s;position:relative;}
+    .mi:hover,.mi.act{background:rgba(0,245,255,.07);}
+    .mi.act::before{content:'';position:absolute;left:0;top:0;bottom:0;
+      width:2px;background:var(--cyan);box-shadow:0 0 6px var(--cyan);}
+    .mi-title{font-size:10px;line-height:1.4;margin-bottom:3px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .mi-tags{display:flex;flex-wrap:wrap;gap:2px;}
+    .tag{font-size:8px;padding:1px 4px;border-radius:1px;letter-spacing:.04em;}
+    .tc0{background:rgba(0,245,255,.1);color:#00f5ff;}
+    .tc1{background:rgba(255,0,170,.1);color:#ff00aa;}
+    .tc2{background:rgba(255,140,0,.1);color:#ff8c00;}
+    .tc3{background:rgba(0,255,136,.1);color:#00ff88;}
+    .tc4{background:rgba(170,0,255,.1);color:#aa00ff;}
+    .tc5{background:rgba(255,34,68,.1);color:#ff2244;}
+    .tc6{background:rgba(0,180,255,.1);color:#00b4ff;}
+    .tc7{background:rgba(255,200,0,.1);color:#ffc800;}
+
+    /* ──────────────────── CHAT PANEL (right) ──────────────────── */
+    #chat-panel{position:fixed;top:var(--top-h);right:0;bottom:var(--bot-h);
+      width:var(--chat-w);background:var(--panel);border-left:1px solid var(--border);
+      display:flex;flex-direction:column;z-index:40;overflow:hidden;}
+
+    /* messages */
+    #msgs{flex:1;overflow-y:auto;padding:12px 14px;display:flex;
+      flex-direction:column;gap:10px;scrollbar-width:thin;
+      scrollbar-color:rgba(0,245,255,.15) transparent;}
+    #msgs::-webkit-scrollbar{width:3px;}
+    #msgs::-webkit-scrollbar-thumb{background:rgba(0,245,255,.15);}
+
+    .msg{display:flex;flex-direction:column;gap:3px;max-width:92%;}
+    .msg.user{align-self:flex-end;align-items:flex-end;}
+    .msg.bot {align-self:flex-start;align-items:flex-start;}
+
+    .msg-meta{font-size:8px;opacity:.35;letter-spacing:.08em;}
+    .msg-bubble{padding:8px 12px;border-radius:2px;font-size:11px;
+      line-height:1.65;word-break:break-word;position:relative;}
+
+    .msg.user .msg-bubble{background:rgba(0,245,255,.08);
+      border:1px solid rgba(0,245,255,.25);color:rgba(0,245,255,.9);}
+    .msg.bot  .msg-bubble{background:rgba(170,0,255,.07);
+      border:1px solid rgba(170,0,255,.25);color:rgba(200,220,255,.9);}
+
+    .msg-voice-badge{font-size:8px;color:var(--org);letter-spacing:.08em;margin-bottom:2px;}
+    .msg-transcript{font-size:9px;opacity:.45;font-style:italic;margin-top:3px;}
+
+    /* streaming cursor */
+    .cursor::after{content:'▋';animation:cur .7s step-end infinite;}
+    @keyframes cur{0%,100%{opacity:1}50%{opacity:0}}
+
+    /* thinking indicator */
+    #thinking{display:none;align-self:flex-start;padding:8px 14px;
+      border:1px solid rgba(170,0,255,.2);background:rgba(170,0,255,.05);
+      font-size:10px;color:rgba(170,0,255,.7);letter-spacing:.1em;}
+    #thinking.show{display:block;}
+    .dots span{animation:dot 1.4s ease-in-out infinite;}
+    .dots span:nth-child(2){animation-delay:.2s;}
+    .dots span:nth-child(3){animation-delay:.4s;}
+    @keyframes dot{0%,80%,100%{opacity:.2}40%{opacity:1}}
+
+    /* ── input area ── */
+    #input-area{border-top:1px solid var(--border);padding:10px 12px;
+      display:flex;flex-direction:column;gap:8px;flex-shrink:0;}
+
+    /* voice mode bar */
+    #voice-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+
+    /* VAD real-time indicator */
+    #vad-row{display:none;width:100%;align-items:center;gap:8px;padding:4px 0;}
+    #vad-row.show{display:flex;}
+    #vad-lamp{width:10px;height:10px;border-radius:50%;flex-shrink:0;
+      background:#333;border:1px solid #444;transition:background .1s,box-shadow .1s;}
+    #vad-lamp.talking{background:var(--grn);box-shadow:0 0 10px var(--grn),0 0 20px var(--grn);}
+    #vad-lamp.silent {background:rgba(0,245,255,.2);box-shadow:none;}
+    #vad-word{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;
+      letter-spacing:.15em;min-width:52px;transition:color .1s;}
+    #vad-word.talking{color:var(--grn);}
+    #vad-word.silent {color:rgba(0,245,255,.3);}
+    #vad-nums{font-size:9px;color:rgba(0,245,255,.3);letter-spacing:.04em;flex:1;}
+    #vad-sil-bar{height:4px;flex:1;background:rgba(0,245,255,.06);
+      border:1px solid var(--border);position:relative;overflow:hidden;}
+    #vad-sil-fill{height:100%;width:0%;background:var(--org);
+      box-shadow:0 0 6px var(--org);transition:width .12s;}
+    #opmic-btn{background:none;border:1px solid var(--border);
+      color:rgba(0,245,255,.45);font-family:inherit;font-size:9px;
+      letter-spacing:.1em;padding:4px 10px;cursor:pointer;transition:all .2s;}
+    #opmic-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+    #opmic-btn.on{border-color:var(--red);color:var(--red);
+      box-shadow:0 0 8px rgba(255,34,68,.3);animation:obmik .9s ease-in-out infinite;}
+    @keyframes obmik{0%,100%{opacity:1}50%{opacity:.6}}
+
+    #level-wrap{flex:1;height:18px;background:rgba(0,245,255,.04);
+      border:1px solid var(--border);position:relative;overflow:hidden;display:none;}
+    #level-wrap.show{display:block;}
+    #level-bar{height:100%;width:0%;background:var(--cyan);
+      box-shadow:0 0 8px var(--cyan);transition:width .05s;}
+    #level-txt{position:absolute;inset:0;display:flex;align-items:center;
+      justify-content:center;font-size:8px;letter-spacing:.1em;
+      color:rgba(0,245,255,.5);}
+
+    /* text row */
+    #text-row{display:flex;gap:8px;align-items:flex-end;}
+    #msg-input{flex:1;background:rgba(0,245,255,.04);border:1px solid var(--border);
+      color:var(--cyan);padding:8px 10px;font-family:inherit;font-size:11px;
+      outline:none;resize:none;min-height:36px;max-height:100px;line-height:1.5;}
+    #msg-input::placeholder{color:rgba(0,245,255,.2);}
+    #msg-input:focus{border-color:var(--cyan);box-shadow:0 0 6px rgba(0,245,255,.15);}
+
+    .icon-btn{background:none;border:1px solid var(--border);
+      color:rgba(0,245,255,.5);cursor:pointer;padding:0;
+      width:36px;height:36px;display:flex;align-items:center;
+      justify-content:center;transition:all .2s;flex-shrink:0;font-size:16px;}
+    .icon-btn:hover{border-color:var(--cyan);color:var(--cyan);
+      box-shadow:0 0 8px rgba(0,245,255,.2);}
+    #mic-btn.recording{border-color:var(--red);color:var(--red);
+      box-shadow:0 0 12px rgba(255,34,68,.4);animation:recpulse .6s ease-in-out infinite;}
+    @keyframes recpulse{0%,100%{box-shadow:0 0 12px rgba(255,34,68,.4)}
+      50%{box-shadow:0 0 20px rgba(255,34,68,.7)}}
+    #send-btn{border-color:rgba(0,245,255,.3);color:rgba(0,245,255,.6);}
+    #send-btn:hover{border-color:var(--cyan);color:var(--cyan);
+      background:rgba(0,245,255,.08);}
+
+    /* ──────────────────── STATUS BAR ──────────────────── */
+    #statusbar{position:fixed;bottom:0;left:0;right:0;height:var(--bot-h);z-index:60;
+      background:var(--panel);border-top:1px solid var(--border);
+      display:flex;align-items:center;padding:0 14px;gap:18px;font-size:9px;
+      letter-spacing:.08em;}
+    .si{display:flex;align-items:center;gap:5px;color:rgba(0,245,255,.35);}
+    .si span{color:var(--cyan);font-weight:bold;}
+    #actbar{margin-left:auto;display:flex;align-items:center;gap:2px;}
+    .ad{width:3px;height:3px;border-radius:50%;background:rgba(0,245,255,.15);
+      transition:background .2s,height .2s;}
+    .ad.on{background:var(--cyan);box-shadow:0 0 4px var(--cyan);}
+
+    /* ──────────────────── LISTENING PULSE ──────────────────── */
+    #pulse{position:fixed;inset:0;pointer-events:none;z-index:5;
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;transition:opacity .5s;}
+    #pulse.on{opacity:1;}
+    .pr{position:absolute;border-radius:50%;border:1px solid var(--cyan);
+      animation:pr 2s linear infinite;}
+    .pr:nth-child(1){animation-delay:0s;}
+    .pr:nth-child(2){animation-delay:.65s;}
+    .pr:nth-child(3){animation-delay:1.3s;}
+    @keyframes pr{0%{width:60px;height:60px;opacity:.9}100%{width:560px;height:560px;opacity:0}}
+
+    /* ──────────────────── EVENT LOG ──────────────────── */
+    #evlog{position:fixed;bottom:var(--bot-h);
+      left:calc(var(--mem-w) + 4px);width:260px;max-height:120px;z-index:45;
+      background:rgba(0,4,12,.8);border:1px solid var(--border);border-bottom:none;
+      transition:left .3s;}
+    #evlog.mem-collapsed{left:32px;}
+    #evlog-hdr{padding:3px 9px;border-bottom:1px solid var(--border);
+      font-family:'Orbitron',monospace;font-size:7px;letter-spacing:.2em;
+      color:rgba(0,245,255,.3);}
+    #evlog-body{max-height:100px;overflow-y:auto;scrollbar-width:none;}
+    #evlog-body::-webkit-scrollbar{display:none;}
+    .ll{padding:2px 9px;color:rgba(0,245,255,.4);display:flex;gap:7px;
+      font-size:9px;animation:lin .2s ease;}
+    @keyframes lin{from{opacity:0;transform:translateX(6px)}to{opacity:1}}
+    .ll .lt{color:rgba(0,245,255,.2);flex-shrink:0;}
+    .ll .lm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .ll.hl{color:var(--cyan);}
+
+    /* ──────────────────── NODE DETAIL (hover tooltip) ──────────────────── */
+    #ndetail{position:fixed;bottom:calc(var(--bot-h) + 8px);
+      right:calc(var(--chat-w) + 10px);width:240px;
+      background:rgba(0,8,20,.92);border:1px solid var(--border);
+      padding:12px;z-index:50;display:none;font-size:10px;line-height:1.6;}
+    #ndetail.show{display:block;}
+    #nd-title{font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
+      margin-bottom:8px;line-height:1.4;word-break:break-word;}
+    .nd-row{display:flex;gap:8px;margin-bottom:4px;}
+    .nd-lbl{color:rgba(0,245,255,.3);font-size:8px;letter-spacing:.15em;
+      text-transform:uppercase;min-width:56px;flex-shrink:0;padding-top:1px;}
+    .nd-val{color:rgba(0,245,255,.75);flex:1;word-break:break-word;}
+    .nd-excerpt{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
+      font-size:9px;color:rgba(0,245,255,.4);line-height:1.7;}
+  </style>
+</head>
+<body>
+
+<div id="grid"></div>
+<div class="crn tl"></div><div class="crn tr"></div>
+<div class="crn bl"></div><div class="crn br"></div>
+
+<div id="graph-wrap"></div>
+
+<!-- ── TOP BAR ── -->
+<div id="topbar">
+  <div id="owl-id">STACKOWL // NEURAL</div>
+  <div class="tsep"></div>
+  <div id="state-block">
+    <div id="state-dot"></div>
+    <div id="state-txt" style="color:var(--cyan)">IDLE</div>
+    <div id="state-lbl"></div>
+  </div>
+  <div id="topbar-right">
+    <div class="si">UPTIME <span id="uptime">00:00:00</span></div>
+    <div class="si">MEM <span id="tb-nodes">0</span></div>
+    <div class="si">WS <span id="tb-ws">—</span></div>
+    <div id="clock">00:00:00</div>
+  </div>
+</div>
+
+<!-- ── MEMORY PANEL ── -->
+<div id="mem-panel">
+  <div class="ph">
+    MEMORY INDEX &nbsp;—&nbsp; <span id="mem-count">0</span>
+    <button class="ph-btn" id="mem-toggle" title="collapse">◀</button>
+  </div>
+  <input id="mem-search" type="text" placeholder="SEARCH..." autocomplete="off"/>
+  <div id="mem-list"></div>
+</div>
+
+<!-- ── CHAT PANEL ── -->
+<div id="chat-panel">
+  <div class="ph">
+    NEURAL COMM
+    <span style="font-size:8px;color:rgba(0,245,255,.35)" id="session-id-display"></span>
+  </div>
+
+  <div id="msgs">
+    <div class="msg bot">
+      <div class="msg-meta">SYSTEM</div>
+      <div class="msg-bubble">Neural interface online. Send a message, record voice, or enable open mic.</div>
+    </div>
+    <div id="thinking" class="msg bot">
+      <div class="msg-bubble">
+        PROCESSING <span class="dots"><span>.</span><span>.</span><span>.</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="input-area">
+    <!-- voice mode bar -->
+    <div id="voice-bar">
+      <button id="opmic-btn">📻 OPEN MIC</button>
+      <div id="level-wrap"><div id="level-bar"></div><div id="level-txt">LISTENING</div></div>
+      <!-- VAD real-time indicator — shown only when open mic is active -->
+      <div id="vad-row">
+        <div id="vad-lamp"></div>
+        <span id="vad-word">SILENT</span>
+        <span id="vad-nums">rms:0.0000  thr:0.0000  sil:0/5</span>
+        <div id="vad-sil-bar"><div id="vad-sil-fill"></div></div>
+      </div>
+    </div>
+
+    <!-- text + mic + send -->
+    <div id="text-row">
+      <textarea id="msg-input" placeholder="Send a message..." rows="1"></textarea>
+      <button class="icon-btn" id="mic-btn" title="Record voice">🎤</button>
+      <button class="icon-btn" id="send-btn" title="Send">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── STATUS BAR ── -->
+<div id="statusbar">
+  <div class="si">NODES <span id="sb-n">0</span></div>
+  <div class="si">EDGES <span id="sb-e">0</span></div>
+  <div class="si">TAGS  <span id="sb-t">0</span></div>
+  <div class="si">STATE <span id="sb-s">IDLE</span></div>
+  <div id="actbar">
+    <div class="ad"></div><div class="ad"></div><div class="ad"></div>
+    <div class="ad"></div><div class="ad"></div><div class="ad"></div>
+    <div class="ad"></div><div class="ad"></div><div class="ad"></div>
+    <div class="ad"></div><div class="ad"></div><div class="ad"></div>
+  </div>
+</div>
+
+<!-- ── EVENT LOG ── -->
+<div id="evlog">
+  <div id="evlog-hdr">SYSTEM LOG</div>
+  <div id="evlog-body"></div>
+</div>
+
+<!-- ── NODE DETAIL TOOLTIP ── -->
+<div id="ndetail">
+  <div id="nd-title"></div>
+  <div id="nd-body"></div>
+</div>
+
+<!-- ── PULSE ── -->
+<div id="pulse"><div class="pr"></div><div class="pr"></div><div class="pr"></div></div>
+
+<script src="/node_modules/3d-force-graph/dist/3d-force-graph.min.js"></script>
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════
+// SESSION
+// ═══════════════════════════════════════════════════════
+let SESSION_ID = sessionStorage.getItem('owlSessionId');
+if (!SESSION_ID) {
+  SESSION_ID = 'web_' + Math.random().toString(36).slice(2, 10);
+  sessionStorage.setItem('owlSessionId', SESSION_ID);
+}
+const USER_ID = 'web-user';
+document.getElementById('session-id-display').textContent = SESSION_ID.slice(0, 14) + '…';
+
+// ═══════════════════════════════════════════════════════
+// GRAPH
+// ═══════════════════════════════════════════════════════
+const gData = { nodes: [], links: [] };
+let graph = null;
+const NODE_COLS = ['#00f5ff','#ff00aa','#ff8c00','#00ff88','#aa00ff','#ff2244','#00b4ff','#ffc800'];
+const tagCI = {};
+function tci(tag) {
+  if (!(tag in tagCI)) { let h=5381; for(let i=0;i<tag.length;i++)h=((h<<5)+h)^tag.charCodeAt(i); tagCI[tag]=Math.abs(h)%8; }
+  return tagCI[tag];
+}
+function nCol(n) { return n.tags?.length ? NODE_COLS[tci(n.tags[0])%8] : '#00f5ff'; }
+
+function buildGraph() {
+  graph = ForceGraph3D()(document.getElementById('graph-wrap'))
+    .backgroundColor('#000509')
+    .width(window.innerWidth).height(window.innerHeight)
+    .graphData(gData)
+    .nodeLabel(n=>`<div style="background:rgba(0,5,15,.9);border:1px solid ${nCol(n)};color:${nCol(n)};padding:4px 10px;font-family:Share Tech Mono,monospace;font-size:11px;max-width:220px;word-break:break-word;text-shadow:0 0 6px ${nCol(n)}">${n.label}</div>`)
+    .nodeVal(n=>n.val??2).nodeColor(nCol).nodeOpacity(.93).nodeResolution(12)
+    .linkColor(()=>'rgba(0,245,255,.1)').linkWidth(.55).linkOpacity(.45)
+    .linkDirectionalParticles(1).linkDirectionalParticleWidth(.8)
+    .linkDirectionalParticleColor(()=>'rgba(0,245,255,.5)')
+    .linkDirectionalParticleSpeed(.003)
+    .enableNavigationControls(true).showNavInfo(false)
+    .onNodeHover(node=>{ document.body.style.cursor=node?'pointer':'default'; showNDetail(node); })
+    .onNodeClick(node=>{ if(!node)return; focusNode(String(node.id)); });
+
+  graph.d3Force('charge').strength(-90);
+  graph.d3Force('link').distance(65).strength(.4);
+
+  let angle=0;
+  setInterval(()=>{ if(curState==='idle'||curState==='speaking'){ angle+=.0014;
+    graph.cameraPosition({x:Math.sin(angle)*380,z:Math.cos(angle)*380}); }}, 50);
+}
+
+function showNDetail(node) {
+  const el = document.getElementById('ndetail');
+  if (!node) { el.classList.remove('show'); return; }
+  el.classList.add('show');
+  const c = nCol(node);
+  document.getElementById('nd-title').style.color = c;
+  document.getElementById('nd-title').style.textShadow = `0 0 10px ${c}`;
+  document.getElementById('nd-title').textContent = node.label;
+  const conns = gData.links.filter(l=>
+    String(l.source?.id??l.source)===String(node.id)||
+    String(l.target?.id??l.target)===String(node.id)).length;
+  const tagsHtml = (node.tags||[]).map(t=>`<span class="tag tc${tci(t)%8}">${t}</span>`).join(' ') || '—';
+  const date = node.generatedAt ? new Date(node.generatedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+  document.getElementById('nd-body').innerHTML=`
+    <div class="nd-row"><span class="nd-lbl">SOURCE</span><span class="nd-val">${node.source||'—'}</span></div>
+    <div class="nd-row"><span class="nd-lbl">DATE</span><span class="nd-val">${date}</span></div>
+    <div class="nd-row"><span class="nd-lbl">CONNS</span><span class="nd-val">${conns}</span></div>
+    <div class="nd-row"><span class="nd-lbl">TAGS</span><span class="nd-val">${tagsHtml}</span></div>
+    ${node.excerpt?`<div class="nd-excerpt">"${node.excerpt.slice(0,160).replace(/</g,'&lt;')}…"</div>`:''}`;
+}
+
+function addNode(id, label, tags, extra={}) {
+  if (gData.nodes.find(n=>String(n.id)===String(id))) return;
+  const node = { id, label, tags:tags||[], val:Math.max(1.5,1+(tags?.length??0)*.7),
+    color:NODE_COLS[tci(tags?.[0]??'')%8], generatedAt:new Date().toISOString(), ...extra };
+  gData.nodes.push(node);
+  gData.nodes.forEach(n=>{
+    if(n.id!==id&&(n.tags||[]).some(t=>(tags||[]).includes(t)))
+      gData.links.push({source:id,target:n.id});
+  });
+  if(graph) graph.graphData({...gData});
+  renderMemList();
+  logEv(`+NODE: ${label}`, true);
+}
+
+async function loadGraph() {
+  try {
+    const d = await fetch('/api/face/graph').then(r=>r.json());
+    gData.nodes = (d.nodes||[]).map(n=>({...n,
+      color:NODE_COLS[tci(n.tags?.[0]??'')%8],val:Math.max(1.5,1+(n.tags?.length??0)*.7)}));
+    gData.links = (d.edges||[]).map(e=>({source:e.source,target:e.target}));
+    if(graph) graph.graphData({...gData});
+    renderMemList();
+    logEv(`LOADED ${gData.nodes.length} memory nodes`);
+  } catch { logEv('GRAPH LOAD FAILED'); }
+}
+
+// ═══════════════════════════════════════════════════════
+// MEMORY LIST
+// ═══════════════════════════════════════════════════════
+function renderMemList(filter='') {
+  const lower = filter.toLowerCase();
+  const items = gData.nodes.filter(n=>!lower||
+    n.label.toLowerCase().includes(lower)||(n.tags||[]).some(t=>t.toLowerCase().includes(lower)));
+  document.getElementById('mem-list').innerHTML = items.map(n=>{
+    const c=nCol(n);
+    return `<div class="mi" data-id="${n.id}" onclick="focusNode('${n.id}')">
+      <div class="mi-title" style="color:${c};text-shadow:0 0 5px ${c}">${n.label}</div>
+      <div class="mi-tags">${(n.tags||[]).map(t=>`<span class="tag tc${tci(t)%8}">${t}</span>`).join('')}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('mem-count').textContent = gData.nodes.length;
+  document.getElementById('tb-nodes').textContent  = gData.nodes.length;
+  document.getElementById('sb-n').textContent = gData.nodes.length;
+  document.getElementById('sb-e').textContent = gData.links.length;
+  const tags = new Set(gData.nodes.flatMap(n=>n.tags||[]));
+  document.getElementById('sb-t').textContent = tags.size;
+}
+
+document.getElementById('mem-search').addEventListener('input',function(){ renderMemList(this.value); });
+
+function focusNode(id) {
+  const node = gData.nodes.find(n=>String(n.id)===String(id));
+  if(!node||!graph) return;
+  const d=120;
+  graph.cameraPosition({x:(node.x??0)+d,y:(node.y??0)+d/2,z:(node.z??0)+d},node,800);
+  document.querySelectorAll('.mi').forEach(el=>el.classList.toggle('act',el.dataset.id===String(id)));
+  showNDetail(node);
+}
+
+// Collapse/expand
+let memCollapsed = false;
+document.getElementById('mem-toggle').addEventListener('click',()=>{
+  memCollapsed=!memCollapsed;
+  document.getElementById('mem-panel').classList.toggle('collapsed',memCollapsed);
+  document.getElementById('evlog').classList.toggle('mem-collapsed',memCollapsed);
+  document.getElementById('mem-toggle').textContent = memCollapsed ? '▶' : '◀';
+});
+
+// ═══════════════════════════════════════════════════════
+// STATE MACHINE
+// ═══════════════════════════════════════════════════════
+const STATES = {
+  idle:      {label:'IDLE',      col:'#4466aa', pulse:false, act:false},
+  listening: {label:'LISTENING', col:'#00f5ff', pulse:true,  act:true },
+  thinking:  {label:'THINKING',  col:'#ff8c00', pulse:false, act:true },
+  speaking:  {label:'SPEAKING',  col:'#00ff88', pulse:false, act:true },
+  learning:  {label:'LEARNING',  col:'#aa00ff', pulse:false, act:true },
+  growing:   {label:'GROWING',   col:'#ff00aa', pulse:false, act:true },
+};
+let curState='idle';
+let actTimer=null;
+
+function setState(state, lbl) {
+  const cfg = STATES[state]??STATES.idle; curState=state;
+  const dot=document.getElementById('state-dot');
+  const txt=document.getElementById('state-txt');
+  dot.style.background=cfg.col; dot.style.boxShadow=`0 0 10px ${cfg.col},0 0 20px ${cfg.col}`;
+  dot.classList.toggle('blink',cfg.pulse);
+  txt.textContent=cfg.label; txt.style.color=cfg.col; txt.style.textShadow=`0 0 8px ${cfg.col}`;
+  document.getElementById('state-lbl').textContent=lbl?`> ${lbl}`:'';
+  document.getElementById('sb-s').textContent=cfg.label;
+  document.getElementById('pulse').classList.toggle('on',cfg.pulse);
+  if(actTimer){clearInterval(actTimer);actTimer=null;}
+  const dots=document.querySelectorAll('.ad');
+  if(!cfg.act){dots.forEach(d=>d.classList.remove('on'));return;}
+  let i=0; actTimer=setInterval(()=>{ dots.forEach(d=>d.classList.remove('on'));
+    dots[i%dots.length].classList.add('on'); dots[(i+1)%dots.length].classList.add('on'); i++; },80);
+  if(graph){
+    switch(state){
+      case 'thinking': graph.d3Force('charge').strength(-160); graph.d3ReheatSimulation(); break;
+      case 'learning': case 'growing': graph.d3Force('charge').strength(-200); graph.d3ReheatSimulation(); break;
+      default: graph.d3Force('charge').strength(-90);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// EVENT LOG
+// ═══════════════════════════════════════════════════════
+function logEv(msg, hl=false) {
+  const body=document.getElementById('evlog-body');
+  const now=new Date();
+  const ts=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  const line=document.createElement('div'); line.className='ll'+(hl?' hl':'');
+  line.innerHTML=`<span class="lt">[${ts}]</span><span class="lm">${msg}</span>`;
+  body.appendChild(line);
+  while(body.children.length>60) body.removeChild(body.firstChild);
+  body.scrollTop=body.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════
+// WEBSOCKET
+// ═══════════════════════════════════════════════════════
+let ws=null, wsReady=false, reconnTimer=null;
+const startTime=Date.now();
+
+function connectWS() {
+  ws=new WebSocket(`ws://${location.host}`);
+  ws.onopen=()=>{
+    wsReady=true;
+    ws.send(JSON.stringify({type:'subscribe',event:'face:state'}));
+    ws.send(JSON.stringify({type:'subscribe',event:'face:node_added'}));
+    document.getElementById('tb-ws').textContent='OK';
+    logEv('WS CONNECTED');
+    loadGraph();
+  };
+  ws.onmessage=e=>{
+    let d; try{d=JSON.parse(e.data);}catch{return;}
+
+    if(d.type==='connected'){
+      if(d.owl) document.getElementById('owl-id').textContent=
+        `${d.owl.emoji??''} ${d.owl.name??'STACKOWL'} // NEURAL`.toUpperCase();
+      return;
+    }
+    if(d.type==='event'){
+      if(d.event==='face:state') setState(d.payload.state,d.payload.label);
+      else if(d.event==='face:node_added'){
+        const p=d.payload;
+        addNode(p.id,p.label,p.tags,{source:p.source,owls:p.owls,excerpt:p.excerpt,generatedAt:p.generatedAt});
+      }
+      return;
+    }
+    // Chat streaming
+    if(d.type==='stream') handleStream(d.event);
+    if(d.type==='response') handleResponse(d);
+  };
+  ws.onclose=()=>{
+    wsReady=false; document.getElementById('tb-ws').textContent='ERR';
+    logEv('WS LOST — retry…');
+    if(!reconnTimer) reconnTimer=setTimeout(()=>{reconnTimer=null;connectWS();},2500);
+  };
+  ws.onerror=()=>ws.close();
+}
+
+// ═══════════════════════════════════════════════════════
+// CHAT — TEXT
+// ═══════════════════════════════════════════════════════
+let streamBubble=null, streamContent='';
+
+function sendText() {
+  const inp=document.getElementById('msg-input');
+  const text=inp.value.trim(); if(!text||!wsReady) return;
+  inp.value=''; inp.style.height='36px';
+  appendMsg('user', text);
+  showThinking(true);
+  streamBubble=null; streamContent='';
+  ws.send(JSON.stringify({type:'message',text,sessionId:SESSION_ID}));
+  setState('thinking','');
+}
+
+function handleStream(ev) {
+  if(ev.type==='text_delta'){
+    const chunk=(ev.content||'').replace(/\[DONE\]/g,'');
+    if(!chunk) return;
+    showThinking(false);
+    if(!streamBubble){
+      streamBubble=appendMsg('bot','',{streaming:true});
+    }
+    streamContent+=chunk;
+    streamBubble.querySelector('.msg-bubble').innerHTML=
+      mdLight(streamContent)+'<span class="cursor"></span>';
+    const msgs=document.getElementById('msgs');
+    msgs.scrollTop=msgs.scrollHeight;
+  }
+  if(ev.type==='done'&&streamBubble){
+    streamBubble.querySelector('.msg-bubble').innerHTML=mdLight(streamContent);
+    streamBubble=null; streamContent='';
+    setState('idle');
+  }
+}
+
+function handleResponse(d) {
+  showThinking(false);
+  if(!streamBubble&&d.content){
+    appendMsg('bot',d.content);
+  } else if(streamBubble){
+    streamBubble.querySelector('.msg-bubble').innerHTML=mdLight(streamContent||d.content||'');
+    streamBubble=null; streamContent='';
+  }
+  setState('idle');
+}
+
+function appendMsg(role, text, opts={}) {
+  const msgs=document.getElementById('msgs');
+  const thinking=document.getElementById('thinking');
+  const div=document.createElement('div');
+  div.className=`msg ${role}`;
+  const now=new Date();
+  const ts=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const meta=role==='user'?'YOU':document.getElementById('owl-id').textContent.split('//')[0].trim()||'OWL';
+  let inner=`<div class="msg-meta">${meta} · ${ts}</div>`;
+  if(opts.voiceBadge) inner+=`<div class="msg-voice-badge">🎤 VOICE</div>`;
+  inner+=`<div class="msg-bubble">${opts.streaming?'':mdLight(text)}</div>`;
+  if(opts.transcript) inner+=`<div class="msg-transcript">heard: "${opts.transcript}"</div>`;
+  div.innerHTML=inner;
+  msgs.insertBefore(div,thinking);
+  msgs.scrollTop=msgs.scrollHeight;
+  return div;
+}
+
+function showThinking(show) {
+  document.getElementById('thinking').classList.toggle('show', show);
+  const msgs=document.getElementById('msgs');
+  msgs.scrollTop=msgs.scrollHeight;
+}
+
+// minimal markdown: bold, code, line-breaks
+function mdLight(s) {
+  return (s||'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/`([^`]+)`/g,'<code style="background:rgba(0,245,255,.1);padding:0 3px">$1</code>')
+    .replace(/\n/g,'<br>');
+}
+
+// send on Enter (Shift+Enter = newline)
+document.getElementById('msg-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendText();}
+});
+document.getElementById('msg-input').addEventListener('input',function(){
+  this.style.height='36px'; this.style.height=Math.min(this.scrollHeight,100)+'px';
+});
+document.getElementById('send-btn').addEventListener('click',sendText);
+
+// ═══════════════════════════════════════════════════════
+// VOICE HELPERS
+// ═══════════════════════════════════════════════════════
+
+// WAV encoder: Float32 PCM chunks → WAV Blob
+function encodeWAV(chunks, sr) {
+  let total=0; chunks.forEach(c=>total+=c.length);
+  const merged=new Float32Array(total);
+  let off=0; chunks.forEach(c=>{merged.set(c,off);off+=c.length;});
+  const i16=new Int16Array(merged.length);
+  for(let i=0;i<merged.length;i++){
+    const v=Math.max(-1,Math.min(1,merged[i]));
+    i16[i]=v<0?v*32768:v*32767;
+  }
+  const dLen=i16.byteLength;
+  const buf=new ArrayBuffer(44+dLen);
+  const dv=new DataView(buf);
+  function ws(s,o){for(let i=0;i<s.length;i++)dv.setUint8(o+i,s.charCodeAt(i));}
+  ws('RIFF',0); dv.setUint32(4,36+dLen,true); ws('WAVE',8); ws('fmt ',12);
+  dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,1,true);
+  dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true);
+  dv.setUint16(32,2,true); dv.setUint16(34,16,true); ws('data',36);
+  dv.setUint32(40,dLen,true);
+  new Uint8Array(buf,44).set(new Uint8Array(i16.buffer));
+  return new Blob([buf],{type:'audio/wav'});
+}
+
+async function sendVoiceBlob(wav, {voiceBadge=false}={}) {
+  try {
+    const resp=await fetch('/api/voice',{
+      method:'POST', body:wav,
+      headers:{'Content-Type':'audio/wav','X-User-Id':USER_ID,'X-Session-Id':SESSION_ID}
+    });
+    const data=await resp.json();
+    if(!data.transcript?.trim()){ logEv(data.error||'NOTHING HEARD'); return; }
+    logEv(`HEARD: "${data.transcript}"`, true);
+    appendMsg('user', data.transcript, {voiceBadge});
+    if(data.response?.content) appendMsg('bot', data.response.content);
+  } catch(e){ logEv('VOICE SEND FAILED: '+e.message); }
+}
+
+// ═══════════════════════════════════════════════════════
+// TAP-TO-RECORD (mic button)
+// ═══════════════════════════════════════════════════════
+let tapCtx=null, tapStream=null, tapSrc=null, tapProc=null;
+let tapRecording=false, tapChunks=[];
+
+document.getElementById('mic-btn').addEventListener('click', async ()=>{
+  if(openMic) return;                          // open mic owns the mic
+  if(!tapRecording) await tapStart();
+  else              await tapStop();
+});
+
+async function tapStart() {
+  try {
+    tapStream=await navigator.mediaDevices.getUserMedia(
+      {audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true}});
+  } catch(e){ logEv('MIC ACCESS DENIED'); return; }
+  tapCtx=new AudioContext({sampleRate:16000});
+  tapSrc=tapCtx.createMediaStreamSource(tapStream);
+  tapProc=tapCtx.createScriptProcessor(4096,1,1);
+  tapChunks=[]; tapRecording=true;
+  tapProc.onaudioprocess=ev=>{
+    tapChunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+    let s=0; const d=ev.inputBuffer.getChannelData(0);
+    for(let i=0;i<d.length;i++) s+=d[i]*d[i];
+    document.getElementById('level-bar').style.width=Math.min(100,Math.sqrt(s/d.length)*700)+'%';
+  };
+  tapSrc.connect(tapProc); tapProc.connect(tapCtx.destination);
+  document.getElementById('mic-btn').classList.add('recording');
+  document.getElementById('mic-btn').title='Stop & send';
+  document.getElementById('level-wrap').classList.add('show');
+  document.getElementById('level-txt').textContent='RECORDING';
+  setState('listening','mic active');
+}
+
+async function tapStop() {
+  if(!tapRecording) return;
+  tapRecording=false;
+  tapProc.disconnect(); tapSrc.disconnect();
+  tapStream.getTracks().forEach(t=>t.stop());
+  tapCtx.close();
+  document.getElementById('mic-btn').classList.remove('recording');
+  document.getElementById('mic-btn').title='Record voice';
+  document.getElementById('level-wrap').classList.remove('show');
+  document.getElementById('level-bar').style.width='0%';
+  if(tapChunks.length<3){ logEv('TOO SHORT'); setState('idle'); return; }
+  setState('thinking','transcribing…');
+  const wav=encodeWAV(tapChunks,16000); tapChunks=[];
+  await sendVoiceBlob(wav,{voiceBadge:true});
+  setState('idle');
+}
+
+// ═══════════════════════════════════════════════════════
+// OPEN MIC — always-on VAD (clean 3-layer architecture)
+//
+// Layer 1 — Activity indicator (raw RMS vs noiseFloor×1.3)
+//            Purely cosmetic. Uses raw per-frame RMS, no EMA lag.
+//            Lamp goes green the instant you make sound.
+//
+// Layer 2 — Speech onset (smoothedRMS > noiseFloor×3.0)
+//            Transitions LISTENING → CAPTURING.
+//
+// Layer 3 — Silence detector (smoothedRMS < max(noiseFloor×1.5, peak×0.15)
+//            for OM_SIL_TGT consecutive frames) — triggers send.
+//
+// Noise floor: initialized from 10-frame calibration, then continuously
+// recalibrated in LISTENING via a slow EMA toward quiet frames.
+// All thresholds derived from noiseFloor — no magic constants to tune.
+// ═══════════════════════════════════════════════════════
+let openMic=false;
+let omCtx=null, omStream=null, omSrc=null, omProc=null;
+
+let omPhase='idle';        // idle | calibrating | listening | capturing | sending
+let omSmoothed=0;          // EMA of per-frame RMS
+let omPeak=0;              // peak smoothed RMS seen in current utterance
+let omSilCount=0;          // consecutive silence frames in CAPTURING
+let omNoiseFloor=0.004;    // adaptive noise baseline
+let omSpeechChunks=[];     // PCM Float32 frames of current utterance
+let omPreRoll=[];          // ring buffer: last N frames before onset
+let omCalBuf=[];           // scratch for initial calibration
+
+const OM_SMOOTH  = 0.85;  // EMA weight — very responsive (85% new sample each frame)
+const OM_PRE_FR  = 4;     // pre-roll frames kept before onset (4 × 128ms = 512ms)
+const OM_SIL_TGT = 5;     // silence frames to send (5 × 128ms ≈ 640ms pause)
+const OM_MIN_FR  = 3;     // minimum frames needed to bother sending
+const OM_CAL_FR  = 10;    // initial calibration frames (~1.3s)
+
+function omRMS(buf){
+  let s=0; for(let i=0;i<buf.length;i++) s+=buf[i]*buf[i];
+  return Math.sqrt(s/buf.length);
+}
+
+// ── Level bar + status label ───────────────────────────
+const OM_BAR_COL={calibrating:'var(--yel)',listening:'var(--cyan)',capturing:'var(--grn)',sending:'var(--org)'};
+function omVisual(phase, sub=''){
+  document.getElementById('level-txt').textContent = sub || phase.toUpperCase();
+  document.getElementById('level-bar').style.background = OM_BAR_COL[phase]||'var(--cyan)';
+}
+
+// ── Layer 1: real-time activity indicator ──────────────
+// Uses raw (not smoothed) RMS so there is zero display lag.
+// Threshold = noiseFloor × 1.3 — anything above ambient noise = TALKING.
+function vadDraw(rawRms){
+  const actThr = omNoiseFloor * 1.3;
+  const talking = rawRms > actThr;
+  document.getElementById('vad-lamp').className = talking ? 'talking' : 'silent';
+  document.getElementById('vad-word').className  = talking ? 'talking' : 'silent';
+  document.getElementById('vad-word').textContent = talking ? 'TALKING' : 'SILENT';
+  const speechThr = omNoiseFloor * 3.0;
+  document.getElementById('vad-nums').textContent =
+    `raw:${rawRms.toFixed(4)}  sm:${omSmoothed.toFixed(4)}  ` +
+    `noise:${omNoiseFloor.toFixed(4)}  onset:${speechThr.toFixed(4)}  sil:${omSilCount}/${OM_SIL_TGT}`;
+  document.getElementById('vad-sil-fill').style.width =
+    Math.min(100, (omSilCount / OM_SIL_TGT) * 100) + '%';
+}
+
+async function startOpenMic(){
+  try{
+    omStream = await navigator.mediaDevices.getUserMedia(
+      {audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true}});
+  }catch(e){ logEv('MIC DENIED: '+e.message); openMic=false; updateOpenMicBtn(); return; }
+
+  omCtx  = new AudioContext({sampleRate:16000});
+  omSrc  = omCtx.createMediaStreamSource(omStream);
+  omProc = omCtx.createScriptProcessor(2048,1,1);
+
+  // Reset state
+  omPhase='calibrating'; omSmoothed=0; omPeak=0; omSilCount=0;
+  omNoiseFloor=0.004; omSpeechChunks=[]; omPreRoll=[]; omCalBuf=[];
+
+  omProc.onaudioprocess = ev => {
+    const raw   = ev.inputBuffer.getChannelData(0);
+    const frame = new Float32Array(raw);
+    const rms   = omRMS(raw);
+
+    // EMA — 0.85 weight means new sample dominates, smoothing only brief spikes
+    omSmoothed = OM_SMOOTH * rms + (1 - OM_SMOOTH) * omSmoothed;
+
+    // Level bar — raw rms, instant
+    document.getElementById('level-bar').style.width = Math.min(100, rms * 600) + '%';
+
+    // Layer 1: update indicator every frame (raw rms, no lag)
+    vadDraw(rms);
+
+    // ── CALIBRATING ─────────────────────────────────
+    if(omPhase === 'calibrating'){
+      omCalBuf.push(rms);
+      omVisual('calibrating', `CAL ${omCalBuf.length}/${OM_CAL_FR}`);
+      if(omCalBuf.length >= OM_CAL_FR){
+        omNoiseFloor = omCalBuf.reduce((a,b)=>a+b, 0) / omCalBuf.length;
+        if(omNoiseFloor < 0.001) omNoiseFloor = 0.001;
+        omPhase = 'listening'; omSmoothed = 0;
+        omVisual('listening');
+        const sT = (omNoiseFloor*3).toFixed(4);
+        const siT = (omNoiseFloor*1.5).toFixed(4);
+        logEv(`CAL: noise=${omNoiseFloor.toFixed(4)}  speech>${sT}  sil<${siT}`, true);
+      }
+      return;
+    }
+
+    // ── SENDING ──────────────────────────────────────
+    if(omPhase === 'sending') return;
+
+    // Pre-roll ring buffer — always updated so we capture speech onset
+    omPreRoll.push(frame);
+    if(omPreRoll.length > OM_PRE_FR) omPreRoll.shift();
+
+    // Layer 2: derived thresholds from adaptive noise floor
+    const speechThr = omNoiseFloor * 3.0;
+    const silThr    = omNoiseFloor * 1.5;
+
+    // ── LISTENING ────────────────────────────────────
+    if(omPhase === 'listening'){
+      // Continuous noise floor recalibration toward quiet frames
+      if(rms < speechThr){
+        omNoiseFloor = 0.995 * omNoiseFloor + 0.005 * rms;
+        if(omNoiseFloor < 0.001) omNoiseFloor = 0.001;
+      }
+
+      // Layer 2: onset detection
+      if(omSmoothed > speechThr){
+        omPhase = 'capturing';
+        omPeak  = omSmoothed;
+        omSpeechChunks = [...omPreRoll.map(c => new Float32Array(c)), frame];
+        omSilCount = 0;
+        omVisual('capturing');
+        setState('listening', 'capturing…');
+        logEv('▶ SPEECH onset');
+      }
+
+    // ── CAPTURING ────────────────────────────────────
+    }else if(omPhase === 'capturing'){
+      omSpeechChunks.push(frame);
+      if(omSmoothed > omPeak) omPeak = omSmoothed;
+
+      // Layer 3: silence threshold = 15% of peak speech energy
+      // Floored at noiseFloor×1.5 so we never mistake ambient as speech
+      const dynSilThr = Math.max(silThr, omPeak * 0.15);
+
+      if(omSmoothed > dynSilThr){
+        omSilCount = Math.max(0, omSilCount - 1);  // soft decay on noise spikes
+        omVisual('capturing');
+      }else{
+        omSilCount++;
+        const pct = Math.round((omSilCount / OM_SIL_TGT) * 100);
+        omVisual('capturing', `PAUSE ${pct}%`);
+
+        if(omSilCount >= OM_SIL_TGT){
+          const chunks = omSpeechChunks.slice();
+          omSpeechChunks=[]; omPreRoll=[]; omSilCount=0; omPeak=0;
+          omPhase = 'sending';
+          omVisual('sending');
+          setState('thinking', 'transcribing…');
+          logEv('■ PAUSE → sending');
+          omSendUtterance(chunks);
+        }
+      }
+    }
+  };
+
+  omSrc.connect(omProc);
+  omProc.connect(omCtx.destination);
+  document.getElementById('level-wrap').classList.add('show');
+  document.getElementById('vad-row').classList.add('show');
+  vadDraw(0);
+  omVisual('calibrating');
+  setState('listening', 'calibrating mic…');
+  logEv('OPEN MIC ON', true);
+}
+
+async function omSendUtterance(chunks){
+  if(chunks.length < OM_MIN_FR){
+    logEv('TOO SHORT — ignored');
+  }else{
+    await sendVoiceBlob(encodeWAV(chunks, 16000), {voiceBadge:true});
+  }
+  if(openMic){
+    omPhase='listening'; omSmoothed=0;
+    omVisual('listening');
+    setState('listening', 'open mic — speak anytime');
+  }
+}
+
+function stopOpenMic(){
+  omProc?.disconnect(); omSrc?.disconnect();
+  omStream?.getTracks().forEach(t=>t.stop());
+  omCtx?.close();
+  omCtx=omSrc=omProc=omStream=null;
+  omPhase='idle'; omSpeechChunks=[]; omPreRoll=[];
+  document.getElementById('level-wrap').classList.remove('show');
+  document.getElementById('level-bar').style.width='0%';
+  document.getElementById('vad-row').classList.remove('show');
+  setState('idle');
+  logEv('OPEN MIC OFF');
+}
+
+function updateOpenMicBtn(){
+  document.getElementById('opmic-btn').classList.toggle('on',openMic);
+  document.getElementById('opmic-btn').textContent=openMic?'🔴 OPEN MIC ON':'📻 OPEN MIC';
+}
+
+document.getElementById('opmic-btn').addEventListener('click', async ()=>{
+  openMic=!openMic; updateOpenMicBtn();
+  if(openMic) await startOpenMic();
+  else         stopOpenMic();
+});
+
+// ═══════════════════════════════════════════════════════
+// CLOCK + UPTIME
+// ═══════════════════════════════════════════════════════
+function pad(n){return String(n).padStart(2,'0');}
+function fmtDur(ms){const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return `${pad(h)}:${pad(m)}:${pad(sc)}`;}
+setInterval(()=>{
+  const n=new Date();
+  document.getElementById('clock').textContent=`${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
+  document.getElementById('uptime').textContent=fmtDur(Date.now()-startTime);
+},1000);
+
+// ═══════════════════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════════════════
+window.addEventListener('resize',()=>{ if(graph){graph.width(window.innerWidth);graph.height(window.innerHeight);} });
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+buildGraph();
+setState('idle');
+connectWS();
+</script>
+</body>
+</html>

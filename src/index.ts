@@ -140,6 +140,7 @@ import { SlackAdapter } from "./gateway/adapters/slack.js";
 import { CLIAdapter } from "./gateway/adapters/cli.js";
 import { VoiceChannelAdapter } from "./gateway/adapters/voice.js";
 import { WhisperSTT } from "./voice/stt.js";
+import { FaceEmitter } from "./events/face-emitter.js";
 import { PreferenceStore } from "./preferences/store.js";
 import { ReflexionEngine } from "./evolution/reflexion.js";
 import { SkillsLoader } from "./skills/index.js";
@@ -779,6 +780,10 @@ async function buildGateway(
 
   // ─── New Infrastructure (Improvements #1-7) ──────────────────
   const eventBus = new StackOwlEventBus();
+  // Wire face state machine — translates EventBus events to face:state
+  new FaceEmitter(eventBus).start();
+  // Give the pellet store an event bus so it fires pellet:created live
+  b.pelletStore.eventBus = eventBus;
   const taskQueue = new TaskQueue(b.config.queue);
 
   // Self-Learning Coordinator — wires SignalBus, MutationTracker, and UserPreferenceModel

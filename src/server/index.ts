@@ -19,6 +19,9 @@ import express from "express";
 import { createServer, type Server as HTTPServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { join } from "node:path";
+import { writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import type { OwlRegistry } from "../owls/registry.js";
 import type { PelletStore } from "../pellets/store.js";
@@ -32,6 +35,7 @@ import {
   type OwlGateway,
 } from "../gateway/core.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
+import { WhisperSTT } from "../voice/stt.js";
 import { log } from "../logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -151,6 +155,8 @@ export class StackOwlServer {
   private adapter: ControlPlaneAdapter;
   private port: number;
   private startTime: number = Date.now();
+  private stt: WhisperSTT | null = null;
+  private sttReady = false;
 
   constructor(
     private config: StackOwlConfig,
@@ -205,19 +211,50 @@ export class StackOwlServer {
   // ─── Express Middleware ────────────────────────────────────────
 
   private setupMiddleware(): void {
+    // Raw body for audio uploads — must come BEFORE express.json()
+    this.app.use("/api/voice", express.raw({ type: "*/*", limit: "25mb" }));
+
     this.app.use(express.json());
 
     // CORS for dev
     this.app.use((_req, res, next) => {
       res.header("Access-Control-Allow-Origin", "*");
-      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      res.header("Access-Control-Allow-Methods", "GET, POST, DELETE");
+      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Session-Id, X-User-Id");
+      res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
       next();
     });
+
+    // Serve face page at root too — it's the main UI
+    const faceHtml = join(process.cwd(), "src", "web", "face", "index.html");
+    this.app.get("/", (_req, res) => res.sendFile(faceHtml));
 
     // Serve static web UI
     const webDir = join(process.cwd(), "src", "web");
     this.app.use(express.static(webDir));
+
+    // Serve node_modules for client-side libs (3d-force-graph, etc.)
+    const nmDir = join(process.cwd(), "node_modules");
+    this.app.use("/node_modules", express.static(nmDir));
+  }
+
+  // ─── STT (lazy, warm on first request) ─────────────────────────
+
+  private getSTT(): WhisperSTT {
+    if (!this.stt) {
+      const voiceCfg = this.config.voice ?? {};
+      this.stt = new WhisperSTT({
+        model: (voiceCfg.model as any) ?? "base.en",
+        language: "en",
+        removeWavAfter: true,
+      });
+      // Warm in background — don't block the request
+      if (!this.sttReady) {
+        this.stt.ensureReady()
+          .then(() => { this.sttReady = true; })
+          .catch((e) => log.engine.warn(`[WebVoice] STT warmup failed: ${e.message}`));
+      }
+    }
+    return this.stt;
   }
 
   // ─── REST Routes ──────────────────────────────────────────────
@@ -365,6 +402,100 @@ export class StackOwlServer {
         res.json({ report: orchestrator.formatSessionMarkdown(session) });
       } catch {
         res.status(500).json({ error: "Parliament session failed" });
+      }
+    });
+
+    // --- Main UI (face + comm hub) ---
+    const faceHtml = join(process.cwd(), "src", "web", "face", "index.html");
+    this.app.get("/face", (_req, res) => res.sendFile(faceHtml));
+
+    // --- Web voice: browser sends raw WAV → STT → gateway → JSON ---
+    // Browser records 16kHz mono WAV using AudioContext + ScriptProcessor
+    // and POSTs raw bytes here. Returns { transcript, response }.
+    this.app.post("/api/voice", async (req, res) => {
+      const wavBuf = req.body as Buffer;
+      if (!Buffer.isBuffer(wavBuf) || wavBuf.length < 44) {
+        res.status(400).json({ error: "No audio data received" });
+        return;
+      }
+
+      const userId    = (req.headers["x-user-id"]    as string) ?? "web-anon";
+      const sessionId = (req.headers["x-session-id"] as string) ?? makeSessionId("web", userId);
+
+      // Write WAV to temp file
+      const wavPath = join(tmpdir(), `stackowl-web-${randomUUID()}.wav`);
+      try {
+        writeFileSync(wavPath, wavBuf);
+      } catch (e) {
+        res.status(500).json({ error: "Failed to write audio" });
+        return;
+      }
+
+      // Transcribe
+      let transcript: string;
+      try {
+        const stt = this.getSTT();
+        transcript = await stt.transcribe(wavPath);
+      } catch (e) {
+        if (existsSync(wavPath)) { try { unlinkSync(wavPath); } catch {} }
+        res.status(500).json({ error: `STT failed: ${(e as Error).message}` });
+        return;
+      }
+
+      if (!transcript.trim()) {
+        res.json({ transcript: "", response: null });
+        return;
+      }
+
+      log.engine.info(`[WebVoice] user:${userId} → "${transcript}"`);
+
+      // Route through gateway
+      try {
+        const response = await this.gateway.handle(
+          {
+            id: makeMessageId(),
+            channelId: "web",
+            userId,
+            sessionId,
+            text: transcript,
+          },
+          {},
+        );
+        res.json({ transcript, response });
+      } catch (e) {
+        res.status(500).json({ error: `Gateway error: ${(e as Error).message}` });
+      }
+    });
+
+    // Snapshot of the current knowledge graph (pellet nodes + edges)
+    // for the face visualization to bootstrap itself on load.
+    this.app.get("/api/face/graph", async (_req, res) => {
+      try {
+        const pellets = await this.pelletStore.listAll();
+        const nodes = pellets.map((p) => ({
+          id: p.id,
+          label: p.title,
+          tags: p.tags,
+          source: p.source,
+          owls: p.owls,
+          generatedAt: p.generatedAt,
+          excerpt: p.content ? p.content.slice(0, 200) : "",
+          val: Math.max(1.5, 1 + (p.tags.length ?? 0) * 0.7),
+        }));
+        // Co-tag edges: connect pellets that share at least one tag
+        const edges: { source: string; target: string }[] = [];
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const a = pellets[i]?.tags ?? [];
+            const b = pellets[j]?.tags ?? [];
+            if (a.some((t) => b.includes(t))) {
+              edges.push({ source: nodes[i]!.id, target: nodes[j]!.id });
+            }
+          }
+        }
+        res.json({ nodes, edges });
+      } catch {
+        res.json({ nodes: [], edges: [] });
       }
     });
 

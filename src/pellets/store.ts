@@ -49,6 +49,8 @@ export class PelletStore {
   private lance: LancePelletStore;
   private graph: KuzuPelletGraph;
   private deduplicator: PelletDeduplicator;
+  /** Optional event bus — when set, emits pellet:created on every new write */
+  eventBus?: import("../events/bus.js").EventBus;
 
   /** Expose for CLI tools (graph build, stats) */
   get kuzuGraph(): KuzuPelletGraph {
@@ -247,6 +249,13 @@ export class PelletStore {
   private async writePellet(pellet: Pellet): Promise<void> {
     const vec = await embed(pelletToEmbedText(pellet));
     await this.lance.upsert(pellet, vec ?? undefined);
+
+    // Notify face visualization + any other listeners
+    this.eventBus?.emit("pellet:created", {
+      id: pellet.id,
+      title: pellet.title,
+      tags: pellet.tags,
+    });
 
     // Keep graph in sync
     if (this.graph.isBuilt) {
