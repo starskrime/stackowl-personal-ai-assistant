@@ -224,7 +224,7 @@ export interface StackOwlConfig {
   };
   /** CamoFox anti-detection browser configuration */
   camofox?: {
-    /** Enable the CamoFox tool and Tier 4 smart-fetch escalation. Default: false */
+    /** Enable the CamoFox tool and Tier 4 smart-fetch escalation. Default: true */
     enabled?: boolean;
     /** CamoFox server base URL. Default: "http://localhost:9377" */
     baseUrl?: string;
@@ -269,8 +269,13 @@ export interface StackOwlConfig {
 }
 
 export interface ProviderConfigEntry {
+  /** Model file to use for protocol lookup (defaults to the provider key) */
+  profile?: string;
   baseUrl?: string;
   apiKey?: string;
+  /** Active model — the model used for this provider. Replaces defaultModel. */
+  activeModel?: string;
+  /** @deprecated Use activeModel instead */
   defaultModel?: string;
   defaultEmbeddingModel?: string;
 }
@@ -428,6 +433,16 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
       },
     };
 
+    // Derive defaultModel from active provider's activeModel (new config format)
+    // This keeps all existing consumers of config.defaultModel working.
+    const activeProviderEntry = config.providers[config.defaultProvider];
+    if (activeProviderEntry) {
+      config.defaultModel =
+        activeProviderEntry.activeModel ??
+        activeProviderEntry.defaultModel ??
+        config.defaultModel;
+    }
+
     // Runtime validation
     const errors = validateConfig(config);
     if (errors.length > 0) {
@@ -450,9 +465,7 @@ function validateConfig(config: StackOwlConfig): string[] {
   if (!config.defaultProvider || typeof config.defaultProvider !== "string") {
     errors.push("defaultProvider must be a non-empty string");
   }
-  if (!config.defaultModel || typeof config.defaultModel !== "string") {
-    errors.push("defaultModel must be a non-empty string");
-  }
+  // defaultModel is derived from active provider's activeModel; no hard validation needed
 
   // Provider validation
   if (!config.providers || typeof config.providers !== "object") {

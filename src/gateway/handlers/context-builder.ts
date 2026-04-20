@@ -21,6 +21,9 @@ import {
   formatTemporalPrompt,
   loadPreviousSession,
 } from "../../cognition/temporal-context.js";
+import { MemoryFirstContextBuilder } from "../../memory/context-builder.js";
+import { OpinionInjector } from "../../owls/opinion-injector.js";
+import { computeDepthDirective } from "../../engine/depth-directive.js";
 
 export class ContextBuilder {
   /** Cache previous session lookup per session ID to avoid repeated disk reads */
@@ -388,6 +391,35 @@ The user has no active tasks right now. Be concise and helpful:
       inferredPrefsContext = this.ctx.preferenceModel.toContextString();
     }
 
+    // ─── Depth Directive (Phase 3) ───────────────────────────────
+    // Compute before LLM call so model calibrates response length upfront.
+    const messageWordCount = userMessage.trim().split(/\s+/).length;
+    const verbosityPref = this.ctx.preferenceModel
+      ? (() => {
+          const c = this.ctx.preferenceModel!.getWithConfidence?.("communication_style")
+            ?? this.ctx.preferenceModel!.getWithConfidence?.("conciseness");
+          return c ? String(c.value) : undefined;
+        })()
+      : undefined;
+    const depthResult = computeDepthDirective(messageWordCount, undefined, verbosityPref);
+    const depthContext = depthResult.systemPromptBlock;
+
+    // ─── Opinion Injection (Phase 3) ────────────────────────────
+    // Surface the owl's formed opinions when relevant to this message.
+    let opinionContext = "";
+    const innerState = this.ctx.innerLife?.getState();
+    if (innerState?.opinions && innerState.opinions.length > 0 && userMessage) {
+      const injector = new OpinionInjector();
+      const match = injector.findRelevant(userMessage, innerState.opinions);
+      if (match) {
+        opinionContext = injector.formatForSystemPrompt(match);
+        // Async: form/update opinion based on this conversation — fire-and-forget
+        if (this.ctx.innerLife) {
+          injector.formOpinionAsync(userMessage, this.ctx.innerLife).catch(() => {});
+        }
+      }
+    }
+
     // Knowledge graph — only for non-conversational messages
     let knowledgeContext = "";
     if (this.ctx.knowledgeReasoner && !isConversational && userMessage) {
@@ -568,6 +600,24 @@ The user has no active tasks right now. Be concise and helpful:
           "For lists use numbered or bulleted lists. Keep responses concise."
         : "";
 
+    // ─── MemoryFirst context (Phase 3 — budgeted memory injection) ──
+    // Runs in parallel with above fetches; never throws.
+    let memoryFirstContext = "";
+    if (this.ctx.preferenceModel || this.ctx.db || this.ctx.pelletStore) {
+      try {
+        const mfBuilder = new MemoryFirstContextBuilder();
+        memoryFirstContext = await mfBuilder.build({
+          userMessage,
+          userId,
+          pelletStore: this.ctx.pelletStore,
+          factStore: this.ctx.db,
+          preferenceModel: this.ctx.preferenceModel,
+        });
+      } catch {
+        // Non-fatal
+      }
+    }
+
     // ─── Assemble enriched context (triage applied) ───────────
     // Order: continuity (prior response) → digest → temporal → mode → memory → conditional
     // continuityContext goes FIRST when present — the model must read "what I just said"
@@ -596,6 +646,9 @@ The user has no active tasks right now. Be concise and helpful:
       collabContext,
       ambientContext,
       memoryBusContext, // Cross-store unified memory (MemoryBus)
+      memoryFirstContext, // Phase 3: budgeted preferences + memory + pellets (1200 tok cap)
+      depthContext,       // Phase 3: response depth directive (minimal/standard/thorough)
+      opinionContext,     // Phase 3: owl's relevant formed opinion (if any)
       // Low-frequency signals (injected only in specific circumstances)
       mentalModelContext,
       echoChamberContext,

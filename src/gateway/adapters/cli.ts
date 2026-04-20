@@ -1,404 +1,250 @@
 /**
  * StackOwl — CLI Channel Adapter
  *
- * Transport layer for the interactive terminal. All business logic lives in OwlGateway.
- * This adapter's responsibilities:
- *   - Readline loop
- *   - Command handling (/quit, /owls, /status, /capabilities, /learning)
- *   - Normalize input → GatewayMessage
- *   - Format GatewayResponse with chalk
+ * Lifecycle:
+ *   1. start() → show HomeScreen (Screen 1)
+ *   2. First keypress → HomeScreen.transition() → TerminalUI.enter() (Screen 2)
+ *   3. TerminalUI emits "line" events → gateway → responses back to UI
  */
 
-import { createInterface } from "node:readline";
-import chalk from "chalk";
+import { resolve }                              from "node:path";
 import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
-import { log } from "../../logger.js";
-import type { StreamEvent } from "../../providers/base.js";
+import { log }                                  from "../../logger.js";
+import { TerminalUI }                           from "../../cli/ui.js";
+import { HomeScreen }                           from "../../cli/home.js";
+import { CommandRegistry }                      from "../../cli/commands.js";
+import { OnboardingFlow }                       from "../../cli/onboarding-flow.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 
-// ─── Config ──────────────────────────────────────────────────────
-
 export interface CLIAdapterConfig {
-  /** Fixed user ID for the CLI — there's always exactly one user */
   userId?: string;
 }
 
-// ─── Adapter ─────────────────────────────────────────────────────
-
 export class CLIAdapter implements ChannelAdapter {
-  readonly id = "cli";
+  readonly id   = "cli";
   readonly name = "CLI";
 
-  private userId: string;
+  private userId:    string;
   private sessionId: string;
-  private rl?: ReturnType<typeof createInterface>;
-  /** Serialized processing — ensures one message completes before the next starts */
-  private messageQueue: string[] = [];
+  private ui:        TerminalUI;
+  private commands:  CommandRegistry;
+
+  /** Serialized processing — one message at a time. */
+  private queue:      string[] = [];
   private processing = false;
+
+  /** Active onboarding wizard (null when not running). */
+  private _onboarding: OnboardingFlow | null = null;
 
   constructor(
     private gateway: OwlGateway,
     config: CLIAdapterConfig = {},
   ) {
-    this.userId = config.userId ?? "local";
+    this.userId    = config.userId ?? "local";
     this.sessionId = makeSessionId(this.id, this.userId);
+    this.ui        = new TerminalUI();
+    this.ui.sessionId = this.sessionId;
+    this.commands  = new CommandRegistry();
   }
 
   // ─── ChannelAdapter interface ─────────────────────────────────
 
   async sendToUser(_userId: string, response: GatewayResponse): Promise<void> {
-    this.printResponse(response);
+    this.ui.printResponse(response.owlEmoji, response.owlName, response.content);
   }
 
   async broadcast(response: GatewayResponse): Promise<void> {
-    this.printResponse(response);
+    this.ui.printResponse(response.owlEmoji, response.owlName, response.content);
   }
 
   async start(): Promise<void> {
-    const owl = this.gateway.getOwl();
+    const owl    = this.gateway.getOwl();
+    const config = this.gateway.getConfig();
 
-    this.rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: chalk.cyan("You: "),
+    // Prepare TerminalUI identity (not entered yet)
+    this.ui.setOwl(
+      owl.persona.emoji,
+      owl.persona.name,
+      config.defaultProvider,
+      config.defaultModel,
+    );
+
+    // Update DNA from owl traits
+    const traits = owl.dna.evolvedTraits;
+    const challengeNum = typeof traits.challengeLevel === "number"
+      ? traits.challengeLevel
+      : parseInt(String(traits.challengeLevel), 10) || 5;
+    this.ui.updateDNA({
+      challenge: challengeNum,
+      verbosity: (traits as any).verbosity ?? 5,
+      mood:      7,
     });
 
-    console.log(
-      chalk.dim(
-        `\nType your message. Commands: ` +
-          `${chalk.bold("/quit")} · ${chalk.bold("/owls")} · ` +
-          `${chalk.bold("/status")} · ${chalk.bold("/capabilities")} · ` +
-          `${chalk.bold("/learning")} · ${chalk.bold("/skills")} · ` +
-          `${chalk.bold("/skill <name>")} · ${chalk.bold("/clear")}\n`,
-      ),
-    );
-    console.log(
-      chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`) +
-        chalk.dim(` (challenge: ${owl.dna.evolvedTraits.challengeLevel})`),
-    );
-    console.log("");
+    // ── Phase 1: show Home screen ──────────────────────────────────
+    await this._showHome(owl, config, challengeNum);
 
-    this.rl.prompt();
+    // ── Phase 2: TerminalUI is now active ─────────────────────────
+    this._wireUI();
 
-    this.rl.on("line", (line) => {
-      const input = line.trim();
-      if (!input) {
-        this.rl!.prompt();
-        return;
-      }
-      // Enqueue and drain serially — prevents /quit from racing a slow response
-      this.messageQueue.push(input);
-      this.drainQueue();
-    });
-
-    // Keep alive; graceful shutdown on close (EOF or Ctrl+D)
-    await new Promise<void>((resolve) => {
-      this.rl!.on("close", async () => {
-        await this.gracefulShutdown();
-        resolve();
-      });
+    // Keep process alive until the UI emits "quit"
+    await new Promise<void>((res) => {
+      this.ui.once("quit", res);
+      process.once("_stackowlStop", res as () => void);
     });
   }
 
   stop(): void {
-    this.rl?.close();
+    this.ui.close();
   }
 
   async deliverFile(_userId: string, filePath: string, caption?: string): Promise<void> {
-    console.log(`\n[File ready: ${filePath}${caption ? ` — ${caption}` : ""}]\n`);
+    this.ui.printInfo(`File ready: ${filePath}${caption ? " — " + caption : ""}`);
   }
 
-  private drainQueue(): void {
-    if (this.processing || this.messageQueue.length === 0) return;
-    const input = this.messageQueue.shift()!;
-    this.processing = true;
-    this.processLine(input).finally(() => {
-      this.processing = false;
-      this.drainQueue(); // process next if any
+  // ─── Home → Active transition ─────────────────────────────────
+
+  private _showHome(
+    owl:          ReturnType<OwlGateway["getOwl"]>,
+    config:       ReturnType<OwlGateway["getConfig"]>,
+    challengeNum: number,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      // Gather recent sessions if session store is available
+      const recentSessions: Array<{ title: string; turns: number; ago: string }> = [];
+
+      const home = new HomeScreen({
+        owlEmoji:   owl.persona.emoji,
+        owlName:    owl.persona.name,
+        generation: owl.dna.generation,
+        challenge:  challengeNum,
+        provider:   config.defaultProvider,
+        model:      config.defaultModel,
+        skills:     (this.gateway.getSkillsLoader?.()?.getRegistry().listEnabled().length) ?? 0,
+        recentSessions,
+      });
+
+      home.on("quit", async () => {
+        home.close();
+        await this._gracefulShutdown();
+      });
+
+      home.on("activate", (firstKey: string) => {
+        // Stay in alt screen — hand off to TerminalUI
+        home.transition();
+        this.ui.enter();
+        // Feed the first typed character into the input
+        if (firstKey.length >= 1) {
+          this.ui.feedChar(firstKey);
+        }
+        resolve();
+      });
+
+      home.enter();
     });
   }
 
-  private async processLine(input: string): Promise<void> {
-    if (await this.handleCommand(input)) {
-      return; // command consumed
+  // ─── Wire TerminalUI events ───────────────────────────────────
+
+  private _wireUI(): void {
+    this.ui.on("line", (input: string) => {
+      this.queue.push(input);
+      this._drain();
+    });
+
+    this.ui.on("quit", async () => {
+      await this._gracefulShutdown();
+    });
+
+    this.ui.on("onboarding", () => {
+      const configPath   = resolve(process.cwd(), "stackowl.config.json");
+      this._onboarding   = new OnboardingFlow(configPath);
+      this._onboarding.start(this.ui);
+    });
+  }
+
+  // ─── Queue ───────────────────────────────────────────────────
+
+  private _drain(): void {
+    if (this.processing || this.queue.length === 0) return;
+    const input = this.queue.shift()!;
+    this.processing = true;
+    this._processLine(input).finally(() => {
+      this.processing = false;
+      this._drain();
+    });
+  }
+
+  private async _processLine(input: string): Promise<void> {
+    // Wizard intercepts all input while active
+    if (this._onboarding) {
+      const done = await this._onboarding.handleInput(input, this.ui);
+      if (done) this._onboarding = null;
+      return;
     }
 
-    // Regular message → gateway
-    this.rl!.pause();
+    const consumed = await this.commands.handle(input, this.ui, this.gateway);
+    if (consumed) return;
+
     try {
       log.cli.incoming(this.userId, input);
       this.gateway.getCognitiveLoop()?.notifyUserActivity();
 
-      // Track whether streaming already delivered the response to stdout.
-      // If it did, skip printResponse to avoid printing the answer twice.
-      let streamedContent = false;
-      const streamHandler = this.createStreamHandler();
-      const trackingHandler = async (event: import("../../providers/base.js").StreamEvent) => {
-        await streamHandler(event);
-        if (event.type === "text_delta" && event.content.replace(/\[DONE\]/g, "").length > 0) {
-          streamedContent = true;
-        }
-      };
+      this.ui.showThinking();
+
+      const { handler, didStream } = this.ui.createStreamHandler();
 
       const response = await this.gateway.handle(
         {
-          id: makeMessageId(),
+          id:        makeMessageId(),
           channelId: this.id,
-          userId: this.userId,
+          userId:    this.userId,
           sessionId: this.sessionId,
-          text: input,
+          text:      input,
         },
         {
           onProgress: async (msg: string) => {
-            console.log(chalk.dim(`  ⋯ ${msg}`));
+            log.engine.debug(`[progress] ${msg}`);
           },
           askInstall: async (deps: string[]) => {
-            return new Promise<boolean>((resolve) => {
-              const tmpRl = createInterface({
-                input: process.stdin,
-                output: process.stdout,
-              });
-              tmpRl.question(
-                chalk.yellow(
-                  `\n📦 Install npm deps: ${deps.join(" ")}? [y/n] `,
-                ),
-                (answer) => {
-                  tmpRl.close();
-                  resolve(
-                    answer.trim().toLowerCase() === "y" ||
-                      answer.trim().toLowerCase() === "yes",
-                  );
-                },
-              );
+            this.ui.stopThinking();
+            this.ui.printInfo(`📦 Install ${deps.join(" ")}? [y/n]`);
+            return new Promise<boolean>((res) => {
+              const onKey = (data: string) => {
+                if (data.toLowerCase() === "y") { process.stdin.off("data", onKey); res(true); }
+                else if (data.toLowerCase() === "n" || data === "\x03") { process.stdin.off("data", onKey); res(false); }
+              };
+              process.stdin.on("data", onKey);
             });
           },
-          onStreamEvent: trackingHandler,
+          onStreamEvent: handler,
         },
       );
 
       log.cli.outgoing(this.userId, response.content);
-      // Only print the full response if streaming did NOT already deliver it.
-      // Streaming + printResponse = duplicate output.
-      if (!streamedContent) {
-        this.printResponse(response);
-      } else {
-        console.log(""); // ensure prompt appears on a new line
-        if (this.rl) this.rl.prompt();
+
+      if (!didStream()) {
+        this.ui.stopThinking();
+        this.ui.printResponse(response.owlEmoji, response.owlName, response.content);
       }
 
       if (response.usage) {
-        console.log(
-          chalk.dim(
-            `  [tokens: ${response.usage.promptTokens}→${response.usage.completionTokens}]`,
-          ),
+        this.ui.updateStats(
+          (response.usage.promptTokens ?? 0) + (response.usage.completionTokens ?? 0),
+          0,
         );
       }
     } catch (err) {
+      this.ui.stopThinking();
       const msg = err instanceof Error ? err.message : String(err);
       log.cli.error(`Error: ${msg}`);
-      console.error(chalk.red(`\n❌ Error: ${msg}\n`));
-    } finally {
-      this.rl!.resume();
-      this.rl!.prompt();
+      this.ui.printError(msg);
     }
   }
 
-  // ─── Command handling ─────────────────────────────────────────
-
-  /** Returns true if the input was a command (consumed). */
-  private async handleCommand(input: string): Promise<boolean> {
-    const rl = this.rl!;
-
-    if (input === "/quit" || input === "/exit") {
-      console.log(chalk.dim("\n🦉 Saving session and evolving..."));
-      await this.gateway.endSession(this.sessionId).catch(() => {});
-      console.log(chalk.dim("🦉 Goodbye. The owls are always watching.\n"));
-      rl.close();
-      process.exit(0);
-    }
-
-    if (input === "/clear" || input === "/reset") {
-      await this.gateway.handle({
-        id: makeMessageId(),
-        channelId: this.id,
-        userId: this.userId,
-        sessionId: this.sessionId,
-        text: "/reset",
-      });
-      console.log(
-        chalk.dim(
-          "\n🧹 Context cleared! Starting fresh. What would you like to work on?\n",
-        ),
-      );
-      rl.prompt();
-      return true;
-    }
-
-    if (input === "/owls") {
-      const registry = this.gateway.getOwlRegistry();
-      console.log(chalk.bold("\nAvailable Owls:"));
-      for (const o of registry.listOwls()) {
-        console.log(
-          `  ${o.persona.emoji} ${chalk.bold(o.persona.name)} — ${o.persona.type} (challenge: ${o.dna.evolvedTraits.challengeLevel})`,
-        );
-      }
-      console.log("");
-      rl.prompt();
-      return true;
-    }
-
-    if (input === "/status") {
-      const owl = this.gateway.getOwl();
-      const config = this.gateway.getConfig();
-      console.log(chalk.bold("\nStatus:"));
-      console.log(`  Provider: ${config.defaultProvider}`);
-      console.log(`  Model:    ${config.defaultModel}`);
-      console.log(`  Owl:      ${owl.persona.emoji} ${owl.persona.name}`);
-      console.log(`  DNA Gen:  ${owl.dna.generation}`);
-      console.log("");
-      rl.prompt();
-      return true;
-    }
-
-    if (input === "/capabilities") {
-      const evolution = this.gateway.getEvolution();
-      if (!evolution) {
-        console.log(chalk.dim("\n  Evolution system not available.\n"));
-        rl.prompt();
-        return true;
-      }
-      const records = await evolution.listAll();
-      if (records.length === 0) {
-        console.log(
-          chalk.dim(
-            "\n  No synthesized tools yet. The owl will build them when needed.\n",
-          ),
-        );
-      } else {
-        console.log(chalk.bold("\n🔧 Synthesized Tools:\n"));
-        for (const r of records) {
-          const icon =
-            r.status === "active"
-              ? chalk.green("✓")
-              : r.status === "failed"
-                ? chalk.red("✗")
-                : chalk.dim("⊘");
-          console.log(`  ${icon} ${chalk.bold(r.toolName)}`);
-          console.log(`     ${chalk.dim(r.description)}`);
-          console.log(
-            `     ${chalk.dim(`Used: ${r.timesUsed}x | Status: ${r.status}`)}`,
-          );
-          console.log("");
-        }
-      }
-      rl.prompt();
-      return true;
-    }
-
-    if (input === "/skills") {
-      const loader = this.gateway.getSkillsLoader?.();
-      if (!loader) {
-        console.log(chalk.dim("\n  Skills not loaded.\n"));
-      } else {
-        const skills = loader.getRegistry().listEnabled();
-        if (skills.length === 0) {
-          console.log(
-            chalk.dim(
-              "\n  No skills loaded. Add SKILL.md files to workspace/skills/\n",
-            ),
-          );
-        } else {
-          console.log(chalk.bold("\n🎯 Available Skills:\n"));
-          for (const s of skills) {
-            const emoji = s.metadata.openclaw?.emoji || "🎯";
-            const always = s.metadata.openclaw?.always
-              ? chalk.cyan(" [always]")
-              : "";
-            console.log(`  ${emoji} ${chalk.bold(s.name)}${always}`);
-            console.log(`     ${chalk.dim(s.description)}`);
-            console.log(`     ${chalk.dim(`Use: /skill ${s.name}`)}`);
-            console.log("");
-          }
-        }
-      }
-      rl.prompt();
-      return true;
-    }
-
-    if (input === "/learning") {
-      const learning = this.gateway.getLearningEngine();
-      if (!learning) {
-        console.log(chalk.dim("\n  Learning engine not available.\n"));
-        rl.prompt();
-        return true;
-      }
-      console.log(chalk.bold("\n🧠 Learning Report:\n"));
-      const report = await learning.getLearningReport();
-      console.log(chalk.dim(report));
-      console.log("");
-      rl.prompt();
-      return true;
-    }
-
-    return false;
-  }
-
-  // ─── Streaming ────────────────────────────────────────────────
-
-  /**
-   * Create a StreamEvent handler for progressive stdout streaming.
-   * Text deltas are written directly to stdout as they arrive.
-   */
-  private createStreamHandler(): (event: StreamEvent) => Promise<void> {
-    let headerPrinted = false;
-    const owl = this.gateway.getOwl();
-
-    return async (event: StreamEvent) => {
-      switch (event.type) {
-        case "text_delta": {
-          // Strip internal [DONE] signal
-          const chunk = event.content.replace(/\[DONE\]/g, "");
-          if (!chunk) break;
-          if (!headerPrinted) {
-            process.stdout.write(
-              "\n" + chalk.yellow(`${owl.persona.emoji} ${owl.persona.name}: `),
-            );
-            headerPrinted = true;
-          }
-          process.stdout.write(chunk);
-          break;
-        }
-        case "tool_start": {
-          process.stdout.write(chalk.dim(`\n  ⚙️ ${event.toolName}...`));
-          break;
-        }
-        case "tool_end": {
-          process.stdout.write(chalk.dim(" ✓"));
-          break;
-        }
-        case "done": {
-          if (headerPrinted) {
-            process.stdout.write("\n");
-          }
-          break;
-        }
-      }
-    };
-  }
-
-  // ─── Display ─────────────────────────────────────────────────
-
-  private printResponse(response: GatewayResponse): void {
-    console.log("");
-    process.stdout.write(
-      chalk.yellow(`${response.owlEmoji} ${response.owlName}: `),
-    );
-    console.log(response.content);
-    console.log("");
-    if (this.rl) this.rl.prompt();
-  }
-
-  private async gracefulShutdown(): Promise<void> {
+  private async _gracefulShutdown(): Promise<void> {
+    this.ui.printInfo("Saving session…");
     await this.gateway.endSession(this.sessionId).catch(() => {});
+    this.ui.close();
+    process.exit(0);
   }
 }

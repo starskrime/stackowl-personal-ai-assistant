@@ -163,11 +163,7 @@ check_prerequisites() {
     (cd "$SCRIPT_DIR" && npm install)
   fi
 
-  if [ ! -f "$CONFIG_FILE" ]; then
-    log_error "stackowl.config.json not found at $CONFIG_FILE"
-    log_error "Create it manually or copy from stackowl.config.example.json"
-    exit 1
-  fi
+  # Config is optional — if missing, the onboarding wizard runs automatically inside tsx.
 
   # ── Python & Scrapling (anti-bot web scraping) ──
   install_scrapling
@@ -233,81 +229,25 @@ exit(0 if has_chromium else 1)
 # ─── CamoFox Setup ──────────────────────────────────────────────
 
 setup_camofox() {
+  local url="http://localhost:9377"
   echo ""
   echo -e "${DIM}─────────────────────────────────────────────────${RESET}"
   log_step "CamoFox — Anti-detection Firefox browser"
 
-  if camofox_enabled; then
-    # Already configured — just make sure the server is up
-    local url
+  # Write config if not already configured
+  if ! camofox_enabled; then
+    write_camofox_config "$url"
+    log_info "CamoFox enabled (npm, $url)"
+  else
     url=$(camofox_url)
     echo -e "  ${DIM}Configured: $url${RESET}"
+  fi
 
-    if camofox_server_running "$url"; then
-      log_info "CamoFox server is running at $url"
-    else
-      log_warn "CamoFox server not running at $url"
-      echo ""
-      echo -e "  ${BOLD}Start it now?${RESET}"
-      echo -e "  ${BOLD}1)${RESET} Yes — launch via npx in background"
-      echo -e "  ${BOLD}2)${RESET} Yes — show Docker command (I'll run it myself)"
-      echo -e "  ${BOLD}3)${RESET} No — skip (tool will show an error if used)"
-      echo ""
-      read -rp "$(echo -e "${CYAN}Choice [1-3]:${RESET} ")" cf_choice
-      case "$cf_choice" in
-        1) start_camofox_npx "$url" ;;
-        2) show_camofox_docker "$url" ;;
-        *) log_warn "CamoFox server not started — camofox tool will be unavailable." ;;
-      esac
-    fi
-
+  # Start via npx if not already running
+  if camofox_server_running "$url"; then
+    log_info "CamoFox server is running at $url"
   else
-    # Not configured — offer to set it up
-    echo -e "  ${DIM}Passes Cloudflare/Google bot detection that breaks Chromium.${RESET}"
-    echo -e "  ${DIM}Enables: camofox tool, Tier 4 smart-fetch escalation, DDG CAPTCHA fallback.${RESET}"
-    echo ""
-    read -rp "$(echo -e "${CYAN}Enable CamoFox? [y/N]:${RESET} ")" cf_yn
-    case "$cf_yn" in
-      [yY]*)
-        echo ""
-        echo -e "  ${BOLD}How to run CamoFox?${RESET}"
-        echo -e "  ${BOLD}1)${RESET} npx (easiest — runs locally, no install needed)"
-        echo -e "  ${BOLD}2)${RESET} Docker (isolated, great for servers)"
-        echo -e "  ${BOLD}3)${RESET} Already running — just configure the URL"
-        echo ""
-        read -rp "$(echo -e "${CYAN}Choice [1-3]:${RESET} ")" cf_mode
-        case "$cf_mode" in
-          1)
-            write_camofox_config "http://localhost:9377"
-            log_info "CamoFox configured (http://localhost:9377)"
-            start_camofox_npx "http://localhost:9377"
-            ;;
-          2)
-            write_camofox_config "http://localhost:9377"
-            log_info "CamoFox configured (http://localhost:9377)"
-            show_camofox_docker "http://localhost:9377"
-            ;;
-          3)
-            echo ""
-            read -rp "$(echo -e "${CYAN}CamoFox base URL [http://localhost:9377]:${RESET} ")" cf_url
-            cf_url="${cf_url:-http://localhost:9377}"
-            write_camofox_config "$cf_url"
-            log_info "CamoFox configured ($cf_url)"
-            if ! camofox_server_running "$cf_url"; then
-              log_warn "Cannot reach $cf_url — make sure the server is running before using the camofox tool."
-            fi
-            ;;
-          *)
-            write_camofox_config "http://localhost:9377"
-            log_info "CamoFox configured (http://localhost:9377)"
-            start_camofox_npx "http://localhost:9377"
-            ;;
-        esac
-        ;;
-      *)
-        log_dim "CamoFox skipped. You can enable it later by adding camofox.enabled=true to stackowl.config.json."
-        ;;
-    esac
+    start_camofox_npx "$url"
   fi
 }
 
@@ -471,7 +411,10 @@ main() {
   log_info "Config: ${BOLD}$CONFIG_FILE${RESET}"
   log_dim  "Provider: ${PROVIDER:-unknown}  |  Model: ${MODEL:-unknown}"
 
-  if [ -f "$SESSION_FILE" ]; then
+  if [ ! -f "$CONFIG_FILE" ]; then
+    # No config yet — skip launch-mode selection; onboarding wizard runs inside tsx
+    LAUNCH_MODE="chat"
+  elif [ -f "$SESSION_FILE" ]; then
     # Resume saved launch mode
     LAUNCH_MODE=$(json_read "$SESSION_FILE" "launchMode")
     SAVED_AT=$(json_read "$SESSION_FILE" "savedAt")

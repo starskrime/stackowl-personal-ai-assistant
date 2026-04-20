@@ -302,4 +302,14 @@ export interface GatewayContext {
 
   // ─── Plan Ledger (persistent PLANNED/SWARM task state) ───────
   planLedger?: import("../tasks/plan-ledger.js").PlanLedger;
+
+  // ─── Phase 3: Intelligent Routing & Delegation ───────────────
+  triageClassifier?: import("../triage/index.js").TriageClassifier;
+  subOwlRunner?: import("../delegation/sub-owl-runner.js").SubOwlRunner;
+
+  // ─── Phase 3: Preference Enforcement ────────────────────────
+  preferenceEnforcer?: import("../memory/preference-enforcer.js").PreferenceEnforcer;
+
+  // ─── Phase 3: Background Orchestrator ───────────────────────
+  backgroundOrchestrator?: import("../background/orchestrator.js").BackgroundOrchestrator;
 }

@@ -1,0 +1,4 @@
+compatible: gemini
+availableModels: ["gemini-2.5-pro"]
+defaultModel: "gemini-2.5-pro"
+url: "https://generativelanguage.googleapis.com/v1beta"

@@ -38,3 +38,4 @@ session.tmp
 __tests__/.pellets_test_workspace/
 __tests__/.test_workspace/
 skills-stats.json
+stackowl.config copy.json

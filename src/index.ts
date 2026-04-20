@@ -18,6 +18,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 import { program } from "commander";
 import chalk from "chalk";
 // log imported by adapters/gateway internally
@@ -138,6 +139,9 @@ import { OwlGateway } from "./gateway/core.js";
 import { TelegramAdapter } from "./gateway/adapters/telegram.js";
 import { SlackAdapter } from "./gateway/adapters/slack.js";
 import { CLIAdapter } from "./gateway/adapters/cli.js";
+import { BootSplash } from "./cli/splash.js";
+import type { BootStep } from "./cli/splash.js";
+import { OnboardingWizard } from "./cli/onboarding.js";
 import { VoiceChannelAdapter } from "./gateway/adapters/voice.js";
 import { WhisperSTT } from "./voice/stt.js";
 import { FaceEmitter } from "./events/face-emitter.js";
@@ -218,13 +222,13 @@ async function bootstrap() {
     initSmartFetch(browserPool);
   }
 
-  // Initialize CamoFox (Tier 4 anti-detection browser)
-  if (config.camofox?.enabled) {
+  // Initialize CamoFox (Tier 4 anti-detection browser) — enabled by default
+  if (config.camofox?.enabled !== false) {
     initCamoFox({
-      baseUrl: config.camofox.baseUrl ?? "http://localhost:9377",
-      apiKey: config.camofox.apiKey,
-      defaultUserId: config.camofox.defaultUserId ?? "stackowl",
-      defaultTimeout: config.camofox.defaultTimeout ?? 30000,
+      baseUrl: config.camofox?.baseUrl ?? "http://localhost:9377",
+      apiKey: config.camofox?.apiKey,
+      defaultUserId: config.camofox?.defaultUserId ?? "stackowl",
+      defaultTimeout: config.camofox?.defaultTimeout ?? 30000,
     });
   }
 
@@ -1025,35 +1029,71 @@ async function buildGateway(
 // ─── Chat Command ────────────────────────────────────────────────
 
 async function chatCommand(owlName?: string) {
-  const b = await bootstrap();
-
-  const owl = owlName ? b.owlRegistry.get(owlName) : b.owlRegistry.getDefault();
-  if (!owl) {
-    console.error(chalk.red(`❌ Owl "${owlName}" not found.`));
-    for (const o of b.owlRegistry.listOwls()) {
-      console.log(chalk.dim(`  ${o.persona.emoji} ${o.persona.name}`));
+  // ── Phase 0: onboarding (first launch) ────────────────────────
+  const configPath = resolve(process.cwd(), "stackowl.config.json");
+  if (!existsSync(configPath)) {
+    const wizard = new OnboardingWizard(configPath);
+    const completed = await wizard.run();
+    if (!completed) {
+      console.log(chalk.yellow("\nSetup cancelled. Run again to configure StackOwl."));
+      process.exit(0);
     }
-    process.exit(1);
   }
 
-  const provider = b.providerRegistry.getDefault();
-  if (!(await provider.healthCheck())) {
-    console.error(
-      chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`),
-    );
-    process.exit(1);
-  }
+  // ── Phase 1: fast bootstrap (no UI yet) ───────────────────────
+  const splash = new BootSplash();
 
-  console.log(
-    chalk.green(`✓ Connected to ${provider.name}`) +
-      chalk.dim(` (model: ${b.config.defaultModel})`),
-  );
+  // Bootstrap steps — each measured and shown in the splash
+  let b!: Awaited<ReturnType<typeof bootstrap>>;
+  let owl!: NonNullable<ReturnType<Awaited<ReturnType<typeof bootstrap>>["owlRegistry"]["get"]>>;
+  let gateway!: OwlGateway;
 
-  const gateway = await buildGateway(b, owl);
+  const steps: BootStep[] = [
+    {
+      label: "Loading config & providers",
+      fn: async () => {
+        b = await bootstrap();
+        const o = owlName ? b.owlRegistry.get(owlName) : b.owlRegistry.getDefault();
+        if (!o) {
+          console.error(chalk.red(`\n  Owl "${owlName}" not found.`));
+          process.exit(1);
+        }
+        owl = o;
+      },
+    },
+    {
+      label: "Connecting to provider",
+      fn: async () => {
+        // Non-fatal: if provider is unreachable the window still opens and
+        // the error is surfaced in the chat area on the first message.
+        const provider = b.providerRegistry.getDefault();
+        await provider.healthCheck().catch(() => {/* silently continue */});
+      },
+    },
+    {
+      label: "Initialising memory & tools",
+      fn: async () => {
+        gateway = await buildGateway(b, owl);
+      },
+    },
+    {
+      label: "Starting perch watchers",
+      fn: async () => {
+        await b.perchManager.startAll();
+      },
+    },
+  ];
+
+  await splash.run(steps, () => ({
+    owlEmoji: owl.persona.emoji,
+    owlName:  owl.persona.name,
+    provider: b.providerRegistry.getDefault().name,
+    model:    b.config.defaultModel,
+  }));
+
+  // ── Phase 2: interactive session ──────────────────────────────
   const adapter = new CLIAdapter(gateway);
   gateway.register(adapter);
-
-  await b.perchManager.startAll();
 
   process.on("SIGINT", async () => {
     b.perchManager.stopAll();

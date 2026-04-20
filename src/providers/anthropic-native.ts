@@ -388,14 +388,21 @@ export class AnthropicNativeProvider implements ModelProvider {
 
   async healthCheck(): Promise<boolean> {
     try {
-      // Minimal request to verify API key and connectivity
-      await this.client.messages.create({
-        model: this.defaultModel,
-        max_tokens: 5,
-        messages: [{ role: "user", content: "Ping" }],
-      });
+      // Use models list — lightweight, no token cost
+      await this.client.models.list();
       return true;
-    } catch {
+    } catch (err) {
+      // API errors (auth, etc.) = server reachable; only network errors = unreachable
+      if (err instanceof Error) {
+        const msg = err.message;
+        const isNetworkError =
+          msg.includes("ECONNREFUSED") ||
+          msg.includes("ENOTFOUND") ||
+          msg.includes("ETIMEDOUT") ||
+          msg.includes("timeout") ||
+          msg.includes("fetch failed");
+        if (!isNetworkError) return true;
+      }
       return false;
     }
   }

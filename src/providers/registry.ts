@@ -1,118 +1,68 @@
 /**
  * StackOwl — Provider Registry
  *
- * Factory for creating and managing model providers.
- * Native drivers per provider — no LangChain abstraction.
+ * Model-file-driven provider factory.
  *
- * Supports:
- *   - ollama         → OllamaNativeProvider (local models)
- *   - anthropic      → AnthropicNativeProvider (Claude API)
- *   - openai-compatible → OpenAICompatProvider (OpenRouter, Together, LMStudio, vLLM, Groq, DeepSeek, MiniMax, etc.)
+ * Resolution order for a config entry named "X":
+ *   1. Look up model file at src/models/X  (or src/models/<profile> if profile is set)
+ *   2. Read `compatible` field → pick one of 4 protocol implementations
+ *   3. Create provider instance with merged config (model file defaults + user overrides)
  *
- * Auto-detection: if the provider name is unknown, tries heuristics
- * based on baseUrl and apiKey to pick the right driver.
+ * Adding a new provider = add a file to src/models/.
+ * No registry edits required.
+ *
+ * Protocols:
+ *   openai    → OpenAI SDK (openai, ollama, minimax, lmstudio, openrouter, etc.)
+ *   anthropic → @anthropic-ai/sdk
+ *   gemini    → @google/genai
+ *   grok      → OpenAI SDK (groq.com, xAI, etc.)
  */
 
+import { log } from "../logger.js";
+import { getModelLoader } from "../models/loader.js";
 import type { ModelProvider, ProviderConfig } from "./base.js";
-import { OllamaNativeProvider } from "./ollama-native.js";
-import { AnthropicNativeProvider } from "./anthropic-native.js";
-import { OpenAICompatProvider } from "./openai-compat.js";
-import { MiniMaxProvider } from "./minimax.js";
+import { OpenAIProtocolProvider } from "./protocols/openai.js";
+import { createAnthropicProvider } from "./protocols/anthropic.js";
+import { GeminiProtocolProvider } from "./protocols/gemini.js";
+import { GrokProtocolProvider } from "./protocols/grok.js";
+import type { ModelDefinition } from "../models/loader.js";
 
-type ProviderFactory = (config: ProviderConfig) => ModelProvider;
+// ─── Protocol Factories ───────────────────────────────────────────
 
-const BUILT_IN_FACTORIES: Record<string, ProviderFactory> = {
-  ollama: (config) => new OllamaNativeProvider(config),
-  anthropic: (config) => new AnthropicNativeProvider(config),
-  "openai-compatible": (config) => new OpenAICompatProvider(config),
-  openai: (config) => new OpenAICompatProvider({ ...config, name: "openai" }),
-  openrouter: (config) =>
-    new OpenAICompatProvider({
-      ...config,
-      name: "openrouter",
-      baseUrl: config.baseUrl ?? "https://openrouter.ai/api/v1",
-    }),
-  together: (config) =>
-    new OpenAICompatProvider({
-      ...config,
-      name: "together",
-      baseUrl: config.baseUrl ?? "https://api.together.xyz/v1",
-    }),
-  groq: (config) =>
-    new OpenAICompatProvider({
-      ...config,
-      name: "groq",
-      baseUrl: config.baseUrl ?? "https://api.groq.com/openai/v1",
-    }),
-  deepseek: (config) =>
-    new OpenAICompatProvider({
-      ...config,
-      name: "deepseek",
-      baseUrl: config.baseUrl ?? "https://api.deepseek.com/v1",
-    }),
-  lmstudio: (config) =>
-    new OpenAICompatProvider({
-      ...config,
-      name: "lmstudio",
-      baseUrl: config.baseUrl ?? "http://127.0.0.1:1234/v1",
-    }),
-  minimax: (config) => new MiniMaxProvider(config),
+type ProtocolFactory = (
+  config: ProviderConfig,
+  modelDef: ModelDefinition,
+) => ModelProvider;
+
+const PROTOCOL_FACTORIES: Record<string, ProtocolFactory> = {
+  openai: (config, def) =>
+    new OpenAIProtocolProvider(
+      {
+        ...config,
+        baseUrl: config.baseUrl ?? def.url,
+        defaultModel:
+          (config as any).activeModel ?? config.defaultModel ?? def.defaultModel,
+      },
+      config.baseUrl ?? def.url,
+    ),
+
+  anthropic: (config, def) => createAnthropicProvider(config, def),
+
+  gemini: (config, def) => new GeminiProtocolProvider(config, def),
+
+  grok: (config, def) =>
+    new GrokProtocolProvider(
+      {
+        ...config,
+        baseUrl: config.baseUrl ?? def.url,
+        defaultModel:
+          (config as any).activeModel ?? config.defaultModel ?? def.defaultModel,
+      },
+      def,
+    ),
 };
 
-/**
- * Auto-detect which factory to use based on config hints.
- */
-function detectFactory(config: ProviderConfig): ProviderFactory | null {
-  const url = config.baseUrl?.toLowerCase() ?? "";
-  const key = config.apiKey ?? "";
-
-  // Ollama detection: default port or "ollama" in URL
-  if (url.includes(":11434") || url.includes("ollama")) {
-    return BUILT_IN_FACTORIES.ollama;
-  }
-
-  // Anthropic detection: API key pattern
-  if (key.startsWith("sk-ant-")) {
-    return BUILT_IN_FACTORIES.anthropic;
-  }
-
-  // OpenRouter detection
-  if (url.includes("openrouter.ai")) {
-    return BUILT_IN_FACTORIES.openrouter;
-  }
-
-  // Together detection
-  if (url.includes("together.xyz") || url.includes("together.ai")) {
-    return BUILT_IN_FACTORIES.together;
-  }
-
-  // Groq detection
-  if (url.includes("groq.com")) {
-    return BUILT_IN_FACTORIES.groq;
-  }
-
-  // DeepSeek detection
-  if (url.includes("deepseek.com")) {
-    return BUILT_IN_FACTORIES.deepseek;
-  }
-
-  // LMStudio detection: common ports
-  if (url.includes(":1234")) {
-    return BUILT_IN_FACTORIES.lmstudio;
-  }
-
-  // MiniMax detection (both .com and .io domains)
-  if (url.includes("minimax.io") || url.includes("minimaxi.com")) {
-    return BUILT_IN_FACTORIES.minimax;
-  }
-
-  // If a baseUrl is set but not recognized, assume OpenAI-compatible
-  if (url) {
-    return BUILT_IN_FACTORIES["openai-compatible"];
-  }
-
-  return null;
-}
+// ─── Registry ────────────────────────────────────────────────────
 
 export class ProviderRegistry {
   private providers: Map<string, ModelProvider> = new Map();
@@ -120,37 +70,64 @@ export class ProviderRegistry {
 
   /**
    * Register a provider from config.
-   * Tries built-in factories first, then auto-detection.
+   *
+   * Resolves protocol via model file:
+   *   - Uses config.profile (if set) or config.name as the model file key
+   *   - Falls back to openai protocol when a baseUrl is configured but no model file exists
    */
   register(config: ProviderConfig): void {
-    let factory = BUILT_IN_FACTORIES[config.name];
+    const modelKey = config.profile ?? config.name;
+    const loader = getModelLoader();
+    const modelDef = loader.get(modelKey);
 
-    // Auto-detect if name is not in the factory map
-    if (!factory) {
-      const detected = detectFactory(config);
-      if (detected) {
-        factory = detected;
-        console.log(
-          `[ProviderRegistry] Auto-detected driver for "${config.name}" based on config`,
+    let factory: ProtocolFactory | undefined;
+
+    if (modelDef) {
+      factory = PROTOCOL_FACTORIES[modelDef.compatible];
+      if (!factory) {
+        log.engine.warn(
+          `[ProviderRegistry] Unknown protocol "${modelDef.compatible}" in model file "${modelKey}". ` +
+            `Available: ${Object.keys(PROTOCOL_FACTORIES).join(", ")}`,
+        );
+        return;
+      }
+    } else if (config.baseUrl) {
+      // No model file — fall back to OpenAI protocol if baseUrl is configured
+      log.engine.debug(
+        `[ProviderRegistry] No model file for "${modelKey}". ` +
+          `Falling back to openai protocol (baseUrl: ${config.baseUrl})`,
+      );
+      const syntheticDef: ModelDefinition = {
+        name: modelKey,
+        compatible: "openai",
+        availableModels: [config.defaultModel ?? (config as any).activeModel ?? "default"],
+        defaultModel: config.defaultModel ?? (config as any).activeModel ?? "default",
+        url: config.baseUrl,
+      };
+      factory = PROTOCOL_FACTORIES.openai;
+      try {
+        const provider = factory(config, syntheticDef);
+        this.providers.set(config.name, provider);
+      } catch (error) {
+        log.engine.warn(
+          `[ProviderRegistry] Failed to initialize "${config.name}": ${(error as Error).message}`,
         );
       }
-    }
-
-    if (!factory) {
-      throw new Error(
-        `[ProviderRegistry] Unknown provider: "${config.name}". ` +
-          `Available: ${Object.keys(BUILT_IN_FACTORIES).join(", ")}. ` +
-          `Set a baseUrl to auto-detect, or use type: "openai-compatible".`,
+      return;
+    } else {
+      log.engine.warn(
+        `[ProviderRegistry] No model file for "${modelKey}" and no baseUrl configured. ` +
+          `Create src/models/${modelKey} or set a baseUrl.`,
       );
+      return;
     }
 
     try {
-      const provider = factory(config);
+      const provider = factory(config, modelDef!);
       this.providers.set(config.name, provider);
     } catch (error) {
-      console.warn(
-        `[ProviderRegistry] Warning: Failed to initialize provider "${config.name}". ` +
-          `It will be disabled. Reason: ${(error as Error).message}`,
+      log.engine.warn(
+        `[ProviderRegistry] Failed to initialize "${config.name}": ${(error as Error).message}`,
       );
     }
   }
@@ -160,8 +137,19 @@ export class ProviderRegistry {
    */
   setDefault(name: string): void {
     if (!this.providers.has(name)) {
+      // If the requested default was not registered (e.g. missing model file),
+      // fall back to the first registered provider rather than crashing.
+      const first = this.providers.keys().next().value;
+      if (first) {
+        log.engine.warn(
+          `[ProviderRegistry] Default provider "${name}" not registered. ` +
+            `Using "${first}" instead.`,
+        );
+        this.defaultProviderName = first;
+        return;
+      }
       throw new Error(
-        `[ProviderRegistry] Cannot set default: provider "${name}" not registered.`,
+        `[ProviderRegistry] Cannot set default: provider "${name}" not registered and no fallback available.`,
       );
     }
     this.defaultProviderName = name;
@@ -190,23 +178,14 @@ export class ProviderRegistry {
     return provider;
   }
 
-  /**
-   * Get the default provider.
-   */
   getDefault(): ModelProvider {
     return this.get();
   }
 
-  /**
-   * List all registered provider names.
-   */
   listProviders(): string[] {
     return Array.from(this.providers.keys());
   }
 
-  /**
-   * Run health checks on all registered providers.
-   */
   async healthCheckAll(): Promise<Record<string, boolean>> {
     const results: Record<string, boolean> = {};
     for (const [name, provider] of this.providers) {

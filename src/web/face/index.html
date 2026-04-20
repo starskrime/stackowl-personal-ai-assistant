@@ -177,12 +177,14 @@
       border:1px solid var(--border);position:relative;overflow:hidden;}
     #vad-sil-fill{height:100%;width:0%;background:var(--org);
       box-shadow:0 0 6px var(--org);transition:width .12s;}
-    #opmic-btn{background:none;border:1px solid var(--border);
+    #opmic-btn,#tts-btn{background:none;border:1px solid var(--border);
       color:rgba(0,245,255,.45);font-family:inherit;font-size:9px;
       letter-spacing:.1em;padding:4px 10px;cursor:pointer;transition:all .2s;}
-    #opmic-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+    #opmic-btn:hover,#tts-btn:hover{border-color:var(--cyan);color:var(--cyan);}
     #opmic-btn.on{border-color:var(--red);color:var(--red);
       box-shadow:0 0 8px rgba(255,34,68,.3);animation:obmik .9s ease-in-out infinite;}
+    #tts-btn.on{border-color:#a0ff60;color:#a0ff60;
+      box-shadow:0 0 8px rgba(160,255,96,.25);}
     @keyframes obmik{0%,100%{opacity:1}50%{opacity:.6}}
 
     #level-wrap{flex:1;height:18px;background:rgba(0,245,255,.04);
@@ -272,6 +274,22 @@
     .nd-val{color:rgba(0,245,255,.75);flex:1;word-break:break-word;}
     .nd-excerpt{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
       font-size:9px;color:rgba(0,245,255,.4);line-height:1.7;}
+
+    /* ──────────────────── GRAPH BACK BUTTON ──────────────────── */
+    #graph-back-btn{position:fixed;top:calc(var(--top-h) + 10px);
+      left:50%;transform:translateX(-50%);z-index:55;
+      display:none;align-items:center;gap:8px;
+      background:rgba(0,8,20,.92);border:1px solid var(--cyan);
+      color:var(--cyan);font-family:'Orbitron',monospace;font-size:9px;
+      font-weight:700;letter-spacing:.2em;padding:6px 18px;cursor:pointer;
+      box-shadow:0 0 16px rgba(0,245,255,.2);}
+    #graph-back-btn.show{display:flex;}
+    #graph-back-btn:hover{background:rgba(0,245,255,.08);}
+    #graph-expand-lbl{position:fixed;top:calc(var(--top-h) + 10px);
+      left:calc(50% + 120px);transform:none;z-index:55;
+      display:none;font-size:9px;color:rgba(0,245,255,.4);
+      letter-spacing:.1em;padding:8px 0;}
+    #graph-expand-lbl.show{display:block;}
   </style>
 </head>
 <body>
@@ -332,6 +350,7 @@
     <!-- voice mode bar -->
     <div id="voice-bar">
       <button id="opmic-btn">📻 OPEN MIC</button>
+      <button id="tts-btn" title="Toggle voice output">🔇 VOICE OUT</button>
       <div id="level-wrap"><div id="level-bar"></div><div id="level-txt">LISTENING</div></div>
       <!-- VAD real-time indicator — shown only when open mic is active -->
       <div id="vad-row">
@@ -377,6 +396,10 @@
   <div id="nd-body"></div>
 </div>
 
+<!-- ── GRAPH EXPAND CONTROLS ── -->
+<button id="graph-back-btn" onclick="collapseGraph()">◀ FULL VIEW</button>
+<span id="graph-expand-lbl"></span>
+
 <!-- ── PULSE ── -->
 <div id="pulse"><div class="pr"></div><div class="pr"></div><div class="pr"></div></div>
 
@@ -405,73 +428,268 @@ function tci(tag) {
   if (!(tag in tagCI)) { let h=5381; for(let i=0;i<tag.length;i++)h=((h<<5)+h)^tag.charCodeAt(i); tagCI[tag]=Math.abs(h)%8; }
   return tagCI[tag];
 }
-function nCol(n) { return n.tags?.length ? NODE_COLS[tci(n.tags[0])%8] : '#00f5ff'; }
+function nCol(n) {
+  if (n._isTagNode) return '#ffc800';
+  return n.tags?.length ? NODE_COLS[tci(n.tags[0])%8] : '#00f5ff';
+}
+
+// ── Expand / focus state ───────────────────────────────
+let focusedId = null;          // currently expanded node id
+let focusNeighborIds = new Set(); // direct neighbors of focused node
+let expandedTagNodes = [];     // synthetic tag node ids added during expansion
+
+function getNodeOpacity(n) {
+  if (!focusedId) return 0.93;
+  const id = String(n.id);
+  if (id === focusedId) return 1.0;
+  if (n._isTagNode) return 0.95;
+  if (focusNeighborIds.has(id)) return 0.88;
+  return 0.04;
+}
+
+function getNodeColor(n) {
+  if (n._isTagNode) return '#ffc800';
+  if (focusedId && String(n.id) === focusedId) return '#ffffff';
+  return nCol(n);
+}
+
+function getNodeVal(n) {
+  if (n._isTagNode) return 1.0;
+  if (focusedId && String(n.id) === focusedId) return (n.val ?? 2) * 1.8;
+  return n.val ?? 2;
+}
+
+function getLinkColor(l) {
+  if (!focusedId) return 'rgba(0,245,255,.1)';
+  const src = String(l.source?.id ?? l.source);
+  const tgt = String(l.target?.id ?? l.target);
+  if (src === focusedId || tgt === focusedId) return 'rgba(0,245,255,.7)';
+  if (l._isTagLink) return 'rgba(255,200,0,.5)';
+  return 'rgba(0,245,255,.01)';
+}
+
+function getLinkOpacity(l) {
+  if (!focusedId) return 0.45;
+  const src = String(l.source?.id ?? l.source);
+  const tgt = String(l.target?.id ?? l.target);
+  if (src === focusedId || tgt === focusedId) return 1.0;
+  return 0.02;
+}
+
+function getLinkWidth(l) {
+  if (!focusedId) return 0.55;
+  const src = String(l.source?.id ?? l.source);
+  const tgt = String(l.target?.id ?? l.target);
+  if (src === focusedId || tgt === focusedId) return 1.4;
+  return 0.1;
+}
 
 function buildGraph() {
   graph = ForceGraph3D()(document.getElementById('graph-wrap'))
     .backgroundColor('#000509')
     .width(window.innerWidth).height(window.innerHeight)
     .graphData(gData)
-    .nodeLabel(n=>`<div style="background:rgba(0,5,15,.9);border:1px solid ${nCol(n)};color:${nCol(n)};padding:4px 10px;font-family:Share Tech Mono,monospace;font-size:11px;max-width:220px;word-break:break-word;text-shadow:0 0 6px ${nCol(n)}">${n.label}</div>`)
-    .nodeVal(n=>n.val??2).nodeColor(nCol).nodeOpacity(.93).nodeResolution(12)
-    .linkColor(()=>'rgba(0,245,255,.1)').linkWidth(.55).linkOpacity(.45)
-    .linkDirectionalParticles(1).linkDirectionalParticleWidth(.8)
-    .linkDirectionalParticleColor(()=>'rgba(0,245,255,.5)')
-    .linkDirectionalParticleSpeed(.003)
+    .nodeLabel(n => {
+      const c = getNodeColor(n);
+      return `<div style="background:rgba(0,5,15,.9);border:1px solid ${c};color:${c};padding:4px 10px;font-family:Share Tech Mono,monospace;font-size:11px;max-width:220px;word-break:break-word;text-shadow:0 0 6px ${c}">${n.label}</div>`;
+    })
+    .nodeVal(getNodeVal)
+    .nodeColor(getNodeColor)
+    .nodeOpacity(getNodeOpacity)
+    .nodeResolution(12)
+    .linkColor(getLinkColor)
+    .linkWidth(getLinkWidth)
+    .linkOpacity(getLinkOpacity)
+    .linkDirectionalParticles(l => {
+      if (!focusedId) return 1;
+      const src = String(l.source?.id ?? l.source);
+      const tgt = String(l.target?.id ?? l.target);
+      return (src === focusedId || tgt === focusedId) ? 4 : 0;
+    })
+    .linkDirectionalParticleWidth(1.2)
+    .linkDirectionalParticleColor(l => l._isTagLink ? 'rgba(255,200,0,.8)' : 'rgba(0,245,255,.7)')
+    .linkDirectionalParticleSpeed(.005)
     .enableNavigationControls(true).showNavInfo(false)
-    .onNodeHover(node=>{ document.body.style.cursor=node?'pointer':'default'; showNDetail(node); })
-    .onNodeClick(node=>{ if(!node)return; focusNode(String(node.id)); });
+    .onNodeHover(node => {
+      document.body.style.cursor = node ? 'pointer' : 'default';
+      if (!focusedId) showNDetail(node);
+    })
+    .onNodeClick(node => {
+      if (!node) return;
+      const id = String(node.id);
+      if (node._isTagNode) {
+        // Tag node clicked: expand to show all pellets with this tag
+        expandByTag(node.tags[0], node);
+      } else if (focusedId === id) {
+        collapseGraph();
+      } else {
+        expandNode(id);
+      }
+    })
+    .onBackgroundClick(() => collapseGraph());
 
   graph.d3Force('charge').strength(-90);
   graph.d3Force('link').distance(65).strength(.4);
 
-  let angle=0;
-  setInterval(()=>{ if(curState==='idle'||curState==='speaking'){ angle+=.0014;
-    graph.cameraPosition({x:Math.sin(angle)*380,z:Math.cos(angle)*380}); }}, 50);
+  let angle = 0;
+  setInterval(() => {
+    if (curState === 'idle' || curState === 'speaking') {
+      angle += .0014;
+      graph.cameraPosition({ x: Math.sin(angle) * 380, z: Math.cos(angle) * 380 });
+    }
+  }, 50);
+}
+
+// ── Expand a pellet node ───────────────────────────────
+function expandNode(id) {
+  collapseGraph(false); // silent collapse of any previous
+
+  const node = gData.nodes.find(n => String(n.id) === id);
+  if (!node || !graph) return;
+
+  focusedId = id;
+  focusNeighborIds = new Set();
+
+  // Find direct neighbors from existing links
+  gData.links.forEach(l => {
+    const src = String(l.source?.id ?? l.source);
+    const tgt = String(l.target?.id ?? l.target);
+    if (src === id) focusNeighborIds.add(tgt);
+    if (tgt === id) focusNeighborIds.add(src);
+  });
+
+  // Inject tag sub-nodes radiating out from the expanded node
+  expandedTagNodes = [];
+  const tags = (node.tags || []);
+  tags.forEach((tag, i) => {
+    const tagId = `__tag__${tag}`;
+    if (gData.nodes.find(n => n.id === tagId)) return;
+    const angle = (i / Math.max(tags.length, 1)) * Math.PI * 2;
+    const r = 100;
+    const tagNode = {
+      id: tagId,
+      label: `# ${tag}`,
+      tags: [tag],
+      _isTagNode: true,
+      val: 1.0,
+      fx: (node.x ?? 0) + Math.cos(angle) * r,
+      fy: (node.y ?? 0) + Math.sin(angle) * r,
+      fz: node.z ?? 0,
+    };
+    gData.nodes.push(tagNode);
+    gData.links.push({ source: id, target: tagId, _isTagLink: true });
+    expandedTagNodes.push(tagId);
+    focusNeighborIds.add(tagId);
+  });
+
+  graph.graphData({ ...gData });
+
+  // Fly camera to node
+  const dist = 140;
+  graph.cameraPosition(
+    { x: (node.x ?? 0) + dist, y: (node.y ?? 0) + dist * 0.5, z: (node.z ?? 0) + dist },
+    node, 900
+  );
+
+  document.querySelectorAll('.mi').forEach(el => el.classList.toggle('act', el.dataset.id === id));
+  showNDetail(node);
+  document.getElementById('graph-back-btn').classList.add('show');
+  document.getElementById('graph-expand-lbl').classList.add('show');
+  document.getElementById('graph-expand-lbl').textContent =
+    `${node.label.slice(0, 30)} — ${focusNeighborIds.size} connections`;
+  logEv(`EXPAND: "${node.label}" (${focusNeighborIds.size} conns)`, true);
+}
+
+// ── Expand by tag: show all pellets with this tag ──────
+function expandByTag(tag, tagNode) {
+  const peers = gData.nodes.filter(n =>
+    !n._isTagNode && (n.tags || []).includes(tag) && String(n.id) !== focusedId
+  );
+  peers.forEach(p => {
+    const alreadyLinked = gData.links.some(l => {
+      const src = String(l.source?.id ?? l.source);
+      const tgt = String(l.target?.id ?? l.target);
+      return (src === tagNode.id && tgt === p.id) || (src === p.id && tgt === tagNode.id);
+    });
+    if (!alreadyLinked) {
+      gData.links.push({ source: tagNode.id, target: p.id, _isTagLink: true });
+    }
+    focusNeighborIds.add(String(p.id));
+  });
+  if (graph) graph.graphData({ ...gData });
+  logEv(`TAG EXPAND: #${tag} → ${peers.length} pellets`);
+}
+
+// ── Collapse back to full graph ────────────────────────
+function collapseGraph(doLog = true) {
+  if (!focusedId && expandedTagNodes.length === 0) return;
+
+  // Remove synthetic tag nodes and links
+  gData.nodes = gData.nodes.filter(n => !expandedTagNodes.includes(n.id));
+  gData.links = gData.links.filter(l => !l._isTagLink);
+  expandedTagNodes = [];
+  focusedId = null;
+  focusNeighborIds = new Set();
+
+  if (graph) graph.graphData({ ...gData });
+  document.querySelectorAll('.mi').forEach(el => el.classList.remove('act'));
+  document.getElementById('ndetail').classList.remove('show');
+  document.getElementById('graph-back-btn').classList.remove('show');
+  document.getElementById('graph-expand-lbl').classList.remove('show');
+  if (doLog) logEv('GRAPH: full view');
 }
 
 function showNDetail(node) {
   const el = document.getElementById('ndetail');
-  if (!node) { el.classList.remove('show'); return; }
+  if (!node || node._isTagNode) { el.classList.remove('show'); return; }
   el.classList.add('show');
   const c = nCol(node);
   document.getElementById('nd-title').style.color = c;
   document.getElementById('nd-title').style.textShadow = `0 0 10px ${c}`;
   document.getElementById('nd-title').textContent = node.label;
-  const conns = gData.links.filter(l=>
-    String(l.source?.id??l.source)===String(node.id)||
-    String(l.target?.id??l.target)===String(node.id)).length;
-  const tagsHtml = (node.tags||[]).map(t=>`<span class="tag tc${tci(t)%8}">${t}</span>`).join(' ') || '—';
-  const date = node.generatedAt ? new Date(node.generatedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
-  document.getElementById('nd-body').innerHTML=`
-    <div class="nd-row"><span class="nd-lbl">SOURCE</span><span class="nd-val">${node.source||'—'}</span></div>
+  const conns = gData.links.filter(l =>
+    String(l.source?.id ?? l.source) === String(node.id) ||
+    String(l.target?.id ?? l.target) === String(node.id)).length;
+  const tagsHtml = (node.tags || []).map(t => `<span class="tag tc${tci(t) % 8}">${t}</span>`).join(' ') || '—';
+  const date = node.generatedAt
+    ? new Date(node.generatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '—';
+  document.getElementById('nd-body').innerHTML = `
+    <div class="nd-row"><span class="nd-lbl">SOURCE</span><span class="nd-val">${node.source || '—'}</span></div>
     <div class="nd-row"><span class="nd-lbl">DATE</span><span class="nd-val">${date}</span></div>
     <div class="nd-row"><span class="nd-lbl">CONNS</span><span class="nd-val">${conns}</span></div>
     <div class="nd-row"><span class="nd-lbl">TAGS</span><span class="nd-val">${tagsHtml}</span></div>
-    ${node.excerpt?`<div class="nd-excerpt">"${node.excerpt.slice(0,160).replace(/</g,'&lt;')}…"</div>`:''}`;
+    ${node.excerpt ? `<div class="nd-excerpt">"${node.excerpt.slice(0, 160).replace(/</g, '&lt;')}…"</div>` : ''}`;
 }
 
-function addNode(id, label, tags, extra={}) {
-  if (gData.nodes.find(n=>String(n.id)===String(id))) return;
-  const node = { id, label, tags:tags||[], val:Math.max(1.5,1+(tags?.length??0)*.7),
-    color:NODE_COLS[tci(tags?.[0]??'')%8], generatedAt:new Date().toISOString(), ...extra };
+function addNode(id, label, tags, extra = {}) {
+  if (gData.nodes.find(n => String(n.id) === String(id))) return;
+  const node = {
+    id, label, tags: tags || [],
+    val: Math.max(1.5, 1 + (tags?.length ?? 0) * .7),
+    color: NODE_COLS[tci(tags?.[0] ?? '') % 8],
+    generatedAt: new Date().toISOString(), ...extra
+  };
   gData.nodes.push(node);
-  gData.nodes.forEach(n=>{
-    if(n.id!==id&&(n.tags||[]).some(t=>(tags||[]).includes(t)))
-      gData.links.push({source:id,target:n.id});
+  gData.nodes.forEach(n => {
+    if (n.id !== id && !n._isTagNode && (n.tags || []).some(t => (tags || []).includes(t)))
+      gData.links.push({ source: id, target: n.id });
   });
-  if(graph) graph.graphData({...gData});
+  if (graph) graph.graphData({ ...gData });
   renderMemList();
   logEv(`+NODE: ${label}`, true);
 }
 
 async function loadGraph() {
   try {
-    const d = await fetch('/api/face/graph').then(r=>r.json());
-    gData.nodes = (d.nodes||[]).map(n=>({...n,
-      color:NODE_COLS[tci(n.tags?.[0]??'')%8],val:Math.max(1.5,1+(n.tags?.length??0)*.7)}));
-    gData.links = (d.edges||[]).map(e=>({source:e.source,target:e.target}));
-    if(graph) graph.graphData({...gData});
+    const d = await fetch('/api/face/graph').then(r => r.json());
+    gData.nodes = (d.nodes || []).map(n => ({
+      ...n,
+      color: NODE_COLS[tci(n.tags?.[0] ?? '') % 8],
+      val: Math.max(1.5, 1 + (n.tags?.length ?? 0) * .7)
+    }));
+    gData.links = (d.edges || []).map(e => ({ source: e.source, target: e.target }));
+    if (graph) graph.graphData({ ...gData });
     renderMemList();
     logEv(`LOADED ${gData.nodes.length} memory nodes`);
   } catch { logEv('GRAPH LOAD FAILED'); }
@@ -480,37 +698,31 @@ async function loadGraph() {
 // ═══════════════════════════════════════════════════════
 // MEMORY LIST
 // ═══════════════════════════════════════════════════════
-function renderMemList(filter='') {
+function renderMemList(filter = '') {
   const lower = filter.toLowerCase();
-  const items = gData.nodes.filter(n=>!lower||
-    n.label.toLowerCase().includes(lower)||(n.tags||[]).some(t=>t.toLowerCase().includes(lower)));
-  document.getElementById('mem-list').innerHTML = items.map(n=>{
-    const c=nCol(n);
-    return `<div class="mi" data-id="${n.id}" onclick="focusNode('${n.id}')">
+  const items = gData.nodes.filter(n =>
+    !n._isTagNode && (!lower ||
+      n.label.toLowerCase().includes(lower) ||
+      (n.tags || []).some(t => t.toLowerCase().includes(lower)))
+  );
+  document.getElementById('mem-list').innerHTML = items.map(n => {
+    const c = nCol(n);
+    return `<div class="mi" data-id="${n.id}" onclick="expandNode('${n.id}')">
       <div class="mi-title" style="color:${c};text-shadow:0 0 5px ${c}">${n.label}</div>
-      <div class="mi-tags">${(n.tags||[]).map(t=>`<span class="tag tc${tci(t)%8}">${t}</span>`).join('')}</div>
+      <div class="mi-tags">${(n.tags || []).map(t => `<span class="tag tc${tci(t) % 8}">${t}</span>`).join('')}</div>
     </div>`;
   }).join('');
   document.getElementById('mem-count').textContent = gData.nodes.length;
   document.getElementById('tb-nodes').textContent  = gData.nodes.length;
   document.getElementById('sb-n').textContent = gData.nodes.length;
   document.getElementById('sb-e').textContent = gData.links.length;
-  const tags = new Set(gData.nodes.flatMap(n=>n.tags||[]));
+  const tags = new Set(gData.nodes.flatMap(n => n.tags || []));
   document.getElementById('sb-t').textContent = tags.size;
 }
 
-document.getElementById('mem-search').addEventListener('input',function(){ renderMemList(this.value); });
+document.getElementById('mem-search').addEventListener('input', function () { renderMemList(this.value); });
 
-function focusNode(id) {
-  const node = gData.nodes.find(n=>String(n.id)===String(id));
-  if(!node||!graph) return;
-  const d=120;
-  graph.cameraPosition({x:(node.x??0)+d,y:(node.y??0)+d/2,z:(node.z??0)+d},node,800);
-  document.querySelectorAll('.mi').forEach(el=>el.classList.toggle('act',el.dataset.id===String(id)));
-  showNDetail(node);
-}
-
-// Collapse/expand
+// Memory panel collapse/expand
 let memCollapsed = false;
 document.getElementById('mem-toggle').addEventListener('click',()=>{
   memCollapsed=!memCollapsed;
@@ -647,20 +859,24 @@ function handleStream(ev) {
   }
   if(ev.type==='done'&&streamBubble){
     streamBubble.querySelector('.msg-bubble').innerHTML=mdLight(streamContent);
+    const completedText = streamContent;
     streamBubble=null; streamContent='';
     setState('idle');
+    maybeSpeakResponse(completedText);
   }
 }
 
 function handleResponse(d) {
   showThinking(false);
+  const responseText = d.content || streamContent || '';
   if(!streamBubble&&d.content){
     appendMsg('bot',d.content);
   } else if(streamBubble){
-    streamBubble.querySelector('.msg-bubble').innerHTML=mdLight(streamContent||d.content||'');
+    streamBubble.querySelector('.msg-bubble').innerHTML=mdLight(responseText);
     streamBubble=null; streamContent='';
   }
   setState('idle');
+  maybeSpeakResponse(responseText);
 }
 
 function appendMsg(role, text, opts={}) {
@@ -742,7 +958,11 @@ async function sendVoiceBlob(wav, {voiceBadge=false}={}) {
     if(!data.transcript?.trim()){ logEv(data.error||'NOTHING HEARD'); return; }
     logEv(`HEARD: "${data.transcript}"`, true);
     appendMsg('user', data.transcript, {voiceBadge});
-    if(data.response?.content) appendMsg('bot', data.response.content);
+    lastInputWasVoice = true;  // mark that this response came from voice
+    if(data.response?.content) {
+      appendMsg('bot', data.response.content);
+      maybeSpeakResponse(data.response.content);
+    }
   } catch(e){ logEv('VOICE SEND FAILED: '+e.message); }
 }
 
@@ -1012,6 +1232,70 @@ document.getElementById('opmic-btn').addEventListener('click', async ()=>{
   if(openMic) await startOpenMic();
   else         stopOpenMic();
 });
+
+// ═══════════════════════════════════════════════════════
+// VOICE OUTPUT (TTS) — Web Speech API
+// Auto-speaks short responses when voice input was the source.
+// ═══════════════════════════════════════════════════════
+
+let ttsEnabled = false;
+let lastInputWasVoice = false;  // set to true after tap-record or open-mic sends
+
+const TTS_MAX_WORDS = 120;  // only auto-speak responses under this word count
+
+function updateTtsBtn() {
+  const btn = document.getElementById('tts-btn');
+  btn.classList.toggle('on', ttsEnabled);
+  btn.textContent = ttsEnabled ? '🔊 VOICE OUT ON' : '🔇 VOICE OUT';
+}
+
+document.getElementById('tts-btn').addEventListener('click', () => {
+  ttsEnabled = !ttsEnabled;
+  if (!ttsEnabled) window.speechSynthesis?.cancel();
+  updateTtsBtn();
+});
+
+/**
+ * Speak `text` using Web Speech API TTS.
+ * Only fires if: ttsEnabled AND lastInputWasVoice AND response is short.
+ * Strips markdown syntax before speaking.
+ */
+function maybeSpeakResponse(text) {
+  if (!ttsEnabled) return;
+  if (!lastInputWasVoice) return;
+  if (!window.speechSynthesis) return;
+
+  const wordCount = text.trim().split(/\s+/).length;
+  if (wordCount > TTS_MAX_WORDS) return;
+
+  // Strip markdown formatting for cleaner speech
+  const clean = text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/`[^`]+`/g, '')
+    .replace(/#{1,6}\s/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\n+/g, ' ')
+    .trim();
+
+  window.speechSynthesis.cancel();  // cancel any in-progress speech
+
+  const utt = new SpeechSynthesisUtterance(clean);
+  utt.rate = 1.05;
+  utt.pitch = 1.0;
+
+  // Prefer a natural-sounding voice if available
+  const voices = window.speechSynthesis.getVoices();
+  const preferred = voices.find(v =>
+    v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Neural') || v.name.includes('Google'))
+  ) || voices.find(v => v.lang.startsWith('en'));
+  if (preferred) utt.voice = preferred;
+
+  window.speechSynthesis.speak(utt);
+
+  // Reset voice flag — next response only speaks if triggered by voice again
+  lastInputWasVoice = false;
+}
 
 // ═══════════════════════════════════════════════════════
 // CLOCK + UPTIME

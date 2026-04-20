@@ -65,6 +65,8 @@ import { MemoryDatabase } from "../memory/db.js";
 import { MessageCompressor } from "../memory/compressor.js";
 import { FeedbackStore } from "../feedback/store.js";
 import { OutputFilter, resolveOutputMode } from "./output-filter.js";
+import { SessionBriefGenerator } from "../cognition/session-brief.js";
+import { LoopDetector } from "../cognition/loop-detector.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -99,6 +101,10 @@ export class OwlGateway {
   agentWatch: import("../agent-watch/index.js").AgentWatchManager | null = null;
   /** Timer tick interval for scheduled message delivery */
   private timerTickInterval: NodeJS.Timeout | null = null;
+
+  // ─── Phase 3: Relational Intelligence ────────────────────────
+  private sessionBriefGenerator: SessionBriefGenerator | null = null;
+  private loopDetector: LoopDetector = new LoopDetector();
 
   // ─── Extracted Handlers (Improvement #4) ───────────────────
   private postProcessor: PostProcessor;
@@ -221,6 +227,9 @@ export class OwlGateway {
         ctx.provider,
       );
     }
+
+    // Phase 3: Session Brief Generator — lazy, only needs provider
+    this.sessionBriefGenerator = new SessionBriefGenerator(ctx.provider);
 
     // User mental model — behavioral state inference
     this.userMentalModel = new UserMentalModel();
@@ -1124,6 +1133,46 @@ export class OwlGateway {
       text = `${freshStartDirective}\n\nUser request: ${text}`;
     }
 
+    // ─── Phase 3: Session Opening Brief ──────────────────────────
+    // On FRESH_START, generate and prepend a personalised context brief so
+    // the user arrives oriented rather than re-explaining themselves.
+    if (
+      continuityResult?.classification === "FRESH_START" &&
+      this.sessionBriefGenerator
+    ) {
+      this.runBackground("session-brief", (async () => {
+        try {
+          const brief = await this.sessionBriefGenerator!.generate({
+            owlName: this.ctx.owl.persona.name,
+            episodicMemory: this.ctx.episodicMemory,
+            groundState: this.ctx.groundState,
+            innerLife: this.ctx.innerLife,
+            userId: message.userId,
+          });
+          if (brief && callbacks.onProgress) {
+            await callbacks.onProgress(`\n${brief.formatted}\n`);
+          }
+        } catch {
+          // Non-fatal
+        }
+      })());
+    }
+
+    // ─── Phase 3: Loop Detection ──────────────────────────────────
+    // Detect if the user is stuck in a recurring question pattern.
+    // If so, inject a root-cause-finding directive into the message text.
+    const loopResult = await this.loopDetector.detect(
+      message.text,
+      this.ctx.episodicMemory,
+      message.userId,
+    );
+    if (loopResult.isLoop && loopResult.systemPromptHint) {
+      text = `${loopResult.systemPromptHint}\n\nUser request: ${text}`;
+      log.engine.info(
+        `[LoopDetector] Loop injected for topic: "${loopResult.cluster?.topic}"`,
+      );
+    }
+
     // ─── Strategy Classification & Orchestrated Execution ─────
     // Single LLM call replaces both parliament detection and planner routing
     let strategy = await classifyStrategy(
@@ -1271,6 +1320,55 @@ export class OwlGateway {
         } else {
           tracker.recordSuccess(name, 0);
         }
+      }
+    }
+
+    // ─── Phase 3: PreferenceEnforcer ──────────────────────────────
+    // 1. Capture explicit preference declarations from this user message.
+    // 2. Infer implicit signals (message length, code questions, etc.).
+    // 3. Enforce preferences on the response (e.g. trim if conciseness high-confidence).
+    if (this.ctx.preferenceEnforcer && this.ctx.preferenceModel) {
+      this.runBackground(
+        "preference-capture",
+        this.ctx.preferenceEnforcer.captureExplicitPreferences(
+          message.text,
+          this.ctx.preferenceModel,
+        ),
+      );
+      this.runBackground(
+        "preference-infer",
+        this.ctx.preferenceEnforcer.inferImplicitSignals(
+          message.text,
+          response.content,
+          this.ctx.preferenceModel,
+        ),
+      );
+      try {
+        response.content = await this.ctx.preferenceEnforcer.enforceOnResponse(
+          response.content,
+          message.text,
+          this.ctx.preferenceModel,
+        );
+      } catch {
+        // Non-fatal — use original response
+      }
+    }
+
+    // Notify background orchestrator of user activity (delivers digest if returning after absence)
+    if (this.ctx.backgroundOrchestrator) {
+      const deliverDigest = !!(callbacks.onProgress);
+      await this.ctx.backgroundOrchestrator.recordUserActivity(deliverDigest);
+
+      // Register current session for debrief after inactivity threshold
+      if (session.messages.length >= 6) {
+        this.ctx.backgroundOrchestrator.registerSessionForDebrief(
+          session.messages,
+          async (formatted) => {
+            if (callbacks.onProgress) {
+              await callbacks.onProgress(formatted);
+            }
+          },
+        );
       }
     }
 

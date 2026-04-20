@@ -1,0 +1,4 @@
+compatible: anthropic
+availableModels: ["claude-sonnet-4-6"]
+defaultModel: "claude-sonnet-4-6"
+url: "https://api.anthropic.com/v1"

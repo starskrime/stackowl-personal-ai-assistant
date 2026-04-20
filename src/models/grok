@@ -1,0 +1,4 @@
+compatible: grok
+availableModels: ["grok-4.1-fast"]
+defaultModel: "grok-4.1-fast"
+url: "https://api.groq.com/v1"

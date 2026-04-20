@@ -85,8 +85,13 @@ export interface EmbeddingResponse {
 
 export interface ProviderConfig {
   name: string;
+  /** Model file to use for protocol lookup (defaults to name) */
+  profile?: string;
   baseUrl?: string;
   apiKey?: string;
+  /** Active model override — replaces defaultModel */
+  activeModel?: string;
+  /** @deprecated Use activeModel instead */
   defaultModel?: string;
   defaultEmbeddingModel?: string;
   options?: Record<string, unknown>;

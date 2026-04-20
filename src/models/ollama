@@ -1,0 +1,4 @@
+compatible: openai
+availableModels: ["gpt-oss:120b"]
+defaultModel: "gpt-oss:120b"
+url: "http://localhost:11434/v1"
