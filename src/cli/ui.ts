@@ -1,92 +1,98 @@
 /**
  * StackOwl — Active Session UI  (Screen 2)
  *
- * Full-screen split-panel layout — all borders yellow.
- *
- *   ┌──────────────────────────────────────────────────────────────────────┐
- *   │ 🦉 Archimedes · claude-sonnet-4-6 · turn 3 · 12.4k tokens · $0.04  │ ← yellow bg
- *   ├──────────────────────────┬───────────────────────────────────────────┤
- *   │  [ OWL MIND ]            │                                           │
- *   │                          │  You                                      │
- *   │  ( o  o )                │  your message                             │
- *   │                          │                                           │
- *   │  ◉ Instincts  none       │  🦉 Archimedes                            │
- *   │  ◉ Memory     3 facts    │  response text                            │
- *   │  ◉ Skills     none       │                                           │
- *   │                          │ ─────────────────────────────────────     │
- *   │  REASONING               │ › input█                                  │
- *   │  ├─▶ ⠸ Glob src/**       │                                           │
- *   │  └─▶ ✓ Read file.ts 89ms │                                           │
- *   │                          │                                           │
- *   │  DNA                     │                                           │
- *   │  challenge ████████░░ 7  │                                           │
- *   │  verbosity █████░░░░░ 5  │                                           │
- *   │                          │                                           │
- *   │  FIREWALL — reserved     │                                           │
- *   ├──────────────────────────┴───────────────────────────────────────────┤
- *   │  [Esc] Stop  [Ctrl+P] Parliament  [Ctrl+L] Clear  [Ctrl+C] Quit     │
- *   └──────────────────────────────────────────────────────────────────────┘
+ * Dark Glass design:
+ *   - Thin borders with ASCII-safe chars (+-+|+-+)
+ *   - Left panel with subtle dark tint + 1-char gap from right panel
+ *   - Yellow only for border structure; white for content; cyan/green for interactive
+ *   - Panels defined by spacing and background, not heavy borders
+ *   - Clean section dividers with thin --- rules
  */
 
 import { EventEmitter } from "node:events";
-import chalk            from "chalk";
+import chalk from "chalk";
 import type { StreamEvent } from "../providers/base.js";
 
 // ─── ANSI helpers ────────────────────────────────────────────────
 
-const ESC  = "\x1B";
+const ESC = "\x1B";
 const ansi = {
-  altIn:   `${ESC}[?1049h`,
-  altOut:  `${ESC}[?1049l`,
-  hide:    `${ESC}[?25l`,
-  show:    `${ESC}[?25h`,
-  clear:   `${ESC}[2J`,
-  el:      `${ESC}[2K`,
-  pos:     (r: number, c = 1) => `${ESC}[${r};${c}H`,
+  altIn: `${ESC}[?1049h`,
+  altOut: `${ESC}[?1049l`,
+  hide: `${ESC}[?25l`,
+  show: `${ESC}[?25h`,
+  clear: `${ESC}[2J\x1B[1;1H`, // erase screen + home cursor (no scrollback clear — avoids flicker)
+  el: `${ESC}[2K`,
+  pos: (r: number, c = 1) => `${ESC}[${r};${c}H`,
 };
 
 // ─── Color shortcuts ─────────────────────────────────────────────
+// Dark Glass palette:
+//   Y  = border/structure (used sparingly)
+//   C  = interactive/active
+//   G  = success/done
+//   R  = error
+//   D  = dim/secondary
+//   W  = primary content
+//   Wb = bold white (headings)
 
-const Y  = chalk.yellow;
-const YB = chalk.yellow.bold;
-const D  = chalk.dim;
-const W  = chalk.white;
-const G  = chalk.green;
-const R  = chalk.red;
-const C  = chalk.cyan;
+const Y = chalk.yellow;
+const D = chalk.dim;
+const W = chalk.white;
+const Wb = chalk.white.bold;
+const G = chalk.green;
+const R = chalk.red;
+const C = chalk.cyan;
 
-// ─── Box drawing ─────────────────────────────────────────────────
+// Panel tint backgrounds (subtle dark glass effect)
+const TOP_BG = chalk.bgBlack.rgb(15, 15, 18);
 
-const BOX = {
-  tl: "┌", tr: "┐", bl: "└", br: "┘",
-  h:  "─", v:  "│",
-  ml: "├", mr: "┤", mt: "┬", mb: "┴",
+// ─── Box drawing (thin, elegant, ASCII-safe) ────────────────────
+// Using standard ASCII for reliable parsing:
+//   + top-left   - horizontal   + top-right
+//   | vertical   + cross        | vertical
+//   + bot-left   - horizontal   + bot-right
+
+const B = {
+  tl: "+",
+  tr: "+",
+  bl: "+",
+  br: "+",
+  h: "-",
+  v: "|",
+  mt: "+",
+  mb: "+",
+  ml: "+",
+  mr: "+",
 };
+
+// Thin divider char
+const DIV = "-";
 
 // ─── Constants ───────────────────────────────────────────────────
 
-const SPINNER   = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const OWL_FACES = {
-  idle:      " ( o  o ) ",
-  thinking:  [" (-_-)  "," (o_-) "," (-_o) "," (o_o) "],
-  done:      " ( ^‿^ ) ",
-  error:     " ( >_< ) ",
+  idle: " ( o  o ) ",
+  thinking: [" (-_-)  ", " (o_-)  ", " (-_o)  ", " (o_o)  "],
+  done: " ( ^‿^ ) ",
+  error: " ( >_< ) ",
 };
 
 type OwlState = "idle" | "thinking" | "done" | "error";
 
 interface ToolEntry {
-  name:     string;
-  args:     string;
-  status:   "running" | "done" | "error";
+  name: string;
+  args: string;
+  status: "running" | "done" | "error";
   summary?: string;
-  ms?:      number;
+  ms?: number;
 }
 
 interface DNA {
   challenge: number;
   verbosity: number;
-  mood:      number;
+  mood: number;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -100,7 +106,7 @@ function visLen(s: string): number {
   let len = 0;
   for (const ch of plain) {
     const cp = ch.codePointAt(0) ?? 0;
-    len += cp > 0xFFFF ? 2 : 1;
+    len += cp > 0xffff ? 2 : 1;
   }
   return len;
 }
@@ -111,86 +117,89 @@ function padR(s: string, w: number): string {
 
 function trunc(s: string, max: number): string {
   const plain = stripAnsi(s);
-  return plain.length > max ? plain.slice(0, max - 1) + "…" : s;
+  return plain.length > max ? plain.slice(0, max - 1) + "..." : s;
 }
 
-// ─── TerminalUI ──────────────────────────────────────────────────
+// ─── TerminalUI ─────────────────────────────────────────────────
 
 export class TerminalUI extends EventEmitter {
-  // External
   sessionId = "";
 
-  // Owl identity
   private owlEmoji = "🦉";
-  private owlName  = "Owl";
+  private owlName = "Owl";
   private owlModel = "";
 
-  // Stats
-  private _turn   = 0;
+  private _turn = 0;
   private _tokens = 0;
-  private _cost   = 0;
+  private _cost = 0;
 
-  // Owl mind state
-  private _owlState:  OwlState   = "idle";
-  private _faceIdx    = 0;
-  private _spinIdx    = 0;
+  private _owlState: OwlState = "idle";
+  private _faceIdx = 0;
+  private _spinIdx = 0;
   private _toolCalls: ToolEntry[] = [];
-  private _instincts  = 0;
-  private _memFacts   = 0;
-  private _skillsHit  = 0;
+  private _instincts = 0;
+  private _memFacts = 0;
+  private _skillsHit = 0;
 
-  // DNA
   private _dna: DNA = { challenge: 5, verbosity: 5, mood: 7 };
 
-  // Conversation content
-  private _lines:      string[] = [];
-  private _scrollOff   = 0;
+  private _lines: string[] = [];
+  private _scrollOff = 0;
 
-  // Input
-  private _inputBuf        = "";
-  private _inputCursor     = 0;
-  private _inputLocked     = false;
-  private _inputMasked     = false;   // show • instead of typed chars (API keys)
-  private _allowEmptyInput = false;   // emit "line" even on empty Enter (wizard)
-  private _history:    string[] = [];
-  private _histIdx     = -1;
-  private _histTemp    = "";
+  private _inputBuf = "";
+  private _inputCursor = 0;
+  private _inputLocked = false;
+  private _inputMasked = false;
+  private _allowEmptyInput = false;
+  private _history: string[] = [];
+  private _histIdx = -1;
+  private _histTemp = "";
 
-  // Stream state
-  private _streaming       = false;
-  private _streamBuf       = "";
+  private _streaming = false;
+  private _streamBuf = "";
   private _streamHeaderIdx = -1;
 
-  // Timers
   private _thinkTimer: ReturnType<typeof setInterval> | null = null;
-  private _thinkStart  = 0;
+  private _thinkStart = 0;
+
+  /** Phase 1: Re-entrancy guard — prevents concurrent renders */
+  private _rendering = false;
+  /** Phase 2: Render queue — dedupes redundant renders, runs once per tick */
+  private _renderQueued = false;
+  /** Fix 1: Resize debounce */
+  private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ─── Dimensions ────────────────────────────────────────────────
 
-  private get cols() { return Math.max(process.stdout.columns ?? 80, 60); }
-  private get rows() { return Math.max(process.stdout.rows    ?? 24, 18); }
+  private get cols() {
+    return Math.max(process.stdout.columns ?? 100, 80);
+  }
+  private get rows() {
+    return Math.max(process.stdout.rows ?? 30, 20);
+  }
 
-  /** Width of left panel content (inside border). */
   private get leftW(): number {
-    return Math.max(24, Math.floor((this.cols - 3) * 0.36));
+    return Math.max(32, Math.floor((this.cols - 4) * 0.38));
   }
-  /** Width of right panel content (inside border). */
   private get rightW(): number {
-    return this.cols - 3 - this.leftW;
-  }
-  /** Body rows: rows 4 .. rows-3 (inclusive). */
-  private get bodyRows(): number {
-    return this.rows - 6;   // top-border + topbar + divider + merge + shortcuts + bot-border
+    return this.cols - 4 - this.leftW;
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────
 
   private _keyHandler = (chunk: unknown): void => {
-    const key = typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf8");
+    const key =
+      typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf8");
     this._onKey(key);
   };
 
-  private _resizeHandler = (): void => { this.redraw(); };
+  private _resizeHandler = (): void => {
+    if (this._resizeTimer) clearTimeout(this._resizeTimer);
+    this._resizeTimer = setTimeout(() => {
+      this._resizeTimer = null;
+      this.redraw();
+    }, 100);
+  };
 
   enter(): void {
     process.stdout.write(ansi.altIn + ansi.hide);
@@ -199,35 +208,43 @@ export class TerminalUI extends EventEmitter {
     process.stdin.setEncoding("utf8");
 
     process.stdout.on("resize", this._resizeHandler);
-    process.stdin.on("data",   this._keyHandler);
+    process.stdin.on("data", this._keyHandler);
 
     setTimeout(() => this.redraw(), 40);
   }
 
-  /** Detach stdin/resize listeners without leaving the alt screen.
-   *  Call before handing stdin to another component (e.g. onboarding wizard). */
   suspend(): void {
     this._stopThink();
-    process.stdin.off("data",    this._keyHandler);
+    process.stdin.off("data", this._keyHandler);
     process.stdout.off("resize", this._resizeHandler);
   }
 
   close(): void {
     this.suspend();
     process.stdout.write(ansi.show + ansi.altOut);
-    if (process.stdin.isTTY) { try { process.stdin.setRawMode(false); } catch { /**/ } }
+    if (process.stdin.isTTY) {
+      try {
+        process.stdin.setRawMode(false);
+      } catch {
+        /**/
+      }
+    }
   }
 
-  /** Feed a character directly into the input (used after HomeScreen transition). */
   feedChar(ch: string): void {
     this._onKey(ch);
   }
 
   // ─── Owl identity ──────────────────────────────────────────────
 
-  setOwl(emoji: string, name: string, _provider?: string, model?: string): void {
+  setOwl(
+    emoji: string,
+    name: string,
+    _provider?: string,
+    model?: string,
+  ): void {
     this.owlEmoji = emoji;
-    this.owlName  = name;
+    this.owlName = name;
     this.owlModel = model ?? "";
   }
 
@@ -238,17 +255,15 @@ export class TerminalUI extends EventEmitter {
 
   updateStats(tokens: number, cost: number): void {
     this._tokens = tokens;
-    this._cost   = cost;
+    this._cost = cost;
     this._renderTopBar();
   }
 
-  /** Mask input as • characters (for API keys). */
   setMasked(on: boolean): void {
     this._inputMasked = on;
     this._renderInput();
   }
 
-  /** Allow emitting "line" on empty Enter (needed by wizard steps). */
   setAllowEmptyInput(on: boolean): void {
     this._allowEmptyInput = on;
   }
@@ -257,38 +272,61 @@ export class TerminalUI extends EventEmitter {
 
   showThinking(): void {
     this._inputLocked = true;
-    this._owlState    = "thinking";
-    this._thinkStart  = Date.now();
-    this._spinIdx     = 0;
-    this._faceIdx     = 0;
+    this._owlState = "thinking";
+    this._thinkStart = Date.now();
+    this._spinIdx = 0;
+    this._faceIdx = 0;
     this._stopThink();
     this._thinkTimer = setInterval(() => {
       this._spinIdx++;
       if (this._spinIdx % 6 === 0) this._faceIdx++;
-      this._renderBody();
+      // Queue render via the render system (deduplicated, one per tick)
+      this._renderBodyQueued();
     }, 100);
+  }
+
+  /** Direct queue — used by thinking timer to update face/spin without full render */
+  private _renderBodyQueued(): void {
+    if (this._rendering) return;
+    if (this._renderQueued) return;
+    this._renderQueued = true;
+    setImmediate(() => {
+      this._renderQueued = false;
+      if (this._rendering) return;
+      this._rendering = true;
+      try {
+        this._doBuildBody();
+      } finally {
+        this._rendering = false;
+      }
+    });
   }
 
   stopThinking(): void {
     this._stopThink();
-    this._owlState  = "idle";
+    this._owlState = "idle";
     this._renderBody();
   }
 
   showToolCall(name: string): void {
     this._owlState = "thinking";
     const [tool, ...rest] = name.split(" ");
-    this._toolCalls.push({ name: tool, args: rest.join(" "), status: "running" });
+    this._toolCalls.push({
+      name: tool,
+      args: rest.join(" "),
+      status: "running",
+    });
     if (this._toolCalls.length > 12) this._toolCalls.shift();
     this._renderBody();
   }
 
   completeToolCall(): void {
-    const last = this._toolCalls.findLast?.(t => t.status === "running")
-               ?? this._toolCalls.filter(t => t.status === "running").at(-1);
+    const last =
+      this._toolCalls.findLast?.((t) => t.status === "running") ??
+      this._toolCalls.filter((t) => t.status === "running").at(-1);
     if (last) {
       last.status = "done";
-      last.ms     = Date.now() - this._thinkStart;
+      last.ms = Date.now() - this._thinkStart;
     }
     this._renderBody();
   }
@@ -297,7 +335,7 @@ export class TerminalUI extends EventEmitter {
     this._stopThink();
     this._owlState = "done";
     this._turn++;
-    this._pushLine(Y(`  ${emoji} ${name}`) + D(":"));
+    this._pushLine(Wb("  " + emoji + " " + name) + D(":"));
     for (const l of this._wrapText(content, this.rightW - 4)) {
       this._pushLine("  " + W(l));
     }
@@ -309,7 +347,7 @@ export class TerminalUI extends EventEmitter {
   printError(msg: string): void {
     this._stopThink();
     this._owlState = "error";
-    this._pushLine("  " + R("✗ ") + R(msg));
+    this._pushLine("  " + R("x ") + R(msg));
     this._pushLine("");
     this._inputLocked = false;
     this._renderBody();
@@ -320,7 +358,6 @@ export class TerminalUI extends EventEmitter {
     this._renderBody();
   }
 
-  /** Push multiple pre-formatted lines and render once (used by commands). */
   printLines(lines: string[]): void {
     for (const l of lines) {
       this._pushLine(l === "" ? "" : "  " + l);
@@ -328,9 +365,11 @@ export class TerminalUI extends EventEmitter {
     this._renderBody();
   }
 
-  showPrompt(): void { this._renderBody(); }
+  showPrompt(): void {
+    this._renderBody();
+  }
 
-  // ─── Stream handler ────────────────────────────────────────────
+  // ─── Stream handler ───────────────────────────────────────────
 
   createStreamHandler(): {
     handler: (event: StreamEvent) => Promise<void>;
@@ -345,11 +384,13 @@ export class TerminalUI extends EventEmitter {
           this._stopThink();
           this._owlState = "done";
           if (!this._streaming) {
-            this._streaming       = true;
-            this._streamBuf       = "";
+            this._streaming = true;
+            this._streamBuf = "";
             this._streamHeaderIdx = this._lines.length;
             this._turn++;
-            this._pushLine(Y(`  ${this.owlEmoji} ${this.owlName}`) + D(":"));
+            this._pushLine(
+              Wb("  " + this.owlEmoji + " " + this.owlName) + D(":"),
+            );
           }
           this._streamBuf += chunk;
           this._lines.splice(this._streamHeaderIdx + 1);
@@ -368,8 +409,10 @@ export class TerminalUI extends EventEmitter {
           this.completeToolCall();
           break;
         case "done":
-          this._streaming       = false;
-          this._streamBuf       = "";
+          this._stopThink(); // stop thinking timer immediately
+          this._owlState = "idle";
+          this._streaming = false;
+          this._streamBuf = "";
           this._streamHeaderIdx = -1;
           this._pushLine("");
           this._inputLocked = false;
@@ -383,29 +426,30 @@ export class TerminalUI extends EventEmitter {
   // ─── Key handler ───────────────────────────────────────────────
 
   private _onKey(data: string): void {
-    if (data === "\x03" || data === "\x04") { this.emit("quit"); return; }
+    if (data === "\x03" || data === "\x04") {
+      this.emit("quit");
+      return;
+    }
 
     if (data === "\r" || data === "\n") {
       if (this._inputLocked) return;
       const line = this._inputBuf.trim();
-      this._inputBuf    = "";
+      this._inputBuf = "";
       this._inputCursor = 0;
-      this._histIdx     = -1;
+      this._histIdx = -1;
       if (line) {
         this._history.unshift(line);
         if (this._history.length > 100) this._history.pop();
         this._turn++;
         this._pushLine(D("  You:"));
-        // Masked echo for API keys — never reveal value in panel history
         const echo = this._inputMasked
-          ? D("  " + "•".repeat(Math.min(line.length, 24)))
+          ? D("  " + "*".repeat(Math.min(line.length, 24)))
           : "  " + W(line);
         this._pushLine(echo);
         this._pushLine("");
-        this._inputMasked = false;  // auto-clear after submit
+        this._inputMasked = false;
         this.emit("line", line);
       } else if (this._allowEmptyInput) {
-        // Wizard uses empty Enter to confirm multi-select / advance past prompts
         this.emit("line", "");
       }
       this._renderBody();
@@ -414,60 +458,80 @@ export class TerminalUI extends EventEmitter {
 
     if (data === "\x7f") {
       if (this._inputCursor > 0) {
-        this._inputBuf = this._inputBuf.slice(0, this._inputCursor - 1) + this._inputBuf.slice(this._inputCursor);
+        this._inputBuf =
+          this._inputBuf.slice(0, this._inputCursor - 1) +
+          this._inputBuf.slice(this._inputCursor);
         this._inputCursor--;
         this._renderInput();
       }
       return;
     }
 
-    // Arrows
-    if (data === `${ESC}[A`) { // up — history
+    if (data === ESC + "[A") {
       if (this._histIdx === -1) this._histTemp = this._inputBuf;
       if (this._histIdx < this._history.length - 1) {
         this._histIdx++;
-        this._inputBuf    = this._history[this._histIdx];
+        this._inputBuf = this._history[this._histIdx];
         this._inputCursor = this._inputBuf.length;
         this._renderInput();
       }
       return;
     }
-    if (data === `${ESC}[B`) { // down
+    if (data === ESC + "[B") {
       if (this._histIdx > -1) {
         this._histIdx--;
-        this._inputBuf    = this._histIdx === -1 ? this._histTemp : this._history[this._histIdx];
+        this._inputBuf =
+          this._histIdx === -1 ? this._histTemp : this._history[this._histIdx];
         this._inputCursor = this._inputBuf.length;
         this._renderInput();
       }
       return;
     }
-    if (data === `${ESC}[D` && this._inputCursor > 0) { this._inputCursor--; this._renderInput(); return; }
-    if (data === `${ESC}[C` && this._inputCursor < this._inputBuf.length) { this._inputCursor++; this._renderInput(); return; }
+    if (data === ESC + "[D" && this._inputCursor > 0) {
+      this._inputCursor--;
+      this._renderInput();
+      return;
+    }
+    if (data === ESC + "[C" && this._inputCursor < this._inputBuf.length) {
+      this._inputCursor++;
+      this._renderInput();
+      return;
+    }
 
-    // PgUp/Down — scroll right panel
-    if (data === `${ESC}[5~`) { this._scrollOff = Math.min(this._scrollOff + 5, Math.max(0, this._lines.length - this._convRows())); this._renderBody(); return; }
-    if (data === `${ESC}[6~`) { this._scrollOff = Math.max(0, this._scrollOff - 5); this._renderBody(); return; }
+    if (data === ESC + "[5~") {
+      this._scrollOff = Math.min(
+        this._scrollOff + 5,
+        Math.max(0, this._lines.length - this._convRows()),
+      );
+      this._renderBody();
+      return;
+    }
+    if (data === ESC + "[6~") {
+      this._scrollOff = Math.max(0, this._scrollOff - 5);
+      this._renderBody();
+      return;
+    }
 
-    // Ctrl+L — clear
     if (data === "\x0C") {
-      this._lines     = [];
+      this._lines = [];
       this._toolCalls = [];
       this._scrollOff = 0;
       this._renderBody();
       return;
     }
 
-    // Onboarding
     if (data === "/") {
-      this._inputBuf    = "/";
+      this._inputBuf = "/";
       this._inputCursor = 1;
       this._renderInput();
       return;
     }
 
-    // Printable
     if (data.length >= 1 && data >= " ") {
-      this._inputBuf = this._inputBuf.slice(0, this._inputCursor) + data + this._inputBuf.slice(this._inputCursor);
+      this._inputBuf =
+        this._inputBuf.slice(0, this._inputCursor) +
+        data +
+        this._inputBuf.slice(this._inputCursor);
       this._inputCursor += data.length;
       this._renderInput();
     }
@@ -475,200 +539,259 @@ export class TerminalUI extends EventEmitter {
 
   // ─── Full redraw ───────────────────────────────────────────────
 
+  /**
+   * Request a full redraw on the next event loop tick.
+   * All writes are batched into a single process.stdout.write() call —
+   * atomic relative to the event loop, no interleaving possible.
+   */
   redraw(): void {
-    process.stdout.write(ansi.clear + ansi.pos(1));
-    this._renderFrame();
-    this._renderTopBar();
-    this._renderBody();
-    this._renderShortcuts();
+    if (this._renderQueued) return;
+    this._renderQueued = true;
+    setImmediate(() => {
+      this._renderQueued = false;
+      if (this._rendering) return;
+      this._rendering = true;
+      try {
+        const out =
+          ansi.clear +
+          this._buildFrame() +
+          this._buildTopBar() +
+          this._doBuildBody() +
+          this._buildShortcuts();
+        process.stdout.write(out);
+      } finally {
+        this._rendering = false;
+      }
+    });
   }
 
-  // ─── Frame (borders) ───────────────────────────────────────────
+  // ─── Frame ────────────────────────────────────────────────────
 
-  private _renderFrame(): void {
-    const c   = this.cols;
-    const r   = this.rows;
-    const lW  = this.leftW;
-    const rW  = this.rightW;
-    const brs = this.bodyRows;
-
-    // Row 1: top border
-    process.stdout.write(ansi.pos(1) + Y(BOX.tl + BOX.h.repeat(c - 2) + BOX.tr));
-
-    // Row 2: top bar (rendered by _renderTopBar)
-    // Row 3: split divider
-    process.stdout.write(
-      ansi.pos(3) +
-      Y(BOX.ml + BOX.h.repeat(lW) + BOX.mt + BOX.h.repeat(rW) + BOX.mr),
-    );
-
-    // Rows 4..rows-3: side borders + vertical divider
-    for (let i = 0; i < brs; i++) {
-      const row = 4 + i;
-      process.stdout.write(
-        ansi.pos(row, 1)         + Y(BOX.v) +
-        ansi.pos(row, lW + 2)    + Y(BOX.v) +
-        ansi.pos(row, c)         + Y(BOX.v),
-      );
+  /**
+   * Build the full frame as a string — top border, cleared inner rows,
+   * and bottom border. All rows explicitly written to prevent ghost content.
+   */
+  private _buildFrame(): string {
+    const c = this.cols;
+    const r = this.rows;
+    let out = ansi.pos(1) + Y(B.tl + B.h.repeat(c - 2) + B.tr);
+    const rowInner = " ".repeat(c - 2);
+    for (let i = 2; i < r; i++) {
+      out += ansi.pos(i) + Y(B.v) + rowInner + Y(B.v);
     }
-
-    // Row rows-2: merge divider
-    process.stdout.write(
-      ansi.pos(r - 2) +
-      Y(BOX.ml + BOX.h.repeat(lW) + BOX.mb + BOX.h.repeat(rW) + BOX.mr),
-    );
-
-    // Row rows-1: shortcuts row borders (content by _renderShortcuts)
-    process.stdout.write(
-      ansi.pos(r - 1, 1) + Y(BOX.v) +
-      ansi.pos(r - 1, c) + Y(BOX.v),
-    );
-
-    // Row rows: bottom border
-    process.stdout.write(ansi.pos(r) + Y(BOX.bl + BOX.h.repeat(c - 2) + BOX.br));
+    out += ansi.pos(r) + Y(B.bl + B.h.repeat(c - 2) + B.br);
+    return out;
   }
 
   // ─── Top bar ───────────────────────────────────────────────────
 
+  private _buildTopBar(): string {
+    const c = this.cols;
+    const bar = this._buildTopBarContent(c - 2);
+    let out = ansi.pos(2) + Y(B.v) + TOP_BG(W(" " + bar) + " ") + Y(B.v);
+    out += ansi.pos(3) + Y(B.v + DIV.repeat(c - 2) + B.v);
+    return out;
+  }
+
   private _renderTopBar(): void {
-    const c   = this.cols;
-    const bar = this._buildTopBar(c - 2);
-    process.stdout.write(
-      ansi.pos(2) +
-      Y(BOX.v) +
-      chalk.bgYellow.black(" " + padR(bar, c - 4) + " ") +
-      Y(BOX.v),
-    );
+    // Deprecated — use _buildTopBar() in redraw()
   }
 
-  private _buildTopBar(_innerW?: number): string {
-    const name    = `${this.owlEmoji} ${this.owlName}`;
-    const model   = this.owlModel ? `· ${trunc(this.owlModel, 22)}` : "";
-    const turn    = this._turn > 0 ? `· turn ${this._turn}` : "";
-    const tokens  = this._tokens > 0 ? `· ${(this._tokens / 1000).toFixed(1)}k tokens` : "";
-    const cost    = this._cost   > 0 ? `· $${this._cost.toFixed(3)}` : "";
-    return [name, model, turn, tokens, cost].filter(Boolean).join("  ");
+  private _buildTopBarContent(_innerW?: number): string {
+    const name = Wb(this.owlEmoji + " " + this.owlName);
+    const model = this.owlModel
+      ? D(" . ") + C(this.owlModel.replace("claude-", "").slice(0, 18))
+      : "";
+    const turn = this._turn > 0 ? D(" . ") + W("turn " + this._turn) : "";
+    const tokens =
+      this._tokens > 0
+        ? D(" . ") + W((this._tokens / 1000).toFixed(1) + "k tokens")
+        : "";
+    const cost = this._cost > 0 ? D(" . $") + W(this._cost.toFixed(3)) : "";
+
+    return name + model + turn + tokens + cost;
   }
 
-  // ─── Body (both panels) ────────────────────────────────────────
+  // ─── Body ──────────────────────────────────────────────────────
 
+  /**
+   * Queue a body render on the next tick.
+   * Deduplicates concurrent callers; writes are batched into a single
+   * process.stdout.write() call for atomic rendering.
+   */
   private _renderBody(): void {
-    const lW       = this.leftW;
-    const rW       = this.rightW;
-    const bodyRows = this.bodyRows;
+    if (this._rendering) return;
+    if (this._renderQueued) return;
+    this._renderQueued = true;
+    setImmediate(() => {
+      this._renderQueued = false;
+      if (this._rendering) return;
+      this._rendering = true;
+      try {
+        process.stdout.write(this._doBuildBody());
+      } finally {
+        this._rendering = false;
+      }
+    });
+  }
 
-    const leftLines  = this._buildLeft(lW, bodyRows);
+  private _doBuildBody(): string {
+    const c = this.cols;
+    const lW = this.leftW;
+    const rW = this.rightW;
+    const bodyRows = this.rows - 6;
+
+    const leftLines = this._buildLeft(lW, bodyRows);
     const rightLines = this._buildRight(rW, bodyRows);
 
+    let out = "";
     for (let i = 0; i < bodyRows; i++) {
-      const row    = 4 + i;
-      const lLine  = leftLines[i]  ?? { t: "", v: 0 };
-      const rLine  = rightLines[i] ?? { t: "", v: 0 };
-      const lPad   = " ".repeat(Math.max(0, lW - lLine.v));
-      const rPad   = " ".repeat(Math.max(0, rW - rLine.v));
+      const row = 4 + i;
+      const lLine = leftLines[i] ?? { t: "", v: 0 };
+      const rLine = rightLines[i] ?? { t: "", v: 0 };
+      const lPad = " ".repeat(Math.max(0, lW - lLine.v));
+      const rPad = " ".repeat(Math.max(0, rW - rLine.v));
 
-      process.stdout.write(
-        ansi.pos(row, 2) + lLine.t + lPad +
-        ansi.pos(row, lW + 3) + rLine.t + rPad,
-      );
+      out += ansi.pos(row, 1) + Y(B.v);
+      out += ansi.pos(row, 2) + lLine.t + lPad;
+      out += ansi.pos(row, lW + 3) + D(":");
+      out += ansi.pos(row, lW + 5) + rLine.t + rPad;
+      out += ansi.pos(row, c) + Y(B.v);
     }
+
+    return out;
   }
 
-  /** Re-render just the input row in the right panel (fast path for keystrokes). */
   private _renderInput(): void {
-    const rW      = this.rightW;
-    const bodyRows = this.bodyRows;
-    const inputRow = 4 + bodyRows - 1;  // last body row
+    if (this._rendering) return;
+    if (this._renderQueued) return;
+    this._renderQueued = true;
+    setImmediate(() => {
+      this._renderQueued = false;
+      if (this._rendering) return;
+      this._rendering = true;
+      try {
+        this._doRenderInput();
+      } finally {
+        this._rendering = false;
+      }
+    });
+  }
+
+  private _doRenderInput(): void {
+    const rW = this.rightW;
+    const bodyRows = this.rows - 6;
+    const inputRow = 4 + bodyRows - 1;
 
     const line = this._buildInputLine(rW);
     const rPad = " ".repeat(Math.max(0, rW - line.v));
 
-    process.stdout.write(
-      ansi.pos(inputRow, this.leftW + 3) + line.t + rPad,
-    );
+    process.stdout.write(ansi.pos(inputRow, this.leftW + 5) + line.t + rPad);
   }
 
-  // ─── Left panel builder ────────────────────────────────────────
+  // ─── Left panel ───────────────────────────────────────────────
 
   private _buildLeft(w: number, rows: number): Array<{ t: string; v: number }> {
     const lines: Array<{ t: string; v: number }> = [];
     const add = (t: string) => lines.push({ t, v: visLen(t) });
     const blank = () => add("");
 
-    // Header
     blank();
-    add(" " + YB("[ OWL MIND ]"));
-    blank();
-
-    // Owl face
-    const face = this._currentFace();
-    add(" " + Y(face));
+    add("  " + Y("+-- ") + Wb("OWL MIND") + Y(" --+"));
     blank();
 
-    // Cognition status
-    add(" " + Y("◉ ") + D("Instincts") + " " + (this._instincts > 0 ? W(`${this._instincts} triggered`) : D("none")));
-    add(" " + Y("◉ ") + D("Memory   ") + " " + (this._memFacts  > 0 ? W(`${this._memFacts} facts`)     : D("none")));
-    add(" " + Y("◉ ") + D("Skills   ") + " " + (this._skillsHit > 0 ? W(`${this._skillsHit} invoked`)  : D("none")));
+    add("  " + Y(this._currentFace()));
     blank();
 
-    // Reasoning tree
+    add(
+      "  " +
+        C("*") +
+        " " +
+        D("Instincts") +
+        "   " +
+        (this._instincts > 0 ? W(this._instincts + " triggered") : D("none")),
+    );
+    add(
+      "  " +
+        C("*") +
+        " " +
+        D("Memory   ") +
+        "   " +
+        (this._memFacts > 0 ? W(this._memFacts + " facts") : D("none")),
+    );
+    add(
+      "  " +
+        C("*") +
+        " " +
+        D("Skills   ") +
+        "   " +
+        (this._skillsHit > 0 ? W(this._skillsHit + " invoked") : D("none")),
+    );
+    blank();
+
     if (this._toolCalls.length > 0) {
-      add(" " + D("REASONING"));
+      const divLen = Math.max(0, w - 14);
+      add("  " + D("REASONING") + " " + D(DIV.repeat(divLen)));
       const visible = this._toolCalls.slice(-8);
       visible.forEach((tc, i) => {
-        const isLast  = i === visible.length - 1;
-        const branch  = isLast ? "└─▶ " : "├─▶ ";
+        const isLast = i === visible.length - 1;
+        const branch = isLast ? "   L " : "   + ";
         const spinner = SPINNER[this._spinIdx % SPINNER.length];
-        const icon    = tc.status === "running"
-          ? Y(spinner)
-          : tc.status === "done" ? G("✓") : R("✗");
-        const name    = trunc(tc.name, w - 12);
-        const ms      = tc.ms ? D(` ${tc.ms}ms`) : "";
-        add(" " + D(branch) + icon + " " + W(name) + ms);
+        const icon =
+          tc.status === "running"
+            ? C(spinner)
+            : tc.status === "done"
+              ? G("Y")
+              : R("X");
+        const name = trunc(tc.name, w - 18);
+        const ms = tc.ms ? D(" " + tc.ms + "ms") : "";
+        add(branch + icon + " " + W(name) + ms);
         if (tc.summary) {
-          const indent = isLast ? "     " : "│    ";
-          add(" " + D(indent) + D(trunc(tc.summary, w - 8)));
+          const indent = isLast ? "        " : "   |    ";
+          add(indent + D(trunc(tc.summary, w - 12)));
         }
       });
       blank();
     }
 
-    // DNA bars
     const dnaStartIdx = lines.length;
-    const dnaRows     = rows - dnaStartIdx - 4;  // leave 3 rows for firewall at bottom + blank
+    const dnaRows = rows - dnaStartIdx - 2;
 
     if (dnaRows > 4) {
-      add(" " + D("DNA"));
-      add(" " + this._dnaBar("challenge", this._dna.challenge, w));
-      add(" " + this._dnaBar("verbosity", this._dna.verbosity, w));
-      add(" " + this._dnaBar("mood     ", this._dna.mood,      w));
       blank();
+      add("  " + D("DNA" + " " + DIV.repeat(Math.max(0, w - 8))));
+      blank();
+      add("  " + this._dnaBar("challenge", this._dna.challenge));
+      add("  " + this._dnaBar("verbosity", this._dna.verbosity));
+      add("  " + this._dnaBar("mood     ", this._dna.mood));
     }
 
-    // Firewall (reserved)
-    while (lines.length < rows - 2) blank();
-    add(" " + D("FIREWALL  — reserved —"));
-    blank();
+    while (lines.length < rows - 1) blank();
+    add("  " + D(DIV.repeat(Math.max(0, w - 4))) + " FIREWALL");
 
     return lines.slice(0, rows);
   }
 
-  // ─── Right panel builder ───────────────────────────────────────
+  // ─── Right panel ─────────────────────────────────────────────
 
-  private _convRows(): number { return this.bodyRows - 2; }
+  private _convRows(): number {
+    return this.rows - 8;
+  }
 
-  private _buildRight(w: number, rows: number): Array<{ t: string; v: number }> {
+  private _buildRight(
+    w: number,
+    rows: number,
+  ): Array<{ t: string; v: number }> {
     const lines: Array<{ t: string; v: number }> = [];
-    const convRows = rows - 2;  // last 2 rows = separator + input
+    const convRows = rows - 2;
 
     if (this._lines.length === 0) {
-      // Empty state
-      const hint = D("  What do you want to work on?");
+      const hint = "  " + D("What do you want to work on?");
       lines.push({ t: hint, v: visLen(hint) });
     } else {
-      const total  = this._lines.length;
-      const end    = Math.max(0, total - this._scrollOff);
-      const start  = Math.max(0, end - convRows);
+      const total = this._lines.length;
+      const end = Math.max(0, total - this._scrollOff);
+      const start = Math.max(0, end - this._convRows());
       const visible = this._lines.slice(start, end);
       for (let i = 0; i < convRows; i++) {
         const l = visible[i] ?? "";
@@ -676,14 +799,11 @@ export class TerminalUI extends EventEmitter {
       }
     }
 
-    // Pad to convRows
     while (lines.length < convRows) lines.push({ t: "", v: 0 });
 
-    // Separator line
-    const sep = " " + D(BOX.h.repeat(w - 1));
+    const sep = "  " + D(DIV.repeat(w - 4));
     lines.push({ t: sep, v: visLen(sep) });
 
-    // Input line
     lines.push(this._buildInputLine(w));
 
     return lines.slice(0, rows);
@@ -691,45 +811,49 @@ export class TerminalUI extends EventEmitter {
 
   private _buildInputLine(_w?: number): { t: string; v: number } {
     if (this._inputLocked) {
-      const spin = Y(SPINNER[this._spinIdx % SPINNER.length]);
-      const t    = " " + spin + D("  thinking…");
+      const spin = C(SPINNER[this._spinIdx % SPINNER.length]);
+      const t = "  " + spin + D("  thinking...");
       return { t, v: visLen(t) };
     }
-    const prefix = " " + Y("› ") + W.bold("");
+    const prefix = "  " + C("> ") + Wb("");
     let before: string, atCur: string, after: string;
     if (this._inputMasked) {
-      before = "•".repeat(this._inputCursor);
-      atCur  = this._inputBuf[this._inputCursor] ? "•" : " ";
-      after  = "•".repeat(Math.max(0, this._inputBuf.length - this._inputCursor - 1));
+      before = "*".repeat(this._inputCursor);
+      atCur = this._inputBuf[this._inputCursor] ? "*" : " ";
+      after = "*".repeat(
+        Math.max(0, this._inputBuf.length - this._inputCursor - 1),
+      );
     } else {
       before = this._inputBuf.slice(0, this._inputCursor);
-      atCur  = this._inputBuf[this._inputCursor] ?? " ";
-      after  = this._inputBuf.slice(this._inputCursor + 1);
+      atCur = this._inputBuf[this._inputCursor] ?? " ";
+      after = this._inputBuf.slice(this._inputCursor + 1);
     }
     const display = W(before) + chalk.bgYellow.black(atCur) + W(after);
-    const t       = prefix + display;
+    const t = prefix + display;
     return { t, v: visLen(t) };
   }
 
-  // ─── Shortcuts bar ─────────────────────────────────────────────
+  // ─── Shortcuts bar ────────────────────────────────────────────
 
-  private _renderShortcuts(): void {
-    const c     = this.cols;
-    const r     = this.rows;
+  private _buildShortcuts(): string {
+    const c = this.cols;
+    const r = this.rows;
     const inner = c - 4;
 
     const line =
-      C("[Esc]")    + D(" Stop   ") +
-      C("[^P]")     + D(" Parliament   ") +
-      C("[^L]")     + D(" Clear   ") +
-      C("[^C]")     + D(" Quit");
+      C("[Esc]") +
+      D("  Stop     ") +
+      C("[^P]") +
+      D("  Parliament     ") +
+      C("[^L]") +
+      D("  Clear     ") +
+      C("[^C]") +
+      D("  Quit");
 
-    process.stdout.write(
-      ansi.pos(r - 1, 2) + padR(line, inner),
-    );
+    return ansi.pos(r - 1, 2) + padR(line, inner);
   }
 
-  // ─── Owl face ──────────────────────────────────────────────────
+  // ─── Owl face ─────────────────────────────────────────────────
 
   private _currentFace(): string {
     switch (this._owlState) {
@@ -737,22 +861,25 @@ export class TerminalUI extends EventEmitter {
         const faces = OWL_FACES.thinking as string[];
         return faces[this._faceIdx % faces.length];
       }
-      case "done":  return OWL_FACES.done;
-      case "error": return OWL_FACES.error;
-      default:      return OWL_FACES.idle;
+      case "done":
+        return OWL_FACES.done;
+      case "error":
+        return OWL_FACES.error;
+      default:
+        return OWL_FACES.idle;
     }
   }
 
-  // ─── DNA bar ───────────────────────────────────────────────────
+  // ─── DNA bar ──────────────────────────────────────────────────
 
-  private _dnaBar(label: string, val: number, _w?: number): string {
-    const v      = Math.max(0, Math.min(10, Math.round(val)));
-    const filled = Y("█").repeat(v);
-    const empty  = D("░").repeat(10 - v);
-    return D(label) + " " + filled + empty + " " + D(String(v));
+  private _dnaBar(label: string, val: number): string {
+    const v = Math.max(0, Math.min(10, Math.round(val)));
+    const filled = G("#").repeat(v);
+    const empty = D(".").repeat(10 - v);
+    return D(label) + " " + filled + empty + " " + W(String(val));
   }
 
-  // ─── Helpers ───────────────────────────────────────────────────
+  // ─── Helpers ──────────────────────────────────────────────────
 
   private _pushLine(line: string): void {
     this._lines.push(line);
@@ -761,13 +888,19 @@ export class TerminalUI extends EventEmitter {
   }
 
   private _stopThink(): void {
-    if (this._thinkTimer) { clearInterval(this._thinkTimer); this._thinkTimer = null; }
+    if (this._thinkTimer) {
+      clearInterval(this._thinkTimer);
+      this._thinkTimer = null;
+    }
   }
 
   private _wrapText(text: string, maxCols: number): string[] {
     const result: string[] = [];
     for (const para of text.split("\n")) {
-      if (!para) { result.push(""); continue; }
+      if (!para) {
+        result.push("");
+        continue;
+      }
       let rem = para;
       while (rem.length > maxCols) {
         let bp = rem.lastIndexOf(" ", maxCols);
