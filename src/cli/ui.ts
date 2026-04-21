@@ -311,7 +311,7 @@ export class TerminalUI extends EventEmitter {
     this._stopThink();
     this._owlState = "done";
     this._turn++;
-    this._pushLine(Wb("  " + emoji + " " + name) + D(":"));
+    this._pushLine(chalk.rgb(205, 214, 244).bold("  " + emoji + " " + name) + LBL(":"));
     for (const l of this._wrapText(content, this.rightW - 4)) {
       this._pushLine("  " + W(l));
     }
@@ -330,7 +330,7 @@ export class TerminalUI extends EventEmitter {
   }
 
   printInfo(msg: string): void {
-    this._pushLine("  " + D(msg));
+    this._pushLine("  " + LBL(msg));
     this.redraw();
   }
 
@@ -365,7 +365,7 @@ export class TerminalUI extends EventEmitter {
             this._streamHeaderIdx = this._lines.length;
             this._turn++;
             this._pushLine(
-              Wb("  " + this.owlEmoji + " " + this.owlName) + D(":"),
+              chalk.rgb(205, 214, 244).bold("  " + this.owlEmoji + " " + this.owlName) + LBL(":"),
             );
           }
           this._streamBuf += chunk;
@@ -484,9 +484,9 @@ export class TerminalUI extends EventEmitter {
         this._history.unshift(line);
         if (this._history.length > 100) this._history.pop();
         this._turn++;
-        this._pushLine(D("  You:"));
+        this._pushLine(LBL("  You:"));
         const echo = this._inputMasked
-          ? D("  " + "*".repeat(Math.min(line.length, 24)))
+          ? LBL("  " + "*".repeat(Math.min(line.length, 24)))
           : "  " + W(line);
         this._pushLine(echo);
         this._pushLine("");
@@ -614,7 +614,7 @@ export class TerminalUI extends EventEmitter {
     for (let i = 0; i < popupRows; i++) {
       const cmd = this._cmdPopupMatches[i];
       const isSelected = i === this._cmdPopupIdx;
-      const line = isSelected ? PANEL_BG(Wb("  " + cmd)) : C("  " + cmd);
+      const line = isSelected ? PANEL_BG(chalk.rgb(205, 214, 244).bold("  " + cmd)) : BLUE("  " + cmd);
       const lineLen = visLen(cmd) + 2;
       const pad = " ".repeat(Math.max(0, rW - 2 - lineLen));
       out += ansi.pos(startRow + i, this.leftW + 3) + line + pad;
@@ -751,24 +751,22 @@ export class TerminalUI extends EventEmitter {
 
   private _buildInputPanel(): string {
     const rW = this.rightW;
-    const topRow = this.rows - 4;
+    const topRow   = this.rows - 4;
     const inputRow = this.rows - 3;
-    const botRow = this.rows - 2;
+    const botRow   = this.rows - 2;
     const line = this._buildInputLine(rW);
 
-    const topBorder = PANEL_BG(" ".repeat(rW + 2));
-    const content = PANEL_BG(
+    // Amber top-border line, panel-bg content row, amber bottom-border line
+    const topBorder = PANEL_BG(AMBER("▔".repeat(rW + 2)));
+    const content   = PANEL_BG(
       " " + line.t + " ".repeat(Math.max(0, rW - line.v)) + " ",
     );
-    const botBorder = PANEL_BG(" ".repeat(rW + 2));
+    const botBorder = PANEL_BG(AMBER("▁".repeat(rW + 2)));
 
     return (
-      ansi.pos(topRow, this.leftW + 2) +
-      topBorder +
-      ansi.pos(inputRow, this.leftW + 2) +
-      content +
-      ansi.pos(botRow, this.leftW + 2) +
-      botBorder
+      ansi.pos(topRow,   this.leftW + 2) + topBorder +
+      ansi.pos(inputRow, this.leftW + 2) + content   +
+      ansi.pos(botRow,   this.leftW + 2) + botBorder
     );
   }
 
@@ -799,7 +797,7 @@ export class TerminalUI extends EventEmitter {
     for (let i = 0; i < popupRows; i++) {
       const cmd = this._cmdPopupMatches[i];
       const isSelected = i === this._cmdPopupIdx;
-      const line = isSelected ? PANEL_BG(C("  " + cmd)) : C("  " + cmd);
+      const line = isSelected ? PANEL_BG(BLUE("  " + cmd)) : BLUE("  " + cmd);
       const lineLen = visLen(cmd) + 2;
       const pad = " ".repeat(Math.max(0, rW - 2 - lineLen));
       out += ansi.pos(startRow + i, this.leftW + 3) + line + pad;
@@ -900,7 +898,7 @@ export class TerminalUI extends EventEmitter {
     const convRows = rows - 1;
 
     if (this._lines.length === 0) {
-      lines.push({ t: "  " + D("What do you want to work on?"), v: 26 });
+      lines.push({ t: "  " + LBL("What do you want to work on?"), v: 26 });
     } else {
       const total = this._lines.length;
       const end = Math.max(0, total - this._scrollOff);
@@ -915,7 +913,7 @@ export class TerminalUI extends EventEmitter {
     while (lines.length < convRows) lines.push({ t: "", v: 0 });
 
     lines.push({
-      t: "  " + D(DIV.repeat(w - 4)),
+      t: "  " + LBL(DIV.repeat(w - 4)),
       v: visLen("  " + DIV.repeat(w - 4)),
     });
     lines.push(this._buildInputLine(w));
@@ -925,24 +923,24 @@ export class TerminalUI extends EventEmitter {
 
   private _buildInputLine(_w?: number): { t: string; v: number } {
     if (this._inputLocked) {
-      const spin = C(SPINNER[this._spinIdx % SPINNER.length]);
+      const spin = BLUE(SPINNER[this._spinIdx % SPINNER.length]);
       return {
-        t: "  " + spin + D("  thinking..."),
-        v: visLen("  thinking...") + 3,
+        t: "  " + spin + LBL("  thinking — press ESC to stop"),
+        v: visLen("  thinking — press ESC to stop") + 3,
       };
     }
-    const prefix = "  " + C("> ") + Wb("");
+    const prefix = "  " + AMBER("› ") + W("");
     let before: string, atCur: string, after: string;
     if (this._inputMasked) {
       before = "*".repeat(this._inputCursor);
-      atCur = this._inputBuf[this._inputCursor] ? "*" : " ";
-      after = "*".repeat(
+      atCur  = this._inputBuf[this._inputCursor] ? "*" : " ";
+      after  = "*".repeat(
         Math.max(0, this._inputBuf.length - this._inputCursor - 1),
       );
     } else {
       before = this._inputBuf.slice(0, this._inputCursor);
-      atCur = this._inputBuf[this._inputCursor] ?? " ";
-      after = this._inputBuf.slice(this._inputCursor + 1);
+      atCur  = this._inputBuf[this._inputCursor] ?? " ";
+      after  = this._inputBuf.slice(this._inputCursor + 1);
     }
     const display = W(before) + chalk.bgYellow.black(atCur) + W(after);
     const t = prefix + display;
@@ -954,17 +952,18 @@ export class TerminalUI extends EventEmitter {
   private _buildShortcuts(): string {
     const c = this.cols;
     const r = this.rows;
-    const inner = c - 4; // 2-char inset on each side
+    const inner = c - 4;
+
+    const key = (k: string) =>
+      chalk.bgRgb(26, 26, 44).rgb(205, 214, 244).bold(` ${k} `);
+
     const line =
-      Wb("[Esc]") +
-      Wbr("  Stop     ") +
-      Wb("[^P]") +
-      Wbr("  Parliament     ") +
-      Wb("[^L]") +
-      Wbr("  Clear     ") +
-      Wb("[^C]") +
-      Wbr("  Quit");
-    return ansi.pos(r - 1, 3) + SHORT_BG(padR(line, inner));
+      key("ESC") + LBL("  Stop     ") +
+      key("^P")  + LBL("  Parliament     ") +
+      key("^L")  + LBL("  Clear     ") +
+      key("^C")  + LBL("  Quit");
+
+    return ansi.pos(r - 1, 3) + PANEL_BG(padR(line, inner));
   }
 
   // ─── Owl face ─────────────────────────────────────────────────
