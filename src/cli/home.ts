@@ -1,40 +1,16 @@
 /**
  * StackOwl — Home Screen  (Screen 1)
  *
- * Shown immediately after the boot splash.
- * First keypress → emits "activate" with that key → CLIAdapter
- * transitions to Screen 2 (TerminalUI) without leaving the alt screen.
- *
- * Layout (all borders in yellow):
- *   ┌──────────────────────────────────────────────────────────┐
- *   │                                                          │
- *   │              ◈  S T A C K O W L                         │
- *   │              personal ai assistant                       │
- *   │                                                          │
- *   │  ┌──────────────────────────────────────────────────┐   │
- *   │  │  › _                                             │   │
- *   │  │                                                  │   │
- *   │  └──────────────────────────────────────────────────┘   │
- *   │  Type anything to start  ·  /help for commands          │
- *   │                                                          │
- *   │  [ Active Owl ]            [ Environment ]               │
- *   │  ◉ Archimedes gen4 ⚡7     ⌬ darwin  M-series            │
- *   │  Provider : Anthropic      🔌 MCP   : 4 active           │
- *   │  Model    : sonnet-4-6     📦 Skills: 12 loaded          │
- *   │                                                          │
- *   │  [ Recent Sessions ]                                     │
- *   │  → 2h   Refactored auth module                47 turns   │
- *   │  → 1d   Optimized vLLM dockerfile             23 turns   │
- *   │                                                          │
- *   │ ──────────────────────────────────────────────────────── │
- *   │  [/help] Commands   [/owls] Owls   [Ctrl+C] Quit        │
- *   └──────────────────────────────────────────────────────────┘
+ * Layout matches Screen 2 (TerminalUI) — same pixel-shadow design.
+ * Left panel: owl identity info.
+ * Right panel: empty conversation area with centered input (initially).
+ * After first command → input moves to bottom (standard Screen 2 position).
  */
 
 import { EventEmitter } from "node:events";
 import chalk from "chalk";
 
-// ─── ANSI ────────────────────────────────────────────────────────
+// ─── ANSI helpers ──────────────────────────────────────────────
 
 const E = "\x1B";
 const H = {
@@ -42,30 +18,32 @@ const H = {
   altOut: `${E}[?1049l`,
   hide: `${E}[?25l`,
   show: `${E}[?25h`,
-  clear: `${E}[2J`,
+  clear: `${E}[2J\x1B[1;1H`,
   pos: (r: number, c = 1) => `${E}[${r};${c}H`,
-  el: `${E}[2K`, // erase line
+  el: `${E}[2K`,
 };
 
-const Y = chalk.yellow;
-const YB = chalk.yellow.bold;
-const D = chalk.dim;
-const W = chalk.white;
-const C = chalk.cyan;
+// ─── Color palette — Neon Accent ─────────────────────────────────
 
-// ─── Box-drawing ─────────────────────────────────────────────────
+const AMBER  = chalk.rgb(250, 179, 135);
+const BLUE   = chalk.rgb(137, 180, 250);
+const GREEN  = chalk.rgb(166, 227, 161);
+const W      = chalk.rgb(205, 214, 244);
+const LBL    = chalk.rgb(69, 71, 90);
+const MUT    = chalk.rgb(46, 46, 69);
 
-const B = {
-  tl: "┌",
-  tr: "┐",
-  bl: "└",
-  br: "┘",
-  h: "─",
-  v: "│",
-  row: (w: number) => "─".repeat(w),
-};
+const PANEL_BG   = chalk.bgRgb(12, 12, 24);
+const CONTENT_BG = chalk.bgRgb(8, 8, 16);
 
-// ─── Helpers ────────────────────────────────────────────────────
+// ─── Frame + panel constants ──────────────────────────────────────
+
+const FRAME_V = CONTENT_BG(" ");
+const FRAME_H = CONTENT_BG(" ");
+const PANEL_V = MUT(" │ ");
+
+const DIV = "━";
+
+// ─── Helpers ───────────────────────────────────────────────────
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
@@ -81,16 +59,13 @@ function visLen(s: string): number {
   return len;
 }
 
-/** Pad a possibly-chalk-colored string to `width` visible columns. */
-function pad(s: string, width: number): string {
-  const vl = visLen(s);
-  return s + " ".repeat(Math.max(0, width - vl));
+function padR(s: string, w: number): string {
+  return s + " ".repeat(Math.max(0, w - visLen(s)));
 }
 
-function center(s: string, width: number): string {
-  const vl = visLen(s);
-  const left = Math.max(0, Math.floor((width - vl) / 2));
-  return " ".repeat(left) + s;
+function trunc(s: string, max: number): string {
+  const plain = stripAnsi(s);
+  return plain.length > max ? plain.slice(0, max - 1) + "…" : s;
 }
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -113,12 +88,11 @@ export class HomeScreen extends EventEmitter {
   private _timer: ReturnType<typeof setInterval> | null = null;
   private _buf = "";
 
-  /** Phase 1: Re-entrancy guard */
   private _rendering = false;
-  /** Phase 2: Render-queue dedupe */
   private _renderPending = false;
-  /** Phase 4: Resize debounce */
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private _closed = false;
+  private _shuttingDown = false;
 
   constructor(private opts: HomeOpts) {
     super();
@@ -131,6 +105,13 @@ export class HomeScreen extends EventEmitter {
   }
   private get rows() {
     return Math.max(process.stdout.rows ?? 24, 20);
+  }
+
+  private get leftW(): number {
+    return Math.max(32, Math.floor((this.cols - 4) * 0.38));
+  }
+  private get rightW(): number {
+    return this.cols - 4 - this.leftW;
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────
@@ -153,19 +134,23 @@ export class HomeScreen extends EventEmitter {
     }, 40);
   }
 
-  /** Transition to Screen 2 — keeps alt screen + raw mode alive. */
   transition(): void {
+    this._closed = true;
     if (this._timer) {
       clearInterval(this._timer);
       this._timer = null;
     }
     process.stdin.off("data", this._onKey);
     process.stdout.off("resize", this._onResize);
-    // intentionally NOT writing altOut / show cursor — TerminalUI takes over
   }
 
-  /** Full quit (Ctrl+C from home). */
   close(): void {
+    if (this._shuttingDown) return;
+    this._shuttingDown = true;
+    this._closed = true;
+    while (this._rendering) {
+      // wait for in-progress render to finish
+    }
     this.transition();
     process.stdout.write(H.show + H.altOut);
     if (process.stdin.isTTY) {
@@ -179,15 +164,37 @@ export class HomeScreen extends EventEmitter {
 
   // ─── Key handler ───────────────────────────────────────────────
 
-  private _onKey = (chunk: unknown) => {
+  private _onKey = (chunk: unknown): void => {
     const key =
       typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf8");
+
     if (key === "\x03" || key === "\x04") {
       this.emit("quit");
       return;
     }
-    // Any other key → activate Screen 2
-    this.emit("activate", key);
+
+    if (key === "\r" || key === "\n") {
+      if (this._buf.length > 0) {
+        const payload = this._buf;
+        this._buf = "";
+        this._renderInputBoxQueued();
+        this.emit("activate", payload);
+      }
+      return;
+    }
+
+    if (key === "\x7f") {
+      if (this._buf.length > 0) {
+        this._buf = this._buf.slice(0, -1);
+        this._renderInputBoxQueued();
+      }
+      return;
+    }
+
+    if (key.length >= 1 && key >= " ") {
+      this._buf += key;
+      this._renderInputBoxQueued();
+    }
   };
 
   private _onResize = () => {
@@ -198,12 +205,14 @@ export class HomeScreen extends EventEmitter {
     }, 100);
   };
 
-  // ─── Render queue (Phases 1+2) ────────────────────────────────
+  // ─── Render queue ──────────────────────────────────────────────
 
   private _renderQueued(): void {
+    if (this._closed) return;
     if (this._renderPending) return;
     this._renderPending = true;
     setImmediate(() => {
+      if (this._closed) return;
       this._renderPending = false;
       if (this._rendering) return;
       this._rendering = true;
@@ -216,9 +225,11 @@ export class HomeScreen extends EventEmitter {
   }
 
   private _renderInputBoxQueued(): void {
+    if (this._closed) return;
     if (this._renderPending) return;
     this._renderPending = true;
     setImmediate(() => {
+      if (this._closed) return;
       this._renderPending = false;
       if (this._rendering) return;
       this._rendering = true;
@@ -235,239 +246,214 @@ export class HomeScreen extends EventEmitter {
   private _render(): void {
     const c = this.cols;
     const r = this.rows;
-    let o = "";
 
-    // Clear + position
-    o += H.clear + H.pos(1);
+    let out = "";
 
-    // ── Row 1: top border ─────────────────────────────────────────
-    o += H.pos(1) + Y(B.tl + B.row(c - 2) + B.tr);
+    out += H.clear + H.pos(1);
 
-    // ── Inner rows 2..rows-1 ─────────────────────────────────────
-    for (let i = 2; i < r; i++) {
-      o += H.pos(i) + Y(B.v) + " ".repeat(c - 2) + Y(B.v);
+    // Frame (outer border - shadow blocks)
+    out += H.pos(1, 1) + FRAME_H.repeat(c);
+    for (let row = 2; row < r; row++) {
+      out += H.pos(row, 1) + FRAME_V;
+      out += H.pos(row, c) + FRAME_V;
+    }
+    out += H.pos(r, 1) + FRAME_H.repeat(c);
+
+    // Top bar
+    out += this._buildTopBar();
+
+    // Body: left panel + right panel (conversation + centered input)
+    out += this._buildBody();
+
+    // Shortcuts bar
+    out += this._buildShortcuts();
+
+    process.stdout.write(out);
+  }
+
+  // ─── Top bar ───────────────────────────────────────────────────
+
+  private _buildTopBar(): string {
+    const c = this.cols;
+    const inner = c - 2;
+    const { owlName, generation, challenge, skills } = this.opts;
+
+    const leftBadge = chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(" ◈ STACKOWL ");
+    const rightBadge = chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(
+      " " + this.opts.owlEmoji + " " + owlName + " "
+    );
+    const meta =
+      " " + MUT("[") + BLUE(this.opts.model.replace("claude-", "").slice(0, 14)) + MUT("]") +
+      " " + MUT("·") + " " + LBL("gen" + generation) +
+      " " + MUT("·") + " " + AMBER("⚡" + challenge) +
+      " " + MUT("·") + " " + GREEN("📦" + skills + " skills");
+
+    const leftLen  = visLen(leftBadge);
+    const rightLen = visLen(rightBadge + meta);
+    const gap = Math.max(2, inner - leftLen - rightLen);
+
+    const row2 = leftBadge + " ".repeat(gap) + rightBadge + meta;
+    let out = "";
+    out += H.pos(2, 2) + PANEL_BG(padR(row2, inner));
+    out += H.pos(3, 2) + PANEL_BG(AMBER(DIV.repeat(inner)));
+    return out;
+  }
+
+  // ─── Body: left panel + right panel ───────────────────────────
+
+  private _buildBody(): string {
+    const r = this.rows;
+
+    // Body rows: 4 through r-5 (input panel rows r-4 to r-2, shortcuts r-1)
+    const bodyRows = r - 7;
+
+    const lW = this.leftW;
+    const rW = this.rightW;
+
+    const leftLines = this._buildLeft(lW, bodyRows);
+    const rightLines = this._buildRight(rW, bodyRows);
+
+    let out = "";
+
+    for (let i = 0; i < bodyRows; i++) {
+      const row = 3 + i;
+      const lLn = leftLines[i] ?? { t: "", v: 0 };
+      const rLn = rightLines[i] ?? { t: "", v: 0 };
+      const lPad = " ".repeat(Math.max(0, lW - lLn.v));
+      const rPad = " ".repeat(Math.max(0, rW - rLn.v));
+
+      out += H.pos(row, 2) + lLn.t + lPad;
+      out += H.pos(row, lW + 2) + PANEL_V;
+      out += H.pos(row, lW + 3) + rLn.t + rPad;
     }
 
-    // ── Row rows: bottom border ───────────────────────────────────
-    o += H.pos(r) + Y(B.bl + B.row(c - 2) + B.br);
-
-    process.stdout.write(o);
-
-    // ── Content sections ──────────────────────────────────────────
-    this._renderLogo();
-    this._renderInputBox();
-    this._renderInfo();
-    this._renderSessions();
-    this._renderShortcuts();
+    return out;
   }
 
-  // ── Logo ────────────────────────────────────────────────────────
+  // ─── Left panel (owl identity) ───────────────────────────────
 
-  private _renderLogo(): void {
-    const c = this.cols;
-    const inner = c - 2; // width inside the border
+  private _buildLeft(
+    w: number,
+    rows: number,
+  ): Array<{ t: string; v: number }> {
+    const lines: Array<{ t: string; v: number }> = [];
+    const add   = (t: string) => lines.push({ t, v: visLen(t) });
+    const blank = () => add("");
 
-    const line1 = YB("◈  S T A C K O W L");
-    const line2 = D("personal ai assistant");
+    const secHdr = (label: string) => {
+      const line = MUT("─".repeat(Math.max(0, w - label.length - 5)));
+      return "  " + AMBER.bold(label) + " " + line;
+    };
 
-    process.stdout.write(
-      H.pos(3) +
-        Y(B.v) +
-        center(line1, inner) +
-        Y(B.v) +
-        H.pos(4) +
-        Y(B.v) +
-        center(line2, inner) +
-        Y(B.v),
-    );
+    const { owlEmoji, owlName, generation, challenge, provider, model, skills } =
+      this.opts;
+
+    blank();
+    add("  " + chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(" " + owlEmoji + " " + owlName + " "));
+    blank();
+    add(secHdr("IDENTITY"));
+    add("  " + LBL("Generation") + "  " + W(String(generation)));
+    add("  " + LBL("Challenge ") + "  " + AMBER("⚡" + String(challenge)));
+    blank();
+    add(secHdr("BACKEND"));
+    add("  " + LBL("Provider") + "   " + BLUE(provider));
+    add("  " + LBL("Model   ") + "   " + W(model.replace("claude-", "").slice(0, 14)));
+    add("  " + LBL("Skills  ") + "   " + GREEN(String(skills) + " loaded"));
+
+    while (lines.length < rows) blank();
+    return lines.slice(0, rows);
   }
 
-  // ── Input box ───────────────────────────────────────────────────
+  // ─── Right panel (conversation + centered input) ──────────────
 
-  private _inputBoxRow(): number {
-    return 6;
-  }
+  private _buildRight(
+    w: number,
+    rows: number,
+  ): Array<{ t: string; v: number }> {
+    const lines: Array<{ t: string; v: number }> = [];
+    const add   = (t: string) => lines.push({ t, v: visLen(t) });
+    const blank = () => add("");
 
-  private _renderInputBox(): void {
-    const c = this.cols;
-    const margin = 3; // spaces from outer border
-    const boxW = c - 2 - margin * 2; // width of the inner box
-    const innerW = boxW - 2; // content width (minus 2 border chars)
-    const startR = this._inputBoxRow();
+    // Center row for the input prompt
+    const centerRow = Math.floor(rows / 2) - 1;
 
-    const borderColor = this._pulse ? chalk.yellow : chalk.dim.yellow;
-    const topBorder = borderColor(B.tl + B.row(innerW) + B.tr);
-    const botBorder = borderColor(B.bl + B.row(innerW) + B.br);
-    const side = borderColor(B.v);
+    for (let i = 0; i < centerRow; i++) blank();
 
-    // Build input line content
-    const prompt = chalk.bold.white("  › ");
-    const cursor = chalk.bgYellow.black(" ");
-    const display = this._buf
-      ? chalk.white(this._buf) + cursor
-      : chalk.dim("What do you want to work on?") + D(" ") + cursor;
-    const inputLine = prompt + display;
-    const inputPad = " ".repeat(Math.max(0, innerW - visLen(inputLine)));
-    const emptyLine = " ".repeat(innerW);
+    // Centered prompt label
+    const labelText = "What do you want to work on?";
+    const labelPad  = Math.max(0, Math.floor((w - labelText.length) / 2));
+    add(" ".repeat(labelPad) + LBL(labelText));
+    blank(); // input box rendered separately by _renderInputBox
 
-    process.stdout.write(
-      H.pos(startR, 1) +
-        Y(B.v) +
-        " ".repeat(margin) +
-        topBorder +
-        " ".repeat(margin) +
-        Y(B.v) +
-        H.pos(startR + 1, 1) +
-        Y(B.v) +
-        " ".repeat(margin) +
-        side +
-        inputLine +
-        inputPad +
-        side +
-        " ".repeat(margin) +
-        Y(B.v) +
-        H.pos(startR + 2, 1) +
-        Y(B.v) +
-        " ".repeat(margin) +
-        side +
-        emptyLine +
-        side +
-        " ".repeat(margin) +
-        Y(B.v) +
-        H.pos(startR + 3, 1) +
-        Y(B.v) +
-        " ".repeat(margin) +
-        botBorder +
-        " ".repeat(margin) +
-        Y(B.v) +
-        H.pos(startR + 4, 1) +
-        Y(B.v) +
-        " ".repeat(margin) +
-        D("Type anything to start  ·  ") +
-        C("/help") +
-        D(" for commands") +
-        " ".repeat(margin + 10) +
-        Y(B.v),
-    );
-  }
-
-  // ── Info sections ────────────────────────────────────────────────
-
-  private _renderInfo(): void {
-    const c = this.cols;
-    const startR = this._inputBoxRow() + 6; // 2 gap rows after input hint
-    const inner = c - 2;
-    const half = Math.floor(inner / 2);
-
-    const {
-      owlEmoji,
-      owlName,
-      generation,
-      challenge,
-      provider,
-      model,
-      skills,
-    } = this.opts;
-
-    // Section headers
-    const leftHdr = YB("[ Active Owl ]");
-    const rightHdr = YB("[ Environment ]");
-    const hdrRow = pad(leftHdr, half) + rightHdr;
-
-    // Owl info
-    const owl1 =
-      Y("◉ ") +
-      W(`${owlEmoji} ${owlName}`) +
-      D(` gen${generation} ⚡${challenge}`);
-    const env1 =
-      D("⌬ ") + W(process.platform === "darwin" ? "macOS" : process.platform);
-    const row1 = pad(owl1, half) + env1;
-
-    const owl2 = D("  Provider : ") + W(provider);
-    const env2 = D("🔌 MCP   : ") + W("active");
-    const row2 = pad(owl2, half) + env2;
-
-    const owl3 =
-      D("  Model   : ") + W(model.replace("claude-", "").slice(0, 14));
-    const env3 = D("📦 Skills : ") + W(`${skills} loaded`);
-    const row3 = pad(owl3, half) + env3;
-
-    const lv = Y(B.v);
-    process.stdout.write(
-      H.pos(startR, 1) +
-        lv +
-        pad(hdrRow, inner) +
-        lv +
-        H.pos(startR + 1, 1) +
-        lv +
-        pad(row1, inner) +
-        lv +
-        H.pos(startR + 2, 1) +
-        lv +
-        pad(row2, inner) +
-        lv +
-        H.pos(startR + 3, 1) +
-        lv +
-        pad(row3, inner) +
-        lv,
-    );
-  }
-
-  // ── Recent sessions ─────────────────────────────────────────────
-
-  private _renderSessions(): void {
-    const c = this.cols;
-    const inner = c - 2;
-    const startR = this._inputBoxRow() + 11;
-    const lv = Y(B.v);
-    const { recentSessions: sessions } = this.opts;
-
-    process.stdout.write(
-      H.pos(startR, 1) + lv + pad(YB("[ Recent Sessions ]"), inner) + lv,
-    );
-
-    if (sessions.length === 0) {
-      process.stdout.write(
-        H.pos(startR + 1, 1) + lv + pad(D("  No sessions yet."), inner) + lv,
-      );
-    } else {
-      sessions.slice(0, 3).forEach((s, i) => {
-        const turnsStr = D(`${s.turns} turns`);
-        const titleStr =
-          Y("→ ") + D(`${s.ago.padEnd(4)} `) + W(s.title.slice(0, inner - 22));
-        const padded = pad(titleStr, inner - 10) + turnsStr;
-        process.stdout.write(
-          H.pos(startR + 1 + i, 1) + lv + " " + pad(padded, inner - 1) + lv,
+    // Recent sessions — show up to 3
+    const sessions = this.opts.recentSessions.slice(0, 3);
+    if (sessions.length > 0) {
+      blank();
+      add("  " + MUT("─".repeat(Math.max(0, w - 4))));
+      add("  " + LBL("recent sessions"));
+      blank();
+      for (const s of sessions) {
+        const title    = trunc(s.title, w - 24);
+        const turns    = MUT(String(s.turns) + "t");
+        const ago      = MUT(s.ago);
+        const spacer   = " ".repeat(
+          Math.max(1, w - 2 - visLen(title) - visLen(String(s.turns) + "t") - visLen(s.ago) - 4),
         );
-      });
+        add("  " + W(title) + spacer + turns + "  " + ago);
+      }
     }
+
+    while (lines.length < rows) blank();
+    return lines.slice(0, rows);
   }
 
-  // ── Shortcuts bar ────────────────────────────────────────────────
+  // ─── Shortcuts bar ────────────────────────────────────────────────
 
-  private _renderShortcuts(): void {
+  private _buildShortcuts(): string {
     const c = this.cols;
     const r = this.rows;
-    const inner = c - 2;
-    const lv = Y(B.v);
+    const inner = c - 4;
 
-    // Divider row
+    const key = (k: string) =>
+      chalk.bgRgb(26, 26, 44).rgb(205, 214, 244).bold(` ${k} `);
+
+    const line =
+      key("ESC") + LBL("  Stop     ") +
+      key("^P")  + LBL("  Parliament     ") +
+      key("^L")  + LBL("  Clear     ") +
+      key("^C")  + LBL("  Quit");
+
+    return H.pos(r - 1, 3) + PANEL_BG(padR(line, inner));
+  }
+
+  // ─── Input box render (800ms pulse updates) ─────────────────────
+
+  private _renderInputBox(): void {
+    const r = this.rows;
+    const bodyRows    = r - 7;
+    const inputCenterRow = Math.floor(bodyRows / 2);
+
+    const lW = this.leftW;
+    const rW = this.rightW;
+
+    const cursor = chalk.bgYellow.black(" ");
+    let contentLine: string;
+
+    if (this._buf.length > 0) {
+      contentLine = AMBER("  › ") + W(this._buf) + cursor;
+    } else {
+      contentLine = AMBER("  › ") + LBL("Ask anything or type / for commands") + W(" ") + cursor;
+    }
+
+    const contentLen = visLen(contentLine);
+    const rowPad = " ".repeat(Math.max(0, rW - contentLen));
+    const row    = 3 + inputCenterRow;
+
+    // Amber top/bottom border, panel-bg content
     process.stdout.write(
-      H.pos(r - 2, 1) + lv + D(" " + B.row(inner - 2) + " ") + lv,
-    );
-
-    const shortcuts =
-      C("[/help]") +
-      D(" Commands   ") +
-      C("[/owls]") +
-      D(" Owls   ") +
-      C("[↑↓]") +
-      D(" History   ") +
-      C("[^C]") +
-      D(" Quit");
-
-    process.stdout.write(
-      H.pos(r - 1, 1) + lv + " " + pad(shortcuts, inner - 2) + lv,
+      H.pos(row - 1, lW + 3) + PANEL_BG(AMBER("▔".repeat(rW))) +
+      H.pos(row,     lW + 3) + PANEL_BG(contentLine + rowPad)   +
+      H.pos(row + 1, lW + 3) + PANEL_BG(AMBER("▁".repeat(rW))),
     );
   }
 }
