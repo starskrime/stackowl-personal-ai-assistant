@@ -814,56 +814,55 @@ export class TerminalUI extends EventEmitter {
     const add = (t: string) => lines.push({ t, v: visLen(t) });
     const blank = () => add("");
 
+    // ── Section header helper ──────────────────────────────────────
+    const secHdr = (label: string) => {
+      const line = MUT("─".repeat(Math.max(0, w - label.length - 5)));
+      return "  " + AMBER.bold(label) + " " + line;
+    };
+
     blank();
-    add("  " + Wb("OWL MIND"));
+    add(secHdr("OWL MIND"));
     blank();
-    add("  " + Y(this._currentFace()));
+    add("  " + AMBER(this._currentFace()));
+    if (this._owlState === "thinking") {
+      add("  " + BLUE(SPINNER[this._spinIdx % SPINNER.length] + " thinking..."));
+    }
     blank();
     add(
-      "  " +
-        C("*") +
-        " " +
-        D("Instincts") +
-        "   " +
-        (this._instincts > 0 ? W(this._instincts + " triggered") : D("none")),
+      "  " + PURPLE("◆") + " " + LBL("Instincts") + "   " +
+      (this._instincts > 0 ? AMBER.bold(this._instincts + " triggered") : MUT("—")),
     );
     add(
-      "  " +
-        C("*") +
-        " " +
-        D("Memory   ") +
-        "   " +
-        (this._memFacts > 0 ? W(this._memFacts + " facts") : D("none")),
+      "  " + PURPLE("◆") + " " + LBL("Memory   ") + "   " +
+      (this._memFacts > 0 ? AMBER.bold(this._memFacts + " facts") : MUT("—")),
     );
     add(
-      "  " +
-        C("*") +
-        " " +
-        D("Skills   ") +
-        "   " +
-        (this._skillsHit > 0 ? W(this._skillsHit + " invoked") : D("none")),
+      "  " + PURPLE("◆") + " " + LBL("Skills   ") + "   " +
+      (this._skillsHit > 0 ? GREEN.bold(this._skillsHit + " invoked") : MUT("—")),
     );
     blank();
 
     if (this._toolCalls.length > 0) {
-      add("  " + D("REASONING") + " " + D(DIV.repeat(Math.max(0, w - 14))));
+      add(secHdr("REASONING"));
       const visible = this._toolCalls.slice(-8);
       visible.forEach((tc, i) => {
         const isLast = i === visible.length - 1;
-        const branch = isLast ? "   L " : "   + ";
+        const branch = isLast ? MUT("  └ ") : MUT("  ├ ");
         const spinner = SPINNER[this._spinIdx % SPINNER.length];
         const icon =
           tc.status === "running"
-            ? C(spinner)
+            ? BLUE(spinner)
             : tc.status === "done"
-              ? G("Y")
-              : R("X");
-        const name = trunc(tc.name, w - 18);
-        const ms = tc.ms ? D(" " + tc.ms + "ms") : "";
-        add(branch + icon + " " + W(name) + ms);
+              ? GREEN("✓")
+              : R("✕");
+        const name = tc.status === "running"
+          ? BLUE(trunc(tc.name, w - 18))
+          : W(trunc(tc.name, w - 18));
+        const ms = tc.ms ? MUT(" " + tc.ms + "ms") : "";
+        add(branch + icon + " " + name + ms);
         if (tc.summary) {
-          const indent = isLast ? "        " : "   |    ";
-          add(indent + D(trunc(tc.summary, w - 12)));
+          const indent = isLast ? "        " : "  │     ";
+          add(indent + LBL(trunc(tc.summary, w - 12)));
         }
       });
       blank();
@@ -874,15 +873,15 @@ export class TerminalUI extends EventEmitter {
 
     if (dnaRows > 4) {
       blank();
-      add("  " + D("DNA" + " " + DIV.repeat(Math.max(0, w - 8))));
+      add(secHdr("DNA"));
       blank();
-      add("  " + this._dnaBar("challenge", this._dna.challenge));
-      add("  " + this._dnaBar("verbosity", this._dna.verbosity));
-      add("  " + this._dnaBar("mood     ", this._dna.mood));
+      add("  " + this._dnaBar("challenge", this._dna.challenge, "challenge"));
+      add("  " + this._dnaBar("verbosity", this._dna.verbosity, "verbosity"));
+      add("  " + this._dnaBar("mood     ", this._dna.mood, "mood"));
     }
 
     while (lines.length < rows - 1) blank();
-    add("  " + D(DIV.repeat(Math.max(0, w - 4))) + " " + D("FIREWALL"));
+    add("  " + MUT("─".repeat(Math.max(0, w - 4))) + " " + MUT("FIREWALL"));
 
     return lines.slice(0, rows);
   }
@@ -987,11 +986,17 @@ export class TerminalUI extends EventEmitter {
 
   // ─── DNA bar ──────────────────────────────────────────────────
 
-  private _dnaBar(label: string, val: number): string {
+  private _dnaBar(
+    label: string,
+    val: number,
+    trait: "challenge" | "verbosity" | "mood",
+  ): string {
     const v = Math.max(0, Math.min(10, Math.round(val)));
-    const filled = G("#").repeat(v);
-    const empty = D(".").repeat(10 - v);
-    return D(label) + " " + filled + empty + " " + W(String(val));
+    const color =
+      trait === "challenge" ? AMBER : trait === "verbosity" ? BLUE : GREEN;
+    const filled = color("█").repeat(v);
+    const empty  = MUT("█").repeat(10 - v);
+    return LBL(label) + " " + filled + empty + " " + MUT(String(val));
   }
 
   // ─── Helpers ──────────────────────────────────────────────────
