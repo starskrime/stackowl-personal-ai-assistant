@@ -1,12 +1,13 @@
 /**
  * StackOwl — Active Session UI  (Screen 2)
  *
- * Dark Glass design:
- *   - Thin borders with ASCII-safe chars (+-+|+-+)
- *   - Left panel with subtle dark tint + 1-char gap from right panel
- *   - Yellow only for border structure; white for content; cyan/green for interactive
- *   - Panels defined by spacing and background, not heavy borders
- *   - Clean section dividers with thin --- rules
+ * Pixel-frame design — NO border lines.
+ * Frame is defined by shadow blocks on all 4 sides:
+ *   Row 1:  full-width shadow row
+ *   Col 1:  shadow column (left edge)
+ *   Col c:  shadow column (right edge)
+ *   Row r:  full-width shadow row
+ * Content lives in the inner area between shadows.
  */
 
 import { EventEmitter } from "node:events";
@@ -21,53 +22,33 @@ const ansi = {
   altOut: `${ESC}[?1049l`,
   hide: `${ESC}[?25l`,
   show: `${ESC}[?25h`,
-  clear: `${ESC}[2J\x1B[1;1H`, // erase screen + home cursor (no scrollback clear — avoids flicker)
+  clear: `${ESC}[2J\x1B[1;1H`,
   el: `${ESC}[2K`,
   pos: (r: number, c = 1) => `${ESC}[${r};${c}H`,
 };
 
-// ─── Color shortcuts ─────────────────────────────────────────────
-// Dark Glass palette:
-//   Y  = border/structure (used sparingly)
-//   C  = interactive/active
-//   G  = success/done
-//   R  = error
-//   D  = dim/secondary
-//   W  = primary content
-//   Wb = bold white (headings)
+// ─── Color palette — Neon Accent ─────────────────────────────────
 
-const Y = chalk.yellow;
-const D = chalk.dim;
-const W = chalk.white;
-const Wb = chalk.white.bold;
-const G = chalk.green;
-const R = chalk.red;
-const C = chalk.cyan;
+const AMBER  = chalk.rgb(250, 179, 135);   // primary accent
+const BLUE   = chalk.rgb(137, 180, 250);   // secondary accent
+const GREEN  = chalk.rgb(166, 227, 161);   // success / high mood
+const PURPLE = chalk.rgb(203, 166, 247);   // metadata (turns, triggered)
+const W      = chalk.rgb(205, 214, 244);   // primary text
+const LBL    = chalk.rgb(69, 71, 90);      // labels / dim text
+const MUT    = chalk.rgb(46, 46, 69);      // muted (borders, timings)
+const R      = chalk.rgb(243, 139, 168);   // error
 
-// Panel tint backgrounds (subtle dark glass effect)
-const TOP_BG = chalk.bgBlack.rgb(15, 15, 18);
+// Backgrounds
+const PANEL_BG   = chalk.bgRgb(12, 12, 24);   // top bar / input zone bg
+const CONTENT_BG = chalk.bgRgb(8, 8, 16);     // body panels bg
 
-// ─── Box drawing (thin, elegant, ASCII-safe) ────────────────────
-// Using standard ASCII for reliable parsing:
-//   + top-left   - horizontal   + top-right
-//   | vertical   + cross        | vertical
-//   + bot-left   - horizontal   + bot-right
+// ─── Frame + panel constants ──────────────────────────────────────
 
-const B = {
-  tl: "+",
-  tr: "+",
-  bl: "+",
-  br: "+",
-  h: "-",
-  v: "|",
-  mt: "+",
-  mb: "+",
-  ml: "+",
-  mr: "+",
-};
+const FRAME_V = CONTENT_BG(" ");          // transparent frame cell (invisible)
+const FRAME_H = CONTENT_BG(" ");          // transparent frame cell (invisible)
+const PANEL_V = MUT(" │ ");               // panel separator — explicit muted color
 
-// Thin divider char
-const DIV = "-";
+const DIV = "━"; // heavy horizontal divider (U+2501)
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -162,12 +143,20 @@ export class TerminalUI extends EventEmitter {
   private _thinkTimer: ReturnType<typeof setInterval> | null = null;
   private _thinkStart = 0;
 
-  /** Phase 1: Re-entrancy guard — prevents concurrent renders */
-  private _rendering = false;
-  /** Phase 2: Render queue — dedupes redundant renders, runs once per tick */
-  private _renderQueued = false;
-  /** Fix 1: Resize debounce */
+  private _rendering = false; // re-entrancy guard
+  private _renderQueued = false; // dedupe flag
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private _closed = false; // prevents renders after close()
+
+  // ─── Command popup ─────────────────────────────────────────────
+  private _cmdPopupActive = false;
+  private _cmdPopupMatches: string[] = [];
+  private _cmdPopupIdx = 0;
+  private _cmdNames: string[] = [];
+
+  setCommandList(names: string[]): void {
+    this._cmdNames = names;
+  }
 
   // ─── Dimensions ────────────────────────────────────────────────
 
@@ -206,10 +195,8 @@ export class TerminalUI extends EventEmitter {
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
-
     process.stdout.on("resize", this._resizeHandler);
     process.stdin.on("data", this._keyHandler);
-
     setTimeout(() => this.redraw(), 40);
   }
 
@@ -220,6 +207,10 @@ export class TerminalUI extends EventEmitter {
   }
 
   close(): void {
+    this._closed = true;
+    while (this._rendering) {
+      // wait for in-progress render to finish
+    }
     this.suspend();
     process.stdout.write(ansi.show + ansi.altOut);
     if (process.stdin.isTTY) {
@@ -233,6 +224,11 @@ export class TerminalUI extends EventEmitter {
 
   feedChar(ch: string): void {
     this._onKey(ch);
+  }
+
+  setInitialInput(buf: string): void {
+    this._inputBuf = buf;
+    this._inputCursor = buf.length;
   }
 
   // ─── Owl identity ──────────────────────────────────────────────
@@ -250,20 +246,18 @@ export class TerminalUI extends EventEmitter {
 
   updateDNA(d: Partial<DNA>): void {
     Object.assign(this._dna, d);
-    this._renderBody();
+    this.redraw();
   }
 
   updateStats(tokens: number, cost: number): void {
     this._tokens = tokens;
     this._cost = cost;
-    this._renderTopBar();
   }
 
   setMasked(on: boolean): void {
     this._inputMasked = on;
-    this._renderInput();
+    this.redraw();
   }
-
   setAllowEmptyInput(on: boolean): void {
     this._allowEmptyInput = on;
   }
@@ -280,32 +274,14 @@ export class TerminalUI extends EventEmitter {
     this._thinkTimer = setInterval(() => {
       this._spinIdx++;
       if (this._spinIdx % 6 === 0) this._faceIdx++;
-      // Queue render via the render system (deduplicated, one per tick)
       this._renderBodyQueued();
     }, 100);
-  }
-
-  /** Direct queue — used by thinking timer to update face/spin without full render */
-  private _renderBodyQueued(): void {
-    if (this._rendering) return;
-    if (this._renderQueued) return;
-    this._renderQueued = true;
-    setImmediate(() => {
-      this._renderQueued = false;
-      if (this._rendering) return;
-      this._rendering = true;
-      try {
-        this._doBuildBody();
-      } finally {
-        this._rendering = false;
-      }
-    });
   }
 
   stopThinking(): void {
     this._stopThink();
     this._owlState = "idle";
-    this._renderBody();
+    this.redraw();
   }
 
   showToolCall(name: string): void {
@@ -317,7 +293,7 @@ export class TerminalUI extends EventEmitter {
       status: "running",
     });
     if (this._toolCalls.length > 12) this._toolCalls.shift();
-    this._renderBody();
+    this.redraw();
   }
 
   completeToolCall(): void {
@@ -328,7 +304,7 @@ export class TerminalUI extends EventEmitter {
       last.status = "done";
       last.ms = Date.now() - this._thinkStart;
     }
-    this._renderBody();
+    this.redraw();
   }
 
   printResponse(emoji: string, name: string, content: string): void {
@@ -341,7 +317,7 @@ export class TerminalUI extends EventEmitter {
     }
     this._pushLine("");
     this._inputLocked = false;
-    this._renderBody();
+    this.redraw();
   }
 
   printError(msg: string): void {
@@ -350,23 +326,23 @@ export class TerminalUI extends EventEmitter {
     this._pushLine("  " + R("x ") + R(msg));
     this._pushLine("");
     this._inputLocked = false;
-    this._renderBody();
+    this.redraw();
   }
 
   printInfo(msg: string): void {
     this._pushLine("  " + D(msg));
-    this._renderBody();
+    this.redraw();
   }
 
   printLines(lines: string[]): void {
     for (const l of lines) {
       this._pushLine(l === "" ? "" : "  " + l);
     }
-    this._renderBody();
+    this.redraw();
   }
 
   showPrompt(): void {
-    this._renderBody();
+    this.redraw();
   }
 
   // ─── Stream handler ───────────────────────────────────────────
@@ -397,7 +373,7 @@ export class TerminalUI extends EventEmitter {
           for (const l of this._wrapText(this._streamBuf, this.rightW - 4)) {
             this._lines.push("  " + W(l));
           }
-          this._renderBody();
+          this.redraw();
           streamed = true;
           break;
         }
@@ -409,14 +385,14 @@ export class TerminalUI extends EventEmitter {
           this.completeToolCall();
           break;
         case "done":
-          this._stopThink(); // stop thinking timer immediately
+          this._stopThink();
           this._owlState = "idle";
           this._streaming = false;
           this._streamBuf = "";
           this._streamHeaderIdx = -1;
           this._pushLine("");
           this._inputLocked = false;
-          this._renderBody();
+          this.redraw();
           break;
       }
     };
@@ -430,6 +406,73 @@ export class TerminalUI extends EventEmitter {
       this.emit("quit");
       return;
     }
+
+    // ── Command popup active ───────────────────────────────────
+    if (this._cmdPopupActive) {
+      if (data === ESC + "[A") {
+        // Arrow up
+        this._cmdPopupIdx = Math.max(0, this._cmdPopupIdx - 1);
+        this._renderCmdPopup();
+        return;
+      }
+      if (data === ESC + "[B") {
+        // Arrow down
+        this._cmdPopupIdx = Math.min(
+          this._cmdPopupMatches.length - 1,
+          this._cmdPopupIdx + 1,
+        );
+        this._renderCmdPopup();
+        return;
+      }
+      if (data === "\r" || data === "\n") {
+        // Enter — select command
+        const selected = this._cmdPopupMatches[this._cmdPopupIdx];
+        if (selected) {
+          this._inputBuf = "/" + selected;
+          this._inputCursor = this._inputBuf.length;
+        }
+        this._cmdPopupActive = false;
+        this.redraw();
+        return;
+      }
+      if (data === ESC) {
+        // Escape — dismiss popup
+        this._inputBuf = "";
+        this._inputCursor = 0;
+        this._cmdPopupActive = false;
+        this.redraw();
+        return;
+      }
+      if (data === "\x7f") {
+        // Backspace — remove last char after "/"
+        if (this._inputBuf.length <= 1) {
+          this._inputBuf = "";
+          this._inputCursor = 0;
+          this._cmdPopupActive = false;
+          this.redraw();
+        } else {
+          this._inputBuf = this._inputBuf.slice(0, -1);
+          this._inputCursor--;
+          this._updatePopupMatches();
+          this.redraw();
+        }
+        return;
+      }
+      if (data.length >= 1 && data >= " ") {
+        // Any printable char — add to input, update filter
+        this._inputBuf =
+          this._inputBuf.slice(0, this._inputCursor) +
+          data +
+          this._inputBuf.slice(this._inputCursor);
+        this._inputCursor += data.length;
+        this._updatePopupMatches();
+        this.redraw();
+        return;
+      }
+      return;
+    }
+
+    // ── Normal input (popup not active) ────────────────────────
 
     if (data === "\r" || data === "\n") {
       if (this._inputLocked) return;
@@ -452,7 +495,7 @@ export class TerminalUI extends EventEmitter {
       } else if (this._allowEmptyInput) {
         this.emit("line", "");
       }
-      this._renderBody();
+      this.redraw();
       return;
     }
 
@@ -462,7 +505,7 @@ export class TerminalUI extends EventEmitter {
           this._inputBuf.slice(0, this._inputCursor - 1) +
           this._inputBuf.slice(this._inputCursor);
         this._inputCursor--;
-        this._renderInput();
+        this.redraw();
       }
       return;
     }
@@ -473,7 +516,7 @@ export class TerminalUI extends EventEmitter {
         this._histIdx++;
         this._inputBuf = this._history[this._histIdx];
         this._inputCursor = this._inputBuf.length;
-        this._renderInput();
+        this.redraw();
       }
       return;
     }
@@ -483,18 +526,18 @@ export class TerminalUI extends EventEmitter {
         this._inputBuf =
           this._histIdx === -1 ? this._histTemp : this._history[this._histIdx];
         this._inputCursor = this._inputBuf.length;
-        this._renderInput();
+        this.redraw();
       }
       return;
     }
     if (data === ESC + "[D" && this._inputCursor > 0) {
       this._inputCursor--;
-      this._renderInput();
+      this.redraw();
       return;
     }
     if (data === ESC + "[C" && this._inputCursor < this._inputBuf.length) {
       this._inputCursor++;
-      this._renderInput();
+      this.redraw();
       return;
     }
 
@@ -503,12 +546,12 @@ export class TerminalUI extends EventEmitter {
         this._scrollOff + 5,
         Math.max(0, this._lines.length - this._convRows()),
       );
-      this._renderBody();
+      this.redraw();
       return;
     }
     if (data === ESC + "[6~") {
       this._scrollOff = Math.max(0, this._scrollOff - 5);
-      this._renderBody();
+      this.redraw();
       return;
     }
 
@@ -516,14 +559,17 @@ export class TerminalUI extends EventEmitter {
       this._lines = [];
       this._toolCalls = [];
       this._scrollOff = 0;
-      this._renderBody();
+      this.redraw();
       return;
     }
 
     if (data === "/") {
       this._inputBuf = "/";
       this._inputCursor = 1;
-      this._renderInput();
+      this._cmdPopupActive = true;
+      this._updatePopupMatches();
+      this._cmdPopupIdx = 0;
+      this.redraw();
       return;
     }
 
@@ -533,21 +579,57 @@ export class TerminalUI extends EventEmitter {
         data +
         this._inputBuf.slice(this._inputCursor);
       this._inputCursor += data.length;
-      this._renderInput();
+      this.redraw();
     }
+  }
+
+  // ─── Popup helpers ─────────────────────────────────────────────
+
+  private _updatePopupMatches(): void {
+    const filter = this._inputBuf.slice(1).toLowerCase();
+    if (!filter) {
+      this._cmdPopupMatches = [...this._cmdNames];
+    } else {
+      this._cmdPopupMatches = this._cmdNames.filter((n) =>
+        n.startsWith(filter),
+      );
+    }
+    this._cmdPopupIdx = 0;
+    if (this._cmdPopupMatches.length === 0) {
+      this._cmdPopupActive = false;
+    }
+  }
+
+  private _renderCmdPopup(): void {
+    if (!this._cmdPopupActive || this._cmdPopupMatches.length === 0) return;
+    const rW = this.rightW;
+    const { startRow } = this._getPopupPosition();
+    const popupRows = Math.min(8, this._cmdPopupMatches.length);
+
+    let out = "";
+    for (let i = 0; i < popupRows + 1; i++) {
+      out +=
+        ansi.pos(startRow + i, this.leftW + 3) + PANEL_BG(" ".repeat(rW - 2));
+    }
+    for (let i = 0; i < popupRows; i++) {
+      const cmd = this._cmdPopupMatches[i];
+      const isSelected = i === this._cmdPopupIdx;
+      const line = isSelected ? PANEL_BG(Wb("  " + cmd)) : C("  " + cmd);
+      const lineLen = visLen(cmd) + 2;
+      const pad = " ".repeat(Math.max(0, rW - 2 - lineLen));
+      out += ansi.pos(startRow + i, this.leftW + 3) + line + pad;
+    }
+    process.stdout.write(out);
   }
 
   // ─── Full redraw ───────────────────────────────────────────────
 
-  /**
-   * Request a full redraw on the next event loop tick.
-   * All writes are batched into a single process.stdout.write() call —
-   * atomic relative to the event loop, no interleaving possible.
-   */
   redraw(): void {
+    if (this._closed) return;
     if (this._renderQueued) return;
     this._renderQueued = true;
     setImmediate(() => {
+      if (this._closed) return;
       this._renderQueued = false;
       if (this._rendering) return;
       this._rendering = true;
@@ -557,6 +639,8 @@ export class TerminalUI extends EventEmitter {
           this._buildFrame() +
           this._buildTopBar() +
           this._doBuildBody() +
+          this._buildInputPanel() +
+          this._buildCmdPopup() +
           this._buildShortcuts();
         process.stdout.write(out);
       } finally {
@@ -565,21 +649,25 @@ export class TerminalUI extends EventEmitter {
     });
   }
 
-  // ─── Frame ────────────────────────────────────────────────────
+  // ─── Frame (pixel shadow, no borders) ─────────────────────────
 
   /**
-   * Build the full frame as a string — top border, cleared inner rows,
-   * and bottom border. All rows explicitly written to prevent ghost content.
+   * Pixel frame — shadow only, NO border lines.
+   * Layout:
+   *   Row 1:   full-width top shadow row
+   *   Rows 2..r-1: shadow col col 1 + shadow col col c
+   *   Row r:   full-width bottom shadow row
    */
   private _buildFrame(): string {
     const c = this.cols;
     const r = this.rows;
-    let out = ansi.pos(1) + Y(B.tl + B.h.repeat(c - 2) + B.tr);
-    const rowInner = " ".repeat(c - 2);
+    let out = "";
+    out += ansi.pos(1) + FRAME_H.repeat(c); // top shadow row
     for (let i = 2; i < r; i++) {
-      out += ansi.pos(i) + Y(B.v) + rowInner + Y(B.v);
+      out += ansi.pos(i, 1) + FRAME_V; // left shadow
+      out += ansi.pos(i, c) + FRAME_V; // right shadow
     }
-    out += ansi.pos(r) + Y(B.bl + B.h.repeat(c - 2) + B.br);
+    out += ansi.pos(r) + FRAME_H.repeat(c); // bottom shadow row
     return out;
   }
 
@@ -587,43 +675,38 @@ export class TerminalUI extends EventEmitter {
 
   private _buildTopBar(): string {
     const c = this.cols;
-    const bar = this._buildTopBarContent(c - 2);
-    let out = ansi.pos(2) + Y(B.v) + TOP_BG(W(" " + bar) + " ") + Y(B.v);
-    out += ansi.pos(3) + Y(B.v + DIV.repeat(c - 2) + B.v);
-    return out;
-  }
-
-  private _renderTopBar(): void {
-    // Deprecated — use _buildTopBar() in redraw()
+    const bar = this._buildTopBarContent(c - 4);
+    return (
+      ansi.pos(2) +
+      TOP_BG(W("  " + bar + "  ")) +
+      ansi.pos(3) +
+      TOP_BG(Wbr(DIV.repeat(c)))
+    );
   }
 
   private _buildTopBarContent(_innerW?: number): string {
     const name = Wb(this.owlEmoji + " " + this.owlName);
     const model = this.owlModel
-      ? D(" . ") + C(this.owlModel.replace("claude-", "").slice(0, 18))
+      ? Wbr(" . ") + C(this.owlModel.replace("claude-", "").slice(0, 18))
       : "";
-    const turn = this._turn > 0 ? D(" . ") + W("turn " + this._turn) : "";
-    const tokens =
+    const turn = this._turn > 0 ? Wbr(" . ") + W("turn " + this._turn) : "";
+    const toks =
       this._tokens > 0
-        ? D(" . ") + W((this._tokens / 1000).toFixed(1) + "k tokens")
+        ? Wbr(" . ") + W((this._tokens / 1000).toFixed(1) + "k tokens")
         : "";
-    const cost = this._cost > 0 ? D(" . $") + W(this._cost.toFixed(3)) : "";
-
-    return name + model + turn + tokens + cost;
+    const cost = this._cost > 0 ? Wbr(" . $") + W(this._cost.toFixed(3)) : "";
+    return name + model + turn + toks + cost;
   }
 
   // ─── Body ──────────────────────────────────────────────────────
 
-  /**
-   * Queue a body render on the next tick.
-   * Deduplicates concurrent callers; writes are batched into a single
-   * process.stdout.write() call for atomic rendering.
-   */
-  private _renderBody(): void {
+  private _renderBodyQueued(): void {
+    if (this._closed) return;
     if (this._rendering) return;
     if (this._renderQueued) return;
     this._renderQueued = true;
     setImmediate(() => {
+      if (this._closed) return;
       this._renderQueued = false;
       if (this._rendering) return;
       this._rendering = true;
@@ -636,57 +719,87 @@ export class TerminalUI extends EventEmitter {
   }
 
   private _doBuildBody(): string {
-    const c = this.cols;
     const lW = this.leftW;
     const rW = this.rightW;
-    const bodyRows = this.rows - 6;
+    // rows 1=frame, 2=topbar, 3..r-5=body, r-4..r-2=input panel, r-1=shortcuts, r=frame
+    const bodyRows = this.rows - 7;
 
     const leftLines = this._buildLeft(lW, bodyRows);
     const rightLines = this._buildRight(rW, bodyRows);
 
     let out = "";
     for (let i = 0; i < bodyRows; i++) {
-      const row = 4 + i;
-      const lLine = leftLines[i] ?? { t: "", v: 0 };
-      const rLine = rightLines[i] ?? { t: "", v: 0 };
-      const lPad = " ".repeat(Math.max(0, lW - lLine.v));
-      const rPad = " ".repeat(Math.max(0, rW - rLine.v));
+      const row = 3 + i;
+      const lLn = leftLines[i] ?? { t: "", v: 0 };
+      const rLn = rightLines[i] ?? { t: "", v: 0 };
+      const lPad = " ".repeat(Math.max(0, lW - lLn.v));
+      const rPad = " ".repeat(Math.max(0, rW - rLn.v));
 
-      out += ansi.pos(row, 1) + Y(B.v);
-      out += ansi.pos(row, 2) + lLine.t + lPad;
-      out += ansi.pos(row, lW + 3) + D(":");
-      out += ansi.pos(row, lW + 5) + rLine.t + rPad;
-      out += ansi.pos(row, c) + Y(B.v);
+      out += ansi.pos(row, 2) + lLn.t + lPad; // left content (col 1 = left frame)
+      out += ansi.pos(row, lW + 2) + PANEL_V; // panel separator
+      out += ansi.pos(row, lW + 3) + rLn.t + rPad; // right content
     }
-
     return out;
   }
 
-  private _renderInput(): void {
-    if (this._rendering) return;
-    if (this._renderQueued) return;
-    this._renderQueued = true;
-    setImmediate(() => {
-      this._renderQueued = false;
-      if (this._rendering) return;
-      this._rendering = true;
-      try {
-        this._doRenderInput();
-      } finally {
-        this._rendering = false;
-      }
-    });
+  // ─── Input panel (recessed box) ────────────────────────────────
+
+  private _buildInputPanel(): string {
+    const rW = this.rightW;
+    const topRow = this.rows - 4;
+    const inputRow = this.rows - 3;
+    const botRow = this.rows - 2;
+    const line = this._buildInputLine(rW);
+
+    const topBorder = PANEL_BG(" ".repeat(rW + 2));
+    const content = PANEL_BG(
+      " " + line.t + " ".repeat(Math.max(0, rW - line.v)) + " ",
+    );
+    const botBorder = PANEL_BG(" ".repeat(rW + 2));
+
+    return (
+      ansi.pos(topRow, this.leftW + 2) +
+      topBorder +
+      ansi.pos(inputRow, this.leftW + 2) +
+      content +
+      ansi.pos(botRow, this.leftW + 2) +
+      botBorder
+    );
   }
 
-  private _doRenderInput(): void {
+  // ─── Command popup ─────────────────────────────────────────────
+
+  private _getPopupPosition(): { startRow: number; above: boolean } {
+    const inputRow = this.rows - 3; // input panel's text row
+    const popupRows = Math.min(8, this._cmdPopupMatches.length);
+    const spaceBelow = this.rows - 1 - (inputRow + 1 + popupRows);
+    if (spaceBelow >= 0) {
+      return { startRow: inputRow + 1, above: false };
+    }
+    return { startRow: inputRow - 1 - popupRows, above: true };
+  }
+
+  private _buildCmdPopup(): string {
+    if (!this._cmdPopupActive || this._cmdPopupMatches.length === 0) return "";
+
     const rW = this.rightW;
-    const bodyRows = this.rows - 6;
-    const inputRow = 4 + bodyRows - 1;
+    const { startRow } = this._getPopupPosition();
+    const popupRows = Math.min(8, this._cmdPopupMatches.length);
 
-    const line = this._buildInputLine(rW);
-    const rPad = " ".repeat(Math.max(0, rW - line.v));
-
-    process.stdout.write(ansi.pos(inputRow, this.leftW + 5) + line.t + rPad);
+    let out = "";
+    for (let i = 0; i < popupRows + 1; i++) {
+      out +=
+        ansi.pos(startRow + i, this.leftW + 3) + PANEL_BG(" ".repeat(rW - 2));
+    }
+    for (let i = 0; i < popupRows; i++) {
+      const cmd = this._cmdPopupMatches[i];
+      const isSelected = i === this._cmdPopupIdx;
+      const line = isSelected ? PANEL_BG(C("  " + cmd)) : C("  " + cmd);
+      const lineLen = visLen(cmd) + 2;
+      const pad = " ".repeat(Math.max(0, rW - 2 - lineLen));
+      out += ansi.pos(startRow + i, this.leftW + 3) + line + pad;
+    }
+    return out;
   }
 
   // ─── Left panel ───────────────────────────────────────────────
@@ -697,12 +810,10 @@ export class TerminalUI extends EventEmitter {
     const blank = () => add("");
 
     blank();
-    add("  " + Y("+-- ") + Wb("OWL MIND") + Y(" --+"));
+    add("  " + Wb("OWL MIND"));
     blank();
-
     add("  " + Y(this._currentFace()));
     blank();
-
     add(
       "  " +
         C("*") +
@@ -730,8 +841,7 @@ export class TerminalUI extends EventEmitter {
     blank();
 
     if (this._toolCalls.length > 0) {
-      const divLen = Math.max(0, w - 14);
-      add("  " + D("REASONING") + " " + D(DIV.repeat(divLen)));
+      add("  " + D("REASONING") + " " + D(DIV.repeat(Math.max(0, w - 14))));
       const visible = this._toolCalls.slice(-8);
       visible.forEach((tc, i) => {
         const isLast = i === visible.length - 1;
@@ -767,7 +877,7 @@ export class TerminalUI extends EventEmitter {
     }
 
     while (lines.length < rows - 1) blank();
-    add("  " + D(DIV.repeat(Math.max(0, w - 4))) + " FIREWALL");
+    add("  " + D(DIV.repeat(Math.max(0, w - 4))) + " " + D("FIREWALL"));
 
     return lines.slice(0, rows);
   }
@@ -775,7 +885,7 @@ export class TerminalUI extends EventEmitter {
   // ─── Right panel ─────────────────────────────────────────────
 
   private _convRows(): number {
-    return this.rows - 8;
+    return this.rows - 4;
   }
 
   private _buildRight(
@@ -783,27 +893,27 @@ export class TerminalUI extends EventEmitter {
     rows: number,
   ): Array<{ t: string; v: number }> {
     const lines: Array<{ t: string; v: number }> = [];
-    const convRows = rows - 2;
+    const convRows = rows - 1;
 
     if (this._lines.length === 0) {
-      const hint = "  " + D("What do you want to work on?");
-      lines.push({ t: hint, v: visLen(hint) });
+      lines.push({ t: "  " + D("What do you want to work on?"), v: 26 });
     } else {
       const total = this._lines.length;
       const end = Math.max(0, total - this._scrollOff);
       const start = Math.max(0, end - this._convRows());
-      const visible = this._lines.slice(start, end);
+      const vis = this._lines.slice(start, end);
       for (let i = 0; i < convRows; i++) {
-        const l = visible[i] ?? "";
+        const l = vis[i] ?? "";
         lines.push({ t: l, v: visLen(l) });
       }
     }
 
     while (lines.length < convRows) lines.push({ t: "", v: 0 });
 
-    const sep = "  " + D(DIV.repeat(w - 4));
-    lines.push({ t: sep, v: visLen(sep) });
-
+    lines.push({
+      t: "  " + D(DIV.repeat(w - 4)),
+      v: visLen("  " + DIV.repeat(w - 4)),
+    });
     lines.push(this._buildInputLine(w));
 
     return lines.slice(0, rows);
@@ -812,8 +922,10 @@ export class TerminalUI extends EventEmitter {
   private _buildInputLine(_w?: number): { t: string; v: number } {
     if (this._inputLocked) {
       const spin = C(SPINNER[this._spinIdx % SPINNER.length]);
-      const t = "  " + spin + D("  thinking...");
-      return { t, v: visLen(t) };
+      return {
+        t: "  " + spin + D("  thinking..."),
+        v: visLen("  thinking...") + 3,
+      };
     }
     const prefix = "  " + C("> ") + Wb("");
     let before: string, atCur: string, after: string;
@@ -838,19 +950,17 @@ export class TerminalUI extends EventEmitter {
   private _buildShortcuts(): string {
     const c = this.cols;
     const r = this.rows;
-    const inner = c - 4;
-
+    const inner = c - 4; // 2-char inset on each side
     const line =
-      C("[Esc]") +
-      D("  Stop     ") +
-      C("[^P]") +
-      D("  Parliament     ") +
-      C("[^L]") +
-      D("  Clear     ") +
-      C("[^C]") +
-      D("  Quit");
-
-    return ansi.pos(r - 1, 2) + padR(line, inner);
+      Wb("[Esc]") +
+      Wbr("  Stop     ") +
+      Wb("[^P]") +
+      Wbr("  Parliament     ") +
+      Wb("[^L]") +
+      Wbr("  Clear     ") +
+      Wb("[^C]") +
+      Wbr("  Quit");
+    return ansi.pos(r - 1, 3) + SHORT_BG(padR(line, inner));
   }
 
   // ─── Owl face ─────────────────────────────────────────────────
