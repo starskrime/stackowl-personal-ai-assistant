@@ -675,27 +675,32 @@ export class TerminalUI extends EventEmitter {
 
   private _buildTopBar(): string {
     const c = this.cols;
-    const bar = this._buildTopBarContent(c - 4);
+    const bar = this._buildTopBarContent();
     return (
       ansi.pos(2) +
-      TOP_BG(W("  " + bar + "  ")) +
+      PANEL_BG("  " + bar + "  ") +
       ansi.pos(3) +
-      TOP_BG(Wbr(DIV.repeat(c)))
+      PANEL_BG(AMBER(DIV.repeat(c)))
     );
   }
 
-  private _buildTopBarContent(_innerW?: number): string {
-    const name = Wb(this.owlEmoji + " " + this.owlName);
+  private _buildTopBarContent(): string {
+    const badge = chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(
+      " " + this.owlEmoji + " " + this.owlName + " "
+    );
     const model = this.owlModel
-      ? Wbr(" . ") + C(this.owlModel.replace("claude-", "").slice(0, 18))
+      ? " " + MUT("[") + BLUE(this.owlModel.replace("claude-", "").slice(0, 18)) + MUT("]")
       : "";
-    const turn = this._turn > 0 ? Wbr(" . ") + W("turn " + this._turn) : "";
-    const toks =
-      this._tokens > 0
-        ? Wbr(" . ") + W((this._tokens / 1000).toFixed(1) + "k tokens")
-        : "";
-    const cost = this._cost > 0 ? Wbr(" . $") + W(this._cost.toFixed(3)) : "";
-    return name + model + turn + toks + cost;
+    const turn  = this._turn > 0
+      ? " " + MUT("·") + " " + PURPLE("turn " + this._turn)
+      : "";
+    const toks  = this._tokens > 0
+      ? " " + MUT("·") + " " + LBL((this._tokens / 1000).toFixed(1) + "k")
+      : "";
+    const cost  = this._cost > 0
+      ? " " + MUT("·") + " " + GREEN("$" + this._cost.toFixed(3))
+      : "";
+    return badge + model + turn + toks + cost;
   }
 
   // ─── Body ──────────────────────────────────────────────────────
