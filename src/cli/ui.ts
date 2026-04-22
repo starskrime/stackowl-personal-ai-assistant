@@ -46,7 +46,7 @@ const CONTENT_BG = chalk.bgRgb(8, 8, 16);     // body panels bg
 
 const FRAME_V = CONTENT_BG(" ");          // transparent frame cell (invisible)
 const FRAME_H = CONTENT_BG(" ");          // transparent frame cell (invisible)
-const PANEL_V = MUT(" │ ");               // panel separator — explicit muted color
+const PANEL_V = chalk.rgb(69, 71, 90)(" │ "); // panel separator — LBL-level brightness
 
 const DIV = "━"; // heavy horizontal divider (U+2501)
 

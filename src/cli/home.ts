@@ -39,7 +39,7 @@ const CONTENT_BG = chalk.bgRgb(8, 8, 16);
 
 const FRAME_V = CONTENT_BG(" ");
 const FRAME_H = CONTENT_BG(" ");
-const PANEL_V = MUT(" │ ");
+const PANEL_V = chalk.rgb(69, 71, 90)(" │ "); // panel separator — LBL-level brightness
 
 const DIV = "━";
 
