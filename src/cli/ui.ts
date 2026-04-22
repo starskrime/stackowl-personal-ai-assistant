@@ -46,7 +46,7 @@ const CONTENT_BG = chalk.bgRgb(8, 8, 16);     // body panels bg
 
 const FRAME_V = CONTENT_BG(" ");          // transparent frame cell (invisible)
 const FRAME_H = CONTENT_BG(" ");          // transparent frame cell (invisible)
-const PANEL_V = chalk.rgb(69, 71, 90)(" │ "); // panel separator — LBL-level brightness
+const PANEL_V = AMBER(" │ "); // panel separator — amber, visible on any dark background
 
 const DIV = "━"; // heavy horizontal divider (U+2501)
 
@@ -762,7 +762,8 @@ export class TerminalUI extends EventEmitter {
     if (spaceBelow >= 0) {
       return { startRow: inputRow + 1, above: false };
     }
-    return { startRow: inputRow - 1 - popupRows, above: true };
+    // Shift up by 2 so our bottom border lands at rows-5, keeping rows-4 free for the input panel top border
+    return { startRow: inputRow - 2 - popupRows, above: true };
   }
 
   private _buildCmdPopup(): string {
@@ -772,28 +773,33 @@ export class TerminalUI extends EventEmitter {
     const { startRow } = this._getPopupPosition();
     const popupRows = Math.min(8, this._cmdPopupMatches.length);
 
-    // Popup background — noticeably brighter than the body (rgb 8,8,16)
-    const POPUP_BG = chalk.bgRgb(22, 22, 38);
+    // Deep purple-navy background — clearly different from body bg (8,8,16)
+    const POPUP_BG = chalk.bgRgb(28, 28, 52);
 
     let out = "";
 
-    // Amber top border
-    out += ansi.pos(startRow - 1, this.leftW + 3) + POPUP_BG(AMBER("▔".repeat(rW - 2)));
-
-    // Item rows
+    // Item rows — each prefixed with amber ▌ indicator (visibility guaranteed)
     for (let i = 0; i < popupRows; i++) {
       const cmd = this._cmdPopupMatches[i];
       const isSelected = i === this._cmdPopupIdx;
-      const label = isSelected
-        ? chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold("  " + cmd)
-        : POPUP_BG(W("  " + cmd));
-      const lineLen = visLen("  " + cmd);
-      const pad = POPUP_BG(" ".repeat(Math.max(0, rW - 2 - lineLen)));
-      out += ansi.pos(startRow + i, this.leftW + 3) + label + pad;
+      const itemW = rW - 3; // 1 for ▌, 2 padding
+      const lineLen = visLen(" " + cmd + " ");
+      const pad = " ".repeat(Math.max(0, itemW - lineLen));
+      if (isSelected) {
+        out +=
+          ansi.pos(startRow + i, this.leftW + 3) +
+          AMBER("▌") +
+          chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(" " + cmd + " " + pad);
+      } else {
+        out +=
+          ansi.pos(startRow + i, this.leftW + 3) +
+          AMBER("▌") +
+          POPUP_BG(W(" " + cmd + " " + pad));
+      }
     }
 
     // Amber bottom border
-    out += ansi.pos(startRow + popupRows, this.leftW + 3) + POPUP_BG(AMBER("▁".repeat(rW - 2)));
+    out += ansi.pos(startRow + popupRows, this.leftW + 3) + POPUP_BG(AMBER("▁".repeat(rW - 1)));
 
     return out;
   }
