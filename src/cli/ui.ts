@@ -602,24 +602,7 @@ export class TerminalUI extends EventEmitter {
 
   private _renderCmdPopup(): void {
     if (!this._cmdPopupActive || this._cmdPopupMatches.length === 0) return;
-    const rW = this.rightW;
-    const { startRow } = this._getPopupPosition();
-    const popupRows = Math.min(8, this._cmdPopupMatches.length);
-
-    let out = "";
-    for (let i = 0; i < popupRows + 1; i++) {
-      out +=
-        ansi.pos(startRow + i, this.leftW + 3) + PANEL_BG(" ".repeat(rW - 2));
-    }
-    for (let i = 0; i < popupRows; i++) {
-      const cmd = this._cmdPopupMatches[i];
-      const isSelected = i === this._cmdPopupIdx;
-      const line = isSelected ? PANEL_BG(chalk.rgb(205, 214, 244).bold("  " + cmd)) : BLUE("  " + cmd);
-      const lineLen = visLen(cmd) + 2;
-      const pad = " ".repeat(Math.max(0, rW - 2 - lineLen));
-      out += ansi.pos(startRow + i, this.leftW + 3) + line + pad;
-    }
-    process.stdout.write(out);
+    process.stdout.write(this._buildCmdPopup());
   }
 
   // ─── Full redraw ───────────────────────────────────────────────
@@ -789,19 +772,29 @@ export class TerminalUI extends EventEmitter {
     const { startRow } = this._getPopupPosition();
     const popupRows = Math.min(8, this._cmdPopupMatches.length);
 
+    // Popup background — noticeably brighter than the body (rgb 8,8,16)
+    const POPUP_BG = chalk.bgRgb(22, 22, 38);
+
     let out = "";
-    for (let i = 0; i < popupRows + 1; i++) {
-      out +=
-        ansi.pos(startRow + i, this.leftW + 3) + PANEL_BG(" ".repeat(rW - 2));
-    }
+
+    // Amber top border
+    out += ansi.pos(startRow - 1, this.leftW + 3) + POPUP_BG(AMBER("▔".repeat(rW - 2)));
+
+    // Item rows
     for (let i = 0; i < popupRows; i++) {
       const cmd = this._cmdPopupMatches[i];
       const isSelected = i === this._cmdPopupIdx;
-      const line = isSelected ? PANEL_BG(BLUE("  " + cmd)) : BLUE("  " + cmd);
-      const lineLen = visLen(cmd) + 2;
-      const pad = " ".repeat(Math.max(0, rW - 2 - lineLen));
-      out += ansi.pos(startRow + i, this.leftW + 3) + line + pad;
+      const label = isSelected
+        ? chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold("  " + cmd)
+        : POPUP_BG(W("  " + cmd));
+      const lineLen = visLen("  " + cmd);
+      const pad = POPUP_BG(" ".repeat(Math.max(0, rW - 2 - lineLen)));
+      out += ansi.pos(startRow + i, this.leftW + 3) + label + pad;
     }
+
+    // Amber bottom border
+    out += ansi.pos(startRow + popupRows, this.leftW + 3) + POPUP_BG(AMBER("▁".repeat(rW - 2)));
+
     return out;
   }
 
