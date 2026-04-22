@@ -29,23 +29,23 @@ const ansi = {
 
 // ─── Color palette — Neon Accent ─────────────────────────────────
 
-const AMBER  = chalk.rgb(250, 179, 135);   // primary accent
-const BLUE   = chalk.rgb(137, 180, 250);   // secondary accent
-const GREEN  = chalk.rgb(166, 227, 161);   // success / high mood
-const PURPLE = chalk.rgb(203, 166, 247);   // metadata (turns, triggered)
-const W      = chalk.rgb(205, 214, 244);   // primary text
-const LBL    = chalk.rgb(69, 71, 90);      // labels / dim text
-const MUT    = chalk.rgb(46, 46, 69);      // muted (borders, timings)
-const R      = chalk.rgb(243, 139, 168);   // error
+const AMBER = chalk.rgb(250, 179, 135); // primary accent
+const BLUE = chalk.rgb(137, 180, 250); // secondary accent
+const GREEN = chalk.rgb(166, 227, 161); // success / high mood
+const PURPLE = chalk.rgb(203, 166, 247); // metadata (turns, triggered)
+const W = chalk.rgb(205, 214, 244); // primary text
+const LBL = chalk.rgb(69, 71, 90); // labels / dim text
+const MUT = chalk.rgb(46, 46, 69); // muted (borders, timings)
+const R = chalk.rgb(243, 139, 168); // error
 
 // Backgrounds
-const PANEL_BG   = chalk.bgRgb(12, 12, 24);   // top bar / input zone bg
-const CONTENT_BG = chalk.bgRgb(8, 8, 16);     // body panels bg
+const PANEL_BG = chalk.bgRgb(12, 12, 24); // top bar / input zone bg
+const CONTENT_BG = chalk.bgRgb(8, 8, 16); // body panels bg
 
 // ─── Frame + panel constants ──────────────────────────────────────
 
-const FRAME_V = CONTENT_BG(" ");          // transparent frame cell (invisible)
-const FRAME_H = CONTENT_BG(" ");          // transparent frame cell (invisible)
+const FRAME_V = CONTENT_BG(" "); // transparent frame cell (invisible)
+const FRAME_H = CONTENT_BG(" "); // transparent frame cell (invisible)
 const PANEL_V = AMBER(" │ "); // panel separator — amber, visible on any dark background
 
 const DIV = "━"; // heavy horizontal divider (U+2501)
@@ -311,7 +311,9 @@ export class TerminalUI extends EventEmitter {
     this._stopThink();
     this._owlState = "done";
     this._turn++;
-    this._pushLine(chalk.rgb(205, 214, 244).bold("  " + emoji + " " + name) + LBL(":"));
+    this._pushLine(
+      chalk.rgb(205, 214, 244).bold("  " + emoji + " " + name) + LBL(":"),
+    );
     for (const l of this._wrapText(content, this.rightW - 4)) {
       this._pushLine("  " + W(l));
     }
@@ -365,7 +367,9 @@ export class TerminalUI extends EventEmitter {
             this._streamHeaderIdx = this._lines.length;
             this._turn++;
             this._pushLine(
-              chalk.rgb(205, 214, 244).bold("  " + this.owlEmoji + " " + this.owlName) + LBL(":"),
+              chalk
+                .rgb(205, 214, 244)
+                .bold("  " + this.owlEmoji + " " + this.owlName) + LBL(":"),
             );
           }
           this._streamBuf += chunk;
@@ -668,21 +672,26 @@ export class TerminalUI extends EventEmitter {
   }
 
   private _buildTopBarContent(): string {
-    const badge = chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(
-      " " + this.owlEmoji + " " + this.owlName + " "
-    );
+    const badge = chalk
+      .bgRgb(250, 179, 135)
+      .rgb(8, 8, 16)
+      .bold(" " + this.owlEmoji + " " + this.owlName + " ");
     const model = this.owlModel
-      ? " " + MUT("[") + BLUE(this.owlModel.replace("claude-", "").slice(0, 18)) + MUT("]")
+      ? " " +
+        MUT("[") +
+        BLUE(this.owlModel.replace("claude-", "").slice(0, 18)) +
+        MUT("]")
       : "";
-    const turn  = this._turn > 0
-      ? " " + MUT("·") + " " + PURPLE("turn " + this._turn)
-      : "";
-    const toks  = this._tokens > 0
-      ? " " + MUT("·") + " " + LBL((this._tokens / 1000).toFixed(1) + "k")
-      : "";
-    const cost  = this._cost > 0
-      ? " " + MUT("·") + " " + GREEN("$" + this._cost.toFixed(3))
-      : "";
+    const turn =
+      this._turn > 0 ? " " + MUT("·") + " " + PURPLE("turn " + this._turn) : "";
+    const toks =
+      this._tokens > 0
+        ? " " + MUT("·") + " " + LBL((this._tokens / 1000).toFixed(1) + "k")
+        : "";
+    const cost =
+      this._cost > 0
+        ? " " + MUT("·") + " " + GREEN("$" + this._cost.toFixed(3))
+        : "";
     return badge + model + turn + toks + cost;
   }
 
@@ -723,9 +732,9 @@ export class TerminalUI extends EventEmitter {
       const lPad = " ".repeat(Math.max(0, lW - lLn.v));
       const rPad = " ".repeat(Math.max(0, rW - rLn.v));
 
-      out += ansi.pos(row, 2) + lLn.t + lPad; // left content (col 1 = left frame)
-      out += ansi.pos(row, lW + 2) + PANEL_V; // panel separator
-      out += ansi.pos(row, lW + 3) + rLn.t + rPad; // right content
+      out += ansi.pos(row, 2) + lLn.t + lPad; // left content
+      out += ansi.pos(row, lW + 2) + PANEL_V; // panel separator ( │ at lW+3)
+      out += ansi.pos(row, lW + 5) + rLn.t + rPad; // right content starts after separator
     }
     return out;
   }
@@ -734,22 +743,25 @@ export class TerminalUI extends EventEmitter {
 
   private _buildInputPanel(): string {
     const rW = this.rightW;
-    const topRow   = this.rows - 4;
+    const topRow = this.rows - 4;
     const inputRow = this.rows - 3;
-    const botRow   = this.rows - 2;
+    const botRow = this.rows - 2;
     const line = this._buildInputLine(rW);
 
     // Amber top-border line, panel-bg content row, amber bottom-border line
     const topBorder = PANEL_BG(AMBER("▔".repeat(rW + 2)));
-    const content   = PANEL_BG(
+    const content = PANEL_BG(
       " " + line.t + " ".repeat(Math.max(0, rW - line.v)) + " ",
     );
     const botBorder = PANEL_BG(AMBER("▁".repeat(rW + 2)));
 
     return (
-      ansi.pos(topRow,   this.leftW + 2) + topBorder +
-      ansi.pos(inputRow, this.leftW + 2) + content   +
-      ansi.pos(botRow,   this.leftW + 2) + botBorder
+      ansi.pos(topRow, this.leftW + 2) +
+      topBorder +
+      ansi.pos(inputRow, this.leftW + 2) +
+      content +
+      ansi.pos(botRow, this.leftW + 2) +
+      botBorder
     );
   }
 
@@ -762,8 +774,9 @@ export class TerminalUI extends EventEmitter {
     if (spaceBelow >= 0) {
       return { startRow: inputRow + 1, above: false };
     }
-    // Shift up by 2 so our bottom border lands at rows-5, keeping rows-4 free for the input panel top border
-    return { startRow: inputRow - 2 - popupRows, above: true };
+    const minStartRow = 4;
+    const rawStart = inputRow - 1 - popupRows;
+    return { startRow: Math.max(minStartRow, rawStart), above: true };
   }
 
   private _buildCmdPopup(): string {
@@ -773,7 +786,6 @@ export class TerminalUI extends EventEmitter {
     const { startRow } = this._getPopupPosition();
     const popupRows = Math.min(8, this._cmdPopupMatches.length);
 
-    // Deep purple-navy background — clearly different from body bg (8,8,16)
     const POPUP_BG = chalk.bgRgb(28, 28, 52);
 
     let out = "";
@@ -789,7 +801,10 @@ export class TerminalUI extends EventEmitter {
         out +=
           ansi.pos(startRow + i, this.leftW + 3) +
           AMBER("▌") +
-          chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(" " + cmd + " " + pad);
+          chalk
+            .bgRgb(250, 179, 135)
+            .rgb(8, 8, 16)
+            .bold(" " + cmd + " " + pad);
       } else {
         out +=
           ansi.pos(startRow + i, this.leftW + 3) +
@@ -799,7 +814,9 @@ export class TerminalUI extends EventEmitter {
     }
 
     // Amber bottom border
-    out += ansi.pos(startRow + popupRows, this.leftW + 3) + POPUP_BG(AMBER("▁".repeat(rW - 1)));
+    out +=
+      ansi.pos(startRow + popupRows, this.leftW + 3) +
+      POPUP_BG(AMBER("▁".repeat(rW - 1)));
 
     return out;
   }
@@ -822,20 +839,38 @@ export class TerminalUI extends EventEmitter {
     blank();
     add("  " + AMBER(this._currentFace()));
     if (this._owlState === "thinking") {
-      add("  " + BLUE(SPINNER[this._spinIdx % SPINNER.length] + " thinking..."));
+      add(
+        "  " + BLUE(SPINNER[this._spinIdx % SPINNER.length] + " thinking..."),
+      );
     }
     blank();
     add(
-      "  " + PURPLE("◆") + " " + LBL("Instincts") + "   " +
-      (this._instincts > 0 ? AMBER.bold(this._instincts + " triggered") : MUT("—")),
+      "  " +
+        PURPLE("◆") +
+        " " +
+        LBL("Instincts") +
+        "   " +
+        (this._instincts > 0
+          ? AMBER.bold(this._instincts + " triggered")
+          : MUT("—")),
     );
     add(
-      "  " + PURPLE("◆") + " " + LBL("Memory   ") + "   " +
-      (this._memFacts > 0 ? AMBER.bold(this._memFacts + " facts") : MUT("—")),
+      "  " +
+        PURPLE("◆") +
+        " " +
+        LBL("Memory   ") +
+        "   " +
+        (this._memFacts > 0 ? AMBER.bold(this._memFacts + " facts") : MUT("—")),
     );
     add(
-      "  " + PURPLE("◆") + " " + LBL("Skills   ") + "   " +
-      (this._skillsHit > 0 ? GREEN.bold(this._skillsHit + " invoked") : MUT("—")),
+      "  " +
+        PURPLE("◆") +
+        " " +
+        LBL("Skills   ") +
+        "   " +
+        (this._skillsHit > 0
+          ? GREEN.bold(this._skillsHit + " invoked")
+          : MUT("—")),
     );
     blank();
 
@@ -852,9 +887,10 @@ export class TerminalUI extends EventEmitter {
             : tc.status === "done"
               ? GREEN("✓")
               : R("✕");
-        const name = tc.status === "running"
-          ? BLUE(trunc(tc.name, w - 18))
-          : W(trunc(tc.name, w - 18));
+        const name =
+          tc.status === "running"
+            ? BLUE(trunc(tc.name, w - 18))
+            : W(trunc(tc.name, w - 18));
         const ms = tc.ms ? MUT(" " + tc.ms + "ms") : "";
         add(branch + icon + " " + name + ms);
         if (tc.summary) {
@@ -932,14 +968,14 @@ export class TerminalUI extends EventEmitter {
     let before: string, atCur: string, after: string;
     if (this._inputMasked) {
       before = "*".repeat(this._inputCursor);
-      atCur  = this._inputBuf[this._inputCursor] ? "*" : " ";
-      after  = "*".repeat(
+      atCur = this._inputBuf[this._inputCursor] ? "*" : " ";
+      after = "*".repeat(
         Math.max(0, this._inputBuf.length - this._inputCursor - 1),
       );
     } else {
       before = this._inputBuf.slice(0, this._inputCursor);
-      atCur  = this._inputBuf[this._inputCursor] ?? " ";
-      after  = this._inputBuf.slice(this._inputCursor + 1);
+      atCur = this._inputBuf[this._inputCursor] ?? " ";
+      after = this._inputBuf.slice(this._inputCursor + 1);
     }
     const display = W(before) + chalk.bgYellow.black(atCur) + W(after);
     const t = prefix + display;
@@ -957,10 +993,14 @@ export class TerminalUI extends EventEmitter {
       chalk.bgRgb(26, 26, 44).rgb(205, 214, 244).bold(` ${k} `);
 
     const line =
-      key("ESC") + LBL("  Stop     ") +
-      key("^P")  + LBL("  Parliament     ") +
-      key("^L")  + LBL("  Clear     ") +
-      key("^C")  + LBL("  Quit");
+      key("ESC") +
+      LBL("  Stop     ") +
+      key("^P") +
+      LBL("  Parliament     ") +
+      key("^L") +
+      LBL("  Clear     ") +
+      key("^C") +
+      LBL("  Quit");
 
     return ansi.pos(r - 1, 3) + PANEL_BG(padR(line, inner));
   }
@@ -993,7 +1033,7 @@ export class TerminalUI extends EventEmitter {
     const color =
       trait === "challenge" ? AMBER : trait === "verbosity" ? BLUE : GREEN;
     const filled = color("█").repeat(v);
-    const empty  = MUT("█").repeat(10 - v);
+    const empty = MUT("█").repeat(10 - v);
     return LBL(label) + " " + filled + empty + " " + MUT(String(val));
   }
 

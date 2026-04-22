@@ -25,14 +25,14 @@ const H = {
 
 // ─── Color palette — Neon Accent ─────────────────────────────────
 
-const AMBER  = chalk.rgb(250, 179, 135);
-const BLUE   = chalk.rgb(137, 180, 250);
-const GREEN  = chalk.rgb(166, 227, 161);
-const W      = chalk.rgb(205, 214, 244);
-const LBL    = chalk.rgb(69, 71, 90);
-const MUT    = chalk.rgb(46, 46, 69);
+const AMBER = chalk.rgb(250, 179, 135);
+const BLUE = chalk.rgb(137, 180, 250);
+const GREEN = chalk.rgb(166, 227, 161);
+const W = chalk.rgb(205, 214, 244);
+const LBL = chalk.rgb(69, 71, 90);
+const MUT = chalk.rgb(46, 46, 69);
 
-const PANEL_BG   = chalk.bgRgb(12, 12, 24);
+const PANEL_BG = chalk.bgRgb(12, 12, 24);
 const CONTENT_BG = chalk.bgRgb(8, 8, 16);
 
 // ─── Frame + panel constants ──────────────────────────────────────
@@ -93,6 +93,16 @@ export class HomeScreen extends EventEmitter {
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private _closed = false;
   private _shuttingDown = false;
+
+  // ─── Command popup ─────────────────────────────────────────────
+  private _cmdPopupActive = false;
+  private _cmdPopupMatches: string[] = [];
+  private _cmdPopupIdx = 0;
+  private _cmdNames: string[] = [];
+
+  setCommandList(names: string[]): void {
+    this._cmdNames = names;
+  }
 
   constructor(private opts: HomeOpts) {
     super();
@@ -173,10 +183,72 @@ export class HomeScreen extends EventEmitter {
       return;
     }
 
+    // ── Command popup active ───────────────────────────────────
+    if (this._cmdPopupActive) {
+      if (key === E + "[A") {
+        this._cmdPopupIdx = Math.max(0, this._cmdPopupIdx - 1);
+        this._renderInputBoxQueued();
+        return;
+      }
+      if (key === E + "[B") {
+        this._cmdPopupIdx = Math.min(
+          this._cmdPopupMatches.length - 1,
+          this._cmdPopupIdx + 1,
+        );
+        this._renderInputBoxQueued();
+        return;
+      }
+      if (key === "\r" || key === "\n") {
+        const selected = this._cmdPopupMatches[this._cmdPopupIdx];
+        if (selected) {
+          this._buf = "/" + selected;
+          this._inputCursor = this._buf.length;
+        }
+        this._cmdPopupActive = false;
+        this._renderInputBoxQueued();
+        return;
+      }
+      if (key === E) {
+        this._buf = "";
+        this._inputCursor = 0;
+        this._cmdPopupActive = false;
+        this._renderInputBoxQueued();
+        return;
+      }
+      if (key === "\x7f") {
+        if (this._buf.length <= 1) {
+          this._buf = "";
+          this._inputCursor = 0;
+          this._cmdPopupActive = false;
+          this._renderInputBoxQueued();
+        } else {
+          this._buf = this._buf.slice(0, -1);
+          this._inputCursor--;
+          this._updatePopupMatches();
+          this._renderInputBoxQueued();
+        }
+        return;
+      }
+      if (key.length >= 1 && key >= " ") {
+        this._buf =
+          this._buf.slice(0, this._inputCursor) +
+          key +
+          this._buf.slice(this._inputCursor);
+        this._inputCursor += key.length;
+        this._updatePopupMatches();
+        this._renderInputBoxQueued();
+        return;
+      }
+      return;
+    }
+
+    // ── Normal input ────────────────────────────────────────────
+
     if (key === "\r" || key === "\n") {
       if (this._buf.length > 0) {
         const payload = this._buf;
         this._buf = "";
+        this._inputCursor = 0;
         this._renderInputBoxQueued();
         this.emit("activate", payload);
       }
@@ -184,18 +256,81 @@ export class HomeScreen extends EventEmitter {
     }
 
     if (key === "\x7f") {
-      if (this._buf.length > 0) {
+      if (this._inputCursor > 0 && this._buf.length > 0) {
+        this._buf =
+          this._buf.slice(0, this._inputCursor - 1) +
+          this._buf.slice(this._inputCursor);
+        this._inputCursor--;
+        this._renderInputBoxQueued();
+      } else if (this._buf.length > 0) {
         this._buf = this._buf.slice(0, -1);
         this._renderInputBoxQueued();
       }
       return;
     }
 
+    if (key === E + "[A") {
+      if (this._histIdx === -1) this._histTemp = this._buf;
+      if (this._histIdx < this._history.length - 1) {
+        this._histIdx++;
+        this._buf = this._history[this._histIdx];
+        this._inputCursor = this._buf.length;
+        this._renderInputBoxQueued();
+      }
+      return;
+    }
+    if (key === E + "[B") {
+      if (this._histIdx > -1) {
+        this._histIdx--;
+        this._buf =
+          this._histIdx === -1 ? this._histTemp : this._history[this._histIdx];
+        this._inputCursor = this._buf.length;
+        this._renderInputBoxQueued();
+      }
+      return;
+    }
+
+    if (key === "/") {
+      this._buf = "/";
+      this._inputCursor = 1;
+      this._cmdPopupActive = true;
+      this._updatePopupMatches();
+      this._cmdPopupIdx = 0;
+      this._renderInputBoxQueued();
+      return;
+    }
+
     if (key.length >= 1 && key >= " ") {
-      this._buf += key;
+      this._buf =
+        this._buf.slice(0, this._inputCursor) +
+        key +
+        this._buf.slice(this._inputCursor);
+      this._inputCursor += key.length;
       this._renderInputBoxQueued();
     }
   };
+
+  // ─── Popup helpers ─────────────────────────────────────────────
+
+  private _inputCursor = 0;
+  private _histTemp = "";
+  private _history: string[] = [];
+  private _histIdx = -1;
+
+  private _updatePopupMatches(): void {
+    const filter = this._buf.slice(1).toLowerCase();
+    if (!filter) {
+      this._cmdPopupMatches = [...this._cmdNames];
+    } else {
+      this._cmdPopupMatches = this._cmdNames.filter((n) =>
+        n.startsWith(filter),
+      );
+    }
+    this._cmdPopupIdx = 0;
+    if (this._cmdPopupMatches.length === 0) {
+      this._cmdPopupActive = false;
+    }
+  }
 
   private _onResize = () => {
     if (this._resizeTimer) clearTimeout(this._resizeTimer);
@@ -278,17 +413,33 @@ export class HomeScreen extends EventEmitter {
     const inner = c - 2;
     const { owlName, generation, challenge, skills } = this.opts;
 
-    const leftBadge = chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(" ◈ STACKOWL ");
-    const rightBadge = chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(
-      " " + this.opts.owlEmoji + " " + owlName + " "
-    );
+    const leftBadge = chalk
+      .bgRgb(250, 179, 135)
+      .rgb(8, 8, 16)
+      .bold(" ◈ STACKOWL ");
+    const rightBadge = chalk
+      .bgRgb(250, 179, 135)
+      .rgb(8, 8, 16)
+      .bold(" " + this.opts.owlEmoji + " " + owlName + " ");
     const meta =
-      " " + MUT("[") + BLUE(this.opts.model.replace("claude-", "").slice(0, 14)) + MUT("]") +
-      " " + MUT("·") + " " + LBL("gen" + generation) +
-      " " + MUT("·") + " " + AMBER("⚡" + challenge) +
-      " " + MUT("·") + " " + GREEN("📦" + skills + " skills");
+      " " +
+      MUT("[") +
+      BLUE(this.opts.model.replace("claude-", "").slice(0, 14)) +
+      MUT("]") +
+      " " +
+      MUT("·") +
+      " " +
+      LBL("gen" + generation) +
+      " " +
+      MUT("·") +
+      " " +
+      AMBER("⚡" + challenge) +
+      " " +
+      MUT("·") +
+      " " +
+      GREEN("📦" + skills + " skills");
 
-    const leftLen  = visLen(leftBadge);
+    const leftLen = visLen(leftBadge);
     const rightLen = visLen(rightBadge + meta);
     const gap = Math.max(2, inner - leftLen - rightLen);
 
@@ -324,7 +475,7 @@ export class HomeScreen extends EventEmitter {
 
       out += H.pos(row, 2) + lLn.t + lPad;
       out += H.pos(row, lW + 2) + PANEL_V;
-      out += H.pos(row, lW + 3) + rLn.t + rPad;
+      out += H.pos(row, lW + 5) + rLn.t + rPad;
     }
 
     return out;
@@ -332,12 +483,9 @@ export class HomeScreen extends EventEmitter {
 
   // ─── Left panel (owl identity) ───────────────────────────────
 
-  private _buildLeft(
-    w: number,
-    rows: number,
-  ): Array<{ t: string; v: number }> {
+  private _buildLeft(w: number, rows: number): Array<{ t: string; v: number }> {
     const lines: Array<{ t: string; v: number }> = [];
-    const add   = (t: string) => lines.push({ t, v: visLen(t) });
+    const add = (t: string) => lines.push({ t, v: visLen(t) });
     const blank = () => add("");
 
     const secHdr = (label: string) => {
@@ -345,11 +493,24 @@ export class HomeScreen extends EventEmitter {
       return "  " + AMBER.bold(label) + " " + line;
     };
 
-    const { owlEmoji, owlName, generation, challenge, provider, model, skills } =
-      this.opts;
+    const {
+      owlEmoji,
+      owlName,
+      generation,
+      challenge,
+      provider,
+      model,
+      skills,
+    } = this.opts;
 
     blank();
-    add("  " + chalk.bgRgb(250, 179, 135).rgb(8, 8, 16).bold(" " + owlEmoji + " " + owlName + " "));
+    add(
+      "  " +
+        chalk
+          .bgRgb(250, 179, 135)
+          .rgb(8, 8, 16)
+          .bold(" " + owlEmoji + " " + owlName + " "),
+    );
     blank();
     add(secHdr("IDENTITY"));
     add("  " + LBL("Generation") + "  " + W(String(generation)));
@@ -357,7 +518,12 @@ export class HomeScreen extends EventEmitter {
     blank();
     add(secHdr("BACKEND"));
     add("  " + LBL("Provider") + "   " + BLUE(provider));
-    add("  " + LBL("Model   ") + "   " + W(model.replace("claude-", "").slice(0, 14)));
+    add(
+      "  " +
+        LBL("Model   ") +
+        "   " +
+        W(model.replace("claude-", "").slice(0, 14)),
+    );
     add("  " + LBL("Skills  ") + "   " + GREEN(String(skills) + " loaded"));
 
     while (lines.length < rows) blank();
@@ -371,7 +537,7 @@ export class HomeScreen extends EventEmitter {
     rows: number,
   ): Array<{ t: string; v: number }> {
     const lines: Array<{ t: string; v: number }> = [];
-    const add   = (t: string) => lines.push({ t, v: visLen(t) });
+    const add = (t: string) => lines.push({ t, v: visLen(t) });
     const blank = () => add("");
 
     // Center row for the input prompt
@@ -381,7 +547,7 @@ export class HomeScreen extends EventEmitter {
 
     // Centered prompt label
     const labelText = "What do you want to work on?";
-    const labelPad  = Math.max(0, Math.floor((w - labelText.length) / 2));
+    const labelPad = Math.max(0, Math.floor((w - labelText.length) / 2));
     add(" ".repeat(labelPad) + LBL(labelText));
     blank(); // input box rendered separately by _renderInputBox
 
@@ -393,11 +559,19 @@ export class HomeScreen extends EventEmitter {
       add("  " + LBL("recent sessions"));
       blank();
       for (const s of sessions) {
-        const title    = trunc(s.title, w - 24);
-        const turns    = MUT(String(s.turns) + "t");
-        const ago      = MUT(s.ago);
-        const spacer   = " ".repeat(
-          Math.max(1, w - 2 - visLen(title) - visLen(String(s.turns) + "t") - visLen(s.ago) - 4),
+        const title = trunc(s.title, w - 24);
+        const turns = MUT(String(s.turns) + "t");
+        const ago = MUT(s.ago);
+        const spacer = " ".repeat(
+          Math.max(
+            1,
+            w -
+              2 -
+              visLen(title) -
+              visLen(String(s.turns) + "t") -
+              visLen(s.ago) -
+              4,
+          ),
         );
         add("  " + W(title) + spacer + turns + "  " + ago);
       }
@@ -418,10 +592,14 @@ export class HomeScreen extends EventEmitter {
       chalk.bgRgb(26, 26, 44).rgb(205, 214, 244).bold(` ${k} `);
 
     const line =
-      key("ESC") + LBL("  Stop     ") +
-      key("^P")  + LBL("  Parliament     ") +
-      key("^L")  + LBL("  Clear     ") +
-      key("^C")  + LBL("  Quit");
+      key("ESC") +
+      LBL("  Stop     ") +
+      key("^P") +
+      LBL("  Parliament     ") +
+      key("^L") +
+      LBL("  Clear     ") +
+      key("^C") +
+      LBL("  Quit");
 
     return H.pos(r - 1, 3) + PANEL_BG(padR(line, inner));
   }
@@ -430,7 +608,7 @@ export class HomeScreen extends EventEmitter {
 
   private _renderInputBox(): void {
     const r = this.rows;
-    const bodyRows    = r - 7;
+    const bodyRows = r - 7;
     const inputCenterRow = Math.floor(bodyRows / 2);
 
     const lW = this.leftW;
@@ -442,18 +620,60 @@ export class HomeScreen extends EventEmitter {
     if (this._buf.length > 0) {
       contentLine = AMBER("  › ") + W(this._buf) + cursor;
     } else {
-      contentLine = AMBER("  › ") + LBL("Ask anything or type / for commands") + W(" ") + cursor;
+      contentLine =
+        AMBER("  › ") +
+        LBL("Ask anything or type / for commands") +
+        W(" ") +
+        cursor;
     }
 
     const contentLen = visLen(contentLine);
     const rowPad = " ".repeat(Math.max(0, rW - contentLen));
-    const row    = 3 + inputCenterRow;
+    const row = 3 + inputCenterRow;
+
+    let out = "";
+
+    // Command popup (rendered above input)
+    if (this._cmdPopupActive && this._cmdPopupMatches.length > 0) {
+      const popupRows = Math.min(8, this._cmdPopupMatches.length);
+      const popupStartRow = row - 1 - popupRows;
+      const POPUP_BG = chalk.bgRgb(28, 28, 52);
+
+      for (let i = 0; i < popupRows; i++) {
+        const cmd = this._cmdPopupMatches[i];
+        const isSelected = i === this._cmdPopupIdx;
+        const itemW = rW - 4;
+        const lineLen = visLen(" " + cmd + " ");
+        const pad = " ".repeat(Math.max(0, itemW - lineLen));
+        if (isSelected) {
+          out +=
+            H.pos(popupStartRow + i, lW + 3) +
+            AMBER("▌") +
+            chalk
+              .bgRgb(250, 179, 135)
+              .rgb(8, 8, 16)
+              .bold(" " + cmd + " " + pad);
+        } else {
+          out +=
+            H.pos(popupStartRow + i, lW + 3) +
+            AMBER("▌") +
+            POPUP_BG(W(" " + cmd + " " + pad));
+        }
+      }
+      out +=
+        H.pos(popupStartRow + popupRows, lW + 3) +
+        POPUP_BG(AMBER("▁".repeat(rW - 1)));
+    }
 
     // Amber top/bottom border, panel-bg content
-    process.stdout.write(
-      H.pos(row - 1, lW + 3) + PANEL_BG(AMBER("▔".repeat(rW))) +
-      H.pos(row,     lW + 3) + PANEL_BG(contentLine + rowPad)   +
-      H.pos(row + 1, lW + 3) + PANEL_BG(AMBER("▁".repeat(rW))),
-    );
+    out +=
+      H.pos(row - 1, lW + 3) +
+      PANEL_BG(AMBER("▔".repeat(rW))) +
+      H.pos(row, lW + 3) +
+      PANEL_BG(contentLine + rowPad) +
+      H.pos(row + 1, lW + 3) +
+      PANEL_BG(AMBER("▁".repeat(rW)));
+
+    process.stdout.write(out);
   }
 }

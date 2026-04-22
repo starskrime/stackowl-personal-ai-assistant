@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Option B — Full Design Spec</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #111318;
+    color: #cdd6f4;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 32px 24px 48px;
+  }
+
+  h1 { font-size: 20px; font-weight: 700; color: #cba6f7; margin-bottom: 4px; }
+  .subtitle { color: #6c7086; font-size: 13px; margin-bottom: 32px; }
+
+  h2 { font-size: 15px; font-weight: 600; color: #89b4fa; margin-bottom: 6px; margin-top: 32px; }
+  .section-note { font-size: 12px; color: #585b70; margin-bottom: 16px; }
+
+  /* terminal window chrome */
+  .window {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid #1e1e2e;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+    margin-bottom: 48px;
+  }
+
+  .win-chrome {
+    background: #181825;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border-bottom: 1px solid #1e1e2e;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot-r { background: #f38ba8; }
+  .dot-y { background: #f9e2af; }
+  .dot-g { background: #a6e3a1; }
+  .win-title { font-size: 12px; color: #45475a; margin-left: 8px; font-family: 'SF Mono', monospace; }
+
+  /* ── shared terminal base ── */
+  .term {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    background: #080810;
+    color: #7f849c;
+    user-select: none;
+  }
+
+  /* ── TOP BAR ── */
+  .topbar {
+    background: #0c0c18;
+    padding: 5px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid #fab387;
+  }
+  .owl-badge {
+    background: #fab387;
+    color: #0c0c18;
+    font-weight: bold;
+    font-size: 10.5px;
+    padding: 2px 9px;
+    border-radius: 4px;
+    letter-spacing: 0.04em;
+  }
+  .model-chip {
+    background: #1a1a2c;
+    border: 1px solid #2e2e45;
+    color: #89b4fa;
+    font-size: 9.5px;
+    padding: 1px 7px;
+    border-radius: 3px;
+  }
+  .stat-chip { color: #45475a; font-size: 9.5px; }
+  .spacer { flex: 1; }
+  .cost-badge { color: #a6e3a1; font-size: 10px; font-weight: 600; }
+  .turn-badge { color: #cba6f7; font-size: 9.5px; }
+
+  /* ── BODY ── */
+  .body {
+    display: flex;
+    min-height: 320px;
+  }
+
+  .left {
+    width: 36%;
+    padding: 8px 10px;
+    background: #080810;
+    border-right: 2px solid #1a1a2c;
+    flex-shrink: 0;
+  }
+
+  .right {
+    flex: 1;
+    padding: 8px 12px;
+    background: #080810;
+    overflow: hidden;
+  }
+
+  /* ── SECTION HEADERS (left panel) ── */
+  .sec {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0 5px;
+    font-size: 8.5px;
+    color: #fab387;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    font-weight: 700;
+  }
+  .sec-line { flex: 1; height: 1px; background: #1a1a2c; }
+  .sec:first-child { margin-top: 4px; }
+
+  /* ── OWL FACE ── */
+  .owl-face {
+    color: #fab387;
+    font-size: 12.5px;
+    text-align: center;
+    display: block;
+    margin: 6px 0 4px;
+    letter-spacing: 0.05em;
+  }
+
+  .think-label { color: #89b4fa; font-size: 9.5px; text-align: center; display: block; margin-top: 2px; }
+
+  /* ── STAT ROWS ── */
+  .stat { display: flex; align-items: center; gap: 5px; margin: 2.5px 0; font-size: 9.5px; }
+  .stat-icon { font-size: 8px; width: 10px; text-align: center; }
+  .stat-lbl { color: #45475a; min-width: 56px; }
+  .stat-val { color: #cdd6f4; }
+  .stat-hit { color: #fab387; font-weight: 600; }
+  .stat-none { color: #1e1e2e; }
+
+  /* ── TOOL TREE ── */
+  .tool { display: flex; align-items: center; gap: 4px; margin: 2px 0; font-size: 9.5px; }
+  .tool-branch { color: #2e2e45; }
+  .tool-ok { color: #a6e3a1; }
+  .tool-run { color: #89b4fa; }
+  .tool-err { color: #f38ba8; }
+  .tool-lbl { color: #7f849c; }
+  .tool-ms { color: #2e2e45; font-size: 8.5px; }
+
+  /* ── DNA BARS ── */
+  .dna { display: flex; align-items: center; gap: 5px; margin: 2.5px 0; font-size: 9px; }
+  .dna-lbl { color: #45475a; min-width: 56px; }
+  .dna-block { display: inline-block; width: 7px; height: 9px; border-radius: 1px; margin-right: 1px; }
+  .db-on { background: #89b4fa; }
+  .db-mid { background: #fab387; }
+  .db-hi { background: #a6e3a1; }
+  .db-off { background: #1a1a2c; }
+  .dna-val { color: #45475a; font-size: 8.5px; margin-left: 2px; }
+
+  /* ── CONVERSATION ── */
+  .msg { margin-bottom: 8px; }
+  .msg-who { font-size: 9.5px; color: #45475a; margin-bottom: 1px; }
+  .msg-who-owl { font-size: 9.5px; color: #fab387; font-weight: bold; margin-bottom: 1px; }
+  .msg-body { font-size: 10px; color: #cdd6f4; line-height: 1.6; }
+  .msg-body-dim { font-size: 10px; color: #7f849c; line-height: 1.6; }
+
+  /* ── INPUT BOX ── */
+  .input-wrap {
+    margin: 8px 0 4px;
+    padding: 4px 10px;
+    background: #0c0c18;
+    border: 1px solid #fab387;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    box-shadow: 0 0 10px rgba(250,179,135,0.12), inset 0 0 4px rgba(250,179,135,0.04);
+  }
+  .input-sym { color: #fab387; font-weight: bold; font-size: 12px; }
+  .input-text { color: #cdd6f4; }
+  .input-ph { color: #313244; }
+  .cursor { background: #fab387; color: #080810; padding: 0 2px; border-radius: 1px; }
+
+  /* thinking state input */
+  .input-thinking {
+    margin: 8px 0 4px;
+    padding: 4px 10px;
+    background: #0c0c18;
+    border: 1px solid #313244;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: #45475a;
+    font-style: italic;
+  }
+  .spin { color: #89b4fa; font-style: normal; }
+
+  /* ── SHORTCUTS ── */
+  .shortcuts {
+    background: #0c0c18;
+    padding: 4px 12px;
+    font-size: 9px;
+    display: flex;
+    gap: 18px;
+    border-top: 1px solid #1a1a2c;
+    align-items: center;
+  }
+  .key {
+    background: #1a1a2c;
+    border: 1px solid #2e2e45;
+    color: #cdd6f4;
+    font-weight: bold;
+    font-size: 8.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+  }
+  .key-label { color: #45475a; margin-left: 3px; }
+
+  /* ── COMMAND POPUP ── */
+  .cmd-popup {
+    background: #0c0c18;
+    border: 1px solid #313244;
+    border-radius: 4px;
+    margin: 0 0 4px 0;
+    overflow: hidden;
+    font-size: 10px;
+  }
+  .cmd-item { padding: 3px 12px; color: #45475a; }
+  .cmd-item.active { background: #1a1a2c; color: #fab387; }
+  .cmd-item span { color: #585b70; font-size: 9px; margin-left: 8px; }
+
+  /* ── HOME SCREEN specific ── */
+  .home-right {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .home-tagline {
+    color: #45475a;
+    font-size: 10px;
+    text-align: center;
+    letter-spacing: 0.05em;
+  }
+
+  .home-input {
+    padding: 6px 14px;
+    background: #0c0c18;
+    border: 1px solid #fab387;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    box-shadow: 0 0 16px rgba(250,179,135,0.15);
+    min-width: 300px;
+  }
+
+  .recent-list { font-size: 9px; color: #45475a; }
+  .recent-item { padding: 2px 0; display: flex; gap: 10px; }
+  .recent-title { color: #585b70; }
+  .recent-turns { color: #2e2e45; }
+  .recent-ago { color: #2e2e45; }
+
+  /* annotation callouts */
+  .callouts { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .callout {
+    background: #1e1e2e;
+    border-left: 3px solid #fab387;
+    padding: 8px 12px;
+    border-radius: 0 6px 6px 0;
+    font-size: 12px;
+    color: #9399b2;
+    flex: 1;
+    min-width: 180px;
+  }
+  .callout strong { color: #cdd6f4; display: block; margin-bottom: 3px; font-size: 12px; }
+  .callout.cyan { border-left-color: #89b4fa; }
+  .callout.green { border-left-color: #a6e3a1; }
+  .callout.purple { border-left-color: #cba6f7; }
+
+  /* palette swatch */
+  .palette { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+  .swatch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #1e1e2e;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .sw-dot { width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0; }
+  .sw-name { color: #cdd6f4; font-size: 11px; }
+  .sw-hex { color: #45475a; font-size: 10px; font-family: monospace; }
+</style>
+</head>
+<body>
+
+<h1>Option B — Neon Accent · Full Design Spec</h1>
+<p class="subtitle">Both screens in detail. Review each section and confirm before we write the implementation plan.</p>
+
+<!-- ══════════════════════════════════════════
+     COLOR PALETTE
+══════════════════════════════════════════ -->
+
+<h2>Color Palette</h2>
+<p class="section-note">All new colors — same chalk API, different values.</p>
+
+<div class="palette">
+  <div class="swatch"><div class="sw-dot" style="background:#fab387"></div><div><div class="sw-name">Amber (primary accent)</div><div class="sw-hex">#fab387 · owl badge, input border, section headers</div></div></div>
+  <div class="swatch"><div class="sw-dot" style="background:#89b4fa"></div><div><div class="sw-name">Blue (secondary accent)</div><div class="sw-hex">#89b4fa · model chip, spinner, tool-running icon</div></div></div>
+  <div class="swatch"><div class="sw-dot" style="background:#a6e3a1"></div><div><div class="sw-name">Green (success)</div><div class="sw-hex">#a6e3a1 · completed tools, cost badge, high DNA bars</div></div></div>
+  <div class="swatch"><div class="sw-dot" style="background:#cba6f7"></div><div><div class="sw-name">Purple (metadata)</div><div class="sw-hex">#cba6f7 · turn counter, stats hits</div></div></div>
+  <div class="swatch"><div class="sw-dot" style="background:#cdd6f4"></div><div><div class="sw-name">White (primary text)</div><div class="sw-hex">#cdd6f4 · message content, active values</div></div></div>
+  <div class="swatch"><div class="sw-dot" style="background:#45475a"></div><div><div class="sw-name">Dim (labels)</div><div class="sw-hex">#45475a · section labels, "You:" prefix</div></div></div>
+  <div class="swatch"><div class="sw-dot" style="background:#0c0c18"></div><div><div class="sw-name">Panel BG</div><div class="sw-hex">#0c0c18 · top bar, input zone background</div></div></div>
+  <div class="swatch"><div class="sw-dot" style="background:#080810"></div><div><div class="sw-name">Content BG</div><div class="sw-hex">#080810 · body panels background</div></div></div>
+</div>
+
+
+<!-- ══════════════════════════════════════════
+     SCREEN 1 — HOME
+══════════════════════════════════════════ -->
+
+<h2>Screen 1 — Home</h2>
+<p class="section-note">Left panel shows owl identity. Right panel: centered prompt + recent sessions list.</p>
+
+<div class="window">
+  <div class="win-chrome">
+    <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+    <span class="win-title">stackowl — home</span>
+  </div>
+  <div class="term">
+    <!-- top bar -->
+    <div class="topbar">
+      <span class="owl-badge">◈ STACKOWL</span>
+      <div class="spacer"></div>
+      <span class="owl-badge">🦉 OwlName</span>
+      <span class="model-chip">sonnet-4-6</span>
+      <span class="stat-chip">gen 3</span>
+      <span class="stat-chip">· ⚡5</span>
+      <span class="stat-chip">· 📦12 skills</span>
+    </div>
+    <!-- body -->
+    <div class="body" style="min-height:280px">
+      <!-- left -->
+      <div class="left">
+        <div class="sec"><span>IDENTITY</span><div class="sec-line"></div></div>
+        <div class="stat"><span class="stat-icon" style="color:#fab387">🦉</span><span class="stat-lbl">Name</span><span class="stat-val" style="color:#fab387;font-weight:600">OwlName</span></div>
+        <div class="stat"><span class="stat-icon">◈</span><span class="stat-lbl">Generation</span><span class="stat-val">3</span></div>
+        <div class="stat"><span class="stat-icon" style="color:#fab387">⚡</span><span class="stat-lbl">Challenge</span><span class="stat-val">5 / 10</span></div>
+
+        <div class="sec"><span>BACKEND</span><div class="sec-line"></div></div>
+        <div class="stat"><span class="stat-icon">◆</span><span class="stat-lbl">Provider</span><span class="stat-val" style="color:#89b4fa">anthropic</span></div>
+        <div class="stat"><span class="stat-icon">◆</span><span class="stat-lbl">Model</span><span class="stat-val">sonnet-4-6</span></div>
+        <div class="stat"><span class="stat-icon" style="color:#a6e3a1">◆</span><span class="stat-lbl">Skills</span><span class="stat-val" style="color:#a6e3a1">12 loaded</span></div>
+
+        <div class="sec"><span>DNA</span><div class="sec-line"></div></div>
+        <div class="dna"><span class="dna-lbl">challenge</span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">5</span></div>
+        <div class="dna"><span class="dna-lbl">verbosity</span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">6</span></div>
+        <div class="dna"><span class="dna-lbl">mood</span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">8</span></div>
+      </div>
+      <!-- right: centered input + recent sessions -->
+      <div class="right" style="display:flex;flex-direction:column;justify-content:center;align-items:center;gap:20px">
+        <div style="text-align:center">
+          <div style="color:#45475a;font-size:9.5px;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">What do you want to work on?</div>
+          <div class="home-input">
+            <span class="input-sym">›</span>
+            <span class="input-ph">Ask anything or type / for commands</span>
+            <span class="cursor">_</span>
+          </div>
+        </div>
+        <div style="width:100%;max-width:340px">
+          <div style="color:#2e2e45;font-size:9px;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px">Recent sessions</div>
+          <div class="recent-item"><span class="recent-title">Refactor router module</span><div style="flex:1"></div><span class="recent-turns">8 turns</span><span class="recent-ago" style="margin-left:10px">2h ago</span></div>
+          <div class="recent-item"><span class="recent-title">Debug websocket timeout</span><div style="flex:1"></div><span class="recent-turns">14 turns</span><span class="recent-ago" style="margin-left:10px">yesterday</span></div>
+          <div class="recent-item"><span class="recent-title">Add pellet search feature</span><div style="flex:1"></div><span class="recent-turns">5 turns</span><span class="recent-ago" style="margin-left:10px">3d ago</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- shortcuts -->
+    <div class="shortcuts">
+      <span><span class="key">ESC</span><span class="key-label">Stop</span></span>
+      <span><span class="key">^P</span><span class="key-label">Parliament</span></span>
+      <span><span class="key">^L</span><span class="key-label">Clear</span></span>
+      <span><span class="key">^C</span><span class="key-label">Quit</span></span>
+    </div>
+  </div>
+</div>
+
+<div class="callouts">
+  <div class="callout"><strong>Amber badges in top bar</strong>Both STACKOWL and OwlName get the amber pill badge — establishes the accent immediately.</div>
+  <div class="callout cyan"><strong>Recent sessions list</strong>Right panel now uses space: centered input + last 3 sessions. No more empty right side.</div>
+  <div class="callout green"><strong>DNA bar colors</strong>challenge=amber, verbosity=blue, mood=green — each trait gets its own color for instant scanning.</div>
+</div>
+
+
+<!-- ══════════════════════════════════════════
+     SCREEN 2 — ACTIVE SESSION (idle)
+══════════════════════════════════════════ -->
+
+<h2>Screen 2 — Active Session (Idle State)</h2>
+<p class="section-note">Left panel: owl mind + tool tree + DNA. Right panel: conversation + input at bottom.</p>
+
+<div class="window">
+  <div class="win-chrome">
+    <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+    <span class="win-title">stackowl — session</span>
+  </div>
+  <div class="term">
+    <div class="topbar">
+      <span class="owl-badge">🦉 OwlName</span>
+      <span class="model-chip">sonnet-4-6</span>
+      <div class="spacer"></div>
+      <span class="turn-badge">turn 3</span>
+      <span class="stat-chip" style="margin-left:8px">·</span>
+      <span class="stat-chip">8.2k tokens</span>
+      <span class="stat-chip">·</span>
+      <span class="cost-badge">$0.021</span>
+    </div>
+    <div class="body" style="min-height:300px">
+      <div class="left">
+        <div class="sec"><span>OWL MIND</span><div class="sec-line"></div></div>
+        <span class="owl-face">( ^‿^ )</span>
+
+        <div class="stat"><span class="stat-icon" style="color:#cba6f7">◆</span><span class="stat-lbl">Instincts</span><span class="stat-none">—</span></div>
+        <div class="stat"><span class="stat-icon" style="color:#cba6f7">◆</span><span class="stat-lbl">Memory</span><span class="stat-none">—</span></div>
+        <div class="stat"><span class="stat-icon" style="color:#a6e3a1">◆</span><span class="stat-lbl">Skills</span><span class="stat-hit">3 invoked</span></div>
+
+        <div class="sec"><span>REASONING</span><div class="sec-line"></div></div>
+        <div class="tool"><span class="tool-branch">  ├</span><span class="tool-ok">✓</span><span class="tool-lbl">shell_exec</span><span class="tool-ms">42ms</span></div>
+        <div class="tool"><span class="tool-branch">  ├</span><span class="tool-ok">✓</span><span class="tool-lbl">read_file</span><span class="tool-ms">18ms</span></div>
+        <div class="tool"><span class="tool-branch">  └</span><span class="tool-ok">✓</span><span class="tool-lbl">write_file</span><span class="tool-ms">7ms</span></div>
+
+        <div class="sec"><span>DNA</span><div class="sec-line"></div></div>
+        <div class="dna"><span class="dna-lbl">challenge</span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">6</span></div>
+        <div class="dna"><span class="dna-lbl">verbosity</span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">5</span></div>
+        <div class="dna"><span class="dna-lbl">mood</span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">8</span></div>
+      </div>
+      <div class="right">
+        <div class="msg">
+          <div class="msg-who">  You</div>
+          <div class="msg-body">  Help me refactor the router module</div>
+        </div>
+        <div class="msg">
+          <div class="msg-who-owl">  🦉 OwlName</div>
+          <div class="msg-body-dim">  Sure! Let me look at the current structure first...</div>
+        </div>
+        <div class="msg">
+          <div class="msg-who">  You</div>
+          <div class="msg-body">  Focus on the dynamic model selection logic</div>
+        </div>
+        <div class="msg">
+          <div class="msg-who-owl">  🦉 OwlName</div>
+          <div class="msg-body-dim">  The router has grown large — it's doing complexity scoring,<br>&nbsp;&nbsp;model lookup, and fallback logic all in one place.<br>&nbsp;&nbsp;Here's my suggestion: split it into three focused functions...</div>
+        </div>
+        <!-- input -->
+        <div class="input-wrap">
+          <span class="input-sym">›</span>
+          <span class="input-ph">Ask anything or type / for commands</span>
+          <span class="cursor">_</span>
+        </div>
+      </div>
+    </div>
+    <div class="shortcuts">
+      <span><span class="key">ESC</span><span class="key-label">Stop</span></span>
+      <span><span class="key">^P</span><span class="key-label">Parliament</span></span>
+      <span><span class="key">^L</span><span class="key-label">Clear</span></span>
+      <span><span class="key">^C</span><span class="key-label">Quit</span></span>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════
+     SCREEN 2 — THINKING STATE
+══════════════════════════════════════════ -->
+
+<h2>Screen 2 — Thinking State</h2>
+<p class="section-note">Input locked, spinner replaces prompt, owl face changes, tool tree shows live progress.</p>
+
+<div class="window">
+  <div class="win-chrome">
+    <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+    <span class="win-title">stackowl — thinking</span>
+  </div>
+  <div class="term">
+    <div class="topbar">
+      <span class="owl-badge">🦉 OwlName</span>
+      <span class="model-chip">sonnet-4-6</span>
+      <div class="spacer"></div>
+      <span class="turn-badge">turn 4</span>
+      <span class="stat-chip" style="margin-left:8px">·</span>
+      <span class="stat-chip">11.4k tokens</span>
+      <span class="stat-chip">·</span>
+      <span class="cost-badge">$0.031</span>
+    </div>
+    <div class="body" style="min-height:260px">
+      <div class="left">
+        <div class="sec"><span>OWL MIND</span><div class="sec-line"></div></div>
+        <span class="owl-face" style="color:#89b4fa">( -_-)</span>
+        <span class="think-label">⠹ thinking...</span>
+
+        <div class="stat" style="margin-top:6px"><span class="stat-icon" style="color:#cba6f7">◆</span><span class="stat-lbl">Instincts</span><span class="stat-hit" style="color:#cba6f7">2 triggered</span></div>
+        <div class="stat"><span class="stat-icon" style="color:#cba6f7">◆</span><span class="stat-lbl">Memory</span><span class="stat-none">—</span></div>
+        <div class="stat"><span class="stat-icon" style="color:#a6e3a1">◆</span><span class="stat-lbl">Skills</span><span class="stat-hit">3 invoked</span></div>
+
+        <div class="sec"><span>REASONING</span><div class="sec-line"></div></div>
+        <div class="tool"><span class="tool-branch">  ├</span><span class="tool-ok">✓</span><span class="tool-lbl">shell_exec</span><span class="tool-ms">42ms</span></div>
+        <div class="tool"><span class="tool-branch">  ├</span><span class="tool-ok">✓</span><span class="tool-lbl">read_file</span><span class="tool-ms">18ms</span></div>
+        <div class="tool"><span class="tool-branch">  └</span><span class="tool-run">⠹</span><span class="tool-lbl" style="color:#89b4fa">write_file</span><span style="color:#89b4fa;font-size:8.5px;margin-left:3px">running</span></div>
+
+        <div class="sec"><span>DNA</span><div class="sec-line"></div></div>
+        <div class="dna"><span class="dna-lbl">challenge</span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-mid"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">6</span></div>
+        <div class="dna"><span class="dna-lbl">verbosity</span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-on"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">5</span></div>
+        <div class="dna"><span class="dna-lbl">mood</span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-hi"></span><span class="dna-block db-off"></span><span class="dna-block db-off"></span><span class="dna-val">8</span></div>
+      </div>
+      <div class="right">
+        <div class="msg">
+          <div class="msg-who">  You</div>
+          <div class="msg-body">  Now write the refactored version to disk</div>
+        </div>
+        <div class="msg">
+          <div class="msg-who-owl">  🦉 OwlName</div>
+          <div class="msg-body-dim">  Writing the three modules now...</div>
+        </div>
+        <!-- input locked = thinking state -->
+        <div class="input-thinking">
+          <span class="spin">⠹</span>
+          <span>thinking — press ESC to stop</span>
+        </div>
+      </div>
+    </div>
+    <div class="shortcuts">
+      <span><span class="key">ESC</span><span class="key-label">Stop</span></span>
+      <span><span class="key">^P</span><span class="key-label">Parliament</span></span>
+      <span><span class="key">^L</span><span class="key-label">Clear</span></span>
+      <span><span class="key">^C</span><span class="key-label">Quit</span></span>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════
+     COMMAND POPUP
+══════════════════════════════════════════ -->
+
+<h2>Command Popup ( / menu )</h2>
+<p class="section-note">Appears above the input box when user types /. Filtered list, amber highlight on selected item.</p>
+
+<div class="window" style="max-width:560px">
+  <div class="win-chrome">
+    <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+    <span class="win-title">stackowl — / menu</span>
+  </div>
+  <div class="term" style="padding:8px 0 0">
+    <div style="padding:0 12px">
+      <div class="msg-who">  You</div>
+      <div class="msg-body">  Previous message shown here</div>
+    </div>
+    <!-- popup appears above input -->
+    <div style="margin:8px 12px 0">
+      <div class="cmd-popup">
+        <div class="cmd-item active">/help <span>Show command list</span></div>
+        <div class="cmd-item">/status <span>Provider, model, owl info</span></div>
+        <div class="cmd-item">/owls <span>List owl personas</span></div>
+        <div class="cmd-item">/clear <span>Clear conversation context</span></div>
+        <div class="cmd-item">/skills <span>List loaded skills</span></div>
+        <div class="cmd-item">/quit <span>Save session and exit</span></div>
+      </div>
+      <div class="input-wrap">
+        <span class="input-sym">›</span>
+        <span class="input-text">/</span>
+        <span class="cursor">_</span>
+      </div>
+    </div>
+    <div class="shortcuts" style="margin-top:8px">
+      <span><span class="key">↑↓</span><span class="key-label">Navigate</span></span>
+      <span><span class="key">↵</span><span class="key-label">Select</span></span>
+      <span><span class="key">ESC</span><span class="key-label">Dismiss</span></span>
+    </div>
+  </div>
+</div>
+
+
+<div class="callouts" style="margin-top:24px">
+  <div class="callout"><strong>What changes from current code</strong>Chalk color values, DNA bar chars (▐ blocks vs #), section header style, input border, top bar layout. No structural changes.</div>
+  <div class="callout cyan"><strong>What stays the same</strong>All logic, key handling, scroll, streaming, tool tree, spinner frames, DNA values, session state — unchanged.</div>
+  <div class="callout purple"><strong>Home screen bonus</strong>Recent sessions list fills the empty right panel. Purely cosmetic — reads from existing session data already available in the gateway.</div>
+</div>
+
+</body>
+</html>

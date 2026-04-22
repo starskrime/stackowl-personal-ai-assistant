@@ -7,13 +7,13 @@
  *   3. TerminalUI emits "line" events → gateway → responses back to UI
  */
 
-import { resolve }                              from "node:path";
+import { resolve } from "node:path";
 import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
-import { log }                                  from "../../logger.js";
-import { TerminalUI }                           from "../../cli/ui.js";
-import { HomeScreen }                           from "../../cli/home.js";
-import { CommandRegistry }                      from "../../cli/commands.js";
-import { OnboardingFlow }                       from "../../cli/onboarding-flow.js";
+import { log } from "../../logger.js";
+import { TerminalUI } from "../../cli/ui.js";
+import { HomeScreen } from "../../cli/home.js";
+import { CommandRegistry } from "../../cli/commands.js";
+import { OnboardingFlow } from "../../cli/onboarding-flow.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 
 export interface CLIAdapterConfig {
@@ -21,17 +21,20 @@ export interface CLIAdapterConfig {
 }
 
 export class CLIAdapter implements ChannelAdapter {
-  readonly id   = "cli";
+  readonly id = "cli";
   readonly name = "CLI";
 
-  private userId:    string;
+  private userId: string;
   private sessionId: string;
-  private ui:        TerminalUI;
-  private commands:  CommandRegistry;
+  private ui: TerminalUI;
+  private commands: CommandRegistry;
 
   /** Serialized processing — one message at a time. */
-  private queue:      string[] = [];
+  private queue: string[] = [];
   private processing = false;
+
+  /** Guard against double gracefulShutdown on Ctrl+C. */
+  private _shuttingDown = false;
 
   /** Active onboarding wizard (null when not running). */
   private _onboarding: OnboardingFlow | null = null;
@@ -40,25 +43,34 @@ export class CLIAdapter implements ChannelAdapter {
     private gateway: OwlGateway,
     config: CLIAdapterConfig = {},
   ) {
-    this.userId    = config.userId ?? "local";
+    this.userId = config.userId ?? "local";
     this.sessionId = makeSessionId(this.id, this.userId);
-    this.ui        = new TerminalUI();
+    this.ui = new TerminalUI();
     this.ui.sessionId = this.sessionId;
-    this.commands  = new CommandRegistry();
+    this.commands = new CommandRegistry();
+    this.ui.setCommandList(this.commands.listNames());
   }
 
   // ─── ChannelAdapter interface ─────────────────────────────────
 
   async sendToUser(_userId: string, response: GatewayResponse): Promise<void> {
-    this.ui.printResponse(response.owlEmoji, response.owlName, response.content);
+    this.ui.printResponse(
+      response.owlEmoji,
+      response.owlName,
+      response.content,
+    );
   }
 
   async broadcast(response: GatewayResponse): Promise<void> {
-    this.ui.printResponse(response.owlEmoji, response.owlName, response.content);
+    this.ui.printResponse(
+      response.owlEmoji,
+      response.owlName,
+      response.content,
+    );
   }
 
   async start(): Promise<void> {
-    const owl    = this.gateway.getOwl();
+    const owl = this.gateway.getOwl();
     const config = this.gateway.getConfig();
 
     // Prepare TerminalUI identity (not entered yet)
@@ -71,20 +83,24 @@ export class CLIAdapter implements ChannelAdapter {
 
     // Update DNA from owl traits
     const traits = owl.dna.evolvedTraits;
-    const challengeNum = typeof traits.challengeLevel === "number"
-      ? traits.challengeLevel
-      : parseInt(String(traits.challengeLevel), 10) || 5;
+    const challengeNum =
+      typeof traits.challengeLevel === "number"
+        ? traits.challengeLevel
+        : parseInt(String(traits.challengeLevel), 10) || 5;
     this.ui.updateDNA({
       challenge: challengeNum,
       verbosity: (traits as any).verbosity ?? 5,
-      mood:      7,
+      mood: 7,
     });
+
+    // Wire UI events BEFORE showing home — so feedChar("\r") from
+    // home transition lands in the queue before we await the promise
+    this._wireUI();
 
     // ── Phase 1: show Home screen ──────────────────────────────────
     await this._showHome(owl, config, challengeNum);
 
     // ── Phase 2: TerminalUI is now active ─────────────────────────
-    this._wireUI();
 
     // Keep process alive until the UI emits "quit"
     await new Promise<void>((res) => {
@@ -97,46 +113,59 @@ export class CLIAdapter implements ChannelAdapter {
     this.ui.close();
   }
 
-  async deliverFile(_userId: string, filePath: string, caption?: string): Promise<void> {
-    this.ui.printInfo(`File ready: ${filePath}${caption ? " — " + caption : ""}`);
+  async deliverFile(
+    _userId: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
+    this.ui.printInfo(
+      `File ready: ${filePath}${caption ? " — " + caption : ""}`,
+    );
   }
 
   // ─── Home → Active transition ─────────────────────────────────
 
   private _showHome(
-    owl:          ReturnType<OwlGateway["getOwl"]>,
-    config:       ReturnType<OwlGateway["getConfig"]>,
+    owl: ReturnType<OwlGateway["getOwl"]>,
+    config: ReturnType<OwlGateway["getConfig"]>,
     challengeNum: number,
   ): Promise<void> {
     return new Promise((resolve) => {
       // Gather recent sessions if session store is available
-      const recentSessions: Array<{ title: string; turns: number; ago: string }> = [];
+      const recentSessions: Array<{
+        title: string;
+        turns: number;
+        ago: string;
+      }> = [];
 
       const home = new HomeScreen({
-        owlEmoji:   owl.persona.emoji,
-        owlName:    owl.persona.name,
+        owlEmoji: owl.persona.emoji,
+        owlName: owl.persona.name,
         generation: owl.dna.generation,
-        challenge:  challengeNum,
-        provider:   config.defaultProvider,
-        model:      config.defaultModel,
-        skills:     (this.gateway.getSkillsLoader?.()?.getRegistry().listEnabled().length) ?? 0,
+        challenge: challengeNum,
+        provider: config.defaultProvider,
+        model: config.defaultModel,
+        skills:
+          this.gateway.getSkillsLoader?.()?.getRegistry().listEnabled()
+            .length ?? 0,
         recentSessions,
       });
+      home.setCommandList(this.commands.listNames());
 
       home.on("quit", async () => {
         home.close();
         await this._gracefulShutdown();
       });
 
-      home.on("activate", (firstKey: string) => {
+      home.on("activate", (buf: string) => {
         // Stay in alt screen — hand off to TerminalUI
         home.transition();
         this.ui.enter();
-        // Feed the first typed character into the input
-        if (firstKey.length >= 1) {
-          this.ui.feedChar(firstKey);
-        }
-        resolve();
+        if (buf) this.ui.setInitialInput(buf);
+        setImmediate(() => {
+          if (buf) this.ui.feedChar("\r");
+          resolve();
+        });
       });
 
       home.enter();
@@ -156,8 +185,8 @@ export class CLIAdapter implements ChannelAdapter {
     });
 
     this.ui.on("onboarding", () => {
-      const configPath   = resolve(process.cwd(), "stackowl.config.json");
-      this._onboarding   = new OnboardingFlow(configPath);
+      const configPath = resolve(process.cwd(), "stackowl.config.json");
+      this._onboarding = new OnboardingFlow(configPath);
       this._onboarding.start(this.ui);
     });
   }
@@ -195,11 +224,11 @@ export class CLIAdapter implements ChannelAdapter {
 
       const response = await this.gateway.handle(
         {
-          id:        makeMessageId(),
+          id: makeMessageId(),
           channelId: this.id,
-          userId:    this.userId,
+          userId: this.userId,
           sessionId: this.sessionId,
-          text:      input,
+          text: input,
         },
         {
           onProgress: async (msg: string) => {
@@ -210,8 +239,13 @@ export class CLIAdapter implements ChannelAdapter {
             this.ui.printInfo(`📦 Install ${deps.join(" ")}? [y/n]`);
             return new Promise<boolean>((res) => {
               const onKey = (data: string) => {
-                if (data.toLowerCase() === "y") { process.stdin.off("data", onKey); res(true); }
-                else if (data.toLowerCase() === "n" || data === "\x03") { process.stdin.off("data", onKey); res(false); }
+                if (data.toLowerCase() === "y") {
+                  process.stdin.off("data", onKey);
+                  res(true);
+                } else if (data.toLowerCase() === "n" || data === "\x03") {
+                  process.stdin.off("data", onKey);
+                  res(false);
+                }
               };
               process.stdin.on("data", onKey);
             });
@@ -224,12 +258,17 @@ export class CLIAdapter implements ChannelAdapter {
 
       if (!didStream()) {
         this.ui.stopThinking();
-        this.ui.printResponse(response.owlEmoji, response.owlName, response.content);
+        this.ui.printResponse(
+          response.owlEmoji,
+          response.owlName,
+          response.content,
+        );
       }
 
       if (response.usage) {
         this.ui.updateStats(
-          (response.usage.promptTokens ?? 0) + (response.usage.completionTokens ?? 0),
+          (response.usage.promptTokens ?? 0) +
+            (response.usage.completionTokens ?? 0),
           0,
         );
       }
@@ -242,8 +281,8 @@ export class CLIAdapter implements ChannelAdapter {
   }
 
   private async _gracefulShutdown(): Promise<void> {
-    this.ui.printInfo("Saving session…");
-    await this.gateway.endSession(this.sessionId).catch(() => {});
+    if (this._shuttingDown) return;
+    this._shuttingDown = true;
     this.ui.close();
     process.exit(0);
   }

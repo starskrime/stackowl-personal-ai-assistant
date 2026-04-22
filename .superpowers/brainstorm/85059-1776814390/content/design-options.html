@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StackOwl Terminal UI — Design Options</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #111318;
+    color: #cdd6f4;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 32px 24px 80px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #cba6f7;
+    letter-spacing: 0.02em;
+    margin-bottom: 6px;
+  }
+
+  .subtitle {
+    color: #6c7086;
+    font-size: 14px;
+    margin-bottom: 36px;
+  }
+
+  .designs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin-bottom: 40px;
+  }
+
+  .design-card {
+    border: 2px solid transparent;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+    overflow: hidden;
+    background: #1e1e2e;
+  }
+
+  .design-card:hover {
+    border-color: #585b70;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+
+  .design-card.selected {
+    border-color: #cba6f7;
+    box-shadow: 0 0 0 4px rgba(203,166,247,0.15), 0 8px 32px rgba(0,0,0,0.5);
+  }
+
+  .design-label {
+    padding: 14px 18px 10px;
+    border-top: 1px solid #313244;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .design-label h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #cdd6f4;
+  }
+
+  .design-label p {
+    font-size: 12px;
+    color: #6c7086;
+    margin-top: 2px;
+  }
+
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 20px;
+  }
+
+  .badge-safe { background: #a6e3a1; color: #1e1e2e; }
+  .badge-bold { background: #89b4fa; color: #1e1e2e; }
+  .badge-retro { background: #f38ba8; color: #1e1e2e; }
+
+  /* ── Terminal mockup shell ── */
+  .term {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    line-height: 1.45;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 10px 10px 0 0;
+    user-select: none;
+  }
+
+  /* ════════════════════════════════════════
+     OPTION A — Refined Dark Glass
+     Fix: visible frame, cyan input border,
+     better label contrast, amber accent
+  ════════════════════════════════════════ */
+
+  .term-a {
+    background: #0d0d14;
+    color: #9399b2;
+    min-height: 320px;
+  }
+
+  .term-a .frame-shadow {
+    background: #1a1a2e;
+    padding: 1px 0;
+    color: #1a1a2e;
+    font-size: 10px;
+    letter-spacing: -0.5px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .term-a .topbar {
+    background: #12121c;
+    padding: 3px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #2d2d4e;
+  }
+
+  .term-a .owl-name { color: #f9e2af; font-weight: bold; }
+  .term-a .model-tag { color: #89b4fa; font-size: 9.5px; }
+  .term-a .stat-tag { color: #6c7086; font-size: 9.5px; }
+  .term-a .divider-row {
+    background: #0f0f1a;
+    color: #2d2d4e;
+    padding: 1px 10px;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .term-a .body {
+    display: flex;
+    height: 220px;
+    overflow: hidden;
+  }
+
+  .term-a .left {
+    width: 38%;
+    padding: 6px 8px;
+    background: #0d0d14;
+    border-right: 1px solid #1e1e30;
+    flex-shrink: 0;
+  }
+
+  .term-a .right {
+    flex: 1;
+    padding: 6px 10px;
+    background: #0d0d14;
+    overflow: hidden;
+  }
+
+  .term-a .section-hdr {
+    color: #585b70;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+    margin-top: 8px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid #1e1e30;
+  }
+
+  .term-a .owl-face { color: #f9e2af; font-size: 11px; margin: 6px 0; text-align: center; }
+
+  .term-a .stat-row { margin: 2px 0; font-size: 9.5px; display: flex; gap: 4px; align-items: center; }
+  .term-a .stat-dot { color: #45475a; }
+  .term-a .stat-lbl { color: #585b70; min-width: 56px; }
+  .term-a .stat-val { color: #cdd6f4; }
+  .term-a .stat-none { color: #313244; }
+
+  .term-a .tool-row { margin: 2px 0; font-size: 9.5px; color: #6c7086; }
+  .term-a .tool-ok { color: #a6e3a1; }
+  .term-a .tool-run { color: #89b4fa; }
+
+  .term-a .dna-lbl { color: #45475a; font-size: 9px; min-width: 52px; display: inline-block; }
+  .term-a .dna-filled { color: #89dceb; }
+  .term-a .dna-empty { color: #1e1e30; }
+  .term-a .dna-val { color: #6c7086; font-size: 9px; }
+
+  .term-a .msg-you { color: #6c7086; font-size: 9.5px; }
+  .term-a .msg-text { color: #cdd6f4; font-size: 9.5px; margin-bottom: 6px; }
+  .term-a .msg-owl { color: #f9e2af; font-weight: bold; font-size: 9.5px; }
+  .term-a .msg-content { color: #9399b2; font-size: 9.5px; }
+
+  .term-a .input-zone {
+    background: #12121c;
+    border-top: 1px solid #89b4fa;
+    padding: 4px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+  }
+  .term-a .prompt-sym { color: #89b4fa; font-weight: bold; }
+  .term-a .cursor-blk { background: #f9e2af; color: #0d0d14; padding: 0 1px; }
+
+  .term-a .shortcuts {
+    background: #12121c;
+    padding: 3px 10px;
+    font-size: 9px;
+    color: #45475a;
+    border-top: 1px solid #1a1a2e;
+  }
+  .term-a .key { color: #cdd6f4; font-weight: bold; background: #1e1e2e; padding: 0 3px; border-radius: 2px; }
+
+  /* ════════════════════════════════════════
+     OPTION B — Neon Accent
+     Bold amber+cyan accent system,
+     structured sections, glowing input
+  ════════════════════════════════════════ */
+
+  .term-b {
+    background: #080810;
+    color: #7f849c;
+    min-height: 320px;
+  }
+
+  .term-b .topbar {
+    background: #0c0c18;
+    padding: 4px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid #fab387;
+  }
+
+  .term-b .owl-badge {
+    background: #fab387;
+    color: #0c0c18;
+    font-weight: bold;
+    font-size: 9.5px;
+    padding: 1px 7px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+  }
+
+  .term-b .model-chip {
+    background: #1a1a30;
+    border: 1px solid #313244;
+    color: #89b4fa;
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  .term-b .stat-chip {
+    color: #45475a;
+    font-size: 9px;
+    margin-left: 2px;
+  }
+
+  .term-b .spacer { flex: 1; }
+  .term-b .cost-badge { color: #a6e3a1; font-size: 9.5px; }
+
+  .term-b .body {
+    display: flex;
+    height: 220px;
+  }
+
+  .term-b .left {
+    width: 38%;
+    padding: 6px 8px;
+    background: #080810;
+    border-right: 2px solid #1a1a2e;
+    flex-shrink: 0;
+  }
+
+  .term-b .right {
+    flex: 1;
+    padding: 6px 10px;
+    background: #080810;
+  }
+
+  .term-b .section-hdr {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 8px 0 4px;
+    font-size: 9px;
+    color: #fab387;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: bold;
+  }
+  .term-b .section-line { flex: 1; height: 1px; background: #1e1e2e; }
+
+  .term-b .owl-face { color: #fab387; font-size: 12px; margin: 4px 0; text-align: center; display: block; }
+
+  .term-b .stat-row { display: flex; align-items: center; gap: 4px; margin: 2px 0; font-size: 9.5px; }
+  .term-b .stat-icon { color: #fab387; }
+  .term-b .stat-lbl { color: #45475a; min-width: 54px; }
+  .term-b .stat-val { color: #cdd6f4; }
+  .term-b .stat-none { color: #1e1e2e; }
+
+  .term-b .tool-row { margin: 2px 0; font-size: 9.5px; }
+  .term-b .tool-ok { color: #a6e3a1; }
+  .term-b .tool-run { color: #89b4fa; }
+  .term-b .tool-lbl { color: #7f849c; }
+
+  .term-b .dna-bar { margin: 2px 0; font-size: 9px; display: flex; align-items: center; gap: 4px; }
+  .term-b .dna-lbl { color: #45475a; min-width: 54px; }
+  .term-b .dna-block { display: inline-block; width: 6px; height: 8px; border-radius: 1px; }
+  .term-b .dna-on { background: #89b4fa; }
+  .term-b .dna-off { background: #1e1e2e; }
+  .term-b .dna-val { color: #585b70; margin-left: 3px; }
+
+  .term-b .msg-you { color: #45475a; font-size: 9.5px; }
+  .term-b .msg-text { color: #cdd6f4; font-size: 9.5px; margin-bottom: 5px; }
+  .term-b .msg-owl { color: #fab387; font-weight: bold; font-size: 9.5px; }
+  .term-b .msg-content { color: #9399b2; font-size: 9.5px; }
+
+  .term-b .input-zone {
+    background: #0c0c18;
+    border: 1px solid #fab387;
+    border-radius: 3px;
+    margin: 4px 8px;
+    padding: 3px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    box-shadow: 0 0 8px rgba(250,179,135,0.15);
+  }
+  .term-b .prompt-sym { color: #fab387; font-weight: bold; }
+  .term-b .cursor-blk { background: #fab387; color: #080810; padding: 0 2px; border-radius: 1px; }
+
+  .term-b .shortcuts {
+    background: #0c0c18;
+    padding: 3px 10px;
+    font-size: 9px;
+    color: #313244;
+    display: flex;
+    gap: 16px;
+    border-top: 1px solid #1a1a2e;
+  }
+  .term-b .key { color: #fab387; font-weight: bold; }
+
+  /* ════════════════════════════════════════
+     OPTION C — Terminal Classic
+     Box-drawing borders, high contrast,
+     green-on-black heritage aesthetic
+  ════════════════════════════════════════ */
+
+  .term-c {
+    background: #000000;
+    color: #4a9e4a;
+    min-height: 320px;
+  }
+
+  .term-c .topbar {
+    background: #000;
+    padding: 2px 10px;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-bottom: 1px solid #1a4a1a;
+    color: #00d700;
+    font-size: 10px;
+    font-weight: bold;
+  }
+
+  .term-c .title-left { color: #00ff41; font-weight: bold; }
+  .term-c .title-sep { color: #1a4a1a; margin: 0 8px; }
+  .term-c .title-right { color: #00d700; }
+  .term-c .model-dim { color: #2a6a2a; font-size: 9.5px; }
+  .term-c .spacer { flex: 1; }
+
+  .term-c .body {
+    display: flex;
+    height: 224px;
+  }
+
+  .term-c .left {
+    width: 38%;
+    padding: 4px 6px;
+    border-right: 1px solid #1a4a1a;
+    flex-shrink: 0;
+  }
+
+  .term-c .right {
+    flex: 1;
+    padding: 4px 8px;
+  }
+
+  .term-c .box-top {
+    color: #1a4a1a;
+    font-size: 10px;
+    padding: 0;
+    margin-bottom: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .term-c .panel-hdr {
+    color: #2a6a2a;
+    font-size: 9px;
+    background: #000;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 3px;
+    border-bottom: 1px solid #1a4a1a;
+    padding-bottom: 1px;
+  }
+
+  .term-c .owl-face { color: #00ff41; font-size: 10.5px; margin: 4px 0 4px 8px; }
+
+  .term-c .stat-row { display: flex; gap: 4px; margin: 2px 0; font-size: 9.5px; }
+  .term-c .stat-lbl { color: #2a6a2a; min-width: 52px; }
+  .term-c .stat-val { color: #00d700; }
+  .term-c .stat-none { color: #1a4a1a; }
+
+  .term-c .tool-row { margin: 2px 0; font-size: 9.5px; color: #2a6a2a; }
+  .term-c .tool-ok { color: #00ff41; }
+  .term-c .tool-run { color: #ffd700; }
+
+  .term-c .dna-lbl { color: #2a6a2a; font-size: 9px; min-width: 56px; display: inline-block; }
+  .term-c .dna-filled { color: #00d700; }
+  .term-c .dna-empty { color: #1a3a1a; }
+  .term-c .dna-val { color: #2a6a2a; font-size: 9px; }
+
+  .term-c .msg-you { color: #2a6a2a; font-size: 9.5px; }
+  .term-c .msg-text { color: #00d700; font-size: 9.5px; margin-bottom: 5px; }
+  .term-c .msg-owl { color: #00ff41; font-weight: bold; font-size: 9.5px; }
+  .term-c .msg-content { color: #4a9e4a; font-size: 9.5px; }
+
+  .term-c .input-zone {
+    background: #000;
+    padding: 3px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    border-top: 1px solid #1a4a1a;
+    color: #00d700;
+  }
+  .term-c .prompt-sym { color: #00ff41; font-weight: bold; }
+  .term-c .cursor-blk { background: #00ff41; color: #000; padding: 0 1px; }
+
+  .term-c .shortcuts {
+    background: #000;
+    padding: 2px 8px;
+    font-size: 9px;
+    color: #1a4a1a;
+    display: flex;
+    gap: 16px;
+    border-top: 1px solid #1a4a1a;
+  }
+  .term-c .key { color: #00d700; }
+
+  /* ── selection state ── */
+  .selected-indicator {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #1e1e2e;
+    border-top: 1px solid #313244;
+    padding: 12px 24px;
+    font-size: 13px;
+    color: #cba6f7;
+    display: none;
+    align-items: center;
+    gap: 8px;
+  }
+  .selected-indicator.visible { display: flex; }
+  .sel-label { color: #6c7086; }
+</style>
+</head>
+<body>
+
+<h1>StackOwl Terminal UI — Design Direction</h1>
+<p class="subtitle">Three directions for the redesign. Click a card to select your preference.</p>
+
+<div class="designs">
+
+  <!-- ── OPTION A ── -->
+  <div class="design-card" id="card-a" onclick="select('a')">
+    <div class="term term-a">
+      <!-- frame top -->
+      <div class="frame-shadow">████████████████████████████████████████████████████████</div>
+      <!-- topbar -->
+      <div class="topbar">
+        <span class="owl-name">🦉 OwlName</span>
+        <span class="model-tag"> · sonnet-4-6</span>
+        <span class="stat-tag"> · turn 3 · 8.2k · $0.021</span>
+      </div>
+      <div class="divider-row">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      <!-- body -->
+      <div class="body">
+        <div class="left">
+          <div class="section-hdr">OWL MIND</div>
+          <div class="owl-face">( ^‿^ )</div>
+          <div class="stat-row"><span class="stat-dot">◆</span><span class="stat-lbl">Instincts</span><span class="stat-none">none</span></div>
+          <div class="stat-row"><span class="stat-dot">◆</span><span class="stat-lbl">Memory</span><span class="stat-none">none</span></div>
+          <div class="stat-row"><span class="stat-dot">◆</span><span class="stat-lbl">Skills</span><span class="stat-val">3 invoked</span></div>
+          <div class="section-hdr" style="margin-top:6px">REASONING</div>
+          <div class="tool-row"><span style="color:#45475a">  └ </span><span class="tool-ok">✓</span> shell_exec <span style="color:#313244">42ms</span></div>
+          <div class="tool-row"><span style="color:#45475a">  └ </span><span class="tool-run">⠹</span> read_file</div>
+          <div class="section-hdr" style="margin-top:6px">DNA</div>
+          <div style="margin:2px 0;font-size:9px"><span class="dna-lbl">challenge</span> <span class="dna-filled">██████</span><span class="dna-empty">████</span> <span class="dna-val">6</span></div>
+          <div style="margin:2px 0;font-size:9px"><span class="dna-lbl">verbosity</span> <span class="dna-filled">█████</span><span class="dna-empty">█████</span> <span class="dna-val">5</span></div>
+          <div style="margin:2px 0;font-size:9px"><span class="dna-lbl">mood</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="dna-filled">████████</span><span class="dna-empty">██</span> <span class="dna-val">8</span></div>
+        </div>
+        <div class="right">
+          <div class="msg-you">  You:</div>
+          <div class="msg-text">  Help me refactor this module</div>
+          <div class="msg-owl">  🦉 OwlName:</div>
+          <div class="msg-content">  Sure! Let me look at the file structure first...</div>
+          <div style="height:8px"></div>
+          <div class="msg-you">  You:</div>
+          <div class="msg-text">  Focus on the router module</div>
+          <div class="msg-owl">  🦉 OwlName:</div>
+          <div class="msg-content">  I can see the router has grown large. Here's what I suggest...</div>
+        </div>
+      </div>
+      <!-- input -->
+      <div class="input-zone">
+        <span class="prompt-sym">›</span>
+        <span style="color:#6c7086">Ask anything</span>
+        <span class="cursor-blk">_</span>
+      </div>
+      <!-- shortcuts -->
+      <div class="shortcuts">
+        <span class="key">[Esc]</span> Stop &nbsp;&nbsp;
+        <span class="key">[^P]</span> Parliament &nbsp;&nbsp;
+        <span class="key">[^L]</span> Clear &nbsp;&nbsp;
+        <span class="key">[^C]</span> Quit
+      </div>
+      <div class="frame-shadow">████████████████████████████████████████████████████████</div>
+    </div>
+    <div class="design-label">
+      <div>
+        <h3>A — Refined Dark Glass</h3>
+        <p>Fix current design: visible frame, cyan input border, amber accent for owl, better contrast labels. Familiar feel, cleaner execution.</p>
+      </div>
+      <span class="badge badge-safe">Safe</span>
+    </div>
+  </div>
+
+  <!-- ── OPTION B ── -->
+  <div class="design-card" id="card-b" onclick="select('b')">
+    <div class="term term-b">
+      <div class="topbar">
+        <span class="owl-badge">🦉 OwlName</span>
+        <span class="model-chip">sonnet-4-6</span>
+        <span class="stat-chip">· turn 3</span>
+        <span class="stat-chip">· 8.2k</span>
+        <div class="spacer"></div>
+        <span class="cost-badge">$0.021</span>
+      </div>
+      <div class="body">
+        <div class="left">
+          <div class="section-hdr">
+            <span>MIND</span>
+            <div class="section-line"></div>
+          </div>
+          <div style="text-align:center;margin:4px 0"><span class="owl-face">( ^‿^ )</span></div>
+          <div class="stat-row"><span class="stat-icon">⚡</span><span class="stat-lbl">Instincts</span><span class="stat-none">—</span></div>
+          <div class="stat-row"><span class="stat-icon">◈</span><span class="stat-lbl">Memory</span><span class="stat-none">—</span></div>
+          <div class="stat-row"><span class="stat-icon">◆</span><span class="stat-lbl">Skills</span><span class="stat-val">3 invoked</span></div>
+          <div class="section-hdr" style="margin-top:6px">
+            <span>TOOLS</span>
+            <div class="section-line"></div>
+          </div>
+          <div class="tool-row"><span class="tool-ok">✓</span> <span class="tool-lbl">shell_exec</span> <span style="color:#313244;font-size:9px">42ms</span></div>
+          <div class="tool-row"><span class="tool-run">⠹</span> <span class="tool-lbl">read_file</span></div>
+          <div class="section-hdr" style="margin-top:6px">
+            <span>DNA</span>
+            <div class="section-line"></div>
+          </div>
+          <div class="dna-bar">
+            <span class="dna-lbl">challenge</span>
+            <span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span>
+            <span class="dna-val">6</span>
+          </div>
+          <div class="dna-bar">
+            <span class="dna-lbl">verbosity</span>
+            <span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span>
+            <span class="dna-val">5</span>
+          </div>
+          <div class="dna-bar">
+            <span class="dna-lbl">mood</span>
+            <span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-on"></span><span class="dna-block dna-off"></span><span class="dna-block dna-off"></span>
+            <span class="dna-val">8</span>
+          </div>
+        </div>
+        <div class="right">
+          <div class="msg-you">  You:</div>
+          <div class="msg-text">  Help me refactor this module</div>
+          <div class="msg-owl">  🦉 OwlName:</div>
+          <div class="msg-content">  Sure! Let me look at the file structure first...</div>
+          <div style="height:6px"></div>
+          <div class="msg-you">  You:</div>
+          <div class="msg-text">  Focus on the router module</div>
+          <div class="msg-owl">  🦉 OwlName:</div>
+          <div class="msg-content">  The router has grown large. Here's what I suggest...</div>
+          <div style="height:8px"></div>
+          <div class="input-zone">
+            <span class="prompt-sym">›</span>
+            <span style="color:#45475a">Ask anything</span>
+            <span class="cursor-blk">_</span>
+          </div>
+        </div>
+      </div>
+      <div class="shortcuts">
+        <span><span class="key">[Esc]</span> Stop</span>
+        <span><span class="key">[^P]</span> Parliament</span>
+        <span><span class="key">[^L]</span> Clear</span>
+        <span><span class="key">[^C]</span> Quit</span>
+      </div>
+    </div>
+    <div class="design-label">
+      <div>
+        <h3>B — Neon Accent</h3>
+        <p>Amber badge header, block DNA bars, glowing input border, section lines. Bold accent system, clean info hierarchy.</p>
+      </div>
+      <span class="badge badge-bold">Bold</span>
+    </div>
+  </div>
+
+  <!-- ── OPTION C ── -->
+  <div class="design-card" id="card-c" onclick="select('c')">
+    <div class="term term-c">
+      <div class="topbar">
+        <span class="title-left">◈ STACKOWL</span>
+        <span class="title-sep">│</span>
+        <span class="title-right">🦉 OwlName</span>
+        <span class="model-dim"> gen3 · sonnet-4-6</span>
+        <div class="spacer"></div>
+        <span style="color:#ffd700;font-size:9.5px">$0.021</span>
+      </div>
+      <div style="color:#1a4a1a;font-size:10px;padding:0 0 0 0;overflow:hidden;white-space:nowrap">┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄</div>
+      <div class="body">
+        <div class="left">
+          <div class="panel-hdr">[ OWL MIND ]</div>
+          <div class="owl-face">( ^‿^ )</div>
+          <div class="stat-row"><span class="stat-lbl">instincts</span><span class="stat-none">none</span></div>
+          <div class="stat-row"><span class="stat-lbl">memory</span><span class="stat-none">none</span></div>
+          <div class="stat-row"><span class="stat-lbl">skills</span><span class="stat-val">3 invoked</span></div>
+          <div style="color:#1a4a1a;font-size:9px;margin:6px 0 3px">┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄</div>
+          <div class="panel-hdr">[ REASONING ]</div>
+          <div class="tool-row">  └ <span class="tool-ok">OK</span> shell_exec 42ms</div>
+          <div class="tool-row">  └ <span class="tool-run">RUN</span> read_file</div>
+          <div style="color:#1a4a1a;font-size:9px;margin:6px 0 3px">┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄</div>
+          <div class="panel-hdr">[ DNA ]</div>
+          <div style="font-size:9px;margin:2px 0"><span class="dna-lbl">challenge</span> <span class="dna-filled">██████</span><span class="dna-empty">████</span> <span class="dna-val">6</span></div>
+          <div style="font-size:9px;margin:2px 0"><span class="dna-lbl">verbosity</span> <span class="dna-filled">█████</span><span class="dna-empty">█████</span> <span class="dna-val">5</span></div>
+          <div style="font-size:9px;margin:2px 0"><span class="dna-lbl">mood&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> <span class="dna-filled">████████</span><span class="dna-empty">██</span> <span class="dna-val">8</span></div>
+        </div>
+        <div class="right">
+          <div class="msg-you">  [you]</div>
+          <div class="msg-text">  Help me refactor this module</div>
+          <div class="msg-owl">  [🦉 OwlName]</div>
+          <div class="msg-content">  Sure! Let me look at the file structure first...</div>
+          <div style="height:5px"></div>
+          <div class="msg-you">  [you]</div>
+          <div class="msg-text">  Focus on the router module</div>
+          <div class="msg-owl">  [🦉 OwlName]</div>
+          <div class="msg-content">  The router has grown large. Here's what I suggest...</div>
+        </div>
+      </div>
+      <div class="input-zone">
+        <span class="prompt-sym">►</span>
+        <span style="color:#2a6a2a">_</span>
+        <span class="cursor-blk"> </span>
+      </div>
+      <div class="shortcuts">
+        <span><span class="key">[ESC]</span> stop</span>
+        <span><span class="key">[^P]</span> parliament</span>
+        <span><span class="key">[^L]</span> clear</span>
+        <span><span class="key">[^C]</span> quit</span>
+      </div>
+    </div>
+    <div class="design-label">
+      <div>
+        <h3>C — Terminal Classic</h3>
+        <p>Green-on-black heritage aesthetic, bracket-style section headers, dashed separators, OK/RUN status tags. Retro terminal vibe.</p>
+      </div>
+      <span class="badge badge-retro">Retro</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="selected-indicator" id="sel-indicator">
+  <span class="sel-label">Selected:</span>
+  <span id="sel-text"></span>
+  <span class="sel-label" style="margin-left:8px">— reply in the terminal to confirm</span>
+</div>
+
+<script>
+  let selected = null;
+
+  function select(choice) {
+    document.querySelectorAll('.design-card').forEach(c => c.classList.remove('selected'));
+    const card = document.getElementById('card-' + choice);
+    card.classList.add('selected');
+    selected = choice;
+    const labels = {
+      a: 'A — Refined Dark Glass (Safe)',
+      b: 'B — Neon Accent (Bold)',
+      c: 'C — Terminal Classic (Retro)'
+    };
+    document.getElementById('sel-text').textContent = labels[choice];
+    document.getElementById('sel-indicator').classList.add('visible');
+
+    // write event
+    fetch('/__event', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type:'click', choice, text: labels[choice], timestamp: Date.now()})
+    }).catch(() => {});
+  }
+</script>
+</body>
+</html>
