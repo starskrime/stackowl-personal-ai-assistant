@@ -327,7 +327,8 @@ export class TerminalRenderer extends EventEmitter {
     out += ansi.pos(2) + topBarStr;
 
     // Body (rows 4 to rows-5)
-    const bodyRows = rows - 7;
+    // bodyRows must end at rows-5 so the input box (rows-4 .. rows-2) never overlaps.
+    const bodyRows = rows - 8;
     const leftLines  = renderLeftPanel(this._leftProps(),  leftW,  bodyRows);
     const rightLines = renderRightPanel(this._rightProps(), rightW, bodyRows);
 
@@ -352,6 +353,10 @@ export class TerminalRenderer extends EventEmitter {
     out += ansi.pos(rows - 4, leftW + 2) + inputLines[0];
     out += ansi.pos(rows - 3, leftW + 2) + inputLines[1];
     out += ansi.pos(rows - 2, leftW + 2) + inputLines[2];
+    // Restore panel separator over the input box's left 3 columns
+    out += ansi.pos(rows - 4, leftW + 2) + PANEL_V;
+    out += ansi.pos(rows - 3, leftW + 2) + PANEL_V;
+    out += ansi.pos(rows - 2, leftW + 2) + PANEL_V;
 
     // Command popup
     if (this.input.cmdPopupActive) {
