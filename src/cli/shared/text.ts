@@ -18,7 +18,7 @@ export function padR(s: string, w: number): string {
 
 export function trunc(s: string, max: number): string {
   const plain = stripAnsi(s);
-  return plain.length > max ? plain.slice(0, max - 1) + "…" : plain;
+  return plain.length > max ? plain.slice(0, max - 1) + "…" : s;
 }
 
 export function wrapText(text: string, maxCols: number): string[] {

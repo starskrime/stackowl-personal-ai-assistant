@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { AMBER, BLUE, LBL, W, PANEL_BG } from "../shared/palette.js";
+import { AMBER, BLUE, LBL, W, PANEL_BG, SPINNER } from "../shared/palette.js";
 import { visLen } from "../shared/text.js";
 
 export interface InputBoxProps {
@@ -10,12 +10,12 @@ export interface InputBoxProps {
   spinIdx: number;
 }
 
-const SPINNER = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
-
 export function renderInputBox(props: InputBoxProps, width: number): string {
   const content  = buildContentLine(props);
   const topBorder = PANEL_BG(AMBER("▔".repeat(width + 2)));
-  const body      = PANEL_BG(" " + content + " ".repeat(Math.max(0, width - visLen(content))) + " ");
+  const maxContentW = width - 2;
+  const padding = " ".repeat(Math.max(0, maxContentW - visLen(content)));
+  const body      = PANEL_BG(" " + content + padding + " ");
   const botBorder = PANEL_BG(AMBER("▁".repeat(width + 2)));
   return topBorder + "\n" + body + "\n" + botBorder;
 }

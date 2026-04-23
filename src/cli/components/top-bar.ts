@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { AMBER, BLUE, GREEN, PURPLE, MUT, LBL, PANEL_BG } from "../shared/palette.js";
+import { AMBER, BLUE, GREEN, PURPLE, MUT, LBL, PANEL_BG, DIV } from "../shared/palette.js";
 import { padR } from "../shared/text.js";
 
 export interface TopBarProps {
@@ -10,8 +10,6 @@ export interface TopBarProps {
   tokens:   number;
   cost:     number;
 }
-
-const DIV = "━";
 
 export function renderTopBar(props: TopBarProps, cols: number): string {
   const { owlEmoji, owlName, model, turn, tokens, cost } = props;
