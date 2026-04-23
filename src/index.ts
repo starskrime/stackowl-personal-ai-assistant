@@ -18,7 +18,8 @@ process.on("unhandledRejection", (reason) => {
 });
 
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { program } from "commander";
 import chalk from "chalk";
 // log imported by adapters/gateway internally
@@ -200,7 +201,8 @@ import { PlanLedger } from "./tasks/plan-ledger.js";
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
 
 async function bootstrap() {
-  const basePath = process.cwd();
+  const basePath = resolve(homedir(), ".stackowl");
+  mkdirSync(basePath, { recursive: true });
   const config = await loadConfig(basePath);
   const workspacePath = resolve(basePath, config.workspace);
 
@@ -1030,7 +1032,7 @@ async function buildGateway(
 
 async function chatCommand(owlName?: string) {
   // ── Phase 0: onboarding (first launch) ────────────────────────
-  const configPath = resolve(process.cwd(), "stackowl.config.json");
+  const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
   if (!existsSync(configPath)) {
     const wizard = new OnboardingWizard(configPath);
     const completed = await wizard.run();

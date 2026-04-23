@@ -40,6 +40,13 @@ export class InputHandler extends EventEmitter {
   /** Feed a raw stdin data chunk. Emits: "line", "quit", "change", "scroll", "clear". */
   feed(data: string): void {
     if (data === "\x03" || data === "\x04") { this.emit("quit"); return; }
+
+    // Strip bracketed-paste wrappers sent by modern terminals (ESC[200~ ... ESC[201~).
+    // Without this, pasted text is silently dropped because the data starts with ESC
+    // which fails the printable-character guard below.
+    data = data.replace(/\x1B\[200~/g, "").replace(/\x1B\[201~/g, "");
+    if (!data) return;
+
     if (this._cmdPopupActive) { this._handlePopupKey(data); return; }
     this._handleNormalKey(data);
   }
@@ -118,9 +125,15 @@ export class InputHandler extends EventEmitter {
       this.emit("change");
       return;
     }
-    if (data.length >= 1 && data >= " ") {
-      this._buf    = this._buf.slice(0, this._cursor) + data + this._buf.slice(this._cursor);
-      this._cursor += data.length;
+    if (data.length >= 1) {
+      // For single chars: accept printable only. For paste chunks (multi-char): strip
+      // any residual control characters and insert the printable content.
+      const printable = data.length === 1
+        ? (data >= " " ? data : "")
+        : data.replace(/[\x00-\x1F\x7F]/g, "");
+      if (!printable) return;
+      this._buf    = this._buf.slice(0, this._cursor) + printable + this._buf.slice(this._cursor);
+      this._cursor += printable.length;
       this.emit("change");
     }
   }

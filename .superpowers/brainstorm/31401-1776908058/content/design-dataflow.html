@@ -1,0 +1,105 @@
+<h2>Design: Data Flow</h2>
+<p class="subtitle">Section 2 of 3 — How messages move through the system</p>
+
+<style>
+  .diagram {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    padding: 1.1rem 1.4rem;
+    font-family: monospace;
+    font-size: 0.79rem;
+    line-height: 1.9;
+    white-space: pre;
+    overflow-x: auto;
+    margin: 0.8rem 0;
+  }
+  .c-blue { color: #89b4fa; font-weight: bold; }
+  .c-green { color: #a6e3a1; font-weight: bold; }
+  .c-amber { color: #fab387; font-weight: bold; }
+  .c-purple { color: #cba6f7; font-weight: bold; }
+  .c-dim { color: #6c7086; }
+  .c-yellow { color: #f9e2af; }
+  .section { margin-bottom: 1.8rem; }
+  .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.5; margin-bottom: 0.4rem; }
+  p { opacity: 0.85; font-size: 0.88rem; line-height: 1.6; margin: 0.4rem 0; }
+  h3 { margin: 1.2rem 0 0.3rem; font-size: 0.95rem; color: #fab387; }
+</style>
+
+<div class="section">
+  <div class="label">Inbound — User types a message</div>
+  <div class="diagram"><span class="c-purple">InputHandler</span>  captures raw stdin keystrokes
+      │   buffers chars, handles cursor/history/backspace
+      │   on Enter → emits <span class="c-yellow">"line"</span> event with text string
+      ▼
+<span class="c-blue">CLIAdapter</span>    receives "line" event
+      │   wraps into <span class="c-yellow">GatewayMessage</span> { id, channelId:"cli", userId, sessionId, text }
+      │   pushes to serial queue (one message at a time)
+      │   calls ui.showThinking() on renderer
+      ▼
+<span class="c-blue">OwlGateway</span>    .handle(msg, callbacks)
+      │   callbacks.onStreamEvent → <span class="c-amber">renderer</span>.onStreamChunk(chunk)
+      │   callbacks.askInstall    → <span class="c-amber">renderer</span>.promptYesNo() → InputHandler
+      ▼
+<span class="c-yellow">GatewayResponse</span>  { content, owlName, owlEmoji, toolsUsed, usage }</div>
+</div>
+
+<div class="section">
+  <div class="label">Outbound — Gateway responds</div>
+  <div class="diagram"><span class="c-yellow">GatewayResponse</span>
+      ▼
+<span class="c-blue">CLIAdapter</span>    .sendToUser() / .broadcast()
+      │   calls <span class="c-amber">renderer</span>.showResponse(response)
+      ▼
+<span class="c-amber">TerminalRenderer</span>
+      │   updates <span class="c-green">RightPanel</span> state (pushes message to conversation)
+      │   updates <span class="c-green">TopBar</span> state (turn count, tokens, cost)
+      │   unlocks <span class="c-green">InputBox</span>
+      │   schedules redraw()
+      ▼
+<span class="c-green">Components</span>    each renders its ANSI string from current state
+      ▼
+<span class="c-dim">process.stdout.write()</span>   ← only the renderer touches stdout</div>
+</div>
+
+<div class="section">
+  <div class="label">Streaming — Real-time token output</div>
+  <div class="diagram"><span class="c-blue">OwlGateway</span>  fires onStreamEvent for every text_delta
+      ▼
+<span class="c-amber">TerminalRenderer</span>.onStreamChunk(chunk)
+      │   appends chunk to RightPanel conversation buffer
+      │   schedules redraw() (debounced — no render storm)
+      ▼
+<span class="c-green">RightPanel</span>    re-renders with latest buffer content
+      ▼
+<span class="c-dim">stdout</span>        user sees tokens appear in real time</div>
+</div>
+
+<div class="section">
+  <div class="label">Redraw Loop</div>
+  <div class="diagram">Any state change → renderer.redraw()
+      │   if already queued → skip (dedupe)
+      │   setImmediate() → batch multiple state changes
+      │   if already rendering → skip (no re-entrancy)
+      ▼
+  renderer builds full frame string:
+    frame() + topBar() + leftPanel() + rightPanel()
+           + inputBox() + cmdPopup() + shortcutsBar()
+      ▼
+  single process.stdout.write(fullFrame)   ← one write per frame</div>
+</div>
+
+<div class="section">
+  <div class="label">Home → Session Transition</div>
+  <div class="diagram">renderer starts in <span class="c-yellow">home</span> mode
+  LeftPanel renders: identity + backend info
+  RightPanel renders: recent sessions + centered input
+
+  User submits first message →
+  renderer.setMode(<span class="c-yellow">"session"</span>)
+  LeftPanel switches to: mind state + DNA + tool trace
+  RightPanel switches to: conversation history
+  InputBox moves to bottom
+
+  <span class="c-dim">No HomeScreen class needed — renderer handles both modes</span></div>
+</div>

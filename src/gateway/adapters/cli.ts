@@ -14,6 +14,8 @@ import { log } from "../../logger.js";
 import { TerminalRenderer } from "../../cli/renderer.js";
 import { CommandRegistry } from "../../cli/commands.js";
 import { OnboardingFlow } from "../../cli/onboarding-flow.js";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 
 export interface CLIAdapterConfig { userId?: string; }
@@ -116,6 +118,10 @@ export class CLIAdapter implements ChannelAdapter {
     });
     this.renderer.on("quit", async () => { await this._gracefulShutdown(); });
     this.renderer.input.on("quit", async () => { await this._gracefulShutdown(); });
+    this.renderer.on("onboarding", () => {
+      this._onboarding = new OnboardingFlow(resolve(homedir(), ".stackowl", "stackowl.config.json"));
+      this._onboarding.start(this.renderer);
+    });
   }
 
   // ─── Queue ────────────────────────────────────────────────────
