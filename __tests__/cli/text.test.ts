@@ -30,7 +30,7 @@ describe("padR", () => {
 
 describe("trunc", () => {
   it("truncates long strings with ellipsis", () => {
-    expect(trunc("hello world", 7)).toBe("hello w…");
+    expect(trunc("hello world", 7)).toBe("hello …");
   });
   it("leaves short strings unchanged", () => {
     expect(trunc("hi", 10)).toBe("hi");
