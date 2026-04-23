@@ -1,7 +1,7 @@
 /**
  * StackOwl — In-Panel Onboarding Flow
  *
- * Runs entirely inside the existing TerminalUI right panel — no screen
+ * Runs entirely inside the existing TerminalRenderer right panel — no screen
  * switching, no raw-mode changes, no direct stdout writes.
  *
  * Each step:
@@ -17,7 +17,7 @@
 
 import { writeFile } from "node:fs/promises";
 import chalk          from "chalk";
-import type { TerminalUI } from "./ui.js";
+import type { TerminalRenderer } from "./renderer.js";
 
 // ─── Style helpers (matches commands.ts) ─────────────────────────
 
@@ -167,7 +167,7 @@ export class OnboardingFlow {
   // ── Public API ──────────────────────────────────────────────────
 
   /** Render the welcome prompt. Call once to start the flow. */
-  start(ui: TerminalUI): void {
+  start(ui: TerminalRenderer): void {
     ui.setAllowEmptyInput(true);
     this._step = "welcome";
     this._showStep(ui);
@@ -177,7 +177,7 @@ export class OnboardingFlow {
    * Feed user input into the wizard.
    * Returns true when the wizard is complete (done or cancelled).
    */
-  async handleInput(input: string, ui: TerminalUI): Promise<boolean> {
+  async handleInput(input: string, ui: TerminalRenderer): Promise<boolean> {
     if (input.toLowerCase() === "cancel" || input.toLowerCase() === "abort") {
       ui.setAllowEmptyInput(false);
       ui.printLines(["", R("Onboarding cancelled."), ""]);
@@ -190,7 +190,7 @@ export class OnboardingFlow {
 
   // ── Step renderer ───────────────────────────────────────────────
 
-  private _showStep(ui: TerminalUI): void {
+  private _showStep(ui: TerminalRenderer): void {
     const d = this._data;
     switch (this._step) {
 
@@ -569,7 +569,7 @@ export class OnboardingFlow {
 
   // ── Step handler ────────────────────────────────────────────────
 
-  private async _handle(input: string, ui: TerminalUI): Promise<boolean> {
+  private async _handle(input: string, ui: TerminalRenderer): Promise<boolean> {
     const d = this._data;
 
     switch (this._step) {

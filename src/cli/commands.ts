@@ -7,13 +7,13 @@
 
 import chalk from "chalk";
 import type { OwlGateway } from "../gateway/core.js";
-import type { TerminalUI } from "./ui.js";
+import type { TerminalRenderer } from "./renderer.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
 type CommandFn = (
   args: string,
-  ui: TerminalUI,
+  ui: TerminalRenderer,
   gateway: OwlGateway,
 ) => Promise<boolean>;
 
@@ -233,7 +233,7 @@ export class CommandRegistry {
 
   async handle(
     input: string,
-    ui: TerminalUI,
+    ui: TerminalRenderer,
     gateway: OwlGateway,
   ): Promise<boolean> {
     if (!input.startsWith("/")) return false;
