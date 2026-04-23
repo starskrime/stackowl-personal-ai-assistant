@@ -77,6 +77,8 @@ export class TerminalRenderer extends EventEmitter {
   private _rendering    = false;
   private _renderQueued = false;
   private _closed       = false;
+  private _origConsoleLog:  typeof console.log  | null = null;
+  private _origConsoleWarn: typeof console.warn | null = null;
 
   constructor() {
     super();
@@ -94,6 +96,13 @@ export class TerminalRenderer extends EventEmitter {
   // ─── Lifecycle ────────────────────────────────────────────────
 
   enter(): void {
+    // Silence console.log/warn so background services don't corrupt the alt screen
+    if (!this._origConsoleLog) {
+      this._origConsoleLog  = console.log;
+      this._origConsoleWarn = console.warn;
+      console.log  = (...args: unknown[]) => this.printInfo(args.map(String).join(" "));
+      console.warn = (...args: unknown[]) => this.printInfo(args.map(String).join(" "));
+    }
     process.stdout.write(ansi.altIn + ansi.hide);
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
     process.stdin.resume();
@@ -106,6 +115,13 @@ export class TerminalRenderer extends EventEmitter {
   close(): void {
     this._closed = true;
     this._stopThink();
+    // Restore console before exiting alt screen
+    if (this._origConsoleLog) {
+      console.log  = this._origConsoleLog;
+      console.warn = this._origConsoleWarn!;
+      this._origConsoleLog  = null;
+      this._origConsoleWarn = null;
+    }
     process.stdin.off("data",   this._keyHandler);
     process.stdout.off("resize", this._resizeHandler);
     process.stdout.write(ansi.show + ansi.altOut);
