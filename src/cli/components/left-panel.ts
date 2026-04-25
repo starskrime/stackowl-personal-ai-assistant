@@ -65,7 +65,7 @@ export function renderLeftPanel(props: LeftPanelProps, width: number, rows: numb
       add("  " + BLUE(SPINNER[props.spinIdx % SPINNER.length] + " thinking..."));
     }
     blank();
-    add("  " + PURPLE("◆") + " " + LBL("Instincts") + "   " + (props.instincts > 0 ? AMBER.bold(props.instincts + " triggered") : MUT("—")));
+    add("  " + PURPLE("◆") + " " + LBL("Skills   ") + "   " + (props.instincts > 0 ? AMBER.bold(props.instincts + " triggered") : MUT("—")));
     add("  " + PURPLE("◆") + " " + LBL("Memory   ") + "   " + (props.memFacts  > 0 ? AMBER.bold(props.memFacts  + " facts")     : MUT("—")));
     add("  " + PURPLE("◆") + " " + LBL("Skills   ") + "   " + (props.skillsHit > 0 ? GREEN.bold(props.skillsHit + " invoked")   : MUT("—")));
     blank();

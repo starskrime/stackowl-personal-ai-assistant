@@ -4,7 +4,7 @@
  * The single point of entry for all incoming messages.
  * All business logic lives here:
  *   - Session management
- *   - Instinct evaluation
+ *   - Behavioral skill evaluation
  *   - ReAct engine execution
  *   - Capability gap detection + auto-synthesis
  *   - Post-processing: memory, learning, DNA evolution
