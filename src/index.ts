@@ -131,8 +131,9 @@ import { ToolSynthesizer } from "./evolution/synthesizer.js";
 import { CapabilityLedger } from "./evolution/ledger.js";
 import { DynamicToolLoader } from "./evolution/loader.js";
 import { EvolutionHandler } from "./evolution/handler.js";
-import { InstinctRegistry } from "./instincts/registry.js";
-import { InstinctEngine } from "./instincts/engine.js";
+import { SkillsEngine } from "./skills/engine.js";
+import { SkillsMigrator } from "./skills/migrator.js";
+import { SkillInstaller, parseInstallSource } from "./skills/installer.js";
 import { PerchManager } from "./perch/manager.js";
 import { FilePerch } from "./perch/file-perch.js";
 import { StackOwlServer } from "./server/index.js";
@@ -547,9 +548,12 @@ async function bootstrap() {
   }
 
   // Instincts
-  const instinctRegistry = new InstinctRegistry(workspacePath);
-  await instinctRegistry.loadAll();
-  const instinctEngine = new InstinctEngine();
+  const migrator = new SkillsMigrator(workspacePath);
+  const migratedCount = await migrator.migrate();
+  if (migratedCount > 0) {
+    console.log(chalk.dim(`  [Migrated ${migratedCount} instinct(s) to skills]`));
+  }
+  const skillsEngine = new SkillsEngine();
 
   // Skills (OpenCLAW-compatible)
   // Always include built-in defaults + any user-configured directories
@@ -695,8 +699,7 @@ async function bootstrap() {
     sessionStore,
     pelletStore,
     evolutionEngine,
-    instinctRegistry,
-    instinctEngine,
+    skillsEngine,
     perchManager,
     workspacePath,
     evolution,
@@ -963,8 +966,7 @@ async function buildGateway(
     learningEngine: b.learningEngineFactory(owl),
     learningOrchestrator: b.learningOrchestratorFactory(owl),
     innerLife,
-    instinctRegistry: b.instinctRegistry,
-    instinctEngine: b.instinctEngine,
+    skillsEngine: b.skillsEngine,
     preferenceStore: b.preferenceStore,
     reflexionEngine: b.reflexionEngine,
     skillsLoader: b.skillsLoader,
@@ -1497,18 +1499,43 @@ async function skillsCommand(opts: {
 
   // Handle ClawHub install
   if (opts.install) {
-    const clawHub = new ClawHubClient();
-    const targetDir = config.skills?.directories?.[0] || "./workspace/skills";
+    const source = parseInstallSource(opts.install);
+    const targetDir = config.skills?.directories?.[0] ?? "./workspace/skills";
+    const workspaceRoot = resolve(targetDir, "../..");
 
-    console.log(chalk.cyan(`Installing "${opts.install}" from ClawHub...\n`));
-
-    try {
-      await clawHub.install(opts.install, targetDir);
-      console.log(chalk.green(`\n✓ Successfully installed!`));
-      console.log(chalk.dim(`Reload skills: restart the assistant`));
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(chalk.red(`Installation failed: ${msg}`));
+    if (source.type === "github") {
+      const installer = new SkillInstaller(workspaceRoot);
+      console.log(chalk.cyan(`Installing "${source.skillName}" from GitHub...`));
+      try {
+        await installer.fromGitHub(source.rawUrl, source.skillName);
+        console.log(chalk.green(`✓ Installed ${source.skillName}`));
+        console.log(chalk.dim(`Reload skills: restart the assistant`));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red(`GitHub install failed: ${msg}`));
+      }
+    } else if (source.type === "local") {
+      const installer = new SkillInstaller(workspaceRoot);
+      console.log(chalk.cyan(`Installing "${source.skillName}" from local path...`));
+      try {
+        await installer.fromLocal(source.localPath);
+        console.log(chalk.green(`✓ Installed ${source.skillName}`));
+        console.log(chalk.dim(`Reload skills: restart the assistant`));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red(`Local install failed: ${msg}`));
+      }
+    } else {
+      const clawHub = new ClawHubClient();
+      console.log(chalk.cyan(`Installing "${source.slug}" from ClawHub...\n`));
+      try {
+        await clawHub.install(source.slug, targetDir);
+        console.log(chalk.green(`\n✓ Successfully installed!`));
+        console.log(chalk.dim(`Reload skills: restart the assistant`));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red(`Installation failed: ${msg}`));
+      }
     }
     return;
   }
