@@ -1005,15 +1005,15 @@ export class OwlGateway {
       wc.setLastUserMessage(message.text);
     }
 
-    // Evaluate instincts — may inject behavioral constraints
+    // Evaluate behavioral skills — may inject reactive constraints
     let text = message.text;
-    if (this.ctx.instinctEngine && this.ctx.instinctRegistry) {
-      const instincts = this.ctx.instinctRegistry.getContextInstincts(
+    if (this.ctx.skillsEngine && this.ctx.skillsRegistry) {
+      const behavioralSkills = this.ctx.skillsRegistry.getBehavioral(
         this.ctx.owl.persona.name,
       );
-      const triggered = await this.ctx.instinctEngine.evaluate(
+      const triggered = await this.ctx.skillsEngine.evaluate(
         text,
-        instincts,
+        behavioralSkills,
         {
           provider: this.ctx.provider,
           owl: this.ctx.owl,
@@ -1021,8 +1021,8 @@ export class OwlGateway {
         },
       );
       if (triggered) {
-        log.engine.info(`Instinct triggered: ${triggered.name}`);
-        text = `User Input: ${text}\n\n[SYSTEM OVERRIDE - INSTINCT TRIGGERED]\n${triggered.actionPrompt}`;
+        log.engine.info(`Skill triggered: ${triggered.name}`);
+        text = `User Input: ${text}\n\n[SYSTEM OVERRIDE - SKILL TRIGGERED]\n${triggered.instructions}`;
       }
     }
 

@@ -141,6 +141,7 @@ import type { LearningEngine } from "../learning/self-study.js";
 import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import type { SkillsEngine } from "../skills/engine.js";
+import type { SkillsRegistry } from "../skills/registry.js";
 import type { OwlRegistry } from "../owls/registry.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { SkillsLoader } from "../skills/index.js";
@@ -204,6 +205,7 @@ export interface GatewayContext {
   learningOrchestrator?: LearningOrchestrator;
   innerLife?: OwlInnerLife;
   skillsEngine?: SkillsEngine;
+  skillsRegistry?: SkillsRegistry;
   memoryContext?: string;
   preferenceStore?: PreferenceStore;
   reflexionEngine?: ReflexionEngine;
