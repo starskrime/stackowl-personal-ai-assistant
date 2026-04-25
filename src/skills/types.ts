@@ -126,6 +126,11 @@ export interface Skill {
   parameters?: Record<string, SkillParameter>;
   /** Structured execution steps (from frontmatter). */
   steps?: SkillStep[];
+  /** Behavioral fields — present only when skill is reactive */
+  trigger?: "context" | "schedule" | "event";
+  conditions?: string[];
+  relevantOwls?: string[];
+  priority?: "low" | "medium" | "high" | "critical";
 }
 
 // ─── Structured Skill Execution ──────────────────────────────────
