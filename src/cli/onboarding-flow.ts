@@ -66,7 +66,8 @@ interface WizardData {
   // Section C
   channels?: boolean[];  // [web, telegram, slack]
   webPort?:  number;
-  telegramToken?: string;
+  telegramToken?:      string;
+  telegramAllowedIds?: number[];
   slackBotToken?: string;
   slackAppToken?: string;
   // Section D
@@ -84,7 +85,7 @@ type StepId =
   | "prov_mm_key"   | "prov_mm_model"
   | "prov_compat_url" | "prov_compat_key" | "prov_compat_model"
   | "chan_multi"
-  | "chan_web_port" | "chan_tg_token" | "chan_slack_bot" | "chan_slack_app"
+  | "chan_web_port" | "chan_tg_token" | "chan_tg_allowed" | "chan_slack_bot" | "chan_slack_app"
   | "feat_multi"
   | "review"
   | "done";
@@ -149,7 +150,11 @@ function buildConfig(d: WizardData): Record<string, unknown> {
 
   const ch = d.channels ?? [false, false, false];
   if (ch[0]) (cfg as any).web = { enabled: true, port: d.webPort ?? 3000 };
-  if (ch[1] && d.telegramToken) (cfg as any).telegram = { botToken: d.telegramToken };
+  if (ch[1] && d.telegramToken) {
+    const tg: Record<string, unknown> = { botToken: d.telegramToken };
+    if (d.telegramAllowedIds?.length) tg.allowedUserIds = d.telegramAllowedIds;
+    (cfg as any).telegram = tg;
+  }
   if (ch[2] && d.slackBotToken) (cfg as any).slack = { botToken: d.slackBotToken, appToken: d.slackAppToken ?? "" };
   if (d.features?.[3]) (cfg as any).voice   = { enabled: true };
   if (d.features?.[4]) (cfg as any).face    = { enabled: true };
@@ -482,6 +487,19 @@ export class OnboardingFlow {
         ui.setMasked(true);
         break;
 
+      case "chan_tg_allowed":
+        ui.printLines([
+          "",
+          W("Telegram — allowed user IDs"),
+          D("    Restrict who can talk to your bot."),
+          D("    Find your ID by messaging @userinfobot on Telegram."),
+          D("    Leave blank to allow everyone (not recommended for personal bots)."),
+          "",
+          C("    Type ID(s) separated by spaces (e.g. 123456789 987654321), or Enter to skip:"),
+          "",
+        ]);
+        break;
+
       case "chan_slack_bot":
         ui.printLines([
           "",
@@ -534,7 +552,10 @@ export class OnboardingFlow {
 
         const chList = ["CLI"];
         if (ch[0]) chList.push(`Web :${d.webPort ?? 3000}`);
-        if (ch[1]) chList.push("Telegram");
+        if (ch[1]) {
+          const ids = d.telegramAllowedIds ?? [];
+          chList.push(ids.length ? `Telegram (${ids.length} user${ids.length > 1 ? "s" : ""})` : "Telegram (open)");
+        }
         if (ch[2]) chList.push("Slack");
 
         const ftList: string[] = [];
@@ -795,9 +816,20 @@ export class OnboardingFlow {
       case "chan_tg_token":
         if (!input) { ui.printLines([R("  Token cannot be empty."), ""]); ui.setMasked(true); return false; }
         d.telegramToken = input;
+        this._step = "chan_tg_allowed";
+        this._showStep(ui);
+        return false;
+
+      case "chan_tg_allowed": {
+        const ids = input
+          .split(/[\s,]+/)
+          .map(s => parseInt(s.trim(), 10))
+          .filter(n => Number.isFinite(n) && n > 0);
+        d.telegramAllowedIds = ids;
         this._step = this._nextChannelStep(d.channels ?? [], "telegram");
         this._showStep(ui);
         return false;
+      }
 
       case "chan_slack_bot":
         if (!input) { ui.printLines([R("  Token cannot be empty."), ""]); ui.setMasked(true); return false; }

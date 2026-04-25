@@ -409,9 +409,10 @@ interface OnboardingResult {
   providerEntry:    ProviderEntry;
   enableWeb:        boolean;
   webPort:          number;
-  enableTelegram:   boolean;
-  telegramToken:    string;
-  enableSlack:      boolean;
+  enableTelegram:      boolean;
+  telegramToken:       string;
+  telegramAllowedIds:  number[];
+  enableSlack:         boolean;
   slackBotToken:    string;
   slackAppToken:    string;
   enableMemory:     boolean;
@@ -649,7 +650,7 @@ async function sectionProvider(current: Partial<OnboardingResult>): Promise<Pick
 // ─── Section C — Channels ────────────────────────────────────────
 
 async function sectionChannels(current: Partial<OnboardingResult>): Promise<
-  Pick<OnboardingResult, "enableWeb" | "webPort" | "enableTelegram" | "telegramToken" | "enableSlack" | "slackBotToken" | "slackAppToken">
+  Pick<OnboardingResult, "enableWeb" | "webPort" | "enableTelegram" | "telegramToken" | "telegramAllowedIds" | "enableSlack" | "slackBotToken" | "slackAppToken">
 > {
   drawHeader(2);
   clearBody();
@@ -670,9 +671,10 @@ async function sectionChannels(current: Partial<OnboardingResult>): Promise<
 
   const [enableWeb, enableTelegram, enableSlack] = selected;
 
-  let webPort       = current.webPort ?? 3000;
-  let telegramToken = current.telegramToken  ?? "";
-  let slackBotToken = current.slackBotToken  ?? "";
+  let webPort            = current.webPort ?? 3000;
+  let telegramToken      = current.telegramToken ?? "";
+  let telegramAllowedIds = current.telegramAllowedIds ?? [] as number[];
+  let slackBotToken      = current.slackBotToken ?? "";
   let slackAppToken = current.slackAppToken  ?? "";
 
   if (enableWeb) {
@@ -695,6 +697,23 @@ async function sectionChannels(current: Partial<OnboardingResult>): Promise<
       row: 9, label: "Bot Token", hint: "123456789:AAF...", masked: true,
       prefill: telegramToken,
     });
+
+    clearBody();
+    drawHeader(2);
+    w(p(6) + `  ${chalk.bold("Telegram — Allowed Users")}\n` +
+      p(7) + chalk.dim("  Restrict who can talk to your bot.") + "\n" +
+      p(8) + chalk.dim("  Find your ID by messaging @userinfobot on Telegram.") + "\n" +
+      p(9) + chalk.dim("  Leave blank to allow everyone (not recommended for personal bots)."));
+    const idsRaw = await inputText({
+      row: 11,
+      label: "Your Telegram user ID(s)",
+      hint:  "e.g. 123456789  or  123456789,987654321",
+      prefill: telegramAllowedIds.join(","),
+    });
+    telegramAllowedIds = idsRaw
+      .split(/[,\s]+/)
+      .map(s => parseInt(s.trim(), 10))
+      .filter(n => Number.isFinite(n) && n > 0);
   }
 
   if (enableSlack) {
@@ -713,7 +732,7 @@ async function sectionChannels(current: Partial<OnboardingResult>): Promise<
     });
   }
 
-  return { enableWeb, webPort, enableTelegram, telegramToken, enableSlack, slackBotToken, slackAppToken };
+  return { enableWeb, webPort, enableTelegram, telegramToken, telegramAllowedIds, enableSlack, slackBotToken, slackAppToken };
 }
 
 // ─── Section D — Features ────────────────────────────────────────
@@ -780,7 +799,10 @@ async function sectionReview(result: OnboardingResult): Promise<boolean> {
   sep();
   const channels = ["CLI (always)"];
   if (result.enableWeb)      channels.push(`Web :${result.webPort}`);
-  if (result.enableTelegram) channels.push("Telegram");
+  if (result.enableTelegram) {
+    const ids = result.telegramAllowedIds;
+    channels.push(ids.length ? `Telegram (${ids.length} user${ids.length > 1 ? "s" : ""})` : "Telegram (open)");
+  }
   if (result.enableSlack)    channels.push("Slack");
   line("Channels", channels.join(", "));
   sep();
@@ -824,8 +846,11 @@ function buildConfig(r: OnboardingResult): Record<string, unknown> {
   };
 
   if (r.enableWeb)      (cfg as any).web      = { enabled: true, port: r.webPort };
-  if (r.enableTelegram && r.telegramToken)
-    (cfg as any).telegram = { botToken: r.telegramToken };
+  if (r.enableTelegram && r.telegramToken) {
+    const tg: Record<string, unknown> = { botToken: r.telegramToken };
+    if (r.telegramAllowedIds.length > 0) tg.allowedUserIds = r.telegramAllowedIds;
+    (cfg as any).telegram = tg;
+  }
   if (r.enableSlack && r.slackBotToken)
     (cfg as any).slack = { botToken: r.slackBotToken, appToken: r.slackAppToken };
   if (r.enableVoice)    (cfg as any).voice    = { enabled: true };
