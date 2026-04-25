@@ -245,6 +245,57 @@ describe("SkillsRegistry", () => {
       expect(result).toContain("</skill>");
     });
   });
+
+  describe("getBehavioral", () => {
+    it("returns only skills with conditions, filtered by owlName", () => {
+      const registry = new SkillsRegistry();
+
+      const taskSkill = makeSkill({ name: "git_commit" });
+
+      const behavioralAll = makeSkill({
+        name: "cost_alarm",
+        conditions: ["user mentions billing"],
+        relevantOwls: ["*"],
+        trigger: "context" as const,
+        priority: "high" as const,
+      });
+
+      const behavioralScrooge = makeSkill({
+        name: "budget_strict",
+        conditions: ["user wants to overspend"],
+        relevantOwls: ["scrooge"],
+        trigger: "context" as const,
+        priority: "medium" as const,
+      });
+
+      const behavioralOther = makeSkill({
+        name: "other_instinct",
+        conditions: ["some condition"],
+        relevantOwls: ["other_owl"],
+        trigger: "context" as const,
+        priority: "low" as const,
+      });
+
+      registry.register(taskSkill);
+      registry.register(behavioralAll);
+      registry.register(behavioralScrooge);
+      registry.register(behavioralOther);
+
+      const result = registry.getBehavioral("scrooge");
+      const names = result.map((s) => s.name);
+
+      expect(names).toContain("cost_alarm");         // relevantOwls: ["*"]
+      expect(names).toContain("budget_strict");      // relevantOwls: ["scrooge"]
+      expect(names).not.toContain("git_commit");     // no conditions
+      expect(names).not.toContain("other_instinct"); // wrong owl
+    });
+
+    it("returns empty array when no behavioral skills registered", () => {
+      const registry = new SkillsRegistry();
+      registry.register(makeSkill({ name: "plain" }));
+      expect(registry.getBehavioral("any_owl")).toEqual([]);
+    });
+  });
 });
 
 // ─── SkillParser + meetsRequirements Tests ──────────────────────────────

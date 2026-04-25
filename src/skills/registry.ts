@@ -52,6 +52,19 @@ export class SkillsRegistry {
   }
 
   /**
+   * Get reactive (behavioral) skills for a specific owl.
+   * Returns skills where conditions.length > 0 and relevantOwls includes owlName or "*".
+   */
+  getBehavioral(owlName: string): Skill[] {
+    const name = owlName.toLowerCase();
+    return this.listEnabled().filter((skill) => {
+      if (!skill.conditions || skill.conditions.length === 0) return false;
+      const owls = skill.relevantOwls ?? ["*"];
+      return owls.some((o) => o === "*" || o.toLowerCase() === name);
+    });
+  }
+
+  /**
    * Get skills that meet the given requirements.
    */
   getEligible(filter: SkillFilter): Skill[] {
