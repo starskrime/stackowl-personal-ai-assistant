@@ -17,15 +17,21 @@ import { log } from "../logger.js";
 let _embedder: import("fastembed").FlagEmbedding | null = null;
 let _dim: number | null = null;
 let _initPromise: Promise<void> | null = null;
+let _cacheDir: string | undefined;
 
 const _cache = new Map<string, number[]>();
 const MAX_CACHE = 1_000;
 
 // ─── Init ────────────────────────────────────────────────────────
 
+/** Set the directory where fastembed will store its model files. Must be called before initEmbedder(). */
+export function setEmbedderCacheDir(dir: string): void {
+  _cacheDir = dir;
+}
+
 /**
  * Initialize the in-process embedder.
- * Downloads the model on first call (~50 MB, cached in ~/.cache/fastembed).
+ * Downloads the model on first call (~50 MB, cached in local_cache inside workspace/memory).
  * Safe to call multiple times — only initializes once.
  */
 export async function initEmbedder(): Promise<void> {
@@ -38,6 +44,7 @@ export async function initEmbedder(): Promise<void> {
       log.engine.info("[Embedder] Loading in-process embedding model (first run may download ~50 MB)...");
       _embedder = await FlagEmbedding.init({
         model: EmbeddingModel.BGESmallENV15,
+        ...(_cacheDir ? { cacheDir: _cacheDir } : {}),
       });
       // Probe dimension with a dummy embed
       const probe = await _embedder.queryEmbed("probe");

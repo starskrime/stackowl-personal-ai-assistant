@@ -15,8 +15,10 @@
  *   E  Review     — confirm & write stackowl.config.json
  */
 
-import { writeFile } from "node:fs/promises";
+import { writeFile, mkdir, rm } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import chalk         from "chalk";
+import { ModelLoader } from "../models/loader.js";
 
 // ─── ANSI ────────────────────────────────────────────────────────
 
@@ -236,7 +238,13 @@ async function inputText(opts: {
   render();
 
   while (true) {
-    const key = await waitForKey();
+    let key = await waitForKey();
+
+    // Strip bracketed-paste wrappers (ESC[200~ ... ESC[201~) sent by modern terminals.
+    // Without this, pasted text that arrives wrapped in these markers is dropped because
+    // the chunk starts with ESC and no branch below matches the full sequence.
+    key = key.replace(/\x1B\[200~/g, "").replace(/\x1B\[201~/g, "");
+    if (!key) { render(); continue; }
 
     if (key === KEY.CTRL_C) ctrlCExit();
     if (KEY.ENTER.includes(key) && buf.trim()) return buf.trim();
@@ -247,9 +255,15 @@ async function inputText(opts: {
       cursor--;
     } else if (key === `${ESC}[C` && cursor < buf.length) {
       cursor++;
-    } else if (key.length === 1 && key >= " ") {
-      buf = buf.slice(0, cursor) + key + buf.slice(cursor);
-      cursor++;
+    } else if (!key.startsWith(ESC)) {
+      // Handles both single keypresses and multi-character paste events.
+      // For single chars: filter keeps only printable chars (>= " ").
+      // For paste chunks: strips residual control characters, inserts everything printable.
+      const printable = [...key].filter(c => c >= " ").join("");
+      if (printable) {
+        buf = buf.slice(0, cursor) + printable + buf.slice(cursor);
+        cursor += printable.length;
+      }
     }
     render();
   }
@@ -464,91 +478,92 @@ async function sectionYou(current: Partial<OnboardingResult>): Promise<Pick<Onbo
   return { userName, workType, commStyle };
 }
 
+// ─── Provider display names ───────────────────────────────────────
+
+const PROVIDER_DISPLAY: Record<string, string> = {
+  anthropic: "Anthropic (Claude)",
+  openai:    "OpenAI",
+  ollama:    "Ollama",
+  lmstudio:  "LM Studio",
+  grok:      "Grok (xAI)",
+  gemini:    "Gemini (Google)",
+  minimax:   "MiniMax",
+};
+
+const LOCAL_PROVIDERS = new Set(["ollama", "lmstudio"]);
+
 // ─── Section B — Provider ────────────────────────────────────────
 
 async function sectionProvider(current: Partial<OnboardingResult>): Promise<Pick<OnboardingResult, "provider" | "providerEntry">> {
+  // Load provider + model definitions from src/models/* files
+  const defs = new ModelLoader().getAll();
+  const isLocal = (name: string) => LOCAL_PROVIDERS.has(name);
+
   drawHeader(1);
   clearBody();
 
   w(p(6) + `  ${OWL} ${chalk.bold("Which AI provider do you want to use?")}\n`);
-  const provIdx = await selectOne({
-    row:   8,
-    title: "Provider",
-    items: [
-      "Anthropic (Claude) — cloud, API key required",
-      "OpenAI (GPT-4) — cloud, API key required",
-      "Ollama — local or remote, free",
-      "LM Studio — local, free",
-      "MiniMax — cloud, API key required",
-      "OpenAI-compatible — custom URL",
-    ],
-    current: 0,
-  });
 
-  const PROVIDERS = ["anthropic", "openai", "ollama", "lmstudio", "minimax", "openai-compatible"];
-  const provider  = PROVIDERS[provIdx];
+  const provItems = [
+    ...defs.map(d => {
+      const label   = PROVIDER_DISPLAY[d.name] ?? d.name;
+      const suffix  = isLocal(d.name) ? " — local, free" : " — cloud, API key required";
+      return label + chalk.dim(suffix);
+    }),
+    chalk.dim("Other (OpenAI-compatible — custom URL)"),
+  ];
+
+  const provIdx = await selectOne({ row: 8, title: "Provider", items: provItems, current: 0 });
+
+  const isOther  = provIdx === defs.length;
+  const def      = isOther ? null : defs[provIdx];
+  const provider = isOther ? "openai-compatible" : def!.name;
 
   let entry: ProviderEntry;
 
   clearBody();
   drawHeader(1);
 
-  if (provider === "anthropic") {
-    w(p(6) + `  ${chalk.bold("Anthropic")} — ${chalk.dim("claude.ai/api")}\n`);
+  if (isOther) {
+    // ── Other: custom OpenAI-compatible endpoint ─────────────────
+    w(p(6) + `  ${chalk.bold("OpenAI-compatible")} — ${chalk.dim("any OpenAI-format API")}\n`);
+    const baseUrl = await inputText({
+      row: 8, label: "Base URL", hint: "e.g. http://localhost:8080/v1",
+      prefill: current.providerEntry?.baseUrl ?? "",
+    });
+    clearBody(12);
+    const defaultModel = await inputText({
+      row: 12, label: "Model name", hint: "e.g. llama3, mistral-7b",
+      prefill: current.providerEntry?.defaultModel ?? "",
+    });
+    clearBody(16);
     const apiKey = await inputText({
-      row: 8, label: "API Key", hint: "sk-ant-...", masked: true,
-      prefill: current.providerEntry?.apiKey,
+      row: 16, label: "API Key", hint: "Leave blank if no auth", masked: true,
+      prefill: current.providerEntry?.apiKey ?? "",
     });
-    clearBody(8);
-    const modelIdx = await selectOne({
-      row: 8, title: "Model",
-      items: [
-        "claude-sonnet-4-6    (latest, recommended)",
-        "claude-opus-4-6      (most capable)",
-        "claude-haiku-4-5     (fastest, cheapest)",
-        "claude-3-5-sonnet-20241022",
-      ],
-      current: 0,
-    });
-    const MODELS = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001", "claude-3-5-sonnet-20241022"];
-    entry = { baseUrl: "https://api.anthropic.com", apiKey, defaultModel: MODELS[modelIdx], type: "anthropic" };
-
-  } else if (provider === "openai") {
-    w(p(6) + `  ${chalk.bold("OpenAI")} — ${chalk.dim("api.openai.com")}\n`);
-    const apiKey = await inputText({
-      row: 8, label: "API Key", hint: "sk-...", masked: true,
-      prefill: current.providerEntry?.apiKey,
-    });
-    clearBody(8);
-    const modelIdx = await selectOne({
-      row: 8, title: "Model",
-      items: ["gpt-4o (recommended)", "gpt-4o-mini (fast, cheap)", "gpt-4-turbo", "o1-preview"],
-      current: 0,
-    });
-    const MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-preview"];
-    entry = { baseUrl: "https://api.openai.com/v1", apiKey, defaultModel: MODELS[modelIdx], type: "openai" };
+    entry = { baseUrl, apiKey, defaultModel, type: "openai-compatible" };
 
   } else if (provider === "ollama") {
-    clearBody();
+    // ── Ollama: live detection → model → optional URL/key ────────
     w(p(6) + chalk.dim("  Checking localhost:11434…"));
-    const localModels = await detectLocal("http://localhost:11434");
+    const detectedModels = await detectLocal("http://localhost:11434");
 
     clearBody();
+    drawHeader(1);
     w(p(6) + `  ${chalk.bold("Ollama")}\n`);
 
     const useLocal = await selectOne({
-      row:   8,
-      title: "Where is Ollama running?",
+      row: 8, title: "Where is Ollama running?",
       items: [
-        localModels.length > 0
-          ? `Local (localhost:11434) — ${localModels.length} model(s) found`
+        detectedModels.length > 0
+          ? `Local (localhost:11434) — ${detectedModels.length} model(s) found`
           : "Local (localhost:11434) — not detected, will configure",
         "Remote (custom URL)",
       ],
       current: 0,
     });
 
-    let baseUrl = "http://localhost:11434";
+    let baseUrl = def!.url;
     let apiKey  = "";
 
     if (useLocal === 1) {
@@ -564,85 +579,68 @@ async function sectionProvider(current: Partial<OnboardingResult>): Promise<Pick
       });
     }
 
-    const availModels = useLocal === 0 ? localModels : await detectLocal(baseUrl);
+    const availModels = useLocal === 0 ? detectedModels : await detectLocal(baseUrl);
     clearBody(8);
-    let defaultModel = "llama3.2";
+    let defaultModel = def!.defaultModel;
+
     if (availModels.length > 0) {
-      const mIdx = await selectOne({
-        row: 8, title: "Model", items: availModels, current: 0,
-      });
+      const mIdx = await selectOne({ row: 8, title: "Model", items: availModels, current: 0 });
       defaultModel = availModels[mIdx];
     } else {
       w(p(8) + chalk.dim("  No models found. You can pull models later with: ollama pull <model>"));
       defaultModel = await inputText({
-        row: 10, label: "Model name", hint: "e.g. llama3.2, mistral, gemma2",
-        prefill: "llama3.2",
+        row: 10, label: "Model name", hint: `e.g. ${def!.defaultModel}`,
+        prefill: def!.defaultModel,
       });
     }
-    entry = { baseUrl, apiKey, defaultModel, type: "ollama" };
+    entry = { baseUrl, apiKey, defaultModel, type: def!.compatible };
 
   } else if (provider === "lmstudio") {
-    clearBody();
+    // ── LM Studio: live detection → model ────────────────────────
     w(p(6) + chalk.dim("  Checking localhost:1234…"));
-    const localModels = await detectLMStudio("http://localhost:1234");
+    const detectedModels = await detectLMStudio("http://localhost:1234");
 
     clearBody();
+    drawHeader(1);
     w(p(6) + `  ${chalk.bold("LM Studio")} — ${chalk.dim("lmstudio.ai")}\n`);
 
-    let defaultModel = "";
-    if (localModels.length > 0) {
-      w(p(8) + chalk.green(`  ✓ Detected ${localModels.length} model(s) on localhost:1234`));
-      const mIdx = await selectOne({
-        row: 10, title: "Model", items: localModels, current: 0,
-      });
-      defaultModel = localModels[mIdx];
+    let defaultModel = def!.defaultModel;
+
+    if (detectedModels.length > 0) {
+      w(p(8) + chalk.green(`  ✓ Detected ${detectedModels.length} model(s) on localhost:1234\n`));
+      const mIdx = await selectOne({ row: 10, title: "Model", items: detectedModels, current: 0 });
+      defaultModel = detectedModels[mIdx];
     } else {
       w(p(8) + chalk.yellow("  ⚠  LM Studio not detected on localhost:1234") +
         "\n" + p(9) + chalk.dim("  Make sure LM Studio is running with the server enabled."));
-      await new Promise<void>(r => setTimeout(r, 1500));
+      await new Promise<void>(r => setTimeout(r, 1200));
       clearBody(8);
       defaultModel = await inputText({
-        row: 8, label: "Model name", hint: "e.g. meta-llama-3-8b-instruct",
+        row: 8, label: "Model name", hint: `e.g. ${def!.defaultModel}`,
         prefill: "",
       });
     }
-    entry = { baseUrl: "http://localhost:1234/v1", apiKey: "lm-studio", defaultModel, type: "openai-compatible" };
-
-  } else if (provider === "minimax") {
-    w(p(6) + `  ${chalk.bold("MiniMax")} — ${chalk.dim("api.minimax.chat")}\n`);
-    const apiKey = await inputText({
-      row: 8, label: "API Key", hint: "eyJ...", masked: true,
-      prefill: current.providerEntry?.apiKey,
-    });
-    clearBody(12);
-    const groupId = await inputText({
-      row: 12, label: "Group ID", hint: "Your MiniMax group/org ID",
-      prefill: "",
-    });
-    entry = {
-      baseUrl:      "https://api.minimax.chat/v1",
-      apiKey:       `${apiKey}:${groupId}`,
-      defaultModel: "abab6.5g-chat",
-      type:         "minimax",
-    };
+    entry = { baseUrl: def!.url, apiKey: "", defaultModel, type: def!.compatible };
 
   } else {
-    w(p(6) + `  ${chalk.bold("OpenAI-compatible")} — ${chalk.dim("any OpenAI-format API")}\n`);
-    const baseUrl = await inputText({
-      row: 8, label: "Base URL", hint: "e.g. http://localhost:8080/v1",
-      prefill: current.providerEntry?.baseUrl ?? "",
-    });
-    clearBody(12);
+    // ── Cloud providers: model first, then API key ────────────────
+    const label = PROVIDER_DISPLAY[provider] ?? provider;
+    w(p(6) + `  ${chalk.bold(label)}\n`);
+
+    const models = def!.availableModels;
+    let defaultModel = def!.defaultModel;
+
+    if (models.length > 1) {
+      const mIdx = await selectOne({ row: 8, title: "Model", items: models, current: 0 });
+      defaultModel = models[mIdx];
+      clearBody(8);
+    }
+
     const apiKey = await inputText({
-      row: 12, label: "API Key", hint: "Leave blank if no auth", masked: true,
+      row: 8, label: "API Key", hint: "Your provider API key", masked: true,
       prefill: current.providerEntry?.apiKey ?? "",
     });
-    clearBody(16);
-    const defaultModel = await inputText({
-      row: 16, label: "Model name", hint: "e.g. llama3, mistral-7b",
-      prefill: current.providerEntry?.defaultModel ?? "",
-    });
-    entry = { baseUrl, apiKey, defaultModel, type: "openai-compatible" };
+    entry = { baseUrl: def!.url, apiKey, defaultModel, type: def!.compatible };
   }
 
   return { provider, providerEntry: entry };
@@ -894,6 +892,13 @@ export class OnboardingWizard {
 
       // Write config
       const cfg = buildConfig(result);
+      const configDir = dirname(this.configPath);
+      await mkdir(configDir, { recursive: true });
+
+      // Wipe workspace so all generated memory, sessions, and caches are reset
+      const workspacePath = resolve(configDir, "./workspace");
+      await rm(workspacePath, { recursive: true, force: true });
+
       await writeFile(this.configPath, JSON.stringify(cfg, null, 2), "utf8");
 
       // Success

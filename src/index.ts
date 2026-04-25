@@ -157,7 +157,7 @@ import { MemorySearcher } from "./memory-threads/searcher.js";
 import { RecallMemoryTool } from "./tools/recall.js";
 import { RememberTool } from "./tools/remember.js";
 import { PelletRecallTool } from "./tools/pellet-recall.js";
-import { initEmbedder } from "./pellets/embedder.js";
+import { initEmbedder, setEmbedderCacheDir } from "./pellets/embedder.js";
 import { selfSeedIfEmpty } from "./pellets/self-seed.js";
 import { EchoChamberDetector } from "./echo-chamber/detector.js";
 import { EchoCheckTool } from "./tools/echo-check.js";
@@ -370,8 +370,9 @@ async function bootstrap() {
   await sessionStore.init();
 
   // Initialize pellet store (with AI-powered deduplication)
-  // Initialize pellet embedder (Ollama nomic-embed-text) before PelletStore
-  // so vector search is available from the first save/search call.
+  // Initialize pellet embedder before PelletStore so vector search is available
+  // from the first save/search call. Model is cached inside workspace/memory/local_cache.
+  setEmbedderCacheDir(join(workspacePath, "memory", "local_cache"));
   initEmbedder().catch((e) => log.engine.warn("[Init] Embedder: " + (e instanceof Error ? e.message : String(e))));
 
   const pelletStore = new PelletStore(

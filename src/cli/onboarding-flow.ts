@@ -15,7 +15,8 @@
  * Masked steps (API keys) show • in the input box and panel echo.
  */
 
-import { writeFile } from "node:fs/promises";
+import { writeFile, rm } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import chalk          from "chalk";
 import type { TerminalRenderer } from "./renderer.js";
 
@@ -830,6 +831,8 @@ export class OnboardingFlow {
         const answer = input.toLowerCase();
         if (answer === "yes" || answer === "y") {
           const cfg = buildConfig(d);
+          const workspacePath = resolve(dirname(this.configPath), "./workspace");
+          await rm(workspacePath, { recursive: true, force: true });
           await writeFile(this.configPath, JSON.stringify(cfg, null, 2), "utf8");
           ui.printLines([
             "",
