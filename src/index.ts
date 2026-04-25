@@ -1098,6 +1098,21 @@ async function chatCommand(owlName?: string) {
   const adapter = new CLIAdapter(gateway);
   gateway.register(adapter);
 
+  // Auto-start Telegram if it was enabled during onboarding
+  if (b.config.telegram?.botToken) {
+    const telegramAdapter = new TelegramAdapter(gateway, {
+      botToken: b.config.telegram.botToken,
+      allowedUserIds: (b.config.telegram as any).allowedUserIds,
+      chatIdsPath: join(b.workspacePath, "known_chat_ids.json"),
+    });
+    gateway.register(telegramAdapter);
+    telegramAdapter.start().catch((err) => {
+      console.error(
+        chalk.red(`✗ Telegram failed: ${err instanceof Error ? err.message : err}`),
+      );
+    });
+  }
+
   process.on("SIGINT", async () => {
     b.perchManager.stopAll();
     adapter.stop();
