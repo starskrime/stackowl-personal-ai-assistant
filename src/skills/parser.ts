@@ -50,6 +50,7 @@ export class SkillParser {
 
     const parameters = this.parseParameters(data);
     const steps = this.parseSteps(data);
+    const behavioralFields = this.parseBehavioralFields(data);
 
     return {
       name: data.name,
@@ -62,6 +63,7 @@ export class SkillParser {
       requiredBins,
       ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
       ...(steps.length > 0 ? { steps } : {}),
+      ...behavioralFields,
     };
   }
 
@@ -189,6 +191,40 @@ export class SkillParser {
     }
 
     return steps;
+  }
+
+  /**
+   * Parse behavioral fields from frontmatter.
+   * Returns an object with trigger, conditions, relevantOwls, priority
+   * (or an empty object if no conditions are present).
+   */
+  private parseBehavioralFields(
+    data: Record<string, unknown>,
+  ): Partial<Pick<Skill, "trigger" | "conditions" | "relevantOwls" | "priority">> {
+    const conditions = Array.isArray(data.conditions)
+      ? (data.conditions as string[]).filter((c) => typeof c === "string")
+      : undefined;
+
+    if (!conditions || conditions.length === 0) {
+      return {};
+    }
+
+    const trigger =
+      typeof data.trigger === "string"
+        ? (data.trigger as "context" | "schedule" | "event")
+        : "context";
+
+    const relevantOwls = Array.isArray(data.relevant_owls)
+      ? (data.relevant_owls as string[]).filter((o) => typeof o === "string")
+      : ["*"];
+
+    const priority =
+      typeof data.priority === "string" &&
+      ["low", "medium", "high", "critical"].includes(data.priority)
+        ? (data.priority as "low" | "medium" | "high" | "critical")
+        : "medium";
+
+    return { trigger, conditions, relevantOwls, priority };
   }
 
   /**
