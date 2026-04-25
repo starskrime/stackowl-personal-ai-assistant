@@ -1,4 +1,4 @@
-compatible: openai
+compatible: anthropic
 availableModels: ["MiniMax-M2.7", "MiniMax-Text-01"]
 defaultModel: "MiniMax-M2.7"
-url: "https://api.minimax.io/v1"
+url: "https://api.minimax.io/anthropic"
