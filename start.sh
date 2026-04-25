@@ -9,7 +9,7 @@
 # Next runs:  reads session.tmp → starts immediately, no questions
 # Reset mode: delete session.tmp to be asked again
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-git pull
+git pull &
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -24,6 +24,12 @@ Thumbs.db
 # Test coverage reports
 coverage/
 
+# Superpowers agent workspace
+.superpowers/
+
+# GitHub workflows (managed separately)
+.github/
+
 # Session data (optional — uncomment to exclude)
 # workspace/sessions/
 # workspace/memory/embeddings.json
@@ -39,3 +45,7 @@ __tests__/.pellets_test_workspace/
 __tests__/.test_workspace/
 skills-stats.json
 stackowl.config copy.json
+
+# Tests
+__tests__/
+
