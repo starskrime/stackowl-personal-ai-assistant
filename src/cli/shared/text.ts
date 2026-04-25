@@ -21,6 +21,10 @@ export function trunc(s: string, max: number): string {
   return plain.length > max ? plain.slice(0, max - 1) + "…" : s;
 }
 
+export function padLeft(s: string, totalWidth: number): string {
+  return " ".repeat(Math.max(0, totalWidth - visLen(s))) + s;
+}
+
 export function wrapText(text: string, maxCols: number): string[] {
   const result: string[] = [];
   for (const para of text.split("\n")) {

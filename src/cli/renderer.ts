@@ -1,8 +1,7 @@
 // src/cli/renderer.ts
 import { EventEmitter } from "node:events";
-import chalk from "chalk";
 import { ansi } from "./shared/ansi.js";
-import { CONTENT_BG, PANEL_V, W, LBL, R } from "./shared/palette.js";
+import { CONTENT_BG, PANEL_V, LBL, R } from "./shared/palette.js";
 import { visLen, wrapText } from "./shared/text.js";
 import { computeLayout } from "./layout.js";
 import { renderTopBar } from "./components/top-bar.js";
@@ -14,6 +13,15 @@ import { renderShortcutsBar, type ShortcutEntry } from "./components/shortcuts-b
 import { InputHandler } from "./input-handler.js";
 import type { GatewayResponse } from "../gateway/types.js";
 import type { StreamEvent } from "../providers/base.js";
+
+// ─── Message model ────────────────────────────────────────────────
+
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  label?: string;        // assistant header e.g. "🦉 Owl"
+  preformatted?: boolean; // render content as-is, no rewrap
+}
 
 // ─── State types ──────────────────────────────────────────────────
 
@@ -39,13 +47,13 @@ interface RendererState {
   provider:   string;
   skills:     number;
   // RightPanel
-  lines:           string[];
-  scrollOff:       number;
-  recentSessions:  RecentSession[];
+  messages:           ChatMessage[];
+  scrollOff:          number;
+  totalRenderedLines: number;
+  recentSessions:     RecentSession[];
   // streaming
-  streaming:       boolean;
-  streamHeaderIdx: number;
-  streamBuf:       string;
+  streaming:  boolean;
+  streamBuf:  string;
 }
 
 const DEFAULT_SHORTCUTS: ShortcutEntry[] = [
@@ -67,8 +75,8 @@ export class TerminalRenderer extends EventEmitter {
     dna: { challenge: 5, verbosity: 5, mood: 7 },
     toolCalls: [], instincts: 0, memFacts: 0, skillsHit: 0,
     generation: 1, challenge: 5, provider: "", skills: 0,
-    lines: [], scrollOff: 0, recentSessions: [],
-    streaming: false, streamHeaderIdx: -1, streamBuf: "",
+    messages: [], scrollOff: 0, totalRenderedLines: 0, recentSessions: [],
+    streaming: false, streamBuf: "",
   };
 
   private _thinkTimer:  ReturnType<typeof setInterval> | null = null;
@@ -85,9 +93,15 @@ export class TerminalRenderer extends EventEmitter {
     this.input = new InputHandler();
     this.input.on("change", () => this.redraw());
     this.input.on("quit",   () => this.emit("quit"));
-    this.input.on("clear",  () => { this._state.lines = []; this._state.toolCalls = []; this._state.scrollOff = 0; this.redraw(); });
+    this.input.on("clear",  () => {
+      this._state.messages = [];
+      this._state.toolCalls = [];
+      this._state.scrollOff = 0;
+      this._state.totalRenderedLines = 0;
+      this.redraw();
+    });
     this.input.on("scroll", (delta: number) => {
-      const max = Math.max(0, this._state.lines.length - this._convRows());
+      const max = Math.max(0, this._state.totalRenderedLines - this._convRows());
       this._state.scrollOff = Math.max(0, Math.min(this._state.scrollOff + delta, max));
       this.redraw();
     });
@@ -202,16 +216,20 @@ export class TerminalRenderer extends EventEmitter {
     this.redraw();
   }
 
+  showUserMessage(text: string): void {
+    this._pushMessage({ role: "user", content: text });
+    this.redraw();
+  }
+
   showResponse(response: GatewayResponse): void {
     this._stopThink();
     this._state.owlState = "done";
     this._state.turn++;
-    this._pushLine(chalk.rgb(205,214,244).bold("  " + response.owlEmoji + " " + response.owlName) + LBL(":"));
-    const { rightW } = computeLayout();
-    for (const l of wrapText(response.content, rightW - 4)) {
-      this._pushLine("  " + W(l));
-    }
-    this._pushLine("");
+    this._pushMessage({
+      role: "assistant",
+      content: response.content,
+      label: response.owlEmoji + " " + response.owlName,
+    });
     this.input.setLocked(false);
     this.redraw();
   }
@@ -223,19 +241,19 @@ export class TerminalRenderer extends EventEmitter {
   printError(msg: string): void {
     this._stopThink();
     this._state.owlState = "error";
-    this._pushLine("  " + R("✕ ") + R(msg));
-    this._pushLine("");
+    this._pushMessage({ role: "system", content: "  " + R("✕ ") + R(msg), preformatted: true });
     this.input.setLocked(false);
     this.redraw();
   }
 
   printInfo(msg: string): void {
-    this._pushLine("  " + LBL(msg));
+    this._pushMessage({ role: "system", content: "  " + LBL(msg), preformatted: true });
     this.redraw();
   }
 
   printLines(lines: string[]): void {
-    for (const l of lines) this._pushLine(l === "" ? "" : "  " + l);
+    const content = lines.map(l => l === "" ? "" : "  " + l).join("\n");
+    this._pushMessage({ role: "system", content, preformatted: true });
     this.redraw();
   }
 
@@ -251,18 +269,17 @@ export class TerminalRenderer extends EventEmitter {
           this._stopThink();
           this._state.owlState = "done";
           if (!this._state.streaming) {
-            this._state.streaming       = true;
-            this._state.streamBuf       = "";
-            this._state.streamHeaderIdx = this._state.lines.length;
+            this._state.streaming = true;
+            this._state.streamBuf = "";
             this._state.turn++;
-            this._pushLine(chalk.rgb(205,214,244).bold("  " + this._state.owlEmoji + " " + this._state.owlName) + LBL(":"));
+            this._state.messages.push({
+              role: "assistant",
+              label: this._state.owlEmoji + " " + this._state.owlName,
+              content: "",
+            });
           }
           this._state.streamBuf += chunk;
-          this._state.lines.splice(this._state.streamHeaderIdx + 1);
-          const { rightW } = computeLayout();
-          for (const l of wrapText(this._state.streamBuf, rightW - 4)) {
-            this._state.lines.push("  " + W(l));
-          }
+          this._state.messages[this._state.messages.length - 1]!.content = this._state.streamBuf;
           this.redraw();
           streamed = true;
           break;
@@ -274,8 +291,6 @@ export class TerminalRenderer extends EventEmitter {
           this._state.owlState    = "idle";
           this._state.streaming   = false;
           this._state.streamBuf   = "";
-          this._state.streamHeaderIdx = -1;
-          this._pushLine("");
           this.input.setLocked(false);
           this.redraw();
           break;
@@ -329,8 +344,10 @@ export class TerminalRenderer extends EventEmitter {
     // Body (rows 4 to rows-5)
     // bodyRows must end at rows-5 so the input box (rows-4 .. rows-2) never overlaps.
     const bodyRows = rows - 8;
-    const leftLines  = renderLeftPanel(this._leftProps(),  leftW,  bodyRows);
-    const rightLines = renderRightPanel(this._rightProps(), rightW, bodyRows);
+    const leftLines   = renderLeftPanel(this._leftProps(),  leftW,  bodyRows);
+    const rightResult = renderRightPanel(this._rightProps(), rightW, bodyRows);
+    this._state.totalRenderedLines = rightResult.totalLines;
+    const rightLines = rightResult.lines;
 
     for (let i = 0; i < bodyRows; i++) {
       const row  = 4 + i;
@@ -388,17 +405,31 @@ export class TerminalRenderer extends EventEmitter {
 
   private _rightProps(): RightPanelProps {
     const s = this._state;
-    return { mode: s.mode, lines: s.lines, scrollOff: s.scrollOff, recentSessions: s.recentSessions };
+    return { mode: s.mode, messages: s.messages, scrollOff: s.scrollOff, recentSessions: s.recentSessions };
   }
 
   // ─── Helpers ──────────────────────────────────────────────────
 
   private _convRows(): number { return computeLayout().rows - 4; }
 
-  private _pushLine(line: string): void {
-    this._state.lines.push(line);
-    if (this._state.lines.length > 5000) this._state.lines.shift();
-    if (this._state.scrollOff > 0) this._state.scrollOff++;
+  private _pushMessage(msg: ChatMessage): void {
+    this._state.messages.push(msg);
+    if (this._state.messages.length > 500) this._state.messages.shift();
+    if (this._state.scrollOff > 0) {
+      // Estimate display lines added so the viewport doesn't jump when reading history
+      const { rightW } = computeLayout();
+      this._state.scrollOff += this._estimateLines(msg, rightW);
+    }
+  }
+
+  private _estimateLines(msg: ChatMessage, rightW: number): number {
+    if (msg.preformatted) return msg.content.split("\n").length;
+    const wrapW = msg.role === "user"
+      ? Math.max(10, Math.min(Math.floor(rightW * 0.70), rightW - 4))
+      : Math.max(10, rightW - 4);
+    const bodyLines = wrapText(msg.content, wrapW).length;
+    const labelLines = msg.label ? 1 : 0;
+    return bodyLines + labelLines + 1; // +1 blank separator
   }
 
   private _stopThink(): void {

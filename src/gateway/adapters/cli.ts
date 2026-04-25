@@ -99,6 +99,7 @@ export class CLIAdapter implements ChannelAdapter {
       const onActivate = (input: string) => {
         this.renderer.setMode("session");
         if (input) {
+          this.renderer.showUserMessage(input);
           this.queue.push(input);
           this._drain();
         }
@@ -113,6 +114,7 @@ export class CLIAdapter implements ChannelAdapter {
   private _wireRenderer(): void {
     this.renderer.input.on("line", (input: string) => {
       if ((this.renderer as any)._state.mode !== "session") return; // handled by _showHome
+      if (!this._onboarding) this.renderer.showUserMessage(input);
       this.queue.push(input);
       this._drain();
     });
