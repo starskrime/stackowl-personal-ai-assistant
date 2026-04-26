@@ -89,7 +89,7 @@ export function renderMain(config: StackOwlConfig): ScreenContent {
 
   const keyboard = new InlineKeyboard()
     .text("📡 Providers",      "cfg:pr").text("🎯 Model Roles",   "cfg:rl").row()
-    .text("🔗 Fallback Chain", "cfg:fb").text("🏥 Health Check",  "cfg:hc").row()
+    .text("⚡ Smart Routing",  "cfg:sr").text("🏥 Health Check",  "cfg:hc").row()
     .text("❌ Close",          "cfg:cl");
 
   return { text, keyboard };

@@ -8,7 +8,7 @@
  *   - Provider add/edit/remove flows
  *   - Model picker (with pagination for large lists)
  *   - Model role assignment
- *   - Fallback chain management
+ *   - Smart routing roster management
  *   - Live health check
  *   - Option C API-key security: delete-immediately + secure web form
  *
@@ -32,8 +32,9 @@ import {
   renderModelPicker,
   renderModelRoles,
   renderRoleProviderPicker,
-  renderFallbackChain,
-  renderFallbackAddPicker,
+  renderSmartRouting,
+  renderSmartRoutingProviderPicker,
+  renderSmartRoutingModelPicker,
   renderHealthCheck,
   renderWebFormLink,
   renderError,
@@ -42,6 +43,7 @@ import {
   PROVIDER_TYPE_META,
 } from "./screens.js";
 import type { ProviderConfigEntry } from "../../../config/loader.js";
+import { getModelLoader } from "../../../models/loader.js";
 
 // ─── One-time secure web form tokens ──────────────────────────────
 
@@ -383,33 +385,58 @@ export class TelegramConfigMenu {
     }
 
     // ── Fallback Chain ───────────────────────────────────────
-    if (cmd === "fb") {
-      this.stateManager.navigate(state.userId, "fallback_chain");
-      await this.editScreen(ctx, state, renderFallbackChain(this.getConfig()));
+    // ── Smart Routing ────────────────────────────────────────────
+    if (cmd === "sr") {
+      this.stateManager.navigate(state.userId, "smart_routing");
+      await this.editScreen(ctx, state, renderSmartRouting(this.getConfig()));
       return;
     }
 
-    if (cmd === "fb_tog") {
+    if (cmd === "sr_tog") {
       await this.toggleSmartRouting(ctx, state);
       return;
     }
 
-    if (cmd === "fa") {
-      const providers = Object.keys(this.getConfig().providers);
-      this.stateManager.navigate(state.userId, "fallback_add_prov");
-      await this.editScreen(ctx, state, renderFallbackAddPicker(providers, this.getConfig()));
+    if (cmd === "sr_add") {
+      const providers = getModelLoader().getAll().map(d => d.name);
+      this.stateManager.navigate(state.userId, "sr_prov_pick");
+      await this.editScreen(ctx, state, renderSmartRoutingProviderPicker(providers));
       return;
     }
 
-    if (cmd.startsWith("fa_p:")) {
-      const providerKey = cmd.slice(5);
-      await this.addToFallbackChain(ctx, state, providerKey);
+    if (cmd.startsWith("sr_ap:")) {
+      const providerName = cmd.slice(6);
+      state.pendingSrProvider = providerName;
+      const def = getModelLoader().get(providerName);
+      const models = def?.availableModels ?? [];
+      this.stateManager.navigate(state.userId, "sr_model_pick");
+      await this.editScreen(ctx, state, renderSmartRoutingModelPicker(providerName, models));
       return;
     }
 
-    if (cmd.startsWith("fb_rm:")) {
-      const providerKey = cmd.slice(6);
-      await this.removeFromFallbackChain(ctx, state, providerKey);
+    if (cmd.startsWith("sr_am:")) {
+      const parts = cmd.slice(6).split(":");
+      const providerName = parts[0];
+      const modelName    = parts.slice(1).join(":");
+      await this.addRosterEntry(ctx, state, providerName, modelName);
+      return;
+    }
+
+    if (cmd.startsWith("sr_rm:")) {
+      const idx = parseInt(cmd.slice(6), 10);
+      await this.removeRosterEntry(ctx, state, idx);
+      return;
+    }
+
+    if (cmd.startsWith("sr_up:")) {
+      const idx = parseInt(cmd.slice(6), 10);
+      await this.moveRosterEntry(ctx, state, idx, -1);
+      return;
+    }
+
+    if (cmd.startsWith("sr_dn:")) {
+      const idx = parseInt(cmd.slice(6), 10);
+      await this.moveRosterEntry(ctx, state, idx, 1);
       return;
     }
 
@@ -468,8 +495,8 @@ export class TelegramConfigMenu {
       case "model_roles":
         await this.editScreen(ctx, state, renderModelRoles(config));
         break;
-      case "fallback_chain":
-        await this.editScreen(ctx, state, renderFallbackChain(config));
+      case "smart_routing":
+        await this.editScreen(ctx, state, renderSmartRouting(config));
         break;
       case "health_check":
         await this.editScreen(ctx, state, renderHealthCheck(this.lastHealth, config, false));
@@ -849,48 +876,76 @@ export class TelegramConfigMenu {
     ));
   }
 
-  // ─── Fallback Chain ───────────────────────────────────────────
+  // ─── Smart Routing ────────────────────────────────────────────
 
   private async toggleSmartRouting(ctx: Context, state: MenuState): Promise<void> {
-    const config = this.getConfig();
+    const config  = this.getConfig();
+    const enabled = !(config.smartRouting?.enabled ?? false);
     config.smartRouting = {
       ...config.smartRouting,
-      enabled: !(config.smartRouting?.enabled ?? false),
+      enabled,
       availableModels: config.smartRouting?.availableModels ?? [],
     };
     await this.saveConfigFn(config);
-    await this.editScreen(ctx, state, renderFallbackChain(config));
+    this.stateManager.navigate(state.userId, "smart_routing");
+    await this.editScreen(ctx, state, renderSmartRouting(config));
   }
 
-  private async addToFallbackChain(
+  private async addRosterEntry(
     ctx: Context,
     state: MenuState,
-    providerKey: string,
+    providerName: string,
+    modelName: string,
   ): Promise<void> {
-    const config = this.getConfig();
-    const chain  = ((config.smartRouting as any)?.fallbackChain ?? []) as string[];
-    if (!chain.includes(providerKey)) {
-      chain.push(providerKey);
-      (config.smartRouting as any) = { ...(config.smartRouting ?? {}), fallbackChain: chain };
-    }
-    await this.saveConfigFn(config);
-    this.stateManager.back(state.userId);
-    await this.editScreen(ctx, state, renderFallbackChain(config));
-  }
-
-  private async removeFromFallbackChain(
-    ctx: Context,
-    state: MenuState,
-    providerKey: string,
-  ): Promise<void> {
-    const config = this.getConfig();
-    const chain  = ((config.smartRouting as any)?.fallbackChain ?? []) as string[];
-    (config.smartRouting as any) = {
-      ...(config.smartRouting ?? {}),
-      fallbackChain: chain.filter((p) => p !== providerKey),
+    const config  = this.getConfig();
+    const roster  = config.smartRouting?.availableModels ?? [];
+    roster.push({ modelName, providerName });
+    config.smartRouting = {
+      ...config.smartRouting,
+      enabled: config.smartRouting?.enabled ?? false,
+      availableModels: roster,
     };
     await this.saveConfigFn(config);
-    await this.editScreen(ctx, state, renderFallbackChain(config));
+    this.stateManager.back(state.userId);
+    this.stateManager.back(state.userId);
+    await this.editScreen(ctx, state, renderSmartRouting(config));
+  }
+
+  private async removeRosterEntry(
+    ctx: Context,
+    state: MenuState,
+    idx: number,
+  ): Promise<void> {
+    const config = this.getConfig();
+    const roster = config.smartRouting?.availableModels ?? [];
+    roster.splice(idx, 1);
+    config.smartRouting = {
+      ...config.smartRouting,
+      enabled: config.smartRouting?.enabled ?? false,
+      availableModels: roster,
+    };
+    await this.saveConfigFn(config);
+    await this.editScreen(ctx, state, renderSmartRouting(config));
+  }
+
+  private async moveRosterEntry(
+    ctx: Context,
+    state: MenuState,
+    idx: number,
+    direction: -1 | 1,
+  ): Promise<void> {
+    const config  = this.getConfig();
+    const roster  = config.smartRouting?.availableModels ?? [];
+    const swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= roster.length) return;
+    [roster[idx], roster[swapIdx]] = [roster[swapIdx], roster[idx]];
+    config.smartRouting = {
+      ...config.smartRouting,
+      enabled: config.smartRouting?.enabled ?? false,
+      availableModels: roster,
+    };
+    await this.saveConfigFn(config);
+    await this.editScreen(ctx, state, renderSmartRouting(config));
   }
 
   // ─── Health Check ─────────────────────────────────────────────
