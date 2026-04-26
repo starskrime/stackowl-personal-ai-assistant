@@ -32,6 +32,9 @@ coverage/
 
 # GitHub workflows
 
+# First-run markers
+.scrapling_ready
+
 # Session data (optional — uncomment to exclude)
 # workspace/sessions/
 # workspace/memory/embeddings.json

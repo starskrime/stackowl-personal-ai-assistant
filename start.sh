@@ -191,8 +191,13 @@ check_prerequisites() {
 
   # Config is optional — if missing, the onboarding wizard runs automatically inside tsx.
 
-  # ── Python & Scrapling (anti-bot web scraping) ──
-  install_scrapling
+  # ── Python & Scrapling (anti-bot web scraping) — only on first install ──
+  local SCRAPLING_MARKER="$SCRIPT_DIR/.scrapling_ready"
+  if [ ! -f "$SCRAPLING_MARKER" ]; then
+    install_scrapling && touch "$SCRAPLING_MARKER"
+  else
+    log_info "Scrapling ready"
+  fi
 
   # ── CamoFox (anti-detection Firefox browser) ──
   setup_camofox
