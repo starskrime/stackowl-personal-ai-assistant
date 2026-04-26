@@ -8,13 +8,17 @@
 
 ## Executive Summary
 
-StackOwl is a sophisticated multi-agent AI framework with extensive infrastructure for tool use, memory, knowledge management, and owl personality evolution. However, after deep code analysis, five critical behavioral deficiencies emerge as systemic patterns — not incidental bugs but architectural choices that manifest as the symptoms the user experiences:
+StackOwl is a sophisticated multi-agent AI framework with extensive infrastructure for tool use, memory, knowledge management, and owl personality evolution. However, after deep code analysis, eight critical behavioral deficiencies emerge as systemic patterns — not incidental bugs but architectural choices that manifest as the symptoms the user experiences:
 
 1. **Reactive-only operation** — The assistant never initiates contact, follows up, or acts without a user message first
 2. **Frozen evolution** — Critical personality traits cannot mutate, trend analysis is not fed to the evolution LLM, and proactive learning is disabled
 3. **Shallow tool mastery** — Tool selection is re-ranked by recency but not by learned effectiveness; fallback chains are hardcoded; no per-tool mastery levels
 4. **Answering instead of delivering** — The system treats any non-empty text as task completion; outcome verification does not exist; the model self-reports completion via `[DONE]` with no independent check
 5. **No curiosity architecture** — The system explicitly avoids asking clarifying questions; gap detection is for *technical* gaps only, not *communicative* gaps; ambiguous requests are guessed rather than clarified
+6. **Parliament never invoked** — Multi-owl debate exists but all automatic triggering paths are dead code; confidence gates silently downgrade PARLIAMENT before execution
+7. **No delegation** — The delegation infrastructure exists but is completely disconnected; two parallel routing systems exist but only the one that doesn't produce delegation decisions is used
+8. **Subagent systems are orphans** — `SwarmCoordinator`, `TaskDecomposer`, `SubOwlRunner`, `TriageClassifier` are all fully implemented but never instantiated or wired; the `AgentRegistry` is created empty and never used
+9. **Pellets perpetually empty** — Pellet retrieval infrastructure works perfectly but generation triggers are rare or disabled; the proactive knowledge pipeline is gutted
 
 ---
 
@@ -217,6 +221,120 @@ The `SubOwlRunner` explicitly says "Complete the subtask directly. Do not ask cl
 
 The `DiagnosticEngine` generates multi-hypothesis fix directives — telling the model *what to try next* rather than *what information is missing*. Self-correction is tool-centric (try a different tool) rather than understanding-centric (clarify what the user actually wants).
 
+### 9. Why Is Parliament Never Invoked?
+
+**Root cause: Automatic triggering paths are all dead code, and confidence gates silently downgrade PARLIAMENT before execution.**
+
+**A. `TriageClassifier` is never instantiated.**
+
+`PARLIAMENT_PATTERNS` exist in `src/triage/index.ts:59-68` with regexes for "should", "pros and cons", "tradeoffs", "best way", etc. — but `new TriageClassifier` has zero matches in the codebase. These patterns are never evaluated against any message.
+
+**B. `shouldConveneParliament()` in `parliament/detector.ts` is defined but never called.**
+
+Only appears in a comment in `classifier.ts:4`. The LLM-based auto-detection path is dead code.
+
+**C. `ParallelRunner.shouldTrigger()` has no callers.**
+
+`src/parliament/parallel-runner.ts:182-202` defines an auto-trigger check but nothing invokes it.
+
+**D. Confidence gates silently downgrade PARLIAMENT.**
+
+At `src/gateway/core.ts:1193-1218`:
+```typescript
+if (strategy.confidence < 0.5) { strategy = "STANDARD" }
+else if (strategy.confidence < 0.65) { strategy = "SPECIALIST" }
+```
+Since classifier confidence typically falls between 0.5–0.65 for non-dilemma queries, PARLIAMENT gets demoted before execution.
+
+**E. The classifier prompt restricts PARLIAMENT to "dilemmas/tradeoffs."**
+
+`src/orchestrator/classifier.ts:239` says: "PARLIAMENT only for genuine value, ethical, or architectural tradeoff dilemmas — NOT factual questions." Most user queries don't match this framing.
+
+**F. Only manual invocation paths exist.**
+
+Parliament can only be triggered via: CLI command (`stackowl parliament "topic"`), REST API (`POST /api/parliament`), or the `summon_parliament` tool — which the system prompt frames as "slow and expensive" and only hints for "high-stakes decisions requiring multiple perspectives."
+
+---
+
+### 10. Why Does the Assistant Do Everything Himself and Not Delegate?
+
+**Root cause: The delegation infrastructure exists but is completely disconnected from the routing path. The system has two parallel routers and only one is used — the one that doesn't produce delegation decisions.**
+
+**A. `TriageClassifier` produces `DELEGATE` but nothing consumes it.**
+
+At `src/triage/index.ts:144`, the classifier can emit `DELEGATE` with `delegateTask` set. At `src/triage/index.ts:61-68`, `DELEGATE_PATTERNS` include multi-step phrases ("build/create/implement" + 20 chars, "step-by-step", etc.). But `handleCore()` in `gateway/core.ts` never calls `TriageClassifier` — it calls `classifyStrategy()` from `orchestrator/classifier.ts` which produces `PLANNED`/`SWARM`, not `DELEGATE`.
+
+**B. `SubOwlRunner` and `TaskDecomposer` are never instantiated.**
+
+Both are defined in `src/gateway/types.ts:308` as optional context fields but are **never passed** to `buildGateway()` in `index.ts`. Zero references to `new SubOwlRunner` or `new TaskDecomposer` exist in the codebase.
+
+**C. The `DELEGATE` path from `depth-directive.ts:73` only sets "thorough" depth — no actual delegation handler exists.**
+
+**D. `orchestrate_tasks` tool relies on LLM self-selection with no systematic trigger.**
+
+The model must voluntarily choose to call `orchestrate_tasks` based purely on its own reasoning. There's no system prompt nudge toward delegation for complex tasks, and no threshold that proactively suggests it.
+
+**E. `delegationPreference` DNA trait is vestigial.**
+
+`src/owls/persona.ts:47,106` defines `delegationPreference: "autonomous" | "collaborative" | "confirmatory"` but the `DNADecisionLayer` never reads this field. The DNA trait has no effect on routing behavior.
+
+**F. The goal loop escalation (STANDARD → PLANNED → SWARM) runs in the same engine, not true delegation.**
+
+At `src/orchestrator/orchestrator.ts:326-330`, each escalation still runs through the **same** `OwlEngine.run()` — it never spawns a separate sub-owl. "SWARM" at attempt 3 is the same primary owl doing parallel thinking, not sub-agent spawning.
+
+**G. Sub-owl runners cannot execute tools.**
+
+At `src/delegation/sub-owl-runner.ts:185-190`: "Tool execution not available in sub-owl context." Even if delegation were wired, sub-owls can only reason, not act.
+
+---
+
+### 11. Why Do Subagent Systems Exist but Are Never Used?
+
+**Root cause: Three subagent systems are fully implemented but completely orphaned — never instantiated, wired, or initialized at startup.**
+
+| System | File | Instantiated? | Wired? | Used? |
+|--------|------|--------------|--------|-------|
+| `SwarmCoordinator` | `src/swarm/coordinator.ts` | **NO** | Optional/undefined | **NO** |
+| `LocalSwarmNode` | `src/swarm/node.ts` | **NO** | Optional/undefined | **NO** |
+| `TaskDecomposer` | `src/delegation/decomposer.ts` | **NO** | N/A | **NO** |
+| `SubOwlRunner` | `src/delegation/sub-owl-runner.ts` | **NO** | Optional/undefined | **NO** |
+| `EnvironmentScanner` | `src/delegation/env-scanner.ts` | **NO** | N/A | **NO** |
+| `DefaultAgentRegistry` | `src/agents/registry.ts` | YES (empty) | YES | **NO** (empty) |
+| `TriageClassifier` | `src/triage/index.ts` | **NO** | Optional/undefined | **NO** |
+
+**`AgentRegistry` is instantiated but hollow:** `DefaultAgentRegistry` is created at `index.ts:818` and passed to `buildGateway()` at line 990 — but no agent ever calls `agentRegistry.register`. Zero matches for `agentRegistry.register` in the codebase.
+
+**The SWARM strategy uses in-process parallelism only:** `TaskOrchestrator.executeSwarm()` (`orchestrator.ts:848-1031`) uses `SwarmBlackboard` for inter-agent communication and spawns parallel ReAct loops via `OwlEngine.run()` — but does **not** use `SwarmCoordinator` for distributed execution across nodes.
+
+**Two parallel routing systems exist but only one runs:** `TriageClassifier` produces `DIRECT | AGENTIC | DELEGATE | PARLIAMENT`. `classifyStrategy` produces `DIRECT | STANDARD | SPECIALIST | PLANNED | PARLIAMENT | SWARM`. The gateway only calls `classifyStrategy`. The `DELEGATE` triage result is a zombie decision — produced but no handler exists anywhere.
+
+---
+
+### 12. Why Are Pellets Never Generated or Used?
+
+**Root cause: Pellet retrieval infrastructure is fully functional, but pellet generation triggers are rare or disabled. The store is perpetually empty.**
+
+**Generation triggers (all rare or disabled):**
+
+| Trigger | Location | Frequency |
+|---------|----------|-----------|
+| `summon_parliament` tool | `parliament/orchestrator.ts:147` | LLM rarely calls (framed as "slow and expensive") |
+| Desire executor research | `evolution/desire-executor.ts:63` | Only if background scheduler runs |
+| Self-seed on empty store | `pellets/self-seed.ts:47` | Once on first startup only |
+| 2 AM self-study | `heartbeat/proactive.ts:646` | **DISABLED** |
+
+**Retrieval triggers (all active on every message):**
+
+| Path | Location |
+|------|----------|
+| `buildSystemPrompt` | `runtime.ts:2481-2498` — every message |
+| `MemoryFirstContextBuilder` | `memory/context-builder.ts:293` — non-conversational |
+| Per-iteration injection | `runtime.ts:1787-1791` — after tools |
+| `MemoryBus` | `memory/bus.ts:224` — cross-store search |
+| `behavioralPatchContext` | `context-builder.ts:179-181` — every message |
+
+**The disconnect:** Retrieval works perfectly — every message searches the pellet store. But the store is empty because generation triggers almost never fire during normal operation. The proactive knowledge pipeline (`maybeKnowledgeCouncil()`, `maybeDream()`, `maybeEvolveSkills()`) is fully disabled at `heartbeat/proactive.ts:696-726`.
+
 ---
 
 ## Part III: Requirements
@@ -282,6 +400,39 @@ The `DiagnosticEngine` generates multi-hypothesis fix directives — telling the
 | R5.7 | `Assumption Over Interruption` MUST be balanced with "verify understanding" | Vague requests trigger either confident execution OR clarification — contextual decision |
 | R5.8 | The Risk Gate "ask user" pattern MUST be generalized to curiosity | Any high-uncertainty situation can route back to the user |
 
+### R6: Parliament & Multi-Owl Debate
+
+| ID | Requirement | Success Criterion |
+|----|------------|-----------------|
+| R6.1 | `TriageClassifier` MUST be instantiated and called in `handleCore()` | PARLIAMENT_PATTERNS are evaluated against every message |
+| R6.2 | `shouldConveneParliament()` from `parliament/detector.ts` MUST be called | LLM-based auto-detection is wired into the routing path |
+| R6.3 | `ParallelRunner.shouldTrigger()` MUST be invoked | Static auto-trigger utility is connected |
+| R6.4 | Confidence gates MUST NOT silently downgrade PARLIAMENT | PARLIAMENT selected → PARLIAMENT executed (no automatic downgrade) |
+| R6.5 | The `summon_parliament` tool description MUST NOT frame it as "slow and expensive" | Tool is presented as a first-class option for appropriate topics |
+| R6.6 | `parliament/detector.ts` MUST be imported and used in `classifier.ts` | Dead code function is wired into production path |
+
+### R7: Delegation & Sub-Agent Systems
+
+| ID | Requirement | Success Criterion |
+|----|------------|-----------------|
+| R7.1 | `TriageClassifier` `DELEGATE` decision MUST be handled | `handleCore()` routes DELEGATE to `TaskDecomposer` + `SubOwlRunner` |
+| R7.2 | `TaskDecomposer` and `SubOwlRunner` MUST be instantiated at startup | Both classes are constructed and passed to `buildGateway()` |
+| R7.3 | `orchestrate_tasks` tool MUST have a proactive trigger, not just LLM self-selection | System prompts toward delegation for multi-step tasks; threshold-based suggestion |
+| R7.4 | `delegationPreference` DNA trait MUST be read in routing logic | `DNADecisionLayer` reads trait; autonomous owls delegate more readily |
+| R7.5 | Goal loop escalation (STANDARD→PLANNED→SWARM) MUST spawn actual sub-agents, not re-use primary engine | SWARM at attempt 3 spawns separate `SubOwlRunner` instances |
+| R7.6 | `SubOwlRunner` MUST support real tool execution, not chat-only | Sub-owls can call actual tools; outcomes are verifiable |
+| R7.7 | `AgentRegistry` MUST have registered agents or be removed as dead code | Either agents register, or the hollow registry is removed |
+
+### R8: Knowledge Pellets
+
+| ID | Requirement | Success Criterion |
+|----|------------|-----------------|
+| R8.1 | Pellet generation MUST NOT depend only on `summon_parliament` | Conversation summaries, significant tool sequences, and decisions generate pellets |
+| R8.2 | `maybeKnowledgeCouncil()`, `maybeDream()`, `maybeEvolveSkills()` MUST be re-enabled | Proactive knowledge generation is restored with token-efficient implementation |
+| R8.3 | Pellet store MUST NOT be empty after normal operation | Generation triggers fire sufficiently to populate the store |
+| R8.4 | Pellets MUST be generated from desire executor research | `evolution/desire-executor.ts:63` pellet generation is active |
+| R8.5 | Pellet retrieval results MUST be actively used, not just searched | Retrieved pellets inform responses; empty results don't mean "no pellets needed" |
+
 ---
 
 ## Part IV: Open Questions
@@ -325,6 +476,19 @@ These require user input before finalizing the spec:
 | Risk Gate only for destructive tools | `src/engine/runtime.ts` | 1420-1443 |
 | IdleActivityEngine cancels on user activity | `src/heartbeat/idle-engine.ts` | 133 |
 | LearningOrchestrator.runProactiveSession disabled | `src/learning/orchestrator.ts` | 257-270 |
+| TriageClassifier never instantiated | `src/gateway/core.ts` | (zero matches for `new TriageClassifier`) |
+| Parliament confidence downgrades | `src/gateway/core.ts` | 1193-1218 |
+| Classifier restricts PARLIAMENT to dilemmas | `src/orchestrator/classifier.ts` | 239 |
+| DELEGATE triage decision never consumed | `src/triage/index.ts` | 144, no downstream handler |
+| SubOwlRunner/TaskDecomposer never instantiated | `src/index.ts` | (zero matches for `new SubOwlRunner`) |
+| delegationPreference DNA trait unused | `src/owls/decision-layer.ts` | (trait never read) |
+| Goal loop uses same engine, not true delegation | `src/orchestrator/orchestrator.ts` | 326-330 |
+| AgentRegistry instantiated but empty | `src/agents/registry.ts` | (no `register` calls) |
+| SwarmCoordinator never instantiated | `src/swarm/coordinator.ts` | (not in index.ts bootstrap) |
+| Pellet retrieval works, generation disabled | `src/heartbeat/proactive.ts` | 696-726 |
+| summon_parliament framed as expensive | `src/tools/parliament.ts` | 13 |
+| shouldConveneParliament dead code | `src/parliament/detector.ts` | 22, never called |
+| ParallelRunner.shouldTrigger has no callers | `src/parliament/parallel-runner.ts` | 182-202 |
 
 ---
 
