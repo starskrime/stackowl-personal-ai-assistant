@@ -238,6 +238,9 @@ export class CommandRegistry {
   ): Promise<boolean> {
     if (!input.startsWith("/")) return false;
 
+    // Let /skills fall through to gateway.handle() for wizard routing
+    if (input.toLowerCase().startsWith("/skills")) return false;
+
     const space = input.indexOf(" ");
     const name = (
       space === -1 ? input.slice(1) : input.slice(1, space)
