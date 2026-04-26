@@ -146,21 +146,47 @@ write_pid_to_session() {
 
 # ─── Prerequisites ───────────────────────────────────────────────
 
+install_node_instructions() {
+  echo ""
+  log_error "Node.js >= 22 is required but was not found."
+  echo ""
+  echo -e "  ${BOLD}Install options:${RESET}"
+  echo -e "  ${CYAN}▸${RESET} Homebrew (macOS/Linux):  ${BOLD}brew install node@22${RESET}"
+  echo -e "  ${CYAN}▸${RESET} nvm (any platform):      ${BOLD}nvm install 22 && nvm use 22${RESET}"
+  echo -e "  ${CYAN}▸${RESET} Download directly:       ${BOLD}https://nodejs.org${RESET}"
+  echo ""
+  exit 1
+}
+
 check_prerequisites() {
+  echo ""
+  echo -e "${DIM}─────────────────────────────────────────────────${RESET}"
+  log_step "Checking prerequisites..."
+
+  # ── Node.js ──
   if ! command -v node &> /dev/null; then
-    log_error "Node.js is not installed. Please install Node.js >= 22."
-    exit 1
+    install_node_instructions
   fi
 
   NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
   if [ "$NODE_VERSION" -lt 22 ]; then
-    log_error "Node.js >= 22 required (found v$(node -v))"
+    log_error "Node.js >= 22 required (found $(node -v))"
+    echo ""
+    echo -e "  ${CYAN}▸${RESET} Upgrade via Homebrew:  ${BOLD}brew install node@22${RESET}"
+    echo -e "  ${CYAN}▸${RESET} Upgrade via nvm:       ${BOLD}nvm install 22 && nvm use 22${RESET}"
+    echo ""
     exit 1
   fi
+  log_info "Node.js $(node -v)"
 
+  # ── npm dependencies ──
   if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
-    log_warn "Dependencies not installed. Running npm install..."
+    echo ""
+    log_step "First run — installing dependencies (this takes a few minutes)..."
     (cd "$SCRIPT_DIR" && npm install)
+    log_info "Dependencies installed"
+  else
+    log_info "Dependencies ready"
   fi
 
   # Config is optional — if missing, the onboarding wizard runs automatically inside tsx.
