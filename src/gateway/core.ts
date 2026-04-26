@@ -22,8 +22,14 @@ import { PromptOptimizer } from "../engine/prompt-optimizer.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
+import { SkillInstallWizard } from "../skills/wizard.js";
 import { SkillTracker } from "../skills/tracker.js";
 import { log } from "../logger.js";
+import { OutcomeVerifier } from "../verification/outcome-verifier.js";
+import { FalseDoneDetector } from "../verification/false-done-detector.js";
+import { CompletionTracker } from "../verification/completion-tracker.js";
+import { EscalationHandler } from "../verification/escalation-handler.js";
+import { DomainExpertiseTracker } from "../learning/domain-expertise.js";
 // MemoryConsolidator and MemoryReflexionEngine retired (Phase 3 L3 consolidation).
 // Replaced by FactStore + ConversationDigest. Imports removed to prevent dead-code warnings.
 import { PreferenceDetector } from "../preferences/detector.js";
@@ -67,6 +73,27 @@ import { FeedbackStore } from "../feedback/store.js";
 import { OutputFilter, resolveOutputMode } from "./output-filter.js";
 import { SessionBriefGenerator } from "../cognition/session-brief.js";
 import { LoopDetector } from "../cognition/loop-detector.js";
+import { AmbiguityDetector } from "../clarification/ambiguity-detector.js";
+import { PreExecutionConfirmer } from "../clarification/pre-execution-confirmer.js";
+import { PreActionQuestioner } from "../clarification/pre-action-questioner.js";
+import { MidExecutionRouter } from "../clarification/mid-execution-router.js";
+import { UnclaritySurfacer } from "../clarification/unclarity-surfacer.js";
+import { ToolMastery } from "../tools/tool-mastery.js";
+import { FallbackSequencer } from "../tools/fallback-sequencer.js";
+import { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
+import { DomainToolMap } from "../delegation/domain-tool-map.js";
+import { DelegationDecider } from "../delegation/delegation-decider.js";
+import { TaskDecomposer } from "../delegation/decomposer.js";
+import { ResultSynthesizer } from "../delegation/result-synthesizer.js";
+import { PriorContextRetriever } from "../memory/prior-context-retriever.js";
+import { CrossSessionStore } from "../memory/cross-session-store.js";
+import { PreferenceRecognizer } from "../memory/preference-recognizer.js";
+import { ParliamentAutoTrigger } from "../parliament/auto-trigger.js";
+import { TopicWorthinessEvaluator } from "../parliament/topic-worthiness.js";
+import { MultiRoundDebateManager } from "../parliament/multi-round-debate.js";
+import { DebatePelletGenerator } from "../parliament/debate-pellet-generator.js";
+import { RoutingWirer } from "../parliament/routing-wirer.js";
+import type { ParliamentSession } from "../parliament/protocol.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -106,6 +133,22 @@ export class OwlGateway {
   private sessionBriefGenerator: SessionBriefGenerator | null = null;
   private loopDetector: LoopDetector = new LoopDetector();
 
+  // ─── Epic 3: Clarification Modules ─────────────────────────────
+  readonly ambiguityDetector: import("../clarification/ambiguity-detector.js").AmbiguityDetector;
+  readonly preExecutionConfirmer: import("../clarification/pre-execution-confirmer.js").PreExecutionConfirmer;
+  readonly preActionQuestioner: import("../clarification/pre-action-questioner.js").PreActionQuestioner;
+  readonly midExecutionRouter: import("../clarification/mid-execution-router.js").MidExecutionRouter;
+  readonly unclaritySurfacer: import("../clarification/unclarity-surfacer.js").UnclaritySurfacer;
+
+  // ─── Epic 4: Tool Mastery Modules ─────────────────────────────
+  readonly toolMastery: ToolMastery;
+  readonly fallbackSequencer: FallbackSequencer;
+  readonly fallbackDiscoverer: FallbackDiscoverer;
+  readonly domainToolMap: DomainToolMap;
+  readonly delegationDecider: DelegationDecider;
+  taskDecomposer: TaskDecomposer | null = null;
+  resultSynthesizer: ResultSynthesizer | null = null;
+
   // ─── Extracted Handlers (Improvement #4) ───────────────────
   private postProcessor: PostProcessor;
   private contextBuilder: ContextBuilder;
@@ -138,9 +181,31 @@ export class OwlGateway {
    * already tried in previous messages of this conversation.
    */
   private attemptLogs = new AttemptLogRegistry();
+  private wizardSessions = new Map<string, SkillInstallWizard>();
 
   /** User mental model — infers user state from behavioral signals */
   private userMentalModel: UserMentalModel | null = null;
+
+  // ─── Epic 5: Memory Module Instances ────────────────────────
+  private priorContextRetriever: PriorContextRetriever | null = null;
+  private crossSessionStore: CrossSessionStore | null = null;
+  private preferenceRecognizer: PreferenceRecognizer | null = null;
+
+  // ─── Epic 6: Parliament Module Instances ──────────────────
+  private parliamentAutoTrigger: ParliamentAutoTrigger | null = null;
+  private topicWorthiness: TopicWorthinessEvaluator | null = null;
+  private multiRoundDebate: MultiRoundDebateManager | null = null;
+  private debatePelletGenerator: DebatePelletGenerator | null = null;
+  private routingWirer: RoutingWirer | null = null;
+
+// ─── Epic 1: Learning Modules ─────────────────────────────────
+  private domainExpertise: DomainExpertiseTracker | null = null;
+
+// ─── Epic 2: Verification Modules ──────────────────────────────
+  private outcomeVerifier: OutcomeVerifier | null = null;
+  private falseDoneDetector: FalseDoneDetector | null = null;
+  private completionTracker: CompletionTracker | null = null;
+  private escalationHandler: EscalationHandler | null = null;
 
   /**
    * Pending feedback contexts — keyed by feedbackId sent to channel adapters.
@@ -233,6 +298,26 @@ export class OwlGateway {
 
     // User mental model — behavioral state inference
     this.userMentalModel = new UserMentalModel();
+
+    // ─── Epic 3: Initialize Clarification Modules ───────────────
+    this.ambiguityDetector = new AmbiguityDetector(ctx.provider);
+    this.preExecutionConfirmer = new PreExecutionConfirmer();
+    this.preActionQuestioner = new PreActionQuestioner(ctx.provider);
+    this.midExecutionRouter = new MidExecutionRouter(this.ambiguityDetector);
+    this.unclaritySurfacer = new UnclaritySurfacer();
+
+    // ─── Epic 4: Initialize Tool Mastery Modules ──────────────
+    this.toolMastery = new ToolMastery();
+    this.fallbackSequencer = new FallbackSequencer();
+    this.fallbackDiscoverer = new FallbackDiscoverer();
+    this.domainToolMap = new DomainToolMap();
+    this.delegationDecider = new DelegationDecider();
+    if (ctx.provider) {
+      this.taskDecomposer = new TaskDecomposer(ctx.provider);
+      this.resultSynthesizer = new ResultSynthesizer(ctx.provider);
+    }
+
+    log.engine.info("[Epic 3&4] Clarification and Tool Mastery modules initialized");
 
     // Initialize extracted handlers (Improvement #4)
     // ContextBuilder is initialized after skillInjector below
@@ -381,6 +466,89 @@ export class OwlGateway {
         );
       });
     }
+
+    // ─── Epic 5: Memory Modules ─────────────────────────────────────
+    const workspacePath = ctx.cwd ?? process.cwd();
+    if (ctx.priorContextRetriever) {
+      this.priorContextRetriever = ctx.priorContextRetriever;
+    } else if (ctx.episodicMemory) {
+      this.priorContextRetriever = new PriorContextRetriever(ctx.episodicMemory, ctx.provider);
+    }
+    if (this.priorContextRetriever) {
+      log.engine.info("[memory] PriorContextRetriever initialized");
+    }
+
+    if (ctx.crossSessionStore) {
+      this.crossSessionStore = ctx.crossSessionStore;
+    } else {
+      this.crossSessionStore = new CrossSessionStore(workspacePath, ctx.factStore, ctx.sessionStore);
+      this.crossSessionStore.load().catch(() => {});
+    }
+    log.engine.info("[memory] CrossSessionStore initialized");
+
+    if (ctx.preferenceRecognizer) {
+      this.preferenceRecognizer = ctx.preferenceRecognizer;
+    } else if (ctx.factStore) {
+      this.preferenceRecognizer = new PreferenceRecognizer(ctx.factStore);
+    }
+    if (this.preferenceRecognizer) {
+      log.engine.info("[memory] PreferenceRecognizer initialized");
+    }
+
+    // ─── Epic 6: Parliament Modules ─────────────────────────────────
+    if (ctx.parliamentAutoTrigger) {
+      this.parliamentAutoTrigger = ctx.parliamentAutoTrigger;
+    } else {
+      this.parliamentAutoTrigger = new ParliamentAutoTrigger(ctx.config);
+    }
+    if (this.parliamentAutoTrigger) {
+      log.engine.info("[parliament] ParliamentAutoTrigger initialized");
+    }
+
+    if (ctx.topicWorthiness) {
+      this.topicWorthiness = ctx.topicWorthiness;
+    } else {
+      this.topicWorthiness = new TopicWorthinessEvaluator(ctx.provider);
+    }
+    if (this.topicWorthiness) {
+      log.engine.info("[parliament] TopicWorthiness initialized");
+    }
+
+    if (ctx.multiRoundDebate) {
+      this.multiRoundDebate = ctx.multiRoundDebate;
+    } else {
+      this.multiRoundDebate = new MultiRoundDebateManager(ctx.provider, ctx.config);
+    }
+    if (this.multiRoundDebate) {
+      log.engine.info("[parliament] MultiRoundDebate initialized");
+    }
+
+    if (ctx.debatePelletGenerator) {
+      this.debatePelletGenerator = ctx.debatePelletGenerator;
+    } else {
+      this.debatePelletGenerator = new DebatePelletGenerator(ctx.provider, ctx.config);
+    }
+    if (this.debatePelletGenerator) {
+      log.engine.info("[parliament] DebatePelletGenerator initialized");
+    }
+
+    if (ctx.routingWirer) {
+      this.routingWirer = ctx.routingWirer;
+    } else {
+      this.routingWirer = new RoutingWirer();
+    }
+    if (this.routingWirer) {
+      log.engine.info("[parliament] RoutingWirer initialized");
+    }
+
+    // ─── Epic 1: Learning Modules ─────────────────────────────────
+    this.domainExpertise = new DomainExpertiseTracker();
+
+    // ─── Epic 2: Verification Modules ──────────────────────────────
+    this.outcomeVerifier = new OutcomeVerifier();
+    this.falseDoneDetector = new FalseDoneDetector(this.ctx.provider);
+    this.completionTracker = new CompletionTracker();
+    this.escalationHandler = new EscalationHandler(this.ctx.provider);
 
     // Initialize new feature modules (all optional, fire-and-forget load)
     this.initFeatureModules();
@@ -582,8 +750,49 @@ export class OwlGateway {
       }
     }
 
+    // ─── Wizard routing ──────────────────────────────────────────
+    const activeWizard = this.wizardSessions.get(message.sessionId);
+    if (activeWizard) {
+      const wizResp = await activeWizard.step(message.text);
+      if (wizResp.done) this.wizardSessions.delete(message.sessionId);
+      return {
+        content: wizResp.text,
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+        inlineKeyboard: wizResp.inlineKeyboard,
+      };
+    }
+
+    // ─── /skills install — start the install wizard ───────────────
+    if (
+      message.text.trim().toLowerCase().startsWith("/skills install") ||
+      message.text.trim().toLowerCase() === "/skills"
+    ) {
+      const { resolve, join } = await import("node:path");
+      const skillsDir = resolve(
+        this.ctx.config.skills?.directories?.[0] ??
+          join(this.ctx.cwd ?? process.cwd(), "workspace", "skills"),
+      );
+      const wizard = new SkillInstallWizard(
+        skillsDir,
+        new ClawHubClient(),
+        this.ctx.skillsLoader?.getRegistry(),
+      );
+      this.wizardSessions.set(message.sessionId, wizard);
+      const startResp = wizard.start();
+      return {
+        content: startResp.text,
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+        inlineKeyboard: startResp.inlineKeyboard,
+      };
+    }
+
     // Check for /reset command - clear session history
     if (message.text.trim().toLowerCase() === "/reset") {
+      this.wizardSessions.delete(message.sessionId);
       session.messages = [];
       this.attemptLogs.delete(message.sessionId);
       await this.ctx.sessionStore.saveSession(session);
@@ -1035,6 +1244,65 @@ export class OwlGateway {
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
     let dynamicSkillsContext = "";
     let injectedSkillNames: string[] = [];
+
+    // ─── Epic 5: Memory Module Pre-Engine Injection ─────────────
+    // Inject prior context, preferences, and cross-session data BEFORE engine runs.
+    if (this.priorContextRetriever || this.preferenceRecognizer || this.crossSessionStore) {
+      const memoryContextParts: string[] = [];
+
+      // PriorContextRetriever — inject context from past conversations on temporal references
+      if (this.priorContextRetriever && this.priorContextRetriever.hasTemporalReference(message.text)) {
+        try {
+          const priorCtx = await this.priorContextRetriever.retrieve({
+            currentMessage: message.text,
+            sessionId: session.id,
+            owlName: this.ctx.owl.persona.name,
+          });
+          if (priorCtx.hasRelevantContext) {
+            const ctxPrompt = await this.priorContextRetriever.buildContextPrompt({
+              currentMessage: message.text,
+              sessionId: session.id,
+              owlName: this.ctx.owl.persona.name,
+            });
+            if (ctxPrompt) {
+              memoryContextParts.push(`\n[PRIOR CONTEXT]\n${ctxPrompt}\n`);
+            }
+          }
+        } catch (err) {
+          log.engine.debug(`[Memory] PriorContext retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // PreferenceRecognizer — inject recognized user preferences
+      if (this.preferenceRecognizer) {
+        try {
+          await this.preferenceRecognizer.recognizeFromMessage(message.text);
+          const prefCtx = this.preferenceRecognizer.buildContextString(0.5);
+          if (prefCtx) {
+            memoryContextParts.push(`\n${prefCtx}\n`);
+          }
+        } catch (err) {
+          log.engine.debug(`[Memory] Preference recognition failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // CrossSessionStore — inject active commitments and critical facts
+      if (this.crossSessionStore) {
+        try {
+          const crossCtx = await this.crossSessionStore.buildContextString();
+          if (crossCtx) {
+            memoryContextParts.push(`\n[CROSS-SESSION STATE]\n${crossCtx}\n`);
+          }
+        } catch (err) {
+          log.engine.debug(`[Memory] CrossSessionStore build failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      if (memoryContextParts.length > 0) {
+        dynamicSkillsContext = memoryContextParts.join("\n") + "\n" + dynamicSkillsContext;
+      }
+    }
+
     // Skip skill routing unless the message looks like an action request.
     // The IntentRouter's 5-tier pipeline (BM25 + semantic re-rank + LLM call)
     // adds 1–3 seconds of latency and is wasted on conversational messages.
@@ -1158,6 +1426,33 @@ export class OwlGateway {
       })());
     }
 
+    // ─── Epic 3.1: Ambiguity Detection — BEFORE engine execution ─────
+    // Detect ambiguous input early and ask clarifying questions before wasting tokens
+    const ambiguityResult = await this.ambiguityDetector.detectAmbiguity(message.text);
+    if (ambiguityResult.needsClarification && ambiguityResult.question) {
+      log.engine.info(`[AmbiguityDetector] Ambiguous input detected: ${ambiguityResult.ambiguitySignals.map(s => s.type).join(", ")}`);
+      return {
+        content: ambiguityResult.question.question,
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+      };
+    }
+
+    // ─── Epic 3.5: Pre-Execution Confirmation — BEFORE engine execution ─────
+    // Check for high-stakes or vague requests and confirm before proceeding
+    const confirmation = this.preExecutionConfirmer.assessRequest(message.text);
+    if (confirmation && confirmation.confidence < 0.8) {
+      const confirmQuestion = this.preExecutionConfirmer.getConfirmationQuestion(confirmation);
+      log.engine.info(`[PreExecutionConfirmer] Low confidence (${confirmation.confidence.toFixed(2)}), requesting confirmation`);
+      return {
+        content: confirmQuestion,
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+      };
+    }
+
     // ─── Phase 3: Loop Detection ──────────────────────────────────
     // Detect if the user is stuck in a recurring question pattern.
     // If so, inject a root-cause-finding directive into the message text.
@@ -1175,13 +1470,30 @@ export class OwlGateway {
 
     // ─── Strategy Classification & Orchestrated Execution ─────
     // Single LLM call replaces both parliament detection and planner routing
-    let strategy = await classifyStrategy(
-      message.text,
-      this.ctx.owlRegistry.listOwls(),
-      this.ctx.toolRegistry?.getAllDefinitions().map((t) => t.name) ?? [],
-      session.messages.slice(-6),
-      this.ctx.provider,
-    );
+    // ─── Epic 6: RoutingWirer — inject Parliament trigger logic into classifier ──
+    let strategy: import("../orchestrator/types.js").TaskStrategy;
+    if (this.routingWirer) {
+      strategy = await this.routingWirer.classifyWithParliament(
+        message.text,
+        () =>
+          classifyStrategy(
+            message.text,
+            this.ctx.owlRegistry.listOwls(),
+            this.ctx.toolRegistry?.getAllDefinitions().map((t) => t.name) ?? [],
+            session.messages.slice(-6),
+            this.ctx.provider,
+          ),
+        this.ctx.provider,
+      );
+    } else {
+      strategy = await classifyStrategy(
+        message.text,
+        this.ctx.owlRegistry.listOwls(),
+        this.ctx.toolRegistry?.getAllDefinitions().map((t) => t.name) ?? [],
+        session.messages.slice(-6),
+        this.ctx.provider,
+      );
+    }
 
     // ── Confidence Gate ───────────────────────────────────────────
     // Expensive strategies (PARLIAMENT, SWARM) should not run when the classifier
@@ -1224,6 +1536,56 @@ export class OwlGateway {
       await callbacks.onProgress(
         `🎯 **Strategy: ${strategy.strategy}** — ${strategy.reasoning}`,
       );
+    }
+
+    // ─── Epic 6: Parliament Routing Check ────────────────────────
+    // Check if this topic warrants Parliament before standard execution.
+    // If autoTrigger fires, route to multi-round debate instead.
+    if (this.parliamentAutoTrigger && this.topicWorthiness && this.multiRoundDebate && this.debatePelletGenerator && this.ctx.pelletStore) {
+      const pelletStore = this.ctx.pelletStore;
+      try {
+        const parliamentCheck = await this.parliamentAutoTrigger.check(message.text, this.ctx.provider);
+        if (parliamentCheck.shouldTrigger) {
+          const worthiness = await this.topicWorthiness.evaluate(message.text);
+          if (worthiness.isWorthy) {
+            log.engine.info(
+              `[Parliament] Routing to multi-round debate for: "${message.text.slice(0, 60)}..."`,
+            );
+            if (callbacks.onProgress) {
+              await callbacks.onProgress(`🦉 **Parliament** — convening debate on: ${message.text.slice(0, 80)}`);
+            }
+            // Create a minimal ParliamentSession for the debate
+            const debateSession: ParliamentSession = {
+              id: `debate_${Date.now()}`,
+              config: {
+                topic: message.text.slice(0, 200),
+                participants: this.ctx.owlRegistry.listOwls().slice(0, 3),
+                contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
+              },
+              phase: "setup",
+              positions: [],
+              challenges: [],
+              synthesis: "",
+              verdict: undefined,
+              startedAt: Date.now(),
+            };
+            await this.multiRoundDebate.runDebate(debateSession);
+            // Generate pellet from debate
+            if (this.debatePelletGenerator) {
+              await this.debatePelletGenerator.generateFromSession(debateSession, pelletStore);
+            }
+            // Return the synthesis as the response
+            return {
+              content: debateSession.synthesis || "Parliament concluded without synthesis.",
+              owlName: this.ctx.owl.persona.name,
+              owlEmoji: this.ctx.owl.persona.emoji,
+              toolsUsed: [],
+            };
+          }
+        }
+      } catch (err) {
+        log.engine.warn(`[Parliament] Routing check failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     const engineCtx = await this.buildEngineContext(
@@ -1288,6 +1650,17 @@ export class OwlGateway {
       userId: message.userId,
       channelId: message.channelId,
     });
+
+    // ─── Epic 3.3: Unclarity Surfacing — AFTER engine response ───────
+    // Proactively surface unclarities from the user's perspective after execution
+    const priorMessages = session.messages.slice(-3).map(m => m.content);
+    const unclarity = this.unclaritySurfacer.detectUnclarity(message.text, priorMessages);
+    if (unclarity && this.unclaritySurfacer.shouldSurfaceProactively(message.text, priorMessages)) {
+      const surfacingQuestion = this.unclaritySurfacer.surfaceUnclarity(unclarity);
+      log.engine.info(`[UnclaritySurfacer] Surfacing unclarity: ${unclarity.description}`);
+      // Prepend the surfacing question to the response
+      response.content = `${surfacingQuestion}\n\n${response.content}`;
+    }
 
     // Update working context with owl's response
     if (this.ctx.workingContextManager) {
@@ -1406,6 +1779,69 @@ export class OwlGateway {
       message.channelId,
       message.userId,
     );
+
+    // ─── Epic 2: Verification Wire ─────────────────────────────────
+    // After engine response, BEFORE returning to user
+    const taskId = message.sessionId;
+    const userIntent = message.text;
+
+    if (this.outcomeVerifier && this.falseDoneDetector && this.completionTracker) {
+      this.runBackground("verification", (async () => {
+        try {
+          const verification = await this.outcomeVerifier!.verify(
+            taskId,
+            response.content,
+            userIntent,
+            this.ctx.provider,
+          );
+
+          if (verification.status === "failed" && this.escalationHandler) {
+            const shouldEscalate = this.escalationHandler.shouldEscalate(verification.confidence);
+            if (shouldEscalate) {
+              const escalationMsg = this.escalationHandler.createEscalationMessage(
+                taskId,
+                userIntent,
+                response.content,
+                verification,
+              );
+              response.content = escalationMsg + "\n\n" + response.content;
+              log.engine.info(`[Verification] Escalation triggered for taskId=${taskId}`);
+            }
+          }
+
+          const falseDoneResult = await this.falseDoneDetector!.detect(
+            taskId,
+            response.content,
+            userIntent,
+            this.ctx.provider,
+          );
+
+          if (falseDoneResult.isFalseDone) {
+            log.engine.warn(`[FalseDoneDetector] False [DONE] claim detected for taskId=${taskId}`);
+          }
+
+          this.completionTracker!.recordOutcome(
+            taskId,
+            verification.status === "passed" && !falseDoneResult.isFalseDone,
+            "standard",
+          );
+        } catch (err) {
+          log.engine.warn(`[Verification] Wire failed: ${err instanceof Error ? err.message : err}`);
+        }
+      })());
+    }
+
+    // ─── Epic 1: Learning Wire (recordOutcome) ─────────────────────
+    // ApproachLibrary.recordOutcome is already called in runtime.ts via context.db.approachLibrary
+    // Record domain expertise on tool outcomes (fire-and-forget)
+    if (this.domainExpertise && response.toolsUsed?.length) {
+      const domain = message.text.toLowerCase().slice(0, 50);
+      this.runBackground("domain-expertise", (async () => {
+        for (const _tool of response.toolsUsed ?? []) {
+          this.domainExpertise!.recordToolExecution(domain, true);
+        }
+      })());
+    }
 
     return toGatewayResponse(response);
   }
