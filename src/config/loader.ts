@@ -94,11 +94,12 @@ export interface StackOwlConfig {
   };
   smartRouting?: {
     enabled: boolean;
-    fallbackProvider?: string; // e.g. 'anthropic'
-    fallbackModel?: string; // e.g. 'claude-3-5-sonnet-latest'
+    fallbackProvider?: string;
+    fallbackModel?: string;
     availableModels: {
-      name: string;
-      description: string;
+      modelName: string;
+      providerName: string;
+      description?: string;
     }[];
   };
   skills?: {
