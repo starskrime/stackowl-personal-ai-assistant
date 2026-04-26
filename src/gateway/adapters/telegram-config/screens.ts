@@ -354,51 +354,75 @@ export function renderRoleProviderPicker(
   return { text, keyboard };
 }
 
-// ─── Screen: Fallback Chain ───────────────────────────────────────
+// ─── Screen: Smart Routing ────────────────────────────────────────
 
-export function renderFallbackChain(config: StackOwlConfig): ScreenContent {
-  const sr       = config.smartRouting;
-  const enabled  = sr?.enabled ?? false;
-  const chain    = (sr as any)?.fallbackChain as string[] | undefined ?? [];
+export function renderSmartRouting(config: StackOwlConfig): ScreenContent {
+  const sr      = config.smartRouting;
+  const enabled = sr?.enabled ?? false;
+  const roster  = sr?.availableModels ?? [];
 
   const toggleLabel = enabled ? "🔴 Disable Smart Routing" : "🟢 Enable Smart Routing";
 
-  const chainLines = chain.length > 0
-    ? chain.map((p, i) => {
-        const tag = i === 0 ? "PRIMARY" : i === chain.length - 1 ? "EMERGENCY" : "FALLBACK";
-        return `${i + 1}. ${providerEmoji(p, config)} <b>${p}</b>  <i>${tag}</i>`;
+  const rosterLines = roster.length > 0
+    ? roster.map((e, i) => {
+        const tier = i === 0 ? "light" : i === roster.length - 1 ? "heavy" : "mid";
+        return `${i + 1}. <code>${e.providerName}</code> · <b>${e.modelName}</b>  <i>${tier}</i>`;
       }).join("\n")
-    : "<i>No chain configured. Add providers below.</i>";
+    : "<i>No models in roster. Add at least 2 to enable routing.</i>";
+
+  const fallbackLine = sr?.fallbackProvider
+    ? `\nFallback: <code>${sr.fallbackProvider}</code> · <b>${sr.fallbackModel ?? "—"}</b>`
+    : "";
 
   const text =
-    `🔗 <b>Fallback Chain</b>\n\n` +
-    `Smart routing: ${enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
-    chainLines;
+    `⚡ <b>Smart Routing</b>\n\n` +
+    `Status: ${enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
+    rosterLines +
+    fallbackLine;
 
   const keyboard = new InlineKeyboard()
-    .text(toggleLabel, "cfg:fb_tog").row();
+    .text(toggleLabel, "cfg:sr_tog").row();
 
-  if (enabled) {
-    keyboard.text("➕ Add Provider", "cfg:fa").row();
-    chain.forEach((p) => {
-      keyboard.text(`🗑 Remove ${p}`, `cfg:fb_rm:${p}`).row();
-    });
-  }
+  roster.forEach((_, i) => {
+    const upCb   = i === 0                 ? "cfg:noop" : `cfg:sr_up:${i}`;
+    const downCb = i === roster.length - 1 ? "cfg:noop" : `cfg:sr_dn:${i}`;
+    const upTxt  = i === 0                 ? "·" : "↑";
+    const downTxt = i === roster.length - 1 ? "·" : "↓";
+    keyboard
+      .text(upTxt,                          upCb)
+      .text(downTxt,                        downCb)
+      .text(`✕ ${roster[i].modelName}`,     `cfg:sr_rm:${i}`)
+      .row();
+  });
+
+  keyboard.text("➕ Add Model", "cfg:sr_add").row();
   keyboard.text("← Back", "cfg:bc");
 
   return { text, keyboard };
 }
 
-// ─── Screen: Fallback — Add Provider Picker ───────────────────────
+// ─── Screen: Smart Routing — Provider Picker ─────────────────────
 
-export function renderFallbackAddPicker(
-  providers: string[],
-  config: StackOwlConfig,
-): ScreenContent {
-  const text = `🔗 <b>Add to Fallback Chain</b>\n\nChoose provider to add:`;
+export function renderSmartRoutingProviderPicker(providers: string[]): ScreenContent {
+  const text = `⚡ <b>Add to Roster</b>\n\nChoose provider:`;
   const keyboard = new InlineKeyboard();
   providers.forEach((p) => {
-    keyboard.text(`${providerEmoji(p, config)} ${p}`, `cfg:fa_p:${p}`).row();
+    keyboard.text(p, `cfg:sr_ap:${p}`).row();
+  });
+  keyboard.text("← Back", "cfg:bc");
+  return { text, keyboard };
+}
+
+// ─── Screen: Smart Routing — Model Picker ────────────────────────
+
+export function renderSmartRoutingModelPicker(
+  providerName: string,
+  models: string[],
+): ScreenContent {
+  const text = `⚡ <b>Add to Roster</b>\n\nProvider: <code>${providerName}</code>\nChoose model:`;
+  const keyboard = new InlineKeyboard();
+  models.forEach((m) => {
+    keyboard.text(m, `cfg:sr_am:${providerName}:${m}`).row();
   });
   keyboard.text("← Back", "cfg:bc");
   return { text, keyboard };
