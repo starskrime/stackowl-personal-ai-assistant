@@ -12,14 +12,15 @@ export type MenuScreen =
   | "providers"
   | "provider_detail"
   | "provider_add_type"
-  | "provider_add_url"     // awaiting baseUrl text input
-  | "provider_add_key"     // awaiting apiKey text input (shows security choice)
-  | "provider_model_pick"  // model selection for a provider
+  | "provider_add_url"
+  | "provider_add_key"
+  | "provider_model_pick"
   | "model_roles"
-  | "model_role_prov_pick" // pick provider for a role
-  | "model_role_model_pick"// pick model for a role
-  | "fallback_chain"
-  | "fallback_add_prov"    // pick provider to add to chain
+  | "model_role_prov_pick"
+  | "model_role_model_pick"
+  | "smart_routing"
+  | "sr_prov_pick"
+  | "sr_model_pick"
   | "health_check";
 
 // ─── Awaiting input marker ────────────────────────────────────────
@@ -61,6 +62,8 @@ export interface MenuState {
   modelList?: string[];
   /** Provider list for role provider picker */
   providerList?: string[];
+  /** Provider selected during smart routing add-model flow */
+  pendingSrProvider?: string;
   /** Whether expecting a plain-text message next */
   pendingInput?: PendingInput;
 
