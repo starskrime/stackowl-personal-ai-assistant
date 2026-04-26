@@ -1006,9 +1006,13 @@ export class OnboardingFlow {
       case "sr_model_pick": {
         const models      = d.srProviderModels ?? [];
         const n           = parseInt(input, 10);
+        const trimmed     = input.trim();
+        if (isNaN(n) && !trimmed) {
+          ui.printLines([R("  Model name cannot be empty."), ""]); return false;
+        }
         const modelName   = (!isNaN(n) && n >= 1 && n <= models.length)
           ? models[n - 1]
-          : (input.trim() || models[0] || "default");
+          : (trimmed || models[0] || "default");
         const providerName = d.srPendingProvider ?? "";
         d.srRoster = [...(d.srRoster ?? []), { modelName, providerName }];
         this._step = "sr_more";
