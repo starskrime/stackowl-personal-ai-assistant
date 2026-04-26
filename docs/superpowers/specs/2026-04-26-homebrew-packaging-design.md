@@ -2,9 +2,9 @@
 
 **Goal:** Package StackOwl as a Homebrew formula so customers can install it with `brew tap starskrime/stackowl && brew install stackowl` — no npm, no Node.js manual setup, no source checkout required.
 
-**Architecture:** A custom Homebrew tap repo (`starskrime/homebrew-stackowl`) hosts `Formula/stackowl.rb`. The formula downloads platform-specific pre-built tarballs from GitHub Releases. Each tarball bundles `dist/` + `node_modules/`, so npm is never needed. Homebrew auto-installs `node@22` as a dependency. A local helper script (`scripts/update-formula.sh`) computes SHA256s and patches the formula on each release.
+**Architecture:** A custom Homebrew tap repo (`starskrime/homebrew-stackowl`) hosts `Formula/stackowl.rb`. The formula downloads platform-specific pre-built tarballs from GitHub Releases. Each tarball bundles `dist/` + `node_modules/`, so npm is never needed. Homebrew auto-installs `node@22` as a dependency. A local `scripts/release.sh` auto-bumps the patch version, commits, tags, and pushes — triggering CI. A second script `scripts/update-formula.sh` patches the formula SHA256s after CI finishes.
 
-**Tech Stack:** Homebrew Ruby formula DSL, Bash (update script), existing GitHub Actions CI
+**Tech Stack:** Homebrew Ruby formula DSL, Bash (release + update scripts), existing GitHub Actions CI
 
 ---
 
@@ -12,11 +12,12 @@
 
 ### Existing repo: `starskrime/stackowl-personal-ai-assistant`
 
-Add one file:
+Add two files:
 ```
 scripts/
   build-release.sh       (existing)
-  update-formula.sh      NEW — patches formula SHA256s and version on release
+  release.sh             NEW — bumps patch version, commits, tags, pushes
+  update-formula.sh      NEW — patches formula SHA256s and version after CI
 ```
 
 ### New repo: `starskrime/homebrew-stackowl`
@@ -82,6 +83,62 @@ end
 
 ---
 
+## Release Script: `scripts/release.sh`
+
+Run locally when ready to ship. No arguments needed.
+
+**Usage:**
+```bash
+./scripts/release.sh
+```
+
+**What it does:**
+1. Reads current version from `package.json`
+2. Bumps the patch segment (`0.1.0` → `0.1.1`)
+3. Updates `package.json` and the hardcoded version string in `src/index.ts`
+4. Commits: `chore(release): v0.1.1`
+5. Tags: `git tag v0.1.1`
+6. Pushes commit + tag — GitHub Actions triggers automatically
+
+**Script:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Read current version from package.json
+CURRENT=$(node -p "require('./package.json').version")
+
+# Bump patch: split on '.', increment last segment
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+NEW_PATCH=$(( PATCH + 1 ))
+NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+TAG="v${NEW_VERSION}"
+
+echo "Bumping ${CURRENT} → ${NEW_VERSION}"
+
+# Update package.json
+sed -i.bak "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW_VERSION}\"/" package.json
+rm -f package.json.bak
+
+# Update hardcoded version in src/index.ts
+sed -i.bak "s/\.version(\"${CURRENT}\")/\.version(\"${NEW_VERSION}\")/" src/index.ts
+rm -f src/index.ts.bak
+
+# Commit, tag, push
+git add package.json src/index.ts
+git commit -m "chore(release): ${TAG}"
+git tag "${TAG}"
+git push && git push --tags
+
+echo ""
+echo "✓ Tagged ${TAG} — GitHub Actions is building tarballs now (~10 min)"
+echo ""
+echo "After CI finishes, run:"
+echo "  ./scripts/update-formula.sh ${TAG} ../homebrew-stackowl"
+```
+
+---
+
 ## Update Script: `scripts/update-formula.sh`
 
 Run locally after GitHub Actions finishes building a release.
@@ -135,18 +192,18 @@ echo "  git commit -am 'stackowl ${VER}' && git push"
 ### Publishing a new version
 
 ```bash
-# 1. Tag and push — triggers GitHub Actions (builds 3 tarballs, ~10 min)
-git tag v0.2.0 && git push --tags
+# 1. One command — bumps patch, commits, tags, pushes → triggers CI
+./scripts/release.sh
 
-# 2. Wait for CI to complete and attach tarballs to the GitHub Release
+# 2. Wait ~10 min for GitHub Actions to build and attach tarballs
 
-# 3. Patch the formula
-./scripts/update-formula.sh v0.2.0 ../homebrew-stackowl
+# 3. Patch the formula (version auto-read from latest tag)
+./scripts/update-formula.sh $(git describe --tags --abbrev=0) ../homebrew-stackowl
 
-# 4. Review and push
+# 4. Review and push the formula
 cd ../homebrew-stackowl
 git diff Formula/stackowl.rb
-git commit -am "stackowl 0.2.0" && git push
+git commit -am "stackowl $(git describe --tags --abbrev=0 | sed 's/v//')" && git push
 ```
 
 ### Customer: first install
@@ -169,8 +226,9 @@ brew upgrade stackowl
 
 | Repo | File | Action |
 |------|------|--------|
+| `stackowl-personal-ai-assistant` | `scripts/release.sh` | Create |
 | `stackowl-personal-ai-assistant` | `scripts/update-formula.sh` | Create |
 | `homebrew-stackowl` | `Formula/stackowl.rb` | Create |
 | `homebrew-stackowl` | `README.md` | Create |
 
-No changes to existing CI, `build-release.sh`, or source code.
+No changes to existing CI, `build-release.sh`, or application source code.
