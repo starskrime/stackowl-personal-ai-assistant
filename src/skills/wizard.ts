@@ -90,6 +90,11 @@ export class SkillInstallWizard {
   }
 
   private async handleSearchClawHub(query: string): Promise<WizardResponse> {
+    // Slug pattern (user/skill-name) — install directly, skip broken search API
+    if (/^[\w.-]+(\/[\w.-]+)+$/.test(query)) {
+      return this.doInstallClawHub(query);
+    }
+
     try {
       const result = await this.clawHubClient.search(query, 5);
       if (result.skills.length === 0) {
@@ -108,8 +113,12 @@ export class SkillInstallWizard {
         done: false,
         inlineKeyboard: keyboard,
       };
-    } catch {
-      return { text: "ClawHub unavailable. Try again later.", done: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        text: `Search failed: ${msg}\n\nTry a different keyword, enter a slug (user/skill-name) directly, or /cancel:`,
+        done: false,
+      };
     }
   }
 
@@ -139,6 +148,10 @@ export class SkillInstallWizard {
       };
     }
 
+    return this.doInstallClawHub(slug);
+  }
+
+  private async doInstallClawHub(slug: string): Promise<WizardResponse> {
     try {
       await this.clawHubClient.install(slug, this.skillsDir);
       await this.registry?.loadFromDirectory(this.skillsDir);
