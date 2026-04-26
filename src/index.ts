@@ -1961,7 +1961,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
 program
   .name("stackowl")
   .description("🦉 StackOwl — Personal AI Assistant")
-  .version("0.1.0");
+  .version("0.1.1");
 
 program
   .command("chat")

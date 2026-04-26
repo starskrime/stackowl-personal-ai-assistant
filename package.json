@@ -1,6 +1,6 @@
 {
   "name": "stackowl-personal-ai-assistant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "🦉 StackOwl — A vendor-agnostic personal AI assistant with multi-owl personalities, Parliament brainstorming, Instincts, Pellets, and Owl DNA evolution.",
   "type": "module",
   "main": "dist/index.js",
