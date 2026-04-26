@@ -17,6 +17,9 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+.claude
+.agents
+_bmad
 
 # Logs
 *.log
