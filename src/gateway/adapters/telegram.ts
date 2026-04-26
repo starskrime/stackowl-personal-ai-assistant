@@ -298,6 +298,30 @@ export class TelegramAdapter implements ChannelAdapter {
       await ctx.reply(msg, { parse_mode: "MarkdownV2" });
     });
 
+    // ── /skills install — start the skill install wizard ────────
+    this.bot.command("skills", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      this.trackChat(ctx.chat.id);
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      try {
+        const response = await this.gateway.handle(
+          {
+            id: makeMessageId(),
+            channelId: this.id,
+            userId: String(userId),
+            sessionId: makeSessionId(this.id, String(userId)),
+            text: "/skills install",
+          },
+          { onProgress: async () => {}, askInstall: async () => false },
+        );
+        await this.sendWizardResponse(ctx.chat.id, response);
+      } catch (err) {
+        log.telegram.error(`/skills wizard error: ${err instanceof Error ? err.message : err}`);
+        await ctx.reply("Failed to start the install wizard. Try again.").catch(() => {});
+      }
+    });
+
     // ── /mcp — MCP server management ─────────────────────────────
     // Usage:
     //   /mcp                          → show status of all servers
@@ -830,6 +854,38 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.on("callback_query:data", async (ctx) => {
       const data = ctx.callbackQuery.data ?? "";
 
+      // ── Skills install wizard callbacks ──────────────────
+      if (data.startsWith("wiz:")) {
+        if (!this.isAllowed(ctx)) {
+          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
+          return;
+        }
+        try {
+          await ctx.answerCallbackQuery();
+        } catch {
+          /* query expired */
+        }
+        const userId = ctx.from?.id;
+        if (!userId) return;
+        try {
+          const response = await this.gateway.handle(
+            {
+              id: makeMessageId(),
+              channelId: this.id,
+              userId: String(userId),
+              sessionId: makeSessionId(this.id, String(userId)),
+              text: data,
+            },
+            { onProgress: async () => {}, askInstall: async () => false },
+          );
+          const chatId = ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id;
+          if (chatId) await this.sendWizardResponse(chatId, response);
+        } catch (err) {
+          log.telegram.error(`Wizard callback error: ${err instanceof Error ? err.message : err}`);
+        }
+        return;
+      }
+
       // ── Config menu callbacks ────────────────────────────
       if (data.startsWith("cfg:")) {
         if (!this.isAllowed(ctx)) {
@@ -1253,6 +1309,25 @@ export class TelegramAdapter implements ChannelAdapter {
     }
     const owlHeader = `${this.escHtml(response.owlEmoji ?? "")} <b>${this.escHtml(response.owlName)}</b>`;
     return `${owlHeader}\n\n${this.renderContent(response.content)}`;
+  }
+
+  private async sendWizardResponse(
+    chatId: number,
+    response: GatewayResponse,
+  ): Promise<void> {
+    const text = this.formatResponse(response);
+    if (response.inlineKeyboard && response.inlineKeyboard.length > 0) {
+      await this.bot.api.sendMessage(chatId, text, {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: response.inlineKeyboard.map((row) =>
+            row.map((btn) => ({ text: btn.text, callback_data: btn.data })),
+          ),
+        },
+      });
+    } else {
+      await this.sendChunked(chatId, text);
+    }
   }
 
   private async sendChunked(
