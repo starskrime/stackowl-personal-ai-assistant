@@ -75,6 +75,8 @@ export interface GatewayResponse {
    * Used for system messages (agent-watch, gap-learner) that build HTML directly.
    */
   preformatted?: boolean;
+  /** Inline keyboard buttons for Telegram wizard responses. Ignored by other channels. */
+  inlineKeyboard?: { text: string; data: string }[][];
 }
 
 // ─── Channel Adapter Interface ───────────────────────────────────
@@ -312,4 +314,25 @@ export interface GatewayContext {
 
   // ─── Phase 3: Background Orchestrator ───────────────────────
   backgroundOrchestrator?: import("../background/orchestrator.js").BackgroundOrchestrator;
+
+  // ─── Epic 5: Memory Modules ───────────────────────────────
+  contextManager?: import("../memory/context-manager.js").ContextManager;
+  priorContextRetriever?: import("../memory/prior-context-retriever.js").PriorContextRetriever;
+  crossSessionStore?: import("../memory/cross-session-store.js").CrossSessionStore;
+  preferenceRecognizer?: import("../memory/preference-recognizer.js").PreferenceRecognizer;
+  truncationAlerter?: import("../memory/truncation-alerter.js").TruncationAlerter;
+
+  // ─── Epic 6: Parliament Modules ──────────────────────────
+  parliamentAutoTrigger?: import("../parliament/auto-trigger.js").ParliamentAutoTrigger;
+  topicWorthiness?: import("../parliament/topic-worthiness.js").TopicWorthinessEvaluator;
+  multiRoundDebate?: import("../parliament/multi-round-debate.js").MultiRoundDebateManager;
+  debatePelletGenerator?: import("../parliament/debate-pellet-generator.js").DebatePelletGenerator;
+  routingWirer?: import("../parliament/routing-wirer.js").RoutingWirer;
+
+  // ─── Epic 7: Knowledge Building Modules ─────────────────
+  pelletRetriever?: import("../pellets/pellet-retriever.js").PelletRetriever;
+  knowledgeBase?: import("../pellets/knowledge-base.js").KnowledgeBase;
+  proactiveGenerator?: import("../pellets/proactive-generator.js").ProactiveKnowledgeGenerator;
+  eventBasedGenerator?: import("../pellets/event-based-generator.js").EventBasedPelletGenerator;
+  semanticDedup?: import("../pellets/semantic-dedup.js").SemanticDeduplicator;
 }
