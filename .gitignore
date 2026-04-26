@@ -27,8 +27,7 @@ coverage/
 # Superpowers agent workspace
 .superpowers/
 
-# GitHub workflows (managed separately)
-.github/
+# GitHub workflows
 
 # Session data (optional — uncomment to exclude)
 # workspace/sessions/
