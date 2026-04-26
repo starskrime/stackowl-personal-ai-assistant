@@ -384,7 +384,6 @@ export class TelegramConfigMenu {
       return;
     }
 
-    // ── Fallback Chain ───────────────────────────────────────
     // ── Smart Routing ────────────────────────────────────────────
     if (cmd === "sr") {
       this.stateManager.navigate(state.userId, "smart_routing");
