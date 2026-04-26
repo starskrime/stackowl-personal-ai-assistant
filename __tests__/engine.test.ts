@@ -298,7 +298,7 @@ describe("ModelRouter", () => {
       const config = makeConfig();
       const result = ModelRouter.route("hello", config, 1);
       expect(result.modelName).toBe("llama3:8b");
-      expect(result.providerName).toBeUndefined();
+      expect(result.providerName).toBe("ollama");
     });
 
     it("handles missing fallbackProvider gracefully", () => {
