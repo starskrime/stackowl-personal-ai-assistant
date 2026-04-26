@@ -91,7 +91,7 @@ export class ModelRouter {
 
     // Single model in roster → no decision needed
     if (models.length === 1) {
-      return { modelName: models[0].name };
+      return { modelName: models[0].modelName, providerName: models[0].providerName };
     }
 
     // Score task complexity
@@ -108,7 +108,7 @@ export class ModelRouter {
     }
 
     const selected = models[targetIndex];
-    log.engine.info(`[ModelRouter] Tier="${tier}" → ${selected.name}`);
-    return { modelName: selected.name };
+    log.engine.info(`[ModelRouter] Tier="${tier}" → ${selected.providerName} / ${selected.modelName}`);
+    return { modelName: selected.modelName, providerName: selected.providerName };
   }
 }
