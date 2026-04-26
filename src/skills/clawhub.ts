@@ -34,7 +34,7 @@ export interface ClawHubConfig {
 
 const DEFAULT_CONFIG: ClawHubConfig = {
   siteUrl: "https://clawhub.ai",
-  registryUrl: "https://registry.clawhub.ai",
+  registryUrl: "https://wry-manatee-359.convex.site/api/v1",
 };
 
 export class ClawHubClient {
@@ -99,52 +99,41 @@ export class ClawHubClient {
 
   /**
    * Download and install a skill from ClawHub.
+   * slug may be "user/repo" or just "repo" — only the repo name is sent to the API.
    */
   async install(
     slug: string,
     targetDir: string,
-    version?: string,
+    _version?: string,
   ): Promise<boolean> {
-    const skill = await this.getSkill(slug);
-    if (!skill) {
-      throw new Error(`Skill "${slug}" not found on ClawHub`);
-    }
+    // ClawHub API only uses the repo name, not the full "user/repo" slug
+    const skillName = slug.includes("/") ? slug.split("/").pop()! : slug;
+    const downloadUrl = `${this.config.registryUrl}/download?slug=${encodeURIComponent(skillName)}`;
 
-    const versionToInstall = version || skill.latestVersion;
-    const downloadUrl = `${this.config.registryUrl}/skills/${encodeURIComponent(slug)}/download?version=${versionToInstall}`;
+    console.log(chalk.dim(`Downloading ${skillName} from ClawHub...`));
 
-    console.log(chalk.dim(`Downloading ${slug}@${versionToInstall}...`));
-
-    try {
-      const response = await fetch(downloadUrl);
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.status}`);
-      }
-
-      // Get the zip as a buffer
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      // Create target directory
-      const skillDir = join(targetDir, slug);
-      await mkdir(skillDir, { recursive: true });
-
-      // Write the zip file temporarily
-      const zipPath = join(skillDir, "skill.zip");
-      await writeFile(zipPath, buffer);
-
-      // Extract the zip (using Node's built-in)
-      await this.extractZip(zipPath, skillDir);
-
-      console.log(
-        chalk.green(`✓ Installed ${slug}@${versionToInstall} to ${skillDir}`),
+    const response = await fetch(downloadUrl);
+    if (!response.ok) {
+      throw new Error(
+        `ClawHub download failed: ${response.status} ${response.statusText} — ${downloadUrl}`,
       );
-
-      return true;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to install skill: ${msg}`);
     }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const skillDir = join(targetDir, skillName);
+    await mkdir(skillDir, { recursive: true });
+
+    const zipPath = join(skillDir, "skill.zip");
+    await writeFile(zipPath, buffer);
+    await this.extractZip(zipPath, skillDir);
+
+    const { unlink } = await import("node:fs/promises");
+    await unlink(zipPath).catch(() => {});
+
+    console.log(chalk.green(`✓ Installed ${skillName} to ${skillDir}`));
+    return true;
   }
 
   /**
