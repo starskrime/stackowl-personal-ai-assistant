@@ -497,6 +497,18 @@ export class TelegramConfigMenu {
       case "smart_routing":
         await this.editScreen(ctx, state, renderSmartRouting(config));
         break;
+      case "sr_prov_pick": {
+        const providers = getModelLoader().getAll().map(d => d.name);
+        await this.editScreen(ctx, state, renderSmartRoutingProviderPicker(providers));
+        break;
+      }
+      case "sr_model_pick": {
+        const provName = state.pendingSrProvider ?? "";
+        const def      = getModelLoader().get(provName);
+        const models   = def?.availableModels ?? [];
+        await this.editScreen(ctx, state, renderSmartRoutingModelPicker(provName, models));
+        break;
+      }
       case "health_check":
         await this.editScreen(ctx, state, renderHealthCheck(this.lastHealth, config, false));
         break;
