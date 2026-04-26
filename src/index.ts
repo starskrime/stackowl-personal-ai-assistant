@@ -157,6 +157,7 @@ import { SelfLearningCoordinator } from "./learning/coordinator.js";
 import { MemorySearcher } from "./memory-threads/searcher.js";
 import { RecallMemoryTool } from "./tools/recall.js";
 import { RememberTool } from "./tools/remember.js";
+import { SkillInstallTool } from "./tools/skill-install.js";
 import { PelletRecallTool } from "./tools/pellet-recall.js";
 import { initEmbedder, setEmbedderCacheDir } from "./pellets/embedder.js";
 import { selfSeedIfEmpty } from "./pellets/self-seed.js";
@@ -291,6 +292,7 @@ async function bootstrap() {
     new SessionStatusTool(),
     // ── System ──
     new CronTool(workspacePath),
+    new SkillInstallTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
     AppleCalendarTool,
