@@ -19,6 +19,7 @@ import { writeFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import chalk          from "chalk";
 import type { TerminalRenderer } from "./renderer.js";
+import { getModelLoader } from "../models/loader.js";
 
 // ─── Style helpers (matches commands.ts) ─────────────────────────
 
@@ -72,6 +73,12 @@ interface WizardData {
   slackAppToken?: string;
   // Section D
   features?: boolean[];  // [memory, proactive, debrief, voice, webface]
+  // Smart routing
+  srEnabled?:         boolean;
+  srRoster?:          Array<{ modelName: string; providerName: string }>;
+  srAvailProviders?:  string[];
+  srPendingProvider?: string;
+  srProviderModels?:  string[];
 }
 
 type StepId =
@@ -84,6 +91,10 @@ type StepId =
   | "prov_lms_model_sel" | "prov_lms_model_txt"
   | "prov_mm_key"   | "prov_mm_model"
   | "prov_compat_url" | "prov_compat_key" | "prov_compat_model"
+  | "sr_ask"
+  | "sr_prov_pick"
+  | "sr_model_pick"
+  | "sr_more"
   | "chan_multi"
   | "chan_web_port" | "chan_tg_token" | "chan_tg_allowed" | "chan_slack_bot" | "chan_slack_app"
   | "feat_multi"
@@ -158,6 +169,15 @@ function buildConfig(d: WizardData): Record<string, unknown> {
   if (ch[2] && d.slackBotToken) (cfg as any).slack = { botToken: d.slackBotToken, appToken: d.slackAppToken ?? "" };
   if (d.features?.[3]) (cfg as any).voice   = { enabled: true };
   if (d.features?.[4]) (cfg as any).face    = { enabled: true };
+
+  if (d.srEnabled && d.srRoster && d.srRoster.length >= 2) {
+    (cfg as any).smartRouting = {
+      enabled: true,
+      availableModels: d.srRoster,
+      fallbackProvider: d.srRoster[d.srRoster.length - 1].providerName,
+      fallbackModel:    d.srRoster[d.srRoster.length - 1].modelName,
+    };
+  }
 
   return cfg;
 }
@@ -580,10 +600,68 @@ export class OnboardingFlow {
           sep40(),
           D("  Channels     ") + W(chList.join(", ")),
           D("  Features     ") + W(ftList.length ? ftList.join(", ") : "none"),
+          D("  Smart Routing") + W(
+            d.srEnabled && d.srRoster?.length
+              ? `ON — ${d.srRoster.length} models`
+              : "OFF"
+          ),
           "",
           C("    Type \"yes\" to save  ·  \"no\" to cancel:"),
           "",
         ]);
+        break;
+      }
+
+      case "sr_ask":
+        ui.printLines([
+          ...sectionHeader("Smart Routing", 1),
+          "🦉  Route each message to the right model tier automatically?",
+          "",
+          D("    You'll select 2+ models ordered light → heavy."),
+          D("    Simple messages go to the lightest model; complex ones to the strongest."),
+          "",
+          C("  1") + "  Yes, set up smart routing",
+          C("  2") + "  No, use a single model",
+          "",
+          C("    Type 1 or 2:"),
+          "",
+        ]);
+        break;
+
+      case "sr_prov_pick": {
+        const providers = d.srAvailProviders ?? [];
+        const lines: string[] = ["", W("Smart Routing — Add model"), sep40()];
+        providers.forEach((p, i) => lines.push(C(`  ${i + 1}`) + `  ${p}`));
+        lines.push("", C(`    Type 1–${providers.length}:`), "");
+        ui.printLines(lines);
+        break;
+      }
+
+      case "sr_model_pick": {
+        const models = d.srProviderModels ?? [];
+        const lines: string[] = ["", W(`Models for ${d.srPendingProvider}`), sep40()];
+        models.forEach((m, i) => lines.push(C(`  ${i + 1}`) + `  ${m}`));
+        lines.push("", C(`    Type 1–${models.length}, or type a custom model name:`), "");
+        ui.printLines(lines);
+        break;
+      }
+
+      case "sr_more": {
+        const roster = d.srRoster ?? [];
+        const lines: string[] = ["", W("Smart Routing Roster"), sep40()];
+        roster.forEach((e, i) => {
+          const tier = i === 0 ? D("light") : i === roster.length - 1 ? D("heavy") : D("mid");
+          lines.push(`  ${i + 1}. ${W(e.providerName + " / " + e.modelName)} ${tier}`);
+        });
+        lines.push("");
+        if (roster.length < 2) {
+          lines.push(G("  a") + D("  Add another model  ") + D("(need at least 2 to enable)"));
+        } else {
+          lines.push(G("  a") + D("  Add another model"));
+          lines.push(G("  d") + D("  Done — continue setup"));
+        }
+        lines.push("", C("    Type a or d:"), "");
+        ui.printLines(lines);
         break;
       }
     }
@@ -680,7 +758,7 @@ export class OnboardingFlow {
         }
         const models = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001", "claude-3-5-sonnet-20241022"];
         d.provModel = models[n - 1];
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
       }
@@ -699,7 +777,7 @@ export class OnboardingFlow {
         }
         const models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-preview"];
         d.provModel = models[n - 1];
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
       }
@@ -729,7 +807,7 @@ export class OnboardingFlow {
           ui.printLines([R(`  Type a number 1–${models.length}.`), ""]); return false;
         }
         d.provModel = models[n - 1];
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
       }
@@ -737,7 +815,7 @@ export class OnboardingFlow {
       case "prov_ollama_model_txt":
         if (!input) { ui.printLines([R("  Model name cannot be empty."), ""]); return false; }
         d.provModel = input;
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
 
@@ -748,7 +826,7 @@ export class OnboardingFlow {
           ui.printLines([R(`  Type a number 1–${models.length}.`), ""]); return false;
         }
         d.provModel = models[n - 1];
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
       }
@@ -756,7 +834,7 @@ export class OnboardingFlow {
       case "prov_lms_model_txt":
         if (!input) { ui.printLines([R("  Model name cannot be empty."), ""]); return false; }
         d.provModel = input;
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
 
@@ -771,7 +849,7 @@ export class OnboardingFlow {
         const PRESET = ["MiniMax-M2.7", "MiniMax-Text-01", "abab6.5g-chat"];
         const n = parseInt(input, 10);
         d.provModel = (!isNaN(n) && n >= 1 && n <= 3) ? PRESET[n - 1] : (input || "MiniMax-M2.7");
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
       }
@@ -792,7 +870,7 @@ export class OnboardingFlow {
       case "prov_compat_model":
         if (!input) { ui.printLines([R("  Model name cannot be empty."), ""]); return false; }
         d.provModel = input;
-        this._step  = "chan_multi";
+        this._step  = "sr_ask";
         this._showStep(ui);
         return false;
 
@@ -879,6 +957,83 @@ export class OnboardingFlow {
           return true;  // done
         }
         ui.printLines([R("  Type \"yes\" to save or \"no\" to cancel."), ""]); return false;
+      }
+
+      case "sr_ask": {
+        const n = parseInt(input, 10);
+        if (n !== 1 && n !== 2) {
+          ui.printLines([R("  Type 1 or 2."), ""]); return false;
+        }
+        if (n === 2) {
+          d.srEnabled = false;
+          this._step  = "chan_multi";
+          this._showStep(ui);
+          return false;
+        }
+        d.srEnabled = true;
+        d.srRoster  = [];
+        const defs  = getModelLoader().getAll();
+        d.srAvailProviders = defs.map(def => def.name);
+        if (d.srAvailProviders.length === 0) {
+          ui.printLines([R("  No model files found in src/models/. Cannot configure routing."), ""]);
+          d.srEnabled = false;
+          this._step  = "chan_multi";
+          this._showStep(ui);
+          return false;
+        }
+        this._step = "sr_prov_pick";
+        this._showStep(ui);
+        return false;
+      }
+
+      case "sr_prov_pick": {
+        const providers = d.srAvailProviders ?? [];
+        const n = parseInt(input, 10);
+        if (isNaN(n) || n < 1 || n > providers.length) {
+          ui.printLines([R(`  Type a number 1–${providers.length}.`), ""]); return false;
+        }
+        d.srPendingProvider = providers[n - 1];
+        const def = getModelLoader().get(d.srPendingProvider);
+        d.srProviderModels = def?.availableModels ?? [];
+        if (d.srProviderModels.length === 0) {
+          d.srProviderModels = ["default"];
+        }
+        this._step = "sr_model_pick";
+        this._showStep(ui);
+        return false;
+      }
+
+      case "sr_model_pick": {
+        const models      = d.srProviderModels ?? [];
+        const n           = parseInt(input, 10);
+        const modelName   = (!isNaN(n) && n >= 1 && n <= models.length)
+          ? models[n - 1]
+          : (input.trim() || models[0] || "default");
+        const providerName = d.srPendingProvider ?? "";
+        d.srRoster = [...(d.srRoster ?? []), { modelName, providerName }];
+        this._step = "sr_more";
+        this._showStep(ui);
+        return false;
+      }
+
+      case "sr_more": {
+        const answer = input.trim().toLowerCase();
+        if (answer === "a") {
+          const defs = getModelLoader().getAll();
+          d.srAvailProviders = defs.map(def => def.name);
+          this._step = "sr_prov_pick";
+          this._showStep(ui);
+          return false;
+        }
+        if (answer === "d") {
+          if ((d.srRoster?.length ?? 0) < 2) {
+            ui.printLines([R("  Need at least 2 models. Type \"a\" to add another."), ""]); return false;
+          }
+          this._step = "chan_multi";
+          this._showStep(ui);
+          return false;
+        }
+        ui.printLines([R("  Type \"a\" to add another model or \"d\" to continue."), ""]); return false;
       }
     }
 
