@@ -205,17 +205,27 @@ install_scrapling() {
     return
   fi
 
+  # Resolve pip: prefer pip3, fall back to pip, fall back to python3 -m pip
+  local PIP
+  if command -v pip3 &>/dev/null; then
+    PIP="pip3"
+  elif command -v pip &>/dev/null; then
+    PIP="pip"
+  else
+    PIP="python3 -m pip"
+  fi
+
   # Check if scrapling is already installed
   if python3 -c "import scrapling" 2>/dev/null; then
     log_info "Scrapling already installed"
   else
     log_step "Installing Scrapling (anti-bot web scraping)..."
-    pip install "scrapling[all]" 2>&1 | tail -3
+    $PIP install "scrapling[all]" 2>&1 | tail -3
     if python3 -c "import scrapling" 2>/dev/null; then
       log_info "Scrapling installed successfully"
     else
       log_warn "Scrapling installation failed — scrapling_fetch tool will be unavailable."
-      log_dim  "Try manually: pip install scrapling[all]"
+      log_dim  "Try manually: $PIP install scrapling[all]"
       return
     fi
   fi
@@ -231,7 +241,7 @@ install_scrapling() {
 
   if [ -n "$MISSING_DEPS" ]; then
     log_step "Installing Scrapling dependencies:$MISSING_DEPS"
-    pip install $MISSING_DEPS 2>&1 | tail -3
+    $PIP install $MISSING_DEPS 2>&1 | tail -3
   fi
 
   # Install browser binaries for stealth/dynamic modes
