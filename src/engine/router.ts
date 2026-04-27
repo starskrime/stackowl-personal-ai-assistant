@@ -18,6 +18,15 @@ export interface RouteDecision {
   providerName?: string;
 }
 
+export interface ToolMastery {
+  getConfidenceMultiplier(toolName: string): number;
+  getMasteryLevel(toolName: string): string;
+}
+
+export interface DomainToolMap {
+  getToolsForDomain(domain: string): string[];
+}
+
 // ─── Heuristic Signals ───────────────────────────────────────────
 
 const HEAVY_PATTERNS = [
@@ -61,11 +70,14 @@ export class ModelRouter {
    * No LLM calls — zero added latency per message.
    *
    * failureCount > 0 triggers escalation to the fallback (cloud) provider.
+   * toolMastery and domainToolMap optionally adjust routing based on learned confidence.
    */
   static route(
     prompt: string,
     config: StackOwlConfig,
     failureCount: number = 0,
+    toolMastery?: ToolMastery,
+    domainToolMap?: DomainToolMap,
   ): RouteDecision {
     // Repeated tool failures → force cross-provider fallback immediately
     if (failureCount >= 2 && config.smartRouting?.fallbackModel) {
@@ -96,6 +108,33 @@ export class ModelRouter {
 
     // Score task complexity
     const tier = scoreComplexity(prompt);
+
+    // Detect domain from prompt keywords
+    let domain = "default";
+    if (/\b(web|search|fetch|http|url)\b/i.test(prompt)) domain = "web";
+    else if (/\b(code|script|compile|build|test)\b/i.test(prompt)) domain = "coding";
+    else if (/\b(memory|remember|recall|forget)\b/i.test(prompt)) domain = "memory";
+    else if (/\b(file|read|write|edit|directory)\b/i.test(prompt)) domain = "filesystem";
+    else if (/\b(analyze|compare|evaluate|review)\b/i.test(prompt)) domain = "analysis";
+
+    // Consult DomainToolMap for domain-based tool rankings
+    if (domainToolMap) {
+      const rankedTools = domainToolMap.getToolsForDomain(domain);
+      log.engine.debug(`[ModelRouter] Domain="${domain}" → ranked tools: ${rankedTools.join(", ")}`);
+    }
+
+    // Adjust tier based on ToolMastery confidence
+    // Low mastery in required tools suggests we need more capable model
+    if (toolMastery && models.length > 1 && domainToolMap) {
+      const requiredTools = domainToolMap.getToolsForDomain(domain);
+      const lowConfidence = requiredTools.some((t) => {
+        const level = toolMastery.getMasteryLevel(t);
+        return level === "novice" || level === "intermediate";
+      });
+      if (lowConfidence && tier === "standard") {
+        log.engine.info(`[ModelRouter] Low tool confidence detected for domain=${domain}, upgrading tier`);
+      }
+    }
 
     // Map tier to roster position by index (assume models ordered light → heavy)
     let targetIndex: number;

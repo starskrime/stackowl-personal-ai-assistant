@@ -121,11 +121,11 @@ export class AmbiguityDetector {
 
   private formClarificationQuestion(
     primarySignal: AmbiguitySignal,
-    allSignals: AmbiguitySignal[],
+    _allSignals: AmbiguitySignal[],
     context: string[],
-    _llmQuestion: string | null
+    llmQuestion: string | null
   ): ClarificationQuestion {
-    const baseQuestion = primarySignal.suggestedClarifications?.[0] || 'Could you clarify?';
+    const baseQuestion = llmQuestion || primarySignal.suggestedClarifications?.[0] || 'Could you clarify?';
     const questionText = baseQuestion;
 
     return {

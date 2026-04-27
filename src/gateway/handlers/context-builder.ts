@@ -433,7 +433,22 @@ The user has no active tasks right now. Be concise and helpful:
                 `  <fact domain="${n.domain}" confidence="${n.confidence}">${n.title}: ${n.content}</fact>`,
             )
             .join("\n") +
-          "\n</knowledge_context>\n";
+            "\n</knowledge_context>\n";
+      }
+    }
+
+    // ─── Epic 7: Pellet Retrieval (pre-engine) ───────────────────
+    // Retrieve relevant pellets before engine runs so context includes prior knowledge.
+    // Only for non-conversational messages to avoid unnecessary retrieval overhead.
+    let pelletContext = "";
+    if (this.ctx.pelletRetriever && !isConversational && userMessage) {
+      try {
+        const relevantPellets = await this.ctx.pelletRetriever.retrieveRelevant(userMessage);
+        if (relevantPellets.length > 0) {
+          pelletContext = this.ctx.pelletRetriever.formatForInjection(relevantPellets);
+        }
+      } catch {
+        // Non-fatal — pellet retrieval is supplementary
       }
     }
 
@@ -640,6 +655,7 @@ The user has no active tasks right now. Be concise and helpful:
       intentContext,
       socraticContext,
       knowledgeContext,
+      pelletContext,      // Epic 7: relevant pellets retrieved pre-engine
       userProfileContext,
       inferredPrefsContext,
       predictiveContext,

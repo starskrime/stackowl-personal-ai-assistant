@@ -17,8 +17,13 @@ import { OnboardingFlow } from "../../cli/onboarding-flow.js";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
+import { SessionPersistence } from "../../cli/session-persistence.js";
+import { StructuredOutputManager, isJsonModeEnabled } from "../../cli/structured-output.js";
+import { ThinkingSuppressor } from "../../cli/thinking-suppressor.js";
+import { ToolStream } from "../../cli/tool-stream.js";
+import type { StreamEvent } from "../../providers/base.js";
 
-export interface CLIAdapterConfig { userId?: string; }
+export interface CLIAdapterConfig { userId?: string; workspacePath?: string; }
 
 export class CLIAdapter implements ChannelAdapter {
   readonly id   = "cli";
@@ -34,29 +39,98 @@ export class CLIAdapter implements ChannelAdapter {
   private _shuttingDown = false;
   private _onboarding: OnboardingFlow | null = null;
 
+  // ─── Epic 8: CLI Modules ───────────────────────────────────────
+  private sessionPersistence?: SessionPersistence;
+  private structuredOutput?: StructuredOutputManager;
+  private thinkingSuppressor?: ThinkingSuppressor;
+  private toolStream?: ToolStream;
+  private jsonMode = false;
+
   constructor(private gateway: OwlGateway, config: CLIAdapterConfig = {}) {
     this.userId    = config.userId ?? "local";
     this.sessionId = makeSessionId(this.id, this.userId);
     this.renderer  = new TerminalRenderer();
     this.commands  = new CommandRegistry();
     this.renderer.setCommandList(this.commands.listNames());
+
+    // ─── Epic 8: Wire CLI modules ────────────────────────────────
+    // SessionPersistence — auto-load session on startup, auto-save on messages
+    if (config.workspacePath) {
+      this.sessionPersistence = new SessionPersistence({ workspacePath: config.workspacePath });
+      this.sessionPersistence.startSession(this.sessionId, this.gateway.getOwl().persona.name)
+        .catch((err) => log.engine.warn(`[SessionPersistence] Failed to load session: ${err instanceof Error ? err.message : String(err)}`));
+    }
+
+    // StructuredOutput — detect --json flag and suppress TUI
+    this.structuredOutput = new StructuredOutputManager();
+    this.jsonMode = isJsonModeEnabled();
+
+    // ThinkingSuppressor — wire to output filtering
+    this.thinkingSuppressor = new ThinkingSuppressor();
+
+    // ToolStream — wire to real-time tool streaming
+    this.toolStream = new ToolStream({
+      onToolStart: (toolName, _toolCallId) => {
+        log.tool.toolCall(toolName);
+      },
+      onToolEnd: (toolName, _toolCallId, success, elapsedMs) => {
+        log.tool.toolResult(toolName, `completed in ${elapsedMs}ms`, success);
+      },
+      onToolError: (toolName, _toolCallId, error) => {
+        log.tool.warn(`Tool ${toolName} error: ${error}`);
+      },
+    });
   }
 
   // ─── ChannelAdapter ───────────────────────────────────────────
 
   async sendToUser(_userId: string, response: GatewayResponse): Promise<void> {
+    if (this.jsonMode) {
+      const usage = response.usage ? {
+        promptTokens: response.usage.promptTokens,
+        completionTokens: response.usage.completionTokens,
+        totalTokens: (response.usage.promptTokens ?? 0) + (response.usage.completionTokens ?? 0),
+      } : undefined;
+      this.structuredOutput?.print(this.structuredOutput.success(response.content, {
+        owlName: response.owlName,
+        usage,
+      }));
+      return;
+    }
     this.renderer.printResponse(response.owlEmoji, response.owlName, response.content);
   }
 
   async broadcast(response: GatewayResponse): Promise<void> {
+    if (this.jsonMode) {
+      const usage = response.usage ? {
+        promptTokens: response.usage.promptTokens,
+        completionTokens: response.usage.completionTokens,
+        totalTokens: (response.usage.promptTokens ?? 0) + (response.usage.completionTokens ?? 0),
+      } : undefined;
+      this.structuredOutput?.print(this.structuredOutput.success(response.content, {
+        owlName: response.owlName,
+        usage,
+      }));
+      return;
+    }
     this.renderer.printResponse(response.owlEmoji, response.owlName, response.content);
   }
 
   async deliverFile(_userId: string, filePath: string, caption?: string): Promise<void> {
+    if (this.jsonMode) {
+      this.structuredOutput?.print(this.structuredOutput.success(`File ready: ${filePath}${caption ? " — " + caption : ""}`));
+      return;
+    }
     this.renderer.printInfo(`File ready: ${filePath}${caption ? " — " + caption : ""}`);
   }
 
   async start(): Promise<void> {
+    // In JSON mode, skip TUI entirely
+    if (this.jsonMode) {
+      console.log(JSON.stringify({ status: "ok", mode: "json", timestamp: new Date().toISOString() }));
+      return;
+    }
+
     const owl    = this.gateway.getOwl();
     const config = this.gateway.getConfig();
     const traits = owl.dna.evolvedTraits;
@@ -77,7 +151,14 @@ export class CLIAdapter implements ChannelAdapter {
     });
   }
 
-  stop(): void { this.renderer.close(); }
+  stop(): void {
+    if (this.jsonMode) return;
+    this.renderer.close();
+    // ─── Epic 8: Save session on shutdown ───────────────────────
+    this.sessionPersistence?.endSession().catch((err) =>
+      log.engine.warn(`[SessionPersistence] Failed to save session on shutdown: ${err instanceof Error ? err.message : String(err)}`)
+    );
+  }
 
   // ─── Home → Session transition ────────────────────────────────
 
@@ -145,6 +226,10 @@ export class CLIAdapter implements ChannelAdapter {
     const consumed = await this.commands.handle(input, this.renderer, this.gateway);
     if (consumed) return;
 
+    // ─── Epic 8: Add user message to session persistence ──────────
+    this.sessionPersistence?.addMessage("user", input);
+    this.sessionPersistence?.incrementTurn();
+
     try {
       log.cli.incoming(this.userId, input);
       (this.gateway as any).getCognitiveLoop?.()?.notifyUserActivity?.();
@@ -152,20 +237,39 @@ export class CLIAdapter implements ChannelAdapter {
 
       const { handler, didStream } = this.renderer.createStreamHandler();
 
+      // ─── Epic 8: Wire ToolStream to stream events ───────────────
+      const toolStreamHandler = this.toolStream?.createStreamHandler();
+      const suppressedHandler = this.thinkingSuppressor?.createSuppressedCallback(
+        async (event: StreamEvent) => {
+          // Forward to tool stream if available
+          if (toolStreamHandler) {
+            await toolStreamHandler(event);
+          }
+          // Forward to original renderer handler
+          await handler(event);
+        }
+      ) ?? handler;
+
       const response = await this.gateway.handle(
         { id: makeMessageId(), channelId: this.id, userId: this.userId, sessionId: this.sessionId, text: input },
         {
-          onProgress: async (msg: string) => { log.engine.debug(`[progress] ${msg}`); },
+          onProgress: this.thinkingSuppressor?.shouldSuppressProgress()
+            ? async () => { /* suppress progress in full mode */ }
+            : async (msg: string) => { log.engine.debug(`[progress] ${msg}`); },
           askInstall: async (deps: string[]) => {
             this.renderer.stopThinking();
             this.renderer.printInfo(`📦 Install ${deps.join(" ")}? [y/n]`);
             return this.renderer.input.promptYesNo();
           },
-          onStreamEvent: handler,
+          onStreamEvent: suppressedHandler,
         },
       );
 
       log.cli.outgoing(this.userId, response.content);
+
+      // ─── Epic 8: Add assistant response to session persistence ───
+      this.sessionPersistence?.addMessage("assistant", response.content, response.owlName);
+
       if (!didStream()) {
         this.renderer.stopThinking();
         this.renderer.showResponse(response);

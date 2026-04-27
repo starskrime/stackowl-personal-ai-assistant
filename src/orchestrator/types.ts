@@ -13,7 +13,8 @@ export type StrategyType =
   | "SPECIALIST" // Route to a specific specialist owl based on domain
   | "PLANNED" // Multi-step with dependency-aware parallel execution
   | "PARLIAMENT" // Multi-owl debate with smart owl selection
-  | "SWARM"; // Multiple owls work on different subtasks in parallel
+  | "SWARM" // Multiple owls work on different subtasks in parallel
+  | "DELEGATED"; // Task decomposed and executed via sub-owl runners
 
 export interface OwlAssignment {
   owlName: string;

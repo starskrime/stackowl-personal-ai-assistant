@@ -197,6 +197,12 @@ import { FactExtractor } from "./memory/fact-extractor.js";
 import { MemoryDatabase } from "./memory/db.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
 import { GoalGraph } from "./goals/graph.js";
+// ── Epic 7: Knowledge Building ─────────────────────────────────────
+import { EventBasedPelletGenerator } from "./pellets/event-based-generator.js";
+import { PelletRetriever } from "./pellets/pellet-retriever.js";
+import { KnowledgeBase } from "./pellets/knowledge-base.js";
+import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
+import { SemanticDeduplicator } from "./pellets/semantic-dedup.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
 
@@ -798,6 +804,58 @@ async function buildGateway(
   b.pelletStore.eventBus = eventBus;
   const taskQueue = new TaskQueue(b.config.queue);
 
+  // ─── Epic 7: Knowledge Building Modules ─────────────────────────
+  // EventBasedPelletGenerator — subscribes to event bus for pellet generation on events
+  const eventBasedGenerator = new EventBasedPelletGenerator(
+    eventBus,
+    b.pelletStore,
+    provider,
+    owl,
+    b.config,
+  );
+  eventBasedGenerator.subscribe();
+  log.engine.info("[Init] EventBasedPelletGenerator subscribed to event bus");
+
+  // PelletRetriever — for relevant pellet retrieval pre-engine
+  const pelletRetriever = new PelletRetriever(b.pelletStore);
+
+  // KnowledgeBase — for knowledge base growth tracking
+  const knowledgeBase = new KnowledgeBase(b.pelletStore);
+
+  // ProactiveGenerator — for scheduled proactive knowledge generation
+  const proactiveGenerator = new ProactiveKnowledgeGenerator(
+    b.pelletStore,
+    provider,
+    owl,
+    b.config,
+  );
+  // Schedule periodic knowledge council runs (every 12 hours by default)
+  const councilIntervalMs = 12 * 60 * 60 * 1000;
+  setInterval(() => {
+    proactiveGenerator.runKnowledgeCouncil().catch((err) =>
+      log.engine.warn(`[ProactiveGenerator] Council run failed: ${err instanceof Error ? err.message : String(err)}`),
+    );
+  }, councilIntervalMs);
+  // Also run on startup after a short delay
+  setTimeout(() => {
+    proactiveGenerator.runKnowledgeCouncil().catch((err) =>
+      log.engine.warn(`[ProactiveGenerator] Initial council run failed: ${err instanceof Error ? err.message : String(err)}`),
+    );
+  }, 30_000);
+  log.engine.info("[Init] ProactiveKnowledgeGenerator scheduled");
+
+  // SemanticDeduplicator — enhanced deduplication (Epic 7.5)
+  // Note: PelletStore already uses PelletDeduplicator from dedup.ts for save-time dedup.
+  // SemanticDeduplicator can be used for pre-save deduplication checks or batch operations.
+  const semanticDedup = new SemanticDeduplicator(
+    async (pellet, limit) => {
+      const threshold = 0.35;
+      const results = await b.pelletStore.search(pellet.content, limit, threshold);
+      return results.map((p) => ({ pellet: p, score: 1 - threshold }));
+    },
+    provider,
+  );
+
   // Self-Learning Coordinator — wires SignalBus, MutationTracker, and UserPreferenceModel
   const selfLearningCoordinator = new SelfLearningCoordinator(
     b.microLearner,
@@ -1028,6 +1086,12 @@ async function buildGateway(
       b.goalGraph,
       undefined, // contextMesh initialized separately in gateway
     ),
+    // ─── Epic 7: Knowledge Building Modules ─────────────────
+    pelletRetriever,
+    knowledgeBase,
+    proactiveGenerator,
+    eventBasedGenerator,
+    semanticDedup,
   });
 
   return gateway;
@@ -1099,7 +1163,7 @@ async function chatCommand(owlName?: string) {
   }));
 
   // ── Phase 2: interactive session ──────────────────────────────
-  const adapter = new CLIAdapter(gateway);
+  const adapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
   gateway.register(adapter);
 
   // Auto-start Telegram if it was enabled during onboarding
@@ -1930,7 +1994,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
   }
 
   // 5. Start CLI adapter
-  const cliAdapter = new CLIAdapter(gateway);
+  const cliAdapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
   gateway.register(cliAdapter);
 
   // Perch: broadcast through gateway

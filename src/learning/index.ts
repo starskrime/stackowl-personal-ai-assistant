@@ -33,6 +33,10 @@ export { MicroLearner } from "./micro-learner.js";
 export { ProactiveAnticipator } from "./anticipator.js";
 export type { Anticipation } from "./anticipator.js";
 
+// Domain expertise tracking
+export { DomainExpertiseTracker } from "./domain-expertise.js";
+export type { DomainExpertiseRecord } from "./domain-expertise.js";
+
 // Memory exports (from memory/reflexion.ts)
 export { MemoryReflexionEngine } from "../memory/reflexion.js";
 export type {
@@ -43,3 +47,16 @@ export type {
   ReflexionResult,
   ConsolidationResult,
 } from "../memory/reflexion.js";
+
+// Mistake pattern detection
+export { MistakePatternDetector } from "./mistake-detector.js";
+export type {
+  MistakePattern,
+  MistakePatternStore,
+  PatternWarning,
+  ApproachRecord,
+} from "./mistake-detector.js";
+
+// Approach Library — pattern storage & retrieval
+export { ApproachLibrary } from "./approach-library.js";
+export type { ApproachPattern, PatternRecord } from "./approach-library.js";

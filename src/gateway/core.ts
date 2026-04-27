@@ -76,7 +76,6 @@ import { LoopDetector } from "../cognition/loop-detector.js";
 import { AmbiguityDetector } from "../clarification/ambiguity-detector.js";
 import { PreExecutionConfirmer } from "../clarification/pre-execution-confirmer.js";
 import { PreActionQuestioner } from "../clarification/pre-action-questioner.js";
-import { MidExecutionRouter } from "../clarification/mid-execution-router.js";
 import { UnclaritySurfacer } from "../clarification/unclarity-surfacer.js";
 import { clarificationCoordinator } from "../clarification/coordinator.js";
 import type { ClarificationQuestion } from "../clarification/types.js";
@@ -139,7 +138,6 @@ export class OwlGateway {
   readonly ambiguityDetector: import("../clarification/ambiguity-detector.js").AmbiguityDetector;
   readonly preExecutionConfirmer: import("../clarification/pre-execution-confirmer.js").PreExecutionConfirmer;
   readonly preActionQuestioner: import("../clarification/pre-action-questioner.js").PreActionQuestioner;
-  readonly midExecutionRouter: import("../clarification/mid-execution-router.js").MidExecutionRouter;
   readonly unclaritySurfacer: import("../clarification/unclarity-surfacer.js").UnclaritySurfacer;
 
   // ─── Epic 4: Tool Mastery Modules ─────────────────────────────
@@ -305,7 +303,6 @@ export class OwlGateway {
     this.ambiguityDetector = new AmbiguityDetector(ctx.provider);
     this.preExecutionConfirmer = new PreExecutionConfirmer();
     this.preActionQuestioner = new PreActionQuestioner(ctx.provider);
-    this.midExecutionRouter = new MidExecutionRouter(this.ambiguityDetector);
     this.unclaritySurfacer = new UnclaritySurfacer();
 
     // ─── Epic 4: Initialize Tool Mastery Modules ──────────────

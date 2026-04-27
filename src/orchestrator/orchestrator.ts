@@ -23,6 +23,9 @@ import type { TaskStrategy, OrchestrationResult, SubTask } from "./types.js";
 import { log } from "../logger.js";
 import { SwarmBlackboard } from "../swarm/blackboard.js";
 import type { PlanLedger } from "../tasks/plan-ledger.js";
+import { DelegationDecider } from "../delegation/delegation-decider.js";
+import { TaskDecomposer } from "../delegation/decomposer.js";
+import { SubOwlRunner } from "../delegation/sub-owl-runner.js";
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -158,6 +161,9 @@ export class TaskOrchestrator {
 
       case "SWARM":
         return this.executeSwarm(userMessage, baseContext, strategy, callbacks);
+
+      case "DELEGATED":
+        return this.executeDelegated(userMessage, baseContext, strategy, callbacks);
 
       default:
         return this.executeStandard(userMessage, baseContext);
@@ -1028,6 +1034,68 @@ export class TaskOrchestrator {
       strategy: "SWARM",
       subtaskResults,
       usage: synthesisResponse.usage,
+    };
+  }
+
+// ─── DELEGATED (sub-owl parallel execution) ──────────────────
+
+  private async executeDelegated(
+    userMessage: string,
+    baseContext: EngineContext,
+    strategy: TaskStrategy,
+    callbacks: GatewayCallbacks,
+  ): Promise<OrchestrationResult> {
+    const decider = new DelegationDecider();
+    const decision = decider.decide(userMessage, {
+      estimatedSubtasks: strategy.subtasks?.length ?? 0,
+      hasMultipleSteps: (strategy.subtasks?.length ?? 0) > 1,
+      hasDependencyChains: strategy.subtasks?.some((t) => t.dependsOn.length > 0) ?? false,
+    });
+
+    if (decision.mode === "direct") {
+      return this.executeStandard(userMessage, baseContext);
+    }
+
+    if (callbacks.onProgress) {
+      await callbacks.onProgress(
+        `🧩 **Delegation mode** — complexity=${decision.complexityScore.toFixed(2)}, ` +
+        `estimated parallel tasks=${decision.estimatedParallelTasks ?? "?"}`,
+      );
+    }
+
+    const decomposer = new TaskDecomposer(this.provider);
+    const plan = await decomposer.decompose(userMessage, baseContext.cwd);
+
+    if (callbacks.onProgress) {
+      await callbacks.onProgress(
+        `📋 Decomposed into ${plan.subtasks.length} subtask(s) ` +
+        `(${plan.parallelGroups.length} parallel group(s))`,
+      );
+    }
+
+    const runner = new SubOwlRunner(this.provider, baseContext.owl.persona.type);
+    const delegationResult = await runner.runAll(plan);
+
+    if (callbacks.onProgress) {
+      const rate = (delegationResult.successRate * 100).toFixed(0);
+      await callbacks.onProgress(
+        `✅ Delegation complete — ${delegationResult.subtaskResults.length} subtasks, ` +
+        `${rate}% success in ${delegationResult.totalDurationMs}ms`,
+      );
+    }
+
+    return {
+      content: delegationResult.synthesis,
+      owlName: baseContext.owl.persona.name,
+      owlEmoji: baseContext.owl.persona.emoji,
+      toolsUsed: ["delegation"],
+      strategy: "DELEGATED",
+      subtaskResults: delegationResult.subtaskResults.map((r, i) => ({
+        id: i + 1,
+        owlName: r.taskId,
+        status: r.success ? "done" : "failed",
+        content: r.output,
+      })),
     };
   }
 

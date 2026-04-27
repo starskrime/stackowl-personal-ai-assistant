@@ -38,7 +38,7 @@ export class UnclaritySurfacer {
     return null;
   }
 
-  private extractUnclarity(message: string, priorContext: string[]): UnclarityItem | null {
+  private extractUnclarity(message: string, _priorContext: string[]): UnclarityItem | null {
     const whichMatch = message.match(/which\s+(\w+(?:\s+\w+)?)/i);
     const unsureMatch = message.match(/(?:unsure|uncertain|unclear|confused?)\s+(?:about|if|whether)\s+([^,.]+)/i);
     const needMoreMatch = message.match(/need\s+more\s+(?:info|information|details|context)\s+(?:about|on|regarding)\s+([^,.]+)/i);

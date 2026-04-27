@@ -183,6 +183,10 @@ export class Logger {
     _writeLine(this.module, "EVOLVE", msg);
   }
 
+  behavioral(event: string, data?: Record<string, unknown>): void {
+    _writeLine(this.module, "BEHAVIORAL", `${event} ${data ? JSON.stringify(data) : ""}`);
+  }
+
   separator(): void {
     _write("  " + "─".repeat(60));
   }
@@ -200,4 +204,5 @@ export const log = {
   memory:   new Logger("MEMORY"),
   heartbeat: new Logger("HEARTBEAT"),
   pellet:   new Logger("PELLET"),
+  parliament: new Logger("PARLIAMENT"),
 };
