@@ -84,6 +84,12 @@ export interface OwlInstance {
   specialistPrompt?: string;
   /** Specialist routing rules from SpecializedOwl.routingRules - used for tool filtering */
   specialistRoutingRules?: string[];
+  /** Specialist permissions constraints */
+  specialistPermissions?: {
+    allowedTools: string[];
+    deniedTools: string[];
+    capabilityConstraints: string[];
+  };
 }
 
 // ─── Default DNA factory ─────────────────────────────────────────

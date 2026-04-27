@@ -2633,6 +2633,30 @@ ${skillsContext}
       prompt += `\n## Specialist Context\n\n${specialistPrompt.trim()}\n`;
     }
 
+    // Specialist Constraints — permissions and tool restrictions
+    if (owl.specialistPermissions) {
+      const perms = owl.specialistPermissions;
+      const hasConstraints = (perms.allowedTools?.length > 0) ||
+        (perms.deniedTools?.length > 0) ||
+        (perms.capabilityConstraints?.length > 0);
+
+      if (hasConstraints) {
+        prompt += `\n## Your Constraints\n`;
+        if (perms.allowedTools?.length > 0) {
+          prompt += `- You can ONLY use these tools: ${perms.allowedTools.join(", ")}\n`;
+        }
+        if (perms.deniedTools?.length > 0) {
+          prompt += `- You must NEVER use these tools: ${perms.deniedTools.join(", ")}\n`;
+        }
+        if (perms.capabilityConstraints?.length > 0) {
+          for (const constraint of perms.capabilityConstraints) {
+            prompt += `- ${constraint}\n`;
+          }
+        }
+        prompt += "\n";
+      }
+    }
+
     // DNA reminder — last line so it's freshest in context window
     prompt += `\nApply challenge mode (${dna.evolvedTraits.challengeLevel}) and verbosity (${dna.evolvedTraits.verbosity}) at all times.\n`;
 
