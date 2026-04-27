@@ -80,6 +80,10 @@ export interface EvolutionEntry {
 export interface OwlInstance {
   persona: OwlPersona;
   dna: OwlDNA;
+  /** Specialist context from SpecializedOwl.personalityPrompt - injected as ## Specialist Context */
+  specialistPrompt?: string;
+  /** Specialist routing rules from SpecializedOwl.routingRules - used for tool filtering */
+  specialistRoutingRules?: string[];
 }
 
 // ─── Default DNA factory ─────────────────────────────────────────

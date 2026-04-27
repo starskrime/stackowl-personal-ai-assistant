@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 10;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -213,6 +213,27 @@ export interface ApproachRecord {
   createdAt: string;
 }
 
+export interface SpecializedOwl {
+  id: string;
+  ownerId: string;
+  name: string;
+  specialization: string;
+  personalityPrompt: string;
+  routingRules: string[];
+  dna: OwlDNA;
+  isMainOwl: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OwlDNA {
+  challengeLevel: number;
+  verbosity: number;
+  expertiseDomains: string[];
+  routingQuality: number;
+  evolutionSpeed: number;
+}
+
 export interface Trajectory {
   id: string;
   sessionId: string;
@@ -343,6 +364,7 @@ export class MemoryDatabase {
   readonly parliamentVerdicts: ParliamentVerdictsRepo;
   readonly agentGoals: AgentGoalsRepo;
   readonly agentTasks: AgentTasksRepo;
+  readonly owls: OwlsRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -376,6 +398,7 @@ export class MemoryDatabase {
     this.parliamentVerdicts = new ParliamentVerdictsRepo(this.db);
     this.agentGoals         = new AgentGoalsRepo(this.db);
     this.agentTasks         = new AgentTasksRepo(this.db);
+    this.owls              = new OwlsRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
@@ -880,6 +903,47 @@ export class MemoryDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_at_goal    ON agent_tasks(goal_id);
         CREATE INDEX IF NOT EXISTS idx_at_status  ON agent_tasks(status);
+      `);
+    }
+    if (current < 9) {
+      // v9: (reserved - was agent goals/tasks)
+    }
+    if (current < 10) {
+      // v10: user-created specialized owls (tenant-isolated)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS owls (
+          id                  TEXT PRIMARY KEY,
+          owner_id            TEXT NOT NULL,
+          name                TEXT NOT NULL,
+          specialization      TEXT NOT NULL,
+          personality_prompt TEXT NOT NULL,
+          routing_rules       TEXT NOT NULL DEFAULT '[]',
+          dna                 TEXT NOT NULL DEFAULT '{}',
+          is_main_owl         INTEGER NOT NULL DEFAULT 0,
+          created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_owls_owner ON owls(owner_id);
+        CREATE INDEX IF NOT EXISTS idx_owls_name  ON owls(owner_id, name);
+      `);
+    }
+    if (current < SCHEMA_VERSION) {
+      // v9: user-created specialized owls (tenant-isolated)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS owls (
+          id                  TEXT PRIMARY KEY,
+          owner_id            TEXT NOT NULL,
+          name                TEXT NOT NULL,
+          specialization      TEXT NOT NULL,
+          personality_prompt TEXT NOT NULL,
+          routing_rules       TEXT NOT NULL DEFAULT '[]',
+          dna                 TEXT NOT NULL DEFAULT '{}',
+          is_main_owl         INTEGER NOT NULL DEFAULT 0,
+          created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_owls_owner ON owls(owner_id);
+        CREATE INDEX IF NOT EXISTS idx_owls_name  ON owls(owner_id, name);
       `);
     }
     if (current < SCHEMA_VERSION) {
@@ -2395,6 +2459,123 @@ class AgentTasksRepo {
   approve(id: string): void {
     this.db.prepare(`UPDATE agent_tasks SET requires_approval = 0, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
   }
+}
+
+// ─── OwlsRepo ──────────────────────────────────────────────────────
+
+class OwlsRepo {
+  constructor(private db: Database.Database) {}
+
+  create(owl: Omit<SpecializedOwl, "id" | "createdAt" | "updatedAt">): SpecializedOwl {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO owls (id, owner_id, name, specialization, personality_prompt, routing_rules, dna, is_main_owl, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      owl.ownerId,
+      owl.name,
+      owl.specialization,
+      owl.personalityPrompt,
+      JSON.stringify(owl.routingRules),
+      JSON.stringify(owl.dna),
+      owl.isMainOwl ? 1 : 0,
+      now,
+      now,
+    );
+    return { ...owl, id, createdAt: now, updatedAt: now };
+  }
+
+  getByOwner(ownerId: string): SpecializedOwl[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM owls WHERE owner_id = ? ORDER BY created_at ASC"
+    ).all(ownerId) as any[];
+    return rows.map(rowToSpecializedOwl);
+  }
+
+  getById(id: string): SpecializedOwl | null {
+    const row = this.db.prepare("SELECT * FROM owls WHERE id = ?").get(id) as any;
+    return row ? rowToSpecializedOwl(row) : null;
+  }
+
+  getByName(ownerId: string, name: string): SpecializedOwl | null {
+    const row = this.db.prepare(
+      "SELECT * FROM owls WHERE owner_id = ? AND name = ?"
+    ).get(ownerId, name) as any;
+    return row ? rowToSpecializedOwl(row) : null;
+  }
+
+  getMainOwl(ownerId: string): SpecializedOwl | null {
+    const row = this.db.prepare(
+      "SELECT * FROM owls WHERE owner_id = ? AND is_main_owl = 1 LIMIT 1"
+    ).get(ownerId) as any;
+    return row ? rowToSpecializedOwl(row) : null;
+  }
+
+  update(id: string, updates: Partial<Omit<SpecializedOwl, "id" | "ownerId" | "createdAt" | "updatedAt">>): void {
+    const sets: string[] = [];
+    const values: any[] = [];
+
+    if (updates.name !== undefined) {
+      sets.push("name = ?");
+      values.push(updates.name);
+    }
+    if (updates.specialization !== undefined) {
+      sets.push("specialization = ?");
+      values.push(updates.specialization);
+    }
+    if (updates.personalityPrompt !== undefined) {
+      sets.push("personality_prompt = ?");
+      values.push(updates.personalityPrompt);
+    }
+    if (updates.routingRules !== undefined) {
+      sets.push("routing_rules = ?");
+      values.push(JSON.stringify(updates.routingRules));
+    }
+    if (updates.dna !== undefined) {
+      sets.push("dna = ?");
+      values.push(JSON.stringify(updates.dna));
+    }
+    if (updates.isMainOwl !== undefined) {
+      sets.push("is_main_owl = ?");
+      values.push(updates.isMainOwl ? 1 : 0);
+    }
+
+    if (sets.length === 0) return;
+
+    sets.push("updated_at = ?");
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    this.db.prepare(`UPDATE owls SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  }
+
+  delete(id: string): void {
+    this.db.prepare("DELETE FROM owls WHERE id = ?").run(id);
+  }
+
+  count(ownerId: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) as c FROM owls WHERE owner_id = ?"
+    ).get(ownerId) as any;
+    return row?.c ?? 0;
+  }
+}
+
+function rowToSpecializedOwl(r: any): SpecializedOwl {
+  return {
+    id: r.id,
+    ownerId: r.owner_id,
+    name: r.name,
+    specialization: r.specialization,
+    personalityPrompt: r.personality_prompt,
+    routingRules: JSON.parse(r.routing_rules ?? "[]"),
+    dna: JSON.parse(r.dna ?? "{}"),
+    isMainOwl: r.is_main_owl === 1,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
 }
 
 function rowToGoal(r: Record<string, unknown>): AgentGoal {

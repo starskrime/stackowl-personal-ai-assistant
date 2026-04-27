@@ -61,6 +61,8 @@ export interface EngineContext {
   preferencesContext?: string;
   /** Skills context to inject into system prompt (from SkillContextInjector.formatForSystemPrompt()) */
   skillsContext?: string;
+  /** Specialist context from SpecializedOwl.personalityPrompt - injected as ## Specialist Context */
+  specialistPrompt?: string;
   /** Files queued for delivery by send_file tool calls during this run */
   pendingFiles?: PendingFile[];
   /** Skills registry — used by CapabilityNeedAssessor to check coverage before synthesis */
@@ -810,6 +812,7 @@ export class OwlEngine {
       context.innerLife,
       innerMonologue,
       context.channelName,
+      context.specialistPrompt,
     );
 
     // Append DNA-driven style directive from DNADecisionLayer
@@ -2334,6 +2337,7 @@ ${userMessage}
     innerLife?: OwlInnerLife,
     innerMonologue?: InnerMonologue,
     channelName?: string,
+    specialistPrompt?: string,
   ): Promise<string> {
     const { persona, dna } = owl;
 
@@ -2622,6 +2626,11 @@ ${skillsContext}
     if (toolRegistry && toolRegistry.getAllDefinitions().length > 0) {
       prompt +=
         "\n[CAPABILITY_GAP: ...] is stripped before display. Use it only for genuine missing tool/access gaps.\n";
+    }
+
+    // Specialist Context — from SpecializedOwl.personalityPrompt, injected after all other context
+    if (specialistPrompt?.trim()) {
+      prompt += `\n## Specialist Context\n\n${specialistPrompt.trim()}\n`;
     }
 
     // DNA reminder — last line so it's freshest in context window

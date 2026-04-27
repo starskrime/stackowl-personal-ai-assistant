@@ -37,6 +37,7 @@ import { MicroLearner } from "../learning/micro-learner.js";
 import { ProactiveAnticipator } from "../learning/anticipator.js";
 import { classifyStrategy } from "../orchestrator/classifier.js";
 import { TaskOrchestrator } from "../orchestrator/orchestrator.js";
+import { SecretaryRouter } from "../routing/secretary.js";
 import type {
   GatewayMessage,
   GatewayResponse,
@@ -1633,6 +1634,68 @@ export class OwlGateway {
       continuityResult ?? null,
     );
 
+    // ─── Epic 2: Secretary Router — route to specialized owls via DB ───────
+    // Check if this message should be routed to a specialized owl based on routing rules
+    let activeOwlName = this.ctx.owl.persona.name;
+    if (this.ctx.db && message.userId) {
+      const secretary = new SecretaryRouter(this.ctx.db);
+      const routingDecision = secretary.route(text, message.userId);
+      if (routingDecision.type === "specialist") {
+        const specializedOwl = routingDecision.owl;
+        // Get the base OwlInstance from OwlRegistry (or use default)
+        const baseOwl = this.ctx.owlRegistry?.get(specializedOwl.name)
+          ?? this.ctx.owlRegistry?.getDefault()
+          ?? this.ctx.owl;
+        // Create merged owl with specialist context from DB
+        engineCtx.owl = {
+          ...baseOwl,
+          specialistPrompt: specializedOwl.personalityPrompt,
+          specialistRoutingRules: specializedOwl.routingRules,
+        };
+        engineCtx.specialistPrompt = specializedOwl.personalityPrompt;
+        activeOwlName = specializedOwl.name;
+        log.engine.info(
+          `[Gateway] Routing to specialist "${specializedOwl.name}" for message: "${text.slice(0, 50)}..."`,
+        );
+      } else if (routingDecision.type === "parliament") {
+        // ─── Secretary Router triggered Parliament ───────────────────
+        if (this.multiRoundDebate && this.ctx.owlRegistry && this.ctx.pelletStore) {
+          log.engine.info(
+            `[Gateway] SecretaryRouter convened Parliament for: "${text.slice(0, 50)}..."`,
+          );
+          if (callbacks.onProgress) {
+            await callbacks.onProgress(`🦉 **Parliament** — convening debate on: ${text.slice(0, 80)}`);
+          }
+          const debateSession: ParliamentSession = {
+            id: `debate_${Date.now()}`,
+            config: {
+              topic: text.slice(0, 200),
+              participants: this.ctx.owlRegistry.listOwls().slice(0, 3),
+              contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
+            },
+            phase: "setup",
+            positions: [],
+            challenges: [],
+            synthesis: "",
+            verdict: undefined,
+            startedAt: Date.now(),
+          };
+          await this.multiRoundDebate.runDebate(debateSession);
+          if (this.debatePelletGenerator) {
+            await this.debatePelletGenerator.generateFromSession(debateSession, this.ctx.pelletStore);
+          }
+          const synthesis = debateSession.synthesis || "Parliament concluded without synthesis.";
+          // Tag response with #Parliament
+          return {
+            content: `${synthesis}\n\n#Parliament`,
+            owlName: this.ctx.owl.persona.name,
+            owlEmoji: this.ctx.owl.persona.emoji,
+            toolsUsed: [],
+          };
+        }
+      }
+    }
+
     const orchestrator = this.getOrchestrator();
     const orchResult = await orchestrator.executeWithFallback(
       strategy,
@@ -1653,6 +1716,11 @@ export class OwlGateway {
       usage: orchResult.usage,
       pendingFiles: engineCtx.pendingFiles ?? [],
     };
+
+    // ─── Tag response with #OwlName when specialist responded ───────────
+    if (activeOwlName !== this.ctx.owl.persona.name && !response.content.endsWith("#Parliament")) {
+      response.content = `${response.content.trim()}\n\n#${activeOwlName}`;
+    }
 
     // Capability gap detected — try to synthesize the missing tool and retry
     if (response.pendingCapabilityGap && this.ctx.evolution) {
