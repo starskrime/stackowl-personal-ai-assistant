@@ -82,10 +82,10 @@ const cmdOwls: CommandFn = async (_args, ui, gateway) => {
   for (const o of owls) {
     lines.push(
       Y(`${o.persona.emoji} `) +
-        W(o.persona.name.padEnd(16)) +
-        D(
-          `gen ${o.dna.generation}  challenge ${o.dna.evolvedTraits.challengeLevel}`,
-        ),
+      W(o.persona.name.padEnd(16)) +
+      D(
+        `gen ${o.dna.generation}  challenge ${o.dna.evolvedTraits.challengeLevel}`,
+      ),
     );
   }
   lines.push("");
@@ -157,29 +157,6 @@ const cmdSkills: CommandFn = async (_args, ui, gateway) => {
   return true;
 };
 
-const cmdSkill: CommandFn = async (args, ui, gateway) => {
-  const name = args.trim();
-  if (!name) {
-    ui.printInfo("Usage: /skill <name>");
-    return true;
-  }
-
-  const loader = gateway.getSkillsLoader?.();
-  if (!loader) {
-    ui.printInfo("Skills not loaded.");
-    return true;
-  }
-
-  const skill = loader.getRegistry().get(name);
-  if (!skill) {
-    ui.printError(`Skill "${name}" not found.`);
-    return true;
-  }
-
-  // Forward as a regular chat message with the skill's name
-  return false;
-};
-
 const cmdLearning: CommandFn = async (_args, ui, gateway) => {
   const learning = gateway.getLearningEngine();
   if (!learning) {
@@ -214,7 +191,6 @@ const COMMANDS: Record<string, CommandDef> = {
   reset: { description: "Clear context", fn: cmdClear },
   capabilities: { description: "List synthesized tools", fn: cmdCapabilities },
   skills: { description: "List loaded skills", fn: cmdSkills },
-  skill: { description: "Run a specific skill", fn: cmdSkill },
   learning: { description: "Learning report", fn: cmdLearning },
   quit: { description: "Save and exit", fn: cmdQuit },
   exit: { description: "Save and exit", fn: cmdQuit },

@@ -854,8 +854,8 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.on("callback_query:data", async (ctx) => {
       const data = ctx.callbackQuery.data ?? "";
 
-      // ── Skills install wizard callbacks ──────────────────
-      if (data.startsWith("wiz:")) {
+      // ── Skills wizard callbacks (menu:* and wiz:*) ───────
+      if (data.startsWith("wiz:") || data.startsWith("menu:")) {
         if (!this.isAllowed(ctx)) {
           await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
           return;

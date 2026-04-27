@@ -2,11 +2,16 @@ import { dirname } from "node:path";
 import { ClawHubClient, type ClawHubSkill } from "./clawhub.js";
 import { SkillInstaller } from "./installer.js";
 import type { SkillsRegistry } from "./registry.js";
+import type { Skill } from "./types.js";
 
 export interface WizardResponse {
   text: string;
   done: boolean;
   inlineKeyboard?: { text: string; data: string }[][];
+}
+
+export interface WizardSession {
+  step(input: string): Promise<WizardResponse>;
 }
 
 type WizardStep =
@@ -208,5 +213,77 @@ export class SkillInstallWizard {
         done: false,
       };
     }
+  }
+}
+
+const MENU_TEXT =
+  "What would you like to do?\n\n" +
+  "1. List loaded skills\n" +
+  "2. Install a new skill\n\n" +
+  "Type a number or /cancel to exit.";
+
+const MENU_KEYBOARD: WizardResponse["inlineKeyboard"] = [
+  [
+    { text: "List skills", data: "menu:list" },
+    { text: "Install skill", data: "menu:install" },
+  ],
+];
+
+/**
+ * Top-level /skills menu — routes to list or install.
+ */
+export class SkillsMenuWizard implements WizardSession {
+  private installWizard?: SkillInstallWizard;
+
+  constructor(
+    private readonly skillsDir: string,
+    private readonly clawHubClient: ClawHubClient,
+    private readonly registry?: SkillsRegistry,
+  ) {}
+
+  start(): WizardResponse {
+    return { text: MENU_TEXT, done: false, inlineKeyboard: MENU_KEYBOARD };
+  }
+
+  async step(input: string): Promise<WizardResponse> {
+    if (input.trim().toLowerCase() === "/cancel") {
+      return { text: "Cancelled.", done: true };
+    }
+
+    if (this.installWizard) {
+      return this.installWizard.step(input);
+    }
+
+    const lower = input.trim().toLowerCase();
+
+    if (lower === "1" || lower === "list" || lower === "menu:list") {
+      return this.listSkills();
+    }
+
+    if (lower === "2" || lower === "install" || lower === "menu:install") {
+      this.installWizard = new SkillInstallWizard(
+        this.skillsDir,
+        this.clawHubClient,
+        this.registry,
+      );
+      return this.installWizard.start();
+    }
+
+    return { text: "Please enter 1 or 2.\n\n" + MENU_TEXT, done: false, inlineKeyboard: MENU_KEYBOARD };
+  }
+
+  private listSkills(): WizardResponse {
+    const skills: Skill[] = this.registry?.listEnabled() ?? [];
+    if (skills.length === 0) {
+      return { text: "No skills loaded.", done: true };
+    }
+    const lines = skills
+      .map((s) => {
+        const emoji = s.metadata.openclaw?.emoji ?? "◈";
+        const always = s.metadata.openclaw?.always ? " [always]" : "";
+        return `${emoji} **${s.name}**${always}\n   ${s.description}`;
+      })
+      .join("\n\n");
+    return { text: `Skills (${skills.length}):\n\n${lines}`, done: true };
   }
 }

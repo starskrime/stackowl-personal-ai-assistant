@@ -295,7 +295,7 @@ setup_camofox() {
 start_camofox_npx() {
   local url="$1"
   local port
-  port=$(echo "$url" | grep -oP ':\K\d+' || echo "9377")
+  port=$(echo "$url" | sed 's/.*:\([0-9][0-9]*\).*/\1/'); [[ "$port" =~ ^[0-9]+$ ]] || port="9377"
 
   # Check if camofox-browser is installed globally or locally
   if command -v camofox-browser &>/dev/null; then
@@ -335,7 +335,7 @@ start_camofox_npx() {
 show_camofox_docker() {
   local url="$1"
   local port
-  port=$(echo "$url" | grep -oP ':\K\d+' || echo "9377")
+  port=$(echo "$url" | sed 's/.*:\([0-9][0-9]*\).*/\1/'); [[ "$port" =~ ^[0-9]+$ ]] || port="9377"
   echo ""
   log_step "Run this Docker command (in a separate terminal):"
   echo ""

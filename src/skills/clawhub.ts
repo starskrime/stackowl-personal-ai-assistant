@@ -51,7 +51,7 @@ export class ClawHubClient {
     query: string,
     limit: number = 10,
   ): Promise<ClawHubSearchResult> {
-    const url = `${this.config.registryUrl}/skills/search?q=${encodeURIComponent(query)}&limit=${limit}`;
+    const url = `${this.config.registryUrl}/search?q=${encodeURIComponent(query)}&limit=${limit}`;
 
     try {
       const response = await fetch(url);
@@ -62,13 +62,26 @@ export class ClawHubClient {
       }
 
       const data = (await response.json()) as {
-        skills: ClawHubSkill[];
-        total: number;
+        results: Array<{
+          slug: string;
+          displayName: string;
+          summary: string;
+          score: number;
+          updatedAt: number;
+        }>;
       };
-      return {
-        skills: data.skills || [],
-        total: data.total || 0,
-      };
+      const skills: ClawHubSkill[] = (data.results || []).slice(0, limit).map((r) => ({
+        slug: r.slug,
+        name: r.displayName,
+        description: r.summary,
+        stars: 0,
+        downloads: 0,
+        tags: [],
+        author: "",
+        latestVersion: "",
+        updatedAt: new Date(r.updatedAt).toISOString(),
+      }));
+      return { skills, total: skills.length };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to search ClawHub (${url}): ${msg}`);

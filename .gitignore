@@ -20,6 +20,7 @@ Thumbs.db
 .claude
 .agents
 _bmad
+_bmad-output
 
 # Logs
 *.log
