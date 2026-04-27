@@ -1649,20 +1649,48 @@ export class OwlGateway {
     // ─── Epic 2: Secretary Router — route to specialized owls via DB ───────
     // Check if this message should be routed to a specialized owl based on routing rules
     let activeOwlName = this.ctx.owl.persona.name;
-    if (this.ctx.db && message.userId) {
+
+    // Check for explicit @OwlName mention first
+    const explicitMention = text.match(/^@(\w+)\s+(.+)/);
+    if (explicitMention && this.ctx.specializedRegistry) {
+      const [, owlName, remainingMessage] = explicitMention;
+      const spec = this.ctx.specializedRegistry.get(owlName);
+      if (spec) {
+        // Direct invoke - use remaining message as the actual user message
+        text = remainingMessage;
+        const baseOwl = this.ctx.owlRegistry?.getDefault() ?? this.ctx.owl;
+        engineCtx.owl = {
+          ...baseOwl,
+          specialistPrompt: `You are ${spec.name}, ${spec.role}`,
+          specialistRoutingRules: spec.routingRules.keywords,
+          specialistPermissions: spec.permissions,
+        };
+        engineCtx.specialistPrompt = `You are ${spec.name}, ${spec.role}`;
+        activeOwlName = spec.name;
+        log.engine.info(
+          `[Gateway] Direct invoke specialist "${spec.name}" for message: "${text.slice(0, 50)}..."`,
+        );
+      }
+    }
+
+    // Otherwise, use SecretaryRouter for implicit routing
+    if (this.ctx.db && message.userId && activeOwlName === this.ctx.owl.persona.name) {
       const secretary = new SecretaryRouter(this.ctx.db);
       const routingDecision = secretary.route(text, message.userId);
       if (routingDecision.type === "specialist") {
         const specializedOwl = routingDecision.owl;
+        // Look up SpecializedOwlSpec from SpecializedOwlRegistry for full spec
+        const spec = this.ctx.specializedRegistry?.get(specializedOwl.name);
         // Get the base OwlInstance from OwlRegistry (or use default)
         const baseOwl = this.ctx.owlRegistry?.get(specializedOwl.name)
           ?? this.ctx.owlRegistry?.getDefault()
           ?? this.ctx.owl;
-        // Create merged owl with specialist context from DB
+        // Create merged owl with specialist context from DB and spec
         engineCtx.owl = {
           ...baseOwl,
           specialistPrompt: specializedOwl.personalityPrompt,
           specialistRoutingRules: specializedOwl.routingRules,
+          specialistPermissions: spec?.permissions,
         };
         engineCtx.specialistPrompt = specializedOwl.personalityPrompt;
         activeOwlName = specializedOwl.name;
