@@ -594,7 +594,7 @@ Return ONLY a valid JSON object, no markdown.`;
         relevance = Math.max(relevance, cosSim);
       }
 
-      const retrievalScore = recency + importance + relevance;
+      const retrievalScore = recency * importance * relevance;
       return { ...ep, retrievalScore };
     });
 
