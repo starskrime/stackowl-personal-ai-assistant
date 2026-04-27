@@ -22,7 +22,7 @@ import { PromptOptimizer } from "../engine/prompt-optimizer.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
-import { SkillInstallWizard } from "../skills/wizard.js";
+import { SkillInstallWizard, SkillsMenuWizard, type WizardSession } from "../skills/wizard.js";
 import { SkillTracker } from "../skills/tracker.js";
 import { log } from "../logger.js";
 import { OutcomeVerifier } from "../verification/outcome-verifier.js";
@@ -78,6 +78,8 @@ import { PreExecutionConfirmer } from "../clarification/pre-execution-confirmer.
 import { PreActionQuestioner } from "../clarification/pre-action-questioner.js";
 import { MidExecutionRouter } from "../clarification/mid-execution-router.js";
 import { UnclaritySurfacer } from "../clarification/unclarity-surfacer.js";
+import { clarificationCoordinator } from "../clarification/coordinator.js";
+import type { ClarificationQuestion } from "../clarification/types.js";
 import { ToolMastery } from "../tools/tool-mastery.js";
 import { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
@@ -181,7 +183,7 @@ export class OwlGateway {
    * already tried in previous messages of this conversation.
    */
   private attemptLogs = new AttemptLogRegistry();
-  private wizardSessions = new Map<string, SkillInstallWizard>();
+  private wizardSessions = new Map<string, WizardSession>();
 
   /** User mental model — infers user state from behavioral signals */
   private userMentalModel: UserMentalModel | null = null;
@@ -764,23 +766,36 @@ export class OwlGateway {
       };
     }
 
-    // ─── /skills install — start the install wizard ───────────────
-    if (
-      message.text.trim().toLowerCase().startsWith("/skills install") ||
-      message.text.trim().toLowerCase() === "/skills"
-    ) {
+    // ─── /skills — top-level menu or direct install ───────────────
+    const skillsCmd = message.text.trim().toLowerCase();
+    if (skillsCmd === "/skills" || skillsCmd.startsWith("/skills install") || skillsCmd.startsWith("/skills list")) {
       const { resolve, join } = await import("node:path");
       const skillsDir = resolve(
         this.ctx.config.skills?.directories?.[0] ??
           join(this.ctx.cwd ?? process.cwd(), "workspace", "skills"),
       );
-      const wizard = new SkillInstallWizard(
-        skillsDir,
-        new ClawHubClient(),
-        this.ctx.skillsLoader?.getRegistry(),
-      );
+      const registry = this.ctx.skillsLoader?.getRegistry();
+      let wizard: WizardSession;
+      if (skillsCmd.startsWith("/skills install")) {
+        wizard = new SkillInstallWizard(skillsDir, new ClawHubClient(), registry);
+      } else {
+        wizard = new SkillsMenuWizard(skillsDir, new ClawHubClient(), registry);
+      }
+      // /skills list — resolve immediately without storing a session
+      if (skillsCmd.startsWith("/skills list")) {
+        const resp = await (wizard as SkillsMenuWizard).step("list");
+        return {
+          content: resp.text,
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
       this.wizardSessions.set(message.sessionId, wizard);
-      const startResp = wizard.start();
+      const startResp =
+        wizard instanceof SkillInstallWizard
+          ? wizard.start()
+          : (wizard as SkillsMenuWizard).start();
       return {
         content: startResp.text,
         owlName: this.ctx.owl.persona.name,
@@ -1430,27 +1445,49 @@ export class OwlGateway {
     // Detect ambiguous input early and ask clarifying questions before wasting tokens
     const ambiguityResult = await this.ambiguityDetector.detectAmbiguity(message.text);
     if (ambiguityResult.needsClarification && ambiguityResult.question) {
-      log.engine.info(`[AmbiguityDetector] Ambiguous input detected: ${ambiguityResult.ambiguitySignals.map(s => s.type).join(", ")}`);
-      return {
-        content: ambiguityResult.question.question,
-        owlName: this.ctx.owl.persona.name,
-        owlEmoji: this.ctx.owl.persona.emoji,
-        toolsUsed: [],
-      };
+      const sessionKey = message.sessionId || 'default';
+      if (!clarificationCoordinator.shouldAsk('AmbiguityDetector', ambiguityResult.question, sessionKey)) {
+        log.engine.info(`[AmbiguityDetector] Suppressing duplicate question`);
+      } else {
+        log.engine.info(`[AmbiguityDetector] Ambiguous input detected: ${ambiguityResult.ambiguitySignals.map(s => s.type).join(", ")}`);
+        return {
+          content: ambiguityResult.question.question,
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
     }
 
     // ─── Epic 3.5: Pre-Execution Confirmation — BEFORE engine execution ─────
     // Check for high-stakes or vague requests and confirm before proceeding
     const confirmation = this.preExecutionConfirmer.assessRequest(message.text);
     if (confirmation && confirmation.confidence < 0.8) {
-      const confirmQuestion = this.preExecutionConfirmer.getConfirmationQuestion(confirmation);
-      log.engine.info(`[PreExecutionConfirmer] Low confidence (${confirmation.confidence.toFixed(2)}), requesting confirmation`);
-      return {
-        content: confirmQuestion,
-        owlName: this.ctx.owl.persona.name,
-        owlEmoji: this.ctx.owl.persona.emoji,
-        toolsUsed: [],
+      const confirmQuestion: ClarificationQuestion = {
+        id: confirmation.id,
+        ambiguitySignal: {
+          type: 'underspecified_scope',
+          description: confirmation.uncertaintyAreas.join('; '),
+          confidence: confirmation.confidence,
+          originalText: message.text,
+        },
+        question: this.preExecutionConfirmer.getConfirmationQuestion(confirmation),
+        contextPreserved: [],
+        timestamp: confirmation.timestamp,
       };
+      const sessionKey = message.sessionId || 'default';
+
+      if (!clarificationCoordinator.shouldAsk('PreExecutionConfirmer', confirmQuestion, sessionKey)) {
+        log.engine.info(`[PreExecutionConfirmer] Suppressing duplicate question`);
+      } else {
+        log.engine.info(`[PreExecutionConfirmer] Low confidence (${confirmation.confidence.toFixed(2)}), requesting confirmation`);
+        return {
+          content: this.preExecutionConfirmer.getConfirmationQuestion(confirmation),
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        };
+      }
     }
 
     // ─── Phase 3: Loop Detection ──────────────────────────────────
