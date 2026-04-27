@@ -145,6 +145,7 @@ import type { OwlInnerLife } from "../owls/inner-life.js";
 import type { SkillsEngine } from "../skills/engine.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { OwlRegistry } from "../owls/registry.js";
+import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { SkillsLoader } from "../skills/index.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
@@ -196,6 +197,7 @@ export interface GatewayContext {
   provider: ModelProvider;
   owl: OwlInstance;
   owlRegistry: OwlRegistry;
+  specializedRegistry?: SpecializedOwlRegistry;
   config: StackOwlConfig;
   toolRegistry?: ToolRegistry;
   sessionStore: SessionStore;
