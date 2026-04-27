@@ -53,6 +53,7 @@ import { ContextBuilder } from "./handlers/context-builder.js";
 import { SessionManager } from "./handlers/session-manager.js";
 import { GapLearner } from "../agent/gap-learner.js";
 import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
+import { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import { TaskQueue } from "../queue/task-queue.js";
 import {
   computeTemporalContext,
@@ -452,6 +453,17 @@ export class OwlGateway {
         ctx.owl.persona.name,
       );
       log.engine.info("[memory] FeedbackStore initialized (SQLite)");
+    }
+
+    // Auto-initialize SpecializedOwlRegistry for folder-based specialized owls
+    if (!ctx.specializedRegistry) {
+      const workspacePath = ctx.cwd ?? process.cwd();
+      ctx.specializedRegistry = new SpecializedOwlRegistry();
+      ctx.specializedRegistry.loadAll(workspacePath).then(() => {
+        log.engine.info(
+          `[registry] SpecializedOwlRegistry loaded ${ctx.specializedRegistry!.listAll().length} specialized owls`,
+        );
+      }).catch(() => {});
     }
 
     // Wire learning orchestrator → cognitive loop gap bridge.
