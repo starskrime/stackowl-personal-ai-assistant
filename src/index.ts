@@ -29,6 +29,7 @@ import { ProviderRegistry } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { ShellTool } from "./tools/shell.js";
+import { CredentialsTool } from "./tools/credentials.js";
 import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
@@ -276,6 +277,8 @@ async function bootstrap() {
     ReadFileTool,
     WriteFileTool,
     EditFileTool,
+    // ── Credentials ──
+    CredentialsTool,
     // ── Web & search ──
     DuckDuckGoSearchTool,
     WebCrawlTool,
