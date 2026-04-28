@@ -1684,7 +1684,7 @@ export class OwlGateway {
         // If the active provider changes at runtime, recreate secretaryRouter by setting it to null.
         const classifyFn = buildClassifyFn(
           this.ctx.provider,
-          this.ctx.config.defaultModel ?? "claude-haiku-4-5-20251001",
+          this.ctx.config.defaultModel,
         );
         this.secretaryRouter = new SecretaryRouter(
           this.ctx.db,
