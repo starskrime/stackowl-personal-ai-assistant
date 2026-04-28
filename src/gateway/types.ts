@@ -53,6 +53,11 @@ export interface GatewayCallbacks {
    * The user only sees final answers, not intermediate reasoning traces.
    */
   suppressThinking?: boolean;
+  /**
+   * Called when routing resolves to a specialist owl, before the LLM call.
+   * Allows the channel adapter to update its UI to show the active specialist.
+   */
+  onOwlChange?: (owlEmoji: string, owlName: string) => void;
 }
 
 // ─── Outgoing ────────────────────────────────────────────────────

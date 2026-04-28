@@ -262,6 +262,7 @@ export class CLIAdapter implements ChannelAdapter {
             return this.renderer.input.promptYesNo();
           },
           onStreamEvent: suppressedHandler,
+          onOwlChange: (emoji, name) => this.renderer.setActiveOwl(emoji, name),
         },
       );
 

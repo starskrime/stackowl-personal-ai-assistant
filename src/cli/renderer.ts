@@ -79,6 +79,8 @@ export class TerminalRenderer extends EventEmitter {
     streaming: false, streamBuf: "",
   };
 
+  private _mainOwlEmoji = "🦉";
+  private _mainOwlName  = "Owl";
   private _thinkTimer:  ReturnType<typeof setInterval> | null = null;
   private _thinkStart   = 0;
   private _resizeTimer: ReturnType<typeof setTimeout>  | null = null;
@@ -153,6 +155,20 @@ export class TerminalRenderer extends EventEmitter {
 
   setOwl(emoji: string, name: string, provider: string, model: string): void {
     Object.assign(this._state, { owlEmoji: emoji, owlName: name, provider, model });
+    this._mainOwlEmoji = emoji;
+    this._mainOwlName = name;
+  }
+
+  setActiveOwl(emoji: string, name: string): void {
+    this._state.owlEmoji = emoji;
+    this._state.owlName = name;
+    this.redraw();
+  }
+
+  resetActiveOwl(): void {
+    this._state.owlEmoji = this._mainOwlEmoji;
+    this._state.owlName = this._mainOwlName;
+    this.redraw();
   }
 
   updateDNA(dna: Partial<RendererState["dna"]>): void {
@@ -230,6 +246,9 @@ export class TerminalRenderer extends EventEmitter {
       content: response.content,
       label: response.owlEmoji + " " + response.owlName,
     });
+    // Reset header back to main owl after specialist response
+    this._state.owlEmoji = this._mainOwlEmoji;
+    this._state.owlName  = this._mainOwlName;
     this.input.setLocked(false);
     this.redraw();
   }

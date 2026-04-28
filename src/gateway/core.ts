@@ -1669,6 +1669,7 @@ export class OwlGateway {
         };
         engineCtx.specialistPrompt = `You are ${spec.name}, ${spec.role}`;
         activeOwlName = spec.name;
+        callbacks?.onOwlChange?.(spec.emoji || "🦉", spec.name);
         log.engine.info(
           `[Gateway] Direct invoke specialist "${spec.name}" for message: "${text.slice(0, 50)}..."`,
         );
@@ -1698,6 +1699,7 @@ export class OwlGateway {
         };
         engineCtx.specialistPrompt = specializedOwl.personalityPrompt;
         activeOwlName = specializedOwl.name;
+        callbacks?.onOwlChange?.(spec?.emoji || "🦉", specializedOwl.name);
         log.engine.info(
           `[Gateway] Routing to specialist "${specializedOwl.name}" for message: "${text.slice(0, 50)}..."`,
         );
@@ -1764,6 +1766,9 @@ export class OwlGateway {
     // ─── Tag response with #OwlName when specialist responded ───────────
     if (activeOwlName !== this.ctx.owl.persona.name && !response.content.endsWith("#Parliament")) {
       response.content = `${response.content.trim()}\n\n#${activeOwlName}`;
+      const activeSpec = this.ctx.specializedRegistry?.get(activeOwlName);
+      response.owlName = activeOwlName;
+      response.owlEmoji = activeSpec?.emoji || "🦉";
     }
 
     // Capability gap detected — try to synthesize the missing tool and retry
