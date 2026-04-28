@@ -928,25 +928,6 @@ export class MemoryDatabase {
       `);
     }
     if (current < SCHEMA_VERSION) {
-      // v9: user-created specialized owls (tenant-isolated)
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS owls (
-          id                  TEXT PRIMARY KEY,
-          owner_id            TEXT NOT NULL,
-          name                TEXT NOT NULL,
-          specialization      TEXT NOT NULL,
-          personality_prompt TEXT NOT NULL,
-          routing_rules       TEXT NOT NULL DEFAULT '[]',
-          dna                 TEXT NOT NULL DEFAULT '{}',
-          is_main_owl         INTEGER NOT NULL DEFAULT 0,
-          created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-          updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_owls_owner ON owls(owner_id);
-        CREATE INDEX IF NOT EXISTS idx_owls_name  ON owls(owner_id, name);
-      `);
-    }
-    if (current < SCHEMA_VERSION) {
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
       log.engine.info(`[MemoryDatabase] Schema migrated to v${SCHEMA_VERSION}`);
     }
