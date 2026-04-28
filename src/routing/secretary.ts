@@ -140,7 +140,10 @@ export class SecretaryRouter {
         }
       }
 
-      // LLM returned null or unknown name
+      // LLM returned null or an unrecognized name
+      if (chosenName) {
+        log.engine.warn(`[SecretaryRouter] LLM returned unrecognized specialist "${chosenName}" — falling through`);
+      }
       if (this.shouldConveneParliament(message)) {
         const decision = { type: "parliament" as const, reason: "Complex query detected - convening parliament" };
         this.logRoutingDecision(userId, message, decision, "success");
@@ -229,6 +232,9 @@ export class SecretaryRouter {
     return decision;
   }
 
+  /**
+   * Find the best matching owl based on routing rules.
+   */
   private findBestMatch(message: string, targets: RoutingTarget[]): RoutingTarget | null {
     let bestMatch: RoutingTarget | null = null;
     let bestScore = 0;
@@ -244,6 +250,9 @@ export class SecretaryRouter {
     return bestScore >= MATCH_SCORE_THRESHOLD ? bestMatch : null;
   }
 
+  /**
+   * Score how well a message matches an owl's routing rules.
+   */
   private scoreMatch(message: string, target: RoutingTarget): number {
     const rules = target.routingRules.map((r) => r.toLowerCase());
     if (rules.length === 0) return 0;
@@ -259,6 +268,9 @@ export class SecretaryRouter {
     return matches / rules.length;
   }
 
+  /**
+   * Calculate confidence in the routing decision.
+   */
   private calculateConfidence(messageLower: string, target: RoutingTarget): number {
     const matchScore = this.scoreMatch(messageLower, target);
     const dnaScore = target.routingQuality ?? (target.isFolderSpec ? 0.7 : 0.5);
@@ -273,10 +285,16 @@ export class SecretaryRouter {
     return false;
   }
 
+  /**
+   * Get the main owl for a user (Secretary Owl).
+   */
   getMainOwl(userId: string): SpecializedOwl | null {
     return this.db.owls.getMainOwl(userId);
   }
 
+  /**
+   * Log a routing decision for evolution feedback.
+   */
   private logRoutingDecision(
     userId: string,
     message: string,

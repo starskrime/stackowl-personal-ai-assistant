@@ -1680,6 +1680,8 @@ export class OwlGateway {
     // Otherwise, use SecretaryRouter for implicit routing
     if (this.ctx.db && message.userId && activeOwlName === this.ctx.owl.persona.name) {
       if (!this.secretaryRouter) {
+        // classifyFn closes over ctx.provider at construction time.
+        // If the active provider changes at runtime, recreate secretaryRouter by setting it to null.
         const classifyFn = buildClassifyFn(
           this.ctx.provider,
           this.ctx.config.defaultModel ?? "claude-haiku-4-5-20251001",
