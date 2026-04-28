@@ -6,9 +6,14 @@
  */
 
 import chalk from "chalk";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { OwlGateway } from "../gateway/core.js";
 import type { TerminalRenderer } from "./renderer.js";
 import { SpecializationCreateWizard } from "./specialization-wizard.js";
+import type { MemoryDatabase, SpecializedOwl } from "../memory/db.js";
+import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
+import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -35,6 +40,26 @@ const R = chalk.red;
 
 function sep() {
   return D("─".repeat(40));
+}
+
+// ─── Shared Lookup ────────────────────────────────────────────────
+
+export type ResolvedOwl =
+  | { source: "db"; owl: SpecializedOwl }
+  | { source: "folder"; spec: SpecializedOwlSpec };
+
+export function resolveOwl(
+  inputName: string,
+  ownerId: string,
+  db: MemoryDatabase,
+  registry: SpecializedOwlRegistry | undefined,
+): ResolvedOwl | null {
+  const lower = inputName.toLowerCase();
+  const dbOwl = db.owls.getByOwner(ownerId).find((o) => o.name.toLowerCase() === lower);
+  if (dbOwl) return { source: "db", owl: dbOwl };
+  const spec = registry?.get(inputName);
+  if (spec) return { source: "folder", spec };
+  return null;
 }
 
 // ─── Wizard State ─────────────────────────────────────────────────
@@ -107,41 +132,75 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
       ui.printInfo("Usage: /specialization show <name>");
       return true;
     }
-    const owl = db.owls.getByName(ownerId, name);
-    if (!owl) {
+    const result = resolveOwl(name, ownerId, db, gateway.getSpecializedRegistry());
+    if (!result) {
       ui.printInfo(`Owl "${name}" not found.`);
       return true;
     }
 
-    const dna = owl.dna;
-    const lines: string[] = [
-      "",
-      YB(`Owl: ${owl.name}`),
-      sep(),
-      D("Specialization  ") + W(owl.specialization),
-      D("Main Owl       ") + W(owl.isMainOwl ? "Yes" : "No"),
-      D("Created        ") + W(owl.createdAt.slice(0, 10)),
-      "",
-      YB("DNA / Evolution"),
-      sep(),
-      D("Challenge Level ") + W(String(dna.challengeLevel)),
-      D("Verbosity       ") + W(String(dna.verbosity)),
-      D("Expertise       ") + W(dna.expertiseDomains.join(", ") || "(none)"),
-      D("Routing Quality ") + W(String(dna.routingQuality)),
-      D("Evolution Speed ") + W(String(dna.evolutionSpeed)),
-      "",
-      YB("Personality Prompt"),
-      sep(),
-      ...owl.personalityPrompt.split("\n").map((l: string) => D("  " + l)),
-      "",
-      YB("Routing Rules"),
-      sep(),
-      ...(owl.routingRules.length > 0
-        ? owl.routingRules.map((r: string) => D("  • " + r))
-        : [D("  (none)")]),
-      "",
-    ];
-    ui.printLines(lines);
+    if (result.source === "db") {
+      const owl = result.owl;
+      const dna = owl.dna;
+      ui.printLines([
+        "",
+        YB(`Owl: ${owl.name}`),
+        sep(),
+        D("Specialization  ") + W(owl.specialization),
+        D("Main Owl       ") + W(owl.isMainOwl ? "Yes" : "No"),
+        D("Created        ") + W(owl.createdAt.slice(0, 10)),
+        "",
+        YB("DNA / Evolution"),
+        sep(),
+        D("Challenge Level ") + W(String(dna.challengeLevel)),
+        D("Verbosity       ") + W(String(dna.verbosity)),
+        D("Expertise       ") + W(dna.expertiseDomains.join(", ") || "(none)"),
+        D("Routing Quality ") + W(String(dna.routingQuality)),
+        D("Evolution Speed ") + W(String(dna.evolutionSpeed)),
+        "",
+        YB("Personality Prompt"),
+        sep(),
+        ...owl.personalityPrompt.split("\n").map((l: string) => D("  " + l)),
+        "",
+        YB("Routing Rules"),
+        sep(),
+        ...(owl.routingRules.length > 0
+          ? owl.routingRules.map((r: string) => D("  • " + r))
+          : [D("  (none)")]),
+        "",
+      ]);
+    } else {
+      const spec = result.spec;
+      const folderPath = join(gateway.getWorkspacePath(), "owls", spec.name);
+      ui.printLines([
+        "",
+        YB(`${spec.emoji || "🦉"} ${spec.name}`) + C(" [folder]"),
+        sep(),
+        D("Role           ") + W(spec.role),
+        D("Expertise      ") + W(spec.expertise.join(", ") || "(none)"),
+        D("Challenge      ") + W(spec.personality.challengeLevel),
+        D("Verbosity      ") + W(spec.personality.verbosity),
+        D("Tone           ") + W(spec.personality.tone),
+        "",
+        YB("Routing Keywords"),
+        sep(),
+        ...(spec.routingRules.keywords.length > 0
+          ? spec.routingRules.keywords.map((k) => D("  • " + k))
+          : [D("  (none)")]),
+        "",
+        YB("Permissions"),
+        sep(),
+        D("Allowed Tools  ") + W(spec.permissions.allowedTools.join(", ") || "all"),
+        D("Denied Tools   ") + W(spec.permissions.deniedTools.join(", ") || "none"),
+        ...(spec.permissions.capabilityConstraints.length > 0
+          ? [D("Constraints    ") + W(spec.permissions.capabilityConstraints.join("; "))]
+          : []),
+        "",
+        YB("Config File"),
+        sep(),
+        D("  " + folderPath + "/specialized_owl.md"),
+        "",
+      ]);
+    }
     return true;
   }
 
@@ -153,32 +212,43 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
   }
 
   if (subcmd === "delete") {
-    const name = parts.slice(1).join(" ");
+    const lastPart = parts[parts.length - 1];
+    const confirmed = (lastPart === "yes" || lastPart === "y") && parts.length > 2;
+    const nameParts = confirmed ? parts.slice(1, -1) : parts.slice(1);
+    const name = nameParts.join(" ");
+
     if (!name) {
       ui.printInfo("Usage: /specialization delete <name>");
       return true;
     }
-    const owl = db.owls.getByName(ownerId, name);
-    if (!owl) {
+
+    const result = resolveOwl(name, ownerId, db, gateway.getSpecializedRegistry());
+    if (!result) {
       ui.printInfo(`Owl "${name}" not found.`);
       return true;
     }
-    if (parts[1] === "yes" || parts[1] === "y") {
-      db.owls.delete(owl.id);
-      ui.printLines([
-        "",
-        G(`✓ Deleted owl: ${name}`),
-        "",
-      ]);
+
+    const displayName = result.source === "db" ? result.owl.name : result.spec.name;
+
+    if (confirmed) {
+      if (result.source === "db") {
+        db.owls.delete(result.owl.id);
+      } else {
+        const folderPath = join(gateway.getWorkspacePath(), "owls", result.spec.name);
+        await rm(folderPath, { recursive: true, force: true });
+        await gateway.reloadSpecializedRegistry();
+      }
+      ui.printLines(["", G(`✓ Deleted owl: ${displayName}`), ""]);
       return true;
     }
+
     ui.printLines([
       "",
-      R(`⚠️  Delete "${name}"?`),
+      R(`⚠️  Delete "${displayName}"?`),
       sep(),
       D("This action cannot be undone."),
       D(""),
-      D("Confirm: /specialization delete " + name + " yes"),
+      D("Confirm: /specialization delete " + displayName + " yes"),
       "",
     ]);
     return true;
@@ -187,21 +257,33 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
   if (subcmd === "update" && parts.length > 2) {
     const name = parts[1];
     const newSpecialization = parts.slice(2).join(" ");
-    const owl = db.owls.getByName(ownerId, name);
-    if (!owl) {
+    const result = resolveOwl(name, ownerId, db, gateway.getSpecializedRegistry());
+    if (!result) {
       ui.printInfo(`Owl "${name}" not found.`);
+      return true;
+    }
+    if (result.source === "folder") {
+      const folderPath = join(gateway.getWorkspacePath(), "owls", result.spec.name);
+      ui.printLines([
+        "",
+        YB(`${result.spec.emoji || "🦉"} ${result.spec.name}`) + C(" [folder]"),
+        sep(),
+        D("Folder owls are configured via their spec file."),
+        D("Edit it directly to update role, expertise, and routing rules:"),
+        "",
+        C("  " + folderPath + "/specialized_owl.md"),
+        "",
+      ]);
       return true;
     }
     if (!newSpecialization || newSpecialization.length < 5) {
       ui.printInfo("Please provide a new specialization (at least 5 characters).");
       return true;
     }
-
-    db.owls.update(owl.id, { specialization: newSpecialization });
-
+    db.owls.update(result.owl.id, { specialization: newSpecialization });
     ui.printLines([
       "",
-      G(`✓ Updated owl: ${name}`),
+      G(`✓ Updated owl: ${result.owl.name}`),
       sep(),
       D("New specialization: ") + W(newSpecialization),
       "",
@@ -215,11 +297,26 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
       ui.printInfo("Usage: /specialization update <name>");
       return true;
     }
-    const owl = db.owls.getByName(ownerId, name);
-    if (!owl) {
+    const result = resolveOwl(name, ownerId, db, gateway.getSpecializedRegistry());
+    if (!result) {
       ui.printInfo(`Owl "${name}" not found.`);
       return true;
     }
+    if (result.source === "folder") {
+      const folderPath = join(gateway.getWorkspacePath(), "owls", result.spec.name);
+      ui.printLines([
+        "",
+        YB(`${result.spec.emoji || "🦉"} ${result.spec.name}`) + C(" [folder]"),
+        sep(),
+        D("Folder owls are configured via their spec file."),
+        D("Edit it directly to update role, expertise, and routing rules:"),
+        "",
+        C("  " + folderPath + "/specialized_owl.md"),
+        "",
+      ]);
+      return true;
+    }
+    const owl = result.owl;
     ui.printLines([
       "",
       YB(`Update Owl: ${owl.name}`),
@@ -227,7 +324,7 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
       D("Specialization: ") + W(owl.specialization),
       D(""),
       D("To update specialization:"),
-      D("  /specialization update " + name + " <new specialization>"),
+      D("  /specialization update " + owl.name + " <new specialization>"),
       "",
     ]);
     return true;
