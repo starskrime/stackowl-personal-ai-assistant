@@ -36,7 +36,9 @@ import {
 import { CapabilityNeedAssessor } from "./assessor.js";
 import { CapabilityLedger } from "./ledger.js";
 import { DynamicToolLoader } from "./loader.js";
-import type { ApprovalCallback } from "./approval.js";
+// ApprovalCallback inlined — approval.ts removed as dead code
+type ApprovalRequest = { id: string; type: string; skillName: string; description: string; rationale: string; gap?: unknown; timestamp?: string };
+export type ApprovalCallback = (request: ApprovalRequest) => Promise<"approved" | "rejected" | "deferred">;
 import type { Skill } from "../skills/types.js";
 import type { ModelProvider } from "../providers/base.js";
 import { log } from "../logger.js";
@@ -56,7 +58,6 @@ export interface BuildResult {
 
 export type InstallApprovalCallback = (deps: string[]) => Promise<boolean>;
 export type ProgressCallback = (message: string) => Promise<void>;
-export type { ApprovalCallback };
 
 export class EvolutionHandler {
   private synthesizer: ToolSynthesizer;
