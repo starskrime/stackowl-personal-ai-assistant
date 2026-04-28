@@ -51,7 +51,7 @@ type StepId =
 
 const CHALLENGE_OPTIONS = [
   "low — gentle guidance, never pushes back",
-  "medium — balanced,偶尔 challenges your assumptions",
+  "medium — balanced, occasionally challenges your assumptions",
   "high — actively debates, demands evidence",
   "relentless — won't let you get away with vague reasoning",
 ];
@@ -358,9 +358,7 @@ export class SpecializationCreateWizard {
   private async _handle(input: string, ui: TerminalRenderer): Promise<boolean> {
     switch (this._step) {
       case "welcome":
-        if (input.trim()) {
-          this._step = "name";
-        }
+        this._step = "name";
         this._showStep(ui);
         return false;
 
@@ -557,42 +555,33 @@ export class SpecializationCreateWizard {
       verbose: "verbose",
     };
 
-    const content = `# ${owlName}
-
-## Identity
-name: ${owlName}
+    const content = `---
+name: ${folderName}
 role: ${d.role}
 emoji: ${d.emoji || "🦉"}
-
-## Personality
 challengeLevel: ${challengeMap[d.challengeLevel ?? "medium"] ?? "medium"}
 verbosity: ${verbosityMap[d.verbosity ?? "balanced"] ?? "balanced"}
 tone: ${d.tone || "neutral"}
-
-## Expertise
 domains:
-${(d.expertise ?? []).map((e) => `  - ${e}`).join("\n")}
-
-## Model Config
+${(d.expertise ?? []).map((e) => `  - ${e}`).join("\n") || "  []"}
 provider: ${d.provider === "default" ? "" : d.provider || ""}
 model: ${d.model || ""}
 maxTokens: ${d.maxTokens ?? ""}
-
-## Permissions
 allowedTools:
-${(d.allowedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  # all tools"}
+${(d.allowedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  []"}
 deniedTools:
-${(d.deniedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  # no restrictions"}
+${(d.deniedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  []"}
 capabilityConstraints:
-${(d.capabilityConstraints ?? []).map((c) => `  - "${c}"`).join("\n") || "  # no constraints"}
-
-## Routing Rules
+${(d.capabilityConstraints ?? []).map((c) => `  - "${c}"`).join("\n") || "  []"}
 keywords:
-${(d.expertise ?? []).map((e) => `  - ${e.toLowerCase()}`).join("\n")}
+${(d.expertise ?? []).map((e) => `  - ${e.toLowerCase()}`).join("\n") || "  []"}
+allowedSkills:
+${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  []"}
+---
 
-## Skills
-allowed:
-${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  # all skills"}
+# ${folderName}
+
+${d.role}
 `;
 
     const basePath = resolve(process.cwd(), "workspace", "owls", folderName);
@@ -629,42 +618,34 @@ ${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  # all skills"}
       verbose: "verbose",
     };
 
-    return `# ${d.name ?? "Unnamed"}
-
-## Identity
-name: ${d.name ?? "Unnamed"}
+    const folderName = (d.name ?? "Unnamed").replace(/[^a-zA-Z0-9-_]/g, "");
+    return `---
+name: ${folderName}
 role: ${d.role ?? ""}
 emoji: ${d.emoji ?? "🦉"}
-
-## Personality
 challengeLevel: ${challengeMap[d.challengeLevel ?? "medium"] ?? "medium"}
 verbosity: ${verbosityMap[d.verbosity ?? "balanced"] ?? "balanced"}
 tone: ${d.tone || "neutral"}
-
-## Expertise
 domains:
-${(d.expertise ?? []).map((e) => `  - ${e}`).join("\n")}
-
-## Model Config
+${(d.expertise ?? []).map((e) => `  - ${e}`).join("\n") || "  []"}
 provider: ${d.provider === "default" ? "" : d.provider || ""}
 model: ${d.model || ""}
 maxTokens: ${d.maxTokens ?? ""}
-
-## Permissions
 allowedTools:
-${(d.allowedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  # all tools"}
+${(d.allowedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  []"}
 deniedTools:
-${(d.deniedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  # no restrictions"}
+${(d.deniedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  []"}
 capabilityConstraints:
-${(d.capabilityConstraints ?? []).map((c) => `  - "${c}"`).join("\n") || "  # no constraints"}
-
-## Routing Rules
+${(d.capabilityConstraints ?? []).map((c) => `  - "${c}"`).join("\n") || "  []"}
 keywords:
-${(d.expertise ?? []).map((e) => `  - ${e.toLowerCase()}`).join("\n")}
+${(d.expertise ?? []).map((e) => `  - ${e.toLowerCase()}`).join("\n") || "  []"}
+allowedSkills:
+${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  []"}
+---
 
-## Skills
-allowed:
-${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  # all skills"}
+# ${folderName}
+
+${d.role ?? ""}
 `;
   }
 }
