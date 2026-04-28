@@ -8,6 +8,16 @@
 import type { MemoryDatabase } from "../memory/db.js";
 import { log } from "../logger.js";
 
+export interface OwlEvolutionStats {
+  name: string;
+  routingQuality: number;
+  expertiseDomains: string[];
+  evolutionSpeed: number;
+  challengeLevel: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class SpecializedOwlEvolution {
   private db: MemoryDatabase;
 
@@ -89,14 +99,4 @@ export class SpecializedOwlEvolution {
       updatedAt: owl.updatedAt,
     }));
   }
-}
-
-export interface OwlEvolutionStats {
-  name: string;
-  routingQuality: number;
-  expertiseDomains: string[];
-  evolutionSpeed: number;
-  challengeLevel: number;
-  createdAt: string;
-  updatedAt: string;
 }

@@ -1,9 +1,3 @@
-/**
- * StackOwl — Specialized Owl Parser
- *
- * Parses specialized_owl.md files into SpecializedOwlSpec objects.
- */
-
 import matter from "gray-matter";
 import type {
   SpecializedOwlSpec,
@@ -16,6 +10,10 @@ import type {
 
 export function parseSpecializedOwl(content: string): SpecializedOwlSpec {
   const { data } = matter(content);
+
+  if (!data.name || typeof data.name !== "string" || !data.name.trim()) {
+    throw new Error("parseSpecializedOwl: missing required field: name");
+  }
 
   const personality: SpecializedPersonality = {
     challengeLevel: (data.challengeLevel as SpecializedPersonality["challengeLevel"]) ?? "medium",
@@ -46,7 +44,7 @@ export function parseSpecializedOwl(content: string): SpecializedOwlSpec {
   };
 
   return {
-    name: (data.name as string) ?? "Unknown",
+    name: data.name.trim(),
     role: (data.role as string) ?? "",
     emoji: (data.emoji as string) ?? "🦉",
     personality,
