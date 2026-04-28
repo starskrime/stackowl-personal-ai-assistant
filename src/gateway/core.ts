@@ -158,6 +158,7 @@ export class OwlGateway {
   sessionManager: SessionManager;
   private taskQueue: TaskQueue;
   private gapLearner: GapLearner | null = null;
+  private secretaryRouter: SecretaryRouter | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -1675,8 +1676,10 @@ export class OwlGateway {
 
     // Otherwise, use SecretaryRouter for implicit routing
     if (this.ctx.db && message.userId && activeOwlName === this.ctx.owl.persona.name) {
-      const secretary = new SecretaryRouter(this.ctx.db);
-      const routingDecision = secretary.route(text, message.userId);
+      if (!this.secretaryRouter) {
+        this.secretaryRouter = new SecretaryRouter(this.ctx.db, this.ctx.specializedRegistry);
+      }
+      const routingDecision = this.secretaryRouter.route(text, message.userId);
       if (routingDecision.type === "specialist") {
         const specializedOwl = routingDecision.owl;
         // Look up SpecializedOwlSpec from SpecializedOwlRegistry for full spec
