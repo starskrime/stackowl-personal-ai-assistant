@@ -8,7 +8,7 @@
 import chalk from "chalk";
 import type { OwlGateway } from "../gateway/core.js";
 import type { TerminalRenderer } from "./renderer.js";
-import { extractKeywords, generateUniqueName } from "../utils/text.js";
+import { SpecializationCreateWizard } from "./specialization-wizard.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -37,17 +37,9 @@ function sep() {
   return D("─".repeat(40));
 }
 
-function generatePersonalityPrompt(owlName: string, description: string, keywords: string[]): string {
-  return `You are ${owlName}, a specialized AI assistant focused on ${description.toLowerCase()}.
+// ─── Wizard State ─────────────────────────────────────────────────
 
-Your expertise areas: ${keywords.join(", ") || "general assistance"}.
-
-Guidelines:
-- Stay focused on your specialization
-- Be knowledgeable about ${keywords[0] || "your topic"} and related areas
-- Provide accurate, helpful responses within your domain
-- If a question is outside your expertise, acknowledge it and offer to help with what you can`;
-}
+let activeWizard: SpecializationCreateWizard | null = null;
 
 // ─── Commands ─────────────────────────────────────────────────────
 
@@ -136,67 +128,8 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
   }
 
   if (subcmd === "create") {
-    ui.printLines([
-      "",
-      YB("Create Specialized Owl"),
-      sep(),
-      D("This wizard will help you create a new specialized owl."),
-      D(""),
-      D("Usage: /specialization create <description>"),
-      D(""),
-      D("Example: /specialization create I want an owl that helps with trading"),
-      "",
-    ]);
-    return true;
-  }
-
-  if (subcmd === "create" && parts.length > 1) {
-    const description = parts.slice(1).join(" ");
-    if (!description || description.length < 5) {
-      ui.printInfo("Please provide a description (at least 5 characters).");
-      ui.printInfo("Example: /specialization create I want an owl that helps with trading");
-      return true;
-    }
-
-    const existingOwls = db.owls.getByOwner(ownerId);
-    const existingNames = existingOwls.map(o => o.name);
-    const baseName = description.split(" ").slice(0, 2).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
-    const owlName = generateUniqueName(baseName, existingNames);
-
-    const keywords = extractKeywords(description);
-    const personalityPrompt = generatePersonalityPrompt(owlName, description, keywords);
-
-    const owl = db.owls.create({
-      ownerId,
-      name: owlName,
-      specialization: description,
-      personalityPrompt,
-      routingRules: keywords,
-      dna: {
-        challengeLevel: 0.7,
-        verbosity: 0.5,
-        expertiseDomains: keywords.slice(0, 3),
-        routingQuality: 0.5,
-        evolutionSpeed: 0.5,
-      },
-      isMainOwl: existingOwls.length === 0,
-    });
-
-    const mainTag = owl.isMainOwl ? " (set as Main Owl)" : "";
-    ui.printLines([
-      "",
-      G(`✓ Created owl: ${owl.name}${mainTag}`),
-      sep(),
-      D("Specialization: ") + W(owl.specialization),
-      D("Routing rules: ") + W(owl.routingRules.join(", ")),
-      "",
-      YB("Personality Prompt"),
-      sep(),
-      ...owl.personalityPrompt.split("\n").map((l: string) => D("  " + l)),
-      "",
-      D("Use ") + C(`/specialization show ${owl.name}`) + D(" to view details."),
-      "",
-    ]);
+    activeWizard = new SpecializationCreateWizard();
+    activeWizard.start(ui);
     return true;
   }
 
@@ -444,6 +377,13 @@ export class CommandRegistry {
     ui: TerminalRenderer,
     gateway: OwlGateway,
   ): Promise<boolean> {
+    // Route to active wizard FIRST - works for any input including empty Enter presses
+    if (activeWizard) {
+      const done = await activeWizard.step(input, ui);
+      if (done) activeWizard = null;
+      return true;
+    }
+
     if (!input.startsWith("/")) return false;
 
     // Let /skills fall through to gateway.handle() for wizard routing
