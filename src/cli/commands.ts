@@ -130,6 +130,7 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
   if (subcmd === "create") {
     activeWizard = new SpecializationCreateWizard();
     activeWizard.start(ui);
+    ui.setAllowEmptyInput(true);
     return true;
   }
 
@@ -380,7 +381,10 @@ export class CommandRegistry {
     // Route to active wizard FIRST - works for any input including empty Enter presses
     if (activeWizard) {
       const done = await activeWizard.step(input, ui);
-      if (done) activeWizard = null;
+      if (done) {
+        activeWizard = null;
+        ui.setAllowEmptyInput(false);
+      }
       return true;
     }
 

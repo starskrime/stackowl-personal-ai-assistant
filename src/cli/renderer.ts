@@ -7,7 +7,7 @@ import { computeLayout } from "./layout.js";
 import { renderTopBar } from "./components/top-bar.js";
 import { renderLeftPanel, type LeftPanelProps, type OwlState, type ToolEntry } from "./components/left-panel.js";
 import { renderRightPanel, type RightPanelProps, type RecentSession } from "./components/right-panel.js";
-import { renderInputBox } from "./components/input-box.js";
+import { renderInputBox, inputBoxHeight } from "./components/input-box.js";
 import { renderCmdPopup } from "./components/cmd-popup.js";
 import { renderShortcutsBar, type ShortcutEntry } from "./components/shortcuts-bar.js";
 import { InputHandler } from "./input-handler.js";
@@ -341,9 +341,16 @@ export class TerminalRenderer extends EventEmitter {
     }, cols);
     out += ansi.pos(2) + topBarStr;
 
-    // Body (rows 4 to rows-5)
-    // bodyRows must end at rows-5 so the input box (rows-4 .. rows-2) never overlaps.
-    const bodyRows = rows - 8;
+    // Input box height grows dynamically with buffer length (min 3, max 8)
+    const inputProps = {
+      buf: this.input.buf, cursor: this.input.cursor,
+      locked: this.input.locked, masked: this.input.masked,
+      spinIdx: this._state.spinIdx,
+    };
+    const inputH = inputBoxHeight(inputProps, rightW);
+
+    // Body rows shrink to make room for a taller input box
+    const bodyRows = Math.max(1, rows - 5 - inputH);
     const leftLines   = renderLeftPanel(this._leftProps(),  leftW,  bodyRows);
     const rightResult = renderRightPanel(this._rightProps(), rightW, bodyRows);
     this._state.totalRenderedLines = rightResult.totalLines;
@@ -360,25 +367,22 @@ export class TerminalRenderer extends EventEmitter {
       out += ansi.pos(row, leftW + 5) + rLn + rPad;
     }
 
-    // Input panel (rows rows-4 to rows-2)
-    const inputStr = renderInputBox({
-      buf: this.input.buf, cursor: this.input.cursor,
-      locked: this.input.locked, masked: this.input.masked,
-      spinIdx: this._state.spinIdx,
-    }, rightW);
+    // Input panel — starts at (rows - 1 - inputH), ends at (rows - 2)
+    const inputStartRow = rows - 1 - inputH;
+    const inputStr = renderInputBox(inputProps, rightW);
     const inputLines = inputStr.split("\n");
-    out += ansi.pos(rows - 4, leftW + 2) + inputLines[0];
-    out += ansi.pos(rows - 3, leftW + 2) + inputLines[1];
-    out += ansi.pos(rows - 2, leftW + 2) + inputLines[2];
-    // Restore panel separator over the input box's left 3 columns
-    out += ansi.pos(rows - 4, leftW + 2) + PANEL_V;
-    out += ansi.pos(rows - 3, leftW + 2) + PANEL_V;
-    out += ansi.pos(rows - 2, leftW + 2) + PANEL_V;
+    for (let i = 0; i < inputLines.length; i++) {
+      out += ansi.pos(inputStartRow + i, leftW + 2) + inputLines[i];
+    }
+    // Restore panel separator over the input box's left columns
+    for (let i = 0; i < inputH; i++) {
+      out += ansi.pos(inputStartRow + i, leftW + 2) + PANEL_V;
+    }
 
-    // Command popup
+    // Command popup — anchored just above the input box
     if (this.input.cmdPopupActive) {
       const popupLines = renderCmdPopup({ matches: this.input.cmdMatches, selectedIdx: this.input.cmdIdx }, rightW);
-      const startRow   = rows - 4 - popupLines.length;
+      const startRow   = inputStartRow - popupLines.length;
       for (let i = 0; i < popupLines.length; i++) {
         out += ansi.pos(startRow + i, leftW + 3) + popupLines[i];
       }
