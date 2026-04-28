@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import matter from "gray-matter";
 import { SpecializationCreateWizard } from "../../src/cli/specialization-wizard.js";
 import type { TerminalRenderer } from "../../src/cli/renderer.js";
 
@@ -36,12 +37,12 @@ describe("SpecializationCreateWizard", () => {
     expect(ui.lines[1]).toContain("Create Specialized Owl");
   });
 
-  it("should stay at welcome when pressing Enter with no input", async () => {
+  it("should advance from welcome to name when pressing Enter with no input", async () => {
     wizard.start(ui as unknown as TerminalRenderer);
     ui.lines = [];
     const done = await wizard.step("", ui as unknown as TerminalRenderer);
     expect(done).toBe(false);
-    expect(wizard.getCurrentStep()).toBe("welcome");
+    expect(wizard.getCurrentStep()).toBe("name");
   });
 
   it("should advance from welcome to name when providing input", async () => {
@@ -91,24 +92,19 @@ describe("SpecializationCreateWizard", () => {
   it("should advance through all steps and complete with yes", async () => {
     wizard.start(ui as unknown as TerminalRenderer);
 
-    // Note: The wizard auto-advances after each input, so the actual flow is:
-    // welcome(name) -> name(role) -> role(emoji) -> emoji(challenge) -> ...
-    // Each step's input goes to the PREVIOUS step's handler.
-    // So input at "emoji" step actually goes to the role handler.
     const steps = [
-      "TradingBot",               // welcome -> name (name="TradingBot")
-      "Stock trading assistant",  // name -> role (role="Stock trading assistant")
-      "📈",                      // role -> emoji (emoji="📈")
-      "3",                       // emoji -> challenge_level (challengeLevel="high")
-      "3",                       // challenge_level -> verbosity (challengeLevel="relentless")
+      "",                        // welcome -> name (Enter advances)
+      "TradingBot",              // name -> role (name="TradingBot")
+      "Stock trading assistant", // role -> emoji (role="Stock trading assistant")
+      "📈",                     // emoji -> challenge_level (emoji="📈")
+      "2",                       // challenge_level -> verbosity (challengeLevel="medium")
       "2",                       // verbosity -> tone (verbosity="balanced")
       "precise",                 // tone -> expertise
-      "stocks, trading",         // expertise
-      "",                        // expertise -> allowed_tools
-      "shell",                   // allowed_tools -> denied_tools
-      "no live trading",         // denied_tools -> capability_constraints
-      "4",                       // capability_constraints -> model_provider (default)
-      "",                        // model_provider -> model_name
+      "stocks, trading",         // expertise -> allowed_tools
+      "",                        // allowed_tools -> denied_tools (no tools)
+      "shell",                   // denied_tools -> capability_constraints
+      "no live trading",         // capability_constraints -> model_provider
+      "4",                       // model_provider -> model_name (default)
       "",                        // model_name -> model_tokens
       "",                        // model_tokens -> skills
       "",                        // skills -> review
@@ -122,10 +118,10 @@ describe("SpecializationCreateWizard", () => {
     }
 
     expect(done).toBe(true);
-    // Welcome just advances - actual owl name is entered at "name" prompt
-    expect(wizard.getSpec().name).toBe("Stock trading assistant");
-    expect(wizard.getSpec().emoji).toBe("3");
-    expect(wizard.getSpec().challengeLevel).toBe("high");
+    expect(wizard.getSpec().name).toBe("TradingBot");
+    expect(wizard.getSpec().role).toBe("Stock trading assistant");
+    expect(wizard.getSpec().emoji).toBe("📈");
+    expect(wizard.getSpec().challengeLevel).toBe("medium");
   });
 
   it("should produce valid specialized_owl.md content", async () => {
@@ -159,11 +155,14 @@ describe("SpecializationCreateWizard", () => {
 
     expect(done).toBe(true);
     const content = wizard.generateSpecFile();
-    // Verify the spec file has the expected structure
+    expect(content.startsWith("---\n")).toBe(true);
     expect(content).toContain("name:");
     expect(content).toContain("emoji:");
     expect(content).toContain("role:");
     expect(content).toContain("challengeLevel:");
     expect(content).toContain("verbosity:");
+    const { data } = matter(content);
+    expect(data.name).toBeTruthy();
+    expect(data.role).toBeTruthy();
   });
 });

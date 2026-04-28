@@ -45,4 +45,28 @@ emoji: 🦉
     expect(spec.personality.verbosity).toBe("balanced");
     expect(spec.model.provider).toBe("openai");
   });
+
+  it("should throw when name field is missing from frontmatter", () => {
+    const noName = `---
+role: Some role
+emoji: 🦉
+---
+`;
+    expect(() => parseSpecializedOwl(noName)).toThrow("missing required field: name");
+  });
+
+  it("should throw when frontmatter is empty", () => {
+    const empty = `---
+---
+`;
+    expect(() => parseSpecializedOwl(empty)).toThrow("missing required field: name");
+  });
+
+  it("should throw when content has no frontmatter at all", () => {
+    const noFrontmatter = `# Just a markdown heading
+
+Some content without frontmatter.
+`;
+    expect(() => parseSpecializedOwl(noFrontmatter)).toThrow("missing required field: name");
+  });
 });
