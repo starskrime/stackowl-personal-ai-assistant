@@ -55,8 +55,18 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
   const subcmd = parts[0] || "list";
 
   if (subcmd === "list") {
-    const owls = db.owls.getByOwner(ownerId);
-    if (owls.length === 0) {
+    const dbOwls = db.owls.getByOwner(ownerId);
+    const registry = gateway.getSpecializedRegistry();
+    const folderOwls = registry ? registry.listAll() : [];
+
+    // De-duplicate: skip folder owls whose name also appears in DB owls
+    const dbNames = new Set(dbOwls.map((o) => o.name.toLowerCase()));
+    const uniqueFolderOwls = folderOwls.filter(
+      (s) => !dbNames.has(s.name.toLowerCase()),
+    );
+
+    const total = dbOwls.length + uniqueFolderOwls.length;
+    if (total === 0) {
       ui.printLines([
         "",
         YB("Specialized Owls"),
@@ -68,7 +78,7 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
     }
 
     const lines: string[] = ["", YB("Specialized Owls"), sep()];
-    for (const owl of owls) {
+    for (const owl of dbOwls) {
       const mainTag = owl.isMainOwl ? Y(" [Main]") : "";
       lines.push(
         Y("🦉 ") +
@@ -77,7 +87,15 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
         mainTag,
       );
     }
-    lines.push(D(`\n${owls.length} owl(s) total`));
+    for (const spec of uniqueFolderOwls) {
+      lines.push(
+        Y(`${spec.emoji || "🦉"} `) +
+        W(spec.name.padEnd(16)) +
+        D(spec.role) +
+        C(" [folder]"),
+      );
+    }
+    lines.push(D(`\n${total} owl(s) total`));
     lines.push("");
     ui.printLines(lines);
     return true;
@@ -383,6 +401,7 @@ export class CommandRegistry {
       const done = await activeWizard.step(input, ui);
       if (done) {
         activeWizard = null;
+        await gateway.reloadSpecializedRegistry();
         ui.setAllowEmptyInput(false);
       }
       return true;
