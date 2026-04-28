@@ -16,6 +16,7 @@ export class SpecializedOwlRegistry {
   private specs: Map<string, SpecializedOwlSpec> = new Map();
 
   async loadAll(workspacePath: string): Promise<void> {
+    this.specs.clear();
     const owlsDir = join(workspacePath, "owls");
     if (!existsSync(owlsDir)) {
       log.engine.info("[SpecializedOwlRegistry] No owls directory found");
