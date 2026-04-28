@@ -81,7 +81,6 @@ import { PreActionQuestioner } from "../clarification/pre-action-questioner.js";
 import { UnclaritySurfacer } from "../clarification/unclarity-surfacer.js";
 import { clarificationCoordinator } from "../clarification/coordinator.js";
 import type { ClarificationQuestion } from "../clarification/types.js";
-import { join } from "node:path";
 import { ToolMastery } from "../tools/tool-mastery.js";
 import { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
@@ -459,7 +458,7 @@ export class OwlGateway {
 
     // Auto-initialize SpecializedOwlRegistry for folder-based specialized owls
     if (!ctx.specializedRegistry) {
-      const workspacePath = join(ctx.cwd ?? process.cwd(), "workspace");
+      const workspacePath = ctx.cwd ?? process.cwd();
       ctx.specializedRegistry = new SpecializedOwlRegistry();
       ctx.specializedRegistry.loadAll(workspacePath).then(() => {
         log.engine.info(
@@ -2514,8 +2513,12 @@ export class OwlGateway {
   }
   async reloadSpecializedRegistry(): Promise<void> {
     if (!this.ctx.specializedRegistry) return;
-    const workspacePath = join(this.ctx.cwd ?? process.cwd(), "workspace");
+    const workspacePath = this.ctx.cwd ?? process.cwd();
     await this.ctx.specializedRegistry.loadAll(workspacePath);
+  }
+
+  getWorkspacePath(): string {
+    return this.ctx.cwd ?? process.cwd();
   }
   getLearningEngine() {
     return this.ctx.learningEngine;

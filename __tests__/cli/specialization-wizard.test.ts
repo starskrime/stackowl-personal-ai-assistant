@@ -23,7 +23,7 @@ describe("SpecializationCreateWizard", () => {
   let ui: MockUI;
 
   beforeEach(() => {
-    wizard = new SpecializationCreateWizard();
+    wizard = new SpecializationCreateWizard("/tmp/test-workspace");
     ui = new MockUI();
   });
 

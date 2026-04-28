@@ -146,7 +146,7 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
   }
 
   if (subcmd === "create") {
-    activeWizard = new SpecializationCreateWizard();
+    activeWizard = new SpecializationCreateWizard(gateway.getWorkspacePath());
     activeWizard.start(ui);
     ui.setAllowEmptyInput(true);
     return true;

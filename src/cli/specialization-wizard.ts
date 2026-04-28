@@ -65,6 +65,11 @@ const VERBOSITY_OPTIONS = [
 export class SpecializationCreateWizard {
   private _step: StepId = "welcome";
   private _data: WizardData = {};
+  private _workspacePath: string;
+
+  constructor(workspacePath: string) {
+    this._workspacePath = workspacePath;
+  }
 
   getCurrentStep(): StepId {
     return this._step;
@@ -507,8 +512,8 @@ export class SpecializationCreateWizard {
               G("✓ Owl created successfully!"),
               sep(),
               D("  Files created:"),
-              `  • workspace/owls/${this._data.name}/specialized_owl.md`,
-              `  • workspace/owls/${this._data.name}/credentials/secrets.md`,
+              `  • owls/${this._data.name}/specialized_owl.md`,
+              `  • owls/${this._data.name}/credentials/secrets.md`,
               "",
               D("  Use ") + C(`/specialization list`) + D(" to see your owls."),
               D("  Use ") + C(`@${this._data.name} hello`) + D(" to chat with this owl."),
@@ -584,7 +589,7 @@ ${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  []"}
 ${d.role}
 `;
 
-    const basePath = resolve(process.cwd(), "workspace", "owls", folderName);
+    const basePath = resolve(this._workspacePath, "owls", folderName);
     const specPath = join(basePath, "specialized_owl.md");
     const credPath = join(basePath, "credentials", "secrets.md");
 
