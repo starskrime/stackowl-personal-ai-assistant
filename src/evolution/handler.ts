@@ -20,6 +20,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type {
   OwlEngine,
@@ -130,8 +131,7 @@ export class EvolutionHandler {
 
       for (const indicator of containerIndicators) {
         try {
-          const fs = require("node:fs");
-          if (fs.existsSync(indicator)) {
+          if (existsSync(indicator)) {
             return true;
           }
         } catch {

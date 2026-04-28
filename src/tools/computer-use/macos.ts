@@ -9,6 +9,8 @@
 
 import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { existsSync, statSync } from "node:fs";
+import { basename, resolve } from "node:path";
 
 const execAsync = promisify(exec);
 const TIMEOUT = 15_000;
@@ -732,9 +734,6 @@ export interface ScreenshotMetadata {
 export function extractScreenshotMetadata(
   imagePath: string,
 ): ScreenshotMetadata {
-  const { existsSync, statSync } = require("node:fs");
-  const { basename, resolve } = require("node:path");
-
   if (!existsSync(imagePath)) {
     throw new Error(`Image file not found: ${imagePath}`);
   }

@@ -24,7 +24,7 @@ import puppeteer, {
   type HTTPRequest,
 } from "puppeteer";
 import type { ToolImplementation, ToolContext } from "../../tools/registry.js";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../../logger.js";
 
@@ -41,7 +41,6 @@ function findChrome(): string | undefined {
           "chrome",
         );
         if (!existsSync(base)) return [];
-        const { readdirSync } = require("node:fs");
         return readdirSync(base)
           .sort()
           .reverse()
