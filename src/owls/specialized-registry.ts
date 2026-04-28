@@ -48,7 +48,15 @@ export class SpecializedOwlRegistry {
   }
 
   get(name: string): SpecializedOwlSpec | undefined {
-    return this.specs.get(name.toLowerCase());
+    const lower = name.toLowerCase();
+    // Exact match first
+    const exact = this.specs.get(lower);
+    if (exact) return exact;
+    // Prefix match — allows @calc to resolve to "calculus"
+    for (const [key, spec] of this.specs) {
+      if (key.startsWith(lower)) return spec;
+    }
+    return undefined;
   }
 
   listAll(): SpecializedOwlSpec[] {

@@ -1653,13 +1653,13 @@ export class OwlGateway {
     let activeOwlName = this.ctx.owl.persona.name;
 
     // Check for explicit @OwlName mention first
-    const explicitMention = text.match(/^@(\w+)\s+(.+)/);
+    const explicitMention = text.match(/^@(\w+)(?:\s+(.+))?$/s);
     if (explicitMention && this.ctx.specializedRegistry) {
       const [, owlName, remainingMessage] = explicitMention;
       const spec = this.ctx.specializedRegistry.get(owlName);
       if (spec) {
-        // Direct invoke - use remaining message as the actual user message
-        text = remainingMessage;
+        // Direct invoke - use remaining message as the actual user message (or a greeting if none)
+        text = remainingMessage?.trim() || "Hello";
         const baseOwl = this.ctx.owlRegistry?.getDefault() ?? this.ctx.owl;
         engineCtx.owl = {
           ...baseOwl,
