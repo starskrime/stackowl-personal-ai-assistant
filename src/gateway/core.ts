@@ -1662,13 +1662,21 @@ export class OwlGateway {
         // Direct invoke - use remaining message as the actual user message (or a greeting if none)
         text = remainingMessage?.trim() || "Hello";
         const baseOwl = this.ctx.owlRegistry?.getDefault() ?? this.ctx.owl;
+        const specialistPrompt = [
+          `You are ${spec.name}, ${spec.role}.`,
+          spec.expertise.length > 0 ? `Your expertise: ${spec.expertise.join(", ")}.` : "",
+          `Communication style: ${spec.personality.challengeLevel} challenge level, ${spec.personality.verbosity} verbosity, ${spec.personality.tone} tone.`,
+          spec.permissions.capabilityConstraints.length > 0
+            ? `Constraints: ${spec.permissions.capabilityConstraints.join("; ")}.`
+            : "",
+        ].filter(Boolean).join(" ");
         engineCtx.owl = {
           ...baseOwl,
-          specialistPrompt: `You are ${spec.name}, ${spec.role}`,
+          specialistPrompt,
           specialistRoutingRules: spec.routingRules.keywords,
           specialistPermissions: spec.permissions,
         };
-        engineCtx.specialistPrompt = `You are ${spec.name}, ${spec.role}`;
+        engineCtx.specialistPrompt = specialistPrompt;
         activeOwlName = spec.name;
         callbacks?.onOwlChange?.(spec.emoji || "🦉", spec.name);
         log.engine.info(
@@ -1678,7 +1686,7 @@ export class OwlGateway {
     }
 
     // Otherwise, use SecretaryRouter for implicit routing
-    if (this.ctx.db && message.userId && activeOwlName === this.ctx.owl.persona.name) {
+    if (this.ctx.specializedRegistry && message.userId && activeOwlName === this.ctx.owl.persona.name) {
       if (!this.secretaryRouter) {
         // classifyFn closes over ctx.provider at construction time.
         // If the active provider changes at runtime, recreate secretaryRouter by setting it to null.
@@ -1687,7 +1695,6 @@ export class OwlGateway {
           this.ctx.config.defaultModel,
         );
         this.secretaryRouter = new SecretaryRouter(
-          this.ctx.db,
           this.ctx.specializedRegistry,
           classifyFn,
         );

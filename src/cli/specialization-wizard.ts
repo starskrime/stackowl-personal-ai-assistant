@@ -13,6 +13,22 @@ const R = chalk.red;
 
 function sep() { return D("─".repeat(40)); }
 
+const STOP_WORDS = new Set(["and", "the", "for", "only", "with", "that", "this", "from", "into", "about"]);
+
+function buildKeywords(expertise: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const e of expertise) {
+    const phrase = e.toLowerCase().trim();
+    const words = phrase.split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+    const tokens = words.length > 1 ? [phrase, ...words] : [phrase];
+    for (const t of tokens) {
+      if (!seen.has(t)) { seen.add(t); result.push(t); }
+    }
+  }
+  return result;
+}
+
 interface WizardData {
   name?: string;
   role?: string;
@@ -579,7 +595,7 @@ ${(d.deniedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  []"}
 capabilityConstraints:
 ${(d.capabilityConstraints ?? []).map((c) => `  - "${c}"`).join("\n") || "  []"}
 keywords:
-${(d.expertise ?? []).map((e) => `  - ${e.toLowerCase()}`).join("\n") || "  []"}
+${buildKeywords(d.expertise ?? []).map((k) => `  - ${k}`).join("\n") || "  []"}
 allowedSkills:
 ${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  []"}
 ---
@@ -643,7 +659,7 @@ ${(d.deniedTools ?? []).map((t) => `  - ${t}`).join("\n") || "  []"}
 capabilityConstraints:
 ${(d.capabilityConstraints ?? []).map((c) => `  - "${c}"`).join("\n") || "  []"}
 keywords:
-${(d.expertise ?? []).map((e) => `  - ${e.toLowerCase()}`).join("\n") || "  []"}
+${buildKeywords(d.expertise ?? []).map((k) => `  - ${k}`).join("\n") || "  []"}
 allowedSkills:
 ${(d.skills ?? []).map((s) => `  - ${s}`).join("\n") || "  []"}
 ---

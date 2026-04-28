@@ -6,7 +6,7 @@
  * Skips the LLM call entirely when no specialists are configured.
  */
 
-import type { MemoryDatabase, SpecializedOwl } from "../memory/db.js";
+import type { SpecializedOwl } from "../memory/db.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import type { ClassifyFn } from "./llm-classifier.js";
 import { log } from "../logger.js";
@@ -40,34 +40,36 @@ interface RoutingTarget {
 }
 
 export class SecretaryRouter {
-  private db: MemoryDatabase;
   private folderRegistry?: SpecializedOwlRegistry;
   private classify?: ClassifyFn;
 
   constructor(
-    db: MemoryDatabase,
     folderRegistry?: SpecializedOwlRegistry,
     classify?: ClassifyFn,
   ) {
-    this.db = db;
     this.folderRegistry = folderRegistry;
     this.classify = classify;
   }
 
-  private toRoutingTarget(owl: SpecializedOwl): RoutingTarget {
+  private specToSyntheticOwl(spec: ReturnType<SpecializedOwlRegistry["listAll"]>[number], userId: string): SpecializedOwl {
     return {
-      name: owl.name,
-      routingRules: owl.routingRules,
-      expertiseDomains: owl.dna?.expertiseDomains,
-      routingQuality: owl.dna?.routingQuality,
+      id: `folder-${spec.name}`,
+      ownerId: userId,
+      name: spec.name,
+      specialization: spec.role,
+      personalityPrompt: `You are ${spec.name}, ${spec.role}. Your expertise: ${spec.expertise.join(", ") || "general"}.`,
+      routingRules: spec.routingRules.keywords,
+      dna: { challengeLevel: 0.7, verbosity: 0.5, expertiseDomains: spec.expertise, routingQuality: 0.7, evolutionSpeed: 0.5 },
+      isMainOwl: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
   }
 
   async route(message: string, userId: string): Promise<RoutingDecision> {
-    const dbOwls = this.db.owls.getByOwner(userId);
     const folderSpecs = this.folderRegistry?.listAll() ?? [];
 
-    if (dbOwls.length === 0 && folderSpecs.length === 0) {
+    if (folderSpecs.length === 0) {
       const decision = { type: "direct" as const, reason: "No specialized owls configured" };
       this.logRoutingDecision(userId, message, decision, "success");
       return decision;
@@ -75,75 +77,25 @@ export class SecretaryRouter {
 
     // ─── LLM semantic routing ────────────────────────────────────
     if (this.classify) {
-      const specialists = [
-        ...dbOwls.map((o) => ({
-          name: o.name,
-          role: o.specialization,
-          expertise: o.dna?.expertiseDomains ?? [],
-        })),
-        ...folderSpecs.map((s) => ({
-          name: s.name,
-          role: s.role,
-          expertise: s.expertise,
-        })),
-      ];
-
+      const specialists = folderSpecs.map((s) => ({ name: s.name, role: s.role, expertise: s.expertise }));
       let chosenName: string | null = null;
       try {
         chosenName = await this.classify(message, specialists);
       } catch {
-        // classify errors fall through to keyword matching / direct
+        // fall through to keyword matching
       }
 
       if (chosenName) {
-        const folderSpec = folderSpecs.find((s) => s.name === chosenName);
-        if (folderSpec) {
-          const syntheticOwl: SpecializedOwl = {
-            id: `folder-${folderSpec.name}`,
-            ownerId: userId,
-            name: folderSpec.name,
-            specialization: folderSpec.role,
-            personalityPrompt: `You are ${folderSpec.name}, ${folderSpec.role}. Your expertise: ${folderSpec.expertise.join(", ") || "general"}.`,
-            routingRules: folderSpec.routingRules.keywords,
-            dna: {
-              challengeLevel: 0.7,
-              verbosity: 0.5,
-              expertiseDomains: folderSpec.expertise,
-              routingQuality: 0.7,
-              evolutionSpeed: 0.5,
-            },
-            isMainOwl: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          const decision = {
-            type: "specialist" as const,
-            owl: syntheticOwl,
-            isFolderSpec: true,
-            reason: `LLM routed to folder specialist: ${chosenName}`,
-          };
-          log.engine.info(`[SecretaryRouter] LLM → folder specialist "${chosenName}"`);
+        const spec = folderSpecs.find((s) => s.name === chosenName);
+        if (spec) {
+          const decision = { type: "specialist" as const, owl: this.specToSyntheticOwl(spec, userId), isFolderSpec: true, reason: `LLM routed to: ${chosenName}` };
+          log.engine.info(`[SecretaryRouter] LLM → "${chosenName}"`);
           this.logRoutingDecision(userId, message, decision, "success");
           return decision;
         }
-
-        const dbOwl = dbOwls.find((o) => o.name === chosenName);
-        if (dbOwl) {
-          const decision = {
-            type: "specialist" as const,
-            owl: dbOwl,
-            reason: `LLM routed to specialist: ${chosenName}`,
-          };
-          log.engine.info(`[SecretaryRouter] LLM → db specialist "${chosenName}"`);
-          this.logRoutingDecision(userId, message, decision, "success");
-          return decision;
-        }
-      }
-
-      // LLM returned null or an unrecognized name
-      if (chosenName) {
         log.engine.warn(`[SecretaryRouter] LLM returned unrecognized specialist "${chosenName}" — falling through`);
       }
+
       if (this.shouldConveneParliament(message)) {
         const decision = { type: "parliament" as const, reason: "Complex query detected - convening parliament" };
         this.logRoutingDecision(userId, message, decision, "success");
@@ -154,70 +106,31 @@ export class SecretaryRouter {
       return decision;
     }
 
-    // ─── Keyword fallback (no classify fn) ───────────────────────
+    // ─── Keyword fallback ─────────────────────────────────────────
     const messageLower = message.toLowerCase();
-    const dbTargets = dbOwls.map((owl) => this.toRoutingTarget(owl));
-    const folderTargets: RoutingTarget[] = folderSpecs.map((spec) => ({
+    const targets: RoutingTarget[] = folderSpecs.map((spec) => ({
       name: spec.name,
       routingRules: spec.routingRules.keywords,
       expertiseDomains: spec.expertise,
       isFolderSpec: true,
     }));
 
-    const allTargets = [...dbTargets, ...folderTargets];
-    const matchedTarget = this.findBestMatch(messageLower, allTargets);
-
+    const matchedTarget = this.findBestMatch(messageLower, targets);
     if (matchedTarget && message.length >= MIN_MESSAGE_LENGTH) {
       const confidence = this.calculateConfidence(messageLower, matchedTarget);
       if (confidence >= ROUTING_CONFIDENCE_THRESHOLD) {
-        log.engine.info(
-          `[SecretaryRouter] Keyword → ${matchedTarget.name} (confidence: ${confidence.toFixed(2)})`,
-        );
-
-        if (matchedTarget.isFolderSpec) {
-          const spec = this.folderRegistry?.get(matchedTarget.name);
-          const syntheticOwl: SpecializedOwl = {
-            id: `folder-${matchedTarget.name}`,
-            ownerId: userId,
-            name: matchedTarget.name,
-            specialization: spec?.role ?? matchedTarget.name,
-            personalityPrompt: `You are ${matchedTarget.name}, ${spec?.role ?? "a specialized assistant"}. Your expertise: ${(matchedTarget.expertiseDomains ?? []).join(", ") || "general"}.`,
-            routingRules: matchedTarget.routingRules,
-            dna: {
-              challengeLevel: 0.7,
-              verbosity: 0.5,
-              expertiseDomains: matchedTarget.expertiseDomains ?? [],
-              routingQuality: 0.7,
-              evolutionSpeed: 0.5,
-            },
-            isMainOwl: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
+        log.engine.info(`[SecretaryRouter] Keyword → ${matchedTarget.name} (confidence: ${confidence.toFixed(2)})`);
+        const spec = this.folderRegistry?.get(matchedTarget.name);
+        if (spec) {
           const decision = {
             type: "specialist" as const,
-            owl: syntheticOwl,
+            owl: this.specToSyntheticOwl(spec, userId),
             isFolderSpec: true,
             reason: `Matched routing rules: ${matchedTarget.routingRules.slice(0, 3).join(", ")}`,
           };
           this.logRoutingDecision(userId, message, decision, "success");
           return decision;
         }
-
-        const matchedDbOwl = dbOwls.find((o) => o.name === matchedTarget.name);
-        if (!matchedDbOwl) {
-          log.engine.warn(`[SecretaryRouter] Matched target "${matchedTarget.name}" not found in dbOwls — falling back to direct`);
-          const fallback = { type: "direct" as const, reason: "Matched owl not found in DB" };
-          this.logRoutingDecision(userId, message, fallback, "failure");
-          return fallback;
-        }
-        const decision = {
-          type: "specialist" as const,
-          owl: matchedDbOwl,
-          reason: `Matched routing rules: ${matchedTarget.routingRules.slice(0, 3).join(", ")}`,
-        };
-        this.logRoutingDecision(userId, message, decision, "success");
-        return decision;
       }
     }
 
@@ -283,13 +196,6 @@ export class SecretaryRouter {
     if (keywordCount >= 3) return true;
     if (keywordCount >= 2 && message.length > 200) return true;
     return false;
-  }
-
-  /**
-   * Get the main owl for a user (Secretary Owl).
-   */
-  getMainOwl(userId: string): SpecializedOwl | null {
-    return this.db.owls.getMainOwl(userId);
   }
 
   /**
