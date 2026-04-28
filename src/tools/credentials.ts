@@ -1,12 +1,5 @@
-/**
- * StackOwl — Credentials Tool
- *
- * Provides secure access to owl-specific credentials.
- * Each specialized owl can only access credentials in its own folder.
- */
-
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
 
@@ -40,16 +33,17 @@ export const CredentialsTool: ToolImplementation = {
       return JSON.stringify({ error: "Missing key or owlName parameter" });
     }
 
-    const credentialsPath = join(
-      context.cwd,
-      "workspace",
-      "owls",
-      owlName,
-      "credentials",
-      "secrets.md",
-    );
+    // Allowlist: only letters, digits, hyphens, underscores
+    const safeOwlName = owlName.replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!safeOwlName || safeOwlName !== owlName) {
+      log.tool.error(`[CredentialsTool] Path traversal attempt: ${owlName}`);
+      return JSON.stringify({ error: "Access denied: invalid owl name" });
+    }
 
-    if (!credentialsPath.startsWith(join(context.cwd, "workspace"))) {
+    const resolvedBase = resolve(join(context.cwd, "workspace"));
+    const credentialsPath = resolve(join(resolvedBase, "owls", safeOwlName, "credentials", "secrets.md"));
+
+    if (!credentialsPath.startsWith(resolvedBase + "/")) {
       log.tool.error(`[CredentialsTool] Path traversal attempt: ${credentialsPath}`);
       return JSON.stringify({ error: "Access denied: invalid owl name" });
     }

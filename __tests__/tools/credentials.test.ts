@@ -48,4 +48,22 @@ describe("CredentialsTool", () => {
     const parsed = JSON.parse(result);
     expect(parsed.error).toContain("Missing");
   });
+
+  it("should reject path traversal attempt in owlName", async () => {
+    const result = await CredentialsTool.execute(
+      { key: "TEST_KEY", owlName: "../../etc" },
+      { cwd: testCwd },
+    );
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toBe("Access denied: invalid owl name");
+  });
+
+  it("should reject owlName with embedded slash", async () => {
+    const result = await CredentialsTool.execute(
+      { key: "TEST_KEY", owlName: "foo/../../bar" },
+      { cwd: testCwd },
+    );
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toBe("Access denied: invalid owl name");
+  });
 });
