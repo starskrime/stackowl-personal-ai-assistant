@@ -16,6 +16,7 @@
  * message arrives, idle activities are paused immediately.
  */
 
+import { join } from "node:path";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { LearningEngine } from "../learning/self-study.js";
 import type { PatternMiner } from "../skills/pattern-miner.js";
@@ -91,6 +92,7 @@ export class IdleActivityEngine {
       microLearner?: MicroLearner;
       toolOutcomeStore?: ToolOutcomeStore;
       capabilityScanner?: CapabilityScanner;
+      workspacePath?: string;
       /** Callback when an idle activity produces something user-relevant */
       onResult?: (result: IdleActivityResult) => void;
     },
@@ -274,7 +276,7 @@ export class IdleActivityEngine {
 
     try {
       const skillsDirs = this.appConfig.skills?.directories ?? [];
-      const skillsDir = skillsDirs[0] ?? "./workspace/skills";
+      const skillsDir = skillsDirs[0] ?? join(this.deps.workspacePath ?? process.cwd(), "skills");
       const newSkills = await this.deps.patternMiner.mine(
         this.deps.skillsRegistry,
         skillsDir,

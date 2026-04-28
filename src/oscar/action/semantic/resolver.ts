@@ -8,6 +8,7 @@ import type {
   BoundingBox,
   ActionType,
 } from "../../types.js";
+import { homedir } from "node:os";
 import { macOSAdapter } from "../../platform/adapters/macos.js";
 import * as fs from "fs";
 import * as path from "path";
@@ -35,7 +36,7 @@ interface UIOperation {
 export class CanonicalActionResolver {
   private adapter = macOSAdapter;
   private appKnowledgeCache: Map<string, AppKnowledge> = new Map();
-  private knowledgeDir = "./workspace/oscar/app-knowledge";
+  private knowledgeDir = path.join(homedir(), ".stackowl", "workspace", "oscar", "app-knowledge");
 
   constructor() {
     this.ensureKnowledgeDir();

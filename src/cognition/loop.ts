@@ -106,6 +106,7 @@ export interface CognitiveLoopDeps {
   microLearner?: MicroLearner;
   toolRegistry?: ToolRegistry;
   skillsDir?: string;
+  workspacePath?: string;
   owlRegistry?: OwlRegistry;
   evolutionEngine?: OwlEvolutionEngine;
   providerRegistry?: ProviderRegistry;
@@ -685,7 +686,7 @@ export class CognitiveLoop {
     if (!this.deps.sessionStore) return "No session store";
 
     const { MemoryConsolidator } = await import("../memory/consolidator.js");
-    const workspacePath = this.deps.config.workspace || "./workspace";
+    const workspacePath = this.deps.workspacePath ?? this.deps.config.workspace ?? "./workspace";
 
     const consolidator = new MemoryConsolidator(
       this.deps.provider,
@@ -722,7 +723,7 @@ export class CognitiveLoop {
     if (!this.deps.capabilityLedger) return "No capability ledger";
 
     const { ToolPruner } = await import("../evolution/pruner.js");
-    const workspacePath = this.deps.config.workspace || "./workspace";
+    const workspacePath = this.deps.workspacePath ?? this.deps.config.workspace ?? "./workspace";
 
     const pruner = new ToolPruner(
       this.deps.provider,
@@ -836,7 +837,7 @@ export class CognitiveLoop {
     // indicating the skill content is broken or inadequate. Re-synthesize them.
     try {
       const { SkillTracker } = await import("../skills/tracker.js");
-      const workspacePath = this.deps.config.workspace || "./workspace";
+      const workspacePath = this.deps.workspacePath ?? this.deps.config.workspace ?? "./workspace";
       const tracker = new SkillTracker(workspacePath);
       await tracker.load();
       const failingSkills = tracker.getFailingSkills(3, 0.3);
@@ -885,7 +886,7 @@ export class CognitiveLoop {
       const { readFile } = await import("node:fs/promises");
       const { existsSync } = await import("node:fs");
       const { join } = await import("node:path");
-      const workspacePath = this.deps.config.workspace || "./workspace";
+      const workspacePath = this.deps.workspacePath ?? this.deps.config.workspace ?? "./workspace";
       const profilePath = join(workspacePath, "user-profile.json");
       if (existsSync(profilePath)) {
         const raw = await readFile(profilePath, "utf-8");
@@ -1133,7 +1134,7 @@ export class CognitiveLoop {
     const state = this.deps.innerLife.getState();
     if (!state || state.desires.length === 0) return;
 
-    const workspacePath = this.deps.config.workspace || "./workspace";
+    const workspacePath = this.deps.workspacePath ?? this.deps.config.workspace ?? "./workspace";
     const graph = new KnowledgeGraphManager(workspacePath);
     await graph.load();
 

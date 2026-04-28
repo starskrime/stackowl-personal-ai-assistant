@@ -58,7 +58,7 @@ export class SkillContextInjector {
     this.options = {
       maxSkills: options.maxSkills ?? 3,
       autoSearchClawHub: options.autoSearchClawHub ?? true,
-      clawHubTargetDir: options.clawHubTargetDir ?? "./workspace/skills",
+      clawHubTargetDir: options.clawHubTargetDir ?? process.cwd(),
     };
 
     // Initialize the tracker (use provided or create a no-op one)

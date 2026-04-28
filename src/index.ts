@@ -1006,6 +1006,7 @@ async function buildGateway(
       microLearner: b.microLearner,
       toolRegistry: b.toolRegistry,
       skillsDir,
+      workspacePath: b.workspacePath,
       owlRegistry: b.owlRegistry,
       evolutionEngine: b.evolutionEngine,
       providerRegistry: b.providerRegistry,

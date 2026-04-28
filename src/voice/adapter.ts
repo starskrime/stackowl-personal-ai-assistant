@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { Logger } from "../logger.js";
 import { VoicePersona } from "./persona.js";
@@ -11,7 +12,7 @@ const log = new Logger("VOICE");
 const DEFAULT_CONFIG: VoiceConfig = {
   enabled: false,
   provider: "system",
-  outputDir: "./workspace/voice",
+  outputDir: join(homedir(), ".stackowl", "workspace", "voice"),
 };
 
 export class VoiceAdapter {
@@ -86,7 +87,7 @@ export class VoiceAdapter {
     text: string,
     profile: VoiceProfile,
   ): Promise<string> {
-    const outputDir = this.config.outputDir ?? "./workspace/voice";
+    const outputDir = this.config.outputDir ?? join(homedir(), ".stackowl", "workspace", "voice");
     if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
     const filePath = join(outputDir, `${randomUUID()}.mp3`);
@@ -131,7 +132,7 @@ export class VoiceAdapter {
     text: string,
     profile: VoiceProfile,
   ): Promise<string> {
-    const outputDir = this.config.outputDir ?? "./workspace/voice";
+    const outputDir = this.config.outputDir ?? join(homedir(), ".stackowl", "workspace", "voice");
     if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
     const filePath = join(outputDir, `${randomUUID()}.mp3`);

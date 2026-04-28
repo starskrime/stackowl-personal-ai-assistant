@@ -79,7 +79,7 @@ export class TelegramAdapter implements ChannelAdapter {
     );
     this.chatIdsPath =
       config.chatIdsPath ??
-      join(process.cwd(), "workspace", "known_chat_ids.json");
+      join(gateway.getWorkspacePath(), "known_chat_ids.json");
 
     // ── Config menu (interactive /config command) ────────────────
     const gwConfig = gateway.getConfig();

@@ -77,7 +77,7 @@ export class SlackAdapter implements ChannelAdapter {
 
     this.channelIdsPath =
       config.channelIdsPath ??
-      join(process.cwd(), "workspace", "known_slack_channels.json");
+      join(gateway.getWorkspacePath(), "known_slack_channels.json");
 
     this.setupHandlers();
   }

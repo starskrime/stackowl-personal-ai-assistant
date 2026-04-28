@@ -81,6 +81,7 @@ import { PreActionQuestioner } from "../clarification/pre-action-questioner.js";
 import { UnclaritySurfacer } from "../clarification/unclarity-surfacer.js";
 import { clarificationCoordinator } from "../clarification/coordinator.js";
 import type { ClarificationQuestion } from "../clarification/types.js";
+import { join } from "node:path";
 import { ToolMastery } from "../tools/tool-mastery.js";
 import { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
@@ -391,7 +392,7 @@ export class OwlGateway {
           maxSkills: 5,
           autoSearchClawHub: true,
           clawHubTargetDir:
-            ctx.config.skills?.directories?.[0] || "./workspace/skills",
+            ctx.config.skills?.directories?.[0] || join(ctx.cwd ?? process.cwd(), "skills"),
         },
         skillProvider,
         skillTracker,
@@ -783,7 +784,7 @@ export class OwlGateway {
       const { resolve, join } = await import("node:path");
       const skillsDir = resolve(
         this.ctx.config.skills?.directories?.[0] ??
-          join(this.ctx.cwd ?? process.cwd(), "workspace", "skills"),
+          join(this.ctx.cwd ?? process.cwd(), "skills"),
       );
       const registry = this.ctx.skillsLoader?.getRegistry();
       let wizard: WizardSession;
@@ -2734,7 +2735,7 @@ export class OwlGateway {
       try {
         const skillMd = await this.ctx.forgeSynthesizer.synthesize(recording);
         const skillDir =
-          this.ctx.config.skills?.directories?.[0] || "./workspace/skills";
+          this.ctx.config.skills?.directories?.[0] || join(this.ctx.cwd ?? process.cwd(), "skills");
         const filePath = await this.ctx.forgeSynthesizer.saveSkill(
           skillMd,
           skillDir,
