@@ -38,6 +38,7 @@ import { ProactiveAnticipator } from "../learning/anticipator.js";
 import { classifyStrategy } from "../orchestrator/classifier.js";
 import { TaskOrchestrator } from "../orchestrator/orchestrator.js";
 import { SecretaryRouter } from "../routing/secretary.js";
+import { buildClassifyFn } from "../routing/llm-classifier.js";
 import type {
   GatewayMessage,
   GatewayResponse,
@@ -1679,9 +1680,17 @@ export class OwlGateway {
     // Otherwise, use SecretaryRouter for implicit routing
     if (this.ctx.db && message.userId && activeOwlName === this.ctx.owl.persona.name) {
       if (!this.secretaryRouter) {
-        this.secretaryRouter = new SecretaryRouter(this.ctx.db, this.ctx.specializedRegistry);
+        const classifyFn = buildClassifyFn(
+          this.ctx.provider,
+          this.ctx.config.defaultModel ?? "claude-haiku-4-5-20251001",
+        );
+        this.secretaryRouter = new SecretaryRouter(
+          this.ctx.db,
+          this.ctx.specializedRegistry,
+          classifyFn,
+        );
       }
-      const routingDecision = this.secretaryRouter.route(text, message.userId);
+      const routingDecision = await this.secretaryRouter.route(text, message.userId);
       if (routingDecision.type === "specialist") {
         const specializedOwl = routingDecision.owl;
         // Look up SpecializedOwlSpec from SpecializedOwlRegistry for full spec
