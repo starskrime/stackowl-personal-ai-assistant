@@ -147,7 +147,8 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 - ✅ Section 4: TaskType registry + defaults
 - ✅ Section 5: GatewayContext injection + hard break (throws on smartRouting)
 - ✅ Spec written: `docs/superpowers/specs/2026-04-29-intelligence-router-design.md`
-- ⬜ Implementation plan (writing-plans)
+- ✅ Implementation plan: `docs/superpowers/plans/2026-04-29-intelligence-router.md`
+- ✅ Implemented + merged to main (commits `809b8f4`–`00d28f2`)
 - ⬜ Backlog: update `start.sh` onboarding to configure intelligence tiers interactively
 
 ---
