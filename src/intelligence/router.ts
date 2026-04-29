@@ -48,7 +48,7 @@ export class IntelligenceRouter {
   ) {}
 
   resolve(taskType: TaskType): ResolvedModel {
-    const tier = (this.config.defaults[taskType] ?? TASK_TYPE_DEFAULTS[taskType] ?? "mid") as Tier;
+    const tier = this.config.defaults[taskType] ?? TASK_TYPE_DEFAULTS[taskType];
     const base = this.config.tiers[tier];
     const usedBase = (base?.provider && base?.model)
       ? base
@@ -57,8 +57,8 @@ export class IntelligenceRouter {
     const override = this.config.overrides?.[taskType];
 
     return {
-      provider: override?.provider ?? usedBase.provider,
-      model:    override?.model    ?? usedBase.model,
+      provider: override?.provider || usedBase.provider,
+      model:    override?.model    || usedBase.model,
       tier,
     };
   }

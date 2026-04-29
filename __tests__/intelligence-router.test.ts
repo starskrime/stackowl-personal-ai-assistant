@@ -41,12 +41,13 @@ describe("IntelligenceRouter", () => {
   it("falls back to mid tier when task type not in defaults", () => {
     const router = new IntelligenceRouter(
       makeConfig({ defaults: {} }),
-      "anthropic",
-      "claude-sonnet-4-6",
+      "ollama",
+      "llama3.2-fallback",
     );
     const result = router.resolve("evolution");
     expect(result.tier).toBe("mid");
     expect(result.model).toBe("claude-sonnet-4-6");
+    expect(result.provider).toBe("anthropic");
   });
 
   it("applies provider override", () => {
