@@ -99,6 +99,8 @@ import { MultiRoundDebateManager } from "../parliament/multi-round-debate.js";
 import { DebatePelletGenerator } from "../parliament/debate-pellet-generator.js";
 import { RoutingWirer } from "../parliament/routing-wirer.js";
 import type { ParliamentSession } from "../parliament/protocol.js";
+import { InstinctRegistry } from "../instincts/registry.js";
+import { InstinctEngine } from "../instincts/engine.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -202,6 +204,10 @@ export class OwlGateway {
   private multiRoundDebate: MultiRoundDebateManager | null = null;
   private debatePelletGenerator: DebatePelletGenerator | null = null;
   private routingWirer: RoutingWirer | null = null;
+
+  // ─── Instincts ────────────────────────────────────────────────
+  private instinctRegistry: InstinctRegistry = new InstinctRegistry();
+  private instinctEngine: InstinctEngine | null = null;
 
 // ─── Epic 1: Learning Modules ─────────────────────────────────
   private domainExpertise: DomainExpertiseTracker | null = null;
@@ -459,15 +465,28 @@ export class OwlGateway {
     }
 
     // Auto-initialize SpecializedOwlRegistry for folder-based specialized owls
+    const workspacePath = ctx.cwd ?? process.cwd();
     if (!ctx.specializedRegistry) {
-      const workspacePath = ctx.cwd ?? process.cwd();
       ctx.specializedRegistry = new SpecializedOwlRegistry();
-      ctx.specializedRegistry.loadAll(workspacePath).then(() => {
-        log.engine.info(
-          `[registry] SpecializedOwlRegistry loaded ${ctx.specializedRegistry!.listAll().length} specialized owls`,
-        );
-      }).catch(() => {});
     }
+    // Initialize InstinctEngine lazily — needs provider which is available now
+    this.instinctEngine = new InstinctEngine(
+      ctx.provider,
+      ctx.config.defaultModel,
+      this.instinctRegistry,
+    );
+    ctx.specializedRegistry.loadAll(workspacePath).then(async () => {
+      log.engine.info(
+        `[registry] SpecializedOwlRegistry loaded ${ctx.specializedRegistry!.listAll().length} specialized owls`,
+      );
+      // Pre-load instincts for all known owls
+      const owlsDir = join(workspacePath, "owls");
+      await Promise.all(
+        ctx.specializedRegistry!.listAll().map((spec) =>
+          this.instinctRegistry.loadForOwl(owlsDir, spec.name),
+        ),
+      );
+    }).catch(() => {});
 
     // Wire learning orchestrator → cognitive loop gap bridge.
     // When the orchestrator discovers knowledge gaps from conversations,
@@ -483,7 +502,6 @@ export class OwlGateway {
     }
 
     // ─── Epic 5: Memory Modules ─────────────────────────────────────
-    const workspacePath = ctx.cwd ?? process.cwd();
     if (ctx.priorContextRetriever) {
       this.priorContextRetriever = ctx.priorContextRetriever;
     } else if (ctx.episodicMemory) {
@@ -1757,6 +1775,20 @@ export class OwlGateway {
             toolsUsed: [],
           };
         }
+      }
+    }
+
+    // ─── Instinct injection ──────────────────────────────────────
+    if (this.instinctEngine && activeOwlName !== this.ctx.owl.persona.name) {
+      const matchedInstincts = await this.instinctEngine.evaluate(activeOwlName, text);
+      if (matchedInstincts.length > 0) {
+        const block = InstinctEngine.buildConstraintBlock(matchedInstincts);
+        const base = engineCtx.specialistPrompt ?? "";
+        engineCtx.specialistPrompt = base + block;
+        engineCtx.owl = { ...engineCtx.owl, specialistPrompt: engineCtx.specialistPrompt };
+        log.engine.info(
+          `[Instincts] Injected ${matchedInstincts.length} constraint(s) for owl "${activeOwlName}"`,
+        );
       }
     }
 
