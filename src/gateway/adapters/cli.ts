@@ -9,7 +9,7 @@
  *   - Implement ChannelAdapter interface
  */
 
-import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
+import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import { log } from "../../logger.js";
 import { TerminalRenderer } from "../../cli/renderer.js";
 import { CommandRegistry } from "../../cli/commands.js";
@@ -251,8 +251,10 @@ export class CLIAdapter implements ChannelAdapter {
         }
       ) ?? handler;
 
+      const msg = makeMessage(this.id, this.userId, input, this.sessionId);
+      if (!msg) return;
       const response = await this.gateway.handle(
-        { id: makeMessageId(), channelId: this.id, userId: this.userId, sessionId: this.sessionId, text: input },
+        msg,
         {
           onProgress: this.thinkingSuppressor?.shouldSuppressProgress()
             ? async () => { /* suppress progress in full mode */ }

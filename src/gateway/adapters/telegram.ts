@@ -18,7 +18,7 @@ import { existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { ProactivePinger } from "../../heartbeat/proactive.js";
 import { log } from "../../logger.js";
-import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
+import { makeSessionId, makeMessageId, makeMessage, OwlGateway } from "../core.js";
 import type { StreamEvent } from "../../providers/base.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 import { convertTables } from "../formatters/table-converter.js";
@@ -543,14 +543,10 @@ export class TelegramAdapter implements ChannelAdapter {
           this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true,
           ackMessageId,
         );
+        const msg = makeMessage(this.id, String(userId), text);
+        if (!msg) return;
         const response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: this.id,
-            userId: String(userId),
-            sessionId: makeSessionId(this.id, String(userId)),
-            text,
-          },
+          msg,
           {
             onProgress: async (msg: string) => {
               // Route tool status and skill usage into the stream message (edit-in-place)
@@ -797,14 +793,10 @@ export class TelegramAdapter implements ChannelAdapter {
           undefined,
         );
 
+        const voiceMsg = makeMessage(this.id, String(userId), text);
+        if (!voiceMsg) return;
         const response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: this.id,
-            userId: String(userId),
-            sessionId: makeSessionId(this.id, String(userId)),
-            text,
-          },
+          voiceMsg,
           {
             onProgress: async (msg: string) => {
               const stripped = this.stripInternalTags(msg);
@@ -868,14 +860,10 @@ export class TelegramAdapter implements ChannelAdapter {
         const userId = ctx.from?.id;
         if (!userId) return;
         try {
+          const cbMsg = makeMessage(this.id, String(userId), data);
+          if (!cbMsg) return;
           const response = await this.gateway.handle(
-            {
-              id: makeMessageId(),
-              channelId: this.id,
-              userId: String(userId),
-              sessionId: makeSessionId(this.id, String(userId)),
-              text: data,
-            },
+            cbMsg,
             { onProgress: async () => {}, askInstall: async () => false },
           );
           const chatId = ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id;

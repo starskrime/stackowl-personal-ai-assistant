@@ -18,7 +18,7 @@
 import { createInterface } from "node:readline";
 import { execSync } from "node:child_process";
 import chalk from "chalk";
-import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
+import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import { Logger } from "../../logger.js";
 import { MicrophoneRecorder } from "../../voice/recorder.js";
 import { WhisperSTT, type WhisperModel } from "../../voice/stt.js";
@@ -198,14 +198,10 @@ export class VoiceChannelAdapter implements ChannelAdapter {
           }
         };
 
+        const voiceMsg = makeMessage(this.id, this.userId, text, this.sessionId);
+        if (!voiceMsg) continue;
         response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: this.id,
-            userId: this.userId,
-            sessionId: this.sessionId,
-            text,
-          },
+          voiceMsg,
           {
             onProgress: async (msg: string) => {
               process.stdout.write(chalk.dim(`  ⋯ ${msg}\r`));

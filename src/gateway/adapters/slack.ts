@@ -26,7 +26,7 @@ import { join, basename } from "node:path";
 import { createReadStream } from "node:fs";
 import { ProactivePinger } from "../../heartbeat/proactive.js";
 import { log } from "../../logger.js";
-import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
+import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import type { StreamEvent } from "../../providers/base.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 
@@ -256,14 +256,10 @@ export class SlackAdapter implements ChannelAdapter {
           client,
         );
 
+        const slackMsg = makeMessage(this.id, msg.user, text, sessionId);
+        if (!slackMsg) return;
         const response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: this.id,
-            userId: msg.user,
-            sessionId,
-            text,
-          },
+          slackMsg,
           {
             onProgress: async (progressMsg: string) => {
               streamCtx.pushToolStatus(progressMsg);

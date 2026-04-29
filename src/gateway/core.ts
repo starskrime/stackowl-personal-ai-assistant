@@ -3973,3 +3973,27 @@ export function makeSessionId(channelId: string, userId: string): string {
 export function makeMessageId(): string {
   return uuidv4();
 }
+
+const MAX_MESSAGE_TEXT = 32_000;
+
+/** Normalizes user-supplied text into a GatewayMessage. Returns null for empty/whitespace input. */
+export function makeMessage(
+  channelId: string,
+  userId: string,
+  text: string,
+  sessionId?: string
+): GatewayMessage | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const safe =
+    trimmed.length > MAX_MESSAGE_TEXT
+      ? trimmed.slice(0, MAX_MESSAGE_TEXT) + "\n[…message truncated]"
+      : trimmed;
+  return {
+    id: makeMessageId(),
+    channelId,
+    userId,
+    sessionId: sessionId ?? makeSessionId(channelId, userId),
+    text: safe,
+  };
+}

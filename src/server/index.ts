@@ -31,7 +31,7 @@ import type { ChannelAdapter, GatewayResponse } from "../gateway/types.js";
 import type { StreamEvent } from "../providers/base.js";
 import {
   makeSessionId,
-  makeMessageId,
+  makeMessage,
   type OwlGateway,
 } from "../gateway/core.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
@@ -351,16 +351,9 @@ export class StackOwlServer {
       const sid = sessionId || `rest_${uuidv4().slice(0, 8)}`;
 
       try {
-        const response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: "rest",
-            userId: sid,
-            sessionId: makeSessionId("rest", sid),
-            text: message,
-          },
-          {},
-        );
+        const restMsg = makeMessage("rest", sid, message);
+        if (!restMsg) { res.status(400).json({ error: "message is empty" }); return; }
+        const response = await this.gateway.handle(restMsg, {});
         res.json(response);
       } catch (error) {
         res.status(500).json({ error: "Failed to process message" });
@@ -451,16 +444,9 @@ export class StackOwlServer {
 
       // Route through gateway
       try {
-        const response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: "web",
-            userId,
-            sessionId,
-            text: transcript,
-          },
-          {},
-        );
+        const webVoiceMsg = makeMessage("web", userId, transcript, sessionId);
+        if (!webVoiceMsg) { res.json({ transcript: "", response: null }); return; }
+        const response = await this.gateway.handle(webVoiceMsg, {});
         res.json({ transcript, response });
       } catch (e) {
         res.status(500).json({ error: `Gateway error: ${(e as Error).message}` });
@@ -753,14 +739,13 @@ export class StackOwlServer {
     client.messageCount++;
     const sessionId = customSessionId || client.sessionId;
 
+    const wsMsg = makeMessage("websocket", client.id, text, sessionId);
+    if (!wsMsg) {
+      this.send(client.ws, { type: "error", message: "text is empty" });
+      return;
+    }
     const response = await this.gateway.handle(
-      {
-        id: makeMessageId(),
-        channelId: "websocket",
-        userId: client.id,
-        sessionId,
-        text,
-      },
+      wsMsg,
       {
         onProgress: async (msg: string) => {
           if (client.ws.readyState === client.ws.OPEN) {
