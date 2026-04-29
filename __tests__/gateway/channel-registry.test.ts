@@ -91,4 +91,31 @@ describe("ChannelRegistry", () => {
     registry.register(makeAdapter("telegram"))
     expect(registry.getBestChannel("user1", "normal")).toBeUndefined()
   })
+
+  it("getBestChannel — background returns async channel seen within 24h", () => {
+    const tg = makeAdapter("telegram", { async: true })
+    registry.register(tg)
+    registry.markActive("telegram", "user1")
+    expect(registry.getBestChannel("user1", "background")).toBe(tg)
+  })
+
+  it("markInactive removes channel from getActiveChannels", () => {
+    const tg = makeAdapter("telegram")
+    registry.register(tg)
+    registry.markActive("telegram", "user1")
+    registry.markInactive("telegram", "user1")
+    expect(registry.getActiveChannels("user1")).not.toContain(tg)
+  })
+
+  it("getCapableChannels filters active adapters by required capabilities", () => {
+    const tg = makeAdapter("telegram", { async: true, supportsButtons: true })
+    const cli = makeAdapter("cli", { async: false, supportsButtons: false })
+    registry.register(tg)
+    registry.register(cli)
+    registry.markActive("telegram", "user1")
+    registry.markActive("cli", "user1")
+    const capable = registry.getCapableChannels("user1", { supportsButtons: true })
+    expect(capable).toContain(tg)
+    expect(capable).not.toContain(cli)
+  })
 })

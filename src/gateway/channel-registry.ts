@@ -51,7 +51,7 @@ export class ChannelRegistry {
     requires: Partial<ChannelCapabilities>
   ): ChannelAdapterV2[] {
     return this.getActiveChannels(userId).filter(adapter => {
-      const caps = adapter.capabilities as Record<string, unknown>
+      const caps = adapter.capabilities as unknown as Record<string, unknown>
       return Object.entries(requires).every(([k, v]) => caps[k] === v)
     })
   }
