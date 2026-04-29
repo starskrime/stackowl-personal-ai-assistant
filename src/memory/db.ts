@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 10;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -925,26 +925,6 @@ export class MemoryDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_owls_owner ON owls(owner_id);
         CREATE INDEX IF NOT EXISTS idx_owls_name  ON owls(owner_id, name);
-      `);
-    }
-    if (current < 11) {
-      // v11: delivery log — every outbound message attempt via DeliveryRouter
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS delivery_log (
-          id           TEXT PRIMARY KEY,
-          envelope_id  TEXT NOT NULL,
-          user_id      TEXT NOT NULL,
-          channel_id   TEXT NOT NULL,
-          urgency      TEXT NOT NULL,
-          trigger      TEXT NOT NULL,
-          status       TEXT NOT NULL,
-          attempt      INTEGER NOT NULL,
-          error        TEXT,
-          delivered_at INTEGER
-        );
-        CREATE INDEX IF NOT EXISTS idx_dl_user    ON delivery_log(user_id);
-        CREATE INDEX IF NOT EXISTS idx_dl_channel ON delivery_log(channel_id);
-        CREATE INDEX IF NOT EXISTS idx_dl_status  ON delivery_log(status);
       `);
     }
     if (current < SCHEMA_VERSION) {
