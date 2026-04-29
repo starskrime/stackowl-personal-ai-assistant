@@ -13,7 +13,7 @@
 |---|---------|--------|---------|
 | 1 | **Channels** (CLI, Telegram, Slack, Voice, Web) | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 2 | GatewayMessage creation | 🔧 reviewed — improvements committed | 2026-04-28 |
-| 3 | SessionManager (load / create) | ⬜ pending | — |
+| 3 | SessionManager (load / create) | 🔄 in progress — brainstorming design | 2026-04-29 |
 | 4 | RoutingCoordinator (owl selection + pin) | ⬜ pending | — |
 | 5 | ContextBuilder (memory + pellets + skills) | ⬜ pending | — |
 | 6 | OwlEngine — ReAct loop | ⬜ pending | — |
@@ -86,6 +86,67 @@ All adapter call sites that construct a `GatewayMessage` literal before calling 
 
 ### Commits
 - `28660a7` — `feat(gateway): add makeMessage() factory — normalize all adapter message construction`
+
+---
+
+---
+
+## Element 3: SessionManager (load / create)
+
+### Status: 🔄 Design in progress
+
+### Findings
+- `SessionManager` class exists and is instantiated but **never called** — core.ts has duplicate inline session management
+- Messages stored in two places: JSON session files AND SQLite `messages` table
+- `CrossSessionStore.extractFromSession()` never called — facts never auto-populated from conversations
+- SQLite `summaries` table exists but 50-message limit silently drops messages instead of summarizing
+- Fact extraction only triggered by user 👍/👎 feedback — never automatic
+- `approach_library` and `prompt_optimization_log` tables created but never written
+
+### Design Decisions (approved)
+- **Option B — Unified `SessionService`** replacing `SessionManager` + `CrossSessionStore`
+- SQLite as single source of truth for session messages (migrate from JSON files)
+- Session message limit raised from 50 → 300; LLM summarization into `summaries` table before dropping
+- Smart end detection: `CompletionTracker.isComplete()` + greeting reset + 2h timeout
+- Async LLM extraction after session ends → writes to existing `facts` table (keyed by `userId`)
+- **`UserMemoryStore`** — query layer over SQLite `facts` table + fastembed semantic search
+- Context injection: summary at session start + top-3 semantic hits per turn (shared 400-token budget)
+- Deduplication: 0.88 cosine threshold (same as pellet dedup)
+
+### Design Sections Status
+- ✅ Section 1: Architecture
+- ✅ Section 2: SessionService interface
+- ✅ Section 3: UserMemoryStore (revised after deep research)
+- ✅ Section 4: Context injection
+- ✅ Section 5: Smart end detection + async extraction (revised)
+- ✅ Section 6: SQLite migration
+- ⬜ Section 7: 300-message summarization
+- ⬜ Spec write + implementation plan
+
+---
+
+## Cross-cutting: Tiered Intelligence Router
+
+### Status: 🔄 Design in progress (discovered during Element 3 brainstorm)
+
+### Problem
+Every platform component (Parliament, Evolution, session extraction, episodic memory, classification, synthesis, summarization) always uses the default provider — no ability to route cheap tasks to cheap models or critical tasks to powerful models.
+
+### Design Decisions (approved)
+- **Three tiers:** `high` / `mid` / `low` — each maps to `{ provider, model }` in config
+- **Named task types:** `conversation`, `parliament`, `evolution`, `extraction`, `episodic`, `classification`, `synthesis`, `summarization`, `clarification`
+- **Resolution order:** overrides → defaults→tier → mid fallback → defaultProvider fallback
+- **New `intelligence` block** in `stackowl.config.json` — replaces `smartRouting`
+- **`IntelligenceRouter`** class at `src/intelligence/router.ts` — injected via `GatewayContext`
+- `ModelRouter` stays untouched (handles conversation SIMPLE/STANDARD/HEAVY heuristics)
+
+### Design Sections Status
+- ✅ Section 1: Architecture
+- ✅ Section 2: Config structure
+- ⬜ Section 3: IntelligenceRouter class
+- ⬜ Section 4: TaskType registry + defaults
+- ⬜ Section 5: GatewayContext injection + migration
+- ⬜ Spec write + implementation plan
 
 ---
 
