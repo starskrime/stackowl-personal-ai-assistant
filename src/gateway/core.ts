@@ -493,7 +493,6 @@ export class OwlGateway {
     this.routingCoordinator = new RoutingCoordinator(
       ctx.specializedRegistry,
       () => this.secretaryRouter,
-      ctx.owlRegistry,
       ctx.owl.persona.name,
     );
 
@@ -1696,7 +1695,7 @@ export class OwlGateway {
     }
     let routingResult: RoutingResult | null = null;
     if (this.routingCoordinator) {
-      routingResult = await this.routingCoordinator.resolve(text, message, engineCtx, callbacks);
+      routingResult = await this.routingCoordinator.resolve(text, message, engineCtx, callbacks, session);
       text = routingResult.text;
       activeOwlName = routingResult.activeOwlName;
     }
