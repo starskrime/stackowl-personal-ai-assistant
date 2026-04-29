@@ -72,6 +72,9 @@ export class InputHandler extends EventEmitter {
     if (data === "\r" || data === "\n") {
       if (this.cmdPopupActive) {
         const selected = this._completion.items[this._cmdIdx];
+        // Guard is intentional: _cmdIdx is reset to 0 on every _refreshCompletion call,
+        // so it is always in range while the list is stable. The check protects against
+        // a stale index if the list is ever updated between navigation and selection.
         if (selected !== undefined) {
           if (this._completion.mode === "command") {
             this._buf = "/" + selected + " ";

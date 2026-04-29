@@ -66,12 +66,13 @@ describe("InputHandler", () => {
     expect(h.cmdMatches).toEqual(["status", "skills"]);
   });
 
-  it("dismisses popup on ESC", () => {
+  it("dismisses popup on ESC and clears buffer", () => {
     const h = new InputHandler();
     h.setCompletionEngine(makeEngine(["help"]));
     h.feed("/");
     h.feed("\x1B");
     expect(h.cmdPopupActive).toBe(false);
+    expect(h.buf).toBe("");
   });
 
   it("emits change on each keystroke", () => {
