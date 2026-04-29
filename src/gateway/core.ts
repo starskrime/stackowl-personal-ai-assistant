@@ -55,6 +55,7 @@ import { SessionManager } from "./handlers/session-manager.js";
 import { GapLearner } from "../agent/gap-learner.js";
 import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
 import { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
+import { SessionStateStore } from "../routing/session-state.js";
 import { TaskQueue } from "../queue/task-queue.js";
 import {
   computeTemporalContext,
@@ -165,6 +166,7 @@ export class OwlGateway {
   private gapLearner: GapLearner | null = null;
   private secretaryRouter: SecretaryRouter | null = null;
   private routingCoordinator: RoutingCoordinator | null = null;
+  private sessionStateStore: SessionStateStore | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -490,10 +492,12 @@ export class OwlGateway {
       );
     }).catch(() => {});
 
+    this.sessionStateStore = new SessionStateStore(workspacePath);
     this.routingCoordinator = new RoutingCoordinator(
       ctx.specializedRegistry,
       () => this.secretaryRouter,
       ctx.owl.persona.name,
+      this.sessionStateStore,
     );
 
     // Wire learning orchestrator → cognitive loop gap bridge.
