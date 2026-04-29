@@ -19,6 +19,7 @@ import type { Session } from "../memory/store.js";
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
 import { PromptOptimizer } from "../engine/prompt-optimizer.js";
+import { IntelligenceRouter } from "../intelligence/router.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
@@ -339,6 +340,16 @@ export class OwlGateway {
     }
 
     log.engine.info("[Epic 3&4] Clarification and Tool Mastery modules initialized");
+
+    // ─── Intelligence Router (tiered model routing) ────────────
+    if (ctx.config.intelligence) {
+      ctx.intelligence = new IntelligenceRouter(
+        ctx.config.intelligence,
+        ctx.config.defaultProvider,
+        ctx.config.defaultModel,
+      );
+      log.engine.info("[IntelligenceRouter] Tiered model routing active");
+    }
 
     // Initialize extracted handlers (Improvement #4)
     // ContextBuilder is initialized after skillInjector below
