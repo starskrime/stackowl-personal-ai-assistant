@@ -44,7 +44,7 @@ describe("IntelligenceRouter", () => {
       "anthropic",
       "claude-sonnet-4-6",
     );
-    const result = router.resolve("synthesis");
+    const result = router.resolve("evolution");
     expect(result.tier).toBe("mid");
     expect(result.model).toBe("claude-sonnet-4-6");
   });
@@ -80,7 +80,7 @@ describe("IntelligenceRouter", () => {
       defaults: {},
     };
     const router = new IntelligenceRouter(config, "ollama", "llama3.2");
-    const result = router.resolve("synthesis");
+    const result = router.resolve("evolution");
     expect(result.provider).toBe("ollama");
     expect(result.model).toBe("llama3.2");
   });

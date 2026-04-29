@@ -35,7 +35,7 @@ export const TASK_TYPE_DEFAULTS: Record<TaskType, Tier> = {
   extraction:     "low",
   episodic:       "low",
   classification: "low",
-  synthesis:      "mid",
+  synthesis:      "high",
   summarization:  "low",
   clarification:  "mid",
 };
