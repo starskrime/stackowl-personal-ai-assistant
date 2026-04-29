@@ -83,4 +83,25 @@ describe("Config Validation", () => {
     expect(config.intelligence?.tiers.high.model).toBe('claude-opus-4-7');
     expect(config.intelligence?.tiers.mid.model).toBe('claude-sonnet-4-6');
   });
+
+  it('throws when intelligence.tiers.high is missing model', async () => {
+    await writeFile(
+      join(testDir, 'stackowl.config.json'),
+      JSON.stringify({
+        defaultProvider: 'ollama',
+        defaultModel: 'llama3.2',
+        providers: { ollama: { baseUrl: 'http://localhost:11434' } },
+        intelligence: {
+          tiers: {
+            high: { provider: 'anthropic', model: '' },
+            mid:  { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+            low:  { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
+          },
+          defaults: {},
+        },
+      }),
+      'utf-8',
+    );
+    await expect(loadConfig(testDir)).rejects.toThrow('intelligence.tiers.high is missing');
+  });
 });

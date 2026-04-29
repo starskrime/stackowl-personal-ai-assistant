@@ -441,11 +441,18 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
 
     // Intelligence block validation
     if (config.intelligence) {
-      const mid = config.intelligence.tiers?.mid;
-      if (!mid?.provider || !mid?.model) {
+      const tiers = config.intelligence.tiers;
+      if (!tiers?.mid?.provider || !tiers?.mid?.model) {
         throw new Error(
           "[Config] intelligence.tiers.mid is required (used as fallback for unspecified task types).",
         );
+      }
+      for (const [name, tier] of Object.entries(tiers ?? {})) {
+        if (!tier.provider || !tier.model) {
+          throw new Error(
+            `[Config] intelligence.tiers.${name} is missing provider or model.`,
+          );
+        }
       }
     }
 
@@ -581,15 +588,6 @@ function validateConfig(config: StackOwlConfig): string[] {
     (!config.skills.directories || config.skills.directories.length === 0)
   ) {
     errors.push("skills.enabled=true but no directories configured");
-  }
-
-  // Smart routing
-  if (
-    config.smartRouting?.enabled &&
-    (!config.smartRouting.availableModels ||
-      config.smartRouting.availableModels.length === 0)
-  ) {
-    errors.push("smartRouting.enabled=true but no availableModels configured");
   }
 
   return errors;
