@@ -13,7 +13,7 @@ export type GatewaySystemEvent =
 const DELIVER_EVENT = "gateway:deliver"
 
 export class GatewayEventBus {
-  private emitter = new EventEmitter()
+  private emitter = new EventEmitter().setMaxListeners(0)
 
   publish(envelope: DeliveryEnvelope): void {
     this.emitter.emit(DELIVER_EVENT, envelope)
