@@ -342,11 +342,6 @@ export class CommandRegistry implements CompletionProvider {
     return COMMANDS[commandName]?.subcommands ?? [];
   }
 
-  /** Keep for any callers that haven't migrated yet */
-  listNames(): string[] {
-    return this.topLevelNames();
-  }
-
   getDescription(name: string): string {
     return COMMANDS[name]?.description ?? "";
   }
