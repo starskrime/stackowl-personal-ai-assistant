@@ -445,6 +445,7 @@ export class OwlGateway {
         );
       log.engine.info("[memory] MemoryDatabase (SQLite) initialized");
     }
+    this.deliveryRouter.setDb(ctx.db.rawDb);
 
     // Auto-initialize MessageCompressor (Phase 2 — batch summarization every 20 msgs)
     if (!ctx.compressor && ctx.db) {
@@ -1323,6 +1324,7 @@ export class OwlGateway {
     // Track last active channel/user for scheduled message delivery
     this.lastActiveChannel = message.channelId;
     this.lastActiveUserId = message.userId;
+    this.channelRegistry.markActive(message.channelId, message.userId);
 
     log.engine.incoming(message.channelId, message.text);
 

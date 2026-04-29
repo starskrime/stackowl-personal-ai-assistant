@@ -346,6 +346,7 @@ export interface AgentTask {
 
 export class MemoryDatabase {
   private db: Database.Database;
+  get rawDb(): Database.Database { return this.db }
 
   readonly messages: MessagesRepo;
   readonly facts: FactsRepo;

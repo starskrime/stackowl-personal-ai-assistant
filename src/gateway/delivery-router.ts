@@ -15,8 +15,15 @@ export class DeliveryRouter {
     this.retryDelaysMs = retryDelaysMs
   }
 
+  setDb(db: Database.Database): void {
+    this.db = db
+  }
+
   start(bus: GatewayEventBus): void {
-    bus.onDeliver(env => this.route(env))
+    bus.onDeliver(async env => {
+      try { await this.route(env) }
+      catch (err) { log.engine.error(`[DeliveryRouter] unexpected route error: ${err}`) }
+    })
   }
 
   private async route(envelope: DeliveryEnvelope): Promise<void> {
