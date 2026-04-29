@@ -32,6 +32,7 @@ export interface SpecializedSkills {
 
 export interface SpecializedOwlSpec {
   name: string;
+  type: "coordinator" | "specialist";
   role: string;
   emoji: string;
   personality: SpecializedPersonality;
@@ -40,5 +41,7 @@ export interface SpecializedOwlSpec {
   permissions: SpecializedPermissions;
   routingRules: SpecializedRoutingRules;
   skills: SpecializedSkills;
+  additionalPrompt: string;
+  folderPath?: string;
   credentialsPath?: string;
 }

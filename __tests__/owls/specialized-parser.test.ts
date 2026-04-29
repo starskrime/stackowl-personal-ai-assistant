@@ -69,4 +69,28 @@ Some content without frontmatter.
 `;
     expect(() => parseSpecializedOwl(noFrontmatter)).toThrow("missing required field: name");
   });
+
+  it("defaults to type 'specialist' when type field is absent", () => {
+    const content = `---\nname: TestOwl\nrole: Test\n---\n`;
+    const spec = parseSpecializedOwl(content);
+    expect(spec.type).toBe("specialist");
+  });
+
+  it("parses type: coordinator", () => {
+    const content = `---\nname: Noctua\ntype: coordinator\nrole: Chief of Staff\n---\n`;
+    const spec = parseSpecializedOwl(content);
+    expect(spec.type).toBe("coordinator");
+  });
+
+  it("parses markdown body as additionalPrompt", () => {
+    const content = `---\nname: TestOwl\nrole: Test\n---\n\nYou are a test owl with special powers.`;
+    const spec = parseSpecializedOwl(content);
+    expect(spec.additionalPrompt).toBe("You are a test owl with special powers.");
+  });
+
+  it("sets additionalPrompt to empty string when body is empty", () => {
+    const content = `---\nname: TestOwl\nrole: Test\n---\n`;
+    const spec = parseSpecializedOwl(content);
+    expect(spec.additionalPrompt).toBe("");
+  });
 });

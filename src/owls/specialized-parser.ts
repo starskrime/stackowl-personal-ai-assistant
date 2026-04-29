@@ -9,11 +9,14 @@ import type {
 } from "./specialized-types.js";
 
 export function parseSpecializedOwl(content: string): SpecializedOwlSpec {
-  const { data } = matter(content);
+  const { data, content: body } = matter(content);
 
   if (!data.name || typeof data.name !== "string" || !data.name.trim()) {
     throw new Error("parseSpecializedOwl: missing required field: name");
   }
+
+  const type: "coordinator" | "specialist" =
+    data.type === "coordinator" ? "coordinator" : "specialist";
 
   const personality: SpecializedPersonality = {
     challengeLevel: (data.challengeLevel as SpecializedPersonality["challengeLevel"]) ?? "medium",
@@ -45,6 +48,7 @@ export function parseSpecializedOwl(content: string): SpecializedOwlSpec {
 
   return {
     name: data.name.trim(),
+    type,
     role: (data.role as string) ?? "",
     emoji: (data.emoji as string) ?? "🦉",
     personality,
@@ -53,5 +57,6 @@ export function parseSpecializedOwl(content: string): SpecializedOwlSpec {
     permissions,
     routingRules,
     skills,
+    additionalPrompt: body.trim(),
   };
 }
