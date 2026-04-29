@@ -498,6 +498,8 @@ export class OwlGateway {
       () => this.secretaryRouter,
       ctx.owl.persona.name,
       this.sessionStateStore,
+      ctx.pelletStore,
+      ctx.digestManager,
     );
 
     // Wire learning orchestrator → cognitive loop gap bridge.

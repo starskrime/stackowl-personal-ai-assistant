@@ -5,6 +5,8 @@ import type { GatewayCallbacks, GatewayMessage } from "../types.js";
 import type { EngineContext } from "../../engine/runtime.js";
 import type { Session } from "../../memory/store.js";
 import type { SessionStateStore } from "../../routing/session-state.js";
+import type { PelletStore } from "../../pellets/store.js";
+import type { ConversationDigestManager } from "../../memory/conversation-digest.js";
 import { log } from "../../logger.js";
 
 export interface RoutingResult {
@@ -19,6 +21,8 @@ export class RoutingCoordinator {
     private getSecretaryRouter: () => SecretaryRouter | null,
     private defaultOwlName: string,
     private sessionStateStore?: SessionStateStore,
+    private pelletStore?: PelletStore,
+    private digestManager?: ConversationDigestManager,
   ) {}
 
   async resolve(
@@ -64,6 +68,7 @@ export class RoutingCoordinator {
           this.sessionStateStore.save(message.userId, { activeOwlName: spec.name, pinnedAt: new Date().toISOString() }).catch(() => {});
         }
         this.applySpecialist(spec, engineCtx, callbacks);
+        await this.injectMemoryContext(spec.name, message.sessionId, text, engineCtx);
         activeOwlName = spec.name;
         log.engine.info(`[RoutingCoordinator] @mention → "${spec.name}" (pinned)`);
         return { text, activeOwlName, parliamentHandled: false };
@@ -76,6 +81,7 @@ export class RoutingCoordinator {
       const pinnedSpec = this.specializedRegistry.get(session.metadata.activeOwlName);
       if (pinnedSpec) {
         this.applySpecialist(pinnedSpec, engineCtx, callbacks);
+        await this.injectMemoryContext(pinnedSpec.name, message.sessionId, text, engineCtx);
         log.engine.info(`[RoutingCoordinator] Resuming pinned specialist "${pinnedSpec.name}"`);
         return { text, activeOwlName: pinnedSpec.name, parliamentHandled: false };
       }
@@ -100,6 +106,7 @@ export class RoutingCoordinator {
           this.sessionStateStore.save(message.userId, { activeOwlName: spec.name, pinnedAt: new Date().toISOString() }).catch(() => {});
         }
         this.applySpecialist(spec, engineCtx, callbacks);
+        await this.injectMemoryContext(spec.name, message.sessionId, text, engineCtx);
         activeOwlName = spec.name;
         log.engine.info(`[RoutingCoordinator] Routed to "${spec.name}" (pinned)`);
       } else if (routingDecision.type === "parliament") {
@@ -135,5 +142,45 @@ export class RoutingCoordinator {
     };
     engineCtx.specialistPrompt = specialistPrompt;
     callbacks?.onOwlChange?.(spec.emoji || "🦉", spec.name);
+  }
+
+  private async injectMemoryContext(
+    owlName: string,
+    sessionId: string,
+    userMessage: string,
+    engineCtx: EngineContext,
+  ): Promise<void> {
+    const parts: string[] = [];
+
+    if (this.digestManager) {
+      try {
+        const digest = await this.digestManager.load(sessionId);
+        if (digest?.task) {
+          const lines = [`Task: ${digest.task}`];
+          if (digest.decisions.length > 0) lines.push(`Decisions: ${digest.decisions.join("; ")}`);
+          if (digest.openQuestions.length > 0) lines.push(`Open: ${digest.openQuestions.join("; ")}`);
+          parts.push(`## Session Context\n${lines.join("\n")}`);
+        }
+      } catch { /* non-critical */ }
+    }
+
+    if (this.pelletStore) {
+      try {
+        const pellets = await this.pelletStore.search(userMessage, 3);
+        if (pellets.length > 0) {
+          const lines = pellets
+            .filter((p) => p.owls.includes(owlName) || p.owls.length === 0)
+            .map((p) => `- ${p.title}: ${p.content.slice(0, 120)}`)
+            .join("\n");
+          if (lines) parts.push(`## Related Memory\n${lines}`);
+        }
+      } catch { /* non-critical */ }
+    }
+
+    if (parts.length > 0) {
+      const existing = engineCtx.specialistPrompt ?? "";
+      engineCtx.specialistPrompt = existing + "\n\n" + parts.join("\n\n");
+      engineCtx.owl = { ...engineCtx.owl, specialistPrompt: engineCtx.specialistPrompt };
+    }
   }
 }
