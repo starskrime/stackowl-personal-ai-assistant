@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ModelRouter } from "../src/engine/router.js";
 import { TaskPlanner, shouldUsePlanner } from "../src/engine/planner.js";
-import { CreativeThinking } from "../src/engine/creative.js";
 import { DiagnosticEngine } from "../src/engine/diagnostic-engine.js";
 import type { StackOwlConfig } from "../src/config/loader.js";
 import type {
@@ -9,8 +8,6 @@ import type {
   ChatMessage,
   ToolDefinition,
 } from "../src/providers/base.js";
-import type { OwlDNA } from "../src/owls/persona.js";
-import type { DNADecisions } from "../src/owls/decision-layer.js";
 import type { DiagnosticInput } from "../src/engine/diagnostic-engine.js";
 
 // ─── Mock Logger ───────────────────────────────────────────────────────
@@ -79,62 +76,6 @@ function makeConfig(
       ],
       ...overrides,
     },
-  };
-}
-
-// ─── Mock DNA Factory ───────────────────────────────────────────────────
-
-function makeMockDNA(overrides: Partial<OwlDNA["evolvedTraits"]> = {}): OwlDNA {
-  return {
-    owl: "TestOwl",
-    generation: 0,
-    created: new Date().toISOString(),
-    lastEvolved: new Date().toISOString(),
-    learnedPreferences: {},
-    evolvedTraits: {
-      challengeLevel: "medium",
-      verbosity: "balanced",
-      humor: 0.3,
-      formality: 0.5,
-      proactivity: 0.5,
-      riskTolerance: "moderate",
-      teachingStyle: "adaptive",
-      delegationPreference: "collaborative",
-      ...overrides,
-    },
-    expertiseGrowth: { typescript: 0.6, python: 0.4 },
-    domainConfidence: {},
-    interactionStats: {
-      totalConversations: 10,
-      adviceAcceptedRate: 0.6,
-      challengesGiven: 5,
-      challengesAccepted: 3,
-      parliamentSessions: 1,
-    },
-    evolutionLog: [],
-  };
-}
-
-// ─── Mock DNADecisions Factory ─────────────────────────────────────────
-
-function makeMockDecisions(
-  overrides: Partial<DNADecisions> = {},
-): DNADecisions {
-  return {
-    maxResponseTokens: 800,
-    temperatureAdjustment: 0,
-    prioritizedTools: ["run_shell_command", "read_file"],
-    deprioritizedTools: [],
-    riskTolerance: "moderate",
-    style: {
-      humorLevel: "subtle",
-      formalityLevel: "balanced",
-      includeExamples: false,
-      suggestNextSteps: true,
-    },
-    preferredStrategy: null,
-    expertiseContext: "You are proficient in typescript.",
-    ...overrides,
   };
 }
 
@@ -656,9 +597,10 @@ describe("TaskPlanner", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// CREATIVE THINKING TESTS
+// NOTE: CreativeThinking class was deleted in f548c8a (dead production code).
+// If you want to restore it, see: git show f548c8a:src/engine/creative.ts
 // ══════════════════════════════════════════════════════════════════════════
-
+/*
 describe("CreativeThinking", () => {
   let creative: CreativeThinking;
   let mockProvider: ModelProvider;
@@ -881,6 +823,7 @@ describe("CreativeThinking", () => {
     });
   });
 });
+*/
 
 // ══════════════════════════════════════════════════════════════════════════
 // DIAGNOSTIC ENGINE TESTS (additional coverage)
