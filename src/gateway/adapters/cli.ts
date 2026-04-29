@@ -13,6 +13,7 @@ import { makeSessionId, makeMessageId, OwlGateway } from "../core.js";
 import { log } from "../../logger.js";
 import { TerminalRenderer } from "../../cli/renderer.js";
 import { CommandRegistry } from "../../cli/commands.js";
+import { CompletionEngine } from "../../cli/completion-engine.js";
 import { OnboardingFlow } from "../../cli/onboarding-flow.js";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
@@ -51,7 +52,7 @@ export class CLIAdapter implements ChannelAdapter {
     this.sessionId = makeSessionId(this.id, this.userId);
     this.renderer  = new TerminalRenderer();
     this.commands  = new CommandRegistry();
-    this.renderer.setCommandList(this.commands.listNames());
+    this.renderer.setCompletionEngine(new CompletionEngine(this.commands));
 
     // ─── Epic 8: Wire CLI modules ────────────────────────────────
     // SessionPersistence — auto-load session on startup, auto-save on messages

@@ -11,6 +11,7 @@ import { renderInputBox, inputBoxHeight } from "./components/input-box.js";
 import { renderCmdPopup } from "./components/cmd-popup.js";
 import { renderShortcutsBar, type ShortcutEntry } from "./components/shortcuts-bar.js";
 import { InputHandler } from "./input-handler.js";
+import type { CompletionEngine } from "./completion-engine.js";
 import type { GatewayResponse } from "../gateway/types.js";
 import type { StreamEvent } from "../providers/base.js";
 
@@ -185,8 +186,8 @@ export class TerminalRenderer extends EventEmitter {
     this._state.recentSessions = sessions;
   }
 
-  setCommandList(names: string[]): void {
-    this.input.setCommandList(names);
+  setCompletionEngine(engine: CompletionEngine): void {
+    this.input.setCompletionEngine(engine);
   }
 
   setInitialInput(buf: string): void {
