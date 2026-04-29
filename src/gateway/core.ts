@@ -585,6 +585,18 @@ export class OwlGateway {
 
     // Initialize new feature modules (all optional, fire-and-forget load)
     this.initFeatureModules();
+    this.validateContext();
+  }
+
+  private validateContext(): void {
+    if (!this.ctx.specializedRegistry)
+      log.engine.warn("[Gateway] specializedRegistry is null — @mention and specialist routing disabled");
+    if (!this.multiRoundDebate)
+      log.engine.warn("[Gateway] multiRoundDebate is null — Parliament feature disabled");
+    if (!this.ctx.pelletStore)
+      log.engine.warn("[Gateway] pelletStore is null — Pellet memory and Parliament disabled");
+    if (!this.ctx.owlRegistry)
+      log.engine.warn("[Gateway] owlRegistry is null — Multi-owl features disabled");
   }
 
   // ─── Adapter Registry ────────────────────────────────────────
@@ -1774,6 +1786,8 @@ export class OwlGateway {
             owlEmoji: this.ctx.owl.persona.emoji,
             toolsUsed: [],
           };
+        } else {
+          log.engine.warn("[Gateway] Parliament triggered but multiRoundDebate module is null — falling back to direct");
         }
       }
     }
