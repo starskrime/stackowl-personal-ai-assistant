@@ -120,7 +120,7 @@ All adapter call sites that construct a `GatewayMessage` literal before calling 
 - ✅ Section 4: Context injection
 - ✅ Section 5: Smart end detection + async extraction (revised)
 - ✅ Section 6: SQLite migration
-- ⬜ Section 7: 300-message summarization
+- ✅ Section 7: 300-message rolling window with summary-before-drop
 - ⬜ Spec write + implementation plan
 
 ---
