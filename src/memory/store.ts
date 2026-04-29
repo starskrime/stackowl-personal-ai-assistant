@@ -18,6 +18,7 @@ export interface Session {
     startedAt: number;
     lastUpdatedAt: number;
     title?: string;
+    activeOwlName?: string;
   };
 }
 
