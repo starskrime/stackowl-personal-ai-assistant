@@ -12,7 +12,7 @@
 | # | Element | Status | Session |
 |---|---------|--------|---------|
 | 1 | **Channels** (CLI, Telegram, Slack, Voice, Web) | 🔧 reviewed — improvements committed | 2026-04-28 |
-| 2 | GatewayMessage creation | ⬜ pending | — |
+| 2 | GatewayMessage creation | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 3 | SessionManager (load / create) | ⬜ pending | — |
 | 4 | RoutingCoordinator (owl selection + pin) | ⬜ pending | — |
 | 5 | ContextBuilder (memory + pellets + skills) | ⬜ pending | — |
@@ -64,6 +64,28 @@
 - `50fa5ba` — Phase 1 implementation plan
 - `1cd409d`–`5042a76` — Phase 1 implementation (12 commits on feature branch)
 - `37ad88a` — merged to main + pushed
+
+---
+
+## Element 2: GatewayMessage creation
+
+### Scope
+All adapter call sites that construct a `GatewayMessage` literal before calling `gateway.handle()`
+
+### Findings
+- 9 inline object literals spread across 5 files (cli, telegram ×3, slack, voice, REST ×2, WebSocket)
+- No text normalization: leading/trailing whitespace passed directly to LLM
+- No empty-text guard: empty or whitespace-only messages hit the full ReAct loop
+- No max-length cap: unbounded input could overflow context windows
+
+### Improvements Committed
+- Added `makeMessage(channelId, userId, text, sessionId?)` factory to `core.ts`
+- Trims text; returns `null` for empty/whitespace; truncates at 32,000 chars with `\n[…message truncated]` marker
+- Updated all 9 call sites to use factory; null guard at each site (early return / continue)
+- Removed now-unused `makeMessageId` imports from cli, slack, voice, server
+
+### Commits
+- `28660a7` — `feat(gateway): add makeMessage() factory — normalize all adapter message construction`
 
 ---
 
