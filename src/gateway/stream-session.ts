@@ -43,10 +43,8 @@ export class StreamSession {
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null }
     try {
       await this.opts.onComplete(this.buffer)
-    } catch {
-      try { await this.opts.onComplete(this.buffer) } catch (e) {
-        console.error("[StreamSession] onComplete failed:", e)
-      }
+    } catch (e) {
+      console.error("[StreamSession] onComplete failed:", e)
     }
   }
 
