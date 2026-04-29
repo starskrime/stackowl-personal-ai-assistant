@@ -101,6 +101,7 @@ import { RoutingWirer } from "../parliament/routing-wirer.js";
 import type { ParliamentSession } from "../parliament/protocol.js";
 import { InstinctRegistry } from "../instincts/registry.js";
 import { InstinctEngine } from "../instincts/engine.js";
+import { RoutingCoordinator, type RoutingResult } from "./handlers/routing-coordinator.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -163,6 +164,7 @@ export class OwlGateway {
   private taskQueue: TaskQueue;
   private gapLearner: GapLearner | null = null;
   private secretaryRouter: SecretaryRouter | null = null;
+  private routingCoordinator: RoutingCoordinator | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -487,6 +489,13 @@ export class OwlGateway {
         ),
       );
     }).catch(() => {});
+
+    this.routingCoordinator = new RoutingCoordinator(
+      ctx.specializedRegistry,
+      () => this.secretaryRouter,
+      ctx.owlRegistry,
+      ctx.owl.persona.name,
+    );
 
     // Wire learning orchestrator → cognitive loop gap bridge.
     // When the orchestrator discovers knowledge gaps from conversations,
@@ -1679,79 +1688,20 @@ export class OwlGateway {
       continuityResult ?? null,
     );
 
-    // ─── Epic 2: Secretary Router — route to specialized owls via DB ───────
-    // Check if this message should be routed to a specialized owl based on routing rules
+    // ─── Routing — @mention + SecretaryRouter ────────────────────
     let activeOwlName = this.ctx.owl.persona.name;
-
-    // Check for explicit @OwlName mention first
-    const explicitMention = text.match(/^@(\w+)(?:\s+(.+))?$/s);
-    if (explicitMention && this.ctx.specializedRegistry) {
-      const [, owlName, remainingMessage] = explicitMention;
-      const spec = this.ctx.specializedRegistry.get(owlName);
-      if (spec) {
-        // Direct invoke - use remaining message as the actual user message (or a greeting if none)
-        text = remainingMessage?.trim() || "Hello";
-        const baseOwl = this.ctx.owlRegistry?.getDefault() ?? this.ctx.owl;
-        const specialistPrompt = [
-          `You are ${spec.name}, ${spec.role}.`,
-          spec.expertise.length > 0 ? `Your expertise: ${spec.expertise.join(", ")}.` : "",
-          `Communication style: ${spec.personality.challengeLevel} challenge level, ${spec.personality.verbosity} verbosity, ${spec.personality.tone} tone.`,
-          spec.permissions.capabilityConstraints.length > 0
-            ? `Constraints: ${spec.permissions.capabilityConstraints.join("; ")}.`
-            : "",
-        ].filter(Boolean).join(" ");
-        engineCtx.owl = {
-          ...baseOwl,
-          specialistPrompt,
-          specialistRoutingRules: spec.routingRules.keywords,
-          specialistPermissions: spec.permissions,
-        };
-        engineCtx.specialistPrompt = specialistPrompt;
-        activeOwlName = spec.name;
-        callbacks?.onOwlChange?.(spec.emoji || "🦉", spec.name);
-        log.engine.info(
-          `[Gateway] Direct invoke specialist "${spec.name}" for message: "${text.slice(0, 50)}..."`,
-        );
-      }
+    if (!this.secretaryRouter && this.ctx.specializedRegistry) {
+      const classifyFn = buildClassifyFn(this.ctx.provider, this.ctx.config.defaultModel);
+      this.secretaryRouter = new SecretaryRouter(this.ctx.specializedRegistry, classifyFn);
+    }
+    let routingResult: RoutingResult | null = null;
+    if (this.routingCoordinator) {
+      routingResult = await this.routingCoordinator.resolve(text, message, engineCtx, callbacks);
+      text = routingResult.text;
+      activeOwlName = routingResult.activeOwlName;
     }
 
-    // Otherwise, use SecretaryRouter for implicit routing
-    if (this.ctx.specializedRegistry && message.userId && activeOwlName === this.ctx.owl.persona.name) {
-      if (!this.secretaryRouter) {
-        // classifyFn closes over ctx.provider at construction time.
-        // If the active provider changes at runtime, recreate secretaryRouter by setting it to null.
-        const classifyFn = buildClassifyFn(
-          this.ctx.provider,
-          this.ctx.config.defaultModel,
-        );
-        this.secretaryRouter = new SecretaryRouter(
-          this.ctx.specializedRegistry,
-          classifyFn,
-        );
-      }
-      const routingDecision = await this.secretaryRouter.route(text, message.userId);
-      if (routingDecision.type === "specialist") {
-        const specializedOwl = routingDecision.owl;
-        // Look up SpecializedOwlSpec from SpecializedOwlRegistry for full spec
-        const spec = this.ctx.specializedRegistry?.get(specializedOwl.name);
-        // Get the base OwlInstance from OwlRegistry (or use default)
-        const baseOwl = this.ctx.owlRegistry?.get(specializedOwl.name)
-          ?? this.ctx.owlRegistry?.getDefault()
-          ?? this.ctx.owl;
-        // Create merged owl with specialist context from DB and spec
-        engineCtx.owl = {
-          ...baseOwl,
-          specialistPrompt: specializedOwl.personalityPrompt,
-          specialistRoutingRules: specializedOwl.routingRules,
-          specialistPermissions: spec?.permissions,
-        };
-        engineCtx.specialistPrompt = specializedOwl.personalityPrompt;
-        activeOwlName = specializedOwl.name;
-        callbacks?.onOwlChange?.(spec?.emoji || "🦉", specializedOwl.name);
-        log.engine.info(
-          `[Gateway] Routing to specialist "${specializedOwl.name}" for message: "${text.slice(0, 50)}..."`,
-        );
-      } else if (routingDecision.type === "parliament") {
+    if (routingResult?.parliamentHandled) {
         // ─── Secretary Router triggered Parliament ───────────────────
         if (this.multiRoundDebate && this.ctx.owlRegistry && this.ctx.pelletStore) {
           log.engine.info(
@@ -1789,7 +1739,6 @@ export class OwlGateway {
         } else {
           log.engine.warn("[Gateway] Parliament triggered but multiRoundDebate module is null — falling back to direct");
         }
-      }
     }
 
     // ─── Instinct injection ──────────────────────────────────────
