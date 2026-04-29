@@ -48,4 +48,24 @@ describe("SpecializedOwlRegistry", () => {
     expect(owl?.credentialsPath).toBeDefined();
     expect(owl?.credentialsPath).toContain("TradingBot");
   });
+
+  it("getDefault() returns the coordinator owl", async () => {
+    await registry.loadAll(testWorkspace);
+    const defaultOwl = registry.getDefault();
+    expect(defaultOwl).toBeDefined();
+    expect(defaultOwl?.type).toBe("coordinator");
+  });
+
+  it("listSpecialists() returns only specialist owls", async () => {
+    await registry.loadAll(testWorkspace);
+    const specialists = registry.listSpecialists();
+    expect(specialists.every((s) => s.type === "specialist")).toBe(true);
+  });
+
+  it("folderPath is set on each loaded owl", async () => {
+    await registry.loadAll(testWorkspace);
+    const owl = registry.get("tradingbot");
+    expect(owl?.folderPath).toBeDefined();
+    expect(owl?.folderPath).toContain("TradingBot");
+  });
 });

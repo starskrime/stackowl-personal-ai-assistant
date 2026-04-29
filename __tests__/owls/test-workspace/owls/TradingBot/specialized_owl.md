@@ -1,5 +1,6 @@
 ---
 name: TradingBot
+type: coordinator
 role: Stock trading assistant
 emoji: 📈
 challengeLevel: high

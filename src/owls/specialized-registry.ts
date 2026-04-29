@@ -5,18 +5,21 @@
  * Each specialized owl is self-contained with its spec and credentials.
  */
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { SpecializedOwlSpec } from "./specialized-types.js";
+import type { OwlDNA } from "./persona.js";
 import { parseSpecializedOwl } from "./specialized-parser.js";
 import { log } from "../logger.js";
 
 export class SpecializedOwlRegistry {
   private specs: Map<string, SpecializedOwlSpec> = new Map();
+  private dnaMap: Map<string, OwlDNA> = new Map();
 
   async loadAll(workspacePath: string): Promise<void> {
     this.specs.clear();
+    this.dnaMap.clear();
     const owlsDir = join(workspacePath, "owls");
     if (!existsSync(owlsDir)) {
       log.engine.info("[SpecializedOwlRegistry] No owls directory found");
@@ -38,8 +41,20 @@ export class SpecializedOwlRegistry {
       try {
         const raw = await readFile(specPath, "utf-8");
         const spec = parseSpecializedOwl(raw);
+        spec.folderPath = join(owlsDir, entry);
         spec.credentialsPath = join(owlsDir, entry, "credentials");
         this.specs.set(spec.name.toLowerCase(), spec);
+
+        const dnaPath = join(owlsDir, entry, "owl_dna.json");
+        if (existsSync(dnaPath)) {
+          try {
+            const dnaRaw = await readFile(dnaPath, "utf-8");
+            this.dnaMap.set(spec.name.toLowerCase(), JSON.parse(dnaRaw) as OwlDNA);
+          } catch {
+            // malformed dna file — skip silently
+          }
+        }
+
         log.engine.info(`[SpecializedOwlRegistry] Loaded ${spec.name}`);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -76,5 +91,26 @@ export class SpecializedOwlRegistry {
     return this.listAll().filter((spec) =>
       spec.routingRules.keywords.some((k) => k.toLowerCase().includes(lower)),
     );
+  }
+
+  getDefault(): SpecializedOwlSpec | undefined {
+    const coordinator = this.listAll().find((s) => s.type === "coordinator");
+    return coordinator ?? this.listAll()[0];
+  }
+
+  listSpecialists(): SpecializedOwlSpec[] {
+    return this.listAll().filter((s) => s.type === "specialist");
+  }
+
+  getDNA(owlName: string): OwlDNA | undefined {
+    return this.dnaMap.get(owlName.toLowerCase());
+  }
+
+  async saveDNA(owlName: string, dna: OwlDNA): Promise<void> {
+    const spec = this.get(owlName);
+    if (!spec?.folderPath) return;
+    const dnaPath = join(spec.folderPath, "owl_dna.json");
+    await writeFile(dnaPath, JSON.stringify(dna, null, 2), "utf-8");
+    this.dnaMap.set(owlName.toLowerCase(), dna);
   }
 }
