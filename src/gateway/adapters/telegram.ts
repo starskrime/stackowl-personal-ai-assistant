@@ -1007,6 +1007,7 @@ export class TelegramAdapter implements ChannelAdapter {
       goalGraph: self.gateway.getGoalGraph(),
       proactiveLoop: self.gateway.getProactiveLoop(),
       eventBus: self.gateway.getEventBus(),
+      gatewayEventBus: self.gateway.gatewayEventBus,
       jobQueue,
       userId: "default",
       sendToUser: async (message: string) => {

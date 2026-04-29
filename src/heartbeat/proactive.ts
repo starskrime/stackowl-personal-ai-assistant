@@ -6,6 +6,7 @@
  */
 
 import { log } from "../logger.js";
+import { makeEnvelope } from "../gateway/delivery-envelope.js";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
@@ -81,6 +82,8 @@ export interface PingContext {
   autonomousPlanner?: AutonomousPlanner;
   /** Global event bus */
   eventBus?: import("../events/bus.js").EventBus;
+  /** GatewayEventBus — when set, proactive messages are routed through the delivery bus */
+  gatewayEventBus?: import("../gateway/event-bus.js").GatewayEventBus;
 }
 
 export type PingType =
@@ -752,7 +755,7 @@ export class ProactivePinger {
         .slice(0, 3)
         .map((g) => `• **${g.title}** — ${g.description.slice(0, 80)}`)
         .join("\n");
-      await this.context.sendToUser(
+      await this.deliverProactive(
         `📌 **Goal check-in** — you have ${stale.length} goal(s) with no recent progress:\n` +
         goalSummaries +
         `\n\nWant me to pick one and start working on it?`,
@@ -762,6 +765,21 @@ export class ProactivePinger {
         `[ProactivePinger] Goal check failed: ${err instanceof Error ? err.message : err}`,
       );
     }
+  }
+
+  private async deliverProactive(message: string): Promise<void> {
+    const { gatewayEventBus, userId } = this.context;
+    if (gatewayEventBus && userId) {
+      gatewayEventBus.publish(makeEnvelope({
+        userId,
+        content: { text: message, streamable: false },
+        urgency: "proactive",
+        trigger: "proactive",
+        ttlMs: 4 * 60 * 60 * 1000,  // drop if user unreachable after 4h
+      }));
+      return;
+    }
+    await this.context.sendToUser(message);
   }
 
   /**

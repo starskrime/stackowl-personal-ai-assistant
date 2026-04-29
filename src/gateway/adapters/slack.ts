@@ -598,6 +598,7 @@ export class SlackAdapter implements ChannelAdapter {
       goalGraph: this.gateway.getGoalGraph(),
       proactiveLoop: this.gateway.getProactiveLoop(),
       eventBus: this.gateway.getEventBus(),
+      gatewayEventBus: this.gateway.gatewayEventBus,
       sendToUser: async (message: string) => {
         await this.broadcast({
           content: message,
