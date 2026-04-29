@@ -263,8 +263,7 @@ describe("loadConfig", () => {
       expect(warnSpy.mock.calls[0][0]).toContain("skills");
     });
 
-    it("should warn when smartRouting enabled without availableModels", async () => {
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    it("should throw when smartRouting key is present in config", async () => {
       vi.mocked(readFile).mockResolvedValue(
         JSON.stringify({
           defaultProvider: "ollama",
@@ -274,10 +273,7 @@ describe("loadConfig", () => {
         }),
       );
 
-      await loadConfig(testDir);
-
-      expect(warnSpy).toHaveBeenCalled();
-      expect(warnSpy.mock.calls[0][0]).toContain("smartRouting");
+      await expect(loadConfig(testDir)).rejects.toThrow("smartRouting is no longer supported");
     });
 
     it("should warn on invalid rateLimit maxPerMinute", async () => {
@@ -503,7 +499,7 @@ describe("loadConfig", () => {
       expect(config.heartbeat.intervalMinutes).toBe(60);
     });
 
-    it("should merge smartRouting config correctly", async () => {
+    it("should throw when smartRouting is present in merged config", async () => {
       vi.mocked(readFile).mockResolvedValue(
         JSON.stringify({
           defaultProvider: "ollama",
@@ -516,10 +512,7 @@ describe("loadConfig", () => {
         }),
       );
 
-      const config = await loadConfig(testDir);
-
-      expect(config.smartRouting?.enabled).toBe(true);
-      expect(config.smartRouting?.availableModels).toHaveLength(1);
+      await expect(loadConfig(testDir)).rejects.toThrow("smartRouting is no longer supported");
     });
 
     it("should merge synthesis config correctly", async () => {
@@ -623,7 +616,7 @@ describe("loadConfig", () => {
       expect(config.parliament.maxOwls).toBe(6);
       expect(config.owlDna.evolutionBatchSize).toBe(5);
       expect(config.owlDna.decayRatePerWeek).toBe(0.01);
-      expect(config.smartRouting!.enabled).toBe(false);
+      expect(config.smartRouting).toBeUndefined();
       expect(config.synthesis!.provider).toBe("anthropic");
       expect(config.synthesis!.model).toBe("claude-sonnet-4-5-20241022");
     });

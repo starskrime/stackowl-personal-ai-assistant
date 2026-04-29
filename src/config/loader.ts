@@ -7,6 +7,7 @@
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { IntelligenceConfig } from "../intelligence/router.js";
 
 // ─── Config Types ────────────────────────────────────────────────
 
@@ -92,6 +93,11 @@ export interface StackOwlConfig {
     /** Max tools to pass to the model per turn when intent routing is enabled. Default: 8 */
     maxToolsRouting?: number;
   };
+  /**
+   * @deprecated Use `intelligence` block instead.
+   * Kept in type so existing ModelRouter references compile.
+   * At runtime, a config JSON containing smartRouting throws.
+   */
   smartRouting?: {
     enabled: boolean;
     fallbackProvider?: string;
@@ -102,6 +108,8 @@ export interface StackOwlConfig {
       description?: string;
     }[];
   };
+  /** Tiered model routing for all platform components. */
+  intelligence?: IntelligenceConfig;
   skills?: {
     enabled: boolean;
     directories: string[];
@@ -313,12 +321,6 @@ const DEFAULT_CONFIG: StackOwlConfig = {
     evolutionBatchSize: 5,
     decayRatePerWeek: 0.01,
   },
-  smartRouting: {
-    enabled: false,
-    fallbackProvider: "anthropic",
-    fallbackModel: "claude-3-5-sonnet-latest",
-    availableModels: [],
-  },
   skills: {
     enabled: false,
     directories: [],
@@ -376,6 +378,12 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
     const raw = await readFile(configPath, "utf-8");
     const userConfig = JSON.parse(raw) as Partial<StackOwlConfig>;
 
+    if ("smartRouting" in userConfig) {
+      throw new Error(
+        "[Config] smartRouting is no longer supported. Replace it with the intelligence block. See docs/platform-audit/progress.md.",
+      );
+    }
+
     // Deep merge with defaults
     const config: StackOwlConfig = {
       ...DEFAULT_CONFIG,
@@ -400,10 +408,7 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         ...DEFAULT_CONFIG.owlDna,
         ...userConfig.owlDna,
       },
-      smartRouting: {
-        ...DEFAULT_CONFIG.smartRouting,
-        ...(userConfig.smartRouting || {}),
-      } as NonNullable<StackOwlConfig["smartRouting"]>,
+      intelligence: userConfig.intelligence,
       skills: {
         ...DEFAULT_CONFIG.skills!,
         ...(userConfig.skills || {}),
@@ -433,6 +438,16 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         ...(userConfig.research || {}),
       },
     };
+
+    // Intelligence block validation
+    if (config.intelligence) {
+      const mid = config.intelligence.tiers?.mid;
+      if (!mid?.provider || !mid?.model) {
+        throw new Error(
+          "[Config] intelligence.tiers.mid is required (used as fallback for unspecified task types).",
+        );
+      }
+    }
 
     // Derive defaultModel from active provider's activeModel (new config format)
     // This keeps all existing consumers of config.defaultModel working.
