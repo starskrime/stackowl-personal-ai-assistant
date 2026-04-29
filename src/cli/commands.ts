@@ -10,6 +10,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { OwlGateway } from "../gateway/core.js";
 import type { TerminalRenderer } from "./renderer.js";
+import type { CompletionProvider } from "./completion-engine.js";
 import { SpecializationCreateWizard } from "./specialization-wizard.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
@@ -25,6 +26,7 @@ type CommandFn = (
 interface CommandDef {
   description: string;
   fn: CommandFn;
+  subcommands?: string[];
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -309,7 +311,16 @@ const COMMANDS: Record<string, CommandDef> = {
   "?": { description: "Show command list", fn: cmdHelp },
   status: { description: "Provider / model / owl info", fn: cmdStatus },
   owls: { description: "List owl personas", fn: cmdOwls },
-  specialization: { description: "Manage specialized owls", fn: cmdSpecialization },
+  specialization: {
+    description: "Manage specialized owls",
+    fn: cmdSpecialization,
+    subcommands: ["list", "show", "create", "delete", "update"],
+  },
+  skills: {
+    description: "List or install skills",
+    fn: async (_args, _ui, _gateway) => false,
+    subcommands: ["list", "install"],
+  },
   clear: { description: "Clear context", fn: cmdClear },
   reset: { description: "Clear context", fn: cmdClear },
   capabilities: { description: "List synthesized tools", fn: cmdCapabilities },
@@ -320,9 +331,20 @@ const COMMANDS: Record<string, CommandDef> = {
   onboarding: { description: "Re-run setup wizard", fn: cmdOnboarding },
 };
 
-export class CommandRegistry {
-  listNames(): string[] {
+export class CommandRegistry implements CompletionProvider {
+  /** CompletionProvider — top-level command names */
+  topLevelNames(): string[] {
     return Object.keys(COMMANDS);
+  }
+
+  /** CompletionProvider — subcommands for a given top-level command */
+  subcommands(commandName: string): string[] {
+    return COMMANDS[commandName]?.subcommands ?? [];
+  }
+
+  /** Keep for any callers that haven't migrated yet */
+  listNames(): string[] {
+    return this.topLevelNames();
   }
 
   getDescription(name: string): string {
@@ -334,7 +356,6 @@ export class CommandRegistry {
     ui: TerminalRenderer,
     gateway: OwlGateway,
   ): Promise<boolean> {
-    // Route to active wizard FIRST - works for any input including empty Enter presses
     if (activeWizard) {
       const done = await activeWizard.step(input, ui);
       if (done) {
