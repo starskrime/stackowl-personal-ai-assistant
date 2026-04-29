@@ -103,6 +103,10 @@ import type { ParliamentSession } from "../parliament/protocol.js";
 import { InstinctRegistry } from "../instincts/registry.js";
 import { InstinctEngine } from "../instincts/engine.js";
 import { RoutingCoordinator, type RoutingResult } from "./handlers/routing-coordinator.js";
+import { ChannelRegistry } from "./channel-registry.js";
+import { GatewayEventBus } from "./event-bus.js";
+import { DeliveryRouter } from "./delivery-router.js";
+import { ChannelAdapterV1Shim, defaultCapsForV1 } from "./adapter-v1-shim.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -119,6 +123,9 @@ interface SessionCache {
 export class OwlGateway {
   private engine: OwlEngine;
   private adapters: Map<string, ChannelAdapter> = new Map();
+  readonly channelRegistry: ChannelRegistry = new ChannelRegistry();
+  readonly gatewayEventBus: GatewayEventBus = new GatewayEventBus();
+  readonly deliveryRouter: DeliveryRouter = new DeliveryRouter(this.channelRegistry);
   private sessions: Map<string, SessionCache> = new Map();
   private skillInjector: SkillContextInjector | null = null;
   /** Singleton PreferenceDetector — avoids re-constructing on every message */
@@ -438,6 +445,7 @@ export class OwlGateway {
         );
       log.engine.info("[memory] MemoryDatabase (SQLite) initialized");
     }
+    this.deliveryRouter.setDb(ctx.db.rawDb);
 
     // Auto-initialize MessageCompressor (Phase 2 — batch summarization every 20 msgs)
     if (!ctx.compressor && ctx.db) {
@@ -600,6 +608,9 @@ export class OwlGateway {
     // Initialize new feature modules (all optional, fire-and-forget load)
     this.initFeatureModules();
     this.validateContext();
+
+    // Wire delivery bus → router (Phase 1 channel infrastructure)
+    this.deliveryRouter.start(this.gatewayEventBus);
   }
 
   private validateContext(): void {
@@ -618,6 +629,9 @@ export class OwlGateway {
   register(adapter: ChannelAdapter): void {
     this.adapters.set(adapter.id, adapter);
     log.engine.info(`Channel registered: ${adapter.name} [${adapter.id}]`);
+    // Also register with ChannelRegistry via V1Shim for Phase 1 event bus routing
+    const shim = new ChannelAdapterV1Shim(adapter, defaultCapsForV1(adapter.id));
+    this.channelRegistry.register(shim);
   }
 
   /** Return all registered channel adapters (used by the server for cross-adapter delegation). */
@@ -1310,6 +1324,7 @@ export class OwlGateway {
     // Track last active channel/user for scheduled message delivery
     this.lastActiveChannel = message.channelId;
     this.lastActiveUserId = message.userId;
+    this.channelRegistry.markActive(message.channelId, message.userId);
 
     log.engine.incoming(message.channelId, message.text);
 
