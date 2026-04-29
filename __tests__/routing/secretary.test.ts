@@ -10,6 +10,7 @@ function makeRegistry(specs: Array<{ name: string; role: string; expertise?: str
       s.name.toLowerCase(),
       {
         name: s.name,
+        type: "specialist" as const,
         role: s.role,
         emoji: "🦉",
         expertise: s.expertise ?? [],
@@ -18,6 +19,7 @@ function makeRegistry(specs: Array<{ name: string; role: string; expertise?: str
         permissions: { allowedTools: [], deniedTools: [], capabilityConstraints: [] },
         routingRules: { keywords: s.keywords ?? [] },
         skills: { allowed: [] },
+        additionalPrompt: "",
       },
     ]),
   );

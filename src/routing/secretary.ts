@@ -6,7 +6,7 @@
  * Skips the LLM call entirely when no specialists are configured.
  */
 
-import type { SpecializedOwl } from "../memory/db.js";
+import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import type { ClassifyFn } from "./llm-classifier.js";
 import { log } from "../logger.js";
@@ -28,7 +28,7 @@ const PARLIAMENT_KEYWORDS = [
 
 export type RoutingDecision =
   | { type: "direct"; reason: string }
-  | { type: "specialist"; owl: SpecializedOwl; reason: string; isFolderSpec?: boolean }
+  | { type: "specialist"; owl: SpecializedOwlSpec; reason: string }
   | { type: "parliament"; reason: string };
 
 interface RoutingTarget {
@@ -36,7 +36,6 @@ interface RoutingTarget {
   routingRules: string[];
   expertiseDomains?: string[];
   routingQuality?: number;
-  isFolderSpec?: boolean;
 }
 
 export class SecretaryRouter {
@@ -51,25 +50,10 @@ export class SecretaryRouter {
     this.classify = classify;
   }
 
-  private specToSyntheticOwl(spec: ReturnType<SpecializedOwlRegistry["listAll"]>[number], userId: string): SpecializedOwl {
-    return {
-      id: `folder-${spec.name}`,
-      ownerId: userId,
-      name: spec.name,
-      specialization: spec.role,
-      personalityPrompt: `You are ${spec.name}, ${spec.role}. Your expertise: ${spec.expertise.join(", ") || "general"}.`,
-      routingRules: spec.routingRules.keywords,
-      dna: { challengeLevel: 0.7, verbosity: 0.5, expertiseDomains: spec.expertise, routingQuality: 0.7, evolutionSpeed: 0.5 },
-      isMainOwl: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
   async route(message: string, userId: string): Promise<RoutingDecision> {
-    const folderSpecs = this.folderRegistry?.listAll() ?? [];
+    const specialists = this.folderRegistry?.listSpecialists() ?? [];
 
-    if (folderSpecs.length === 0) {
+    if (specialists.length === 0) {
       const decision = { type: "direct" as const, reason: "No specialized owls configured" };
       this.logRoutingDecision(userId, message, decision, "success");
       return decision;
@@ -77,18 +61,18 @@ export class SecretaryRouter {
 
     // ─── LLM semantic routing ────────────────────────────────────
     if (this.classify) {
-      const specialists = folderSpecs.map((s) => ({ name: s.name, role: s.role, expertise: s.expertise }));
+      const candidates = specialists.map((s) => ({ name: s.name, role: s.role, expertise: s.expertise }));
       let chosenName: string | null = null;
       try {
-        chosenName = await this.classify(message, specialists);
+        chosenName = await this.classify(message, candidates);
       } catch {
         // fall through to keyword matching
       }
 
       if (chosenName) {
-        const spec = folderSpecs.find((s) => s.name === chosenName);
+        const spec = specialists.find((s) => s.name === chosenName);
         if (spec) {
-          const decision = { type: "specialist" as const, owl: this.specToSyntheticOwl(spec, userId), isFolderSpec: true, reason: `LLM routed to: ${chosenName}` };
+          const decision = { type: "specialist" as const, owl: spec, reason: `LLM routed to: ${chosenName}` };
           log.engine.info(`[SecretaryRouter] LLM → "${chosenName}"`);
           this.logRoutingDecision(userId, message, decision, "success");
           return decision;
@@ -108,11 +92,10 @@ export class SecretaryRouter {
 
     // ─── Keyword fallback ─────────────────────────────────────────
     const messageLower = message.toLowerCase();
-    const targets: RoutingTarget[] = folderSpecs.map((spec) => ({
+    const targets: RoutingTarget[] = specialists.map((spec) => ({
       name: spec.name,
       routingRules: spec.routingRules.keywords,
       expertiseDomains: spec.expertise,
-      isFolderSpec: true,
     }));
 
     const matchedTarget = this.findBestMatch(messageLower, targets);
@@ -120,12 +103,11 @@ export class SecretaryRouter {
       const confidence = this.calculateConfidence(messageLower, matchedTarget);
       if (confidence >= ROUTING_CONFIDENCE_THRESHOLD) {
         log.engine.info(`[SecretaryRouter] Keyword → ${matchedTarget.name} (confidence: ${confidence.toFixed(2)})`);
-        const spec = this.folderRegistry?.get(matchedTarget.name);
+        const spec = specialists.find((s) => s.name === matchedTarget.name);
         if (spec) {
           const decision = {
             type: "specialist" as const,
-            owl: this.specToSyntheticOwl(spec, userId),
-            isFolderSpec: true,
+            owl: spec,
             reason: `Matched routing rules: ${matchedTarget.routingRules.slice(0, 3).join(", ")}`,
           };
           this.logRoutingDecision(userId, message, decision, "success");
@@ -145,9 +127,6 @@ export class SecretaryRouter {
     return decision;
   }
 
-  /**
-   * Find the best matching owl based on routing rules.
-   */
   private findBestMatch(message: string, targets: RoutingTarget[]): RoutingTarget | null {
     let bestMatch: RoutingTarget | null = null;
     let bestScore = 0;
@@ -163,9 +142,6 @@ export class SecretaryRouter {
     return bestScore >= MATCH_SCORE_THRESHOLD ? bestMatch : null;
   }
 
-  /**
-   * Score how well a message matches an owl's routing rules.
-   */
   private scoreMatch(message: string, target: RoutingTarget): number {
     const rules = target.routingRules.map((r) => r.toLowerCase());
     if (rules.length === 0) return 0;
@@ -181,12 +157,9 @@ export class SecretaryRouter {
     return matches / rules.length;
   }
 
-  /**
-   * Calculate confidence in the routing decision.
-   */
   private calculateConfidence(messageLower: string, target: RoutingTarget): number {
     const matchScore = this.scoreMatch(messageLower, target);
-    const dnaScore = target.routingQuality ?? (target.isFolderSpec ? 0.7 : 0.5);
+    const dnaScore = target.routingQuality ?? 0.7;
     return (matchScore * MATCH_WEIGHT) + (dnaScore * DNA_WEIGHT);
   }
 
@@ -198,9 +171,6 @@ export class SecretaryRouter {
     return false;
   }
 
-  /**
-   * Log a routing decision for evolution feedback.
-   */
   private logRoutingDecision(
     userId: string,
     message: string,
