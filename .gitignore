@@ -55,3 +55,4 @@ stackowl.config copy.json
 # Tests
 __tests__/
 
+.worktrees/
