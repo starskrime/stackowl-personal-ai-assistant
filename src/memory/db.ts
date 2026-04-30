@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -202,6 +202,61 @@ export interface SynthesisRecord {
   lastUsedAt?: string;
 }
 
+// ─── Routing Persistence Types ────────────────────────────────────
+
+export interface RoutingHistoryEntry {
+  ts: string;
+  owl: string;
+  reason: string;
+}
+
+export interface UserProfile {
+  userId: string;
+  activePin: string | null;
+  pinnedAt: string | null;
+  trustLevel: "standard" | "elevated" | "restricted";
+  stylePref: string | null;
+  routingHistory: RoutingHistoryEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type OwlTaskStatus = "pending" | "active" | "blocked" | "done" | "abandoned";
+export type OwlTaskPriority = "low" | "normal" | "high" | "urgent";
+
+export interface OwlTask {
+  id: string;
+  userId: string;
+  owlName: string;
+  title: string;
+  description?: string;
+  status: OwlTaskStatus;
+  priority: OwlTaskPriority;
+  sessionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  dueAt?: string;
+  result?: string;
+}
+
+export type OwlJobType = "proactive" | "monitor" | "research" | "followup";
+export type OwlJobStatus = "queued" | "running" | "done" | "failed";
+
+export interface OwlJob {
+  id: string;
+  taskId?: string;
+  userId: string;
+  owlName: string;
+  type: OwlJobType;
+  payload: Record<string, unknown>;
+  status: OwlJobStatus;
+  scheduledAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  result?: string;
+}
+
 export interface ApproachRecord {
   id: string;
   owlName: string;
@@ -366,6 +421,9 @@ export class MemoryDatabase {
   readonly agentGoals: AgentGoalsRepo;
   readonly agentTasks: AgentTasksRepo;
   readonly owls: OwlsRepo;
+  readonly userProfiles: UserProfilesRepo;
+  readonly owlTasks: TasksRepo;
+  readonly owlJobs: JobsRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -400,6 +458,9 @@ export class MemoryDatabase {
     this.agentGoals         = new AgentGoalsRepo(this.db);
     this.agentTasks         = new AgentTasksRepo(this.db);
     this.owls              = new OwlsRepo(this.db);
+    this.userProfiles      = new UserProfilesRepo(this.db);
+    this.owlTasks          = new TasksRepo(this.db);
+    this.owlJobs           = new JobsRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
@@ -946,6 +1007,54 @@ export class MemoryDatabase {
         CREATE INDEX IF NOT EXISTS idx_dl_user    ON delivery_log(user_id);
         CREATE INDEX IF NOT EXISTS idx_dl_channel ON delivery_log(channel_id);
         CREATE INDEX IF NOT EXISTS idx_dl_status  ON delivery_log(status);
+      `);
+    }
+    if (current < 12) {
+      // v12: OwlBrain routing persistence — user profiles, task ownership, job queue
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS user_profiles (
+          user_id      TEXT PRIMARY KEY,
+          active_pin   TEXT,
+          pinned_at    TEXT,
+          trust_level  TEXT NOT NULL DEFAULT 'standard',
+          style_pref   TEXT,
+          routing_json TEXT NOT NULL DEFAULT '[]',
+          created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS owl_tasks (
+          id           TEXT PRIMARY KEY,
+          user_id      TEXT NOT NULL,
+          owl_name     TEXT NOT NULL,
+          title        TEXT NOT NULL,
+          description  TEXT,
+          status       TEXT NOT NULL DEFAULT 'pending',
+          priority     TEXT NOT NULL DEFAULT 'normal',
+          session_id   TEXT,
+          due_at       TEXT,
+          result       TEXT,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_owl_tasks_user ON owl_tasks(user_id, status);
+
+        CREATE TABLE IF NOT EXISTS owl_jobs (
+          id           TEXT PRIMARY KEY,
+          task_id      TEXT REFERENCES owl_tasks(id),
+          user_id      TEXT NOT NULL,
+          owl_name     TEXT NOT NULL,
+          type         TEXT NOT NULL,
+          payload      TEXT NOT NULL DEFAULT '{}',
+          status       TEXT NOT NULL DEFAULT 'queued',
+          scheduled_at TEXT NOT NULL,
+          started_at   TEXT,
+          completed_at TEXT,
+          error        TEXT,
+          result       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_owl_jobs_status ON owl_jobs(status, scheduled_at);
+        CREATE INDEX IF NOT EXISTS idx_owl_jobs_user   ON owl_jobs(user_id, status);
       `);
     }
     if (current < SCHEMA_VERSION) {
@@ -2629,6 +2738,175 @@ function rowToTask(r: Record<string, unknown>): AgentTask {
     createdAt: r["created_at"] as string,
     updatedAt: r["updated_at"] as string,
     completedAt: (r["completed_at"] as string) || undefined,
+  };
+}
+
+class UserProfilesRepo {
+  constructor(private db: Database.Database) {}
+
+  getPin(userId: string): string | null {
+    const row = this.db.prepare(
+      "SELECT active_pin FROM user_profiles WHERE user_id = ?"
+    ).get(userId) as any;
+    return row?.active_pin ?? null;
+  }
+
+  setPin(userId: string, owlName: string | null): void {
+    this.db.prepare(`
+      INSERT INTO user_profiles (user_id, active_pin, pinned_at, updated_at)
+      VALUES (?, ?, datetime('now'), datetime('now'))
+      ON CONFLICT(user_id) DO UPDATE SET
+        active_pin = excluded.active_pin,
+        pinned_at = excluded.pinned_at,
+        updated_at = excluded.updated_at
+    `).run(userId, owlName);
+  }
+
+  appendRoutingHistory(userId: string, entry: RoutingHistoryEntry): void {
+    const row = this.db.prepare(
+      "SELECT routing_json FROM user_profiles WHERE user_id = ?"
+    ).get(userId) as any;
+    const history: RoutingHistoryEntry[] = row?.routing_json
+      ? JSON.parse(row.routing_json) : [];
+    history.push(entry);
+    if (history.length > 10) history.splice(0, history.length - 10);
+    this.db.prepare(`
+      INSERT INTO user_profiles (user_id, routing_json, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(user_id) DO UPDATE SET
+        routing_json = excluded.routing_json,
+        updated_at = excluded.updated_at
+    `).run(userId, JSON.stringify(history));
+  }
+
+  getRoutingHistory(userId: string): RoutingHistoryEntry[] {
+    const row = this.db.prepare(
+      "SELECT routing_json FROM user_profiles WHERE user_id = ?"
+    ).get(userId) as any;
+    return row?.routing_json ? JSON.parse(row.routing_json) : [];
+  }
+}
+
+class TasksRepo {
+  constructor(private db: Database.Database) {}
+
+  create(task: Omit<OwlTask, "createdAt" | "updatedAt">): void {
+    this.db.prepare(`
+      INSERT INTO owl_tasks
+        (id, user_id, owl_name, title, description, status, priority, session_id, due_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      task.id, task.userId, task.owlName, task.title,
+      task.description ?? null, task.status, task.priority,
+      task.sessionId ?? null, task.dueAt ?? null,
+    );
+  }
+
+  updateStatus(taskId: string, status: OwlTaskStatus, result?: string): void {
+    this.db.prepare(`
+      UPDATE owl_tasks
+      SET status = ?, result = COALESCE(?, result), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(status, result ?? null, taskId);
+  }
+
+  getActive(userId: string): OwlTask[] {
+    return (this.db.prepare(`
+      SELECT * FROM owl_tasks
+      WHERE user_id = ? AND status IN ('pending','active','blocked')
+      ORDER BY updated_at ASC LIMIT 5
+    `).all(userId) as any[]).map(rowToOwlTask);
+  }
+
+  get(taskId: string): OwlTask | null {
+    const row = this.db.prepare(
+      "SELECT * FROM owl_tasks WHERE id = ?"
+    ).get(taskId) as any;
+    return row ? rowToOwlTask(row) : null;
+  }
+}
+
+class JobsRepo {
+  constructor(private db: Database.Database) {}
+
+  enqueue(job: Omit<OwlJob, "status" | "startedAt" | "completedAt" | "error" | "result">): void {
+    this.db.prepare(`
+      INSERT INTO owl_jobs (id, task_id, user_id, owl_name, type, payload, status, scheduled_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)
+    `).run(
+      job.id, job.taskId ?? null, job.userId, job.owlName,
+      job.type, JSON.stringify(job.payload), job.scheduledAt,
+    );
+  }
+
+  dequeueNext(): OwlJob | null {
+    const row = this.db.prepare(`
+      SELECT * FROM owl_jobs
+      WHERE status = 'queued' AND scheduled_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      ORDER BY scheduled_at ASC LIMIT 1
+    `).get() as any;
+    if (!row) return null;
+    this.db.prepare(
+      "UPDATE owl_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?"
+    ).run(row.id);
+    return rowToOwlJob({ ...row, status: "running" });
+  }
+
+  markDone(jobId: string, result: string): void {
+    this.db.prepare(
+      "UPDATE owl_jobs SET status = 'done', result = ?, completed_at = datetime('now') WHERE id = ?"
+    ).run(result, jobId);
+  }
+
+  markFailed(jobId: string, error: string): void {
+    this.db.prepare(
+      "UPDATE owl_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?"
+    ).run(error, jobId);
+  }
+
+  get(jobId: string): OwlJob | null {
+    const row = this.db.prepare("SELECT * FROM owl_jobs WHERE id = ?").get(jobId) as any;
+    return row ? rowToOwlJob(row) : null;
+  }
+
+  getQueued(userId: string): OwlJob[] {
+    return (this.db.prepare(
+      "SELECT * FROM owl_jobs WHERE user_id = ? AND status IN ('queued','running') ORDER BY scheduled_at ASC"
+    ).all(userId) as any[]).map(rowToOwlJob);
+  }
+}
+
+function rowToOwlTask(row: any): OwlTask {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    owlName: row.owl_name,
+    title: row.title,
+    description: row.description ?? undefined,
+    status: row.status as OwlTaskStatus,
+    priority: row.priority as OwlTaskPriority,
+    sessionId: row.session_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    dueAt: row.due_at ?? undefined,
+    result: row.result ?? undefined,
+  };
+}
+
+function rowToOwlJob(row: any): OwlJob {
+  return {
+    id: row.id,
+    taskId: row.task_id ?? undefined,
+    userId: row.user_id,
+    owlName: row.owl_name,
+    type: row.type as OwlJobType,
+    payload: typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload,
+    status: row.status as OwlJobStatus,
+    scheduledAt: row.scheduled_at,
+    startedAt: row.started_at ?? undefined,
+    completedAt: row.completed_at ?? undefined,
+    error: row.error ?? undefined,
+    result: row.result ?? undefined,
   };
 }
 

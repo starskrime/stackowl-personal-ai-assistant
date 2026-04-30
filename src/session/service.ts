@@ -145,7 +145,7 @@ export class SessionService {
   }
 
   async extractAndStoreFacts(
-    sessionId: string,
+    _sessionId: string,
     userId: string,
     owlName: string,
     messages: ChatMessage[],
