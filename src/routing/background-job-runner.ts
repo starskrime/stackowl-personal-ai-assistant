@@ -17,7 +17,10 @@ export class BackgroundJobRunner {
 
   start(): void {
     if (this.interval) return;
-    this.interval = setInterval(() => { this.tick().catch(() => {}); }, POLL_INTERVAL_MS);
+    this.interval = setInterval(
+      () => { this.tick().catch((err) => log.engine.error(`[BackgroundJobRunner] Unexpected tick error: ${err}`)); },
+      POLL_INTERVAL_MS,
+    );
     this.interval.unref();
     log.engine.info("[BackgroundJobRunner] Started — polling every 60s");
   }

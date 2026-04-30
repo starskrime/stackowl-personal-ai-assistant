@@ -7,6 +7,7 @@
 
 import { EventEmitter } from "node:events";
 import type { TokenUsage } from "../providers/base.js";
+import type { OwlJobType } from "../memory/db.js";
 import { log } from "../logger.js";
 
 // ─── Event Definitions ──────────────────────────────────────────
@@ -184,7 +185,7 @@ export interface EventPayloads {
   "job:complete": {
     userId: string;
     jobId: string;
-    type: string;
+    type: OwlJobType;
     result: string;
   };
 }
