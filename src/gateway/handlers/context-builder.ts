@@ -238,8 +238,9 @@ The user has no active tasks right now. Be concise and helpful:
     }
 
     let openTasksContext = "";
-    if (this.ctx.taskOwnershipManager && userId) {
-      openTasksContext = this.ctx.taskOwnershipManager.buildPromptBlock(userId);
+    const effectiveUserId = userId ?? session.id.split(":")[1] ?? session.id;
+    if (this.ctx.taskOwnershipManager && effectiveUserId) {
+      openTasksContext = this.ctx.taskOwnershipManager.buildPromptBlock(effectiveUserId);
     }
 
     // Conversation digest (L1 working memory) — persisted semantic snapshot of

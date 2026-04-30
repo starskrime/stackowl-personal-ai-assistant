@@ -500,6 +500,7 @@ export class OwlGateway {
         ctx.digestManager,
       );
       this.owlBrain.setSecretaryRouterGetter(() => this.secretaryRouter);
+      ctx.owlBrain = this.owlBrain;
       log.engine.info("[OwlBrain] Initialized");
     }
 
@@ -2106,6 +2107,7 @@ export class OwlGateway {
     }
 
     // ─── Task commitment detection ──────────────────────────────
+    // sync — detectAndCreate return value intentionally discarded
     if (this.ctx.taskOwnershipManager && response.content) {
       this.ctx.taskOwnershipManager.detectAndCreate(
         message.userId,

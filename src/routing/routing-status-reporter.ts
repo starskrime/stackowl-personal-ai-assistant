@@ -13,7 +13,7 @@ const STATUS_PATTERNS = [
   /what\s+tasks?\b/i,
   /what\s+did\s+you\s+(promise|commit|say\s+you.d)/i,
   /what.s\s+pending/i,
-  /\bstatus\b/i,
+  /\bmy\s+(tasks?|status|commitments?)\b/i,
   /open\s+tasks?/i,
 ];
 
