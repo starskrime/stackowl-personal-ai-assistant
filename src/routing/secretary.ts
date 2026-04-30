@@ -17,6 +17,7 @@ const MATCH_WEIGHT = 0.7;
 const DNA_WEIGHT = 0.3;
 const DOMAIN_SIGNAL_BOOST = 0.15;
 const FACT_SIGNAL_BOOST   = 0.25;
+// Must be >= MATCH_SCORE_THRESHOLD so a single explicit fact mention routes even when keywords score 0
 
 const PARLIAMENT_KEYWORDS = [
   "compare", "versus", "vs", "difference between",
@@ -107,20 +108,27 @@ export class SecretaryRouter {
       return { type: "direct", reason: "Message too short to classify" };
     }
 
+    const cappedDomains = signals.domainStack.slice(0, 10);
+    const cappedFacts = signals.relevantFacts.slice(0, 10);
+
     // Score each specialist with signal boosts
     const scored = specialists.map((spec) => {
       let score = this.computeKeywordScore(message, spec);
 
       // Domain signal boost: active goals overlapping with owl's expertise
-      for (const domain of signals.domainStack) {
+      for (const domain of cappedDomains) {
         const domainLower = domain.toLowerCase();
-        if (spec.expertise.some((e) => domainLower.includes(e.toLowerCase()) || e.toLowerCase().includes(domainLower.split(" ")[0]))) {
+        const domainTokens = domainLower.split(/\s+/).filter(t => t.length > 2);
+        if (domainTokens.length > 0 && spec.expertise.some((e) =>
+          domainTokens.some((token) => e.toLowerCase().includes(token)) ||
+          domainLower.includes(e.toLowerCase())
+        )) {
           score += DOMAIN_SIGNAL_BOOST;
         }
       }
 
       // Fact signal boost: facts that mention this owl by name
-      for (const fact of signals.relevantFacts) {
+      for (const fact of cappedFacts) {
         if (fact.toLowerCase().includes(spec.name.toLowerCase())) {
           score += FACT_SIGNAL_BOOST;
         }
@@ -137,9 +145,8 @@ export class SecretaryRouter {
       return { type: "specialist", owl: best.spec, reason: `score=${best.score.toFixed(2)}` };
     }
 
-    // Parliament detection
-    const lowerMsg = message.toLowerCase();
-    if (PARLIAMENT_KEYWORDS.some((kw) => lowerMsg.includes(kw))) {
+    // Parliament detection (same logic as route())
+    if (this.shouldConveneParliament(message)) {
       return { type: "parliament", reason: "parliament keyword matched" };
     }
 
