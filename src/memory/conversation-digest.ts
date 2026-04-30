@@ -170,6 +170,7 @@ export class ConversationDigestManager {
       openQuestions,
       updatedAt: new Date().toISOString(),
       lastAssistantResponse,
+      lastInnerMonologue: existing.lastInnerMonologue,
     };
 
     await this.save(digest);
