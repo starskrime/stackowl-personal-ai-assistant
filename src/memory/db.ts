@@ -1108,6 +1108,19 @@ class MessagesRepo {
     ).get(sessionId) as any;
     return row?.m ?? -1;
   }
+
+  getOldestN(sessionId: string, n: number): Array<{ id: string; seq: number }> {
+    const rows = this.db
+      .prepare("SELECT id, seq FROM messages WHERE session_id = ? ORDER BY seq ASC LIMIT ?")
+      .all(sessionId, n) as Array<{ id: string; seq: number }>;
+    return rows;
+  }
+
+  deleteByIds(ids: string[]): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => "?").join(",");
+    this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...ids);
+  }
 }
 
 class FactsRepo {
