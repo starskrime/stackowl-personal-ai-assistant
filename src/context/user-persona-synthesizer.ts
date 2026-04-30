@@ -2,6 +2,7 @@ import type { ModelProvider } from "../providers/base.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { StoredFact } from "../memory/fact-store.js";
 import type { Episode } from "../memory/episodic.js";
+import { log } from "../logger.js";
 
 export interface UserPersona {
   communicationStyle: "concise" | "verbose" | "technical" | "casual";
@@ -16,6 +17,16 @@ export interface UserPersona {
 
 const PERSONA_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const MIN_FACTS_FOR_PERSONA = 3;
+
+function parsePersona(json: string): UserPersona | null {
+  try {
+    const p = JSON.parse(json) as Record<string, unknown>;
+    if (typeof p.communicationStyle !== "string" || typeof p.expertiseLevel !== "string") return null;
+    return p as unknown as UserPersona;
+  } catch {
+    return null;
+  }
+}
 
 export class UserPersonaSynthesizer {
   private pending = new Set<string>(); // userId → background synthesis in flight
@@ -32,20 +43,27 @@ export class UserPersonaSynthesizer {
     preferenceContext: string,
   ): Promise<UserPersona | null> {
     // Check cache first — return cached persona regardless of current fact count
-    const cached = this.db.getUserPersona(userId);
+    const cached = this.db.getUserPersonaRaw(userId);
     if (cached) {
       if (Date.now() < cached.expiresAt) {
-        return JSON.parse(cached.personaJson) as UserPersona;
+        const persona = parsePersona(cached.personaJson);
+        if (persona) return persona;
+        // Parse failed — fall through to synthesize
+      } else {
+        // Stale-while-revalidate: return stale, refresh in background
+        const stale = parsePersona(cached.personaJson);
+        if (stale) {
+          if (!this.pending.has(userId)) {
+            this.pending.add(userId);
+            setImmediate(() => {
+              this.synthesize(userId, facts, episodes, preferenceContext)
+                .finally(() => this.pending.delete(userId));
+            });
+          }
+          return stale;
+        }
+        // Stale parse failed — fall through to synthesize
       }
-      // Stale-while-revalidate: return stale, refresh in background
-      if (!this.pending.has(userId)) {
-        this.pending.add(userId);
-        setImmediate(() => {
-          this.synthesize(userId, facts, episodes, preferenceContext)
-            .finally(() => this.pending.delete(userId));
-        });
-      }
-      return JSON.parse(cached.personaJson) as UserPersona;
     }
 
     // No cache — need enough facts to synthesize
@@ -63,9 +81,9 @@ export class UserPersonaSynthesizer {
   ): Promise<UserPersona | null> {
     try {
       const topFacts = facts
-        .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
-        .map((f) => `- ${f.fact}`)
+        .toSorted((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
         .slice(0, 10)
+        .map((f) => `- ${f.fact}`)
         .join("\n");
       const topEpisodes = episodes
         .slice(0, 3)
@@ -105,10 +123,13 @@ Respond with ONLY valid JSON matching this exact schema:
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return null;
 
-      const persona: UserPersona = { ...JSON.parse(jsonMatch[0]), lastUpdated: new Date().toISOString() };
+      const parsed = parsePersona(JSON.stringify({ ...JSON.parse(jsonMatch[0]), lastUpdated: new Date().toISOString() }));
+      if (!parsed) return null;
+      const persona = parsed;
       this.db.setUserPersona(userId, JSON.stringify(persona), PERSONA_TTL_MS);
       return persona;
-    } catch {
+    } catch (err) {
+      log.engine.warn("UserPersonaSynthesizer: synthesis failed", { userId, error: err });
       return null;
     }
   }

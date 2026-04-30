@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UserPersonaSynthesizer } from "../../src/context/user-persona-synthesizer.js";
 
 function mockDb() {
-  return { getUserPersona: vi.fn(() => null), setUserPersona: vi.fn() } as any;
+  return { getUserPersonaRaw: vi.fn(() => null), setUserPersona: vi.fn() } as any;
 }
 function mockProvider() {
   const persona = JSON.stringify({
@@ -22,7 +22,7 @@ describe("UserPersonaSynthesizer", () => {
     expect(result).toBeNull();
   });
 
-  it("calls LLM and caches when > 3 facts and no cache", async () => {
+  it("calls LLM and caches when >= 3 facts and no cache", async () => {
     const db = mockDb();
     const provider = mockProvider();
     const synth = new UserPersonaSynthesizer(provider, db);
@@ -35,7 +35,7 @@ describe("UserPersonaSynthesizer", () => {
 
   it("returns cached persona when not expired", async () => {
     const db = mockDb();
-    db.getUserPersona.mockReturnValue({
+    db.getUserPersonaRaw.mockReturnValue({
       personaJson: JSON.stringify({ communicationStyle: "casual", expertiseLevel: "novice",
         currentProjects: [], recurringPatterns: [], emotionalTendencies: "",
         emotionalTrajectory: [], preferredApproach: "", lastUpdated: "" }),
@@ -53,11 +53,15 @@ describe("UserPersonaSynthesizer", () => {
     const stale = { communicationStyle: "verbose", expertiseLevel: "intermediate",
       currentProjects: [], recurringPatterns: [], emotionalTendencies: "",
       emotionalTrajectory: [], preferredApproach: "", lastUpdated: "" };
-    db.getUserPersona.mockReturnValue({ personaJson: JSON.stringify(stale), expiresAt: Date.now() - 1 });
+    db.getUserPersonaRaw.mockReturnValue({ personaJson: JSON.stringify(stale), expiresAt: Date.now() - 1 });
     const provider = mockProvider();
     const synth = new UserPersonaSynthesizer(provider, db);
     const facts = Array.from({ length: 5 }, (_, i) => ({ fact: `f${i}`, confidence: 0.9 } as any));
     const result = await synth.getPersona("u1", facts, [], "");
     expect(result?.communicationStyle).toBe("verbose"); // stale returned immediately
+    // Flush the setImmediate queue
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Background refresh should have triggered LLM
+    expect(provider.chat).toHaveBeenCalledOnce();
   });
 });

@@ -1174,6 +1174,13 @@ export class MemoryDatabase {
     return row ? { personaJson: row.persona_json, expiresAt: row.expires_at } : null;
   }
 
+  getUserPersonaRaw(userId: string): { personaJson: string; expiresAt: number } | null {
+    const row = this.db
+      .prepare("SELECT persona_json, expires_at FROM user_personas WHERE user_id = ?")
+      .get(userId) as { persona_json: string; expires_at: number } | undefined;
+    return row ? { personaJson: row.persona_json, expiresAt: row.expires_at } : null;
+  }
+
   setUserPersona(userId: string, personaJson: string, ttlMs: number): void {
     const expiresAt = Date.now() + ttlMs;
     this.db.prepare(`
