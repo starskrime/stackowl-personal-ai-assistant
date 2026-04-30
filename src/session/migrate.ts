@@ -13,7 +13,7 @@ export async function migrateJsonSessionsToSQLite(
 
     const existing = db.messages.countSession(sessionId);
     if (existing > 0) {
-      // already migrated — skip without deleting the JSON file
+      await sessionStore.deleteSession(sessionId);
       continue;
     }
 

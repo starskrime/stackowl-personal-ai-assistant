@@ -60,25 +60,29 @@ describe("migrateJsonSessionsToSQLite", () => {
     ]);
 
     const deleted: string[] = [];
+    const sessions: Record<string, any> = {
+      "cli:user1": {
+        id: "cli:user1",
+        messages: [{ role: "user", content: "already there" }],
+        metadata: { owlName: "hoot", startedAt: Date.now(), lastUpdatedAt: Date.now() },
+      },
+    };
     const store = {
-      listSessions: async () => [
-        {
-          id: "cli:user1",
-          messages: [{ role: "user", content: "already there" }],
-          metadata: { owlName: "hoot", startedAt: Date.now(), lastUpdatedAt: Date.now() },
-        },
-      ],
-      loadSession: async (id: string) => null,
+      listSessions: async () => Object.values(sessions),
+      loadSession: async (id: string) => sessions[id] ?? null,
       deleteSession: async (id: string) => {
         deleted.push(id);
+        delete sessions[id];
       },
     };
 
     await migrateJsonSessionsToSQLite(store as any, db, "hoot");
 
-    // should skip — not deleted (no migration attempt)
-    expect(deleted).toHaveLength(0);
-    expect(db.messages.countSession("cli:user1")).toBe(1); // unchanged
+    // no new rows appended — count stays at 1
+    expect(db.messages.countSession("cli:user1")).toBe(1);
+    // JSON file was deleted to prevent re-checking on every startup
+    expect(deleted).toContain("cli:user1");
+    expect(Object.keys(sessions)).toHaveLength(0);
   });
 
   it("skips and deletes empty sessions", async () => {
