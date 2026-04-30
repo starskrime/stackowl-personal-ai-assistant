@@ -15,6 +15,8 @@ const ROUTING_CONFIDENCE_THRESHOLD = 0.4;
 const MATCH_SCORE_THRESHOLD = 0.25;
 const MATCH_WEIGHT = 0.7;
 const DNA_WEIGHT = 0.3;
+const DOMAIN_SIGNAL_BOOST = 0.15;
+const FACT_SIGNAL_BOOST   = 0.25;
 
 const PARLIAMENT_KEYWORDS = [
   "compare", "versus", "vs", "difference between",
@@ -113,14 +115,14 @@ export class SecretaryRouter {
       for (const domain of signals.domainStack) {
         const domainLower = domain.toLowerCase();
         if (spec.expertise.some((e) => domainLower.includes(e.toLowerCase()) || e.toLowerCase().includes(domainLower.split(" ")[0]))) {
-          score += 0.15;
+          score += DOMAIN_SIGNAL_BOOST;
         }
       }
 
       // Fact signal boost: facts that mention this owl by name
       for (const fact of signals.relevantFacts) {
         if (fact.toLowerCase().includes(spec.name.toLowerCase())) {
-          score += 0.25;
+          score += FACT_SIGNAL_BOOST;
         }
       }
 
