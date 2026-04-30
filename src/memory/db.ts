@@ -1119,7 +1119,7 @@ class MessagesRepo {
   deleteByIds(ids: string[]): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => "?").join(",");
-    this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...ids);
+    this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(ids);
   }
 }
 

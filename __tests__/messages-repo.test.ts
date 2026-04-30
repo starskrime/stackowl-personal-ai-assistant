@@ -58,4 +58,11 @@ describe("MessagesRepo – getOldestN and deleteByIds", () => {
     expect(() => db.messages.deleteByIds([])).not.toThrow();
     expect(db.messages.countSession("s1")).toBe(3);
   });
+
+  it("getOldestN only returns rows for the given session", () => {
+    seedMessages("s1", 3);
+    seedMessages("s2", 5);
+    const result = db.messages.getOldestN("s1", 10);
+    expect(result).toHaveLength(3);
+  });
 });
