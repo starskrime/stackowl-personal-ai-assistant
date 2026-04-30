@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1057,6 +1057,27 @@ export class MemoryDatabase {
         CREATE INDEX IF NOT EXISTS idx_owl_jobs_user   ON owl_jobs(user_id, status);
       `);
     }
+    if (current < 13) {
+      // v13: ContextPipeline — user persona cache + pellets tag index
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS user_personas (
+          user_id        TEXT PRIMARY KEY,
+          persona_json   TEXT NOT NULL,
+          synthesized_at TEXT NOT NULL,
+          expires_at     INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS pellets (
+          id            TEXT PRIMARY KEY,
+          tag           TEXT NOT NULL DEFAULT '',
+          title         TEXT NOT NULL DEFAULT '',
+          content       TEXT NOT NULL DEFAULT '',
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pellets_tag ON pellets(tag);
+      `);
+    }
     if (current < SCHEMA_VERSION) {
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
       log.engine.info(`[MemoryDatabase] Schema migrated to v${SCHEMA_VERSION}`);
@@ -1142,6 +1163,27 @@ export class MemoryDatabase {
 
   rebuildLearningsFts(): void {
     this.db.exec(`INSERT INTO owl_learnings_fts(owl_learnings_fts) VALUES('rebuild')`);
+  }
+
+  // ── UserPersonas ────────────────────────────────────────────────
+
+  getUserPersona(userId: string): { personaJson: string; expiresAt: number } | null {
+    const row = this.db.prepare(
+      "SELECT persona_json, expires_at FROM user_personas WHERE user_id = ?"
+    ).get(userId) as { persona_json: string; expires_at: number } | undefined;
+    return row ? { personaJson: row.persona_json, expiresAt: row.expires_at } : null;
+  }
+
+  setUserPersona(userId: string, personaJson: string, ttlMs: number): void {
+    const expiresAt = Date.now() + ttlMs;
+    this.db.prepare(`
+      INSERT INTO user_personas (user_id, persona_json, synthesized_at, expires_at)
+      VALUES (?, ?, datetime('now'), ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        persona_json   = excluded.persona_json,
+        synthesized_at = excluded.synthesized_at,
+        expires_at     = excluded.expires_at
+    `).run(userId, personaJson, expiresAt);
   }
 }
 

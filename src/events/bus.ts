@@ -188,6 +188,12 @@ export interface EventPayloads {
     type: OwlJobType;
     result: string;
   };
+
+  // ─── Context Pipeline Events ─────────────────────────────────
+  "pellet:written": { id: string; tag: string };
+  "persona:refreshed": { userId: string };
+  "learning:recorded": { owlName: string; category: string };
+  "context:quality_degraded": { score: number; trace: unknown };
 }
 
 export type EventType = keyof EventPayloads;
