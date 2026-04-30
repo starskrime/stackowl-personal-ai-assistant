@@ -92,9 +92,10 @@ export class SessionService {
       summary.toSeq >= lastSeq;
 
     if (!covered) {
-      // Summarize the full session messages before dropping
+      // Compress only the overflow batch (oldest messages), not the entire session.
       const allMessages = this.db.messages.getSession(sessionId);
-      await this.compressor.compress(sessionId, userId, owlName, allMessages);
+      const oldestMessages = allMessages.slice(0, overflow);
+      await this.compressor.compress(sessionId, userId, owlName, oldestMessages);
     }
 
     this.db.messages.deleteByIds(oldest.map((r) => r.id));

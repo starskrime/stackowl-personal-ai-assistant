@@ -77,6 +77,48 @@ describe("SessionService", () => {
     });
   });
 
+  describe("addMessages() — rolling window", () => {
+    it("enforces 300-message ceiling", async () => {
+      await svc.getOrCreate("cli:user1", "user1", "hoot");
+      // Add 305 messages in batches of 30 to avoid timeout
+      for (let i = 0; i < 305; i++) {
+        await svc.addMessages("cli:user1", [{ role: "user", content: `msg ${i}` }]);
+      }
+      expect(db.messages.countSession("cli:user1")).toBeLessThanOrEqual(300);
+    });
+
+    it("calls compressor.compress() before dropping when no summary coverage", async () => {
+      const compressor = makeMockCompressor();
+      const svc2 = new SessionService(
+        db,
+        compressor as any,
+        makeMockUserMemoryStore() as any,
+        undefined,
+        makeMockRegistry() as any,
+        "openai",
+        "gpt-4o-mini",
+      );
+      await svc2.getOrCreate("s2", "user2", "hoot");
+
+      // Fill 301 messages in batches of 30 to trigger overflow without per-message overhead
+      const batches = Array.from({ length: 10 }, (_, b) =>
+        Array.from({ length: 30 }, (_, i) => ({
+          role: (b * 30 + i) % 2 === 0 ? "user" as const : "assistant" as const,
+          content: `msg ${b * 30 + i}`,
+        })),
+      );
+      for (const batch of batches) {
+        await svc2.addMessages("s2", batch);
+      }
+      // Add the one extra that pushes over 300
+      await svc2.addMessages("s2", [{ role: "user", content: "msg 300" }]);
+
+      expect(compressor.compress).toHaveBeenCalled();
+      expect(db.messages.countSession("s2")).toBeLessThanOrEqual(300);
+      svc2.destroy();
+    });
+  });
+
   describe("buildContext()", () => {
     it("returns SessionContext with recentMessages array", async () => {
       await svc.getOrCreate("cli:user1", "user1", "hoot");
