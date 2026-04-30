@@ -1,14 +1,13 @@
 /**
  * StackOwl — Secretary Owl Router
  *
- * Routes user messages to the right specialist owl using LLM semantic
- * classification. Falls back to keyword matching if no classify fn provided.
- * Skips the LLM call entirely when no specialists are configured.
+ * Routes user messages to the right specialist owl using keyword matching.
+ * Convenes Parliament for complex multi-faceted queries.
+ * Skips routing entirely when no specialists are configured.
  */
 
 import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
-export type ClassifyFn = (message: string, specialists: { name: string; role: string; expertise: string[] }[]) => Promise<string | null>;
 import { log } from "../logger.js";
 
 const MIN_MESSAGE_LENGTH = 10;

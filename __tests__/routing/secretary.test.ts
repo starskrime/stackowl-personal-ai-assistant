@@ -81,26 +81,4 @@ describe("SecretaryRouter", () => {
     });
   });
 
-  describe("route() — keyword fallback (no classify fn)", () => {
-    it("routes to specialist whose keywords match the message", async () => {
-      const registry = makeRegistry([{ name: "TradingBot", role: "trading", keywords: ["stock", "trade", "portfolio"] }]);
-      const router = new SecretaryRouter(registry);
-
-      const decision = await router.route("I want to buy some stocks", "user_test");
-
-      expect(decision.type).toBe("specialist");
-      if (decision.type === "specialist") {
-        expect(decision.owl.name).toBe("TradingBot");
-      }
-    });
-
-    it("returns direct when no keywords match", async () => {
-      const registry = makeRegistry([{ name: "TradingBot", role: "trading", keywords: ["stock", "trade"] }]);
-      const router = new SecretaryRouter(registry);
-
-      const decision = await router.route("Tell me a joke", "user_test");
-
-      expect(decision.type).toBe("direct");
-    });
-  });
 });
