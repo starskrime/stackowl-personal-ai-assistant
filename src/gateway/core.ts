@@ -39,7 +39,6 @@ import { ProactiveAnticipator } from "../learning/anticipator.js";
 import { classifyStrategy } from "../orchestrator/classifier.js";
 import { TaskOrchestrator } from "../orchestrator/orchestrator.js";
 import { SecretaryRouter } from "../routing/secretary.js";
-import { buildClassifyFn } from "../routing/llm-classifier.js";
 import type {
   GatewayMessage,
   GatewayResponse,
@@ -55,7 +54,6 @@ import { ContextBuilder } from "./handlers/context-builder.js";
 import { GapLearner } from "../agent/gap-learner.js";
 import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
 import { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
-import { SessionStateStore } from "../routing/session-state.js";
 import { TaskQueue } from "../queue/task-queue.js";
 import {
   computeTemporalContext,
@@ -88,7 +86,6 @@ import { ToolMastery } from "../tools/tool-mastery.js";
 import { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
 import { DomainToolMap } from "../delegation/domain-tool-map.js";
-import { DelegationDecider } from "../delegation/delegation-decider.js";
 import { TaskDecomposer } from "../delegation/decomposer.js";
 import { ResultSynthesizer } from "../delegation/result-synthesizer.js";
 import { PriorContextRetriever } from "../memory/prior-context-retriever.js";
@@ -163,7 +160,6 @@ export class OwlGateway {
   readonly fallbackSequencer: FallbackSequencer;
   readonly fallbackDiscoverer: FallbackDiscoverer;
   readonly domainToolMap: DomainToolMap;
-  readonly delegationDecider: DelegationDecider;
   taskDecomposer: TaskDecomposer | null = null;
   resultSynthesizer: ResultSynthesizer | null = null;
 
@@ -174,7 +170,6 @@ export class OwlGateway {
   private gapLearner: GapLearner | null = null;
   private secretaryRouter: SecretaryRouter | null = null;
   private routingCoordinator: RoutingCoordinator | null = null;
-  private sessionStateStore: SessionStateStore | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -326,7 +321,6 @@ export class OwlGateway {
     this.fallbackSequencer = new FallbackSequencer();
     this.fallbackDiscoverer = new FallbackDiscoverer();
     this.domainToolMap = new DomainToolMap();
-    this.delegationDecider = new DelegationDecider();
     if (ctx.provider) {
       this.taskDecomposer = new TaskDecomposer(ctx.provider);
       this.resultSynthesizer = new ResultSynthesizer(ctx.provider);
@@ -526,12 +520,10 @@ export class OwlGateway {
       );
     }).catch(() => {});
 
-    this.sessionStateStore = new SessionStateStore(workspacePath);
     this.routingCoordinator = new RoutingCoordinator(
       ctx.specializedRegistry,
       () => this.secretaryRouter,
       ctx.owl.persona.name,
-      this.sessionStateStore,
       ctx.pelletStore,
       ctx.digestManager,
     );
@@ -1753,8 +1745,7 @@ export class OwlGateway {
     // ─── Routing — @mention + SecretaryRouter ────────────────────
     let activeOwlName = this.ctx.owl.persona.name;
     if (!this.secretaryRouter && this.ctx.specializedRegistry) {
-      const classifyFn = buildClassifyFn(this.ctx.provider, this.ctx.config.defaultModel);
-      this.secretaryRouter = new SecretaryRouter(this.ctx.specializedRegistry, classifyFn);
+      this.secretaryRouter = new SecretaryRouter(this.ctx.specializedRegistry);
     }
     let routingResult: RoutingResult | null = null;
     if (this.routingCoordinator) {

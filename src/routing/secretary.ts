@@ -8,7 +8,7 @@
 
 import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
-import type { ClassifyFn } from "./llm-classifier.js";
+export type ClassifyFn = (message: string, specialists: { name: string; role: string; expertise: string[] }[]) => Promise<string | null>;
 import { log } from "../logger.js";
 
 const MIN_MESSAGE_LENGTH = 10;

@@ -4,7 +4,6 @@ import type { SecretaryRouter } from "../../routing/secretary.js";
 import type { GatewayCallbacks, GatewayMessage } from "../types.js";
 import type { EngineContext } from "../../engine/runtime.js";
 import type { Session } from "../../memory/store.js";
-import type { SessionStateStore } from "../../routing/session-state.js";
 import type { PelletStore } from "../../pellets/store.js";
 import type { ConversationDigestManager } from "../../memory/conversation-digest.js";
 import { log } from "../../logger.js";
@@ -20,7 +19,6 @@ export class RoutingCoordinator {
     private specializedRegistry: SpecializedOwlRegistry | undefined,
     private getSecretaryRouter: () => SecretaryRouter | null,
     private defaultOwlName: string,
-    private sessionStateStore?: SessionStateStore,
     private pelletStore?: PelletStore,
     private digestManager?: ConversationDigestManager,
   ) {}
@@ -34,15 +32,6 @@ export class RoutingCoordinator {
   ): Promise<RoutingResult> {
     let activeOwlName = this.defaultOwlName;
 
-    // ─── Restore pin from file on first message ──────────────────
-    if (!session?.metadata.activeOwlName && message.userId && this.sessionStateStore) {
-      const saved = await this.sessionStateStore.load(message.userId);
-      if (saved && session) {
-        session.metadata.activeOwlName = saved.activeOwlName;
-        log.engine.info(`[RoutingCoordinator] Restored pin "${saved.activeOwlName}" for user ${message.userId}`);
-      }
-    }
-
     // ─── Explicit @mention ──────────────────────────────────────
     const explicitMention = text.match(/^@(\w+)(?:\s+(.+))?$/s);
     if (explicitMention && this.specializedRegistry) {
@@ -52,9 +41,6 @@ export class RoutingCoordinator {
       if (owlName.toLowerCase() === coordinatorName.toLowerCase()) {
         // @noctua (or any coordinator name) — clear session pin
         if (session) session.metadata.activeOwlName = undefined;
-        if (this.sessionStateStore && message.userId) {
-          this.sessionStateStore.clear(message.userId).catch(() => {});
-        }
         text = remainingMessage?.trim() || "Hello";
         log.engine.info(`[RoutingCoordinator] @${owlName} cleared specialist pin`);
         return { text, activeOwlName: this.defaultOwlName, parliamentHandled: false };
@@ -64,9 +50,6 @@ export class RoutingCoordinator {
       if (spec) {
         text = remainingMessage?.trim() || "Hello";
         if (session) session.metadata.activeOwlName = spec.name;
-        if (this.sessionStateStore && message.userId) {
-          this.sessionStateStore.save(message.userId, { activeOwlName: spec.name, pinnedAt: new Date().toISOString() }).catch(() => {});
-        }
         this.applySpecialist(spec, engineCtx, callbacks);
         await this.injectMemoryContext(spec.name, message.sessionId, text, engineCtx);
         activeOwlName = spec.name;
@@ -102,9 +85,6 @@ export class RoutingCoordinator {
       if (routingDecision.type === "specialist") {
         const spec = routingDecision.owl;
         if (session) session.metadata.activeOwlName = spec.name;
-        if (this.sessionStateStore && message.userId) {
-          this.sessionStateStore.save(message.userId, { activeOwlName: spec.name, pinnedAt: new Date().toISOString() }).catch(() => {});
-        }
         this.applySpecialist(spec, engineCtx, callbacks);
         await this.injectMemoryContext(spec.name, message.sessionId, text, engineCtx);
         activeOwlName = spec.name;
