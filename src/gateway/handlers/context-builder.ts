@@ -237,6 +237,11 @@ The user has no active tasks right now. Be concise and helpful:
       }
     }
 
+    let openTasksContext = "";
+    if (this.ctx.taskOwnershipManager && userId) {
+      openTasksContext = this.ctx.taskOwnershipManager.buildPromptBlock(userId);
+    }
+
     // Conversation digest (L1 working memory) — persisted semantic snapshot of
     // what was found/decided/failed in the previous turn. Injected FIRST so the
     // model always knows "what I just did" before reading raw history.
@@ -656,6 +661,7 @@ The user has no active tasks right now. Be concise and helpful:
       digestContext, // L1: artifacts/decisions/failures from last turn
       compressionSummaryContext, // L2: compressed history of older messages
       userMemoryContext, // L2.5: cross-session user facts (UserMemoryStore)
+      openTasksContext,  // L2.6: open tasks owned by active owl
       temporalContext,
       channelFormatHint,
       this.ctx.memoryContext ?? "",

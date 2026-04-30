@@ -107,6 +107,10 @@ import { ChannelAdapterV1Shim, defaultCapsForV1 } from "./adapter-v1-shim.js";
 import { SessionService } from "../session/service.js";
 import { UserMemoryStore } from "../session/user-memory-store.js";
 import { migrateJsonSessionsToSQLite } from "../session/migrate.js";
+import { OwlBrain } from "../routing/owl-brain.js";
+import { UserProfileService } from "../routing/user-profile-service.js";
+import { TaskOwnershipManager } from "../routing/task-ownership-manager.js";
+import { RoutingStatusReporter } from "../routing/routing-status-reporter.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -170,6 +174,7 @@ export class OwlGateway {
   private gapLearner: GapLearner | null = null;
   private secretaryRouter: SecretaryRouter | null = null;
   private routingCoordinator: RoutingCoordinator | null = null;
+  private owlBrain: OwlBrain | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -473,6 +478,29 @@ export class OwlGateway {
       migrateJsonSessionsToSQLite(ctx.sessionStore, ctx.db, ctx.owl.persona.name).catch((err) => {
         log.engine.warn(`[Migration] JSON→SQLite migration failed: ${err instanceof Error ? err.message : err}`);
       });
+    }
+
+    // ─── OwlBrain (Element 4 — routing coordinator) ───────────────
+    if (ctx.db) {
+      const userProfileSvc = new UserProfileService(
+        ctx.db,
+        ctx.goalGraph ?? undefined,
+        ctx.episodicMemory ?? undefined,
+        ctx.userMemoryStore ?? undefined,
+      );
+      ctx.userProfileService = userProfileSvc;
+      ctx.taskOwnershipManager = new TaskOwnershipManager(ctx.db);
+      ctx.routingStatusReporter = new RoutingStatusReporter(ctx.db);
+      this.owlBrain = new OwlBrain(
+        ctx.specializedRegistry,
+        ctx.db,
+        ctx.owl.persona.name,
+        userProfileSvc,
+        ctx.pelletStore,
+        ctx.digestManager,
+      );
+      this.owlBrain.setSecretaryRouterGetter(() => this.secretaryRouter);
+      log.engine.info("[OwlBrain] Initialized");
     }
 
     // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
@@ -920,6 +948,18 @@ export class OwlGateway {
       return {
         content:
           "🧹 Context cleared! Starting fresh. What would you like to work on?",
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+      };
+    }
+
+    // ─── Status query interception ──────────────────────────────
+    if (this.ctx.routingStatusReporter && RoutingStatusReporter.isStatusQuery(message.text)) {
+      const report = this.ctx.routingStatusReporter.getStatusReport(message.userId);
+      const content = this.ctx.routingStatusReporter.formatForChannel(report, message.channelId);
+      return {
+        content,
         owlName: this.ctx.owl.persona.name,
         owlEmoji: this.ctx.owl.persona.emoji,
         toolsUsed: [],
@@ -1748,7 +1788,12 @@ export class OwlGateway {
       this.secretaryRouter = new SecretaryRouter(this.ctx.specializedRegistry);
     }
     let routingResult: RoutingResult | null = null;
-    if (this.routingCoordinator) {
+    if (this.owlBrain) {
+      const brainResult = await this.owlBrain.resolve(text, message, engineCtx, callbacks, session);
+      text = brainResult.text;
+      activeOwlName = brainResult.activeOwlName;
+      routingResult = { text: brainResult.text, activeOwlName: brainResult.activeOwlName, parliamentHandled: brainResult.parliamentHandled };
+    } else if (this.routingCoordinator) {
       routingResult = await this.routingCoordinator.resolve(text, message, engineCtx, callbacks, session);
       text = routingResult.text;
       activeOwlName = routingResult.activeOwlName;
@@ -2058,6 +2103,16 @@ export class OwlGateway {
           this.domainExpertise!.recordToolExecution(domain, true);
         }
       })());
+    }
+
+    // ─── Task commitment detection ──────────────────────────────
+    if (this.ctx.taskOwnershipManager && response.content) {
+      this.ctx.taskOwnershipManager.detectAndCreate(
+        message.userId,
+        activeOwlName,
+        session.id,
+        response.content,
+      );
     }
 
     return toGatewayResponse(response);

@@ -349,4 +349,10 @@ export interface GatewayContext {
   // ─── Session Service (Element 3 — unified session management) ────
   sessionService?: import("../session/service.js").SessionService;
   userMemoryStore?: import("../session/user-memory-store.js").UserMemoryStore;
+
+  // ─── OwlBrain (Element 4 — routing coordinator) ───────────────
+  owlBrain?: import("../routing/owl-brain.js").OwlBrain;
+  taskOwnershipManager?: import("../routing/task-ownership-manager.js").TaskOwnershipManager;
+  routingStatusReporter?: import("../routing/routing-status-reporter.js").RoutingStatusReporter;
+  userProfileService?: import("../routing/user-profile-service.js").UserProfileService;
 }
