@@ -1,5 +1,6 @@
 import { SessionStore } from "../memory/store.js";
 import { MemoryDatabase } from "../memory/db.js";
+import { log } from "../logger.js";
 
 export async function migrateJsonSessionsToSQLite(
   sessionStore: SessionStore,
@@ -29,8 +30,6 @@ export async function migrateJsonSessionsToSQLite(
     db.messages.append(sessionId, userId, owlName, session.messages);
     await sessionStore.deleteSession(sessionId);
 
-    console.log(
-      `[Migration] Migrated session ${sessionId} — ${session.messages.length} messages`,
-    );
+    log.engine.info(`[Migration] Migrated session ${sessionId} — ${session.messages.length} messages`);
   }
 }

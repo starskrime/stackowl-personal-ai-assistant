@@ -1121,6 +1121,10 @@ class MessagesRepo {
     const placeholders = ids.map(() => "?").join(",");
     this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(ids);
   }
+
+  deleteSession(sessionId: string): void {
+    this.db.prepare("DELETE FROM messages WHERE session_id = ?").run(sessionId);
+  }
 }
 
 class FactsRepo {

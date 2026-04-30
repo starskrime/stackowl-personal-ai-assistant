@@ -82,6 +82,10 @@ export class SessionService {
     const oldest = this.db.messages.getOldestN(sessionId, overflow);
     if (oldest.length === 0) return;
 
+    // Note: getSession() and getOldestN() are two separate DB reads. If messages were inserted
+    // between these calls (by a background path bypassing the lane queue), the slice indices
+    // could diverge from the oldest[] IDs. The lane queue in OwlGateway serialises per-session
+    // access so this is safe in practice.
     const firstSeq = oldest[0].seq;
     const lastSeq = oldest[oldest.length - 1].seq;
 

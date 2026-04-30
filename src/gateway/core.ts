@@ -918,7 +918,12 @@ export class OwlGateway {
       this.wizardSessions.delete(message.sessionId);
       session.messages = [];
       this.attemptLogs.delete(message.sessionId);
-      await this.ctx.sessionStore.saveSession(session);
+      if (this.ctx.sessionService && this.ctx.db) {
+        this.ctx.db.messages.deleteSession(message.sessionId);
+        this.ctx.sessionService.evictFromCache(message.sessionId);
+      } else {
+        await this.ctx.sessionStore.saveSession(session);
+      }
       log.engine.info(`Session reset for ${message.sessionId}`);
       return {
         content:
