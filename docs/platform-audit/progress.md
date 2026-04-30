@@ -13,7 +13,7 @@
 |---|---------|--------|---------|
 | 1 | **Channels** (CLI, Telegram, Slack, Voice, Web) | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 2 | GatewayMessage creation | 🔧 reviewed — improvements committed | 2026-04-28 |
-| 3 | SessionManager (load / create) | 🔄 in progress — brainstorming design | 2026-04-29 |
+| 3 | SessionManager (load / create) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 4 | RoutingCoordinator (owl selection + pin) | ⬜ pending | — |
 | 5 | ContextBuilder (memory + pellets + skills) | ⬜ pending | — |
 | 6 | OwlEngine — ReAct loop | ⬜ pending | — |
@@ -93,7 +93,7 @@ All adapter call sites that construct a `GatewayMessage` literal before calling 
 
 ## Element 3: SessionManager (load / create)
 
-### Status: 🔄 Design in progress
+### Status: 🔧 Implemented + merged
 
 ### Findings
 - `SessionManager` class exists and is instantiated but **never called** — core.ts has duplicate inline session management
@@ -101,27 +101,28 @@ All adapter call sites that construct a `GatewayMessage` literal before calling 
 - `CrossSessionStore.extractFromSession()` never called — facts never auto-populated from conversations
 - SQLite `summaries` table exists but 50-message limit silently drops messages instead of summarizing
 - Fact extraction only triggered by user 👍/👎 feedback — never automatic
-- `approach_library` and `prompt_optimization_log` tables created but never written
 
-### Design Decisions (approved)
-- **Option B — Unified `SessionService`** replacing `SessionManager` + `CrossSessionStore`
-- SQLite as single source of truth for session messages (migrate from JSON files)
-- Session message limit raised from 50 → 300; LLM summarization into `summaries` table before dropping
-- Smart end detection: `CompletionTracker.isComplete()` + greeting reset + 2h timeout
-- Async LLM extraction after session ends → writes to existing `facts` table (keyed by `userId`)
-- **`UserMemoryStore`** — query layer over SQLite `facts` table + fastembed semantic search
-- Context injection: summary at session start + top-3 semantic hits per turn (shared 400-token budget)
-- Deduplication: 0.88 cosine threshold (same as pellet dedup)
+### Improvements Implemented
+- **`SessionService`** (`src/session/service.ts`) — unified session lifecycle replacing dead `SessionManager` + inline core.ts methods
+- SQLite as single source of truth; one-shot JSON→SQLite migration on startup (`src/session/migrate.ts`)
+- Session message limit raised 50 → 300; summary-before-drop via `MessageCompressor` before eviction
+- Greeting-reset detection: `SessionService.isGreetingPattern()` fires `endSession()` at natural conversation boundaries
+- **`UserMemoryStore`** (`src/session/user-memory-store.ts`) — fastembed semantic search over `facts` table; 0.88 cosine dedup
+- **`extractFactsFromConversation()`** (`src/session/fact-extractor.ts`) — LLM-based extraction at session end → `facts` table
+- `userMemoryContext` injected as L2.5 layer in `context-builder.ts` (top-3 semantic hits per turn)
+- Dead `src/gateway/handlers/session-manager.ts` deleted
+- New `MessagesRepo.getOldestN()`, `deleteByIds()`, `deleteSession()` methods added to `src/memory/db.ts`
+- `deleteSession()` added to `SessionStore` (`src/memory/store.ts`)
 
-### Design Sections Status
-- ✅ Section 1: Architecture
-- ✅ Section 2: SessionService interface
-- ✅ Section 3: UserMemoryStore (revised after deep research)
-- ✅ Section 4: Context injection
-- ✅ Section 5: Smart end detection + async extraction (revised)
-- ✅ Section 6: SQLite migration
-- ✅ Section 7: 300-message rolling window with summary-before-drop
-- ⬜ Spec write + implementation plan
+### Commits (feature/session-management → merged to main)
+- `e572f0b`–`5e42cf8` — MessagesRepo rolling window methods + tests
+- `809336c`–`94c9ca4` — UserMemoryStore + tests
+- `f4b27fb` — fact-extractor + tests
+- `ed5c201`–`6c60eac` — JSON→SQLite migration + tests
+- `38180d7` — SessionService + rolling window tests
+- `e03b3f7` — GatewayContext types
+- `63ccdc5` — core.ts + context-builder.ts wiring
+- final commit — delete session-manager.ts, /reset SQLite fix, logger cleanup
 
 ---
 
