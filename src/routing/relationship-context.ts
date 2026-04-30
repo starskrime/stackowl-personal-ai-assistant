@@ -13,18 +13,14 @@ export interface RelationshipSummary {
 }
 
 export class RelationshipContext {
-  // reserved for Task 11 wiring
-  goalGraph: GoalGraph | undefined;
-  episodicMemory: EpisodicMemory | undefined;
-
   constructor(
     private db: Pick<MemoryDatabase, "userProfiles" | "owlTasks">,
-    goalGraph: GoalGraph | undefined,
-    episodicMemory: EpisodicMemory | undefined,
+    private goalGraph: GoalGraph | undefined,       // reserved for Task 11
+    private episodicMemory: EpisodicMemory | undefined, // reserved for Task 11
     private userMemoryStore: UserMemoryStore | undefined,
   ) {
-    this.goalGraph = goalGraph;
-    this.episodicMemory = episodicMemory;
+    void this.goalGraph;
+    void this.episodicMemory;
   }
 
   async buildSummary(userId: string): Promise<RelationshipSummary> {
