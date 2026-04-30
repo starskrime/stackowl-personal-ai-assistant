@@ -3,8 +3,8 @@ import type { MemoryDatabase, OwlTask, OwlTaskPriority } from "../memory/db.js";
 import { v4 as uuidv4 } from "uuid";
 
 const COMMITMENT_PATTERNS = [
-  /i'?ll\s+(follow\s+up|remind|check\s+back|research|look\s+into|handle|take\s+care|investigate|get\s+back)/i,
-  /i\s+will\s+(follow\s+up|remind|check\s+back|research|look\s+into|handle|investigate)/i,
+  /\bi'?ll\s+(follow\s+up|remind|check\s+back|research|look\s+into|handle|take\s+care|investigate|get\s+back)/i,
+  /\bi\s+will\s+(follow\s+up|remind|check\s+back|research|look\s+into|handle|investigate)/i,
   /let\s+me\s+(follow\s+up|check|research|look\s+into|investigate)/i,
   /i'?ll\s+(get\s+that|do\s+that|sort\s+that|fix\s+that)/i,
 ];
@@ -47,9 +47,9 @@ export class TaskOwnershipManager {
     for (const pattern of COMMITMENT_PATTERNS) {
       const match = responseText.match(pattern);
       if (match) {
-        const matchIndex = responseText.indexOf(match[0]);
+        const matchIndex = match.index!;
         const snippet = responseText.slice(matchIndex, matchIndex + 80);
-        const title = snippet.replace(/[^a-z0-9 ]/gi, " ").slice(0, 60).trim();
+        const title = (snippet.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").slice(0, 60).trim()) || match[0].slice(0, 60);
         return this.createTask(userId, owlName, title, undefined, "normal", sessionId);
       }
     }
