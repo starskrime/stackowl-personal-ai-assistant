@@ -1,10 +1,8 @@
 import { MemoryDatabase } from "../memory/db.js";
+import type { FactCategory } from "../memory/db.js";
 import { embed, isEmbedderReady } from "../pellets/embedder.js";
 
-export type FactCategory =
-  | "skill" | "preference" | "project_detail" | "personal" | "context"
-  | "goal" | "habit" | "relationship" | "decision" | "open_question"
-  | "active_goal" | "sub_goal";
+export type { FactCategory };
 
 const DEDUP_THRESHOLD = 0.88;
 
@@ -32,13 +30,12 @@ export class UserMemoryStore {
     if (isEmbedderReady()) {
       const newEmbedding = await embed(fact);
       if (newEmbedding) {
-        // dedup check — getAllForUser returns Fact[] with embedding: number[] | undefined
-        const existing = this.db.facts.getAllForUser(userId);
-        for (const row of existing) {
-          if (row.embedding) {
-            const sim = cosineSimilarity(newEmbedding, row.embedding);
-            if (sim >= DEDUP_THRESHOLD) return; // duplicate — skip
-          }
+        // dedup check — semanticSearch returns top-1 nearest fact (already sorted by score);
+        // semanticSearch strips scores so we recompute similarity for just this one result
+        const topMatches = this.db.facts.semanticSearch(newEmbedding, userId, 1);
+        if (topMatches.length > 0 && topMatches[0].embedding) {
+          const sim = cosineSimilarity(newEmbedding, topMatches[0].embedding);
+          if (sim >= DEDUP_THRESHOLD) return; // duplicate — skip
         }
         this.db.facts.add({
           userId,
@@ -65,14 +62,7 @@ export class UserMemoryStore {
   }
 
   private ftsFallback(userId: string, query: string, limit: number): string[] {
-    try {
-      const rows = (this.db.rawDb as any)
-        .prepare("SELECT fact FROM facts_fts WHERE facts_fts MATCH ? AND user_id = ? LIMIT ?")
-        .all(query, userId, limit) as Array<{ fact: string }>;
-      return rows.map((r) => r.fact);
-    } catch {
-      return [];
-    }
+    return this.db.facts.search(query, userId, limit).map((r) => r.fact);
   }
 }
 
