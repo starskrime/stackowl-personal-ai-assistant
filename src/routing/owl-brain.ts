@@ -50,6 +50,10 @@ export class OwlBrain {
         if (spec) {
           session.metadata.activeOwlName = savedPin;
           log.engine.info(`[OwlBrain] Restored SQLite pin "${savedPin}" for ${message.userId}`);
+        } else {
+          // Owl no longer exists — clear stale pin
+          this.db.userProfiles.setPin(message.userId, null);
+          log.engine.warn(`[OwlBrain] Cleared stale pin "${savedPin}" for ${message.userId} (owl not found)`);
         }
       }
     }
@@ -77,6 +81,8 @@ export class OwlBrain {
         this.appendHistory(message.userId, spec.name, "@mention");
         log.engine.info(`[OwlBrain] @mention → "${spec.name}" (pinned)`);
         return { text, activeOwlName, parliamentHandled: false };
+      } else {
+        log.engine.warn(`[OwlBrain] @mention "${owlName}" not found in registry — ignored`);
       }
     }
 
@@ -88,8 +94,13 @@ export class OwlBrain {
         await this.injectMemoryContext(pinnedSpec.name, message.sessionId, text, engineCtx);
         this.appendHistory(message.userId, pinnedSpec.name, "pin-resume");
         return { text, activeOwlName: pinnedSpec.name, parliamentHandled: false };
+      } else {
+        session.metadata.activeOwlName = undefined;
+        // Also clear SQLite pin — owl no longer exists
+        if (message.userId) {
+          this.db.userProfiles.setPin(message.userId, null);
+        }
       }
-      session.metadata.activeOwlName = undefined;
     }
 
     // 4. Signal-aware routing
@@ -104,6 +115,7 @@ export class OwlBrain {
 
         if (decision.type === "specialist") {
           if (session) session.metadata.activeOwlName = decision.owl.name;
+          // Auto-pins on every signal-routing specialist match; user can clear with @coordinator
           this.db.userProfiles.setPin(message.userId, decision.owl.name);
           this.applySpecialist(decision.owl, engineCtx, callbacks);
           await this.injectMemoryContext(decision.owl.name, message.sessionId, text, engineCtx);
