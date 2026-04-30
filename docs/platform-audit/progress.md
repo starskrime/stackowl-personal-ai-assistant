@@ -15,7 +15,7 @@
 | 2 | GatewayMessage creation | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 3 | SessionManager (load / create) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
-| 5 | ContextBuilder (memory + pellets + skills) | ⬜ pending | — |
+| 5 | ContextBuilder (memory + pellets + skills) | 🔄 design approved — implementation pending | 2026-04-29 |
 | 6 | OwlEngine — ReAct loop | ⬜ pending | — |
 | 7 | Tool layer (registry, execution, permissions) | ⬜ pending | — |
 | 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
