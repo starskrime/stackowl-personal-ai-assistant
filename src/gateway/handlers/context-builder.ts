@@ -247,7 +247,9 @@ The user has no active tasks right now. Be concise and helpful:
     if (this.ctx.relationshipContext && effectiveUserId) {
       try {
         relationshipContext = await this.ctx.relationshipContext.buildPromptBlock(effectiveUserId);
-      } catch { /* non-critical */ }
+      } catch (err) {
+        log.engine.warn(`[ContextBuilder] relationshipContext failed (non-critical): ${err}`);
+      }
     }
 
     // Conversation digest (L1 working memory) — persisted semantic snapshot of

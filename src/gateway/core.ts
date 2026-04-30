@@ -2547,6 +2547,7 @@ export class OwlGateway {
       this.ctx.predictiveQueue?.save?.().catch(() => {});
       this.ctx.skillArena?.save?.().catch(() => {});
       this.ctx.contextMesh?.stop?.();
+      this.ctx.backgroundJobRunner?.stop();
     };
     process.once("beforeExit", saveOnExit);
   }
