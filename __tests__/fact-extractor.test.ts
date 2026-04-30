@@ -55,8 +55,9 @@ describe("extractFactsFromConversation", () => {
 
   it("filters out facts with invalid categories", async () => {
     const json = JSON.stringify([
-      { fact: "Likes cats", category: "episode" },  // invalid
-      { fact: "Expert in Go", category: "skill" },   // valid
+      { fact: "Likes cats", category: "episode" },      // invalid
+      { fact: "Made a correction", category: "correction" }, // invalid
+      { fact: "Expert in Go", category: "skill" },      // valid
     ]);
     const provider = makeMockProvider(json);
     const registry = makeMockRegistry(provider);
@@ -79,5 +80,27 @@ describe("extractFactsFromConversation", () => {
     const registry = makeMockRegistry(undefined);
     const facts = await extractFactsFromConversation(messages, undefined, registry as any, "missing", "model");
     expect(facts).toEqual([]);
+  });
+
+  it("uses intelligence.resolve('extraction') when intelligence is provided", async () => {
+    const json = JSON.stringify([{ fact: "Writes TypeScript", category: "skill" }]);
+    const provider = makeMockProvider(json);
+    const registry = makeMockRegistry(provider);
+
+    const mockIntelligence = {
+      resolve: vi.fn().mockReturnValue({ provider: "openai", model: "gpt-4o-mini", tier: "low" }),
+    };
+
+    const facts = await extractFactsFromConversation(
+      [{ role: "user" as const, content: "I write TypeScript" }],
+      mockIntelligence as any,
+      registry as any,
+      "fallback-provider",
+      "fallback-model",
+    );
+
+    expect(mockIntelligence.resolve).toHaveBeenCalledWith("extraction");
+    expect(facts).toHaveLength(1);
+    expect(facts[0].category).toBe("skill");
   });
 });
