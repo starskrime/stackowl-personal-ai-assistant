@@ -52,7 +52,6 @@ import { RateLimitMiddleware, LoggingMiddleware } from "./middleware.js";
 import { getReadyMessages } from "../tools/utils/timer.js";
 import { PostProcessor } from "./handlers/post-processor.js";
 import { ContextBuilder } from "./handlers/context-builder.js";
-import { SessionManager } from "./handlers/session-manager.js";
 import { GapLearner } from "../agent/gap-learner.js";
 import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
 import { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
@@ -171,8 +170,6 @@ export class OwlGateway {
   // ─── Extracted Handlers (Improvement #4) ───────────────────
   private postProcessor: PostProcessor;
   private contextBuilder: ContextBuilder;
-  /** Extracted session manager — used by new code paths, old inline code migrating incrementally */
-  sessionManager: SessionManager;
   private taskQueue: TaskQueue;
   private gapLearner: GapLearner | null = null;
   private secretaryRouter: SecretaryRouter | null = null;
@@ -266,13 +263,6 @@ export class OwlGateway {
         ctx.pelletStore,
       );
     }
-
-    // Initialize session manager (Improvement #4)
-    this.sessionManager = new SessionManager(
-      ctx.sessionStore,
-      ctx.owl.persona.name,
-      ctx.eventBus ?? null,
-    );
 
     // Ensure DNA is persisted on process exit.
     // Without this, any mutations from the current session are lost when the
