@@ -179,6 +179,14 @@ export interface EventPayloads {
     to: string;
     channel: string;
   };
+
+  // ─── Background Job Events ───────────────────────────────────
+  "job:complete": {
+    userId: string;
+    jobId: string;
+    type: string;
+    result: string;
+  };
 }
 
 export type EventType = keyof EventPayloads;
