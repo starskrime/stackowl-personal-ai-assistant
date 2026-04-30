@@ -470,7 +470,7 @@ export class OwlGateway {
     }
 
     // Auto-initialize SessionService + UserMemoryStore (SQLite-backed session management)
-    if (ctx.db && ctx.compressor && !ctx.sessionService) {
+    if (ctx.db && ctx.compressor && ctx.providerRegistry && !ctx.sessionService) {
       const userMemoryStore = new UserMemoryStore(ctx.db);
       ctx.userMemoryStore = userMemoryStore;
 
@@ -479,7 +479,7 @@ export class OwlGateway {
         ctx.compressor,
         userMemoryStore,
         ctx.intelligence,
-        ctx.providerRegistry!,
+        ctx.providerRegistry,
         ctx.config.defaultProvider ?? "openai",
         ctx.config.defaultModel ?? "gpt-4o-mini",
       );
@@ -2112,7 +2112,7 @@ export class OwlGateway {
     // Async fact extraction → facts table (fire-and-forget)
     if (this.ctx.sessionService && messages.length >= 4) {
       const userId = this.ctx.sessionService.getUserId(sessionId)
-        ?? sessionId.split(":").slice(1).join(":");
+        ?? (sessionId.split(":").slice(1).join(":") || sessionId);
       this.ctx.sessionService.extractAndStoreFacts(
         sessionId,
         userId,
@@ -3531,6 +3531,7 @@ export class OwlGateway {
           });
         }
         this.sessions.delete(key);
+        this.ctx.sessionService?.evictFromCache(key);
         this.stuckStreak.delete(key);
         this.attemptLogs.delete(key);
         log.engine.info(

@@ -229,7 +229,7 @@ The user has no active tasks right now. Be concise and helpful:
     if (this.ctx.sessionService && this.ctx.userMemoryStore) {
       try {
         const userId = this.ctx.sessionService.getUserId(session.id)
-          ?? session.id.split(":").slice(1).join(":");
+          ?? (session.id.split(":").slice(1).join(":") || session.id);
         const result = await this.ctx.sessionService.buildContext(session.id, userId, userMessage || "");
         userMemoryContext = result.recentFacts;
       } catch {
