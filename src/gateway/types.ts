@@ -345,4 +345,8 @@ export interface GatewayContext {
 
   // ─── Intelligence Router (tiered model routing) ───────────
   intelligence?: import("../intelligence/router.js").IntelligenceRouter;
+
+  // ─── Session Service (Element 3 — unified session management) ────
+  sessionService?: import("../session/service.js").SessionService;
+  userMemoryStore?: import("../session/user-memory-store.js").UserMemoryStore;
 }
