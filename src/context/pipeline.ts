@@ -1,4 +1,4 @@
-import { BudgetController } from "./budget-controller.js";
+import { BudgetController, estimateTokens } from "./budget-controller.js";
 import type { ContextCache } from "./cache.js";
 import type { LayerHealthMonitor } from "./circuit-breaker.js";
 import { DAGPlanner } from "./dag-planner.js";
@@ -121,7 +121,7 @@ export class ContextPipeline {
           batchIndex,
           fired: true,
           cacheHit: true,
-          tokensUsed: Math.ceil(budgeted.length / 3.8),
+          tokensUsed: estimateTokens(budgeted),
           durationMs: Date.now() - start,
         });
         return;
@@ -129,11 +129,12 @@ export class ContextPipeline {
     }
 
     try {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const output = await Promise.race([
-        layer.build(request, triage, deps),
-        new Promise<string>((_, reject) =>
-          setTimeout(() => reject(new Error("timeout")), LAYER_TIMEOUT_MS),
-        ),
+        layer.build(request, triage, deps).finally(() => clearTimeout(timeoutId)),
+        new Promise<string>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("timeout")), LAYER_TIMEOUT_MS);
+        }),
       ]);
 
       this.healthMonitor.getBreaker(layer.name).recordSuccess(Date.now() - start);
@@ -144,7 +145,7 @@ export class ContextPipeline {
           layer.name,
           cacheKey,
           budgeted,
-          300_000,
+          layer.cacheTtlMs ?? 300_000,
           triage.effectiveUserId,
         );
       }
@@ -156,7 +157,7 @@ export class ContextPipeline {
         batchIndex,
         fired: true,
         cacheHit: false,
-        tokensUsed: Math.ceil(budgeted.length / 3.8),
+        tokensUsed: estimateTokens(budgeted),
         durationMs: Date.now() - start,
       });
     } catch (err) {

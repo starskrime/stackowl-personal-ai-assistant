@@ -73,6 +73,8 @@ export interface ContextLayer {
   produces: string[];
   dependsOn: string[];
   alwaysInclude?: boolean;
+  /** Cache TTL in milliseconds; undefined = use pipeline default (300_000 ms) */
+  cacheTtlMs?: number;
   shouldFire(triage: TriageSignals): boolean;
   build(req: ContextRequest, triage: TriageSignals, deps: LayerResults): Promise<string>;
   getCacheKey?(req: ContextRequest, triage: TriageSignals): string | null;
