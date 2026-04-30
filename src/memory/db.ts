@@ -2752,14 +2752,17 @@ class UserProfilesRepo {
   }
 
   setPin(userId: string, owlName: string | null): void {
-    this.db.prepare(`
-      INSERT INTO user_profiles (user_id, active_pin, pinned_at, updated_at)
-      VALUES (?, ?, datetime('now'), datetime('now'))
-      ON CONFLICT(user_id) DO UPDATE SET
-        active_pin = excluded.active_pin,
-        pinned_at = excluded.pinned_at,
-        updated_at = excluded.updated_at
-    `).run(userId, owlName);
+    if (owlName === null) {
+      this.db.prepare(`INSERT INTO user_profiles (user_id, active_pin, pinned_at, updated_at)
+        VALUES (?, NULL, NULL, datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+          active_pin = NULL, pinned_at = NULL, updated_at = datetime('now')`).run(userId);
+    } else {
+      this.db.prepare(`INSERT INTO user_profiles (user_id, active_pin, pinned_at, updated_at)
+        VALUES (?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+          active_pin = excluded.active_pin, pinned_at = excluded.pinned_at, updated_at = excluded.updated_at`).run(userId, owlName);
+    }
   }
 
   appendRoutingHistory(userId: string, entry: RoutingHistoryEntry): void {
@@ -2840,16 +2843,13 @@ class JobsRepo {
   }
 
   dequeueNext(): OwlJob | null {
-    const row = this.db.prepare(`
-      SELECT * FROM owl_jobs
-      WHERE status = 'queued' AND scheduled_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      ORDER BY scheduled_at ASC LIMIT 1
-    `).get() as any;
+    const row = this.db.prepare(
+      `SELECT * FROM owl_jobs WHERE status = 'queued' AND scheduled_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ORDER BY scheduled_at ASC LIMIT 1`
+    ).get() as any;
     if (!row) return null;
-    this.db.prepare(
-      "UPDATE owl_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?"
-    ).run(row.id);
-    return rowToOwlJob({ ...row, status: "running" });
+    const startedAt = new Date().toISOString();
+    this.db.prepare("UPDATE owl_jobs SET status = 'running', started_at = ? WHERE id = ?").run(startedAt, row.id);
+    return rowToOwlJob({ ...row, status: "running", started_at: startedAt });
   }
 
   markDone(jobId: string, result: string): void {
