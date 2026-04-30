@@ -6,7 +6,7 @@
  */
 
 import { join } from "node:path";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import type { ChatMessage } from "../providers/base.js";
 
@@ -104,6 +104,16 @@ export class SessionStore {
     } catch (error) {
       console.error("[SessionStore] Failed to list sessions:", error);
       return [];
+    }
+  }
+
+  /**
+   * Delete a session JSON file by session ID.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const filePath = join(this.sessionsDir, `${sessionId}.json`);
+    if (existsSync(filePath)) {
+      await unlink(filePath);
     }
   }
 
