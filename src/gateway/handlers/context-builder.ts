@@ -224,6 +224,19 @@ The user has no active tasks right now. Be concise and helpful:
       }
     }
 
+    // L2.5 — User memory (cross-session facts from UserMemoryStore)
+    let userMemoryContext = "";
+    if (this.ctx.sessionService && this.ctx.userMemoryStore) {
+      try {
+        const userId = this.ctx.sessionService.getUserId(session.id)
+          ?? session.id.split(":").slice(1).join(":");
+        const result = await this.ctx.sessionService.buildContext(session.id, userId, userMessage || "");
+        userMemoryContext = result.recentFacts;
+      } catch {
+        // Non-fatal — user memory is supplementary
+      }
+    }
+
     // Conversation digest (L1 working memory) — persisted semantic snapshot of
     // what was found/decided/failed in the previous turn. Injected FIRST so the
     // model always knows "what I just did" before reading raw history.
@@ -642,6 +655,7 @@ The user has no active tasks right now. Be concise and helpful:
       continuityContext, // L1.5: pinned prior-response block (FOLLOW_UP/CONTINUATION/TOPIC_SWITCH)
       digestContext, // L1: artifacts/decisions/failures from last turn
       compressionSummaryContext, // L2: compressed history of older messages
+      userMemoryContext, // L2.5: cross-session user facts (UserMemoryStore)
       temporalContext,
       channelFormatHint,
       this.ctx.memoryContext ?? "",

@@ -108,6 +108,9 @@ import { ChannelRegistry } from "./channel-registry.js";
 import { GatewayEventBus } from "./event-bus.js";
 import { DeliveryRouter } from "./delivery-router.js";
 import { ChannelAdapterV1Shim, defaultCapsForV1 } from "./adapter-v1-shim.js";
+import { SessionService } from "../session/service.js";
+import { UserMemoryStore } from "../session/user-memory-store.js";
+import { migrateJsonSessionsToSQLite } from "../session/migrate.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -466,6 +469,28 @@ export class OwlGateway {
       );
     }
 
+    // Auto-initialize SessionService + UserMemoryStore (SQLite-backed session management)
+    if (ctx.db && ctx.compressor && !ctx.sessionService) {
+      const userMemoryStore = new UserMemoryStore(ctx.db);
+      ctx.userMemoryStore = userMemoryStore;
+
+      ctx.sessionService = new SessionService(
+        ctx.db,
+        ctx.compressor,
+        userMemoryStore,
+        ctx.intelligence,
+        ctx.providerRegistry!,
+        ctx.config.defaultProvider ?? "openai",
+        ctx.config.defaultModel ?? "gpt-4o-mini",
+      );
+      log.engine.info("[memory] SessionService initialized (SQLite-backed)");
+
+      // Fire-and-forget JSON→SQLite migration for existing sessions
+      migrateJsonSessionsToSQLite(ctx.sessionStore, ctx.db, ctx.owl.persona.name).catch((err) => {
+        log.engine.warn(`[Migration] JSON→SQLite migration failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
+
     // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
     // Always enabled — requires no config, no external deps, writes to workspace/memory/digests/.
     if (!ctx.digestManager) {
@@ -812,6 +837,17 @@ export class OwlGateway {
     message: GatewayMessage,
     callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse> {
+    // Greeting-reset check: if user sends a lone greeting and session has history,
+    // end and evict the old session so they start fresh.
+    if (this.ctx.sessionService && SessionService.isGreetingPattern(message.text)) {
+      const existingCache = this.sessions.get(message.sessionId);
+      if (existingCache && existingCache.session.messages.length >= 4) {
+        await this.endSession(message.sessionId);
+        this.sessions.delete(message.sessionId);
+        this.ctx.sessionService.evictFromCache(message.sessionId);
+      }
+    }
+
     const session = await this.getOrCreateSession(message);
 
     // Check if user is giving feedback on a recent gap-learning response
@@ -2071,6 +2107,20 @@ export class OwlGateway {
           `[endSession:episodic] Extraction failed: ${err instanceof Error ? err.message : err}`,
         );
       }
+    }
+
+    // Async fact extraction → facts table (fire-and-forget)
+    if (this.ctx.sessionService && messages.length >= 4) {
+      const userId = this.ctx.sessionService.getUserId(sessionId)
+        ?? sessionId.split(":").slice(1).join(":");
+      this.ctx.sessionService.extractAndStoreFacts(
+        sessionId,
+        userId,
+        (cache?.session.metadata as any)?.owlName ?? this.ctx.owl.persona.name,
+        messages,
+      ).catch((err) => {
+        log.engine.warn(`[endSession:facts] Fact extraction failed: ${err instanceof Error ? err.message : err}`);
+      });
     }
 
     // Legacy memory.md append-only consolidation — retired.
@@ -3378,7 +3428,21 @@ export class OwlGateway {
       return cached.session;
     }
 
-    // Load from disk or create fresh
+    // Delegate to SessionService (SQLite-backed) when available
+    if (this.ctx.sessionService) {
+      // Extract userId from sessionId (format: "channelId:userId" or "userId")
+      const parts = key.split(":");
+      const userId = message.userId ?? (parts.length >= 2 ? parts.slice(1).join(":") : key);
+      const session = await this.ctx.sessionService.getOrCreate(
+        key,
+        userId,
+        this.ctx.owl.persona.name,
+      );
+      this.sessions.set(key, { session, lastActivity: Date.now() });
+      return session;
+    }
+
+    // Load from disk or create fresh (JSON fallback)
     let session = await this.ctx.sessionStore.loadSession(key);
     if (!session) {
       session = this.ctx.sessionStore.createSession(this.ctx.owl.persona.name);
@@ -3399,18 +3463,36 @@ export class OwlGateway {
   ): Promise<void> {
     const snapshot = session.messages.slice();
     try {
+      // Build the new messages for this turn
+      const addedMessages: ChatMessage[] = [];
       if (!userAlreadySaved) {
-        session.messages.push({ role: "user", content: userText });
+        addedMessages.push({ role: "user", content: userText });
       }
       for (const msg of newMessages) {
-        session.messages.push(msg);
+        addedMessages.push(msg);
       }
       if (finalContent?.trim()) {
-        session.messages.push({ role: "assistant", content: finalContent });
+        addedMessages.push({ role: "assistant", content: finalContent });
+      }
+
+      // Apply to in-memory session
+      for (const msg of addedMessages) {
+        session.messages.push(msg);
       }
       if (session.messages.length > MAX_SESSION_HISTORY) {
         session.messages = session.messages.slice(-MAX_SESSION_HISTORY);
       }
+
+      // Delegate persistence to SessionService (SQLite) when available
+      if (this.ctx.sessionService && addedMessages.length > 0) {
+        await this.ctx.sessionService.addMessages(session.id, addedMessages);
+        const key = session.id;
+        const cached = this.sessions.get(key);
+        if (cached) cached.lastActivity = Date.now();
+        return;
+      }
+
+      // Fallback: persist to JSON session store
       await this.ctx.sessionStore.saveSession(session);
       const key = session.id;
       const cached = this.sessions.get(key);
