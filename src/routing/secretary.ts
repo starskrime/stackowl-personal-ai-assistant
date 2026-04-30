@@ -92,6 +92,69 @@ export class SecretaryRouter {
     return decision;
   }
 
+  async routeWithSignals(
+    message: string,
+    _userId: string,
+    signals: import("./user-profile-service.js").RoutingSignals,
+  ): Promise<RoutingDecision> {
+    const specialists = this.folderRegistry?.listSpecialists() ?? [];
+    if (specialists.length === 0) {
+      return { type: "direct", reason: "No specialized owls configured" };
+    }
+    if (message.length < MIN_MESSAGE_LENGTH) {
+      return { type: "direct", reason: "Message too short to classify" };
+    }
+
+    // Score each specialist with signal boosts
+    const scored = specialists.map((spec) => {
+      let score = this.computeKeywordScore(message, spec);
+
+      // Domain signal boost: active goals overlapping with owl's expertise
+      for (const domain of signals.domainStack) {
+        const domainLower = domain.toLowerCase();
+        if (spec.expertise.some((e) => domainLower.includes(e.toLowerCase()) || e.toLowerCase().includes(domainLower.split(" ")[0]))) {
+          score += 0.15;
+        }
+      }
+
+      // Fact signal boost: facts that mention this owl by name
+      for (const fact of signals.relevantFacts) {
+        if (fact.toLowerCase().includes(spec.name.toLowerCase())) {
+          score += 0.25;
+        }
+      }
+
+      return { spec, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+
+    if (best.score >= MATCH_SCORE_THRESHOLD) {
+      log.engine.info(`[SecretaryRouter] routeWithSignals → "${best.spec.name}" (score=${best.score.toFixed(2)})`);
+      return { type: "specialist", owl: best.spec, reason: `score=${best.score.toFixed(2)}` };
+    }
+
+    // Parliament detection
+    const lowerMsg = message.toLowerCase();
+    if (PARLIAMENT_KEYWORDS.some((kw) => lowerMsg.includes(kw))) {
+      return { type: "parliament", reason: "parliament keyword matched" };
+    }
+
+    return { type: "direct", reason: `max score ${best.score.toFixed(2)} below threshold` };
+  }
+
+  private computeKeywordScore(message: string, spec: SpecializedOwlSpec): number {
+    const lowerMsg = message.toLowerCase();
+    const keywords = spec.routingRules?.keywords ?? [];
+    const expertise = spec.expertise ?? [];
+    const allKeywords = [...keywords, ...expertise];
+    if (allKeywords.length === 0) return 0;
+    const matchCount = allKeywords.filter((kw) => lowerMsg.includes(kw.toLowerCase())).length;
+    const matchRatio = matchCount / allKeywords.length;
+    return matchRatio * MATCH_WEIGHT;
+  }
+
   private findBestMatch(message: string, targets: RoutingTarget[]): RoutingTarget | null {
     let bestMatch: RoutingTarget | null = null;
     let bestScore = 0;
