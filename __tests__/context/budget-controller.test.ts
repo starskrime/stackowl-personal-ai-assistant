@@ -44,4 +44,12 @@ describe("BudgetController", () => {
     const out = b.apply("L1", text, 4); // ~4 tokens = ~15 chars
     expect(out.endsWith(".") || out.endsWith("…[trimmed]")).toBe(true);
   });
+
+  it("uses remaining budget when it is tighter than layer maxTokens", () => {
+    const b = new BudgetController(20);
+    b.apply("L1", "first sentence here.", 10); // consume some tokens
+    const remaining = b.remaining;
+    const out = b.apply("L2", "word ".repeat(100), 100); // layer allows 100 but budget is tight
+    expect(estimateTokens(out)).toBeLessThanOrEqual(remaining + 1);
+  });
 });

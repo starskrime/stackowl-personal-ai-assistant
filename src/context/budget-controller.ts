@@ -2,6 +2,8 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.8);
 }
 
+const TRIM_SUFFIX = " …[trimmed]";
+
 export class BudgetController {
   private _consumed = 0;
 
@@ -12,7 +14,7 @@ export class BudgetController {
 
   reset(): void { this._consumed = 0; }
 
-  apply(layerName: string, text: string, maxTokens: number): string {
+  apply(_layerName: string, text: string, maxTokens: number): string {
     if (this.remaining <= 0) return "";
 
     const cap = Math.min(maxTokens, this.remaining);
@@ -30,7 +32,7 @@ export class BudgetController {
   }
 
   private trimAtBoundary(text: string, maxChars: number): string {
-    const hard = text.slice(0, maxChars - 12); // reserve room for suffix
+    const hard = text.slice(0, maxChars - (TRIM_SUFFIX.length + 1)); // reserve room for suffix
     const lastSentence = Math.max(
       hard.lastIndexOf(". "),
       hard.lastIndexOf("! "),
@@ -38,8 +40,8 @@ export class BudgetController {
       hard.lastIndexOf(".\n"),
     );
     if (lastSentence > maxChars * 0.5) {
-      return hard.slice(0, lastSentence + 1) + " …[trimmed]";
+      return hard.slice(0, lastSentence + 1) + TRIM_SUFFIX;
     }
-    return hard + "…[trimmed]";
+    return hard + TRIM_SUFFIX;
   }
 }
