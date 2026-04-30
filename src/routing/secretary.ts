@@ -40,14 +40,11 @@ interface RoutingTarget {
 
 export class SecretaryRouter {
   private folderRegistry?: SpecializedOwlRegistry;
-  private classify?: ClassifyFn;
 
   constructor(
     folderRegistry?: SpecializedOwlRegistry,
-    classify?: ClassifyFn,
   ) {
     this.folderRegistry = folderRegistry;
-    this.classify = classify;
   }
 
   async route(message: string, userId: string): Promise<RoutingDecision> {
@@ -55,37 +52,6 @@ export class SecretaryRouter {
 
     if (specialists.length === 0) {
       const decision = { type: "direct" as const, reason: "No specialized owls configured" };
-      this.logRoutingDecision(userId, message, decision, "success");
-      return decision;
-    }
-
-    // ─── LLM semantic routing ────────────────────────────────────
-    if (this.classify) {
-      const candidates = specialists.map((s) => ({ name: s.name, role: s.role, expertise: s.expertise }));
-      let chosenName: string | null = null;
-      try {
-        chosenName = await this.classify(message, candidates);
-      } catch {
-        // fall through to keyword matching
-      }
-
-      if (chosenName) {
-        const spec = specialists.find((s) => s.name === chosenName);
-        if (spec) {
-          const decision = { type: "specialist" as const, owl: spec, reason: `LLM routed to: ${chosenName}` };
-          log.engine.info(`[SecretaryRouter] LLM → "${chosenName}"`);
-          this.logRoutingDecision(userId, message, decision, "success");
-          return decision;
-        }
-        log.engine.warn(`[SecretaryRouter] LLM returned unrecognized specialist "${chosenName}" — falling through`);
-      }
-
-      if (this.shouldConveneParliament(message)) {
-        const decision = { type: "parliament" as const, reason: "Complex query detected - convening parliament" };
-        this.logRoutingDecision(userId, message, decision, "success");
-        return decision;
-      }
-      const decision = { type: "direct" as const, reason: "LLM classified as no specialist" };
       this.logRoutingDecision(userId, message, decision, "success");
       return decision;
     }

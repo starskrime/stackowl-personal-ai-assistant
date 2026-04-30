@@ -1,7 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { SpecializedOwlRegistry } from "../../src/owls/specialized-registry.js";
 import { SecretaryRouter } from "../../src/routing/secretary.js";
-import type { ClassifyFn } from "../../src/routing/llm-classifier.js";
 
 function makeRegistry(specs: Array<{ name: string; role: string; expertise?: string[]; keywords?: string[] }>): SpecializedOwlRegistry {
   const registry = new SpecializedOwlRegistry();
@@ -26,28 +25,22 @@ function makeRegistry(specs: Array<{ name: string; role: string; expertise?: str
   return registry;
 }
 
-function mockClassify(returnName: string | null): ClassifyFn {
-  return vi.fn().mockResolvedValue(returnName);
-}
-
 describe("SecretaryRouter", () => {
   describe("route() — no specialists", () => {
     it("returns direct immediately when registry is empty", async () => {
-      const classify = vi.fn();
-      const router = new SecretaryRouter(makeRegistry([]), classify as ClassifyFn);
+      const router = new SecretaryRouter(makeRegistry([]));
 
       const decision = await router.route("Hello", "user_test");
 
       expect(decision.type).toBe("direct");
       expect(decision.reason).toBe("No specialized owls configured");
-      expect(classify).not.toHaveBeenCalled();
     });
   });
 
-  describe("route() — LLM classify", () => {
-    it("routes to folder specialist when LLM returns its name", async () => {
-      const registry = makeRegistry([{ name: "TradingBot", role: "trading assistant" }]);
-      const router = new SecretaryRouter(registry, mockClassify("TradingBot"));
+  describe("route() — keyword routing", () => {
+    it("routes to specialist when keywords match and confidence is sufficient", async () => {
+      const registry = makeRegistry([{ name: "TradingBot", role: "trading assistant", keywords: ["stock", "trade", "portfolio"] }]);
+      const router = new SecretaryRouter(registry);
 
       const decision = await router.route("I want to buy stocks", "user_test");
 
@@ -57,18 +50,18 @@ describe("SecretaryRouter", () => {
       }
     });
 
-    it("returns direct when LLM returns null", async () => {
-      const registry = makeRegistry([{ name: "TradingBot", role: "trading assistant" }]);
-      const router = new SecretaryRouter(registry, mockClassify(null));
+    it("returns direct when no keywords match the message", async () => {
+      const registry = makeRegistry([{ name: "TradingBot", role: "trading assistant", keywords: ["stock", "trade"] }]);
+      const router = new SecretaryRouter(registry);
 
       const decision = await router.route("What is the weather?", "user_test");
 
       expect(decision.type).toBe("direct");
     });
 
-    it("routes to parliament when LLM returns null and message triggers parliament", async () => {
+    it("routes to parliament when message triggers parliament keywords", async () => {
       const registry = makeRegistry([{ name: "SomeOwl", role: "assistant" }]);
-      const router = new SecretaryRouter(registry, mockClassify(null));
+      const router = new SecretaryRouter(registry);
 
       const decision = await router.route(
         "Compare two programming languages: analyze the advantages and disadvantages, then evaluate the strategy for choosing one?",
@@ -78,12 +71,11 @@ describe("SecretaryRouter", () => {
       expect(decision.type).toBe("parliament");
     });
 
-    it("falls back to direct when LLM classify throws", async () => {
-      const registry = makeRegistry([{ name: "TradingBot", role: "trading assistant" }]);
-      const broken: ClassifyFn = vi.fn().mockRejectedValue(new Error("LLM down"));
-      const router = new SecretaryRouter(registry, broken);
+    it("returns direct when message is too short to match specialist", async () => {
+      const registry = makeRegistry([{ name: "TradingBot", role: "trading assistant", keywords: ["stock", "trade"] }]);
+      const router = new SecretaryRouter(registry);
 
-      const decision = await router.route("I want to buy stocks", "user_test");
+      const decision = await router.route("stock", "user_test");
 
       expect(decision.type).toBe("direct");
     });
