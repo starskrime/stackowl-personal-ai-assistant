@@ -17,15 +17,16 @@ export interface RoutingSignals {
 const SIGNAL_TIMEOUT_MS = 200;
 
 function withTimeout<T>(p: Promise<T>, fallback: T): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((res) => setTimeout(() => res(fallback), SIGNAL_TIMEOUT_MS)),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((res) => {
+    timer = setTimeout(() => res(fallback), SIGNAL_TIMEOUT_MS);
+  });
+  return Promise.race([p.finally(() => clearTimeout(timer!)), timeout]);
 }
 
 export class UserProfileService {
   constructor(
-    private db: Pick<MemoryDatabase, "userProfiles" | "owlTasks">,
+    private db: Pick<MemoryDatabase, "userProfiles">,
     private goalGraph: GoalGraph | undefined,
     private episodicMemory: EpisodicMemory | undefined,
     private userMemoryStore: UserMemoryStore | undefined,
@@ -34,6 +35,7 @@ export class UserProfileService {
   async buildSignals(userId: string, userText: string): Promise<RoutingSignals> {
     const activePin = this.db.userProfiles.getPin(userId);
     const trustLevel = "standard" as const;
+    // TODO(Phase 2): read trust_level from db.userProfiles.get(userId)
 
     const [domainStack, recentEpisodes, relevantFacts] = await Promise.all([
       withTimeout(this.getDomains(), []),
@@ -57,7 +59,7 @@ export class UserProfileService {
   private async getEpisodes(): Promise<string[]> {
     if (!this.episodicMemory) return [];
     try {
-      return this.episodicMemory.getRecent(3).map((e: any) => e.summary ?? "");
+      return this.episodicMemory.getRecent(3).map((e) => e.summary ?? "");
     } catch (err) {
       log.engine.debug(`[UserProfileService] episode fetch failed: ${err}`);
       return [];
