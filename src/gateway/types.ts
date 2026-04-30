@@ -355,4 +355,6 @@ export interface GatewayContext {
   taskOwnershipManager?: import("../routing/task-ownership-manager.js").TaskOwnershipManager;
   routingStatusReporter?: import("../routing/routing-status-reporter.js").RoutingStatusReporter;
   userProfileService?: import("../routing/user-profile-service.js").UserProfileService;
+  backgroundJobRunner?: import("../routing/background-job-runner.js").BackgroundJobRunner;
+  relationshipContext?: import("../routing/relationship-context.js").RelationshipContext;
 }

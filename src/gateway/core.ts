@@ -111,6 +111,8 @@ import { OwlBrain } from "../routing/owl-brain.js";
 import { UserProfileService } from "../routing/user-profile-service.js";
 import { TaskOwnershipManager } from "../routing/task-ownership-manager.js";
 import { RoutingStatusReporter } from "../routing/routing-status-reporter.js";
+import { BackgroundJobRunner } from "../routing/background-job-runner.js";
+import { RelationshipContext } from "../routing/relationship-context.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -502,6 +504,19 @@ export class OwlGateway {
       this.owlBrain.setSecretaryRouterGetter(() => this.secretaryRouter);
       ctx.owlBrain = this.owlBrain;
       log.engine.info("[OwlBrain] Initialized");
+    }
+
+    // ─── Phase 2: Background jobs + relationship (Element 4) ──────
+    if (ctx.db) {
+      ctx.backgroundJobRunner = new BackgroundJobRunner(ctx.db, ctx.eventBus ?? null);
+      ctx.backgroundJobRunner.start();
+      ctx.relationshipContext = new RelationshipContext(
+        ctx.db,
+        ctx.goalGraph ?? undefined,
+        ctx.episodicMemory ?? undefined,
+        ctx.userMemoryStore ?? undefined,
+      );
+      log.engine.info("[BackgroundJobRunner + RelationshipContext] Initialized");
     }
 
     // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
