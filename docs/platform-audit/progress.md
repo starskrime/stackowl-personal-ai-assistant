@@ -14,7 +14,7 @@
 | 1 | **Channels** (CLI, Telegram, Slack, Voice, Web) | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 2 | GatewayMessage creation | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 3 | SessionManager (load / create) | 🔧 reviewed — improvements committed | 2026-04-29 |
-| 4 | RoutingCoordinator (owl selection + pin) | ⬜ pending | — |
+| 4 | RoutingCoordinator (owl selection + pin) | 🔄 design approved — implementation pending | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | ⬜ pending | — |
 | 6 | OwlEngine — ReAct loop | ⬜ pending | — |
 | 7 | Tool layer (registry, execution, permissions) | ⬜ pending | — |
@@ -151,6 +151,37 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 - ✅ Implementation plan: `docs/superpowers/plans/2026-04-29-intelligence-router.md`
 - ✅ Implemented + merged to main (commits `809b8f4`–`00d28f2`)
 - ⬜ Backlog: update `start.sh` onboarding to configure intelligence tiers interactively
+
+---
+
+## Element 4: RoutingCoordinator
+
+### Status: 🔄 Design approved — implementation pending
+
+### Scope
+`src/gateway/handlers/routing-coordinator.ts`, `src/routing/secretary.ts`, `src/routing/session-state.ts`, `src/routing/llm-classifier.ts`, `src/delegation/delegation-decider.ts`, `src/delegation/sub-owl-runner.ts`, `src/gateway/core.ts`, `src/memory/db.ts`, `src/gateway/handlers/context-builder.ts`
+
+### Findings
+- `RoutingCoordinator` (186 lines) covers @mention + session-pin + SecretaryRouter — no persistent user context
+- Pin stored as JSON file via `SessionStateStore` — lost on restart, no cross-channel persistence
+- Routing ignores GoalGraph, EpisodicMemory, FactStore, Kuzu — uses only keyword + LLM classification
+- `DelegationDecider` field on `OwlGateway` (line 166) assigned but never called — dead
+- `buildClassifyFn` / `SessionStateStore` / `DelegationDecider` imports all removable from `core.ts`
+- No task ownership, no background jobs, no relationship context, no status transparency
+
+### Design Decisions (approved)
+- **`OwlBrain`** (`src/routing/owl-brain.ts`) — central coordinator replacing `RoutingCoordinator` direct usage
+- **`UserProfileService`** (`src/routing/user-profile-service.ts`) — signal aggregator (not data store) over GoalGraph, EpisodicMemory, FactStore, UserMemoryStore; 200ms timeout per source
+- **3 new SQLite tables** (schema v12): `user_profiles` (pin + routing history), `owl_tasks` (task ownership), `owl_jobs` (background queue)
+- **`TaskOwnershipManager`**: commitment detection regex + task CRUD
+- **`BackgroundJobRunner`**: 60s poll, one-at-a-time execution, fires `job:complete` event via EventBus
+- **`RelationshipContext`**: reads routing_history + FactStore → `<user_relationship>` prompt block
+- **`RoutingStatusReporter`**: status query detection + formatted output for `/status` and `/why`
+- Dead code cleanup: `session-state.ts` and `llm-classifier.ts` deleted; `DelegationDecider` / `buildClassifyFn` removed from `core.ts`
+
+### Commits
+- `9b0cac1` — design spec (`docs/superpowers/specs/2026-04-29-routing-coordinator-design.md`)
+- `9c26e69` — implementation plan (`docs/superpowers/plans/2026-04-29-routing-coordinator.md`)
 
 ---
 
