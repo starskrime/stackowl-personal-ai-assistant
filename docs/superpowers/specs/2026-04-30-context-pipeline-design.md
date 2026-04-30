@@ -1,7 +1,7 @@
 # Element 5: ContextPipeline — Design Specification
 
 **Date:** 2026-04-30
-**Status:** PM-reviewed — blocking gaps resolved — awaiting architect review
+**Status:** Architect-approved — ready for implementation plan
 **Audit element:** 5 — ContextBuilder (memory + pellets + skills)
 **Replaces:** `src/gateway/handlers/context-builder.ts` (762 lines, 28 inline signals)
 
@@ -127,6 +127,21 @@ export interface TriageSignals {
   continuityClass: ContinuityClass | null;
 }
 
+/**
+ * Narrow dependency surface for src/context/ — never import GatewayContext directly.
+ * GatewayContext satisfies this interface via structural typing (no explicit implements needed).
+ * This keeps src/context/ free of circular dependencies on src/gateway/.
+ */
+export interface ContextDependencies {
+  intelligenceRouter: IntelligenceRouter;
+  pelletStore: PelletStore;
+  memoryBus: MemoryBus;
+  sessionStore: SessionStore;
+  userPersonaSynthesizer: UserPersonaSynthesizer;
+  eventBus: EventBus;
+  config: StackOwlConfig;
+}
+
 export interface ContextRequest {
   readonly session: Session;
   readonly callbacks: GatewayCallbacks;
@@ -134,7 +149,7 @@ export interface ContextRequest {
   readonly userId?: string;
   readonly continuityResult: ContinuityResult | null;
   readonly digest: ConversationDigest | null;
-  readonly ctx: GatewayContext;
+  readonly deps: ContextDependencies;  // replaces ctx: GatewayContext — no gateway import
 }
 
 export interface ContextBuildTraceEntry {
@@ -216,12 +231,16 @@ interface CacheEntry {
 }
 
 export class ContextCache {
+  // Primary store: `${layerName}:${cacheKey}` → CacheEntry
+  // userIndex:    userId → Set<fullKey>  — maintained on set(), cleared on invalidateUser()
+  // This makes invalidateUser() O(1) lookup + O(k) deletes where k = user's cached entries,
+  // instead of O(n) full scan over all 200 entries.
   constructor(private maxEntries: number = 200) {}
 
   get(layerName: string, cacheKey: string): string | null
-  set(layerName: string, cacheKey: string, output: string, ttlMs: number): void
+  set(layerName: string, cacheKey: string, output: string, ttlMs: number, userId?: string): void
   invalidate(layerName: string): void
-  invalidateUser(userId: string): void  // clears all entries containing userId in key
+  invalidateUser(userId: string): void  // O(1) via userIndex reverse map
   stats(): { size: number; hitRate: number; evictions: number }
 }
 ```
@@ -293,20 +312,26 @@ export class ContextQualityScore {
 
 ```typescript
 export class ContextPipeline {
+  private readonly batches: ContextLayer[][];
+
   constructor(
     private layers: ContextLayer[],
-    private budgetController: BudgetController,
     private cache: ContextCache,
     private healthMonitor: LayerHealthMonitor,
-    private dagPlanner: DAGPlanner,
+    dagPlanner: DAGPlanner,
   ) {
-    this.batches = dagPlanner.buildBatches(layers);  // throws at construction if cycle
+    // Throws CircularDependencyError at construction time — fail loud, fail early.
+    // batches is immutable after construction; safe to share across concurrent run() calls.
+    this.batches = dagPlanner.buildBatches(layers);
   }
 
+  // BudgetController is created fresh inside run() — never shared between concurrent requests.
+  // Node.js is single-threaded but ContextPipeline is a singleton; per-run instantiation
+  // guarantees no consumed-counter bleed between simultaneous web/Telegram requests.
   async run(
     request: ContextRequest,
     triage: TriageSignals,
-    options?: { timeoutMs?: number }
+    options?: { timeoutMs?: number; globalTokenCeiling?: number }
   ): Promise<{ output: string; trace: ContextBuildTrace }>
 }
 ```
@@ -314,10 +339,19 @@ export class ContextPipeline {
 **Execution loop:**
 
 ```
-for each batch in this.batches:
-  await Promise.all(batch.map(layer => executeLayer(layer, request, triage, results)))
+budget = new BudgetController(options.globalTokenCeiling ?? config.context.globalTokenCeiling)
 
-executeLayer(layer, request, triage, results):
+for each batch in this.batches:
+  await Promise.all(batch.map(layer => executeLayer(layer, request, triage, results, budget)))
+
+  // Post-batch priority trim: if budget is near ceiling, trim lowest-priority outputs first.
+  // Sort completed batch results by layer.priority descending (lowest priority = highest number).
+  // Remove from results map starting at lowest priority until budget.remaining > 0.
+  // This ensures high-priority layers (low priority number) keep their tokens if ceiling is hit
+  // by fast-resolving lower-priority layers in the same batch.
+  trimBatchToFloor(batch, results, budget)
+
+executeLayer(layer, request, triage, results, budget):
   1. Check layer.alwaysInclude || shouldFire(triage) → skip if neither
   2. Check !layer.alwaysInclude && healthMonitor.shouldBypass → skip if circuit OPEN
      (alwaysInclude layers bypass circuit state — they must never fail silently)
@@ -325,7 +359,7 @@ executeLayer(layer, request, triage, results):
   4. Start timer
   5. await Promise.race([layer.build(...), timeout(2000)])
   6. Record success/failure on circuit breaker
-  7. Apply budget cap
+  7. Apply budget cap via budget.apply()
   8. cache.set(output) if cacheable
   9. Append to results map (for dependsOn consumers)
   10. Record trace entry
@@ -337,7 +371,12 @@ On skip or throw:
 
 **Pipeline-level timeout** (default 5,000ms): remaining layers after timeout marked `pipeline_timeout` in trace.
 
-**Debug log** after every run:
+**Trace emission policy:**
+- `debug` log level: full `ContextBuildTrace` (28 entries) emitted on every run — only visible when `LOG_LEVEL=debug`
+- `info` log level: one-line summary always emitted (fires, cache hits, tokens, batches, ms, quality)
+- `EventBus`: `"context:quality_degraded"` emitted with `{ score, trace }` when quality < 0.6
+- No SQLite persistence of traces — retrospective analysis is PostProcessor's concern, not ContextPipeline's
+
 ```
 [ContextPipeline] 12 fired (8 cache hits, 4 computed), 3 skipped, 2 circuit_open
   — 3,240/8,000 tokens, 4 batches, 180ms, quality: 0.87
@@ -388,7 +427,13 @@ interface UserPersona {
 }
 ```
 
-**Cache strategy:** 30-min TTL in `user_personas` SQLite table. **Stale-while-revalidate** — expired persona returned immediately, background synthesis triggered. First-time users get no persona (layer skips gracefully).
+**Cache strategy:** 30-min TTL in `user_personas` SQLite table.
+
+**Synthesis trigger:**
+- On **cache miss**: `UserPersonaSynthesizer.synthesize()` is called synchronously inside `UserPersonaLayer.build()` — blocks the layer until synthesis completes. This is acceptable for a new user's first request; subsequent requests hit the cache.
+- On **cache stale** (expired but exists): stale persona returned immediately from SQLite; background revalidation enqueued via `setImmediate(() => synthesizer.synthesize())` **after** `build()` returns. The current request gets the old persona; the next request gets the fresh one. This is the stale-while-revalidate invariant.
+- **PostProcessor invariant:** synthesis can only be triggered after at least 3 turns (no persona for first-time users with < 3 facts). `shouldFire()` returns false when fact count < 3.
+- First-time users with < 3 facts: layer skips gracefully (no `<user_persona>` block injected).
 
 **Injected as:**
 ```xml
@@ -509,7 +554,7 @@ CREATE INDEX IF NOT EXISTS idx_pellets_tag ON pellets(tag);
 |------|--------|
 | `src/gateway/handlers/context-builder.ts` | Thin adapter ≤120 lines; delegates to `ContextPipeline.run()` |
 | `src/gateway/handlers/post-processor.ts` | Store `InnerMonologue` in digest after each response |
-| `src/gateway/types.ts` | Add `userPersonaSynthesizer?`, `contextCache?`, `contextPipeline?` |
+| `src/gateway/types.ts` | Add `userPersonaSynthesizer?`, `contextCache?`, `contextPipeline?`; `GatewayContext` satisfies `ContextDependencies` interface structurally (no explicit implements needed) |
 | `src/gateway/core.ts` | Instantiate all context subsystems; wire into `GatewayContext` |
 | `src/memory/db.ts` | Schema v13 migration; `UserPersonasRepo`; `PelletsRepo.getByTag()` |
 | `src/memory/bus.ts` | Add `FactStore` + `EpisodicMemory` as named query sources |
