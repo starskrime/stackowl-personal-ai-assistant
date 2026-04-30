@@ -5,7 +5,7 @@ import { hash, resolveUserId } from "../../src/context/utils.js";
 describe("computeTriage", () => {
   const base = {
     sessionDepth: 3,
-    continuityClass: null as any,
+    continuityClass: null,
     userId: "u1",
     sessionId: "s1",
     hasActiveItems: false,
