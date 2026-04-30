@@ -50,7 +50,13 @@ export class LayerCircuitBreaker {
     }
   }
 
+  getErrorRate(): number {
+    if (this.window.length === 0) return 0;
+    return this.window.filter((e) => !e.success).length / this.window.length;
+  }
+
   private evaluate(): void {
+    if (this._state !== "CLOSED") return;
     if (this.window.length < 5) return;
     const errorRate =
       this.window.filter((e) => !e.success).length / this.window.length;
@@ -84,7 +90,7 @@ export class LayerHealthMonitor {
   getReport(): Record<string, { state: string; errorRate: number }> {
     const out: Record<string, { state: string; errorRate: number }> = {};
     for (const [name, cb] of this.breakers) {
-      out[name] = { state: cb.state, errorRate: 0 };
+      out[name] = { state: cb.state, errorRate: cb.getErrorRate() };
     }
     return out;
   }
