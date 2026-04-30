@@ -3,6 +3,7 @@ interface CacheEntry {
   tokensUsed: number;
   cachedAt: number;
   ttlMs: number;
+  userId?: string;
 }
 
 export class ContextCache {
@@ -20,11 +21,20 @@ export class ContextCache {
     return `${layerName}:${cacheKey}`;
   }
 
+  private removeFromUserIndex(key: string, userId?: string): void {
+    if (!userId) return;
+    const keys = this.userIndex.get(userId);
+    if (!keys) return;
+    keys.delete(key);
+    if (keys.size === 0) this.userIndex.delete(userId);
+  }
+
   get(layerName: string, cacheKey: string): string | null {
     const key = this.fullKey(layerName, cacheKey);
     const entry = this.store.get(key);
     if (!entry) { this.misses++; return null; }
     if (Date.now() - entry.cachedAt > entry.ttlMs) {
+      this.removeFromUserIndex(key, entry.userId);
       this.store.delete(key);
       this.misses++;
       return null;
@@ -40,15 +50,20 @@ export class ContextCache {
     const key = this.fullKey(layerName, cacheKey);
     // Evict oldest if at capacity
     if (this.store.size >= this.maxEntries) {
-      const oldest = this.store.keys().next().value as string;
-      this.store.delete(oldest);
-      this.evictions++;
+      const oldest = this.store.keys().next().value;
+      if (oldest !== undefined) {
+        const oldestEntry = this.store.get(oldest);
+        this.removeFromUserIndex(oldest, oldestEntry?.userId);
+        this.store.delete(oldest);
+        this.evictions++;
+      }
     }
     this.store.set(key, {
       output,
       tokensUsed: Math.ceil(output.length / 3.8),
       cachedAt: Date.now(),
       ttlMs,
+      userId,
     });
     if (userId) {
       const keys = this.userIndex.get(userId) ?? new Set();
@@ -59,8 +74,11 @@ export class ContextCache {
 
   invalidate(layerName: string): void {
     const prefix = `${layerName}:`;
-    for (const key of [...this.store.keys()]) {
-      if (key.startsWith(prefix)) this.store.delete(key);
+    for (const [key, entry] of [...this.store.entries()]) {
+      if (key.startsWith(prefix)) {
+        this.removeFromUserIndex(key, entry.userId);
+        this.store.delete(key);
+      }
     }
   }
 
