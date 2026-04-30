@@ -14,7 +14,7 @@
 | 1 | **Channels** (CLI, Telegram, Slack, Voice, Web) | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 2 | GatewayMessage creation | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 3 | SessionManager (load / create) | 🔧 reviewed — improvements committed | 2026-04-29 |
-| 4 | RoutingCoordinator (owl selection + pin) | 🔄 design approved — implementation pending | 2026-04-29 |
+| 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | ⬜ pending | — |
 | 6 | OwlEngine — ReAct loop | ⬜ pending | — |
 | 7 | Tool layer (registry, execution, permissions) | ⬜ pending | — |
@@ -182,6 +182,7 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 ### Commits
 - `9b0cac1` — design spec (`docs/superpowers/specs/2026-04-29-routing-coordinator-design.md`)
 - `9c26e69` — implementation plan (`docs/superpowers/plans/2026-04-29-routing-coordinator.md`)
+- `21906ec`–`7f2e66f` — Phase 1+2 implementation (23 commits on feature branch, merged to main)
 
 ---
 
