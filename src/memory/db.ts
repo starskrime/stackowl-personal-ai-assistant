@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1076,6 +1076,70 @@ export class MemoryDatabase {
         );
 
         CREATE INDEX IF NOT EXISTS idx_pellets_tag ON pellets(tag);
+      `);
+    }
+    if (current < 14) {
+      // v14: OwlEngine v2 — task ledgers, HITL checkpoints, approach patterns,
+      // extended trajectory quality fields
+      this.db.exec(`
+        ALTER TABLE trajectories ADD COLUMN quality_score REAL DEFAULT NULL;
+        ALTER TABLE trajectories ADD COLUMN quality_flags TEXT DEFAULT '[]';
+        ALTER TABLE trajectories ADD COLUMN task_category TEXT DEFAULT NULL;
+        ALTER TABLE trajectories ADD COLUMN task_complexity TEXT DEFAULT NULL;
+        ALTER TABLE trajectories ADD COLUMN degradation_tier INTEGER DEFAULT 1;
+        ALTER TABLE trajectories ADD COLUMN recovery_actions TEXT DEFAULT '[]';
+        ALTER TABLE trajectories ADD COLUMN follow_up_sentiment TEXT DEFAULT NULL;
+        ALTER TABLE trajectories ADD COLUMN follow_up_updated_at TEXT DEFAULT NULL;
+
+        CREATE TABLE IF NOT EXISTS task_ledgers (
+          id             TEXT PRIMARY KEY,
+          session_id     TEXT NOT NULL,
+          user_id        TEXT NOT NULL DEFAULT 'default',
+          goal           TEXT NOT NULL,
+          sub_goals      TEXT NOT NULL DEFAULT '[]',
+          expected_output TEXT NOT NULL DEFAULT '',
+          complexity     TEXT NOT NULL DEFAULT 'medium',
+          status         TEXT NOT NULL DEFAULT 'active',
+          revisions      TEXT NOT NULL DEFAULT '[]',
+          created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ledgers_session
+          ON task_ledgers(session_id);
+        CREATE INDEX IF NOT EXISTS idx_ledgers_user_status
+          ON task_ledgers(user_id, status);
+
+        CREATE TABLE IF NOT EXISTS hitl_checkpoints (
+          id             TEXT PRIMARY KEY,
+          session_id     TEXT NOT NULL,
+          ledger_id      TEXT NOT NULL,
+          pending_action TEXT NOT NULL,
+          request_kind   TEXT NOT NULL,
+          memo_json      TEXT NOT NULL,
+          status         TEXT NOT NULL DEFAULT 'waiting',
+          response_json  TEXT DEFAULT NULL,
+          created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+          resolved_at    TEXT DEFAULT NULL,
+          expires_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_hitl_session
+          ON hitl_checkpoints(session_id, status);
+
+        CREATE TABLE IF NOT EXISTS approach_patterns (
+          id                   TEXT PRIMARY KEY,
+          task_category        TEXT NOT NULL,
+          lesson               TEXT NOT NULL,
+          successful_sequences TEXT NOT NULL DEFAULT '[]',
+          conditions           TEXT NOT NULL DEFAULT '[]',
+          observation_count    INTEGER NOT NULL DEFAULT 0,
+          success_rate         REAL NOT NULL DEFAULT 0.0,
+          status               TEXT NOT NULL DEFAULT 'tentative',
+          last_used_at         TEXT DEFAULT NULL,
+          created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_patterns_category_status
+          ON approach_patterns(task_category, status);
       `);
     }
     if (current < SCHEMA_VERSION) {
