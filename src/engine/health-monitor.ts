@@ -79,6 +79,7 @@ export class HealthMonitor {
   private _checkSignals(turn: TurnResult): void {
     const pct = this.health.tokensConsumed / this.tokenBudget;
     if (pct >= 0.85) this._emit("budget_critical", `${Math.round(pct * 100)}% budget consumed`);
+    // TODO: emit 'spinning' signal when TrajectoryStore similarity >= 0.7 for 2+ consecutive turns — deferred pending TrajectoryStore integration
     if (this.health.stuckOnSubGoalId) this._emit("stall", `SubGoal ${this.health.stuckOnSubGoalId} stuck for ${this.consecutiveSameSubGoal} turns`);
     if (this.health.allToolsFailed && this.health.uniqueToolsAttempted.size > 1) this._emit("tool_blackout", `All ${this.health.uniqueToolsAttempted.size} tools failed`);
     if (turn.budgetExhausted) this._emit("budget_critical", "Engine reported budget exhausted");

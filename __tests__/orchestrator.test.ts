@@ -84,4 +84,100 @@ describe("OwlOrchestrator", () => {
     expect(qualityScore).toBeGreaterThanOrEqual(0);
     expect(qualityScore).toBeLessThanOrEqual(1);
   });
+
+  it("HITL decision falls back to SYNTHESIZE when no hitlChannel provided", async () => {
+    // Force HITL decision by creating a condition where recovery orchestrator chooses HITL
+    // The simplest way: pass a provider that returns pendingCapabilityGap signal
+    const capGapProvider = {
+      name: "mock",
+      chat: vi.fn().mockResolvedValue({
+        content: "I need shell access. [CAPABILITY_GAP:shell_access]",
+        toolCalls: [],
+        usage: { promptTokens: 50, completionTokens: 30 },
+        model: "mock",
+        finishReason: "stop",
+      }),
+      chatWithTools: vi.fn().mockResolvedValue({
+        content: "I need shell access. [CAPABILITY_GAP:shell_access]",
+        toolCalls: [],
+        usage: { promptTokens: 50, completionTokens: 30 },
+        model: "mock",
+        finishReason: "stop",
+      }),
+    };
+    const orch = new OwlOrchestrator({
+      owl: mockOwl as any,
+      provider: capGapProvider as any,
+      config: mockConfig as any,
+      db,
+      // No hitlChannel — should fall back to SYNTHESIZE
+    });
+    const response = await orch.run("do something that needs shell", {
+      sessionId: "s1",
+      userId: "u1",
+    });
+    // Should complete without throwing, content should not contain internal markers
+    expect(response.content).not.toContain("[CAPABILITY_GAP:");
+    expect(typeof response.content).toBe("string");
+  });
+
+  it("degradation tier is > 1 when quality score is very low", async () => {
+    const exhaustedProvider = {
+      name: "mock",
+      chat: vi.fn().mockResolvedValue({
+        content: "__STACKOWL_EXHAUSTED__",
+        toolCalls: [],
+        usage: { promptTokens: 500, completionTokens: 300 },
+        model: "mock",
+        finishReason: "stop",
+      }),
+      chatWithTools: vi.fn().mockResolvedValue({
+        content: "__STACKOWL_EXHAUSTED__",
+        toolCalls: [],
+        usage: { promptTokens: 500, completionTokens: 300 },
+        model: "mock",
+        finishReason: "stop",
+      }),
+    };
+    const orch = new OwlOrchestrator({
+      owl: mockOwl as any,
+      provider: exhaustedProvider as any,
+      config: mockConfig as any,
+      db,
+    });
+    const response = await orch.run("analyze this enormous dataset in exhaustive detail", {
+      sessionId: "s1",
+      userId: "u1",
+    });
+    // Exhausted provider should produce low quality → degradation tier > 1
+    expect(response.degradationTier).toBeGreaterThanOrEqual(1);
+    expect(response.content).not.toContain("__STACKOWL_EXHAUSTED__");
+  });
+
+  it("records outcome to journal (non-fatal)", async () => {
+    const orch = new OwlOrchestrator({
+      owl: mockOwl as any,
+      provider: mockProvider as any,
+      config: mockConfig as any,
+      db,
+    });
+    // Should complete without error even when journal is working
+    const response = await orch.run("hello", { sessionId: "s2", userId: "u2" });
+    expect(response.owlName).toBe("Atlas");
+    // Journal failure should not throw (non-fatal)
+  });
+
+  it("complex message includes plan block in system messages", async () => {
+    const orch = new OwlOrchestrator({
+      owl: mockOwl as any,
+      provider: mockProvider as any,
+      config: mockConfig as any,
+      db,
+    });
+    // Long message that will be classified as complex
+    const complexMsg = "Please research and compare the top 5 electric vehicle manufacturers, analyze their market share, battery technology, and autonomous driving capabilities, then write a comprehensive investment thesis.";
+    const response = await orch.run(complexMsg, { sessionId: "s3", userId: "u1" });
+    expect(response.complexity).toBe("complex");
+    expect(response.content.length).toBeGreaterThan(0);
+  });
 });

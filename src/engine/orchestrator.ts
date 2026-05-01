@@ -118,6 +118,7 @@ export class OwlOrchestrator {
       log.engine.debug(`[Orchestrator] i=${iteration} decision=${finalDecision}`);
 
       if (finalDecision === "REPLAN") {
+        // TODO: call LLM to produce revised TaskLedger (goal + subGoals) — deferred pending TrajectoryStore integration
         await this.ledgerStore.addRevision(ledger.id, "stall detected", ledger.goal);
         const updated = await this.ledgerStore.load(ledger.id);
         if (updated) ledger.revisions = updated.revisions;
@@ -125,6 +126,8 @@ export class OwlOrchestrator {
       }
       if (finalDecision === "HITL") {
         if (!this.deps.hitlChannel) { finalDecision = "SYNTHESIZE"; break; }
+        // TODO: call this.deps.hitlChannel.pause(request) and handle response — deferred pending channel-specific HITL adapters
+        finalDecision = "SYNTHESIZE";
         break;
       }
       if (finalDecision === "CONTINUE") continue;
