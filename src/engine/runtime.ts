@@ -2843,4 +2843,76 @@ ${skillsContext}
         : `Choose a different approach for your next tool call.`)
     );
   }
+
+  /**
+   * Single-turn executor for OwlOrchestrator.
+   * Strips all internal markers — returns typed signals only.
+   */
+  async runTurn(
+    request: import("./types.js").TurnRequest,
+    providerOverride?: import("../providers/base.js").ModelProvider,
+  ): Promise<import("./types.js").TurnResult> {
+    const provider = providerOverride ?? (request as any)._resolvedProvider;
+    if (!provider) throw new Error("runTurn requires a provider");
+
+    const { messages, tools, modelName, turnBudget } = request;
+
+    let response: import("../providers/base.js").ChatResponse;
+    if (tools.length > 0 && provider.chatWithTools) {
+      response = await provider.chatWithTools(messages, tools, modelName, { temperature: 0.7 });
+    } else {
+      response = await provider.chat(messages, modelName, { temperature: 0.7 });
+    }
+
+    const tokensUsed =
+      (response.usage?.promptTokens ?? 0) + (response.usage?.completionTokens ?? 0);
+    const rawContent = response.content ?? "";
+
+    const budgetExhausted =
+      rawContent.includes(EXHAUSTION_MARKER) ||
+      turnBudget.used + tokensUsed >= turnBudget.total;
+
+    const doneSignal = hasDoneSignal(rawContent);
+
+    const cleanContent = rawContent
+      .replace(/__STACKOWL_EXHAUSTED__/g, "")
+      .replace(/\[CAPABILITY_GAP:[^\]]*\]/g, "")
+      .replace(/\[SYSTEM:[^\]]*\]/g, "")
+      .replace(/\[DONE\]/g, "")
+      .replace(/\[DEEPER\]/gi, "")
+      .trim();
+
+    const failedTools: import("./types.js").FailedToolCall[] = [];
+    const toolResults: { toolCallId: string; name: string; result: string }[] = [];
+    const toolCalls = response.toolCalls ?? [];
+
+    if (toolCalls.length > 0 && (request as any).toolRegistry) {
+      const registry = (request as any).toolRegistry;
+      const toolCtx = { cwd: process.cwd(), engineContext: {} };
+      await Promise.allSettled(
+        toolCalls.map(async (tc) => {
+          try {
+            const result = await registry.execute(tc.name, tc.arguments, toolCtx);
+            toolResults.push({ toolCallId: tc.id, name: tc.name, result });
+          } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            failedTools.push({ name: tc.name, reason });
+            toolResults.push({ toolCallId: tc.id, name: tc.name, result: `Error: ${reason}` });
+          }
+        }),
+      );
+    }
+
+    return {
+      content: cleanContent,
+      toolCalls,
+      toolResults,
+      tokensUsed,
+      doneSignal,
+      budgetExhausted,
+      failedTools,
+      providerUsed: provider.name,
+      modelUsed: modelName,
+    };
+  }
 }
