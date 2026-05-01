@@ -113,6 +113,7 @@ export const WriteFileTool: ToolImplementation = {
       },
       required: ["path", "content"],
     },
+    sequential: true,
   },
 
   async execute(
@@ -171,6 +172,7 @@ export const EditFileTool: ToolImplementation = {
       },
       required: ["path", "old_string", "new_string"],
     },
+    sequential: true,
   },
 
   async execute(

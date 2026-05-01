@@ -196,6 +196,7 @@ export const ComputerUseTool: ToolImplementation = {
       },
       required: ["action"],
     },
+    sequential: true,
   },
 
   async execute(

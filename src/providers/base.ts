@@ -38,6 +38,8 @@ export interface ToolDefinition {
     >;
     required?: string[];
   };
+  /** When true, this tool must not run concurrently with others. Default: false. */
+  sequential?: boolean;
 }
 
 // ─── Response Types ──────────────────────────────────────────────
