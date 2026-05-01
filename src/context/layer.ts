@@ -13,11 +13,11 @@ import type { ContinuityClass } from "../cognition/continuity-engine.js";
 export type { ContinuityClass };
 
 export interface ContextDependencies {
-  intelligenceRouter: IntelligenceRouter;
-  pelletStore: PelletStore;
-  memoryBus: MemoryBus;
+  intelligenceRouter?: IntelligenceRouter;
+  pelletStore?: PelletStore;
+  memoryBus?: MemoryBus;
   sessionStore: SessionStore;
-  eventBus: EventBus;
+  eventBus?: EventBus;
   config: StackOwlConfig;
 }
 

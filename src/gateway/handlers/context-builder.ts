@@ -66,11 +66,11 @@ export class ContextBuilder {
     });
 
     const deps = {
-      intelligenceRouter: (this.ctx as any).intelligence,
-      pelletStore: (this.ctx as any).pelletStore,
-      memoryBus: (this.ctx as any).memoryBus,
+      intelligenceRouter: this.ctx.intelligence,
+      pelletStore: this.ctx.pelletStore,
+      memoryBus: this.ctx.memoryBus,
       sessionStore: this.ctx.sessionStore,
-      eventBus: (this.ctx as any).eventBus,
+      eventBus: this.ctx.eventBus,
       config: this.ctx.config,
     };
 
