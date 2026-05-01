@@ -8,8 +8,8 @@ export class BehavioralPatchLayer implements ContextLayer {
   produces = ["behavioral_rules"];
   dependsOn = [];
   shouldFire(_t: TriageSignals): boolean { return true; }
-  getCacheKey(_req: ContextRequest, _t: TriageSignals): string | null {
-    return hash("behavioral_v1");
+  getCacheKey(_req: ContextRequest, t: TriageSignals): string | null {
+    return hash(t.effectiveUserId + "behavioral_v1");
   }
 
   async build(req: ContextRequest, _t: TriageSignals, _deps: LayerResults): Promise<string> {

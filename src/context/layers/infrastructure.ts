@@ -50,7 +50,7 @@ export class ModeDirectiveLayer implements ContextLayer {
   dependsOn = [];
   shouldFire(_t: TriageSignals): boolean { return true; }
   getCacheKey(_req: ContextRequest, t: TriageSignals): string | null {
-    return hash(t.effectiveUserId + String(t.hasActiveItems));
+    return hash(t.effectiveUserId + "mode");
   }
 
   async build(req: ContextRequest, _t: TriageSignals, _deps: LayerResults): Promise<string> {
@@ -68,7 +68,7 @@ export class SocraticModeLayer implements ContextLayer {
   dependsOn = [];
   getCacheKey(): string | null { return null; }
   shouldFire(_t: TriageSignals): boolean {
-    return true; // build() returns "" when socratic not enabled in session
+    return true;
   }
 
   async build(req: ContextRequest, _t: TriageSignals, _deps: LayerResults): Promise<string> {

@@ -27,9 +27,10 @@ export class OpenTasksLayer implements ContextLayer {
 
   async build(req: ContextRequest, _t: TriageSignals, _deps: LayerResults): Promise<string> {
     const tasks = (req.session as any).owlTasks as Array<{ title: string; status: string }> | undefined;
-    if (!tasks?.length) return "";
+    const open = tasks?.filter((t) => t.status !== "complete").slice(0, 5) ?? [];
+    if (!open.length) return "";
     const lines = ["<open_tasks>"];
-    for (const task of tasks.filter((t) => t.status !== "complete").slice(0, 5)) {
+    for (const task of open) {
       lines.push(`  <task status="${task.status}">${task.title}</task>`);
     }
     lines.push("</open_tasks>");
