@@ -61,4 +61,35 @@ describe("HitlCheckpointStore", () => {
     const waiting = await store.getWaiting("s1");
     expect(waiting.length).toBe(1);
   });
+
+  it("load returns null for unknown id", async () => {
+    const result = await store.load("nonexistent-id");
+    expect(result).toBeNull();
+  });
+
+  it("getWaiting does not return checkpoints from other sessions", async () => {
+    const req: HitlRequest = {
+      kind: "approval",
+      memo: { whatIDid: "did something", whatINeed: "approval" },
+      ledgerSnapshot: makeLedger(),
+      pendingAction: "proceed",
+    };
+    await store.create("s1", "l1", req, 60);
+    const waitingForS2 = await store.getWaiting("s2");
+    expect(waitingForS2.length).toBe(0);
+  });
+
+  it("ledgerSnapshot survives round-trip", async () => {
+    const ledger = makeLedger();
+    const req: HitlRequest = {
+      kind: "approval",
+      memo: { whatIDid: "searched", whatINeed: "confirmation" },
+      ledgerSnapshot: ledger,
+      pendingAction: "delete",
+    };
+    const id = await store.create("s1", "l1", req, 60);
+    const cp = await store.load(id);
+    expect(cp?.ledgerSnapshot?.id).toBe("l1");
+    expect(cp?.ledgerSnapshot?.goal).toBe("test");
+  });
 });

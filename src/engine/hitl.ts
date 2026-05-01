@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import type { MemoryDatabase } from "../memory/db.js";
-import type { HitlRequest, HitlResponse, HitlChannel } from "./types.js";
+import type { HitlRequest, HitlResponse, HitlChannel, TaskLedger } from "./types.js";
 
 interface StoredCheckpoint {
   id: string;
@@ -8,6 +8,7 @@ interface StoredCheckpoint {
   ledgerId: string;
   requestKind: HitlRequest["kind"];
   memo: HitlRequest["memo"];
+  ledgerSnapshot: TaskLedger | null;
   pendingAction: string;
   status: "waiting" | "resolved" | "expired";
   response?: HitlResponse;
@@ -59,7 +60,7 @@ export class HitlCheckpointStore {
 
   async getWaiting(sessionId: string): Promise<StoredCheckpoint[]> {
     const rows = this.db.rawDb.prepare(
-      "SELECT * FROM hitl_checkpoints WHERE session_id = ? AND status = 'waiting' ORDER BY created_at DESC"
+      "SELECT * FROM hitl_checkpoints WHERE session_id = ? AND status = 'waiting' AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ORDER BY created_at DESC"
     ).all(sessionId) as Record<string, unknown>[];
     return rows.map((r) => this._parse(r));
   }
@@ -67,6 +68,7 @@ export class HitlCheckpointStore {
   private _parse(row: Record<string, unknown>): StoredCheckpoint {
     const memoData = JSON.parse((row["memo_json"] as string | null) ?? "{}") as {
       memo?: HitlRequest["memo"];
+      ledger?: TaskLedger;
     };
     return {
       id: row["id"] as string,
@@ -74,6 +76,7 @@ export class HitlCheckpointStore {
       ledgerId: row["ledger_id"] as string,
       requestKind: row["request_kind"] as HitlRequest["kind"],
       memo: (memoData.memo ?? {}) as HitlRequest["memo"],
+      ledgerSnapshot: memoData.ledger ?? null,
       pendingAction: row["pending_action"] as string,
       status: row["status"] as "waiting" | "resolved" | "expired",
       response: row["response_json"]
