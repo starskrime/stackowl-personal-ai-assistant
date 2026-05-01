@@ -362,4 +362,8 @@ export interface GatewayContext {
   contextPipeline?: import("../context/pipeline.js").ContextPipeline;
   contextCache?: import("../context/cache.js").ContextCache;
   userPersonaSynthesizer?: import("../context/user-persona-synthesizer.js").UserPersonaSynthesizer;
+
+  // ─── OwlEngine v2 (Element 6a) ────────────────────────────────────
+  orchestrator?: import("../engine/orchestrator.js").OwlOrchestrator;
+  improvementScheduler?: import("../engine/improvement-scheduler.js").ImprovementScheduler;
 }
