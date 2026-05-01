@@ -16,7 +16,7 @@
 | 3 | SessionManager (load / create) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
-| 6 | OwlEngine — ReAct loop | ⬜ pending | — |
+| 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
 | 7 | Tool layer (registry, execution, permissions) | ⬜ pending | — |
 | 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
 | 9 | Parliament (multi-owl debate) | ⬜ pending | — |
@@ -223,6 +223,34 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 ### Design
 - Spec: `docs/superpowers/specs/2026-04-30-context-pipeline-design.md`
 - Plan: `docs/superpowers/plans/2026-04-30-context-pipeline.md`
+
+---
+
+## Element 6: OwlEngine v2 — ReAct Loop (Element 6a Gateway Wiring)
+
+### Scope
+`src/engine/orchestrator.ts`, `src/engine/improvement-scheduler.ts`, `src/engine/outcome-journal.ts`,
+`src/gateway/types.ts`, `src/gateway/core.ts`
+
+### Improvements Implemented (Tasks 15–16, 2026-05-01)
+
+**Task 15 — GatewayContext extended**
+- Added `orchestrator?: OwlOrchestrator` and `improvementScheduler?: ImprovementScheduler` to `GatewayContext` (src/gateway/types.ts)
+
+**Task 16 — Gateway wiring**
+- Imported `OwlOrchestratorV2`, `ImprovementScheduler`, `OutcomeJournalV2` in `src/gateway/core.ts`
+- Added `owlOrchestratorV2` and `improvementScheduler` private fields to `OwlGateway`
+- `ImprovementScheduler.start()` called at boot (after `ctx.db` guaranteed available) — runs journal review every 15min + approach pruning every 1h, zero LLM calls
+- `OwlOrchestrator` initialized and exposed on `ctx.orchestrator`; scheduler exposed on `ctx.improvementScheduler`
+- 2 integration tests added (`__tests__/gateway-orchestrator.test.ts`)
+
+### Test counts
+- Before: 506 tests
+- After: 508 tests (2 new integration tests)
+
+### Commits
+- `232233b` — `feat(gateway): add orchestrator + improvementScheduler to GatewayContext`
+- `4f3e487` — `feat(gateway): wire OwlOrchestrator as primary path, ImprovementScheduler bootstrapped at startup`
 
 ---
 
