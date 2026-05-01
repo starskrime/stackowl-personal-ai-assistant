@@ -8,9 +8,10 @@ import type {
   TaskLedgerRevision,
 } from "./types.js";
 
-interface LedgerWithMeta extends TaskLedger {
+export interface LedgerWithMeta extends TaskLedger {
   sessionId: string;
   userId: string;
+  status: string;
 }
 
 export class TaskLedgerStore {
@@ -22,30 +23,38 @@ export class TaskLedgerStore {
       createdAt: Date.now(),
       sessionId,
       userId,
+      status: "active",
       ...input,
     };
   }
 
-  async save(ledger: TaskLedger): Promise<void> {
+  async save(ledger: LedgerWithMeta): Promise<void> {
     const now = new Date().toISOString();
-    const meta = ledger as LedgerWithMeta;
+    const extras = JSON.stringify({
+      estimatedTurns: ledger.estimatedTurns,
+      behavioralConstraints: ledger.behavioralConstraints,
+      approachPatterns: ledger.approachPatterns,
+      parliamentContext: ledger.parliamentContext,
+      reflexionContext: ledger.reflexionContext,
+    });
     this.db.rawDb.prepare(`
       INSERT OR REPLACE INTO task_ledgers
         (id, session_id, user_id, goal, sub_goals, expected_output,
-         complexity, status, revisions, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         complexity, status, revisions, created_at, updated_at, extras)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       ledger.id,
-      meta.sessionId ?? "unknown",
-      meta.userId ?? "default",
+      ledger.sessionId ?? "unknown",
+      ledger.userId ?? "default",
       ledger.goal,
       JSON.stringify(ledger.subGoals),
       ledger.expectedOutput,
       ledger.complexity,
-      "active",
+      ledger.status ?? "active",
       JSON.stringify(ledger.revisions),
       new Date(ledger.createdAt).toISOString(),
       now,
+      extras,
     );
   }
 
@@ -80,17 +89,21 @@ export class TaskLedgerStore {
   }
 
   private _parse(row: any): LedgerWithMeta {
+    const extras = JSON.parse(row.extras ?? "{}");
     return {
       id: row.id,
       sessionId: row.session_id ?? "unknown",
       userId: row.user_id ?? "default",
+      status: row.status ?? "active",
       goal: row.goal,
       subGoals: JSON.parse(row.sub_goals ?? "[]") as SubGoal[],
       expectedOutput: row.expected_output ?? "",
       complexity: (row.complexity ?? "medium") as TaskComplexity,
-      estimatedTurns: 5,
-      behavioralConstraints: [],
-      approachPatterns: [],
+      estimatedTurns: extras.estimatedTurns ?? 5,
+      behavioralConstraints: extras.behavioralConstraints ?? [],
+      approachPatterns: extras.approachPatterns ?? [],
+      parliamentContext: extras.parliamentContext,
+      reflexionContext: extras.reflexionContext,
       revisions: JSON.parse(row.revisions ?? "[]") as TaskLedgerRevision[],
       createdAt: new Date(row.created_at).getTime(),
     };

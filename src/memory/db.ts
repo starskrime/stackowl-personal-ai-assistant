@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1140,6 +1140,13 @@ export class MemoryDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_patterns_category_status
           ON approach_patterns(task_category, status);
+      `);
+    }
+    if (current < 15) {
+      // v15: persist TaskLedger extras (estimatedTurns, behavioralConstraints,
+      // approachPatterns, parliamentContext, reflexionContext)
+      this.db.exec(`
+        ALTER TABLE task_ledgers ADD COLUMN extras TEXT DEFAULT '{}';
       `);
     }
     if (current < SCHEMA_VERSION) {

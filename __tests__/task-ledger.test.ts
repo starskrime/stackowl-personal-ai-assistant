@@ -57,4 +57,16 @@ describe("TaskLedgerStore", () => {
     expect(updated?.revisions.length).toBe(1);
     expect(updated?.revisions[0].reason).toBe("stall detected");
   });
+
+  it("round-trips estimatedTurns through save/load", async () => {
+    const ledger = store.create("s1", "u1", {
+      goal: "test", subGoals: [], expectedOutput: "", complexity: "simple",
+      estimatedTurns: 12, behavioralConstraints: ["be brief"],
+      approachPatterns: [], revisions: [],
+    });
+    await store.save(ledger);
+    const loaded = await store.load(ledger.id);
+    expect(loaded?.estimatedTurns).toBe(12);
+    expect(loaded?.behavioralConstraints).toEqual(["be brief"]);
+  });
 });
