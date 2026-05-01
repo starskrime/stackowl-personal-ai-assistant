@@ -532,7 +532,7 @@ export class OwlGateway {
         ctx.episodicMemory,
       );
       const contextCache = new ContextCache();
-      ctx.contextPipeline = createContextPipeline({ userPersonaSynthesizer, unifiedMemoryRetriever });
+      ctx.contextPipeline = createContextPipeline({ userPersonaSynthesizer, unifiedMemoryRetriever, contextCache });
       ctx.contextCache = contextCache;
       ctx.userPersonaSynthesizer = userPersonaSynthesizer;
 
@@ -541,7 +541,7 @@ export class OwlGateway {
         ctx.eventBus.on("pellet:written",    () => contextCache.invalidate("BehavioralPatchLayer"));
         ctx.eventBus.on("persona:refreshed", (e) => contextCache.invalidateUser(e.userId));
         ctx.eventBus.on("learning:recorded", () => contextCache.invalidate("OwlLearningsLayer"));
-        ctx.eventBus.on("session:ended",     (e) => contextCache.invalidateUser(e.sessionId));
+        ctx.eventBus.on("session:ended",     (e) => contextCache.invalidateUser((e as any).userId ?? e.sessionId));
       }
 
       log.engine.info("[ContextPipeline] Element 5 pipeline initialized");

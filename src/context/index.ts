@@ -33,6 +33,7 @@ import type { UnifiedMemoryRetriever } from "./unified-memory-retriever.js";
 export interface ContextPipelineDeps {
   userPersonaSynthesizer: UserPersonaSynthesizer;
   unifiedMemoryRetriever: UnifiedMemoryRetriever;
+  contextCache?: ContextCache;  // if provided, used by the pipeline; otherwise creates its own
 }
 
 export function createContextPipeline(deps: ContextPipelineDeps): ContextPipeline {
@@ -70,7 +71,7 @@ export function createContextPipeline(deps: ContextPipelineDeps): ContextPipelin
 
   return new ContextPipeline(
     layers,
-    new ContextCache(),
+    deps.contextCache ?? new ContextCache(),
     new LayerHealthMonitor(),
     new DAGPlanner(),
   );
