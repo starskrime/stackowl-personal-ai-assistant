@@ -15,7 +15,7 @@ export class UnifiedMemoryRetrievalLayer implements ContextLayer {
     return !t.isConversational || t.isReturningUser || t.hasTemporalTrigger;
   }
 
-  async build(req: ContextRequest, t: TriageSignals, _deps: LayerResults): Promise<string> {
+  async build(_req: ContextRequest, t: TriageSignals, _deps: LayerResults): Promise<string> {
     return this.retriever.retrieve(t.userMessage, t.effectiveUserId);
   }
 }
