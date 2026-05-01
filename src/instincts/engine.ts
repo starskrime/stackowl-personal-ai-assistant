@@ -51,3 +51,33 @@ export class InstinctEngine {
     return `\n\n[Active instincts]\n${lines}`;
   }
 }
+
+/**
+ * Heuristic-first instinct evaluator.
+ * Keyword scoring (0ms) → cache. Falls back to LLM only when no keyword match.
+ */
+export class InstinctEngineV2 {
+  private cache = new Map<string, InstinctSpec[]>();
+
+  evaluateHeuristic(instincts: InstinctSpec[], userMessage: string): InstinctSpec[] {
+    const lower = userMessage.toLowerCase();
+    const matched = instincts.filter(inst =>
+      inst.keywords?.some(kw => lower.includes(kw.toLowerCase()))
+    );
+    this.cache.set(userMessage, matched);
+    return matched;
+  }
+
+  getCached(userMessage: string): InstinctSpec[] | null {
+    return this.cache.get(userMessage) ?? null;
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  buildConstraintBlock(instincts: InstinctSpec[]): string {
+    if (instincts.length === 0) return "";
+    return instincts.map(i => `- ${i.constraint}`).join("\n");
+  }
+}
