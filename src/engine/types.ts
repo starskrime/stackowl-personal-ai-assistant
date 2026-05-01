@@ -19,6 +19,8 @@ export interface TurnRequest {
   turnBudget: TokenBudget;
   onStreamEvent?: (event: StreamEvent) => Promise<void>;
   onProgress?: (msg: string) => Promise<void>;
+  toolRegistry?: { execute(name: string, args: unknown, ctx: unknown): Promise<string> };
+  _resolvedProvider?: import("../providers/base.js").ModelProvider;
 }
 
 export interface FailedToolCall {

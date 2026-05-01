@@ -2852,7 +2852,7 @@ ${skillsContext}
     request: import("./types.js").TurnRequest,
     providerOverride?: import("../providers/base.js").ModelProvider,
   ): Promise<import("./types.js").TurnResult> {
-    const provider = providerOverride ?? (request as any)._resolvedProvider;
+    const provider = providerOverride ?? request._resolvedProvider;
     if (!provider) throw new Error("runTurn requires a provider");
 
     const { messages, tools, modelName, turnBudget } = request;
@@ -2874,8 +2874,12 @@ ${skillsContext}
 
     const doneSignal = hasDoneSignal(rawContent);
 
+    // Extract pendingCapabilityGap before stripping markers
+    const capabilityGapMatch = rawContent.match(/\[CAPABILITY_GAP:([^\]]+)\]/);
+    const pendingCapabilityGap = capabilityGapMatch?.[1]?.trim();
+
     const cleanContent = rawContent
-      .replace(/__STACKOWL_EXHAUSTED__/g, "")
+      .replace(new RegExp(EXHAUSTION_MARKER, "g"), "")
       .replace(/\[CAPABILITY_GAP:[^\]]*\]/g, "")
       .replace(/\[SYSTEM:[^\]]*\]/g, "")
       .replace(/\[DONE\]/g, "")
@@ -2886,8 +2890,8 @@ ${skillsContext}
     const toolResults: { toolCallId: string; name: string; result: string }[] = [];
     const toolCalls = response.toolCalls ?? [];
 
-    if (toolCalls.length > 0 && (request as any).toolRegistry) {
-      const registry = (request as any).toolRegistry;
+    if (toolCalls.length > 0 && request.toolRegistry) {
+      const registry = request.toolRegistry;
       const toolCtx = { cwd: process.cwd(), engineContext: {} };
       await Promise.allSettled(
         toolCalls.map(async (tc) => {
@@ -2910,6 +2914,7 @@ ${skillsContext}
       tokensUsed,
       doneSignal,
       budgetExhausted,
+      pendingCapabilityGap,
       failedTools,
       providerUsed: provider.name,
       modelUsed: modelName,
