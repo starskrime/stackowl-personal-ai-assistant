@@ -73,7 +73,8 @@ export class ImprovementScheduler {
     let processed = 0;
     for (const [category, entries] of byCategory) {
       if (entries.length < 3) continue;
-      const lesson = `${entries.length} failures in "${category}" — check approach patterns`;
+      const lesson = `repeated failures in "${category}" — check approach patterns`;
+      const now = new Date().toISOString();
       const existing = this.db.rawDb.prepare(
         "SELECT id FROM approach_patterns WHERE task_category = ? AND lesson = ?"
       ).get(category, lesson);
@@ -82,11 +83,12 @@ export class ImprovementScheduler {
           INSERT INTO approach_patterns
             (id, task_category, lesson, observation_count, success_rate, status, created_at, updated_at)
           VALUES (?,?,?,?,?,?,?,?)
-        `).run(
-          uuidv4(), category, lesson, entries.length, 0.0, "tentative",
-          new Date().toISOString(), new Date().toISOString(),
-        );
+        `).run(uuidv4(), category, lesson, entries.length, 0.0, "tentative", now, now);
         processed++;
+      } else {
+        this.db.rawDb.prepare(
+          "UPDATE approach_patterns SET observation_count = ?, updated_at = ? WHERE task_category = ? AND lesson = ?"
+        ).run(entries.length, now, category, lesson);
       }
     }
     return processed;
