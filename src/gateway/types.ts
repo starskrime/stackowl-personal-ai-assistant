@@ -357,4 +357,9 @@ export interface GatewayContext {
   userProfileService?: import("../routing/user-profile-service.js").UserProfileService;
   backgroundJobRunner?: import("../routing/background-job-runner.js").BackgroundJobRunner;
   relationshipContext?: import("../routing/relationship-context.js").RelationshipContext;
+
+  // ─── ContextPipeline (Element 5) ─────────────────────────────
+  contextPipeline?: import("../context/pipeline.js").ContextPipeline;
+  contextCache?: import("../context/cache.js").ContextCache;
+  userPersonaSynthesizer?: import("../context/user-persona-synthesizer.js").UserPersonaSynthesizer;
 }
