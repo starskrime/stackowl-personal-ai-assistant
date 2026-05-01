@@ -29,7 +29,9 @@ export class UnifiedMemoryRetriever {
       const key = normalize(e.summary);
       const existing = seen.get(key);
       const importance = e.importance ?? 0;
-      if (!existing || importance > existing.relevance) {
+      if (!existing) {
+        seen.set(key, { content: e.summary, relevance: importance, tier: "episodic" });
+      } else if (existing.tier !== "long_term" && importance > existing.relevance) {
         seen.set(key, { content: e.summary, relevance: importance, tier: "episodic" });
       }
     }
@@ -50,17 +52,17 @@ export class UnifiedMemoryRetriever {
     const lines = ["<memory>"];
     if (byTier.has("long_term")) {
       lines.push(`  <facts tier="long_term" confidence="high">`);
-      for (const c of byTier.get("long_term")!) lines.push(`    ${c}`);
+      for (const c of byTier.get("long_term") ?? []) lines.push(`    ${c}`);
       lines.push("  </facts>");
     }
     if (byTier.has("episodic")) {
       lines.push(`  <episodes tier="episodic" recency="recent">`);
-      for (const c of byTier.get("episodic")!) lines.push(`    ${c}`);
+      for (const c of byTier.get("episodic") ?? []) lines.push(`    ${c}`);
       lines.push("  </episodes>");
     }
     if (byTier.has("semantic")) {
       lines.push(`  <bus tier="semantic" relevance="high">`);
-      for (const c of byTier.get("semantic")!) lines.push(`    ${c}`);
+      for (const c of byTier.get("semantic") ?? []) lines.push(`    ${c}`);
       lines.push("  </bus>");
     }
     lines.push("</memory>");

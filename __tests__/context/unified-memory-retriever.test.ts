@@ -44,4 +44,13 @@ describe("UnifiedMemoryRetriever", () => {
     const result = await retriever.retrieve("resilience", "u1");
     expect(result).toContain("resilience test");
   });
+
+  it("preserves long_term tier when episode content overlaps with a fact", async () => {
+    const facts = [{ id: "f1", fact: "User builds trading bots", confidence: 0.9, userId: "u1" }];
+    const episodes = [{ id: "e1", summary: "User builds trading bots", importance: 0.99 }];
+    const retriever = new UnifiedMemoryRetriever(mockBus(), mockFactStore(facts), mockEpisodic(episodes));
+    const result = await retriever.retrieve("trading", "u1");
+    expect(result).toContain('tier="long_term"');
+    expect(result).not.toContain('tier="episodic"');
+  });
 });
