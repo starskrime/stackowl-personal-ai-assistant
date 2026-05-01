@@ -1,4 +1,4 @@
-import type { TurnResult, TaskLedger, RunHealth, HealthSignal, HealthSignalKind } from "./types.js";
+import type { TurnResult, TaskLedger, RunHealth, HealthSignalKind } from "./types.js";
 
 export class HealthMonitor {
   private health: RunHealth;
