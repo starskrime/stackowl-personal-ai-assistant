@@ -216,8 +216,9 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 - **EventBus cache invalidation** — `pellet:written`, `persona:refreshed`, `learning:recorded`, `session:ended` invalidate stale cache entries
 - **Deleted** `src/memory/context-builder.ts` (`MemoryFirstContextBuilder` superseded)
 
-### Commits (feature/context-pipeline → pending merge to main)
+### Commits (feature/context-pipeline → merged to main)
 - `85af96b`–`b578fcf` — 30+ commits implementing all 21 plan tasks
+- `caa6381` — merge commit to main
 
 ### Design
 - Spec: `docs/superpowers/specs/2026-04-30-context-pipeline-design.md`
