@@ -117,6 +117,9 @@ import { createContextPipeline } from "../context/index.js";
 import { UserPersonaSynthesizer } from "../context/user-persona-synthesizer.js";
 import { UnifiedMemoryRetriever } from "../context/unified-memory-retriever.js";
 import { ContextCache } from "../context/cache.js";
+import { OwlOrchestrator as OwlOrchestratorV2 } from "../engine/orchestrator.js";
+import { ImprovementScheduler } from "../engine/improvement-scheduler.js";
+import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -181,6 +184,10 @@ export class OwlGateway {
   private secretaryRouter: SecretaryRouter | null = null;
   private routingCoordinator: RoutingCoordinator | null = null;
   private owlBrain: OwlBrain | null = null;
+
+  // ─── OwlEngine v2 (Element 6a) ──────────────────────────────
+  private owlOrchestratorV2: OwlOrchestratorV2 | null = null;
+  private improvementScheduler: ImprovementScheduler | null = null;
 
   /**
    * Lane Queue — one active Promise per session key.
@@ -545,6 +552,27 @@ export class OwlGateway {
       }
 
       log.engine.info("[ContextPipeline] Element 5 pipeline initialized");
+    }
+
+    // ─── OwlEngine v2 (Element 6a): OwlOrchestrator + ImprovementScheduler ─
+    // ctx.db is always available here (auto-initialized above if not provided)
+    if (ctx.db) {
+      this.owlOrchestratorV2 = new OwlOrchestratorV2({
+        owl: ctx.owl,
+        provider: ctx.provider,
+        config: ctx.config,
+        db: ctx.db,
+        toolRegistry: ctx.toolRegistry,
+      });
+      this.improvementScheduler = new ImprovementScheduler(
+        new OutcomeJournalV2(ctx.db),
+        ctx.db,
+        { quietHours: (ctx.config as any).heartbeat?.quietHours ?? [] },
+      );
+      this.improvementScheduler.start();
+      ctx.orchestrator = this.owlOrchestratorV2;
+      ctx.improvementScheduler = this.improvementScheduler;
+      log.engine.info("[OwlEngine v2] OwlOrchestrator + ImprovementScheduler initialized");
     }
 
     // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
