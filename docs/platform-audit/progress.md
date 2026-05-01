@@ -15,7 +15,7 @@
 | 2 | GatewayMessage creation | 🔧 reviewed — improvements committed | 2026-04-28 |
 | 3 | SessionManager (load / create) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
-| 5 | ContextBuilder (memory + pellets + skills) | 🔄 design approved — implementation pending | 2026-04-29 |
+| 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
 | 6 | OwlEngine — ReAct loop | ⬜ pending | — |
 | 7 | Tool layer (registry, execution, permissions) | ⬜ pending | — |
 | 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
@@ -183,6 +183,45 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 - `9b0cac1` — design spec (`docs/superpowers/specs/2026-04-29-routing-coordinator-design.md`)
 - `9c26e69` — implementation plan (`docs/superpowers/plans/2026-04-29-routing-coordinator.md`)
 - `21906ec`–`7f2e66f` — Phase 1+2 implementation (23 commits on feature branch, merged to main)
+
+---
+
+## Element 5: ContextBuilder → ContextPipeline
+
+### Scope
+`src/gateway/handlers/context-builder.ts` (762 lines replaced by ~140-line adapter)
+`src/context/` (new module: 22 source files)
+
+### Findings
+- 762-line god-method with 28 inline signal blocks, executed sequentially
+- Sequential execution: ~4,200ms wall time per cold request
+- Triple memory duplication (factContext + memoryBus + memoryFirstContext)
+- No token budget — context silently overflows LLM window
+- InnerMonologue generated but discarded every turn
+- No user persona synthesis — owl knows fragments, not the person
+- Zero test coverage on context assembly logic
+
+### Improvements Implemented
+- **ContextPipeline** — typed registry of 29 ContextLayer instances executed via DAG batches
+- **DAGPlanner** — Kahn's topological sort; layers declare `produces[]`/`dependsOn[]`; parallel batches via `Promise.all()`
+- **BudgetController** — per-layer token cap + configurable global ceiling (default 8,000 tokens); sentence-boundary trim
+- **ContextCache** — LRU (200 entries), per-layer TTL, event-driven invalidation, O(1) `userIndex` for user-scoped invalidation
+- **LayerCircuitBreaker** — CLOSED→OPEN→HALF_OPEN→CLOSED; trips at errorRate>40% OR p95>1800ms
+- **ContextQualityScore** — composite 0–1 score; emits `context:quality_degraded` on EventBus when <0.6
+- **InnerMonologueLayer** — owl's last-turn thoughts persisted in `ConversationDigest`; injected at priority 15
+- **UserPersonaSynthesizer** — LLM synthesis of user character card; 30min SQLite cache; stale-while-revalidate
+- **UnifiedMemoryRetriever** — parallel query across FactStore + EpisodicMemory + MemoryBus; cosine dedup + tier-labeled XML
+- **ContextDependencies interface** — `src/context/` never imports `GatewayContext`; clean module boundary
+- **Schema v13** — `user_personas` table + `idx_pellets_tag`
+- **EventBus cache invalidation** — `pellet:written`, `persona:refreshed`, `learning:recorded`, `session:ended` invalidate stale cache entries
+- **Deleted** `src/memory/context-builder.ts` (`MemoryFirstContextBuilder` superseded)
+
+### Commits (feature/context-pipeline → pending merge to main)
+- `85af96b`–`b578fcf` — 30+ commits implementing all 21 plan tasks
+
+### Design
+- Spec: `docs/superpowers/specs/2026-04-30-context-pipeline-design.md`
+- Plan: `docs/superpowers/plans/2026-04-30-context-pipeline.md`
 
 ---
 

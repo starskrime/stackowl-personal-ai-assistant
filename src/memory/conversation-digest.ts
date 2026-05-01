@@ -28,6 +28,13 @@ export interface DigestArtifact {
   label?: string; // e.g. "TechCrunch AI article", "downloaded video"
 }
 
+export interface StoredMonologue {
+  thoughts: string;
+  responseIntent: string;
+  moodCurrent?: string;
+  storedAt: string;
+}
+
 export interface ConversationDigest {
   sessionId: string;
   /** What the user is currently trying to accomplish */
@@ -43,6 +50,8 @@ export interface ConversationDigest {
   updatedAt: string;
   /** Verbatim text of the last assistant response — for FOLLOW_UP/CONTINUATION context */
   lastAssistantResponse?: string;
+  /** Last turn's inner monologue — written by PostProcessor, read by InnerMonologueLayer */
+  lastInnerMonologue?: StoredMonologue;
 }
 
 // ─── Constants ────────────────────────────────────────────────────
@@ -161,6 +170,7 @@ export class ConversationDigestManager {
       openQuestions,
       updatedAt: new Date().toISOString(),
       lastAssistantResponse,
+      lastInnerMonologue: existing.lastInnerMonologue,
     };
 
     await this.save(digest);
@@ -168,6 +178,13 @@ export class ConversationDigestManager {
       `[ConversationDigest] Updated: ${artifacts.length} artifacts, ${decisions.length} decisions, ${failed.length} failures`,
     );
     return digest;
+  }
+
+  async setLastMonologue(sessionId: string, monologue: StoredMonologue): Promise<void> {
+    const digest = await this.load(sessionId);
+    if (!digest) return;
+    digest.lastInnerMonologue = monologue;
+    await this.save(digest);
   }
 
   // ── Format for injection into system prompt ──────────────────────

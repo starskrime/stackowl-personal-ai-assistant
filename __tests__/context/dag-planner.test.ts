@@ -64,4 +64,19 @@ describe("DAGPlanner", () => {
     const batches = planner.buildBatches(layers);
     expect(batches).toHaveLength(3);
   });
+
+  it("handles diamond dependency (A→B, A→C, B+C→D) in 3 batches", () => {
+    const planner = new DAGPlanner();
+    const layers = [
+      makeLayer("A", ["a"], []),
+      makeLayer("B", ["b"], ["a"]),
+      makeLayer("C", ["c"], ["a"]),
+      makeLayer("D", ["d"], ["b", "c"]),
+    ];
+    const batches = planner.buildBatches(layers);
+    expect(batches).toHaveLength(3);
+    expect(batches[0].map((l) => l.name)).toEqual(["A"]);
+    expect(batches[1].map((l) => l.name).sort()).toEqual(["B", "C"]);
+    expect(batches[2].map((l) => l.name)).toEqual(["D"]);
+  });
 });

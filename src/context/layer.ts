@@ -13,11 +13,11 @@ import type { ContinuityClass } from "../cognition/continuity-engine.js";
 export type { ContinuityClass };
 
 export interface ContextDependencies {
-  intelligenceRouter: IntelligenceRouter;
-  pelletStore: PelletStore;
-  memoryBus: MemoryBus;
+  intelligenceRouter?: IntelligenceRouter;
+  pelletStore?: PelletStore;
+  memoryBus?: MemoryBus;
   sessionStore: SessionStore;
-  eventBus: EventBus;
+  eventBus?: EventBus;
   config: StackOwlConfig;
 }
 
@@ -73,6 +73,8 @@ export interface ContextLayer {
   produces: string[];
   dependsOn: string[];
   alwaysInclude?: boolean;
+  /** Cache TTL in milliseconds; undefined = use pipeline default (300_000 ms) */
+  cacheTtlMs?: number;
   shouldFire(triage: TriageSignals): boolean;
   build(req: ContextRequest, triage: TriageSignals, deps: LayerResults): Promise<string>;
   getCacheKey?(req: ContextRequest, triage: TriageSignals): string | null;

@@ -19,40 +19,44 @@ export class DAGPlanner {
 
     // In-degree map: how many unresolved deps each layer has
     const inDegree = new Map<string, number>();
-    const dependants = new Map<string, string[]>(); // produced-key → layers that need it
+    const dependants = new Map<string, string[]>(); // produced-key → layer names that need it
 
     for (const layer of layers) {
       let deg = 0;
-      for (const dep of layer.dependsOn) {
+      for (const dep of new Set(layer.dependsOn)) {
         if (producers.has(dep)) {
           deg++;
           const list = dependants.get(dep) ?? [];
           list.push(layer.name);
           dependants.set(dep, list);
         }
-        // deps with no producer are treated as always-available (no blocking)
+        // deps with no producer are treated as always-available (empty string)
       }
       inDegree.set(layer.name, deg);
     }
 
-    const byName = new Map(layers.map((l) => [l.name, l]));
+    const byName = new Map<string, ContextLayer>(layers.map((l) => [l.name, l]));
     const batches: ContextLayer[][] = [];
-    let remaining = new Set(layers.map((l) => l.name));
+    const remaining = new Set<string>(layers.map((l) => l.name));
 
     while (remaining.size > 0) {
       const ready = [...remaining].filter((name) => inDegree.get(name) === 0);
       if (ready.length === 0) {
-        // Cycle — report remaining names as cycle
         throw new CircularDependencyError([...remaining]);
       }
       const batch = ready
-        .map((name) => byName.get(name)!)
-        .sort((a, b) => a.priority - b.priority);
+        .map((name) => {
+          const layer = byName.get(name);
+          if (!layer) throw new Error(`DAGPlanner: unknown layer name "${name}"`);
+          return layer;
+        })
+        .sort((a, b) => a.priority - b.priority); // lower priority value = higher precedence
       batches.push(batch);
 
       for (const name of ready) {
         remaining.delete(name);
-        const layer = byName.get(name)!;
+        const layer = byName.get(name);
+        if (!layer) continue;
         for (const produced of layer.produces) {
           for (const dependant of dependants.get(produced) ?? []) {
             inDegree.set(dependant, (inDegree.get(dependant) ?? 1) - 1);

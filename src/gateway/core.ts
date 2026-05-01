@@ -113,6 +113,10 @@ import { TaskOwnershipManager } from "../routing/task-ownership-manager.js";
 import { RoutingStatusReporter } from "../routing/routing-status-reporter.js";
 import { BackgroundJobRunner } from "../routing/background-job-runner.js";
 import { RelationshipContext } from "../routing/relationship-context.js";
+import { createContextPipeline } from "../context/index.js";
+import { UserPersonaSynthesizer } from "../context/user-persona-synthesizer.js";
+import { UnifiedMemoryRetriever } from "../context/unified-memory-retriever.js";
+import { ContextCache } from "../context/cache.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -517,6 +521,30 @@ export class OwlGateway {
         ctx.userMemoryStore ?? undefined,
       );
       log.engine.info("[BackgroundJobRunner + RelationshipContext] Initialized");
+    }
+
+    // ─── Element 5: ContextPipeline ───────────────────────────────
+    if (!ctx.contextPipeline && ctx.db && ctx.memoryBus && ctx.factStore && ctx.episodicMemory) {
+      const userPersonaSynthesizer = new UserPersonaSynthesizer(ctx.provider, ctx.db);
+      const unifiedMemoryRetriever = new UnifiedMemoryRetriever(
+        ctx.memoryBus,
+        ctx.factStore,
+        ctx.episodicMemory,
+      );
+      const contextCache = new ContextCache();
+      ctx.contextPipeline = createContextPipeline({ userPersonaSynthesizer, unifiedMemoryRetriever, contextCache });
+      ctx.contextCache = contextCache;
+      ctx.userPersonaSynthesizer = userPersonaSynthesizer;
+
+      // Wire EventBus cache invalidation
+      if (ctx.eventBus) {
+        ctx.eventBus.on("pellet:written",    () => contextCache.invalidate("BehavioralPatchLayer"));
+        ctx.eventBus.on("persona:refreshed", (e) => contextCache.invalidateUser(e.userId));
+        ctx.eventBus.on("learning:recorded", () => contextCache.invalidate("OwlLearningsLayer"));
+        ctx.eventBus.on("session:ended",     (e) => contextCache.invalidateUser((e as any).userId ?? e.sessionId));
+      }
+
+      log.engine.info("[ContextPipeline] Element 5 pipeline initialized");
     }
 
     // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
@@ -3703,6 +3731,25 @@ export class OwlGateway {
           typeof lastUserMsg.content === "string" ? lastUserMsg.content : "",
           messages,
         );
+
+        // Persist the monologue result to digestManager for next-turn injection
+        // via the ContextPipeline InnerMonologueLayer.
+        const innerLife = this.ctx.innerLife;
+        const digestManager = this.ctx.digestManager;
+        if (digestManager && sessionId) {
+          setImmediate(async () => {
+            await new Promise((r) => setTimeout(r, 100));
+            const monologue = innerLife.getLastMonologue?.();
+            if (monologue) {
+              await digestManager.setLastMonologue(sessionId, {
+                thoughts: monologue.thoughts,
+                responseIntent: monologue.responseIntent,
+                moodCurrent: monologue.moodShift?.current,
+                storedAt: new Date().toISOString(),
+              });
+            }
+          });
+        }
       }
     }
   }
