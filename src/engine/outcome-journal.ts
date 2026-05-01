@@ -31,7 +31,7 @@ export class OutcomeJournal {
   async record(entry: JournalEntry): Promise<string> {
     const id = uuidv4();
     const now = new Date().toISOString();
-    (this.db as any).db.prepare(`
+    this.db.rawDb.prepare(`
       INSERT INTO trajectories (
         id, session_id, owl_name, user_id, user_message,
         total_turns, tools_used, outcome, reward,
@@ -49,20 +49,20 @@ export class OutcomeJournal {
   }
 
   async updateSentiment(id: string, sentiment: "positive" | "correction" | "neutral"): Promise<void> {
-    (this.db as any).db.prepare(`
+    this.db.rawDb.prepare(`
       UPDATE trajectories SET follow_up_sentiment = ?, follow_up_updated_at = ? WHERE id = ?
     `).run(sentiment, new Date().toISOString(), id);
   }
 
   async getRecent(limit: number): Promise<StoredEntry[]> {
-    const rows = (this.db as any).db.prepare(`
+    const rows = this.db.rawDb.prepare(`
       SELECT * FROM trajectories WHERE quality_score IS NOT NULL ORDER BY created_at DESC LIMIT ?
     `).all(limit) as any[];
     return rows.map(this._parse);
   }
 
   async getFailures({ minEntries }: { minEntries: number }): Promise<StoredEntry[]> {
-    const rows = (this.db as any).db.prepare(`
+    const rows = this.db.rawDb.prepare(`
       SELECT * FROM trajectories WHERE quality_score IS NOT NULL AND quality_score < 0.5 ORDER BY created_at DESC LIMIT 50
     `).all() as any[];
     if (rows.length < minEntries) return [];

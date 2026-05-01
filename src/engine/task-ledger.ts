@@ -29,7 +29,7 @@ export class TaskLedgerStore {
   async save(ledger: TaskLedger): Promise<void> {
     const now = new Date().toISOString();
     const meta = ledger as LedgerWithMeta;
-    (this.db as any).db.prepare(`
+    this.db.rawDb.prepare(`
       INSERT OR REPLACE INTO task_ledgers
         (id, session_id, user_id, goal, sub_goals, expected_output,
          complexity, status, revisions, created_at, updated_at)
@@ -50,7 +50,7 @@ export class TaskLedgerStore {
   }
 
   async load(id: string): Promise<LedgerWithMeta | null> {
-    const row = (this.db as any).db.prepare(
+    const row = this.db.rawDb.prepare(
       "SELECT * FROM task_ledgers WHERE id = ?"
     ).get(id) as any;
     if (!row) return null;
