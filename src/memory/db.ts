@@ -1167,13 +1167,6 @@ export class MemoryDatabase {
 
   // ── UserPersonas ────────────────────────────────────────────────
 
-  getUserPersona(userId: string): { personaJson: string; expiresAt: number } | null {
-    const row = this.db.prepare(
-      "SELECT persona_json, expires_at FROM user_personas WHERE user_id = ? AND expires_at > ?"
-    ).get(userId, Date.now()) as { persona_json: string; expires_at: number } | undefined;
-    return row ? { personaJson: row.persona_json, expiresAt: row.expires_at } : null;
-  }
-
   getUserPersonaRaw(userId: string): { personaJson: string; expiresAt: number } | null {
     const row = this.db
       .prepare("SELECT persona_json, expires_at FROM user_personas WHERE user_id = ?")
