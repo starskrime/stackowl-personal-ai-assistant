@@ -76,6 +76,7 @@ export class InstinctEngineV2 {
     this.cache.clear();
   }
 
+  /** Bullet-only lines — no header block. Caller injects into TaskLedger.behavioralConstraints. */
   buildConstraintBlock(instincts: InstinctSpec[]): string {
     if (instincts.length === 0) return "";
     return instincts.map(i => `- ${i.constraint}`).join("\n");
