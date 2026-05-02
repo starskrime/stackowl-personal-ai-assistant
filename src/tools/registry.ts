@@ -7,6 +7,7 @@
 
 import type { ToolDefinition } from "../providers/base.js";
 import type { EngineContext } from "../engine/runtime.js";
+import type { GatewayEventBus } from "../gateway/event-bus.js";
 import type { ToolCategory, ToolPermission } from "./categories.js";
 import { DEFAULT_PERMISSIONS } from "./categories.js";
 import { validateToolArgs } from "./validator.js";
@@ -47,6 +48,7 @@ export class ToolRegistry {
   };
   private _intentRouter: ToolIntentRouter | null = null;
   private _tracker: ToolTracker | null = null;
+  private _eventBus: GatewayEventBus | null = null;
 
   setIntentRouter(router: ToolIntentRouter): void {
     this._intentRouter = router;
@@ -55,6 +57,10 @@ export class ToolRegistry {
 
   setTracker(tracker: ToolTracker): void {
     this._tracker = tracker;
+  }
+
+  setEventBus(bus: GatewayEventBus): void {
+    this._eventBus = bus;
   }
 
   getTracker(): ToolTracker | null {
@@ -125,6 +131,7 @@ export class ToolRegistry {
   getAllDefinitions(): ToolDefinition[] {
     return Array.from(this.tools.values())
       .filter((t) => this.checkPermission(t) === "allowed")
+      .filter((t) => !t.definition.deprecated)
       .map((t) => t.definition);
   }
 
@@ -220,6 +227,19 @@ export class ToolRegistry {
       throw new ToolPermissionError(name, tool.category ?? "uncategorized");
     }
 
+    // Platform enforcement
+    if (tool.definition.platforms && !tool.definition.platforms.includes(process.platform as NodeJS.Platform)) {
+      return JSON.stringify({
+        success: false,
+        data: null,
+        error: {
+          code: "PLATFORM_NOT_SUPPORTED",
+          message: `Tool '${name}' is only available on: ${tool.definition.platforms.join(", ")}. Current platform: ${process.platform}.`,
+          suggestion: "Use a cross-platform alternative or run on a supported OS.",
+        },
+      });
+    }
+
     // Schema validation
     const violations = validateToolArgs(
       tool.definition.parameters as Record<string, unknown> | undefined,
@@ -231,6 +251,7 @@ export class ToolRegistry {
 
     try {
       const startTime = Date.now();
+      this._eventBus?.emit({ type: "tool:start", toolName: name, args, turnId: context.engineContext?.sessionId ?? "" });
       let result = await tool.execute(args, context);
       const durationMs = Date.now() - startTime;
 
@@ -239,11 +260,15 @@ export class ToolRegistry {
       }
 
       // Truncate long results to prevent context bloat
+      let truncated = false;
       if (result.length > MAX_TOOL_RESULT_LENGTH) {
         result =
           result.slice(0, MAX_TOOL_RESULT_LENGTH) +
           `\n\n[OUTPUT TRUNCATED — ${result.length} chars total, showing first ${MAX_TOOL_RESULT_LENGTH}]`;
+        truncated = true;
       }
+
+      this._eventBus?.emit({ type: "tool:result", toolName: name, success: true, durationMs, truncated });
 
       return result;
     } catch (error) {
@@ -251,6 +276,7 @@ export class ToolRegistry {
       if (this._tracker) {
         this._tracker.recordFailure(name, durationMs);
       }
+      this._eventBus?.emit({ type: "tool:result", toolName: name, success: false, durationMs, truncated: false });
       if (error instanceof ToolExecutionError) throw error;
       const msg = error instanceof Error ? error.message : String(error);
       throw new ToolExecutionError(name, msg);
