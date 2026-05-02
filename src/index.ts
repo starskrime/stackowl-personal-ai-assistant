@@ -131,6 +131,7 @@ import { DocumentTool }    from "./tools/document.js";
 import { CodeSandboxTool } from "./tools/code-sandbox.js";
 import { DbQueryTool }     from "./tools/db-query.js";
 import { ScheduleTool }    from "./tools/schedule.js";
+import { createInvokeSkillTool } from "./tools/invoke-skill.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -734,6 +735,9 @@ async function bootstrap() {
   toolRegistry.register(CodeSandboxTool);
   toolRegistry.register(DbQueryTool);
   toolRegistry.register(ScheduleTool);
+
+  // invoke_skill — LLM can explicitly invoke a named skill
+  toolRegistry.register(createInvokeSkillTool());
 
   // Self-seed foundational pellets on first startup (empty store)
   // This gives the model self-knowledge (identity, tools, skills) immediately

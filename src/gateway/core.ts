@@ -122,6 +122,7 @@ import { ContextCache } from "../context/cache.js";
 import { OwlOrchestrator as OwlOrchestratorV2 } from "../engine/orchestrator.js";
 import { ImprovementScheduler } from "../engine/improvement-scheduler.js";
 import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js";
+import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/reflexion-engine.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -365,6 +366,14 @@ export class OwlGateway {
       ? new InnerLifeDNABridge(ctx.owlRegistry)
       : null;
 
+    let intelligenceReflexion: IntelligenceReflexionEngine | undefined;
+    if (ctx.db && ctx.provider) {
+      const embedFn = async (text: string): Promise<number[]> => {
+        try { return (await (ctx.provider as any).embed(text)).embedding; } catch { return []; }
+      };
+      intelligenceReflexion = new IntelligenceReflexionEngine(ctx.db, ctx.provider, embedFn);
+    }
+
     this.postProcessor = new PostProcessor(
       ctx,
       this.taskQueue,
@@ -373,6 +382,7 @@ export class OwlGateway {
       this.anticipator,
       ctx.costTracker ?? null,
       innerLifeBridge,
+      intelligenceReflexion,
     );
     this.contextBuilder = new ContextBuilder(
       ctx,
