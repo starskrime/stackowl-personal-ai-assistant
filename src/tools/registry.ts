@@ -9,6 +9,7 @@ import type { ToolDefinition } from "../providers/base.js";
 import type { EngineContext } from "../engine/runtime.js";
 import type { GatewayEventBus } from "../gateway/event-bus.js";
 import type { ToolCategory, ToolPermission } from "./categories.js";
+import type { GoalVerifier } from "./goal-verifier.js";
 import { DEFAULT_PERMISSIONS } from "./categories.js";
 import { validateToolArgs } from "./validator.js";
 import {
@@ -49,6 +50,7 @@ export class ToolRegistry {
   private _intentRouter: ToolIntentRouter | null = null;
   private _tracker: ToolTracker | null = null;
   private _eventBus: GatewayEventBus | null = null;
+  private _goalVerifier: GoalVerifier | null = null;
 
   setIntentRouter(router: ToolIntentRouter): void {
     this._intentRouter = router;
@@ -61,6 +63,10 @@ export class ToolRegistry {
 
   setEventBus(bus: GatewayEventBus): void {
     this._eventBus = bus;
+  }
+
+  setGoalVerifier(verifier: GoalVerifier): void {
+    this._goalVerifier = verifier;
   }
 
   getTracker(): ToolTracker | null {
@@ -271,6 +277,46 @@ export class ToolRegistry {
       }
 
       this._eventBus?.emit({ type: "tool:result", toolName: name, success: true, durationMs, truncated });
+
+      // GAV: verify result against active sub-goal (skip if no sub-goal or no verifier)
+      if (this._goalVerifier && context.engineContext?.activeSubGoal) {
+        const subGoal = context.engineContext.activeSubGoal;
+        const userMessage = context.engineContext.userMessage ?? "";
+        try {
+          const verification = await this._goalVerifier.verify({
+            toolName: name,
+            toolArgs: args,
+            toolResult: result,
+            subGoal,
+            userMessage,
+          });
+
+          if (verification.verdict === "ADVANCES" || verification.verdict === "PARTIAL") {
+            this._eventBus?.emit({
+              type: "tool:goal_advance",
+              toolName: name,
+              subGoal: subGoal.description,
+              verdict: verification.verdict,
+            });
+          }
+
+          if (verification.verdict === "BLOCKED") {
+            this._eventBus?.emit({
+              type: "tool:goal_blocked",
+              toolName: name,
+              subGoal: subGoal.description,
+              suggestion: verification.suggestion,
+            });
+          }
+
+          // For BLOCKED and PARTIAL, wrap result with warning so LLM knows
+          if (verification.verdict === "BLOCKED" || verification.verdict === "PARTIAL") {
+            result = result + `\n\n<tool_result_warning verdict="${verification.verdict}">${verification.reason}${verification.suggestion ? ` Suggestion: ${verification.suggestion}` : ""}</tool_result_warning>`;
+          }
+        } catch {
+          // Verifier failure is non-fatal — proceed with unmodified result
+        }
+      }
 
       return result;
     } catch (error) {
