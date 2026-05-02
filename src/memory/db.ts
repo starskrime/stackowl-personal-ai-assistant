@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -710,15 +710,18 @@ export class MemoryDatabase {
 
       -- Individual tool invocations within a trajectory
       CREATE TABLE IF NOT EXISTS trajectory_turns (
-        id              TEXT PRIMARY KEY,
-        trajectory_id   TEXT NOT NULL REFERENCES trajectories(id),
-        turn_index      INTEGER NOT NULL,
-        tool_name       TEXT NOT NULL,
-        args_snapshot   TEXT NOT NULL DEFAULT '',
-        result_snapshot TEXT NOT NULL DEFAULT '',
-        success         INTEGER NOT NULL DEFAULT 1,
-        duration_ms     INTEGER,
-        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        id                  TEXT PRIMARY KEY,
+        trajectory_id       TEXT NOT NULL REFERENCES trajectories(id),
+        turn_index          INTEGER NOT NULL,
+        tool_name           TEXT NOT NULL,
+        args_snapshot       TEXT NOT NULL DEFAULT '',
+        result_snapshot     TEXT NOT NULL DEFAULT '',
+        success             INTEGER NOT NULL DEFAULT 1,
+        duration_ms         INTEGER,
+        verification_result TEXT,
+        verifier_reason     TEXT,
+        subgoal_id          TEXT,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_turn_traj ON trajectory_turns(trajectory_id);
 
@@ -791,6 +794,15 @@ export class MemoryDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_at_goal    ON agent_tasks(goal_id);
       CREATE INDEX IF NOT EXISTS idx_at_status  ON agent_tasks(status);
+
+      -- Tool Cortex: workspace-scoped synthesized tools with lifecycle management
+      CREATE TABLE IF NOT EXISTS workspace_tools (
+        tool_name     TEXT PRIMARY KEY,
+        state         TEXT NOT NULL DEFAULT 'SHADOW',
+        source_code   TEXT NOT NULL,
+        promoted_at   TEXT,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
   }
 
@@ -1147,6 +1159,23 @@ export class MemoryDatabase {
       // approachPatterns, parliamentContext, reflexionContext)
       this.db.exec(`
         ALTER TABLE task_ledgers ADD COLUMN extras TEXT DEFAULT '{}';
+      `);
+    }
+    if (current < 16) {
+      // v16: GAV verifier columns on trajectory_turns + workspace_tools table.
+      // Fresh DBs already have these columns via createSchema(); the ALTER TABLE
+      // statements are only needed for existing pre-v16 databases.
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verification_result TEXT`); } catch {}
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verifier_reason TEXT`); } catch {}
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN subgoal_id TEXT`); } catch {}
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS workspace_tools (
+          tool_name     TEXT PRIMARY KEY,
+          state         TEXT NOT NULL DEFAULT 'SHADOW',
+          source_code   TEXT NOT NULL,
+          promoted_at   TEXT,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
       `);
     }
     if (current < SCHEMA_VERSION) {
@@ -3021,6 +3050,82 @@ function rowToOwlJob(row: any): OwlJob {
     error: row.error ?? undefined,
     result: row.result ?? undefined,
   };
+}
+
+// ─── StackOwlDB ───────────────────────────────────────────────────
+// Thin wrapper around a raw SQLite file path. Used by tests and any
+// caller that manages the db path directly (vs. a workspace directory).
+
+export class StackOwlDB {
+  readonly db: Database.Database;
+
+  constructor(dbPath: string) {
+    this.db = new Database(dbPath);
+
+    // Performance pragmas
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
+    this.db.pragma("foreign_keys = ON");
+
+    this.createSchema();
+    this.runMigrations();
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  private createSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS trajectory_turns (
+        id                  TEXT PRIMARY KEY,
+        trajectory_id       TEXT NOT NULL,
+        turn_index          INTEGER NOT NULL,
+        tool_name           TEXT NOT NULL,
+        args_snapshot       TEXT NOT NULL DEFAULT '',
+        result_snapshot     TEXT NOT NULL DEFAULT '',
+        success             INTEGER NOT NULL DEFAULT 1,
+        duration_ms         INTEGER,
+        verification_result TEXT,
+        verifier_reason     TEXT,
+        subgoal_id          TEXT,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS workspace_tools (
+        tool_name     TEXT PRIMARY KEY,
+        state         TEXT NOT NULL DEFAULT 'SHADOW',
+        source_code   TEXT NOT NULL,
+        promoted_at   TEXT,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  }
+
+  private runMigrations(): void {
+    const current = (this.db.pragma("user_version") as { user_version: number }[])[0]?.user_version ?? 0;
+    if (current < 16) {
+      // v16: GAV verifier columns on trajectory_turns + workspace_tools table
+      // Safe to skip: createSchema() already creates tables with all columns
+      // for fresh databases. The ALTER TABLE statements only apply to existing
+      // databases upgrading from an earlier schema version.
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verification_result TEXT`); } catch {}
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verifier_reason TEXT`); } catch {}
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN subgoal_id TEXT`); } catch {}
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS workspace_tools (
+          tool_name     TEXT PRIMARY KEY,
+          state         TEXT NOT NULL DEFAULT 'SHADOW',
+          source_code   TEXT NOT NULL,
+          promoted_at   TEXT,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+    }
+    if (current < 16) {
+      this.db.pragma(`user_version = 16`);
+    }
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────
