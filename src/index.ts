@@ -677,6 +677,39 @@ async function bootstrap() {
     search: (args, ctx) => toolRegistry.execute("memory_search", args, ctx),
     store:  (args, ctx) => toolRegistry.execute("remember", args, ctx),
     get:    (args, ctx) => toolRegistry.execute("memory_get", args, ctx),
+    write: async (args, ctx) => {
+      const userId = ctx.userId ?? "default";
+      const content = args["content"] as string;
+      const category = (args["category"] as string) ?? "general";
+      const confidence = typeof args["confidence"] === "number" ? args["confidence"] : 0.8;
+      if (!content) {
+        return JSON.stringify({ success: false, data: null, error: { code: "MISSING_CONTENT", message: "content is required for action:write", suggestion: "Provide a content string" } });
+      }
+      try {
+        const stored = await factStore.add({
+          userId,
+          fact: content,
+          category: category as any,
+          confidence,
+          source: "explicit",
+        });
+        return JSON.stringify({ success: true, data: { written: content, id: stored.id }, error: null });
+      } catch (err) {
+        return JSON.stringify({ success: false, data: null, error: { code: "WRITE_FAILED", message: err instanceof Error ? err.message : String(err), suggestion: "Check that content is a non-empty string" } });
+      }
+    },
+    invalidate: async (args, ctx) => {
+      const userId = ctx.userId ?? "default";
+      const query = (args["query"] as string) ?? (args["content"] as string);
+      if (!query) {
+        return JSON.stringify({ success: false, data: null, error: { code: "MISSING_QUERY", message: "query is required for action:invalidate", suggestion: "Provide a query string" } });
+      }
+      const now = new Date().toISOString();
+      const result = memoryDb.rawDb.prepare(
+        "UPDATE facts SET invalidated_at = ? WHERE user_id = ? AND fact LIKE ? AND invalidated_at IS NULL"
+      ).run(now, userId, `%${query}%`);
+      return JSON.stringify({ success: true, data: { invalidated: (result as any).changes }, error: null });
+    },
   }));
 
   toolRegistry.register(createMacosCommsTool({
