@@ -359,6 +359,22 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
+    // ── /owl status — observable owl state ─────────────────────────────
+    this.bot.command("owl", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      const db = this.gateway.getDb();
+      if (!db) {
+        await ctx.reply("Database not available.");
+        return;
+      }
+      const userId = String(ctx.from?.id ?? "local");
+      const { OwlStateReporter } = await import("../../intelligence/owl-state-reporter.js");
+      const reporter = new OwlStateReporter(db);
+      const dna = owl.dna.evolvedTraits as Record<string, unknown>;
+      const report = await reporter.report(userId, owl.persona.name, dna);
+      await ctx.reply(report);
+    });
+
     this.bot.on("message:text", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
       const userId = ctx.from?.id;

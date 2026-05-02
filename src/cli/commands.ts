@@ -202,6 +202,7 @@ const cmdHelp: CommandFn = async (_args, ui) => {
     C("/capabilities".padEnd(20)) + D("List synthesized tools"),
     C("/skills".padEnd(20)) + D("List or install skills"),
     C("/learning".padEnd(20)) + D("Show learning report"),
+    C("/owl".padEnd(20)) + D("Show owl state and memory"),
     C("/onboarding".padEnd(20)) + D("Re-run setup wizard"),
     C("/quit".padEnd(20)) + D("Save session and exit"),
     "",
@@ -306,6 +307,21 @@ const cmdOnboarding: CommandFn = async (_args, ui) => {
   return true;
 };
 
+const cmdOwl: CommandFn = async (_args, ui, gateway) => {
+  const db = gateway.getDb();
+  const owl = gateway.getOwl();
+  if (!db) {
+    ui.printInfo("Database not available.");
+    return true;
+  }
+  const { OwlStateReporter } = await import("../intelligence/owl-state-reporter.js");
+  const reporter = new OwlStateReporter(db);
+  const dna = owl.dna.evolvedTraits as Record<string, unknown>;
+  const report = await reporter.report("local", owl.persona.name, dna);
+  ui.printLines(["", ...report.split("\n"), ""]);
+  return true;
+};
+
 const cmdMcp: CommandFn = async (args, ui, gateway) => {
   const mcpManager = gateway.getMcpManager();
   if (!mcpManager) {
@@ -358,6 +374,7 @@ const COMMANDS: Record<string, CommandDef> = {
     fn: cmdMcp,
     subcommands: ["list", "status", "add", "remove", "enable", "disable", "tools", "reconnect", "install"],
   },
+  owl: { description: "Show owl state", fn: cmdOwl, subcommands: ["status"] },
 };
 
 export class CommandRegistry implements CompletionProvider {
