@@ -1181,69 +1181,7 @@ export class MemoryDatabase {
     if (current < 17) {
       // v17: owl intelligence tables — task ledger, reflexion critiques,
       // skill templates, outcome journal; plus new columns on facts.
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS owl_task_ledger (
-          id            TEXT PRIMARY KEY,
-          session_id    TEXT NOT NULL,
-          user_id       TEXT NOT NULL,
-          task_id       TEXT NOT NULL,
-          subgoal_index INTEGER NOT NULL,
-          subgoal_text  TEXT NOT NULL,
-          state_json    TEXT NOT NULL,
-          status        TEXT NOT NULL DEFAULT 'in_progress',
-          attempt_count INTEGER NOT NULL DEFAULT 0,
-          created_at    TEXT NOT NULL,
-          resumed_at    TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_task_ledger_user
-          ON owl_task_ledger(user_id, status);
-
-        CREATE TABLE IF NOT EXISTS reflexion_critiques (
-          id               TEXT PRIMARY KEY,
-          task_category    TEXT NOT NULL,
-          complexity_tier  TEXT NOT NULL,
-          tool_sequence    TEXT NOT NULL,
-          critique_text    TEXT NOT NULL,
-          embedding        BLOB NOT NULL,
-          used_count       INTEGER NOT NULL DEFAULT 0,
-          created_at       TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_critiques_category
-          ON reflexion_critiques(task_category, complexity_tier);
-
-        CREATE TABLE IF NOT EXISTS skill_templates (
-          id            TEXT PRIMARY KEY,
-          name          TEXT UNIQUE NOT NULL,
-          source        TEXT NOT NULL DEFAULT 'auto',
-          template_text TEXT NOT NULL,
-          trigger_desc  TEXT NOT NULL,
-          embedding     BLOB NOT NULL,
-          success_count INTEGER NOT NULL DEFAULT 0,
-          installed_at  TEXT NOT NULL,
-          last_used_at  TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS outcome_journal (
-          id                  TEXT PRIMARY KEY,
-          session_id          TEXT NOT NULL,
-          owl_name            TEXT NOT NULL DEFAULT 'default',
-          user_id             TEXT NOT NULL,
-          outcome             TEXT NOT NULL,
-          reward              REAL NOT NULL DEFAULT 0.0,
-          quality_score       REAL NOT NULL DEFAULT 0.0,
-          task_category       TEXT NOT NULL DEFAULT 'general',
-          task_complexity     TEXT NOT NULL DEFAULT 'medium',
-          challenge_instances INTEGER NOT NULL DEFAULT 0,
-          created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_outcome_journal_user
-          ON outcome_journal(user_id, created_at);
-      `);
-
-      const factsColumns = (this.db.prepare("PRAGMA table_info(facts)").all() as { name: string }[]).map(c => c.name);
-      if (!factsColumns.includes("invalidated_at")) {
-        this.db.exec("ALTER TABLE facts ADD COLUMN invalidated_at TEXT;");
-      }
+      applyV17Migration(this.db);
     }
     if (current < SCHEMA_VERSION) {
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -3189,13 +3127,92 @@ export class StackOwlDB {
         )
       `);
     }
-    if (current < 16) {
-      this.db.pragma(`user_version = 16`);
+    if (current < 17) {
+      // v17: owl intelligence tables — task ledger, reflexion critiques,
+      // skill templates, outcome journal; plus new columns on facts (if present).
+      applyV17Migration(this.db);
+      this.db.pragma(`user_version = 17`);
     }
   }
 }
 
 // ─── Standalone migration helper (used in tests & tooling) ───────
+
+/**
+ * Shared v17 DDL — called by MemoryDatabase.runMigrations(), StackOwlDB.runMigrations(),
+ * and the standalone applyMigrations() export. Not exported.
+ */
+function applyV17Migration(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS owl_task_ledger (
+      id            TEXT PRIMARY KEY,
+      session_id    TEXT NOT NULL,
+      user_id       TEXT NOT NULL,
+      task_id       TEXT NOT NULL,
+      subgoal_index INTEGER NOT NULL,
+      subgoal_text  TEXT NOT NULL,
+      state_json    TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'in_progress',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      created_at    TEXT NOT NULL,
+      resumed_at    TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_ledger_user
+      ON owl_task_ledger(user_id, status);
+
+    CREATE TABLE IF NOT EXISTS reflexion_critiques (
+      id               TEXT PRIMARY KEY,
+      task_category    TEXT NOT NULL,
+      complexity_tier  TEXT NOT NULL,
+      tool_sequence    TEXT NOT NULL,
+      critique_text    TEXT NOT NULL,
+      embedding        BLOB NOT NULL,
+      used_count       INTEGER NOT NULL DEFAULT 0,
+      created_at       TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_critiques_category
+      ON reflexion_critiques(task_category, complexity_tier);
+
+    CREATE TABLE IF NOT EXISTS skill_templates (
+      id            TEXT PRIMARY KEY,
+      name          TEXT UNIQUE NOT NULL,
+      source        TEXT NOT NULL DEFAULT 'auto',
+      template_text TEXT NOT NULL,
+      trigger_desc  TEXT NOT NULL,
+      embedding     BLOB NOT NULL,
+      success_count INTEGER NOT NULL DEFAULT 0,
+      installed_at  TEXT NOT NULL,
+      last_used_at  TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS outcome_journal (
+      id                  TEXT PRIMARY KEY,
+      session_id          TEXT NOT NULL,
+      owl_name            TEXT NOT NULL DEFAULT 'default',
+      user_id             TEXT NOT NULL,
+      outcome             TEXT NOT NULL,
+      reward              REAL NOT NULL DEFAULT 0.0,
+      quality_score       REAL NOT NULL DEFAULT 0.0,
+      task_category       TEXT NOT NULL DEFAULT 'general',
+      task_complexity     TEXT NOT NULL DEFAULT 'medium',
+      challenge_instances INTEGER NOT NULL DEFAULT 0,
+      created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_outcome_journal_user
+      ON outcome_journal(user_id, created_at);
+  `);
+
+  // Only ALTER facts if the table exists (StackOwlDB does not have a facts table)
+  const factsExists = (db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='facts'"
+  ).get() as { name: string } | undefined) !== undefined;
+  if (factsExists) {
+    const factsColumns = (db.prepare("PRAGMA table_info(facts)").all() as { name: string }[]).map(c => c.name);
+    if (!factsColumns.includes("invalidated_at")) {
+      db.exec("ALTER TABLE facts ADD COLUMN invalidated_at TEXT;");
+    }
+  }
+}
 
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
@@ -3224,71 +3241,8 @@ export function applyMigrations(db: Database.Database): void {
   const current = (db.pragma("user_version") as { user_version: number }[])[0]?.user_version ?? 0;
 
   if (current < 17) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS owl_task_ledger (
-        id            TEXT PRIMARY KEY,
-        session_id    TEXT NOT NULL,
-        user_id       TEXT NOT NULL,
-        task_id       TEXT NOT NULL,
-        subgoal_index INTEGER NOT NULL,
-        subgoal_text  TEXT NOT NULL,
-        state_json    TEXT NOT NULL,
-        status        TEXT NOT NULL DEFAULT 'in_progress',
-        attempt_count INTEGER NOT NULL DEFAULT 0,
-        created_at    TEXT NOT NULL,
-        resumed_at    TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_task_ledger_user
-        ON owl_task_ledger(user_id, status);
-
-      CREATE TABLE IF NOT EXISTS reflexion_critiques (
-        id               TEXT PRIMARY KEY,
-        task_category    TEXT NOT NULL,
-        complexity_tier  TEXT NOT NULL,
-        tool_sequence    TEXT NOT NULL,
-        critique_text    TEXT NOT NULL,
-        embedding        BLOB NOT NULL,
-        used_count       INTEGER NOT NULL DEFAULT 0,
-        created_at       TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_critiques_category
-        ON reflexion_critiques(task_category, complexity_tier);
-
-      CREATE TABLE IF NOT EXISTS skill_templates (
-        id            TEXT PRIMARY KEY,
-        name          TEXT UNIQUE NOT NULL,
-        source        TEXT NOT NULL DEFAULT 'auto',
-        template_text TEXT NOT NULL,
-        trigger_desc  TEXT NOT NULL,
-        embedding     BLOB NOT NULL,
-        success_count INTEGER NOT NULL DEFAULT 0,
-        installed_at  TEXT NOT NULL,
-        last_used_at  TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS outcome_journal (
-        id                  TEXT PRIMARY KEY,
-        session_id          TEXT NOT NULL,
-        owl_name            TEXT NOT NULL DEFAULT 'default',
-        user_id             TEXT NOT NULL,
-        outcome             TEXT NOT NULL,
-        reward              REAL NOT NULL DEFAULT 0.0,
-        quality_score       REAL NOT NULL DEFAULT 0.0,
-        task_category       TEXT NOT NULL DEFAULT 'general',
-        task_complexity     TEXT NOT NULL DEFAULT 'medium',
-        challenge_instances INTEGER NOT NULL DEFAULT 0,
-        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_outcome_journal_user
-        ON outcome_journal(user_id, created_at);
-    `);
-
-    const factsColumns = (db.prepare("PRAGMA table_info(facts)").all() as { name: string }[]).map(c => c.name);
-    if (!factsColumns.includes("invalidated_at")) {
-      db.exec("ALTER TABLE facts ADD COLUMN invalidated_at TEXT;");
-    }
-
-    db.pragma(`user_version = 17`);
+    applyV17Migration(db);
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
 }
 
