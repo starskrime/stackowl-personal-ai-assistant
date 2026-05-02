@@ -369,7 +369,7 @@ export class OwlGateway {
     let intelligenceReflexion: IntelligenceReflexionEngine | undefined;
     if (ctx.db && ctx.provider) {
       const embedFn = async (text: string): Promise<number[]> => {
-        try { return (await (ctx.provider as any).embed(text)).embedding; } catch { return []; }
+        try { return (await ctx.provider.embed(text)).embedding; } catch { return []; }
       };
       intelligenceReflexion = new IntelligenceReflexionEngine(ctx.db, ctx.provider, embedFn);
     }

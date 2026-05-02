@@ -55,7 +55,7 @@ describe("intelligence module integration", () => {
     `).run(JSON.stringify([0.9, 0.1, 0.0, 0.0]));
 
     const invalidator = new FactInvalidator(db as any);
-    (invalidator as any).embedFn = async () => [0.9, 0.1, 0.0, 0.0];
+    invalidator.embedFn = async () => [0.9, 0.1, 0.0, 0.0];
     await invalidator.check("User moved to Tokyo", "u1");
 
     const row = db.prepare("SELECT invalidated_at FROM facts WHERE id = 'f1'").get() as any;
