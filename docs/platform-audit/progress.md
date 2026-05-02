@@ -17,7 +17,7 @@
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
-| 7 | Tool layer (registry, execution, permissions) | 🔄 Phase 7a plan written — ready to implement | 2026-05-02 |
+| 7 | Tool layer (registry, execution, permissions) | 🔧 Phase 7a complete — 14/14 tasks, 585 tests passing | 2026-05-02 |
 | 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
 | 9 | Parliament (multi-owl debate) | ⬜ pending | — |
 | 10 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
@@ -256,7 +256,7 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 
 ## Element 7: Tool Layer — Tool Cortex
 
-### Status: 🔄 Design approved — spec written — Phase 7a plan written | 2026-05-02
+### Status: 🔧 Phase 7a complete — all 14 tasks implemented + integration tests passing | 2026-05-02
 
 ### Scope
 `src/tools/` (all tool files), `src/tools/registry.ts`, `src/tools/mcp/`, `src/tools/cortex/` (new), `src/gateway/event-bus.ts`, `src/gateway/narration-formatter.ts` (new), `src/engine/orchestrator.ts`, `src/engine/improvement-scheduler.ts`, `src/memory/db.ts` (schema v17/v18)
@@ -299,6 +299,28 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 
 ### Commits
 - `02762fc` — spec written (1067 lines, 16 sections)
+
+### Phase 7a Implementation (2026-05-02) — All 14 tasks complete
+
+**Tasks completed:**
+1. `ToolDefinition` extended with `deprecated`, `platforms`, `capabilities`, `executionPolicy` fields
+2. `GatewayEventBus` extended with 6 `tool:*` events (`tool:start`, `tool:result`, `tool:retry`, `tool:fallback`, `tool:goal_advance`, `tool:goal_blocked`)
+3. `NarrationFormatter` (`src/gateway/narration-formatter.ts`) — pure event→string function; routes to human-readable narration per tool type
+4. `ToolRegistry` extended — platform guard, event emission, deprecated filter in `getAllDefinitions()`, `setEventBus()`, `setGoalVerifier()`
+5. CLI narration via `wireToolNarration()` in CLI adapter
+6. Schema v16 — `trajectory_turns` + `workspace_tools` tables in `src/memory/db.ts`
+7. `GoalVerifier` (`src/tools/goal-verifier.ts`) — cheap-tier post-execution verification; `ADVANCES`/`PARTIAL`/`BLOCKED`/`NEUTRAL` verdicts
+8. `TurnRequest` + `EngineContext` extended with `activeSubGoal` + `userMessage` propagation
+9. GAV hook in `ToolRegistry.execute()` — emits `tool:goal_advance`/`tool:goal_blocked`; wraps result with `<tool_result_warning>` for BLOCKED/PARTIAL
+10. Unified `web` tool (`src/tools/web-unified.ts`) — replaces 5 web tools; `action: search|fetch|interact`
+11. Unified `memory` tool (`src/tools/memory-unified.ts`) — replaces 5 memory tools; `action: search|store|get`
+12. macOS native tool grouping — `macos_comms` + `macos_system` unified tools
+13. Superseded tools marked `deprecated: true`; unified tools registered in `src/index.ts`
+14. Integration tests (`__tests__/integration/tool-cortex-7a.test.ts`) — 7 integration tests covering narration, deprecated filter, GAV end-to-end, unified tool capabilities
+
+**Test counts:**
+- Before Phase 7a: 508 tests
+- After Phase 7a: 585 tests (+77 new tests across all 14 tasks)
 
 ---
 
