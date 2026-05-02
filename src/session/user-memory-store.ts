@@ -1,13 +1,17 @@
 import { MemoryDatabase } from "../memory/db.js";
 import type { FactCategory } from "../memory/db.js";
 import { embed, isEmbedderReady } from "../pellets/embedder.js";
+import type { GatewayEventBus } from "../gateway/event-bus.js";
 
 export type { FactCategory };
 
 const DEDUP_THRESHOLD = 0.88;
 
 export class UserMemoryStore {
-  constructor(private db: MemoryDatabase) {}
+  constructor(
+    private db: MemoryDatabase,
+    private eventBus?: GatewayEventBus,
+  ) {}
 
   async retrieve(userId: string, query: string, limit = 3): Promise<string[]> {
     if (isEmbedderReady()) {
@@ -37,7 +41,7 @@ export class UserMemoryStore {
           const sim = cosineSimilarity(newEmbedding, topMatches[0].embedding);
           if (sim >= DEDUP_THRESHOLD) return; // duplicate — skip
         }
-        this.db.facts.add({
+        const stored = this.db.facts.add({
           userId,
           owlName,
           fact,
@@ -46,11 +50,12 @@ export class UserMemoryStore {
           source: "inferred",
           embedding: newEmbedding,
         });
+        this.eventBus?.emit({ type: "fact:extracted", userId, factText: fact, factId: stored.id });
         return;
       }
     }
     // no embedder: store without embedding (no dedup)
-    this.db.facts.add({
+    const stored = this.db.facts.add({
       userId,
       owlName,
       fact,
@@ -59,6 +64,7 @@ export class UserMemoryStore {
       source: "inferred",
       embedding: undefined,
     });
+    this.eventBus?.emit({ type: "fact:extracted", userId, factText: fact, factId: stored.id });
   }
 
   private ftsFallback(userId: string, query: string, limit: number): string[] {

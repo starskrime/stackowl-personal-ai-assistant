@@ -1434,6 +1434,7 @@ class FactsRepo {
         WHERE facts_fts MATCH ?
           AND (? IS NULL OR f.user_id = ?)
           AND f.confidence > 0
+          AND f.invalidated_at IS NULL
           AND (f.expires_at IS NULL OR f.expires_at > ?)
         ORDER BY facts_fts.rank
         LIMIT ?
@@ -1453,6 +1454,7 @@ class FactsRepo {
       WHERE fact LIKE ?
         AND (? IS NULL OR user_id = ?)
         AND confidence > 0
+        AND invalidated_at IS NULL
         AND (expires_at IS NULL OR expires_at > ?)
       ORDER BY confidence DESC
       LIMIT ?
@@ -1470,6 +1472,7 @@ class FactsRepo {
       WHERE embedding IS NOT NULL
         AND (? IS NULL OR user_id = ?)
         AND confidence > 0
+        AND invalidated_at IS NULL
         AND (expires_at IS NULL OR expires_at > ?)
     `).all(userId ?? null, userId ?? null, now) as any[];
 
@@ -1491,6 +1494,7 @@ class FactsRepo {
     const rows = this.db.prepare(`
       SELECT * FROM facts
       WHERE user_id = ? AND category = ? AND confidence > 0
+        AND invalidated_at IS NULL
         AND (expires_at IS NULL OR expires_at > ?)
       ORDER BY confidence DESC
     `).all(userId, category, now) as any[];
@@ -1500,8 +1504,8 @@ class FactsRepo {
   /** All non-retired facts (used by FactStore.load to populate in-memory map from DB) */
   getAllForUser(userId?: string): Fact[] {
     const rows = userId
-      ? (this.db.prepare("SELECT * FROM facts WHERE user_id = ? AND confidence > 0").all(userId) as any[])
-      : (this.db.prepare("SELECT * FROM facts WHERE confidence > 0").all() as any[]);
+      ? (this.db.prepare("SELECT * FROM facts WHERE user_id = ? AND confidence > 0 AND invalidated_at IS NULL").all(userId) as any[])
+      : (this.db.prepare("SELECT * FROM facts WHERE confidence > 0 AND invalidated_at IS NULL").all() as any[]);
     return rows.map(rowToFact);
   }
 

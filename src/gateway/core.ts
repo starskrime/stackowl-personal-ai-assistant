@@ -20,6 +20,7 @@ import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
 import { PromptOptimizer } from "../engine/prompt-optimizer.js";
 import { IntelligenceRouter } from "../intelligence/router.js";
+import { FactInvalidator } from "../intelligence/fact-invalidator.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
@@ -473,7 +474,7 @@ export class OwlGateway {
 
     // Auto-initialize SessionService + UserMemoryStore (SQLite-backed session management)
     if (ctx.db && ctx.compressor && ctx.providerRegistry && !ctx.sessionService) {
-      const userMemoryStore = new UserMemoryStore(ctx.db);
+      const userMemoryStore = new UserMemoryStore(ctx.db, this.gatewayEventBus);
       ctx.userMemoryStore = userMemoryStore;
 
       ctx.sessionService = new SessionService(
@@ -549,6 +550,16 @@ export class OwlGateway {
         ctx.eventBus.on("persona:refreshed", (e) => contextCache.invalidateUser(e.userId));
         ctx.eventBus.on("learning:recorded", () => contextCache.invalidate("OwlLearningsLayer"));
         ctx.eventBus.on("session:ended",     (e) => contextCache.invalidateUser((e as any).userId ?? e.sessionId));
+      }
+
+      // Wire FactInvalidator — marks contradicted facts invalid on fact:extracted
+      // embedFn is injected in Task 15 (intelligence wiring); no-op until then.
+      if (ctx.db) {
+        const factInvalidator = new FactInvalidator(ctx.db);
+        this.gatewayEventBus.on("fact:extracted", (e) => {
+          factInvalidator.check(e.factText, e.userId).catch(() => {});
+        });
+        log.engine.debug("[FactInvalidator] Subscribed to fact:extracted");
       }
 
       log.engine.info("[ContextPipeline] Element 5 pipeline initialized");
