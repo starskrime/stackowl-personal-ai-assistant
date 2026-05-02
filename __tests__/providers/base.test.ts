@@ -3,6 +3,7 @@ import type { ToolDefinition, ExecutionPolicy } from "../../src/providers/base.j
 
 describe("ToolDefinition extensions", () => {
   it("accepts deprecated flag", () => {
+    // Filtering of deprecated tools from getAllDefinitions() is tested in registry-platform.test.ts (Task 4).
     const def: ToolDefinition = {
       name: "old_tool",
       description: "deprecated",

@@ -23,6 +23,17 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
 }
 
+export interface ExecutionPolicy {
+  /** Milliseconds before AbortController fires. Default: 30000 */
+  timeoutMs?: number;
+  /** Max retry attempts on transient failure. Default: 1 */
+  maxRetries?: number;
+  /** Delay between retries in ms. Default: 1000 */
+  retryDelayMs?: number;
+  /** Ordered list of fallback tool names to try on persistent failure */
+  fallbackChain?: string[];
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -48,17 +59,6 @@ export interface ToolDefinition {
   capabilities?: string[];
   /** Execution policy: timeout, retries, fallback chain */
   executionPolicy?: ExecutionPolicy;
-}
-
-export interface ExecutionPolicy {
-  /** Milliseconds before AbortController fires. Default: 30000 */
-  timeoutMs?: number;
-  /** Max retry attempts on transient failure. Default: 1 */
-  maxRetries?: number;
-  /** Delay between retries in ms. Default: 1000 */
-  retryDelayMs?: number;
-  /** Ordered list of fallback tool names to try on persistent failure */
-  fallbackChain?: string[];
 }
 
 // ─── Response Types ──────────────────────────────────────────────
