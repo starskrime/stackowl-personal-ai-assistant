@@ -6,6 +6,7 @@
  */
 
 import type { ToolDefinition } from "../providers/base.js";
+import { SemanticToolGate } from "../intelligence/semantic-tool-gate.js";
 import type { EngineContext } from "../engine/runtime.js";
 import type { GatewayEventBus } from "../gateway/event-bus.js";
 import type { ToolCategory, ToolPermission } from "./categories.js";
@@ -51,6 +52,8 @@ export class ToolRegistry {
   private _tracker: ToolTracker | null = null;
   private _eventBus: GatewayEventBus | null = null;
   private _goalVerifier: GoalVerifier | null = null;
+  private _semanticGate = new SemanticToolGate();
+  private _gateIndexed = false;
 
   setIntentRouter(router: ToolIntentRouter): void {
     this._intentRouter = router;
@@ -96,6 +99,7 @@ export class ToolRegistry {
       );
     }
     this.tools.set(tool.definition.name, tool);
+    this.invalidateGateIndex();
   }
 
   /**
@@ -111,7 +115,9 @@ export class ToolRegistry {
    * Remove a tool from the registry (used for MCP disconnect).
    */
   unregister(name: string): boolean {
-    return this.tools.delete(name);
+    const deleted = this.tools.delete(name);
+    if (deleted) this.invalidateGateIndex();
+    return deleted;
   }
 
   /**
@@ -139,6 +145,28 @@ export class ToolRegistry {
       .filter((t) => this.checkPermission(t) === "allowed")
       .filter((t) => !t.definition.deprecated)
       .map((t) => t.definition);
+  }
+
+  /**
+   * Get the top-K most relevant tools for a given query using SemanticToolGate.
+   * Falls back to returning all tools (up to limit) when no embed function is
+   * configured (i.e. gate was indexed without an embedFn).
+   */
+  async getRelevantTools(query: string, limit = 8): Promise<ToolDefinition[]> {
+    const allDefs = this.getAllDefinitions();
+    if (!this._gateIndexed) {
+      await this._semanticGate.index(allDefs);
+      this._gateIndexed = true;
+    }
+    return this._semanticGate.getRelevant(query, limit);
+  }
+
+  /**
+   * Invalidate the SemanticToolGate index so it is rebuilt on next call to
+   * getRelevantTools(). Called automatically on register() and unregister().
+   */
+  invalidateGateIndex(): void {
+    this._gateIndexed = false;
   }
 
   /**
