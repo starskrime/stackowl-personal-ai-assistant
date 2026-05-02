@@ -228,6 +228,7 @@ export class ToolRegistry {
     }
 
     // Platform enforcement
+    // Platform-blocked calls are intentionally not emitted to the event bus — no execution occurred.
     if (tool.definition.platforms && !tool.definition.platforms.includes(process.platform as NodeJS.Platform)) {
       return JSON.stringify({
         success: false,
@@ -249,9 +250,10 @@ export class ToolRegistry {
       throw new ToolValidationError(name, violations);
     }
 
+    const startTime = Date.now();
+    this._eventBus?.emit({ type: "tool:start", toolName: name, args, turnId: context.engineContext?.sessionId ?? "" });
+
     try {
-      const startTime = Date.now();
-      this._eventBus?.emit({ type: "tool:start", toolName: name, args, turnId: context.engineContext?.sessionId ?? "" });
       let result = await tool.execute(args, context);
       const durationMs = Date.now() - startTime;
 
@@ -272,7 +274,7 @@ export class ToolRegistry {
 
       return result;
     } catch (error) {
-      const durationMs = 0;
+      const durationMs = Date.now() - startTime;
       if (this._tracker) {
         this._tracker.recordFailure(name, durationMs);
       }

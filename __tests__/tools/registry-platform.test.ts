@@ -68,6 +68,7 @@ describe("ToolRegistry event emission", () => {
     expect(resultHandler).toHaveBeenCalledWith(
       expect.objectContaining({ type: "tool:result", toolName: "emit_test_tool", success: true })
     );
+    expect(resultHandler.mock.calls[0][0].durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it("emits tool:result with success: false when tool throws", async () => {
