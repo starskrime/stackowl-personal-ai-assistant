@@ -15,6 +15,9 @@ export type GatewaySystemEvent =
   | { type: "tool:fallback";     fromTool: string; toTool: string; reason: string }
   | { type: "tool:goal_advance"; toolName: string; subGoal: string; verdict: "ADVANCES" | "PARTIAL" }
   | { type: "tool:goal_blocked"; toolName: string; subGoal: string; suggestion?: string }
+  | { type: "task:failed";       userId: string; taskDescription: string; toolSequence: string[]; errorSummary: string; category: string; complexityTier: string }
+  | { type: "fact:extracted";    userId: string; factText: string; factId: string }
+  | { type: "session:ended";     userId: string; sessionId: string }
 
 const DELIVER_EVENT = "gateway:deliver"
 
