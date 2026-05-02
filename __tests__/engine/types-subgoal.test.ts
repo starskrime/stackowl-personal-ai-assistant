@@ -7,6 +7,7 @@ describe("TurnRequest subgoal extensions", () => {
       id: "sg-1",
       description: "Find the current TypeScript version",
       status: "in_progress",
+      dependsOn: [],
     };
     const turn: TurnRequest = {
       message: "test",

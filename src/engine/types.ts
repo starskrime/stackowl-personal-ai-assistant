@@ -21,7 +21,12 @@ export interface TurnRequest {
   onProgress?: (msg: string) => Promise<void>;
   toolRegistry?: { execute(name: string, args: unknown, ctx: unknown): Promise<string> };
   _resolvedProvider?: import("../providers/base.js").ModelProvider;
-  /** Short user message text — convenience alias used by GAV and context propagation */
+  /**
+   * @deprecated Added by Task 8 as a convenience alias; use `userMessage` instead.
+   * `userMessage` is the single canonical field for the original user message text
+   * passed to GoalVerifier and context propagation. `message` is distinct from the
+   * `messages: ChatMessage[]` conversation history and should not be confused with it.
+   */
   message?: string;
   /** Active sub-goal from TaskLedger — passed to GoalVerifier if present */
   activeSubGoal?: SubGoal;
