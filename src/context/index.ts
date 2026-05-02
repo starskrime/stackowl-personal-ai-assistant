@@ -31,7 +31,9 @@ import type { UserPersonaSynthesizer } from "./user-persona-synthesizer.js";
 import type { UnifiedMemoryRetriever } from "./unified-memory-retriever.js";
 import type { ContextLayer } from "./layer.js";
 import { CritiqueRetriever } from "../intelligence/critique-retriever.js";
+import { ChallengeDirectiveLayer } from "../intelligence/challenge-directive.js";
 import type { MemoryDatabase } from "../memory/db.js";
+import type { OwlRegistry } from "../owls/registry.js";
 
 export interface ContextPipelineDeps {
   userPersonaSynthesizer: UserPersonaSynthesizer;
@@ -39,6 +41,8 @@ export interface ContextPipelineDeps {
   contextCache?: ContextCache;  // if provided, used by the pipeline; otherwise creates its own
   /** Optional MemoryDatabase — enables the CritiqueRetriever layer when provided. */
   db?: MemoryDatabase;
+  /** Optional OwlRegistry — enables ChallengeDirectiveLayer to read live DNA. */
+  owlRegistry?: OwlRegistry;
 }
 
 export function createContextPipeline(deps: ContextPipelineDeps): ContextPipeline {
@@ -57,6 +61,7 @@ export function createContextPipeline(deps: ContextPipelineDeps): ContextPipelin
     new ModeDirectiveLayer(),
     new SocraticModeLayer(),
     new BehavioralPatchLayer(),
+    new ChallengeDirectiveLayer(deps.owlRegistry),
     new ActiveIntentsLayer(),
     new OwlLearningsLayer(),
     new UnifiedMemoryRetrievalLayer(deps.unifiedMemoryRetriever),

@@ -455,6 +455,48 @@ export class OwlEvolutionEngine {
         changed = true;
       }
 
+      // ── Phase D4: challenge_instances signal ──────────────────
+      // Read the number of user corrections recorded by SentimentProbe over
+      // the last 10 days. If corrections are frequent the user is pushing back
+      // on sycophantic answers → raise challengeLevel. If there have been zero
+      // corrections for a sustained period → relax one step.
+      if (this.db) {
+        try {
+          const challengeStats = this.db.rawDb.prepare(`
+            SELECT AVG(challenge_instances) as avg_challenge,
+                   COUNT(*) as session_count
+            FROM outcome_journal
+            WHERE owl_name = ? AND created_at > datetime('now', '-10 days')
+          `).get(owlName) as { avg_challenge: number; session_count: number } | undefined;
+
+          if (challengeStats && challengeStats.session_count >= 3) {
+            const challengeLevels: Array<ChallengeLevel> = ["low", "medium", "high", "relentless"];
+            const currentLevel = owl.dna.evolvedTraits.challengeLevel;
+            const currentIdx = challengeLevels.indexOf(currentLevel);
+
+            if (challengeStats.avg_challenge > 2 && currentIdx < challengeLevels.length - 1) {
+              // Frequent corrections → user wants the owl to push back more
+              const newLevel = challengeLevels[currentIdx + 1]!;
+              logEntries.push(
+                `challengeLevel nudged up: ${currentLevel} → ${newLevel} (avg ${challengeStats.avg_challenge.toFixed(1)} corrections/session)`,
+              );
+              owl.dna.evolvedTraits.challengeLevel = newLevel;
+              changed = true;
+            } else if (challengeStats.avg_challenge === 0 && currentIdx > 0) {
+              // No corrections at all → owl may already be appropriately assertive; relax one step
+              const newLevel = challengeLevels[currentIdx - 1]!;
+              logEntries.push(
+                `challengeLevel nudged down: ${currentLevel} → ${newLevel} (0 corrections over ${challengeStats.session_count} sessions)`,
+              );
+              owl.dna.evolvedTraits.challengeLevel = newLevel;
+              changed = true;
+            }
+          }
+        } catch {
+          // Non-fatal — outcome_journal may not have data yet
+        }
+      }
+
       // ── Phase D3: Reward-derived prompt rules ─────────────────
       // The LLM can now suggest targeted rules derived from low-reward failure domains.
       // These are appended to dna.promptSections and injected into every future prompt.
