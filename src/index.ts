@@ -125,6 +125,12 @@ import { createWebUnifiedTool } from "./tools/web-unified.js";
 import { createMemoryUnifiedTool } from "./tools/memory-unified.js";
 import { createMacosCommsTool } from "./tools/macos/comms-unified.js";
 import { createMacosSystemTool } from "./tools/macos/system-unified.js";
+// ── Tool Cortex 7d — new capability tools ──
+import { VisionTool }      from "./tools/vision.js";
+import { DocumentTool }    from "./tools/document.js";
+import { CodeSandboxTool } from "./tools/code-sandbox.js";
+import { DbQueryTool }     from "./tools/db-query.js";
+import { ScheduleTool }    from "./tools/schedule.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -686,6 +692,13 @@ async function bootstrap() {
     system_info:   (args, ctx) => toolRegistry.execute("system_info", args, ctx),
   }));
 
+  // ── Tool Cortex 7d — register new capability tools ──
+  toolRegistry.register(VisionTool);
+  toolRegistry.register(DocumentTool);
+  toolRegistry.register(CodeSandboxTool);
+  toolRegistry.register(DbQueryTool);
+  toolRegistry.register(ScheduleTool);
+
   // Self-seed foundational pellets on first startup (empty store)
   // This gives the model self-knowledge (identity, tools, skills) immediately
   // after a reset — prevents "acts like generic LLM" regression.
@@ -709,7 +722,7 @@ async function bootstrap() {
   const mcpManager = new MCPManager();
   if (config.mcp?.servers?.length) {
     const mcpCount = await mcpManager.connectAll(
-      config.mcp.servers,
+      config.mcp.servers.filter((s) => s.enabled !== false),
       toolRegistry,
     );
     if (mcpCount > 0) {

@@ -14,6 +14,8 @@ import type { CompletionProvider } from "./completion-engine.js";
 import { SpecializationCreateWizard } from "./specialization-wizard.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
+import { McpCommandRouter } from "../gateway/commands/mcp-router.js";
+import { saveConfig } from "../config/loader.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -304,6 +306,28 @@ const cmdOnboarding: CommandFn = async (_args, ui) => {
   return true;
 };
 
+const cmdMcp: CommandFn = async (args, ui, gateway) => {
+  const mcpManager = gateway.getMcpManager();
+  if (!mcpManager) {
+    ui.printInfo("MCP manager not available.");
+    return true;
+  }
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  const verb = parts[0] || "status";
+  const verbArgs = parts.slice(1);
+  const config = gateway.getConfig();
+  const basePath = gateway.getWorkspacePath();
+  const result = await McpCommandRouter.dispatch(verb, verbArgs, {
+    mcpManager,
+    toolRegistry: gateway.getToolRegistry()!,
+    config,
+    basePath,
+    saveConfig,
+  });
+  ui.printLines(["", ...result.split("\n"), ""]);
+  return true;
+};
+
 // ─── Registry ────────────────────────────────────────────────────
 
 const COMMANDS: Record<string, CommandDef> = {
@@ -329,6 +353,11 @@ const COMMANDS: Record<string, CommandDef> = {
   exit: { description: "Save and exit", fn: cmdQuit },
   bye: { description: "Save and exit", fn: cmdQuit },
   onboarding: { description: "Re-run setup wizard", fn: cmdOnboarding },
+  mcp: {
+    description: "Manage MCP servers (add/remove/list/status/enable/disable)",
+    fn: cmdMcp,
+    subcommands: ["list", "status", "add", "remove", "enable", "disable", "tools", "reconnect", "install"],
+  },
 };
 
 export class CommandRegistry implements CompletionProvider {

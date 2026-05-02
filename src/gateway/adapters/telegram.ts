@@ -25,6 +25,7 @@ import { convertTables } from "../formatters/table-converter.js";
 import { TelegramConfigMenu } from "./telegram-config/menu.js";
 import { TelegramVoiceMenu } from "./telegram-config/voice-menu.js";
 import { saveConfig } from "../../config/loader.js";
+import { McpCommandRouter } from "../commands/mcp-router.js";
 import { OggConverter } from "../../voice/ogg-converter.js";
 import { WhisperSTT } from "../../voice/stt.js";
 
@@ -322,147 +323,40 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // ── /mcp — MCP server management ─────────────────────────────
-    // Usage:
-    //   /mcp                          → show status of all servers
-    //   /mcp status                   → same
-    //   /mcp connect <npm-package>    → dynamically connect npx-published server
-    //   /mcp reconnect <server-name>  → re-establish a dropped connection
-    //   /mcp disconnect <server-name> → remove server and unregister its tools
+    // ── /mcp — MCP server management (delegated to McpCommandRouter) ─────
     this.bot.command("mcp", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
 
       const mcpManager = this.gateway.getMcpManager();
       const toolRegistry = this.gateway.getToolRegistry();
 
-      if (!mcpManager) {
-        await ctx.reply(
-          "⚠️ MCP manager is not available. Restart the bot to reinitialise.",
-        );
+      if (!mcpManager || !toolRegistry) {
+        await ctx.reply("⚠️ MCP manager is not available.");
         return;
       }
 
       const rawArgs = ctx.match?.trim() ?? "";
-      const [sub, ...rest] = rawArgs.split(/\s+/);
-      const arg = rest.join(" ").trim();
+      const parts = rawArgs.split(/\s+/).filter(Boolean);
+      const verb = parts[0] || "status";
+      const verbArgs = parts.slice(1);
 
-      // ── /mcp or /mcp status ───────────────────────────────────
-      if (!sub || sub === "status") {
-        const text = mcpManager.formatStatus();
-        await ctx.reply(text, { parse_mode: "HTML" });
-        return;
+      const config = this.gateway.getConfig();
+      const basePath = this.gateway.getWorkspacePath();
+
+      try {
+        const result = await McpCommandRouter.dispatch(verb, verbArgs, {
+          mcpManager,
+          toolRegistry,
+          config,
+          basePath,
+          saveConfig,
+        });
+        const escaped = result.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        await ctx.reply(escaped, { parse_mode: "HTML" });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await ctx.reply(`❌ MCP error: <code>${msg}</code>`, { parse_mode: "HTML" });
       }
-
-      // ── /mcp connect <npm-package> [args…] ────────────────────
-      if (sub === "connect") {
-        if (!arg) {
-          await ctx.reply(
-            "Usage: <code>/mcp connect &lt;npm-package&gt; [arg1 arg2 …]</code>\n" +
-              "Example: <code>/mcp connect @modelcontextprotocol/server-filesystem ~/Desktop</code>",
-            { parse_mode: "HTML" },
-          );
-          return;
-        }
-        const [pkg, ...pkgArgs] = arg.split(/\s+/);
-        const statusMsg = await ctx.reply(
-          `🔌 Connecting to <code>${pkg}</code>…`,
-          { parse_mode: "HTML" },
-        );
-        try {
-          if (!toolRegistry) throw new Error("Tool registry not available.");
-          const count = await mcpManager.connectNpx(pkg!, toolRegistry, pkgArgs);
-          await ctx.api
-            .editMessageText(
-              ctx.chat.id,
-              statusMsg.message_id,
-              `✅ Connected <b>${pkg}</b> — ${count} tool(s) registered.`,
-              { parse_mode: "HTML" },
-            )
-            .catch(() => {});
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          await ctx.api
-            .editMessageText(
-              ctx.chat.id,
-              statusMsg.message_id,
-              `❌ Failed to connect <code>${pkg}</code>:\n<code>${msg}</code>`,
-              { parse_mode: "HTML" },
-            )
-            .catch(() => {});
-        }
-        return;
-      }
-
-      // ── /mcp reconnect <server-name> ──────────────────────────
-      if (sub === "reconnect") {
-        if (!arg) {
-          await ctx.reply(
-            "Usage: <code>/mcp reconnect &lt;server-name&gt;</code>",
-            { parse_mode: "HTML" },
-          );
-          return;
-        }
-        const statusMsg = await ctx.reply(
-          `🔄 Reconnecting <code>${arg}</code>…`,
-          { parse_mode: "HTML" },
-        );
-        try {
-          if (!toolRegistry) throw new Error("Tool registry not available.");
-          const count = await mcpManager.reconnect(arg, toolRegistry);
-          await ctx.api
-            .editMessageText(
-              ctx.chat.id,
-              statusMsg.message_id,
-              `✅ Reconnected <b>${arg}</b> — ${count} tool(s) available.`,
-              { parse_mode: "HTML" },
-            )
-            .catch(() => {});
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          await ctx.api
-            .editMessageText(
-              ctx.chat.id,
-              statusMsg.message_id,
-              `❌ Reconnect failed for <code>${arg}</code>:\n<code>${msg}</code>`,
-              { parse_mode: "HTML" },
-            )
-            .catch(() => {});
-        }
-        return;
-      }
-
-      // ── /mcp disconnect <server-name> ─────────────────────────
-      if (sub === "disconnect") {
-        if (!arg) {
-          await ctx.reply(
-            "Usage: <code>/mcp disconnect &lt;server-name&gt;</code>",
-            { parse_mode: "HTML" },
-          );
-          return;
-        }
-        try {
-          if (!toolRegistry) throw new Error("Tool registry not available.");
-          mcpManager.disconnect(arg, toolRegistry);
-          await ctx.reply(
-            `🔌 <b>${arg}</b> disconnected and its tools unregistered.`,
-            { parse_mode: "HTML" },
-          );
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          await ctx.reply(
-            `❌ Disconnect failed:\n<code>${msg}</code>`,
-            { parse_mode: "HTML" },
-          );
-        }
-        return;
-      }
-
-      // Unknown sub-command
-      await ctx.reply(
-        `❓ Unknown sub-command <code>${sub}</code>.\n\n` +
-          `Available: <code>status</code> · <code>connect</code> · <code>reconnect</code> · <code>disconnect</code>`,
-        { parse_mode: "HTML" },
-      );
     });
 
     this.bot.on("message:text", async (ctx) => {
