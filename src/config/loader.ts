@@ -83,6 +83,12 @@ export interface StackOwlConfig {
       args?: string[];
       url?: string;
       env?: Record<string, string>;
+      /** When false, skip connecting at boot. Default: true */
+      enabled?: boolean;
+      /** Human-readable purpose for /mcp list output */
+      description?: string;
+      /** ISO timestamp set by addServer() */
+      installedAt?: string;
     }>;
   };
   /** Tool permission gating by category */

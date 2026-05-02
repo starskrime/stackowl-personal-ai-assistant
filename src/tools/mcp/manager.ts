@@ -11,7 +11,10 @@
 
 import { MCPClient, type MCPServerConfig } from "./client.js";
 import type { ToolRegistry } from "../registry.js";
+import type { StackOwlConfig } from "../../config/loader.js";
 import { log } from "../../logger.js";
+
+type SaveConfigFn = (basePath: string, config: StackOwlConfig) => Promise<void>;
 
 export type { MCPServerConfig };
 
@@ -164,6 +167,63 @@ export class MCPManager {
     };
     log.engine.info(`[MCP] Resolving NPM package: ${packageName}`);
     return this.connect(config, toolRegistry);
+  }
+
+  // ─── Persistent CRUD ────────────────────────────────────────────
+
+  /**
+   * Add a new MCP server, connect it, then persist to config.
+   * Throws (without saving) if the connect step fails.
+   */
+  async addServer(
+    serverConfig: MCPServerConfig & { enabled?: boolean; description?: string; installedAt?: string },
+    toolRegistry: ToolRegistry,
+    config: StackOwlConfig,
+    basePath: string,
+    saveConfig: SaveConfigFn,
+  ): Promise<number> {
+    const count = await this.connect(serverConfig, toolRegistry);
+    config.mcp ??= { servers: [] };
+    config.mcp.servers.push(serverConfig);
+    await saveConfig(basePath, config);
+    return count;
+  }
+
+  /**
+   * Disconnect a server and remove it from the persisted config.
+   */
+  async removeServer(
+    name: string,
+    toolRegistry: ToolRegistry,
+    config: StackOwlConfig,
+    basePath: string,
+    saveConfig: SaveConfigFn,
+  ): Promise<void> {
+    this.disconnect(name, toolRegistry);
+    if (config.mcp) {
+      config.mcp.servers = config.mcp.servers.filter((s) => s.name !== name);
+    }
+    await saveConfig(basePath, config);
+  }
+
+  /**
+   * Patch a server's config fields, reconnect it, then persist.
+   */
+  async updateServer(
+    name: string,
+    patch: Partial<MCPServerConfig & { enabled?: boolean; description?: string }>,
+    toolRegistry: ToolRegistry,
+    config: StackOwlConfig,
+    basePath: string,
+    saveConfig: SaveConfigFn,
+  ): Promise<number> {
+    if (!config.mcp) throw new Error(`No MCP config found.`);
+    const idx = config.mcp.servers.findIndex((s) => s.name === name);
+    if (idx === -1) throw new Error(`MCP server "${name}" not found in config.`);
+    Object.assign(config.mcp.servers[idx]!, patch);
+    const count = await this.reconnect(name, toolRegistry);
+    await saveConfig(basePath, config);
+    return count;
   }
 
   // ─── Status ──────────────────────────────────────────────────────
