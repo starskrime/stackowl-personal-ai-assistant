@@ -17,7 +17,7 @@
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
-| 7 | Tool layer (registry, execution, permissions) | ⬜ pending | — |
+| 7 | Tool layer (registry, execution, permissions) | 🔄 design approved — spec written | 2026-05-02 |
 | 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
 | 9 | Parliament (multi-owl debate) | ⬜ pending | — |
 | 10 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
@@ -251,6 +251,54 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 ### Commits
 - `232233b` — `feat(gateway): add orchestrator + improvementScheduler to GatewayContext`
 - `4f3e487` — `feat(gateway): wire OwlOrchestrator as primary path, ImprovementScheduler bootstrapped at startup`
+
+---
+
+## Element 7: Tool Layer — Tool Cortex
+
+### Status: 🔄 Design approved — spec written — implementation plans pending
+
+### Scope
+`src/tools/` (all tool files), `src/tools/registry.ts`, `src/tools/mcp/`, `src/tools/cortex/` (new), `src/gateway/event-bus.ts`, `src/gateway/narration-formatter.ts` (new), `src/engine/orchestrator.ts`, `src/engine/improvement-scheduler.ts`, `src/memory/db.ts` (schema v17/v18)
+
+### Findings
+- ~65 tools registered; LLM sees full catalog every turn — 5 web tools overlap, 5 memory tools overlap, 15 macOS tools consume 3KB of context budget
+- No post-execution critique hook — LLM is sole arbiter of whether tool result advanced the goal
+- FallbackSequencer is in-memory only — learning evaporates on restart
+- ToolTracker is JSON-file, discards error reasons, not queryable
+- Live browser control (Safari/Chrome on user's screen) broken — CDP only works if user pre-launches Chrome with debug flag; Safari has no driver at all
+- `/mcp` command in Telegram lacks `add/edit/remove`; CLI has zero `/mcp`; mutations don't persist across restart
+- No tool scaffolding — adding a tool requires manual registry wiring
+
+### Architecture Decisions (approved 2026-05-02)
+
+**Platform:** Cross-platform (Windows/macOS/Linux). Every tool declares `platforms: NodeJS.Platform[]`. Enforced by `ToolRegistry.execute()`.
+
+**Four phases (7a ships first, 7d parallel, 7b/7c gated):**
+
+- **7a — Verification & Narration** (Week 1–2): GSN (EventBus tool:* events → real-time narration in all channels), GAV (goal-anchored verifier using cheap-tier LLM — different model from main to avoid correlated blindspots), tool catalog cleanup (web 5→1, memory 5→1, native 15→4)
+- **7d — Quality & Coverage** (Week 3–5, parallel track): `live_browser` tool (Playwright CDP, all OS), MCP full CRUD + marketplace (static catalog ~40 servers), tool quality pass (30 tools get ExecutionPolicy + structured errors + capability tags), 5 new tools (vision/document/sandbox/db_query/schedule — full advanced implementations), tool scaffolder (`npm run tool:create`)
+- **7b — Memory-Driven Routing** (Month 2, gated): CWTG (cost-weighted tool graph, Dijkstra LLM-free recovery, persisted in SQLite), PTR (K-NN over own trajectory history, inject as ToolPriorLayer)
+- **7c — Self-Evolution** (Month 3, gated): SET (workspace model — evolved tools land in `workspace/tools/*.js`, never overwrite system tools; 40-success promotion threshold; shadow execution + auto-rollback), FPC (fact provenance chain with retroactive retraction)
+
+### Key Design Decisions
+- SET writes to `workspace/tools/` only — system tools never modified
+- Workspace tool promotion: 40 successful executions → becomes primary route
+- Shadow mode: both system + workspace run in parallel before promotion
+- MCP persistence: every `/mcp` mutation calls `saveConfig()` — survives restart
+- Secrets in MCP/DB config: stored in Credentials vault, config holds references not values
+- GAV verifier must be different model tier than main LLM (correlated blindspot prevention)
+- Live browser: Playwright CDP only — no OS-specific drivers in `live_browser` tool
+
+### Schema migrations
+- v17 (7a): `trajectory_turns` + 3 columns; `workspace_tools` table
+- v18 (7b): `tool_edges` table; `tool_executions` table (replaces JSON ToolTracker)
+
+### Spec
+- `docs/superpowers/specs/2026-05-02-tool-cortex-design.md`
+
+### Commits
+- `02762fc` — spec written (1067 lines, 16 sections)
 
 ---
 
