@@ -16,10 +16,12 @@ import type { CostTracker } from "../../costs/tracker.js";
 import type { SelfLearningCoordinator } from "../../learning/coordinator.js";
 import type { ProactiveAnticipator } from "../../learning/anticipator.js";
 import type { InnerLifeDNABridge } from "../../owls/inner-bridge.js";
+import type { ReflexionEngine as IntelligenceReflexionEngine } from "../../intelligence/reflexion-engine.js";
 import { log } from "../../logger.js";
 
 export class PostProcessor {
   private messageCount = 0;
+  private intelligenceReflexion: IntelligenceReflexionEngine | null = null;
 
   constructor(
     private ctx: GatewayContext,
@@ -29,7 +31,10 @@ export class PostProcessor {
     private anticipator: ProactiveAnticipator | null,
     private costTracker: CostTracker | null,
     private innerLifeBridge: InnerLifeDNABridge | null = null,
-  ) {}
+    intelligenceReflexion?: IntelligenceReflexionEngine,
+  ) {
+    this.intelligenceReflexion = intelligenceReflexion ?? null;
+  }
 
   /**
    * Run all post-processing tasks after a response.
@@ -521,6 +526,24 @@ export class PostProcessor {
           }
         });
       }
+    }
+
+    // ── Intelligence Reflexion — write self-critiques to SQLite ──
+    // When the loop exhausted, feed structured failure context into
+    // IntelligenceReflexionEngine so CritiqueRetriever can surface these
+    // lessons before similar future tasks (Reflexion loop closure).
+    if (this.intelligenceReflexion && metadata?.loopExhausted) {
+      const toolsUsed = metadata.toolsUsed ?? [];
+      this.taskQueue.enqueue("reflexion-write", async () => {
+        await this.intelligenceReflexion!.onTaskFailed({
+          userId: metadata.userId ?? "",
+          taskDescription: messages[0]?.content?.slice(0, 200) ?? "",
+          toolSequence: toolsUsed,
+          errorSummary: "Task loop exhausted without completion",
+          category: "general",
+          complexityTier: "medium",
+        });
+      });
     }
 
     // ── Response Quality Signal ────────────────────────────────
