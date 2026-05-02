@@ -17,7 +17,7 @@
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
-| 7 | Tool layer (registry, execution, permissions) | 🔄 design approved — spec written | 2026-05-02 |
+| 7 | Tool layer (registry, execution, permissions) | 🔄 Phase 7a plan written — ready to implement | 2026-05-02 |
 | 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
 | 9 | Parliament (multi-owl debate) | ⬜ pending | — |
 | 10 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
@@ -256,7 +256,7 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 
 ## Element 7: Tool Layer — Tool Cortex
 
-### Status: 🔄 Design approved — spec written — implementation plans pending
+### Status: 🔄 Design approved — spec written — Phase 7a plan written | 2026-05-02
 
 ### Scope
 `src/tools/` (all tool files), `src/tools/registry.ts`, `src/tools/mcp/`, `src/tools/cortex/` (new), `src/gateway/event-bus.ts`, `src/gateway/narration-formatter.ts` (new), `src/engine/orchestrator.ts`, `src/engine/improvement-scheduler.ts`, `src/memory/db.ts` (schema v17/v18)
