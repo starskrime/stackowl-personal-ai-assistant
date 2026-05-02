@@ -23,6 +23,8 @@ import { StructuredOutputManager, isJsonModeEnabled } from "../../cli/structured
 import { ThinkingSuppressor } from "../../cli/thinking-suppressor.js";
 import { ToolStream } from "../../cli/tool-stream.js";
 import type { StreamEvent } from "../../providers/base.js";
+import { GatewayEventBus, type GatewaySystemEvent } from "../event-bus.js";
+import { formatToolEvent } from "../narration-formatter.js";
 
 export interface CLIAdapterConfig { userId?: string; workspacePath?: string; }
 
@@ -296,5 +298,28 @@ export class CLIAdapter implements ChannelAdapter {
     this._shuttingDown = true;
     this.renderer.close();
     process.exit(0);
+  }
+}
+
+/**
+ * Subscribe to tool:* events on the given bus and print narration lines to stdout.
+ * Call once when the CLI session starts.
+ */
+export function wireToolNarration(bus: GatewayEventBus): void {
+  const toolEvents: Array<GatewaySystemEvent["type"]> = [
+    "tool:start",
+    "tool:result",
+    "tool:retry",
+    "tool:fallback",
+    "tool:goal_advance",
+    "tool:goal_blocked",
+  ];
+  for (const eventType of toolEvents) {
+    bus.on(eventType as any, (event: any) => {
+      const msg = formatToolEvent(event);
+      if (msg !== null) {
+        process.stdout.write(`\x1b[2m⟳ ${msg}\x1b[0m\n`);
+      }
+    });
   }
 }
