@@ -17,7 +17,7 @@
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
-| 7 | Tool layer (registry, execution, permissions) | 🔧 Phase 7a complete — 14/14 tasks, 585 tests passing | 2026-05-02 |
+| 7 | Tool layer (registry, execution, permissions) | 🔧 Phase 7a + 7d complete — 633 tests passing. Phase 7b/7c gated on production data. | 2026-05-02 |
 | 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
 | 9 | Parliament (multi-owl debate) | ⬜ pending | — |
 | 10 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
@@ -327,6 +327,57 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 **Test counts:**
 - Before Phase 7a: 508 tests
 - After Phase 7a: 585 tests (+77 new tests across all 14 tasks)
+
+### Phase 7d Implementation (2026-05-02) — All 12 tasks complete
+
+**Tasks completed:**
+1. `MCPManager.addServer()` — atomic connect-then-persist with `saveConfig()`
+2. `MCPManager.removeServer()` + `MCPManager.updateServer()` — snapshot/restore rollback on reconnect failure
+3. `McpServerConfig` extended: `enabled?`, `description?`, `installedAt?` fields in `src/config/loader.ts`
+4. `McpCommandRouter` (`src/gateway/commands/mcp-router.ts`) — channel-agnostic static dispatcher for 9 MCP verbs (list, status, add, install, remove, enable, disable, tools, reconnect); `disable` calls `mcpManager.disconnect()` directly (NOT `updateServer`)
+5. CLI `/mcp` command in `src/cli/commands.ts` via `McpCommandRouter.dispatch()`
+6. Telegram `/mcp` refactored to single `McpCommandRouter.dispatch()` call (replaced 130-line switch block)
+7. `enabled !== false` filter at `connectAll` call site in `src/index.ts`
+8. `toolError` / `toolSuccess` envelope helpers (`src/tools/tool-error.ts`)
+9. `VisionTool` (`src/tools/vision.ts`) — multimodal image understanding via `IntelligenceRouter`; capabilities `["vision", "multimodal"]`
+10. `DocumentTool` (`src/tools/document.ts`) — unified parser for PDF/DOCX/MD/TXT; actions `parse|extract_tables|metadata`
+11. `CodeSandboxTool` (`src/tools/code-sandbox.ts`) — Python/JS subprocess sandbox with SIGKILL timeout; name `"sandbox"`
+12. `DbQueryTool` (`src/tools/db-query.ts`) — SQLite client via `better-sqlite3` dynamic import; `{ readonly: true, fileMustExist: true }`
+13. `ScheduleTool` (`src/tools/schedule.ts`) — in-process job store; supports "in N minutes/hours/days/seconds" + ISO 8601; 4 actions
+14. `scripts/create-tool.ts` scaffolder + `npm run tool:create` script
+15. All 5 new tools registered in `src/index.ts`
+16. Integration smoke tests (`__tests__/integration/tool-cortex-7d.test.ts`)
+
+**Merge commit:** `6df5d3c` — feat: merge Tool Cortex Phase 7d — MCP CRUD, 5 new tools, quality framework
+
+**Test counts:**
+- Before Phase 7d: 585 tests
+- After Phase 7d: 633 tests (+48 new tests)
+
+**Phase 7b/7c status:** Gated on production data. Plans are written; implementation deferred until data justifies it.
+
+#### ⏰ Phase 7b Readiness Gate — CHECK DATE: 2026-05-09
+
+After ~1 week of real usage, run this query against `~/.stackowl/stackowl.db`:
+
+```sql
+SELECT
+  verification_result,
+  COUNT(*) as count,
+  ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) as pct
+FROM trajectory_turns
+WHERE verification_result IS NOT NULL
+  AND created_at > datetime('now', '-7 days')
+GROUP BY verification_result;
+```
+
+- Sample count < 200 → insufficient data, wait longer
+- BLOCKED % > 5 → start Phase 7b (CWTG + PTR)
+- BLOCKED % < 2 → deprioritize Phase 7b
+
+#### ⏰ Phase 7c Readiness Gate — CHECK DATE: ~2026-05-23
+
+After Phase 7b has run ~2 weeks in production, evaluate Phase 7c (SET + FPC). Check `tool_edges` table has ≥50 rows with meaningful success_rate variance before starting.
 
 ---
 
