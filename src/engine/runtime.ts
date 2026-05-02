@@ -32,6 +32,7 @@ import type { ToolMastery } from "../tools/tool-mastery.js";
 import type { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import type { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
 import type { DomainToolMap } from "../delegation/domain-tool-map.js";
+import type { SubGoal } from "./types.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -138,6 +139,10 @@ export interface EngineContext {
   fallbackDiscoverer?: FallbackDiscoverer;
   /** Dynamic domain-to-tool rankings based on success rates */
   domainToolMap?: DomainToolMap;
+  /** Active sub-goal from TaskLedger — passed to GoalVerifier during tool execution */
+  activeSubGoal?: SubGoal;
+  /** Original user message text — passed to GoalVerifier for context */
+  userMessage?: string;
 }
 
 export interface PendingCapabilityGap {
@@ -1265,7 +1270,14 @@ ${userMessage}
 
         // Phase 2: Execute eligible tools in parallel
         const executableActions = actions.filter((a) => a.kind === "execute");
-        const toolCtx = { cwd: cwd || process.cwd(), engineContext: context };
+        const toolCtx = {
+          cwd: cwd || process.cwd(),
+          engineContext: {
+            ...context,
+            activeSubGoal: context.activeSubGoal,
+            userMessage: context.userMessage,
+          },
+        };
 
         // ── ApproachLibrary pre-execution recall ──────────────────────────
         // Before running tools, check if we've seen failures for these tool names
@@ -2892,7 +2904,13 @@ ${skillsContext}
 
     if (toolCalls.length > 0 && request.toolRegistry) {
       const registry = request.toolRegistry;
-      const toolCtx = { cwd: process.cwd(), engineContext: {} };
+      const toolCtx = {
+        cwd: process.cwd(),
+        engineContext: {
+          activeSubGoal: request.activeSubGoal,
+          userMessage: request.userMessage,
+        },
+      };
       await Promise.allSettled(
         toolCalls.map(async (tc) => {
           try {

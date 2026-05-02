@@ -21,6 +21,12 @@ export interface TurnRequest {
   onProgress?: (msg: string) => Promise<void>;
   toolRegistry?: { execute(name: string, args: unknown, ctx: unknown): Promise<string> };
   _resolvedProvider?: import("../providers/base.js").ModelProvider;
+  /** Short user message text — convenience alias used by GAV and context propagation */
+  message?: string;
+  /** Active sub-goal from TaskLedger — passed to GoalVerifier if present */
+  activeSubGoal?: SubGoal;
+  /** Original user message text — passed to GoalVerifier for context */
+  userMessage?: string;
 }
 
 export interface FailedToolCall {
