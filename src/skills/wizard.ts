@@ -219,13 +219,15 @@ export class SkillInstallWizard {
 const MENU_TEXT =
   "What would you like to do?\n\n" +
   "1. List loaded skills\n" +
-  "2. Install a new skill\n\n" +
+  "2. Install a new skill\n" +
+  "3. Browse ClawHub marketplace\n\n" +
   "Type a number or /cancel to exit.";
 
 const MENU_KEYBOARD: WizardResponse["inlineKeyboard"] = [
   [
     { text: "List skills", data: "menu:list" },
     { text: "Install skill", data: "menu:install" },
+    { text: "Browse marketplace", data: "menu:browse" },
   ],
 ];
 
@@ -269,7 +271,11 @@ export class SkillsMenuWizard implements WizardSession {
       return this.installWizard.start();
     }
 
-    return { text: "Please enter 1 or 2.\n\n" + MENU_TEXT, done: false, inlineKeyboard: MENU_KEYBOARD };
+    if (lower === "3" || lower === "browse" || lower === "marketplace" || lower === "menu:browse") {
+      return this.browseMarketplace(input.trim());
+    }
+
+    return { text: "Please enter 1, 2, or 3.\n\n" + MENU_TEXT, done: false, inlineKeyboard: MENU_KEYBOARD };
   }
 
   private listSkills(): WizardResponse {
@@ -285,5 +291,40 @@ export class SkillsMenuWizard implements WizardSession {
       })
       .join("\n\n");
     return { text: `Skills (${skills.length}):\n\n${lines}`, done: true };
+  }
+
+  /**
+   * Browse the ClawHub marketplace with a default trending search.
+   * Returns top results so the user can pick one to install.
+   */
+  private async browseMarketplace(_input: string): Promise<WizardResponse> {
+    try {
+      const result = await this.clawHubClient.search("", 10);
+      if (result.skills.length === 0) {
+        return { text: "No skills found on ClawHub marketplace. Try installing directly with option 2.", done: true };
+      }
+      const listText = result.skills
+        .map((s, i) => `${i + 1}. **${s.name}** — ${s.description}`)
+        .join("\n");
+      const keyboard: WizardResponse["inlineKeyboard"] = result.skills.map((s) => [
+        { text: s.name, data: `wiz:pick:${s.slug}` },
+      ]);
+      // Transition into install wizard at the pick step so user can select one
+      this.installWizard = new SkillInstallWizard(
+        this.skillsDir,
+        this.clawHubClient,
+        this.registry,
+      );
+      // Manually prime the install wizard's state to pick_clawhub
+      (this.installWizard as any).state = { step: "pick_clawhub", searchResults: result.skills };
+      return {
+        text: `ClawHub marketplace — top skills:\n\n${listText}\n\nType a number to install, or /cancel to exit.`,
+        done: false,
+        inlineKeyboard: keyboard,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { text: `Failed to browse ClawHub: ${msg}`, done: true };
+    }
   }
 }

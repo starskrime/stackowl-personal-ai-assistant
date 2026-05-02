@@ -313,6 +313,34 @@ export class PatternMiner {
   }
 
   /**
+   * Called by the runtime after a successful outcome to teach the SkillTemplateLayer
+   * a new NL template derived from the successful tool sequence.
+   *
+   * Only persists if qualityScore ≥ 0.8 and the sequence has at least 2 tools.
+   */
+  async onOutcomeSuccess(
+    toolSequence: string[],
+    taskDescription: string,
+    qualityScore: number,
+    templateLayer?: import("../intelligence/skill-template-layer.js").SkillTemplateLayer,
+  ): Promise<void> {
+    if (qualityScore < 0.8 || toolSequence.length < 2) return;
+    if (!templateLayer) return;
+
+    const toolSummary = toolSequence.map((t) => `${t}()`).join(" → ");
+    const taskType = taskDescription
+      .slice(0, 50)
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, "")
+      .trim();
+    const templateText = `To ${taskType}: ${toolSummary}`;
+    const triggerDesc = `${taskType} tasks involving ${toolSequence.join(", ")}`;
+    const name = `auto-${taskType.replace(/\s+/g, "-").slice(0, 40)}`;
+
+    await templateLayer.storeTemplate(name, templateText, triggerDesc, "auto");
+  }
+
+  /**
    * Crystallize a pattern group into a new SKILL.md file.
    */
   private async crystallize(
