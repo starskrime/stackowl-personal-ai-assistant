@@ -40,6 +40,25 @@ export interface ToolDefinition {
   };
   /** When true, this tool must not run concurrently with others. Default: false. */
   sequential?: boolean;
+  /** When true, this tool is hidden from LLM definitions but still callable internally */
+  deprecated?: boolean;
+  /** Operating systems where this tool is available. Omit = all platforms */
+  platforms?: NodeJS.Platform[];
+  /** Capability tags for Cost-Weighted Tool Graph routing (Phase 7b) */
+  capabilities?: string[];
+  /** Execution policy: timeout, retries, fallback chain */
+  executionPolicy?: ExecutionPolicy;
+}
+
+export interface ExecutionPolicy {
+  /** Milliseconds before AbortController fires. Default: 30000 */
+  timeoutMs?: number;
+  /** Max retry attempts on transient failure. Default: 1 */
+  maxRetries?: number;
+  /** Delay between retries in ms. Default: 1000 */
+  retryDelayMs?: number;
+  /** Ordered list of fallback tool names to try on persistent failure */
+  fallbackChain?: string[];
 }
 
 // ─── Response Types ──────────────────────────────────────────────
