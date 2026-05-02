@@ -370,8 +370,9 @@ export class TelegramAdapter implements ChannelAdapter {
       const userId = String(ctx.from?.id ?? "local");
       const { OwlStateReporter } = await import("../../intelligence/owl-state-reporter.js");
       const reporter = new OwlStateReporter(db);
-      const dna = owl.dna.evolvedTraits as Record<string, unknown>;
-      const report = await reporter.report(userId, owl.persona.name, dna);
+      const currentOwl = this.gateway.getOwl();
+      const dna = currentOwl.dna.evolvedTraits as Record<string, unknown>;
+      const report = await reporter.report(userId, currentOwl.persona.name, dna);
       await ctx.reply(report);
     });
 
