@@ -678,9 +678,9 @@ async function bootstrap() {
     store:  (args, ctx) => toolRegistry.execute("remember", args, ctx),
     get:    (args, ctx) => toolRegistry.execute("memory_get", args, ctx),
     write: async (args, ctx) => {
-      const userId = ctx.userId ?? "default";
+      const userId = (ctx.engineContext as any)?.userId ?? "default";
       const content = args["content"] as string;
-      const category = (args["category"] as string) ?? "general";
+      const category = (args["category"] as string) ?? "context";
       const confidence = typeof args["confidence"] === "number" ? args["confidence"] : 0.8;
       if (!content) {
         return JSON.stringify({ success: false, data: null, error: { code: "MISSING_CONTENT", message: "content is required for action:write", suggestion: "Provide a content string" } });
@@ -699,15 +699,18 @@ async function bootstrap() {
       }
     },
     invalidate: async (args, ctx) => {
-      const userId = ctx.userId ?? "default";
+      const userId = (ctx.engineContext as any)?.userId ?? "default";
       const query = (args["query"] as string) ?? (args["content"] as string);
       if (!query) {
         return JSON.stringify({ success: false, data: null, error: { code: "MISSING_QUERY", message: "query is required for action:invalidate", suggestion: "Provide a query string" } });
       }
       const now = new Date().toISOString();
+      const escaped = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
       const result = memoryDb.rawDb.prepare(
-        "UPDATE facts SET invalidated_at = ? WHERE user_id = ? AND fact LIKE ? AND invalidated_at IS NULL"
-      ).run(now, userId, `%${query}%`);
+        "UPDATE facts SET invalidated_at = ? WHERE user_id = ? AND fact LIKE ? ESCAPE '\\' AND invalidated_at IS NULL"
+      ).run(now, userId, `%${escaped}%`);
+      // Direct SQL is intentional for performance; mirrors FactInvalidator pattern.
+      // Cache staleness is acceptable here — facts.getAllForUser() re-queries the DB.
       return JSON.stringify({ success: true, data: { invalidated: (result as any).changes }, error: null });
     },
   }));
