@@ -17,12 +17,14 @@ import type { SelfLearningCoordinator } from "../../learning/coordinator.js";
 import type { ProactiveAnticipator } from "../../learning/anticipator.js";
 import type { InnerLifeDNABridge } from "../../owls/inner-bridge.js";
 import type { ReflexionEngine as IntelligenceReflexionEngine } from "../../intelligence/reflexion-engine.js";
+import type { SleepTimeConsolidator } from "../../intelligence/sleep-time-consolidator.js";
 import { SentimentProbe } from "../../intelligence/sentiment-probe.js";
 import { log } from "../../logger.js";
 
 export class PostProcessor {
   private messageCount = 0;
   private intelligenceReflexion: IntelligenceReflexionEngine | null = null;
+  private sleepConsolidator: SleepTimeConsolidator | null = null;
   private sentimentProbe: SentimentProbe | null = null;
   private _lastProcessUserId = "";
 
@@ -35,8 +37,10 @@ export class PostProcessor {
     private costTracker: CostTracker | null,
     private innerLifeBridge: InnerLifeDNABridge | null = null,
     intelligenceReflexion?: IntelligenceReflexionEngine,
+    sleepConsolidator?: SleepTimeConsolidator,
   ) {
     this.intelligenceReflexion = intelligenceReflexion ?? null;
+    this.sleepConsolidator = sleepConsolidator ?? null;
 
     // SentimentProbe — detects user corrections and increments challenge_instances
     // so DNA evolution can increase challengeLevel (reducing sycophancy) over time.
@@ -661,6 +665,13 @@ export class PostProcessor {
           }
         });
       }
+    }
+
+    // SleepTimeConsolidator — surface cross-session patterns after session ends
+    if (this.sleepConsolidator && metadata?.userId && sessionId) {
+      this.taskQueue.enqueue("sleep-consolidation", async () => {
+        await this.sleepConsolidator!.onSessionEnded(metadata.userId!, sessionId);
+      });
     }
   }
 

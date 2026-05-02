@@ -3240,6 +3240,27 @@ export function applyMigrations(db: Database.Database): void {
       created_at   TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS summaries (
+      id               TEXT PRIMARY KEY,
+      session_id       TEXT NOT NULL,
+      user_id          TEXT NOT NULL,
+      owl_name         TEXT NOT NULL DEFAULT 'default',
+      from_seq         INTEGER NOT NULL,
+      to_seq           INTEGER NOT NULL,
+      message_count    INTEGER NOT NULL,
+      summary_text     TEXT NOT NULL,
+      task             TEXT,
+      accomplished     TEXT,
+      key_facts        TEXT DEFAULT '[]',
+      decisions        TEXT DEFAULT '[]',
+      failed_approaches TEXT DEFAULT '[]',
+      open_questions   TEXT DEFAULT '[]',
+      tokens_saved     INTEGER DEFAULT 0,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sum_session ON summaries(session_id);
+    CREATE INDEX IF NOT EXISTS idx_sum_user    ON summaries(user_id);
   `);
 
   const current = (db.pragma("user_version") as { user_version: number }[])[0]?.user_version ?? 0;
