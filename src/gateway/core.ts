@@ -539,7 +539,7 @@ export class OwlGateway {
         ctx.episodicMemory,
       );
       const contextCache = new ContextCache();
-      ctx.contextPipeline = createContextPipeline({ userPersonaSynthesizer, unifiedMemoryRetriever, contextCache });
+      ctx.contextPipeline = createContextPipeline({ userPersonaSynthesizer, unifiedMemoryRetriever, contextCache, db: ctx.db });
       ctx.contextCache = contextCache;
       ctx.userPersonaSynthesizer = userPersonaSynthesizer;
 
