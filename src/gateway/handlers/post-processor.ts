@@ -24,6 +24,7 @@ export class PostProcessor {
   private messageCount = 0;
   private intelligenceReflexion: IntelligenceReflexionEngine | null = null;
   private sentimentProbe: SentimentProbe | null = null;
+  private _lastProcessUserId = "";
 
   constructor(
     private ctx: GatewayContext,
@@ -40,8 +41,7 @@ export class PostProcessor {
     // SentimentProbe — detects user corrections and increments challenge_instances
     // so DNA evolution can increase challengeLevel (reducing sycophancy) over time.
     this.sentimentProbe = new SentimentProbe((sentiment, incrementChallenge) => {
-      if (incrementChallenge && this.ctx.db) {
-        const userId = this.sentimentProbe?.getArmedUserId() ?? "default";
+      if (incrementChallenge && this._lastProcessUserId) {
         this.taskQueue.enqueue("sentiment-challenge-update", async () => {
           try {
             this.ctx.db!.rawDb.prepare(
@@ -53,9 +53,9 @@ export class PostProcessor {
                  ORDER BY created_at DESC
                  LIMIT 1
                )`,
-            ).run(userId);
+            ).run(this._lastProcessUserId);
             log.engine.info(
-              `[PostProcessor:sentiment] Correction detected — incremented challenge_instances for user=${userId}`,
+              `[PostProcessor:sentiment] Correction detected — incremented challenge_instances for user=${this._lastProcessUserId}`,
             );
           } catch (err) {
             log.engine.warn(
@@ -88,6 +88,9 @@ export class PostProcessor {
     },
   ): void {
     this.messageCount++;
+
+    // Capture userId at the start of process() for SentimentProbe callback
+    this._lastProcessUserId = metadata?.userId ?? "";
 
     // ── SentimentProbe — fire on current user message, then re-arm ──────────
     // The probe was armed after the PREVIOUS assistant response. Now the user
