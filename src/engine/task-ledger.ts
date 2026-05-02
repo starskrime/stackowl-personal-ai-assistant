@@ -8,6 +8,18 @@ import type {
   TaskLedgerRevision,
 } from "./types.js";
 
+export interface PersistSubgoalArgs {
+  id: string;
+  sessionId: string;
+  userId: string;
+  taskId: string;
+  subgoalIndex: number;
+  subgoalText: string;
+  stateJson: string;
+  status: string;
+  attemptCount: number;
+}
+
 export interface LedgerWithMeta extends TaskLedger {
   sessionId: string;
   userId: string;
@@ -86,6 +98,51 @@ export class TaskLedgerStore {
     const revision: TaskLedgerRevision = { at: Date.now(), reason, previousGoal };
     ledger.revisions = [...ledger.revisions, revision];
     await this.save(ledger);
+  }
+
+  async persistSubgoal(args: PersistSubgoalArgs): Promise<void> {
+    this.db.rawDb.prepare(`
+      INSERT INTO owl_task_ledger
+        (id, session_id, user_id, task_id, subgoal_index, subgoal_text, state_json, status, attempt_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        subgoal_index = excluded.subgoal_index,
+        subgoal_text  = excluded.subgoal_text,
+        state_json    = excluded.state_json,
+        status        = excluded.status,
+        attempt_count = excluded.attempt_count
+    `).run(
+      args.id, args.sessionId, args.userId, args.taskId,
+      args.subgoalIndex, args.subgoalText, args.stateJson,
+      args.status, args.attemptCount, new Date().toISOString(),
+    );
+  }
+
+  async loadIncomplete(userId: string): Promise<PersistSubgoalArgs | null> {
+    const row = this.db.rawDb.prepare(`
+      SELECT * FROM owl_task_ledger
+      WHERE user_id = ? AND status = 'in_progress'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(userId) as any;
+    if (!row) return null;
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      userId: row.user_id,
+      taskId: row.task_id,
+      subgoalIndex: row.subgoal_index,
+      subgoalText: row.subgoal_text,
+      stateJson: row.state_json,
+      status: row.status,
+      attemptCount: row.attempt_count,
+    };
+  }
+
+  async markComplete(id: string): Promise<void> {
+    this.db.rawDb.prepare(
+      "UPDATE owl_task_ledger SET status = 'complete', resumed_at = ? WHERE id = ?",
+    ).run(new Date().toISOString(), id);
   }
 
   private _parse(row: any): LedgerWithMeta {

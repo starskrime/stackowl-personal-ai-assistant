@@ -78,6 +78,13 @@ export class OwlOrchestrator {
     // Phase 1 — PLAN
     const ledger = await this._plan(userMessage, complexity, ctx);
 
+    // Check for incomplete task from a prior session
+    const incomplete = await this.ledgerStore.loadIncomplete(ctx.userId);
+    if (incomplete && incomplete.taskId !== ledger.id) {
+      const resumeMsg = `Picking up your task from a prior session — I was on step ${incomplete.subgoalIndex + 1}: "${incomplete.subgoalText}". Continuing now.`;
+      await ctx.onProgress?.(resumeMsg);
+    }
+
     const monitor = new HealthMonitor(TOKEN_BUDGET);
     let lastTurn: TurnResult | null = null;
     let iteration = 0;
