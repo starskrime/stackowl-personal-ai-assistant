@@ -23,7 +23,7 @@ describe("SleepTimeConsolidator", () => {
     await consolidator.onSessionEnded("u1", "s1");
 
     // If no prior sessions, provider is NOT called (nothing to consolidate)
-    expect(mockProvider.chat.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(mockProvider.chat).not.toHaveBeenCalled();
   });
 
   it("calls provider and stores pellets when summaries exist", async () => {
@@ -59,6 +59,6 @@ describe("SleepTimeConsolidator", () => {
     await consolidator.onSessionEnded("u1", "s1");
     await consolidator.onSessionEnded("u1", "s2"); // debounced
 
-    expect(mockProvider.chat.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(mockProvider.chat).toHaveBeenCalledOnce();
   });
 });
