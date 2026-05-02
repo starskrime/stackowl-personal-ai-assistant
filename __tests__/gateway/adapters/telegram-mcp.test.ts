@@ -15,6 +15,7 @@ describe("Telegram /mcp delegates to McpCommandRouter", () => {
       addServer: vi.fn().mockResolvedValue(0),
       removeServer: vi.fn().mockResolvedValue(undefined),
       updateServer: vi.fn().mockResolvedValue(0),
+      disconnect: vi.fn(),
       reconnect: vi.fn().mockResolvedValue(0),
       getServer: vi.fn().mockReturnValue(null),
     };

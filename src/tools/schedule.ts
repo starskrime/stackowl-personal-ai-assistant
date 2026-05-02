@@ -33,6 +33,7 @@ export const ScheduleTool: ToolImplementation = {
     name: "schedule",
     description:
       "Schedule reminders and recurring tasks. Natural language times: \"in 5 minutes\", \"in 2 hours\". " +
+      "NOTE: In-process job store only — jobs do not survive restarts and fire no external notification. " +
       'Example: schedule(action: "remind", when: "in 30 minutes", message: "Check deployment")',
     parameters: {
       type: "object",

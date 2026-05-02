@@ -22,6 +22,7 @@ export const VisionTool: ToolImplementation = {
     description:
       "Analyze an image file and answer a question about it. Returns a structured description, " +
       "list of detected objects, and any text found in the image. " +
+      "Requires a vision-capable provider (e.g. Anthropic claude-opus-4-5). " +
       'Example: vision(imagePath: "/tmp/screenshot.png", question: "What error is shown?")',
     parameters: {
       type: "object",

@@ -84,7 +84,15 @@ export class McpCommandRouter {
       case "disable": {
         const name = args[0];
         if (!name) return "Usage: /mcp disable <server-name>";
-        await mcpManager.updateServer(name, { enabled: false }, toolRegistry, config, basePath, saveConfig);
+        // Disconnect immediately (do not use updateServer which calls reconnect)
+        mcpManager.disconnect(name, toolRegistry);
+        // Persist enabled:false
+        config.mcp ??= { servers: [] };
+        const idx = config.mcp.servers.findIndex((s) => s.name === name);
+        if (idx !== -1) {
+          config.mcp.servers[idx]!.enabled = false;
+          await saveConfig(basePath, config);
+        }
         return `${name} disabled.`;
       }
 

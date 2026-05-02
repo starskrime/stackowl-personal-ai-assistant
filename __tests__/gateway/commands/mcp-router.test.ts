@@ -69,18 +69,15 @@ describe("McpCommandRouter.dispatch", () => {
     );
   });
 
-  it("disable sets enabled:false and calls updateServer", async () => {
-    const mgr = makeMockManager({
-      updateServer: vi.fn().mockResolvedValue(4),
-    });
+  it("disable calls disconnect (not updateServer)", async () => {
+    const mgr = makeMockManager();
     await McpCommandRouter.dispatch("disable", ["fs-server"], {
       mcpManager: mgr, toolRegistry: mockRegistry,
       config: { mcp: { servers: [{ name: "fs-server", transport: "stdio" }] } } as any,
       basePath: "/tmp", saveConfig: vi.fn().mockResolvedValue(undefined),
     });
-    expect(mgr.updateServer).toHaveBeenCalledWith(
-      "fs-server", { enabled: false }, mockRegistry, expect.anything(), "/tmp", expect.any(Function),
-    );
+    expect(mgr.disconnect).toHaveBeenCalledWith("fs-server", mockRegistry);
+    expect(mgr.updateServer).not.toHaveBeenCalled();
   });
 
   it("unknown verb returns error string", async () => {
