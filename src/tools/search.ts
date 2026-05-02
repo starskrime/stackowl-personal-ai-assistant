@@ -69,6 +69,7 @@ function parseSnapshotAsSearchResults(query: string, snapshot: string): string {
 export const DuckDuckGoSearchTool: ToolImplementation = {
   definition: {
     name: "duckduckgo_search",
+    deprecated: true,
     description:
       "Search the web for information. Returns titles, URLs, and snippets. " +
       "Use this as your FIRST step when you need current/real-time information " +

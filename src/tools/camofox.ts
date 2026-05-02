@@ -50,6 +50,7 @@ function requireTab(userId: string): string {
 export const CamoFoxTool: ToolImplementation = {
   definition: {
     name: "camofox",
+    deprecated: true,
     description: [
       "Anti-detection browser automation using CamoFox (Firefox/Camoufox engine).",
       "Use when web_crawl or other browsers are blocked by Cloudflare, Google, or bot-detection.",

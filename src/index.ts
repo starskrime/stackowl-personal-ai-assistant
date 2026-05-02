@@ -120,6 +120,11 @@ import { ComputerUseTool } from "./tools/computer-use/index.js";
 // ── Anti-bot Web Scraping ──
 import { ScraplingTool } from "./tools/web-scrapling.js";
 import { CamoFoxTool } from "./tools/camofox.js";
+// ── Unified Tool Facades (Phase 7a) ──
+import { createWebUnifiedTool } from "./tools/web-unified.js";
+import { createMemoryUnifiedTool } from "./tools/memory-unified.js";
+import { createMacosCommsTool } from "./tools/macos/comms-unified.js";
+import { createMacosSystemTool } from "./tools/macos/system-unified.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -661,6 +666,36 @@ async function bootstrap() {
     createMonitorTool(healthChecker),
     createConnectorTool(connectorResolver),
   ]);
+
+  // ── Unified tool facades (Phase 7a consolidation) ──────────────
+  // Each unified tool dispatches internally to the already-registered individual tools.
+  // The individual tools are marked deprecated: true in their definitions, so they are
+  // hidden from getAllDefinitions() / LLM-visible tool lists but remain callable
+  // by internal code via toolRegistry.execute().
+  toolRegistry.register(createWebUnifiedTool({
+    search: (args, ctx) => toolRegistry.execute("duckduckgo_search", args, ctx),
+    fetch:  (args, ctx) => toolRegistry.execute("web_crawl", args, ctx),
+    interact: (args, ctx) => toolRegistry.execute("camofox", args, ctx),
+  }));
+
+  toolRegistry.register(createMemoryUnifiedTool({
+    search: (args, ctx) => toolRegistry.execute("memory_search", args, ctx),
+    store:  (args, ctx) => toolRegistry.execute("remember", args, ctx),
+    get:    (args, ctx) => toolRegistry.execute("memory_get", args, ctx),
+  }));
+
+  toolRegistry.register(createMacosCommsTool({
+    mail:     (args, ctx) => toolRegistry.execute("apple_mail", args, ctx),
+    contacts: (args, ctx) => toolRegistry.execute("apple_contacts", args, ctx),
+    imessage: (args, ctx) => toolRegistry.execute("imessage", args, ctx),
+  }));
+
+  toolRegistry.register(createMacosSystemTool({
+    spotlight:     (args, ctx) => toolRegistry.execute("spotlight_search", args, ctx),
+    focus_mode:    (args, ctx) => toolRegistry.execute("focus_mode", args, ctx),
+    notifications: (args, ctx) => toolRegistry.execute("send_notification", args, ctx),
+    system_info:   (args, ctx) => toolRegistry.execute("system_info", args, ctx),
+  }));
 
   // Load tool permissions from config
   if (config.tools?.permissions) {

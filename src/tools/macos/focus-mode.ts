@@ -7,6 +7,7 @@ const execAsync = promisify(exec);
 export const FocusModeTool: ToolImplementation = {
   definition: {
     name: "focus_mode",
+    deprecated: true,
     description: "Check or toggle macOS Focus/Do Not Disturb mode.",
     parameters: {
       type: "object",

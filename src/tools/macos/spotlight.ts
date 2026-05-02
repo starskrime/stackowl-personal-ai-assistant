@@ -11,6 +11,7 @@ function escapeForShell(str: string): string {
 export const SpotlightSearchTool: ToolImplementation = {
   definition: {
     name: "spotlight_search",
+    deprecated: true,
     description:
       "Search the entire Mac using Spotlight (mdfind). Find files, folders, documents by content or name.",
     parameters: {

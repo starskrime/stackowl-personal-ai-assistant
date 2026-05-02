@@ -21,6 +21,7 @@ import { log } from "../logger.js";
 export class RememberTool implements ToolImplementation {
   definition = {
     name: "remember",
+    deprecated: true,
     description:
       "Permanently store a fact, learned approach, or user preference in long-term memory. " +
       "Call this after completing a task successfully, when the user shares a preference, " +

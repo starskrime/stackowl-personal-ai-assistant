@@ -11,6 +11,7 @@ function escapeForShell(str: string): string {
 export const AppleContactsTool: ToolImplementation = {
   definition: {
     name: "apple_contacts",
+    deprecated: true,
     description:
       "Search macOS Contacts for people by name, email, or phone number.",
     parameters: {

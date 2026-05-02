@@ -33,6 +33,7 @@ export class MemorySearchTool {
 
   definition = {
     name: "memory_search",
+    deprecated: true,
     description: `Search your long-term memory for facts, preferences, and context from past conversations. Use this when the user references something from a previous session, asks "do you remember...", or when you need context about the user's preferences/projects. Do NOT use for greetings or simple questions.`,
     parameters: {
       type: "object" as const,
@@ -209,6 +210,7 @@ export class MemoryGetTool {
 
   definition = {
     name: "memory_get",
+    deprecated: true,
     description: `Get specific memory file contents.
 
 Examples:

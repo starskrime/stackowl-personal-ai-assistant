@@ -124,6 +124,7 @@ export class BrowserTool implements ToolImplementation {
 
   definition = {
     name: "browser",
+    deprecated: true,
     description: `Headless Chrome browser with full CDP (Chrome DevTools Protocol) control. Use when web_crawl fails (bot-blocked, login-gated, SPA) or when you need interactive web automation.
 
 **Basic workflow:** start → navigate → snapshot → act → screenshot

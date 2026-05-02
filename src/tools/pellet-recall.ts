@@ -15,6 +15,7 @@ import type { ToolImplementation, ToolContext } from "./registry.js";
 export const PelletRecallTool: ToolImplementation = {
   definition: {
     name: "pellet_recall",
+    deprecated: true,
     description: [
       "Search your accumulated knowledge base (pellets) for relevant stored knowledge.",
       "",

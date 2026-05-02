@@ -11,6 +11,7 @@ function escapeForShell(str: string): string {
 export const NotificationTool: ToolImplementation = {
   definition: {
     name: "send_notification",
+    deprecated: true,
     description:
       "Show a macOS notification to the user. Use for alerts, reminders, or when you need to get the user's attention.",
     parameters: {
