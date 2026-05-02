@@ -220,10 +220,16 @@ export class MCPManager {
     if (!config.mcp) throw new Error(`No MCP config found.`);
     const idx = config.mcp.servers.findIndex((s) => s.name === name);
     if (idx === -1) throw new Error(`MCP server "${name}" not found in config.`);
+    const old = { ...config.mcp.servers[idx]! };
     Object.assign(config.mcp.servers[idx]!, patch);
-    const count = await this.reconnect(name, toolRegistry);
-    await saveConfig(basePath, config);
-    return count;
+    try {
+      const count = await this.reconnect(name, toolRegistry);
+      await saveConfig(basePath, config);
+      return count;
+    } catch (err) {
+      Object.assign(config.mcp.servers[idx]!, old);
+      throw err;
+    }
   }
 
   // ─── Status ──────────────────────────────────────────────────────

@@ -102,4 +102,26 @@ describe("MCPManager CRUD", () => {
     }));
     expect(reconnectSpy).toHaveBeenCalledWith("my-server", mockRegistry);
   });
+
+  it("updateServer rolls back config patch when reconnect fails", async () => {
+    vi.spyOn(manager, "reconnect").mockRejectedValue(new Error("reconnect failed"));
+    mockConfig.mcp = {
+      servers: [{ name: "my-server", transport: "stdio" as const, command: "old-cmd" }],
+    };
+
+    await expect(
+      manager.updateServer(
+        "my-server",
+        { command: "new-cmd" },
+        mockRegistry,
+        mockConfig,
+        "/tmp",
+        mockSaveConfig,
+      ),
+    ).rejects.toThrow("reconnect failed");
+
+    // Config must be rolled back to original value
+    expect(mockConfig.mcp!.servers[0]!.command).toBe("old-cmd");
+    expect(mockSaveConfig).not.toHaveBeenCalled();
+  });
 });

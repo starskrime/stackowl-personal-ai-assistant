@@ -709,7 +709,7 @@ async function bootstrap() {
   const mcpManager = new MCPManager();
   if (config.mcp?.servers?.length) {
     const mcpCount = await mcpManager.connectAll(
-      config.mcp.servers,
+      config.mcp.servers.filter((s) => s.enabled !== false),
       toolRegistry,
     );
     if (mcpCount > 0) {
