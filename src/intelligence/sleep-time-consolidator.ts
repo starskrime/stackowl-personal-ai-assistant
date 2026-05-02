@@ -59,7 +59,6 @@ export class SleepTimeConsolidator {
     // Per-user debounce: skip if we ran within the last 60 minutes
     const last = this.lastRunAt.get(userId) ?? 0;
     if (Date.now() - last < this.DEBOUNCE_MS) return;
-    this.lastRunAt.set(userId, Date.now());
 
     // Fetch up to 5 recent summaries for this user
     const recentSummaries = this.raw
@@ -69,8 +68,11 @@ export class SleepTimeConsolidator {
       )
       .all(userId) as { summary_text: string }[];
 
-    // Nothing to consolidate if no prior sessions
+    // Nothing to consolidate if no prior sessions (don't consume debounce window)
     if (recentSummaries.length === 0) return;
+
+    // Stamp debounce only after confirming there's real work to do
+    this.lastRunAt.set(userId, Date.now());
 
     const context = recentSummaries
       .map((s, i) => `Session ${i + 1}: ${s.summary_text}`)

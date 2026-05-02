@@ -21,6 +21,7 @@ import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
 import { PromptOptimizer } from "../engine/prompt-optimizer.js";
 import { IntelligenceRouter } from "../intelligence/router.js";
 import { FactInvalidator } from "../intelligence/fact-invalidator.js";
+import { SleepTimeConsolidator } from "../intelligence/sleep-time-consolidator.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
@@ -560,6 +561,15 @@ export class OwlGateway {
           factInvalidator.check(e.factText, e.userId).catch(() => {});
         });
         log.engine.debug("[FactInvalidator] Subscribed to fact:extracted");
+      }
+
+      // Wire SleepTimeConsolidator — surfaces cross-session insights on session:ended
+      if (ctx.db && ctx.provider && ctx.pelletStore) {
+        const sleepConsolidator = new SleepTimeConsolidator(ctx.db, ctx.provider, ctx.pelletStore as any);
+        this.gatewayEventBus.on("session:ended", (e) => {
+          sleepConsolidator.onSessionEnded(e.userId, e.sessionId).catch(() => {});
+        });
+        log.engine.debug("[SleepTimeConsolidator] Subscribed to session:ended");
       }
 
       log.engine.info("[ContextPipeline] Element 5 pipeline initialized");
