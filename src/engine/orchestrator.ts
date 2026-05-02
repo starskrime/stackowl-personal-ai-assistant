@@ -6,6 +6,7 @@ import { OutcomeJournal } from "./outcome-journal.js";
 import { UserFacingStatusNarrator } from "./user-facing-narrator.js";
 import { TaskLedgerStore } from "./task-ledger.js";
 import { log } from "../logger.js";
+import { HITLEscalator } from "../intelligence/hitl-escalator.js";
 import type {
   TurnRequest, TurnResult, TaskLedger, Decision,
   OrchestratorResponse, DegradationTier, HitlChannel,
@@ -55,6 +56,7 @@ export class OwlOrchestrator {
   private journal: OutcomeJournal;
   private ledgerStore: TaskLedgerStore;
   private deps: OrchestratorDeps;
+  private hitlEscalator = new HITLEscalator();
 
   constructor(deps: OrchestratorDeps) {
     this.deps = deps;
@@ -127,6 +129,32 @@ export class OwlOrchestrator {
       // Phase 3 — ASSESS
       monitor.observe(lastTurn, ledger, iteration++);
 
+      // Track blocked tool attempts for HITL escalation
+      const numericChallengeLevel = typeof this.deps.owl.dna?.challengeLevel === "number"
+        ? this.deps.owl.dna.challengeLevel
+        : dna.challengeLevel === "low" ? 2 : dna.challengeLevel === "high" ? 8 : 5;
+      const activeSubGoal = ledger.subGoals.find(sg => sg.status === "in_progress")?.description
+        ?? ledger.goal;
+      for (const failed of lastTurn.failedTools) {
+        this.hitlEscalator.onBlocked(failed.name, failed.reason, activeSubGoal);
+      }
+      if (this.hitlEscalator.shouldEscalate(numericChallengeLevel)) {
+        const narration = this.hitlEscalator.buildNarration();
+        await ctx.onProgress?.(narration);
+        if (this.deps.hitlChannel) {
+          await this.deps.hitlChannel.pause({
+            kind: "clarification",
+            memo: {
+              whatIDid: narration,
+              whatINeed: "guidance on how to proceed",
+            },
+            ledgerSnapshot: ledger,
+            pendingAction: activeSubGoal,
+          });
+        }
+        this.hitlEscalator.reset();
+      }
+
       // Phase 4 — DECIDE
       finalDecision = decide(monitor.getHealth(), lastTurn, ledger, dna);
       log.engine.debug(`[Orchestrator] i=${iteration} decision=${finalDecision}`);
@@ -140,7 +168,7 @@ export class OwlOrchestrator {
       }
       if (finalDecision === "HITL") {
         if (!this.deps.hitlChannel) { finalDecision = "SYNTHESIZE"; break; }
-        // TODO: call this.deps.hitlChannel.pause(request) and handle response — deferred pending channel-specific HITL adapters
+        // hitlChannel.pause is now also called by HITLEscalator above when threshold is reached
         finalDecision = "SYNTHESIZE";
         break;
       }
