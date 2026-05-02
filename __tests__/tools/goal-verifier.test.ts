@@ -1,19 +1,29 @@
 import { describe, it, expect, vi } from "vitest";
 import { GoalVerifier } from "../../src/tools/goal-verifier.js";
 import type { IntelligenceRouter } from "../../src/intelligence/router.js";
-import type { ProviderRegistry } from "../../src/providers/registry.js";
+import type { ModelProvider } from "../../src/providers/base.js";
 import type { SubGoal } from "../../src/engine/types.js";
 
-function makeRouter(responseText: string): IntelligenceRouter {
+// Build a ClassificationRouter mock where resolve() returns a provider whose
+// chat() calls the supplied chatFn. Exposing chatFn separately lets tests assert
+// on how chat() was called (args, temperature, etc.).
+function makeRouterWithChatFn(
+  chatFn: (...args: unknown[]) => Promise<{ content: string; model: string; finishReason: string }>,
+) {
   return {
     resolve: vi.fn().mockResolvedValue({
-      chat: vi.fn().mockResolvedValue({
-        content: responseText,
-        model: "mock",
-        finishReason: "stop",
-      }),
+      chat: chatFn,
     }),
-  } as unknown as IntelligenceRouter;
+  };
+}
+
+function makeRouter(responseText: string) {
+  const chatFn = vi.fn().mockResolvedValue({
+    content: responseText,
+    model: "mock",
+    finishReason: "stop",
+  });
+  return makeRouterWithChatFn(chatFn);
 }
 
 const subGoal: SubGoal = {
@@ -90,7 +100,29 @@ describe("GoalVerifier", () => {
     expect(result.verdict).toBe("PARTIAL");
   });
 
-  it("GoalVerifier.create() wires IntelligenceRouter + ProviderRegistry into the classification tier", async () => {
+  it("calls provider.chat with temperature 0 for deterministic classification", async () => {
+    const chatFn = vi.fn().mockResolvedValue({
+      content: '{"verdict":"ADVANCES","reason":"test"}',
+      model: "mock",
+      finishReason: "stop",
+    });
+    const router = makeRouterWithChatFn(chatFn);
+    const verifier = new GoalVerifier(router);
+    await verifier.verify({
+      toolName: "web_crawl",
+      toolArgs: {},
+      toolResult: "test result",
+      subGoal: { id: "sg-1", description: "test goal", status: "in_progress", dependsOn: [] },
+      userMessage: "test",
+    });
+    expect(chatFn).toHaveBeenCalledWith(
+      expect.any(Array),
+      undefined, // model — passed as undefined; resolved separately via create()
+      expect.objectContaining({ temperature: 0 }),
+    );
+  });
+
+  it("GoalVerifier.create() wires IntelligenceRouter + Map<string, ModelProvider> into the classification tier", async () => {
     const chatMock = vi.fn().mockResolvedValue({
       content: '{"verdict":"ADVANCES","reason":"Factory wired correctly"}',
       model: "cheap-model",
@@ -105,11 +137,11 @@ describe("GoalVerifier", () => {
       }),
     } as unknown as IntelligenceRouter;
 
-    const registry = {
-      get: vi.fn().mockReturnValue({ chat: chatMock }),
-    } as unknown as ProviderRegistry;
+    const providers = new Map<string, ModelProvider>([
+      ["anthropic", { chat: chatMock } as unknown as ModelProvider],
+    ]);
 
-    const verifier = GoalVerifier.create(realRouter, registry);
+    const verifier = GoalVerifier.create(realRouter, providers);
     const result = await verifier.verify({
       toolName: "web_crawl",
       toolArgs: { url: "https://typescriptlang.org" },
@@ -121,12 +153,35 @@ describe("GoalVerifier", () => {
     expect(result.verdict).toBe("ADVANCES");
     // router.resolve must always be called with "classification"
     expect(realRouter.resolve).toHaveBeenCalledWith("classification");
-    // registry.get must be called with the provider name returned by the router
-    expect(registry.get).toHaveBeenCalledWith("anthropic");
-    // provider.chat must be called with the resolved model
+    // provider.chat must be called with the resolved model and temperature: 0
     expect(chatMock).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ role: "system" })]),
       "claude-haiku-3",
+      expect.objectContaining({ temperature: 0 }),
     );
+  });
+
+  it("GoalVerifier.create() fails open (NEUTRAL) when provider is not in the map", async () => {
+    const realRouter = {
+      resolve: vi.fn().mockReturnValue({
+        provider: "missing-provider",
+        model: "some-model",
+        tier: "low",
+      }),
+    } as unknown as IntelligenceRouter;
+
+    const providers = new Map<string, ModelProvider>(); // empty — provider not found
+
+    const verifier = GoalVerifier.create(realRouter, providers);
+    const result = await verifier.verify({
+      toolName: "web_crawl",
+      toolArgs: {},
+      toolResult: "some result",
+      subGoal,
+      userMessage: "test",
+    });
+
+    expect(result.verdict).toBe("NEUTRAL");
+    expect(result.reason).toBe("provider not found");
   });
 });
