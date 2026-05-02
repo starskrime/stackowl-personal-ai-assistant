@@ -1,5 +1,7 @@
 import type { SubGoal } from "../engine/types.js";
 import type { ChatMessage } from "../providers/base.js";
+import type { IntelligenceRouter } from "../intelligence/router.js";
+import type { ProviderRegistry } from "../providers/registry.js";
 
 // ─── Public Types ─────────────────────────────────────────────────
 
@@ -46,6 +48,32 @@ Respond with JSON only:
 // ─── GoalVerifier ─────────────────────────────────────────────────
 
 export class GoalVerifier {
+  /**
+   * Create a GoalVerifier wired to the real IntelligenceRouter + ProviderRegistry.
+   *
+   * Calls router.resolve("classification") at verify-time to pick the cheapest
+   * tier, then delegates .chat() to the resolved provider with the resolved model.
+   * The constructor's ClassificationRouter interface is satisfied by an adapter
+   * closure — the constructor and existing tests remain unchanged.
+   */
+  static create(
+    router: IntelligenceRouter,
+    registry: ProviderRegistry,
+  ): GoalVerifier {
+    const classificationRouter: ClassificationRouter = {
+      resolve(_taskType: string) {
+        const resolved = router.resolve("classification");
+        const provider = registry.get(resolved.provider);
+        return {
+          chat(messages: ChatMessage[]) {
+            return provider.chat(messages, resolved.model);
+          },
+        };
+      },
+    };
+    return new GoalVerifier(classificationRouter);
+  }
+
   constructor(private readonly router: ClassificationRouter) {}
 
   async verify(args: VerifyArgs): Promise<VerificationResult> {

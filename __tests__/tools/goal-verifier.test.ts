@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { GoalVerifier } from "../../src/tools/goal-verifier.js";
 import type { IntelligenceRouter } from "../../src/intelligence/router.js";
+import type { ProviderRegistry } from "../../src/providers/registry.js";
 import type { SubGoal } from "../../src/engine/types.js";
 
 function makeRouter(responseText: string): IntelligenceRouter {
@@ -87,5 +88,45 @@ describe("GoalVerifier", () => {
       userMessage: "What is the LATEST TypeScript version?",
     });
     expect(result.verdict).toBe("PARTIAL");
+  });
+
+  it("GoalVerifier.create() wires IntelligenceRouter + ProviderRegistry into the classification tier", async () => {
+    const chatMock = vi.fn().mockResolvedValue({
+      content: '{"verdict":"ADVANCES","reason":"Factory wired correctly"}',
+      model: "cheap-model",
+      finishReason: "stop",
+    });
+
+    const realRouter = {
+      resolve: vi.fn().mockReturnValue({
+        provider: "anthropic",
+        model: "claude-haiku-3",
+        tier: "low",
+      }),
+    } as unknown as IntelligenceRouter;
+
+    const registry = {
+      get: vi.fn().mockReturnValue({ chat: chatMock }),
+    } as unknown as ProviderRegistry;
+
+    const verifier = GoalVerifier.create(realRouter, registry);
+    const result = await verifier.verify({
+      toolName: "web_crawl",
+      toolArgs: { url: "https://typescriptlang.org" },
+      toolResult: "TypeScript 5.5 is out",
+      subGoal,
+      userMessage: "What is the latest TypeScript version?",
+    });
+
+    expect(result.verdict).toBe("ADVANCES");
+    // router.resolve must always be called with "classification"
+    expect(realRouter.resolve).toHaveBeenCalledWith("classification");
+    // registry.get must be called with the provider name returned by the router
+    expect(registry.get).toHaveBeenCalledWith("anthropic");
+    // provider.chat must be called with the resolved model
+    expect(chatMock).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ role: "system" })]),
+      "claude-haiku-3",
+    );
   });
 });
