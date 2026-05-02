@@ -17,11 +17,13 @@ import type { SelfLearningCoordinator } from "../../learning/coordinator.js";
 import type { ProactiveAnticipator } from "../../learning/anticipator.js";
 import type { InnerLifeDNABridge } from "../../owls/inner-bridge.js";
 import type { ReflexionEngine as IntelligenceReflexionEngine } from "../../intelligence/reflexion-engine.js";
+import { SentimentProbe } from "../../intelligence/sentiment-probe.js";
 import { log } from "../../logger.js";
 
 export class PostProcessor {
   private messageCount = 0;
   private intelligenceReflexion: IntelligenceReflexionEngine | null = null;
+  private sentimentProbe: SentimentProbe | null = null;
 
   constructor(
     private ctx: GatewayContext,
@@ -34,6 +36,35 @@ export class PostProcessor {
     intelligenceReflexion?: IntelligenceReflexionEngine,
   ) {
     this.intelligenceReflexion = intelligenceReflexion ?? null;
+
+    // SentimentProbe — detects user corrections and increments challenge_instances
+    // so DNA evolution can increase challengeLevel (reducing sycophancy) over time.
+    this.sentimentProbe = new SentimentProbe((sentiment, incrementChallenge) => {
+      if (incrementChallenge && this.ctx.db) {
+        const userId = this.sentimentProbe?.getArmedUserId() ?? "default";
+        this.taskQueue.enqueue("sentiment-challenge-update", async () => {
+          try {
+            this.ctx.db!.rawDb.prepare(
+              `UPDATE outcome_journal
+               SET challenge_instances = challenge_instances + 1
+               WHERE id = (
+                 SELECT id FROM outcome_journal
+                 WHERE user_id = ?
+                 ORDER BY created_at DESC
+                 LIMIT 1
+               )`,
+            ).run(userId);
+            log.engine.info(
+              `[PostProcessor:sentiment] Correction detected — incremented challenge_instances for user=${userId}`,
+            );
+          } catch (err) {
+            log.engine.warn(
+              `[PostProcessor:sentiment] Failed to increment challenge_instances: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        });
+      }
+    });
   }
 
   /**
@@ -57,6 +88,22 @@ export class PostProcessor {
     },
   ): void {
     this.messageCount++;
+
+    // ── SentimentProbe — fire on current user message, then re-arm ──────────
+    // The probe was armed after the PREVIOUS assistant response. Now the user
+    // has replied — classify their sentiment before doing anything else.
+    // After classification we re-arm so the NEXT user message is also checked.
+    if (this.sentimentProbe) {
+      const lastUserContent =
+        messages.findLast?.((m) => m.role === "user")?.content ??
+        [...messages].reverse().find((m) => m.role === "user")?.content ??
+        "";
+      const textToClassify =
+        typeof lastUserContent === "string" ? lastUserContent : "";
+      this.sentimentProbe.onNextMessage(textToClassify);
+      // Re-arm for the next incoming message
+      this.sentimentProbe.arm(metadata?.userId ?? "default");
+    }
 
     // Emit event
     if (this.eventBus && sessionId && metadata) {
