@@ -29,6 +29,7 @@ import { LayerHealthMonitor } from "./circuit-breaker.js";
 import { ContextPipeline } from "./pipeline.js";
 import type { UserPersonaSynthesizer } from "./user-persona-synthesizer.js";
 import type { UnifiedMemoryRetriever } from "./unified-memory-retriever.js";
+import type { ContextLayer } from "./layer.js";
 import { CritiqueRetriever } from "../intelligence/critique-retriever.js";
 import type { MemoryDatabase } from "../memory/db.js";
 
@@ -41,7 +42,7 @@ export interface ContextPipelineDeps {
 }
 
 export function createContextPipeline(deps: ContextPipelineDeps): ContextPipeline {
-  const layers = [
+  const layers: ContextLayer[] = [
     new SynthesisIdentityLayer(),
     new InnerMonologueLayer(),
     new WorkingMemoryDigestLayer(),

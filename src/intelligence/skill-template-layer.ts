@@ -132,15 +132,12 @@ export class SkillTemplateLayer {
         _triage: TriageSignals,
         _deps: LayerResults,
       ): Promise<string> => {
+        // Best-effort: pull the last user message from whatever shape req provides
         const msg: string =
           (req.session?.messages as Array<{ role: string; content: string }> | undefined)
             ?.filter((m) => m.role === "user")
             .at(-1)
-            ?.content ??
-          (req.messages as Array<{ role: string; content: string }> | undefined)
-            ?.at(-1)
-            ?.content ??
-          "";
+            ?.content ?? "";
         return this.retrieve(msg);
       },
     };
