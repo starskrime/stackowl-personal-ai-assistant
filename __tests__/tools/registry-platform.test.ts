@@ -69,4 +69,22 @@ describe("ToolRegistry event emission", () => {
       expect.objectContaining({ type: "tool:result", toolName: "emit_test_tool", success: true })
     );
   });
+
+  it("emits tool:result with success: false when tool throws", async () => {
+    const registry = new ToolRegistry();
+    const bus = new GatewayEventBus();
+    registry.setEventBus(bus);
+    const resultHandler = vi.fn();
+    bus.on("tool:result", resultHandler);
+    const failingTool: ToolImplementation = {
+      definition: { name: "fail_tool", description: "x", parameters: { type: "object", properties: {} } },
+      category: "filesystem" as any,
+      execute: async () => { throw new Error("boom"); },
+    };
+    registry.register(failingTool);
+    await expect(registry.execute("fail_tool", {}, { cwd: "/" })).rejects.toThrow();
+    expect(resultHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "tool:result", toolName: "fail_tool", success: false })
+    );
+  });
 });
