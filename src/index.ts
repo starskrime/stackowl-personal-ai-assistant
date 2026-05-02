@@ -399,17 +399,6 @@ async function bootstrap() {
   );
   await pelletStore.init();
 
-  // Self-seed foundational pellets on first startup (empty store)
-  // This gives the model self-knowledge (identity, tools, skills) immediately
-  // after a reset — prevents "acts like generic LLM" regression.
-  selfSeedIfEmpty(
-    pelletStore,
-    workspacePath,
-    toolRegistry.getAllDefinitions().map((t) => t.name),
-  ).catch((e) =>
-    log.engine.warn(`[SelfSeed] Failed (non-fatal): ${e instanceof Error ? e.message : e}`)
-  );
-
   // Build/refresh knowledge graph in background (non-blocking)
   pelletStore
     .buildGraph()
@@ -696,6 +685,20 @@ async function bootstrap() {
     notifications: (args, ctx) => toolRegistry.execute("send_notification", args, ctx),
     system_info:   (args, ctx) => toolRegistry.execute("system_info", args, ctx),
   }));
+
+  // Self-seed foundational pellets on first startup (empty store)
+  // This gives the model self-knowledge (identity, tools, skills) immediately
+  // after a reset — prevents "acts like generic LLM" regression.
+  // NOTE: must run AFTER all unified tools are registered so the seed pellet
+  // reflects the consolidated catalog (web, memory, macos_comms, macos_system)
+  // rather than the deprecated individual tool names.
+  selfSeedIfEmpty(
+    pelletStore,
+    workspacePath,
+    toolRegistry.getAllDefinitions().map((t) => t.name),
+  ).catch((e) =>
+    log.engine.warn(`[SelfSeed] Failed (non-fatal): ${e instanceof Error ? e.message : e}`)
+  );
 
   // Load tool permissions from config
   if (config.tools?.permissions) {
