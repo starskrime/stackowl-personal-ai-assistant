@@ -12,6 +12,7 @@ import type {
 } from "./types.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { ModelProvider } from "../providers/base.js";
+import type { GoalVerifier } from "../tools/goal-verifier.js";
 
 // Use `any` for owl/config since their shapes vary by project setup
 interface OrchestratorDeps {
@@ -22,6 +23,7 @@ interface OrchestratorDeps {
   toolRegistry?: any;
   hitlChannel?: HitlChannel;
   sessionHistory?: import("../providers/base.js").ChatMessage[];
+  goalVerifier?: GoalVerifier;
 }
 
 interface RunContext {
@@ -61,6 +63,11 @@ export class OwlOrchestrator {
     this.narrator = new UserFacingStatusNarrator();
     this.journal = new OutcomeJournal(deps.db);
     this.ledgerStore = new TaskLedgerStore(deps.db);
+
+    // Wire GoalVerifier into ToolRegistry if both are provided
+    if (deps.goalVerifier && deps.toolRegistry && typeof deps.toolRegistry.setGoalVerifier === "function") {
+      deps.toolRegistry.setGoalVerifier(deps.goalVerifier);
+    }
   }
 
   async run(userMessage: string, ctx: RunContext): Promise<OrchestratorResponse> {

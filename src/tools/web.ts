@@ -11,6 +11,7 @@ import { webFetch } from "../browser/smart-fetch.js";
 export const WebCrawlTool: ToolImplementation = {
   definition: {
     name: "web_crawl",
+    deprecated: true,
     description:
       "Fetch and extract text content from a specific URL. Use this AFTER duckduckgo_search " +
       "to read a page you found, or when you already know the exact URL. " +

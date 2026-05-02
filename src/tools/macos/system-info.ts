@@ -7,6 +7,7 @@ const execAsync = promisify(exec);
 export const SystemInfoTool: ToolImplementation = {
   definition: {
     name: "system_info",
+    deprecated: true,
     description:
       "Get system information — macOS version, CPU usage, memory, disk space, battery level, and uptime.",
     parameters: {

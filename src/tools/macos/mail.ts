@@ -11,6 +11,7 @@ function escapeForShell(str: string): string {
 export const AppleMailTool: ToolImplementation = {
   definition: {
     name: "apple_mail",
+    deprecated: true,
     description:
       "Send and read email via macOS Mail.app. Can send messages, check unread count, and read recent emails.",
     parameters: {

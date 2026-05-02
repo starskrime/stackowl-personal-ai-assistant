@@ -52,3 +52,31 @@ describe("GatewayEventBus", () => {
     expect(calls.sort()).toEqual([1, 2])
   })
 })
+
+describe("GatewayEventBus tool events", () => {
+  it("emits and receives tool:start event", () => {
+    const bus = new GatewayEventBus();
+    const handler = vi.fn();
+    bus.on("tool:start", handler);
+    bus.emit({ type: "tool:start", toolName: "web_crawl", args: { url: "https://x.com" }, turnId: "t1" });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "tool:start", toolName: "web_crawl" })
+    );
+  });
+
+  it("emits and receives tool:result event", () => {
+    const bus = new GatewayEventBus();
+    const handler = vi.fn();
+    bus.on("tool:result", handler);
+    bus.emit({ type: "tool:result", toolName: "web_crawl", success: true, durationMs: 120, truncated: false });
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ success: true, durationMs: 120 }));
+  });
+
+  it("emits and receives tool:goal_blocked event", () => {
+    const bus = new GatewayEventBus();
+    const handler = vi.fn();
+    bus.on("tool:goal_blocked", handler);
+    bus.emit({ type: "tool:goal_blocked", toolName: "duckduckgo_search", subGoal: "find price data", suggestion: "try web_crawl with specific URL" });
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ suggestion: "try web_crawl with specific URL" }));
+  });
+})

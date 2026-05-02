@@ -39,6 +39,7 @@ const shell = async (cmd: string): Promise<string> => {
 export const IMessageTool: ToolImplementation = {
   definition: {
     name: "imessage",
+    deprecated: true,
     description:
       "Send and read iMessages/SMS via macOS Messages app. " +
       "Send text messages, send file attachments (images, documents, audio), " +

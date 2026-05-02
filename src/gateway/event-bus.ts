@@ -9,6 +9,12 @@ export type GatewaySystemEvent =
   | { type: "perch:event";       source: string;    detail: string;  userId: string }
   | { type: "commitment:due";    text: string;      userId: string }
   | { type: "cost:alert";        spent: number;     budget: number;  userId: string }
+  | { type: "tool:start";        toolName: string; args: Record<string, unknown>; turnId: string }
+  | { type: "tool:result";       toolName: string; success: boolean; durationMs: number; truncated: boolean }
+  | { type: "tool:retry";        toolName: string; attempt: number; reason: string }
+  | { type: "tool:fallback";     fromTool: string; toTool: string; reason: string }
+  | { type: "tool:goal_advance"; toolName: string; subGoal: string; verdict: "ADVANCES" | "PARTIAL" }
+  | { type: "tool:goal_blocked"; toolName: string; subGoal: string; suggestion?: string }
 
 const DELIVER_EVENT = "gateway:deliver"
 

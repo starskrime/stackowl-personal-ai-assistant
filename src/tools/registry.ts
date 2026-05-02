@@ -7,7 +7,9 @@
 
 import type { ToolDefinition } from "../providers/base.js";
 import type { EngineContext } from "../engine/runtime.js";
+import type { GatewayEventBus } from "../gateway/event-bus.js";
 import type { ToolCategory, ToolPermission } from "./categories.js";
+import type { GoalVerifier } from "./goal-verifier.js";
 import { DEFAULT_PERMISSIONS } from "./categories.js";
 import { validateToolArgs } from "./validator.js";
 import {
@@ -47,6 +49,8 @@ export class ToolRegistry {
   };
   private _intentRouter: ToolIntentRouter | null = null;
   private _tracker: ToolTracker | null = null;
+  private _eventBus: GatewayEventBus | null = null;
+  private _goalVerifier: GoalVerifier | null = null;
 
   setIntentRouter(router: ToolIntentRouter): void {
     this._intentRouter = router;
@@ -55,6 +59,14 @@ export class ToolRegistry {
 
   setTracker(tracker: ToolTracker): void {
     this._tracker = tracker;
+  }
+
+  setEventBus(bus: GatewayEventBus): void {
+    this._eventBus = bus;
+  }
+
+  setGoalVerifier(verifier: GoalVerifier): void {
+    this._goalVerifier = verifier;
   }
 
   getTracker(): ToolTracker | null {
@@ -125,6 +137,7 @@ export class ToolRegistry {
   getAllDefinitions(): ToolDefinition[] {
     return Array.from(this.tools.values())
       .filter((t) => this.checkPermission(t) === "allowed")
+      .filter((t) => !t.definition.deprecated)
       .map((t) => t.definition);
   }
 
@@ -220,6 +233,20 @@ export class ToolRegistry {
       throw new ToolPermissionError(name, tool.category ?? "uncategorized");
     }
 
+    // Platform enforcement
+    // Platform-blocked calls are intentionally not emitted to the event bus — no execution occurred.
+    if (tool.definition.platforms && !tool.definition.platforms.includes(process.platform as NodeJS.Platform)) {
+      return JSON.stringify({
+        success: false,
+        data: null,
+        error: {
+          code: "PLATFORM_NOT_SUPPORTED",
+          message: `Tool '${name}' is only available on: ${tool.definition.platforms.join(", ")}. Current platform: ${process.platform}.`,
+          suggestion: "Use a cross-platform alternative or run on a supported OS.",
+        },
+      });
+    }
+
     // Schema validation
     const violations = validateToolArgs(
       tool.definition.parameters as Record<string, unknown> | undefined,
@@ -229,8 +256,10 @@ export class ToolRegistry {
       throw new ToolValidationError(name, violations);
     }
 
+    const startTime = Date.now();
+    this._eventBus?.emit({ type: "tool:start", toolName: name, args, turnId: context.engineContext?.sessionId ?? "" });
+
     try {
-      const startTime = Date.now();
       let result = await tool.execute(args, context);
       const durationMs = Date.now() - startTime;
 
@@ -239,18 +268,63 @@ export class ToolRegistry {
       }
 
       // Truncate long results to prevent context bloat
+      let truncated = false;
       if (result.length > MAX_TOOL_RESULT_LENGTH) {
         result =
           result.slice(0, MAX_TOOL_RESULT_LENGTH) +
           `\n\n[OUTPUT TRUNCATED — ${result.length} chars total, showing first ${MAX_TOOL_RESULT_LENGTH}]`;
+        truncated = true;
+      }
+
+      this._eventBus?.emit({ type: "tool:result", toolName: name, success: true, durationMs, truncated });
+
+      // GAV: verify result against active sub-goal (skip if no sub-goal or no verifier)
+      if (this._goalVerifier && context.engineContext?.activeSubGoal) {
+        const subGoal = context.engineContext.activeSubGoal;
+        const userMessage = context.engineContext.userMessage ?? "";
+        try {
+          const verification = await this._goalVerifier.verify({
+            toolName: name,
+            toolArgs: args,
+            toolResult: result,
+            subGoal,
+            userMessage,
+          });
+
+          if (verification.verdict === "ADVANCES" || verification.verdict === "PARTIAL") {
+            this._eventBus?.emit({
+              type: "tool:goal_advance",
+              toolName: name,
+              subGoal: subGoal.description,
+              verdict: verification.verdict,
+            });
+          }
+
+          if (verification.verdict === "BLOCKED") {
+            this._eventBus?.emit({
+              type: "tool:goal_blocked",
+              toolName: name,
+              subGoal: subGoal.description,
+              suggestion: verification.suggestion,
+            });
+          }
+
+          // For BLOCKED and PARTIAL, wrap result with warning so LLM knows
+          if (verification.verdict === "BLOCKED" || verification.verdict === "PARTIAL") {
+            result = result + `\n\n<tool_result_warning verdict="${verification.verdict}">${verification.reason}${verification.suggestion ? ` Suggestion: ${verification.suggestion}` : ""}</tool_result_warning>`;
+          }
+        } catch {
+          // Verifier failure is non-fatal — proceed with unmodified result
+        }
       }
 
       return result;
     } catch (error) {
-      const durationMs = 0;
+      const durationMs = Date.now() - startTime;
       if (this._tracker) {
         this._tracker.recordFailure(name, durationMs);
       }
+      this._eventBus?.emit({ type: "tool:result", toolName: name, success: false, durationMs, truncated: false });
       if (error instanceof ToolExecutionError) throw error;
       const msg = error instanceof Error ? error.message : String(error);
       throw new ToolExecutionError(name, msg);

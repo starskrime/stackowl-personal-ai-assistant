@@ -179,6 +179,7 @@ ${outputLogic}`;
 export const ScraplingTool: ToolImplementation = {
   definition: {
     name: "scrapling_fetch",
+    deprecated: true,
     description:
       "Advanced anti-bot web scraping powered by Scrapling. " +
       "Bypasses Cloudflare, bot detection, TLS fingerprinting, and CAPTCHAs. " +

@@ -7,6 +7,7 @@ import type { ToolImplementation, ToolContext } from "./registry.js";
 export class RecallMemoryTool implements ToolImplementation {
   definition = {
     name: "recall_memory",
+    deprecated: true,
     description:
       "Search your memory for past conversations, knowledge, and insights. " +
       'Use when the user says "remember", "we discussed", "what did we talk about", ' +
