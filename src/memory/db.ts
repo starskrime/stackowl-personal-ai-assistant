@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1185,6 +1185,9 @@ export class MemoryDatabase {
     }
     if (current < 18) {
       applyV18Migration(this.db);
+    }
+    if (current < 19) {
+      applyV19Migration(this.db);
     }
     if (current < SCHEMA_VERSION) {
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -2363,6 +2366,21 @@ class TrajectoriesRepo {
     return rows.map(rowToTrajectory);
   }
 
+  markClarificationAsked(trajectoryId: string): void {
+    this.db.prepare(
+      `UPDATE trajectories SET clarification_asked = 1 WHERE id = ?`
+    ).run(trajectoryId);
+  }
+
+  getRecentWithClarification(owlName: string, limit = 50): Array<Trajectory & { clarification_asked: number }> {
+    const rows = this.db.prepare(`
+      SELECT * FROM trajectories
+      WHERE owl_name = ? AND completed_at IS NOT NULL
+      ORDER BY created_at DESC LIMIT ?
+    `).all(owlName, limit) as any[];
+    return rows.map(r => ({ ...rowToTrajectory(r), clarification_asked: r.clarification_asked ?? 0 }));
+  }
+
   /** All turns for a given trajectory — for detailed APO critique */
   getTurns(trajectoryId: string): TrajectoryTurn[] {
     const rows = this.db.prepare(`
@@ -3142,6 +3160,10 @@ export class StackOwlDB {
     }
     if (current < 18) {
       applyV18Migration(this.db);
+      this.db.pragma(`user_version = 18`);
+    }
+    if (current < 19) {
+      applyV19Migration(this.db);
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
     }
   }
@@ -3245,6 +3267,19 @@ function applyV18Migration(db: Database.Database): void {
   `);
 }
 
+function applyV19Migration(db: Database.Database): void {
+  // Guard: trajectories table exists in MemoryDatabase but not in StackOwlDB or minimal test DBs
+  const trajExists = (db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='trajectories'"
+  ).get() as { name: string } | undefined) !== undefined;
+  if (trajExists) {
+    const cols = (db.prepare("PRAGMA table_info(trajectories)").all() as { name: string }[]).map(c => c.name);
+    if (!cols.includes("clarification_asked")) {
+      db.exec(`ALTER TABLE trajectories ADD COLUMN clarification_asked INTEGER NOT NULL DEFAULT 0;`);
+    }
+  }
+}
+
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
  * Accepts an in-memory or on-disk Database instance; idempotent.
@@ -3288,6 +3323,24 @@ export function applyMigrations(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_sum_session ON summaries(session_id);
     CREATE INDEX IF NOT EXISTS idx_sum_user    ON summaries(user_id);
+
+    CREATE TABLE IF NOT EXISTS trajectories (
+      id               TEXT PRIMARY KEY,
+      session_id       TEXT NOT NULL,
+      owl_name         TEXT NOT NULL DEFAULT 'default',
+      user_id          TEXT,
+      user_message     TEXT NOT NULL DEFAULT '',
+      total_turns      INTEGER NOT NULL DEFAULT 0,
+      tools_used       TEXT NOT NULL DEFAULT '[]',
+      outcome          TEXT NOT NULL DEFAULT 'success',
+      reward           REAL NOT NULL DEFAULT 0.0,
+      reward_breakdown TEXT NOT NULL DEFAULT '{}',
+      created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_traj_session ON trajectories(session_id);
+    CREATE INDEX IF NOT EXISTS idx_traj_owl     ON trajectories(owl_name);
+    CREATE INDEX IF NOT EXISTS idx_traj_reward  ON trajectories(reward);
   `);
 
   const current = (db.pragma("user_version") as { user_version: number }[])[0]?.user_version ?? 0;
@@ -3297,6 +3350,9 @@ export function applyMigrations(db: Database.Database): void {
   }
   if (current < 18) {
     applyV18Migration(db);
+  }
+  if (current < 19) {
+    applyV19Migration(db);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
