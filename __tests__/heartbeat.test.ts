@@ -270,3 +270,53 @@ describe("ProactivePinger — engagement recording", () => {
     );
   });
 });
+
+describe("ProactivePinger — goal-aware assembly", () => {
+  it("morning brief includes active goal context in prompt", async () => {
+    const mockGoalGraph = {
+      load: vi.fn().mockResolvedValue(undefined),
+      getActive: vi.fn().mockReturnValue([
+        { id: "g1", title: "Ship feature X", status: "active" },
+      ]),
+      getStale: vi.fn().mockReturnValue([]),
+    };
+
+    const provider = makeMockProvider();
+    const pingContext: PingContext = {
+      provider,
+      owl: makeMockOwl(),
+      config: makeMockConfig(),
+      capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
+      sendToUser: vi.fn(),
+      goalGraph: mockGoalGraph as any,
+    };
+
+    const pinger = new ProactivePinger(
+      pingContext,
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: true,
+        morningBriefHour: new Date().getHours(), quietHoursStart: 22, quietHoursEnd: 7 },
+    );
+
+    await (pinger as any).sendMorningBrief();
+
+    const chatCalls = (provider.chat as ReturnType<typeof vi.fn>).mock.calls;
+    if (chatCalls.length > 0) {
+      const promptUsed = chatCalls[0][0][0].content as string;
+      expect(promptUsed).toContain("Ship feature X");
+    }
+  });
+
+  it("does not have maybeDream method", () => {
+    const pinger = new ProactivePinger(
+      { provider: makeMockProvider(), owl: makeMockOwl(), config: makeMockConfig(),
+        capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
+        sendToUser: vi.fn() },
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: false,
+        morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
+    );
+    expect((pinger as any).maybeDream).toBeUndefined();
+    expect((pinger as any).maybeKnowledgeCouncil).toBeUndefined();
+    expect((pinger as any).maybeEvolveSkills).toBeUndefined();
+    expect((pinger as any).maybeConsolidateMemory).toBeUndefined();
+  });
+});

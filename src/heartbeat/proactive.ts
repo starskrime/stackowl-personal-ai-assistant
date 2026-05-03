@@ -10,7 +10,6 @@ import { makeEnvelope } from "../gateway/delivery-envelope.js";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
-import { MemoryConsolidator } from "./consolidation.js";
 import { ToolPruner } from "../evolution/pruner.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { CapabilityLedger } from "../evolution/ledger.js";
@@ -97,7 +96,8 @@ export type PingType =
   | "check_in"
   | "reminder"
   | "idea"
-  | "follow_up";
+  | "follow_up"
+  | "goal_progress_update";
 
 // ─── Default Config ──────────────────────────────────────────────
 
@@ -341,7 +341,7 @@ export class ProactivePinger {
         await this.sendCheckIn();
         break;
       case "memory_consolidation":
-        await this.maybeConsolidateMemory();
+        log.engine.debug("[ProactivePinger] memory_consolidation handled by CognitiveLoop — skipping");
         break;
       case "tool_pruning":
         await this.maybePruneTools();
@@ -350,17 +350,38 @@ export class ProactivePinger {
         await this.maybeSelfStudy();
         break;
       case "knowledge_council":
-        await this.maybeKnowledgeCouncil();
+        log.engine.debug("[ProactivePinger] knowledge_council handled by CognitiveLoop — skipping");
         break;
       case "dream_reflexion":
-        await this.maybeDream();
+        log.engine.debug("[ProactivePinger] dream_reflexion handled by CognitiveLoop — skipping");
         break;
       case "skill_evolution":
-        await this.maybeEvolveSkills();
+        log.engine.debug("[ProactivePinger] skill_evolution handled by CognitiveLoop — skipping");
         break;
       case "goal_check":
         await this.maybeCheckGoals();
         break;
+      case "goal_progress_update": {
+        let payload: { goalId?: string; summary?: string } = {};
+        try { payload = job.payload ? JSON.parse(job.payload) : {}; } catch { /* keep {} */ }
+
+        if (!payload.goalId || !payload.summary) {
+          log.engine.warn(`[ProactivePinger] goal_progress_update missing payload — marking done`);
+          this.context.jobQueue?.markDone(job.id);
+          break;
+        }
+
+        const goalContext = await this.assembleGoalContext();
+        const prompt =
+          `Inform the user about progress on a goal they're tracking. ` +
+          `Be brief (1-2 sentences max), specific, and reference the actual progress.\n\n` +
+          `Goal context:\n${goalContext || "(no active goals loaded)"}\n\n` +
+          `Progress summary: ${payload.summary}`;
+
+        await this.generateAndSend(prompt, "goal_progress_update");
+        this.context.jobQueue?.markDone(job.id);
+        break;
+      }
       case "background_task":
         if (this._backgroundWorker) {
           await this._backgroundWorker.tick();
@@ -639,44 +660,6 @@ export class ProactivePinger {
   }
 
   /**
-   * Maybe run the daily memory consolidation job.
-   * Extracts persistent facts from the day's chat logs and saves them to owl_dna.json.
-   */
-  private async maybeConsolidateMemory(): Promise<void> {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const dateKey = now.toISOString().split("T")[0];
-
-    // Run at 3 AM by default (when the user is asleep)
-    // Hardcoded for now, but could be added to PingConfig
-    if (hour !== 3 || minute !== 0) return;
-    if (this.lastConsolidationDate === dateKey) return;
-
-    this.lastConsolidationDate = dateKey;
-
-    // Ensure we know who we are consolidating for
-    const userId = this.context.userId;
-    if (!userId) {
-      console.log(
-        "[ProactivePinger] Skipping consolidation: no userId in context",
-      );
-      return;
-    }
-
-    try {
-      const consolidator = new MemoryConsolidator(
-        this.context.provider,
-        this.context.owl,
-        this.context.config.workspace,
-      );
-      await consolidator.consolidateSession(userId);
-    } catch (e) {
-      console.error("[ProactivePinger] Memory consolidation failed:", e);
-    }
-  }
-
-  /**
    * Maybe run the autonomous tool pruner.
    * Scans for failing tools and attempts to rewrite or archive them.
    */
@@ -756,47 +739,59 @@ export class ProactivePinger {
     }
   }
 
-  /**
-   * Knowledge Council — owls learn independently, then brainstorm and validate.
-   * Runs weekly during quiet hours (3 AM on Sundays by default).
-   */
-  private async maybeKnowledgeCouncil(): Promise<void> {
-    // DISABLED — Knowledge Council burned tokens proactively.
-    // Learning now only happens reactively (on actual failures).
-    return;
-  }
-
-  /**
-   * Idle-Time Dreaming — reflects on past mistakes to adapt heuristics.
-   */
-  private async maybeDream(): Promise<void> {
-    // DISABLED — Dreaming is handled by CognitiveLoop's reflexion_dream action.
-    // No need to duplicate with a separate timer.
-    return;
-  }
-
-  /**
-   * Skill Evolution + Pattern Mining — runs at 5 AM, once per day.
-   *
-   * Two phases:
-   *   1. SkillEvolver: critiques every registered skill and rewrites low-scoring ones
-   *      (Self-Refine loop, max 2 iterations each).
-   *   2. PatternMiner: scans recent session history for repeated successful tool
-   *      sequences and crystallizes them as new SKILL.md files (LATS-inspired).
-   *
-   * Neither phase sends anything to the user — all work is silent.
-   */
-  private async maybeEvolveSkills(): Promise<void> {
-    // DISABLED — Skill evolution and pattern mining burned tokens proactively.
-    // Learning now only happens reactively (on actual failures).
-    return;
-  }
-
   // ── Queue-compatible wrappers (called by job executor) ────────
 
-  /** Thin wrapper so job executor can call by job type name */
+  /**
+   * Assemble goal-aware context string for proactive message prompts.
+   * Priority-ordered: active goals (high) > recent history (low).
+   */
+  private async assembleGoalContext(): Promise<string> {
+    const parts: string[] = [];
+
+    if (this.context.goalGraph) {
+      try {
+        await this.context.goalGraph.load();
+        const activeGoals = this.context.goalGraph.getActive?.() ?? [];
+        if (activeGoals.length > 0) {
+          parts.push(
+            `Active goals:\n${activeGoals.slice(0, 3).map((g: any) => `- ${g.title}`).join("\n")}`,
+          );
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    if (this.context.getRecentHistory) {
+      const history = this.context.getRecentHistory();
+      if (history.length > 0) {
+        const lastUserMessages = history
+          .filter(m => m.role === "user")
+          .slice(-3)
+          .map(m => (typeof m.content === "string" ? m.content : "").slice(0, 80));
+        if (lastUserMessages.length > 0) {
+          parts.push(`Recent context: ${lastUserMessages.join(" | ")}`);
+        }
+      }
+    }
+
+    return parts.join("\n\n");
+  }
+
+  /** Job-queue path: goal-anchored morning brief (queue handles time gating). */
   private async sendMorningBrief(): Promise<void> {
-    return this.maybeMorningBrief();
+    const dayOfWeek = new Date().toLocaleDateString("en-US", { weekday: "long" });
+    const goalContext = await this.assembleGoalContext();
+
+    if (!goalContext) return; // Skip if nothing real to say
+
+    const prompt =
+      `It's ${dayOfWeek} morning. Generate a concise morning brief (2-3 sentences max). ` +
+      `${goalContext}\n\n` +
+      `Reference the actual context above — do not invent generic motivational filler. ` +
+      `Sound like a real assistant who knows what the user is working on.`;
+
+    await this.generateAndSend(prompt, "morning_brief");
   }
 
   /** Thin wrapper so job executor can call by job type name */
