@@ -310,6 +310,7 @@ export class PelletStore {
     verdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL",
   ): Promise<void> {
     if (verdict === "NEUTRAL") return;
+    await this.init();
     const successDelta = verdict === "ADVANCES" || verdict === "PARTIAL" ? 1 : 0;
     const failureDelta = verdict === "BLOCKED" ? 1 : 0;
     for (const id of ids) {

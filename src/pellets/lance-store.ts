@@ -324,7 +324,7 @@ export class LancePelletStore {
     this.assertReady();
     if (successDelta === 0 && failureDelta === 0) return;
     // Escape single quotes in ID to prevent SQL injection
-    const escapedId = id.replace(/'/g, "''");
+    const escapedId = this.esc(id);
     const sets: { [col: string]: string } = {};
     if (successDelta !== 0) sets["success_count"] = `success_count + ${successDelta}`;
     if (failureDelta !== 0) sets["failure_count"] = `failure_count + ${failureDelta}`;

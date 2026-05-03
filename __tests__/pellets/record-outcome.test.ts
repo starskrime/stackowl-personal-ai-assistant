@@ -56,6 +56,16 @@ describe("PelletStore.recordOutcome", () => {
     await expect(store.recordOutcome(["bad", "good"], "ADVANCES")).resolves.not.toThrow();
     expect(mockUpdate).toHaveBeenCalledTimes(2);
   });
+
+  it("empty IDs is a no-op", async () => {
+    const { PelletStore } = await import("../../src/pellets/store.js");
+    const store = new (PelletStore as any)("/tmp/test-ws6");
+    store._initialized = true;
+    const mockUpdate = vi.fn();
+    store.lance = { updateCounters: mockUpdate, init: vi.fn() } as any;
+    await store.recordOutcome([], "ADVANCES");
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
 });
 
 // ─── searchWithGraphScored quality re-rank test ──────────────────
