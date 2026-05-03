@@ -34,7 +34,7 @@ export class RelevantPelletsLayer implements ContextLayer {
     const pelletStore = req.deps.pelletStore;
     if (!pelletStore) return "";
     try {
-      const scored = await (pelletStore as any).searchWithGraphScored(t.userMessage, 5) as Array<{ p: import("../../pellets/store.js").Pellet; score: number }>;
+      const scored = await pelletStore.searchWithGraphScored(t.userMessage, 5);
       if (!scored.length) return "";
 
       req.retrievedPelletIds = scored.map((s) => s.p.id);
