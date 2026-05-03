@@ -558,6 +558,14 @@ export class OwlEvolutionEngine {
         this.trackMutationEffectiveness(owl, logEntries, effectivenessScore);
 
         await this.owlRegistry.saveDNA(owl.persona.name);
+
+        // ── Task 13: Clarification autonomy update ────────────────
+        // After DNA is saved, update how much the owl likes to ask
+        // clarification questions based on trajectory reward data.
+        if (this.db) {
+          await updateClarificationAutonomy(owlName, this.db as any, owl.dna);
+        }
+
         log.evolution.info(
           `✅ ${owl.persona.name} evolved to Generation ${owl.dna.generation} (effectiveness: ${(effectivenessScore * 100).toFixed(0)}%).`,
         );
@@ -692,4 +700,38 @@ export class OwlEvolutionEngine {
     // If conversation is within limits, just filter user/assistant messages
     return messages.filter((m) => m.role === "user" || m.role === "assistant");
   }
+}
+
+/**
+ * Updates clarification_autonomy_score in DNA based on reward signal.
+ * Called from evolve() after trait mutation. Uses proportional delta (not Math.sign).
+ *
+ * - If turns where the owl PROCEEDED (no clarification) got better rewards → increase score
+ * - If turns where the owl ASKED for clarification got better rewards → decrease score
+ * - Learning rate: 0.05, clamped to [0.1, 0.9]
+ */
+export async function updateClarificationAutonomy(
+  owlName: string,
+  db: { trajectories: { getRecentWithClarification(name: string, limit: number): Array<{ reward: number; clarification_asked: number }> } },
+  dna: import('./persona.js').OwlDNA,
+): Promise<void> {
+  const recent = db.trajectories.getRecentWithClarification(owlName, 50);
+  if (recent.length < 5) {
+    // Not enough data — remove any stale score so downstream code knows it's unset
+    delete dna.learnedPreferences['clarification_autonomy_score'];
+    return;
+  }
+
+  const asked   = recent.filter(t => t.clarification_asked === 1);
+  const skipped = recent.filter(t => t.clarification_asked === 0);
+  if (asked.length === 0 || skipped.length === 0) return;
+
+  const avg = (arr: Array<{ reward: number }>) =>
+    arr.reduce((s, t) => s + t.reward, 0) / arr.length;
+
+  const delta = avg(skipped) - avg(asked);
+  const LEARNING_RATE = 0.05;
+  const current = (dna.learnedPreferences['clarification_autonomy_score'] as number) ?? 0.5;
+  dna.learnedPreferences['clarification_autonomy_score'] =
+    Math.max(0.1, Math.min(0.9, current + LEARNING_RATE * delta));
 }
