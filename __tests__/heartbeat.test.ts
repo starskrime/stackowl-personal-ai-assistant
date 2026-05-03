@@ -238,3 +238,35 @@ describe("ProactivePinger — delivery recording", () => {
     );
   });
 });
+
+describe("ProactivePinger — engagement recording", () => {
+  it("records reply latency when user replies to a delivery", () => {
+    const writeEngagement = vi.fn();
+    const mockDb = { writeProactiveDelivery: vi.fn(), writeProactiveEngagement: writeEngagement } as any;
+
+    const pingContext: PingContext = {
+      provider: makeMockProvider(),
+      owl: makeMockOwl(),
+      config: makeMockConfig(),
+      capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
+      db: mockDb,
+    };
+
+    const pinger = new ProactivePinger(
+      pingContext,
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: false,
+        morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
+    );
+
+    pinger.recordEngagement("del_xyz", "morning_brief", true, 42, "g1");
+    expect(writeEngagement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryId: "del_xyz",
+        jobType: "morning_brief",
+        replied: true,
+        replyLatencySeconds: 42,
+        goalId: "g1",
+      }),
+    );
+  });
+});

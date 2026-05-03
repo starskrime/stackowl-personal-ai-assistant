@@ -855,6 +855,8 @@ export class ProactivePinger {
         urgency: "proactive",
         trigger: "proactive",
         ttlMs: 4 * 60 * 60 * 1000,
+        deliveryId,
+        jobType: _jobType,
       }));
       db?.writeProactiveDelivery({
         id: deliveryId,

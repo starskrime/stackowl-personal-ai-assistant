@@ -21,6 +21,12 @@ export interface DeliveryEnvelope {
   trigger: DeliveryTrigger
   ttlMs?: number
   sessionId?: string
+  /** Set on outbound proactive envelopes — adapters use this to correlate replies */
+  deliveryId?: string
+  /** Job type for proactive deliveries (e.g. "morning_brief", "check_in") */
+  jobType?: string
+  /** Set on inbound user replies that follow a proactive delivery */
+  inReplyToDeliveryId?: string
 }
 
 export function makeEnvelope(

@@ -53,6 +53,9 @@ export class TelegramAdapter implements ChannelAdapter {
 
   private bot: Bot;
   private pinger: ProactivePinger | null = null;
+
+  /** Exposes the wired ProactivePinger so other adapters can share it. */
+  getPinger(): ProactivePinger | null { return this.pinger; }
   private _backgroundWorker: import("../../agent/background-worker.js").BackgroundWorker | null = null;
   private activeChatIds: Set<number> = new Set();
   private userState: Map<number, UserState> = new Map();

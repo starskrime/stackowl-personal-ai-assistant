@@ -25,6 +25,7 @@ import { ToolStream } from "../../cli/tool-stream.js";
 import type { StreamEvent } from "../../providers/base.js";
 import { GatewayEventBus, type GatewaySystemEvent } from "../event-bus.js";
 import { formatToolEvent } from "../narration-formatter.js";
+import type { ProactivePinger } from "../../heartbeat/proactive.js";
 
 export interface CLIAdapterConfig { userId?: string; workspacePath?: string; }
 
@@ -48,6 +49,12 @@ export class CLIAdapter implements ChannelAdapter {
   private thinkingSuppressor?: ThinkingSuppressor;
   private toolStream?: ToolStream;
   private jsonMode = false;
+
+  // ─── Element 12: proactive engagement tracking ─────────────────
+  private pinger: ProactivePinger | null = null;
+  private lastDeliveryId: string | null = null;
+  private lastDeliveryJobType: string = "";
+  private lastDeliveryAt: number = 0;
 
   constructor(private gateway: OwlGateway, config: CLIAdapterConfig = {}) {
     this.userId    = config.userId ?? "local";
@@ -83,6 +90,27 @@ export class CLIAdapter implements ChannelAdapter {
         log.tool.warn(`Tool ${toolName} error: ${error}`);
       },
     });
+
+    // ─── Element 12: capture outbound proactive deliveries ───────
+    // ProactivePinger publishes envelopes with `deliveryId` + `jobType`
+    // when a proactive message is sent. We remember the most recent one so
+    // the next user input can be recorded as a reply via `recordEngagement`.
+    this.gateway.gatewayEventBus.onDeliver(async (env) => {
+      if (env.urgency === "proactive" && env.deliveryId) {
+        this.lastDeliveryId = env.deliveryId;
+        this.lastDeliveryJobType = env.jobType ?? "unknown";
+        this.lastDeliveryAt = Date.now();
+      }
+    });
+  }
+
+  /**
+   * Wire a ProactivePinger so user replies that follow a proactive delivery
+   * can be recorded as engagement. Constructed in the Telegram adapter, but
+   * shared here so CLI users get the same learning signal.
+   */
+  setPinger(pinger: ProactivePinger): void {
+    this.pinger = pinger;
   }
 
   // ─── ChannelAdapter ───────────────────────────────────────────
@@ -228,6 +256,26 @@ export class CLIAdapter implements ChannelAdapter {
 
     const consumed = await this.commands.handle(input, this.renderer, this.gateway);
     if (consumed) return;
+
+    // ─── Element 12: record reply-engagement on proactive deliveries ─
+    // If the most recent outbound was a proactive message and a pinger is
+    // wired, treat this user input as the user's reply.
+    if (this.pinger && this.lastDeliveryId && this.lastDeliveryAt > 0) {
+      const latencySeconds = Math.max(0, Math.round((Date.now() - this.lastDeliveryAt) / 1000));
+      try {
+        this.pinger.recordEngagement(
+          this.lastDeliveryId,
+          this.lastDeliveryJobType,
+          true,
+          latencySeconds,
+        );
+      } catch (err) {
+        log.engine.warn(`[CLI] recordEngagement failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      this.lastDeliveryId = null;
+      this.lastDeliveryJobType = "";
+      this.lastDeliveryAt = 0;
+    }
 
     // ─── Epic 8: Add user message to session persistence ──────────
     this.sessionPersistence?.addMessage("user", input);
