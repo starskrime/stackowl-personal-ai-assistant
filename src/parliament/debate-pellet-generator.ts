@@ -6,9 +6,8 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
-import type { StackOwlConfig } from "../config/loader.js";
 import type { ParliamentSession } from "./protocol.js";
-import { PelletGenerator } from "../pellets/generator.js";
+import { PelletGenerator, makeProviderRouter } from "../pellets/generator.js";
 import type { Pellet, PelletStore } from "../pellets/store.js";
 import { log } from "../logger.js";
 
@@ -19,9 +18,8 @@ export class DebatePelletGenerator {
 
   constructor(
     private provider: ModelProvider,
-    private config: StackOwlConfig,
   ) {
-    this.pelletGenerator = new PelletGenerator();
+    this.pelletGenerator = new PelletGenerator(makeProviderRouter(provider));
   }
 
   /**
@@ -39,12 +37,12 @@ export class DebatePelletGenerator {
       const pellet = await this.pelletGenerator.generate(
         this.generateDebateSummary(session),
         `Parliament: ${session.config.topic}`,
-        {
-          provider: this.provider,
-          owl: session.config.participants[0],
-          config: this.config,
-        },
       );
+
+      if (!pellet) {
+        log.engine.warn("[DebatePelletGenerator] Generator returned null — skipping save");
+        return null;
+      }
 
       // Enhance pellet with debate-specific metadata
       pellet.owls = session.config.participants.map((p) => p.persona.name);

@@ -13,7 +13,7 @@ import type {
   ParliamentConfig,
   ParliamentSession,
 } from "./protocol.js";
-import { PelletGenerator } from "../pellets/generator.js";
+import { PelletGenerator, makeProviderRouter } from "../pellets/generator.js";
 import type { PelletStore } from "../pellets/store.js";
 import { assignPerspectives } from "./perspectives.js";
 import type { PerspectiveOverlay } from "./perspectives.js";
@@ -22,8 +22,6 @@ import { log } from "../logger.js";
 import { MultiRoundDebateManager } from "./multi-round-debate.js";
 
 export class ParliamentOrchestrator {
-  private provider: ModelProvider;
-  private config: StackOwlConfig;
   private pelletGenerator: PelletGenerator;
   private pelletStore: PelletStore;
   private db?: MemoryDatabase;
@@ -36,11 +34,9 @@ export class ParliamentOrchestrator {
     _toolRegistry?: ToolRegistry,
     db?: MemoryDatabase,
   ) {
-    this.provider = provider;
-    this.config = config;
     this.pelletStore = pelletStore;
     this.db = db;
-    this.pelletGenerator = new PelletGenerator();
+    this.pelletGenerator = new PelletGenerator(makeProviderRouter(provider));
     this.multiRoundDebate = new MultiRoundDebateManager(provider, config);
   }
 
@@ -139,14 +135,11 @@ export class ParliamentOrchestrator {
         const pellet = await this.pelletGenerator.generate(
           mdTranscript,
           `Parliament Session: ${config.topic}`,
-          {
-            provider: this.provider,
-            owl: config.participants[0],
-            config: this.config,
-          },
         );
-        await this.pelletStore.save(pellet);
-        log.engine.info(`[Parliament] Saved Knowledge Pellet: ${pellet.id}.md`);
+        if (pellet) {
+          await this.pelletStore.save(pellet);
+          log.engine.info(`[Parliament] Saved Knowledge Pellet: ${pellet.id}.md`);
+        }
       } catch (pelletError) {
         log.engine.error(
           `[Parliament] Failed to generate pellet: ${pelletError}`,

@@ -1,111 +1,147 @@
 /**
  * StackOwl — Pellet Generator
  *
- * Uses the Owl Engine to "digest" raw transcript/conversation data
+ * Uses IntelligenceRouter to "digest" raw transcript/conversation data
  * into a highly structured knowledge artifact (Pellet).
+ *
+ * The constructor accepts a duck-typed GenerationRouter so it can be
+ * trivially mocked in tests. Use PelletGenerator.create() to wire up
+ * the real IntelligenceRouter + provider map in production.
  */
 
 import { v4 as uuidv4 } from "uuid";
+import type { IntelligenceRouter } from "../intelligence/router.js";
 import type { ModelProvider } from "../providers/base.js";
-import type { OwlInstance } from "../owls/persona.js";
-import { OwlEngine } from "../engine/runtime.js";
-import type { StackOwlConfig } from "../config/loader.js";
 import type { Pellet } from "./store.js";
+import { log } from "../logger.js";
+
+// ─── Duck-typed interface ─────────────────────────────────────────
+// Accepts both the real IntelligenceRouter (via create()) and simple
+// test mocks that return the generated text directly.
+
+export interface GenerationRouter {
+  resolve(tier: string, prompt: string): Promise<string>;
+}
+
+/**
+ * Convenience adapter: wraps a plain ModelProvider into a GenerationRouter.
+ * Used by parliament/orchestrator callers that don't yet have a full
+ * IntelligenceRouter in scope.
+ */
+export function makeProviderRouter(provider: ModelProvider): GenerationRouter {
+  return {
+    async resolve(_tier: string, prompt: string): Promise<string> {
+      const response = await provider.chat(
+        [{ role: "user", content: prompt }],
+        undefined,
+        { temperature: 0.3 },
+      );
+      return response.content;
+    },
+  };
+}
+
+// ─── PelletGenerator ─────────────────────────────────────────────
 
 export class PelletGenerator {
-  private engine: OwlEngine;
+  constructor(private router: GenerationRouter) {}
 
-  constructor() {
-    this.engine = new OwlEngine();
+  /**
+   * Wire up a real IntelligenceRouter + provider map.
+   * Uses the "synthesis" task type (high tier) to pick the model.
+   */
+  static create(
+    router: IntelligenceRouter,
+    providers: Map<string, ModelProvider>,
+  ): PelletGenerator {
+    const adapted: GenerationRouter = {
+      async resolve(_tier: string, prompt: string): Promise<string> {
+        const resolved = router.resolve("synthesis");
+        const provider = providers.get(resolved.provider);
+        if (!provider) {
+          throw new Error(
+            `[PelletGenerator] Provider "${resolved.provider}" not found in registry`,
+          );
+        }
+        const response = await provider.chat(
+          [{ role: "user", content: prompt }],
+          resolved.model,
+          { temperature: 0.3 },
+        );
+        return response.content;
+      },
+    };
+    return new PelletGenerator(adapted);
   }
 
   /**
-   * Generate a pellet from unstructured data (e.g., a Parliament session transcript
-   * or a long conversation).
+   * Generate a pellet from unstructured source material using IntelligenceRouter.
+   * Returns null if sourceMaterial is empty or if the LLM returns unparseable JSON.
    */
   async generate(
     sourceMaterial: string,
     sourceName: string,
-    context: {
-      provider: ModelProvider;
-      owl: OwlInstance;
-      config: StackOwlConfig;
-    },
-  ): Promise<Pellet> {
-    const { provider, owl, config } = context;
-
-    console.log(
-      `[PelletGenerator] 📦 ${owl.persona.name} is digesting knowledge from: ${sourceName}...`,
-    );
+    opts?: { provenance?: string[] },
+  ): Promise<Pellet | null> {
+    if (!sourceMaterial.trim()) return null;
 
     const prompt =
       `You are digesting a conversation or research output to create a "Pellet" — a compressed, highly structured knowledge artifact.\n\n` +
-      `Source Material:\n${sourceMaterial}\n\n` +
+      `Source: ${sourceName}\n` +
+      `Material:\n${sourceMaterial}\n\n` +
       `Task: Generate the contents of the Pellet. Your response MUST be valid JSON matching this schema:\n` +
       `{\n` +
       `  "slug": "a-kebab-case-short-id",\n` +
       `  "title": "A clear, descriptive title",\n` +
       `  "tags": ["architectural", "decision-record", "database"],\n` +
       `  "owlsInvolved": ["Noctua", "Archimedes"],\n` +
-      `  "content": "A beautifully formatted Markdown string containing:\n` +
-      `     - ## Key Insight (1-2 sentences)\n` +
-      `     - ## Evidence/Arguments (bullet points)\n` +
-      `     - ## Final Verdict/Decision (if applicable)\n` +
-      `     - ## Context (briefly, what led to this)"\n` +
+      `  "content": "Formatted Markdown with ## Key Insight, ## Evidence/Arguments, ## Final Verdict"\n` +
       `}\n\n` +
       `Output ONLY the JSON object. Do not wrap it in \`\`\`json blocks.`;
 
-    const response = await this.engine.run(prompt, {
-      provider,
-      owl,
-      sessionHistory: [],
-      config,
-    });
+    let jsonStr: string;
+    try {
+      jsonStr = await this.router.resolve("generation", prompt);
+    } catch (err) {
+      log.engine.warn(
+        `[PelletGenerator] router.resolve failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
 
-    // Parse JSON (attempt to clean if wrapped in code blocks)
-    let jsonStr = response.content.trim();
-    if (jsonStr.startsWith("```json")) {
-      jsonStr = jsonStr
-        .replace(/^```json/, "")
-        .replace(/```$/, "")
-        .trim();
-    } else if (jsonStr.startsWith("```")) {
-      jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "").trim();
+    // Strip optional code-block wrapping
+    jsonStr = jsonStr.trim();
+    if (jsonStr.startsWith("```")) {
+      jsonStr = jsonStr.replace(/^```(?:json)?/, "").replace(/```$/, "").trim();
     }
 
     let parsed: any;
     try {
       parsed = JSON.parse(jsonStr);
-    } catch (error) {
-      console.error(
-        "[PelletGenerator] Failed to parse LLM output as JSON. Falling back to dumb string logic.",
+    } catch {
+      log.engine.warn(
+        "[PelletGenerator] Failed to parse LLM output as JSON — skipping pellet",
       );
-      // Fallback strategy if the LLM didn't return valid JSON
-      parsed = {
-        slug: `pellet-${uuidv4().substring(0, 8)}`,
-        title: "Auto-generated Pellet",
-        tags: ["auto-generated"],
-        owlsInvolved: [owl.persona.name],
-        content: response.content,
-      };
+      return null;
     }
 
-    const id = parsed.slug || `pellet-${uuidv4().substring(0, 8)}`;
+    const id =
+      (parsed.slug as string | undefined) || `pellet-${uuidv4().substring(0, 8)}`;
 
     return {
       id,
-      title: parsed.title || id,
+      title: (parsed.title as string | undefined) || id,
       generatedAt: new Date().toISOString(),
       source: sourceName,
       owls: Array.isArray(parsed.owlsInvolved)
-        ? parsed.owlsInvolved
-        : [owl.persona.name],
-      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+        ? (parsed.owlsInvolved as string[])
+        : [],
+      tags: Array.isArray(parsed.tags) ? (parsed.tags as string[]) : [],
       version: 1,
-      content: parsed.content || "Content generation failed.",
+      content: (parsed.content as string | undefined) || "",
       successCount: 0,
       failureCount: 0,
-      provenance: [],
+      provenance: opts?.provenance ?? [],
     };
   }
 }

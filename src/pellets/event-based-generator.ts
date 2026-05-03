@@ -7,10 +7,7 @@
 
 import type { EventBus } from "../events/bus.js";
 import type { PelletStore, Pellet } from "./store.js";
-import type { ModelProvider } from "../providers/base.js";
-import type { OwlInstance } from "../owls/persona.js";
-import type { StackOwlConfig } from "../config/loader.js";
-import { PelletGenerator } from "./generator.js";
+import { PelletGenerator, type GenerationRouter } from "./generator.js";
 import { log } from "../logger.js";
 
 // ─── Significance Criteria ─────────────────────────────────────
@@ -120,12 +117,10 @@ export class EventBasedPelletGenerator {
   constructor(
     private eventBus: EventBus,
     private pelletStore: PelletStore,
-    private provider: ModelProvider,
-    private owl: OwlInstance,
-    private config: StackOwlConfig,
+    private router: GenerationRouter,
     significanceConfig?: Partial<SignificanceConfig>,
   ) {
-    this.generator = new PelletGenerator();
+    this.generator = new PelletGenerator(this.router);
     const _significanceConfig = {
       minMessagesForSession: 3,
       maxGapAgeDays: 30,
@@ -263,12 +258,9 @@ export class EventBasedPelletGenerator {
       const pellet = await this.generator.generate(
         data.sourceMaterial,
         data.sourceName,
-        {
-          provider: this.provider,
-          owl: this.owl,
-          config: this.config,
-        },
       );
+
+      if (!pellet) return null;
 
       pellet.tags = [...new Set([...pellet.tags, ...data.tags])];
       if (data.owlsInvolved.length > 0) {

@@ -6,11 +6,8 @@
  */
 
 import type { PelletStore, Pellet } from "./store.js";
-import type { ModelProvider } from "../providers/base.js";
-import type { OwlInstance } from "../owls/persona.js";
-import type { StackOwlConfig } from "../config/loader.js";
 import type { MemoryDatabase } from "../memory/db.js";
-import { PelletGenerator } from "./generator.js";
+import { PelletGenerator, type GenerationRouter } from "./generator.js";
 import { KnowledgeBase } from "./knowledge-base.js";
 import { log } from "../logger.js";
 
@@ -38,13 +35,11 @@ export class ProactiveKnowledgeGenerator {
 
   constructor(
     private pelletStore: PelletStore,
-    private provider: ModelProvider,
-    private owl: OwlInstance,
-    private config: StackOwlConfig,
+    private router: GenerationRouter,
     private generationConfig: Partial<ProactiveGenerationConfig> = {},
     private db?: MemoryDatabase,
   ) {
-    this.generator = new PelletGenerator();
+    this.generator = new PelletGenerator(this.router);
     this.knowledgeBase = new KnowledgeBase(pelletStore);
     this.generationConfig = { ...DEFAULT_CONFIG, ...generationConfig };
   }
@@ -165,11 +160,12 @@ export class ProactiveKnowledgeGenerator {
         `Focus on the pattern or principle that connects these cases. ` +
         `Format as JSON with: id, title, tags (including "dream_insight"), content.`;
 
-      const pellet = await this.generator.generate(prompt, "dream_reflexion", {
-        provider: this.provider,
-        owl: this.owl,
-        config: this.config,
-      });
+      const pellet = await this.generator.generate(prompt, "dream_reflexion");
+
+      if (!pellet) {
+        log.engine.info("[ProactiveGenerator] Dream reflexion — generator returned null");
+        return [];
+      }
 
       pellet.tags = [...new Set([...pellet.tags, "dream_insight", "reflexion"])];
 
@@ -229,11 +225,12 @@ export class ProactiveKnowledgeGenerator {
         `Generate ONE pellet that synthesizes the new capabilities and knowledge. ` +
         `Format as JSON with: id, title, tags (including "skill_evolution"), content.`;
 
-      const pellet = await this.generator.generate(prompt, "skill_evolution", {
-        provider: this.provider,
-        owl: this.owl,
-        config: this.config,
-      });
+      const pellet = await this.generator.generate(prompt, "skill_evolution");
+
+      if (!pellet) {
+        log.engine.info("[ProactiveGenerator] Skill evolution — generator returned null");
+        return [];
+      }
 
       pellet.tags = [...new Set([...pellet.tags, "skill_evolution", "capability"])];
 
@@ -259,11 +256,7 @@ export class ProactiveKnowledgeGenerator {
       `Format as JSON with: id, title, tags (including the topic), content in markdown.`;
 
     try {
-      return await this.generator.generate(prompt, `knowledge-gap:${topic}`, {
-        provider: this.provider,
-        owl: this.owl,
-        config: this.config,
-      });
+      return await this.generator.generate(prompt, `knowledge-gap:${topic}`);
     } catch (err) {
       log.engine.warn(
         `[ProactiveGenerator] Gap filling failed for "${topic}": ${err instanceof Error ? err.message : String(err)}`,

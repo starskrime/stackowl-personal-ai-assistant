@@ -215,6 +215,7 @@ import { EventBasedPelletGenerator } from "./pellets/event-based-generator.js";
 import { PelletRetriever } from "./pellets/pellet-retriever.js";
 import { KnowledgeBase } from "./pellets/knowledge-base.js";
 import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
+import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
 
@@ -902,9 +903,7 @@ async function buildGateway(
   const eventBasedGenerator = new EventBasedPelletGenerator(
     eventBus,
     b.pelletStore,
-    provider,
-    owl,
-    b.config,
+    makeProviderRouter(provider),
   );
   eventBasedGenerator.subscribe();
   log.engine.info("[Init] EventBasedPelletGenerator subscribed to event bus");
@@ -918,9 +917,7 @@ async function buildGateway(
   // ProactiveGenerator — for scheduled proactive knowledge generation
   const proactiveGenerator = new ProactiveKnowledgeGenerator(
     b.pelletStore,
-    provider,
-    owl,
-    b.config,
+    makeProviderRouter(provider),
   );
   // Schedule periodic knowledge council runs (every 12 hours by default)
   const councilIntervalMs = 12 * 60 * 60 * 1000;

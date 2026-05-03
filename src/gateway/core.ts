@@ -732,7 +732,7 @@ export class OwlGateway {
     if (ctx.debatePelletGenerator) {
       this.debatePelletGenerator = ctx.debatePelletGenerator;
     } else {
-      this.debatePelletGenerator = new DebatePelletGenerator(ctx.provider, ctx.config);
+      this.debatePelletGenerator = new DebatePelletGenerator(ctx.provider);
     }
     if (this.debatePelletGenerator) {
       log.engine.info("[parliament] DebatePelletGenerator initialized");

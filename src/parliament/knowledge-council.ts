@@ -21,7 +21,7 @@ import type { PelletStore } from "../pellets/store.js";
 import type { OwlRegistry } from "../owls/registry.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { OwlInnerLife } from "../owls/inner-life.js";
-import { PelletGenerator } from "../pellets/generator.js";
+import { PelletGenerator, makeProviderRouter } from "../pellets/generator.js";
 import { log } from "../logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export class KnowledgeCouncil {
     _providerRegistry?: ProviderRegistry,
   ) {
     this.historyPath = join(workspacePath, "council_history.json");
-    this.pelletGenerator = new PelletGenerator();
+    this.pelletGenerator = new PelletGenerator(makeProviderRouter(provider));
   }
 
   /**
@@ -590,7 +590,7 @@ Respond as JSON:
 
   private async phaseCreatePellets(
     session: CouncilSession,
-    owls: OwlInstance[],
+    _owls: OwlInstance[],
     onProgress?: (msg: string) => Promise<void>,
   ): Promise<void> {
     // Create pellets for learnings that passed peer review
@@ -653,13 +653,14 @@ Respond as JSON:
       ].join("\n");
 
       try {
-        const owl =
-          owls.find((o) => o.persona.name === learning.owlName) ?? owls[0];
         const pellet = await this.pelletGenerator.generate(
           enrichedContent,
           `Knowledge Council: ${learning.topic}`,
-          { provider: this.provider, owl, config: this.config },
         );
+        if (!pellet) {
+          log.engine.warn(`[KnowledgeCouncil] Generator returned null for "${learning.topic}"`);
+          continue;
+        }
         await this.pelletStore.save(pellet);
         session.pelletsCreated++;
 
@@ -689,8 +690,8 @@ Respond as JSON:
         const pellet = await this.pelletGenerator.generate(
           content,
           `Cross-Pollination: ${cp.connection.slice(0, 60)}`,
-          { provider: this.provider, owl: owls[0], config: this.config },
         );
+        if (!pellet) continue;
         await this.pelletStore.save(pellet);
         session.pelletsCreated++;
       } catch {
