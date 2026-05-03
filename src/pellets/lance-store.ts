@@ -167,21 +167,26 @@ export class LancePelletStore {
   /** Returns column names of the pellets table. Used by tests and migrations. */
   async getColumnNames(): Promise<string[]> {
     this.assertReady();
-    const schema = await (this.table!.schema as () => Promise<{ fields: Array<{ name: string }> }>)();
-    return schema.fields.map((f: { name: string }) => f.name);
+    const schema = await (this.table!.schema as unknown as () => Promise<{ fields: Array<{ name: string }> }>)();
+    return (schema.fields as Array<{ name: string }>).map(f => f.name);
   }
 
   private async addMissingColumns(): Promise<void> {
     const existing = await this.getColumnNames();
-    const toAdd: Array<{ name: string; defaultValue: number | string }> = [];
-    if (!existing.includes("success_count")) toAdd.push({ name: "success_count", defaultValue: 0 });
-    if (!existing.includes("failure_count")) toAdd.push({ name: "failure_count", defaultValue: 0 });
-    if (!existing.includes("provenance"))    toAdd.push({ name: "provenance",    defaultValue: "[]" });
+    const toAdd: Array<{ name: string; valueSql: string }> = [];
+    if (!existing.includes("success_count")) toAdd.push({ name: "success_count", valueSql: "0" });
+    if (!existing.includes("failure_count")) toAdd.push({ name: "failure_count", valueSql: "0" });
+    if (!existing.includes("provenance"))    toAdd.push({ name: "provenance",    valueSql: "'[]'" });
     if (toAdd.length > 0) {
-      await (this.table as any).addColumns(toAdd);
-      // Re-open after addColumns so schema is refreshed
-      this.table = await this.db!.openTable(LancePelletStore.TABLE);
-      log.engine.info(`[LanceStore] Added columns: ${toAdd.map(c => c.name).join(", ")}`);
+      try {
+        await (this.table as any).addColumns(toAdd);
+        // Re-open after addColumns so schema is refreshed
+        this.table = await this.db!.openTable(LancePelletStore.TABLE);
+        log.engine.info(`[LanceStore] Added columns: ${toAdd.map(c => c.name).join(", ")}`);
+      } catch (err) {
+        log.engine.warn(`[LanceStore] addMissingColumns failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
     }
   }
 
