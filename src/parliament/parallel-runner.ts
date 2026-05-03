@@ -175,32 +175,6 @@ export class ParallelParliamentRunner {
     return this.runConvergence(topic, positions);
   }
 
-  /**
-   * Auto-trigger check: should this topic go to parliament?
-   * Returns true if confidence < 0.6 OR topic contains contested keywords.
-   */
-  static shouldTrigger(topic: string, owlConfidence?: number): boolean {
-    if (owlConfidence !== undefined && owlConfidence < 0.6) return true;
-
-    const contested = [
-      "should",
-      "best way",
-      "which is better",
-      "tradeoff",
-      "trade-off",
-      " vs ",
-      " vs.",
-      "compare",
-      "versus",
-      "pros and cons",
-      "recommend",
-      "alternative",
-    ];
-
-    const lower = topic.toLowerCase();
-    return contested.some((kw) => lower.includes(kw));
-  }
-
   // ─── Private helpers ──────────────────────────────────────────────
 
   private async fetchPosition(
