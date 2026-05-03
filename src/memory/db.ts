@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1204,6 +1204,10 @@ export class MemoryDatabase {
       applyV22Migration(this.db);
       this.db.pragma(`user_version = 22`);
     }
+    if (current < 23) {
+      applyV23Migration(this.db);
+      this.db.pragma(`user_version = 23`);
+    }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
       log.engine.info(`[MemoryDatabase] Schema migrated to v${SCHEMA_VERSION}`);
@@ -1418,6 +1422,82 @@ export class MemoryDatabase {
         params.replyLatencySeconds ?? null,
         new Date().toISOString(),
       );
+  }
+
+  // ── Tool Cortex (v23) ──────────────────────────────────────────
+
+  /**
+   * Append a single tool execution row. Used by the Tool Cortex telemetry
+   * pipeline to record per-call success, latency, and optional error/context
+   * metadata for later aggregation.
+   */
+  recordToolExecution(args: {
+    toolName: string;
+    success: boolean;
+    durationMs: number;
+    errorCode?: string;
+    errorMessage?: string;
+    subgoalId?: string;
+    sessionId?: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO tool_executions
+           (tool_name, success, duration_ms, error_code, error_message, subgoal_id, session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        args.toolName,
+        args.success ? 1 : 0,
+        args.durationMs,
+        args.errorCode ?? null,
+        args.errorMessage ?? null,
+        args.subgoalId ?? null,
+        args.sessionId ?? null,
+      );
+  }
+
+  /**
+   * Aggregate tool execution stats over the last `opts.days` days
+   * (default 30). Returns null when no executions match.
+   */
+  getToolStats(
+    toolName: string,
+    opts: { days?: number } = {},
+  ): {
+    selectionCount: number;
+    successCount: number;
+    failureCount: number;
+    avgDurationMs: number;
+    lastUsedAt: string | null;
+  } | null {
+    const days = opts.days ?? 30;
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS selection_count,
+                SUM(success) AS success_count,
+                SUM(1 - success) AS failure_count,
+                AVG(duration_ms) AS avg_duration_ms,
+                MAX(created_at) AS last_used_at
+           FROM tool_executions
+           WHERE tool_name = ?
+             AND created_at > datetime('now', '-' || ? || ' days')`,
+      )
+      .get(toolName, days) as {
+      selection_count: number;
+      success_count: number | null;
+      failure_count: number | null;
+      avg_duration_ms: number | null;
+      last_used_at: string | null;
+    };
+    if (!row || row.selection_count === 0) return null;
+    return {
+      selectionCount: row.selection_count,
+      successCount: Number(row.success_count ?? 0),
+      failureCount: Number(row.failure_count ?? 0),
+      avgDurationMs: Math.round(row.avg_duration_ms ?? 0),
+      lastUsedAt: row.last_used_at,
+    };
   }
 }
 
@@ -3301,6 +3381,10 @@ export class StackOwlDB {
       applyV22Migration(this.db);
       this.db.pragma(`user_version = 22`);
     }
+    if (current < 23) {
+      applyV23Migration(this.db);
+      this.db.pragma(`user_version = 23`);
+    }
   }
 }
 
@@ -3540,6 +3624,42 @@ export function applyV22Migration(db: Database.Database): void {
   run();
 }
 
+export function applyV23Migration(db: Database.Database): void {
+  // v23: Tool Cortex foundation — per-execution telemetry (tool_executions)
+  // and capability-tagged tool transition graph (tool_edges) used by the
+  // Tool Cortex selector/learning loop.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tool_executions (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      tool_name     TEXT NOT NULL,
+      success       INTEGER NOT NULL,
+      duration_ms   INTEGER NOT NULL,
+      error_code    TEXT,
+      error_message TEXT,
+      subgoal_id    TEXT,
+      session_id    TEXT,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_exec_name_time
+      ON tool_executions(tool_name, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_tool_exec_subgoal
+      ON tool_executions(subgoal_id) WHERE subgoal_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS tool_edges (
+      from_tool       TEXT NOT NULL,
+      to_tool         TEXT NOT NULL,
+      capability_tag  TEXT NOT NULL,
+      success_rate    REAL NOT NULL DEFAULT 0,
+      avg_duration_ms INTEGER NOT NULL DEFAULT 0,
+      sample_count    INTEGER NOT NULL DEFAULT 0,
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (from_tool, to_tool, capability_tag)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_edges_capability
+      ON tool_edges(capability_tag, from_tool);
+  `);
+}
+
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
  * Accepts an in-memory or on-disk Database instance; idempotent.
@@ -3622,6 +3742,9 @@ export function applyMigrations(db: Database.Database): void {
   }
   if (current < 22) {
     applyV22Migration(db);
+  }
+  if (current < 23) {
+    applyV23Migration(db);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
