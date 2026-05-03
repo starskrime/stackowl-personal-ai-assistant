@@ -131,6 +131,15 @@ export class KnowledgeGraph {
     });
   }
 
+  queryContext(userMessage: string): string {
+    const results = this.search(userMessage, 3);
+    if (results.length === 0) return "";
+    const lines = results.map(
+      (n) => `  <node title="${n.title}">${n.content.slice(0, 200)}</node>`,
+    );
+    return lines.join("\n");
+  }
+
   async semanticSearch(
     query: string,
     limit = 10,
