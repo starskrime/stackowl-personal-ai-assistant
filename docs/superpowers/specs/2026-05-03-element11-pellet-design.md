@@ -159,6 +159,10 @@ if (goalVerdict === "ADVANCES" && retrievedPelletIds.length > 0 && this.ctx.db) 
       retrievedPellets.flatMap((p) => p?.owls ?? []).filter(Boolean)
     ),
   ];
+  // topicCategory: use first tag from the highest-ranked retrieved pellet,
+  // fall back to "general" if no tags. Avoids a classifier call in the hot path.
+  const topicCategory =
+    retrievedPellets[0]?.tags?.[0] ?? "general";
   if (generatorOwlNames.length > 0) {
     await updatePelletGeneratorDNA(
       generatorOwlNames,
@@ -262,6 +266,10 @@ The gateway reads `retrievedPelletIds` from the pipeline result and uses it in h
 ### DNA update ordering
 
 Hooks 4 and 5 both run in the same post-turn block as the existing GoalVerifier call. Ordering: GoalVerifier → Hook 4 (recordOutcome) → Hook 5 (updatePelletGeneratorDNA). All three are non-fatal and run sequentially in the catch-wrapped block.
+
+### topicCategory derivation (Hook 5)
+
+`topicCategory` for `updatePelletGeneratorDNA` is derived from the first tag of the highest-ranked retrieved pellet (`retrievedPellets[0]?.tags?.[0] ?? "general"`). This avoids an extra classifier call in the hot path. The imprecision is acceptable: `expertiseGrowth` is a soft signal and the asymptotic clamp prevents any single category from dominating.
 
 ### searchWithGraph contract
 
