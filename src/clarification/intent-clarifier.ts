@@ -89,7 +89,7 @@ export class IntentClarifier {
 
       if (
         (parsed.verdict === 'CLARIFY' || parsed.verdict === 'USER_CONFUSED') &&
-        this.coordinator.shouldSuppressDuplicate(parsed.reasoning, sessionKey)
+        this.coordinator.shouldSuppressDuplicate(parsed.question ?? parsed.reasoning, sessionKey)
       ) {
         log.engine.info('[IntentClarifier] Duplicate suppressed by coordinator — returning PROCEED');
         return { ...FAIL_OPEN, reasoning: parsed.reasoning };

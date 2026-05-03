@@ -1182,9 +1182,11 @@ export class MemoryDatabase {
       // v17: owl intelligence tables — task ledger, reflexion critiques,
       // skill templates, outcome journal; plus new columns on facts.
       applyV17Migration(this.db);
+      this.db.pragma('user_version = 17');
     }
     if (current < 18) {
       applyV18Migration(this.db);
+      this.db.pragma('user_version = 18');
     }
     if (current < 19) {
       applyV19Migration(this.db);

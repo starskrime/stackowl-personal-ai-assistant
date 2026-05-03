@@ -1697,15 +1697,23 @@ export class OwlGateway {
     let clarificationInput = message.text;
     let clarificationHistory = [...(session.messages ?? [])];
 
+    // Fix 3: initialize clarificationBias BEFORE the pendingExecution block so
+    // recordDismissal() can be called inside that block.
+    const clarificationBias: SessionAutonomyBias = (session as any).clarificationBias ?? new SessionAutonomyBias();
+    (session as any).clarificationBias = clarificationBias;
+
+    // Fix 2: track whether there was a pending execution before nulling it.
+    const hadPendingExecution = !!(session as any).pendingExecution;
+
     if ((session as any).pendingExecution) {
       const pending = (session as any).pendingExecution as { originalMessage: string };
       clarificationInput = pending.originalMessage;
       clarificationHistory = [...clarificationHistory, { role: 'user' as const, content: message.text }];
       (session as any).pendingExecution = null;
+      // Fix 3: user answered our clarification question — record the dismissal
+      // so the autonomy-bias feedback loop has accurate data.
+      clarificationBias.recordDismissal();
     }
-
-    const clarificationBias: SessionAutonomyBias = (session as any).clarificationBias ?? new SessionAutonomyBias();
-    (session as any).clarificationBias = clarificationBias;
 
     const intentResult = await this.intentClarifier.evaluate(
       clarificationInput,
@@ -1716,6 +1724,11 @@ export class OwlGateway {
     );
 
     if (intentResult.verdict === 'USER_CONFUSED') {
+      // Fix 2: if a pendingExecution was active when confusion was detected,
+      // restore it so the next user message can resume the original intent.
+      if (hadPendingExecution) {
+        (session as any).pendingExecution = { originalMessage: clarificationInput };
+      }
       return {
         content: `Let me help you think through this. ${intentResult.reasoning}`,
         owlName: this.ctx.owl.persona.name,
@@ -1743,6 +1756,12 @@ export class OwlGateway {
           toolsUsed: [],
         };
       }
+    }
+
+    // Fix 1: clean up stale _clarifyRetry flag on any non-CLARIFY verdict so
+    // it doesn't silently swallow the next legitimate CLARIFY on a new message.
+    if ((session as any)._clarifyRetry && intentResult.verdict !== 'CLARIFY') {
+      delete (session as any)._clarifyRetry;
     }
 
     // ─── Phase 3: Loop Detection ──────────────────────────────────
