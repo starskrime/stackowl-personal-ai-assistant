@@ -3,7 +3,7 @@ export type AmbiguityType =
   | 'incomplete_reference'
   | 'conflicting_constraints'
   | 'missing_context'
-  | 'underspecified_scope'
+  | 'unspecified_scope'
   | 'ambiguous_priority'
   | 'unclear_timeline';
 
@@ -38,25 +38,6 @@ export interface ClarificationState {
   clarificationCount: number;
 }
 
-export interface ExecutionCheckpoint {
-  id: string;
-  toolCalls: Array<{
-    toolName: string;
-    params: Record<string, unknown>;
-    result?: unknown;
-    completed: boolean;
-  }>;
-  contextSnapshot: string[];
-  timestamp: string;
-}
-
-export interface MidExecutionState {
-  isPaused: boolean;
-  checkpoint: ExecutionCheckpoint | null;
-  pauseReason: string;
-  pendingQuestion: ClarificationQuestion | null;
-}
-
 export interface UnclarityItem {
   id: string;
   description: string;
@@ -76,14 +57,41 @@ export interface PreActionQuestion {
   timestamp: string;
 }
 
-export interface PreExecutionConfirmation {
+export interface ExecutionCheckpoint {
   id: string;
-  summary: string;
-  uncertaintyAreas: string[];
-  confidence: number;
-  isHighStakes: boolean;
-  confirmed: boolean | null;
+  toolCalls: Array<{
+    toolName: string;
+    params: Record<string, unknown>;
+    result?: unknown;
+    completed: boolean;
+  }>;
+  contextSnapshot: string[];
   timestamp: string;
+}
+
+export interface MidExecutionState {
+  isPaused: boolean;
+  checkpoint: ExecutionCheckpoint | null;
+  pauseReason: string;
+  pendingQuestion: ClarificationQuestion | null;
+}
+
+// ─── Element 9: Intent Classification ───────────────────────────────
+
+export type IntentVerdict =
+  | 'PROCEED'        // clear actionable request — execute immediately
+  | 'NARRATE'        // execute, but begin response with interpretation
+  | 'CLARIFY'        // genuinely multi-path — ask one focused question first
+  | 'USER_CONFUSED'; // user expressing their own uncertainty — help them
+
+export interface IntentClassification {
+  verdict: IntentVerdict;
+  /** Populated only when verdict === 'CLARIFY'. Null otherwise. */
+  question: string | null;
+  /** Populated only when verdict === 'NARRATE'. Null otherwise. */
+  interpretation: string | null;
+  /** Always present — used for coordinator hash dedup */
+  reasoning: string;
 }
 
 export interface ClarificationResult {
