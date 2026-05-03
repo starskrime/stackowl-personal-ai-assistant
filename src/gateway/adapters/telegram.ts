@@ -28,6 +28,8 @@ import { saveConfig } from "../../config/loader.js";
 import { McpCommandRouter } from "../commands/mcp-router.js";
 import { OggConverter } from "../../voice/ogg-converter.js";
 import { WhisperSTT } from "../../voice/stt.js";
+import { formatToolEvent } from "../narration-formatter.js";
+import type { GatewayEventBus, GatewaySystemEvent } from "../event-bus.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -1358,5 +1360,42 @@ export class TelegramAdapter implements ChannelAdapter {
   /** Returns the background worker instance (if running). */
   getBackgroundWorker() {
     return this._backgroundWorker;
+  }
+}
+
+export interface TelegramNarrationDeps {
+  send: (text: string) => Promise<void> | void;
+  chatId: string;
+}
+
+/**
+ * Subscribe to tool:* events on the given bus and stream narration to a Telegram chat.
+ * Throttled to one message per 1.5s to avoid Telegram flood-bans.
+ */
+export function subscribeTelegramNarration(
+  bus: GatewayEventBus,
+  deps: TelegramNarrationDeps,
+): void {
+  const events: Array<GatewaySystemEvent["type"]> = [
+    "tool:start",
+    "tool:result",
+    "tool:goal_advance",
+    "tool:goal_blocked",
+  ];
+  let lastSentAt = 0;
+  const minIntervalMs = 1500;
+  for (const ev of events) {
+    bus.on(ev as any, async (event: any) => {
+      const now = Date.now();
+      if (now - lastSentAt < minIntervalMs) return;
+      const line = formatToolEvent(event);
+      if (!line) return;
+      lastSentAt = now;
+      try {
+        await deps.send(line);
+      } catch (err) {
+        log.telegram.warn(`Narration send failed: ${(err as Error).message}`);
+      }
+    });
   }
 }
