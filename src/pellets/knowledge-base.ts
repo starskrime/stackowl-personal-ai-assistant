@@ -6,6 +6,7 @@
  */
 
 import type { PelletStore, Pellet } from "./store.js";
+import type { GenerationRouter } from "./generator.js";
 import { extractConcepts } from "./concepts.js";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ export interface GrowthMetrics {
 export class KnowledgeBase {
   constructor(
     private pelletStore: PelletStore,
-    private router?: { resolve(tier: string, prompt: string): Promise<string> },
+    private router?: GenerationRouter,
   ) {}
 
   /**

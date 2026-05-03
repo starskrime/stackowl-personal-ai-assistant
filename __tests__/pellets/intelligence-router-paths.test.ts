@@ -24,6 +24,25 @@ describe("PelletDeduplicator — IntelligenceRouter path", () => {
     await dedup.evaluate(incoming);
     expect(mockProvider.chat).toHaveBeenCalled();
   });
+
+  it("retry call includes original prompt context and fix-JSON instruction", async () => {
+    const { PelletDeduplicator } = await import("../../src/pellets/dedup.js");
+    const mockRouter = {
+      resolve: vi.fn()
+        .mockResolvedValueOnce("not json at all")
+        .mockResolvedValueOnce('{"verdict":"SKIP","reasoning":"test"}'),
+    };
+    const mockSearch = vi.fn().mockResolvedValue([
+      { pellet: { id: "existing", title: "Existing", content: "content", tags: [], owls: [], source: "", generatedAt: "", version: 1, successCount: 5, failureCount: 0, provenance: [] }, score: 0.95 }
+    ]);
+    const dedup = new (PelletDeduplicator as any)(mockSearch, undefined, { useLlm: true, similarityThreshold: 0.5 }, mockRouter);
+    const incoming = { id: "new", title: "New", content: "content", tags: [], owls: [], source: "", generatedAt: "", version: 1, successCount: 0, failureCount: 0, provenance: [] };
+    await dedup.evaluate(incoming);
+    expect(mockRouter.resolve).toHaveBeenCalledTimes(2);
+    const secondCallPrompt = mockRouter.resolve.mock.calls[1][1] as string;
+    expect(secondCallPrompt).toContain("NEW PELLET");
+    expect(secondCallPrompt).toContain("not valid JSON");
+  });
 });
 
 describe("KnowledgeBase.computeCoverageGaps — IntelligenceRouter path", () => {

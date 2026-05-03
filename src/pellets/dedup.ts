@@ -13,6 +13,7 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
+import type { GenerationRouter } from "./generator.js";
 import type { Pellet } from "./store.js";
 import { log } from "../logger.js";
 
@@ -163,7 +164,7 @@ export class PelletDeduplicator {
     private searchSimilar: SimilarFn,
     private provider?: ModelProvider,
     config?: Partial<DedupConfig>,
-    private router?: { resolve(tier: string, prompt: string): Promise<string> },
+    private router?: GenerationRouter,
   ) {
     this.config = { ...DEFAULT_DEDUP_CONFIG, ...config };
   }
