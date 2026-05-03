@@ -111,6 +111,7 @@ export interface CognitiveLoopDeps {
   evolutionEngine?: OwlEvolutionEngine;
   providerRegistry?: ProviderRegistry;
   skillsLoader?: SkillsLoader;
+  jobQueue?: import("../heartbeat/job-queue.js").ProactiveJobQueue;
 }
 
 /**
@@ -308,6 +309,27 @@ export class CognitiveLoop {
   /** Call when user sends a message to reset idle timer. */
   notifyUserActivity(): void {
     this.lastUserActivity = Date.now();
+  }
+
+  /**
+   * After completing a study or reflexion action tied to a goal,
+   * enqueue a goal_progress_update job so ProactivePinger can inform the user.
+   * No-op when jobQueue is not wired (tests, headless runs).
+   * Wired by future tasks once execute methods carry goalId in their result.
+   */
+  // @ts-expect-error TS6133 — exercised via test; call sites added once execute methods return goalId
+  private async maybeEnqueueGoalUpdate(goalId: string, summary: string): Promise<void> {
+    if (!this.deps.jobQueue) return;
+    const userId = (this.deps.owl as any)?.owlId ?? (this.deps.owl as any)?.id ?? "default";
+    this.deps.jobQueue.schedule({
+      type: "goal_progress_update",
+      userId,
+      scheduledAt: new Date(Date.now() + 5 * 60 * 1000),
+      payload: { goalId, summary: summary.slice(0, 200) },
+      priority: 7,
+      deduplicate: false,
+    });
+    log.engine.debug(`[CognitiveLoop] Enqueued goal_progress_update for goal ${goalId}`);
   }
 
   /**
