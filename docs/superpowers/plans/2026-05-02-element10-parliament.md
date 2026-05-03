@@ -25,6 +25,7 @@
 | `src/parliament/protocol.ts` | Modify | Add `diversePair?: [OwlPosition, OwlPosition]` to `ParliamentSession` |
 | `src/owls/evolution.ts` | Modify | Add `export async function updateParliamentDNA()` |
 | `src/gateway/core.ts` | Modify | Post-session: inject ContextPipeline layer + call GoalVerifier + call updateParliamentDNA |
+| `src/parliament/orchestrator.ts` | Modify | Delete duplicate `runRound1/2/3` methods; delegate `convene()` body to `MultiRoundDebateManager.runDebate()`; keep post-session Pellet + `parliamentVerdicts.record()` |
 
 Tests added to:
 | Test file | What's tested |
@@ -112,7 +113,7 @@ function applyV20Migration(db: Database.Database): void {
 ```typescript
     if (current < 20) {
       applyV20Migration(this.db);
-      this.db.pragma(`user_version = 20`);
+      this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
     }
 ```
 
@@ -316,17 +317,6 @@ import type { OwlPosition } from "../../src/parliament/protocol.js";
 
 function makePos(owlName: string, argument: string): OwlPosition {
   return { owlName, owlEmoji: "🦉", position: "FOR", argument };
-}
-
-function makeRouter(indices: [number, number]) {
-  return {
-    resolve: () => ({
-      provider: "test",
-      model: "test-model",
-      tier: "low" as const,
-    }),
-    _chat: vi.fn().mockResolvedValue({ content: JSON.stringify({ indices }) }),
-  };
 }
 
 describe("DiversityFilter", () => {
@@ -909,6 +899,8 @@ git commit -m "feat(e10): replace hardcoded model strings in ParliamentLite with
 
 ## Task 7: Update `ParliamentSession` protocol — add `diversePair` field
 
+> **Ordering note:** This task MUST be committed before Task 8 (`multi-round-debate.ts`). Task 8's tests set `session.diversePair` — TypeScript will fail to compile until `diversePair` is declared on `ParliamentSession`.
+
 **Files:**
 - Modify: `src/parliament/protocol.ts`
 
@@ -970,7 +962,10 @@ vi.mock("../../src/logger.js", () => ({
          engine: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } },
 }));
 
-const callTimestamps: number[] = [];
+// callTimestamps is reset in beforeEach to avoid cross-test contamination
+let callTimestamps: number[] = [];
+beforeEach(() => { callTimestamps = []; });
+
 vi.mock("../../src/engine/runtime.js", () => ({
   OwlEngine: vi.fn().mockImplementation(() => ({
     run: vi.fn().mockImplementation(async () => {
@@ -1004,7 +999,6 @@ function makeSession(owls: OwlInstance[]): ParliamentSession {
 
 describe("MultiRoundDebateManager — sparse debate", () => {
   it("AC-2: Round 1 fires all owl calls in parallel (start time delta < 100ms)", async () => {
-    callTimestamps.length = 0;
     const owls = [makeOwl("Owl1"), makeOwl("Owl2"), makeOwl("Owl3")];
     const manager = new MultiRoundDebateManager({} as any, {} as any);
     const session = makeSession(owls);
@@ -1318,7 +1312,7 @@ describe("updateParliamentDNA", () => {
     const synthesizer = makeOwl("Synthesizer");
     const challenger = makeOwl("Challenger");
     const db = {} as any;
-    await updateParliamentDNA([synthesizer, challenger], "PROCEED", "architecture", db, "ADVANCES");
+    await updateParliamentDNA(synthesizer, challenger, [synthesizer, challenger], "PROCEED", "architecture", db, "ADVANCES");
     expect(synthesizer.dna.expertiseGrowth["architecture"]).toBeGreaterThan(0.5);
   });
 
@@ -1326,7 +1320,7 @@ describe("updateParliamentDNA", () => {
     const synthesizer = makeOwl("S");
     const challenger = makeOwl("C");
     const db = {} as any;
-    await updateParliamentDNA([synthesizer, challenger], "PROCEED", "typescript", db, "ADVANCES");
+    await updateParliamentDNA(synthesizer, challenger, [synthesizer, challenger], "PROCEED", "typescript", db, "ADVANCES");
     const synthGrowth = synthesizer.dna.expertiseGrowth["typescript"] ?? 0;
     const challGrowth = challenger.dna.expertiseGrowth["critical_thinking"] ?? 0;
     expect(challGrowth).toBeCloseTo(synthGrowth / 2, 1);
@@ -1336,14 +1330,27 @@ describe("updateParliamentDNA", () => {
     const owl = makeOwl("Owl");
     const before = JSON.stringify(owl.dna);
     const db = {} as any;
-    await updateParliamentDNA([owl], "HOLD", "design", db, "BLOCKED");
+    await updateParliamentDNA(owl, undefined, [owl], "HOLD", "design", db, "BLOCKED");
     expect(JSON.stringify(owl.dna)).toBe(before);
   });
 
-  it("does not throw when db call would fail", async () => {
+  it("PARTIAL: makes no DNA changes (same as BLOCKED)", async () => {
     const owl = makeOwl("Owl");
-    const db = { owls: { updateDNA: vi.fn().mockRejectedValue(new Error("db error")) } } as any;
-    await expect(updateParliamentDNA([owl], "PROCEED", "design", db, "ADVANCES")).resolves.not.toThrow();
+    const before = JSON.stringify(owl.dna);
+    const db = {} as any;
+    await updateParliamentDNA(owl, undefined, [owl], "PARTIAL", "design", db, "PARTIAL");
+    expect(JSON.stringify(owl.dna)).toBe(before);
+  });
+
+  it("is non-fatal — resolves even when expertiseGrowth mutation would throw", async () => {
+    const owl = makeOwl("Owl");
+    // Freeze expertiseGrowth to cause assignment throw
+    Object.freeze(owl.dna.expertiseGrowth);
+    const db = {} as any;
+    // Should not propagate the TypeError
+    await expect(
+      updateParliamentDNA(owl, undefined, [owl], "PROCEED", "design", db, "ADVANCES")
+    ).resolves.not.toThrow();
   });
 });
 ```
@@ -1371,6 +1378,8 @@ const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(ma
  * for persisting via owlRegistry.saveDNA() for each participant.
  */
 export async function updateParliamentDNA(
+  synthesizer: import('./persona.js').OwlInstance | undefined,
+  challenger: import('./persona.js').OwlInstance | undefined,
   participants: import('./persona.js').OwlInstance[],
   _verdict: string,
   topicCategory: string,
@@ -1379,32 +1388,32 @@ export async function updateParliamentDNA(
 ): Promise<void> {
   if (goalVerifierResult !== 'ADVANCES') return;
 
-  const LEARNING_RATE = 0.05;
-  const synthesizer = participants[0];
-  const challenger = participants[1];
+  try {
+    const LEARNING_RATE = 0.05;
 
-  if (synthesizer) {
-    synthesizer.dna.expertiseGrowth[topicCategory] = clamp(
-      (synthesizer.dna.expertiseGrowth[topicCategory] ?? 0.5) + LEARNING_RATE,
-      0.1, 0.9,
-    );
-  }
-
-  if (challenger) {
-    const ctKey = 'critical_thinking';
-    challenger.dna.expertiseGrowth[ctKey] = clamp(
-      (challenger.dna.expertiseGrowth[ctKey] ?? 0.5) + LEARNING_RATE * 0.5,
-      0.1, 0.9,
-    );
-  }
-
-  for (const owl of participants) {
-    if (owl.dna.evolvedTraits.delegationPreference === 'autonomous') {
-      const key = 'delegation_autonomy';
-      const current = (owl.dna.learnedPreferences[key] as number) ?? 0.5;
-      owl.dna.learnedPreferences[key] = clamp(current - LEARNING_RATE, 0.1, 0.9);
+    if (synthesizer) {
+      synthesizer.dna.expertiseGrowth[topicCategory] = clamp(
+        (synthesizer.dna.expertiseGrowth[topicCategory] ?? 0.5) + LEARNING_RATE,
+        0.1, 0.9,
+      );
     }
-  }
+
+    if (challenger) {
+      const ctKey = 'critical_thinking';
+      challenger.dna.expertiseGrowth[ctKey] = clamp(
+        (challenger.dna.expertiseGrowth[ctKey] ?? 0.5) + LEARNING_RATE * 0.5,
+        0.1, 0.9,
+      );
+    }
+
+    for (const owl of participants) {
+      if (owl.dna.evolvedTraits.delegationPreference === 'autonomous') {
+        const key = 'delegation_autonomy';
+        const current = (owl.dna.learnedPreferences[key] as number) ?? 0.5;
+        owl.dna.learnedPreferences[key] = clamp(current - LEARNING_RATE, 0.1, 0.9);
+      }
+    }
+  } catch { /* non-fatal — DNA mutation failures must not crash Parliament */ }
 }
 ```
 
@@ -1413,7 +1422,7 @@ export async function updateParliamentDNA(
 ```bash
 npx vitest run __tests__/owls/evolution-parliament-dna.test.ts
 ```
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1445,47 +1454,65 @@ vi.mock("../../src/logger.js", () => ({
 }));
 
 // Test AC-4: ContextPipeline receives parliament_synthesis after session
-it("AC-4: ContextPipeline.setShortTermLayer is called with synthesis after Parliament session", async () => {
-  const mockPipeline = { setShortTermLayer: vi.fn() };
+it("AC-4: post-session synthesis formatting includes topic, verdict, synthesis, and key dissent", () => {
+  // Test the formatting logic that gateway/core.ts runs — not the pipeline call itself
   const debateSession = {
     synthesis: "The council recommends PROCEED with microservices.",
     verdict: "PROCEED",
     config: { topic: "microservices vs monolith", participants: [] },
+    positions: [
+      { owlName: "Owl1", owlEmoji: "🦉", position: "FOR", argument: "Microservices scale better" },
+      { owlName: "Owl2", owlEmoji: "🦉", position: "AGAINST", argument: "Monolith is simpler and we have 3 devs" },
+    ],
+    challenges: [] as any[],
   };
-
-  // Simulate the post-session injection logic that will be in gateway/core.ts
+  const synthesis = debateSession.synthesis ?? "";
+  const minorityContent = debateSession.positions.find(p => p.position === "AGAINST")?.argument
+    ?? debateSession.challenges[0]?.challengeContent
+    ?? "";
   const formattedSynthesis =
-    `[Parliament concluded on "${debateSession.config.topic}"] Verdict: ${debateSession.verdict}\n` +
-    `The council's synthesis: ${(debateSession.synthesis ?? "").slice(0, 300)}\n`;
+    `[Parliament concluded on "${debateSession.config.topic}"] Verdict: ${debateSession.verdict ?? "CONSENSUS_REACHED"}\n` +
+    `The council's synthesis: ${synthesis.slice(0, 300)}\n` +
+    (minorityContent ? `Key dissent: ${minorityContent.slice(0, 150)}\n` : "");
 
-  mockPipeline.setShortTermLayer("parliament_synthesis", formattedSynthesis, { priority: 117, ttlTurns: 3 });
-
-  expect(mockPipeline.setShortTermLayer).toHaveBeenCalledWith(
-    "parliament_synthesis",
-    expect.stringContaining("The council recommends PROCEED"),
-    { priority: 117, ttlTurns: 3 },
-  );
+  expect(formattedSynthesis).toContain("microservices vs monolith");
+  expect(formattedSynthesis).toContain("PROCEED");
+  expect(formattedSynthesis).toContain("The council recommends PROCEED");
+  expect(formattedSynthesis).toContain("Key dissent: Monolith is simpler");
+  // The gateway call: priority=117, ttlTurns=3
+  // Verified by inspecting gateway/core.ts Task 10 Step 4 Block A and B
 });
 
-// Test AC-5: GoalVerifier is called after Parliament when activeSubGoal is set
-it("AC-5: GoalVerifier.verify is called with toolName=parliament when activeSubGoal is set", async () => {
+// Test AC-5: GoalVerifier receives the correct arguments when Parliament calls it
+it("AC-5: GoalVerifier.verify receives toolName='parliament' and synthesis as toolResult", async () => {
+  const synthesis = "Parliament recommends PROCEED.";
+  const activeSubGoal = { id: "g1", description: "decide architecture", status: "in_progress" as const, dependsOn: [] };
+
+  const capturedArgs: Parameters<(typeof mockVerifier)["verify"]>[0][] = [];
   const mockVerifier = {
-    verify: vi.fn().mockResolvedValue({ verdict: "ADVANCES", reason: "debate helped" }),
+    verify: vi.fn().mockImplementation((args: any) => {
+      capturedArgs.push(args);
+      return Promise.resolve({ verdict: "ADVANCES", reason: "debate helped" });
+    }),
   };
-  const synthesis = "Parliament says PROCEED.";
-  const activeSubGoal = { id: "g1", description: "decide architecture" };
 
-  await mockVerifier.verify({
+  // Simulate the conditional call from gateway/core.ts Task 10 Block A
+  if (mockVerifier && activeSubGoal) {
+    await mockVerifier.verify({
+      toolName: "parliament",
+      toolArgs: {},
+      toolResult: synthesis,
+      subGoal: activeSubGoal,
+      userMessage: "should we use microservices?",
+    });
+  }
+
+  expect(capturedArgs).toHaveLength(1);
+  expect(capturedArgs[0]).toMatchObject({
     toolName: "parliament",
-    toolArgs: {},
     toolResult: synthesis,
-    subGoal: activeSubGoal,
-    userMessage: "should we use microservices?",
+    subGoal: expect.objectContaining({ id: "g1", description: "decide architecture" }),
   });
-
-  expect(mockVerifier.verify).toHaveBeenCalledWith(
-    expect.objectContaining({ toolName: "parliament" }),
-  );
 });
 
 // Test AC-6: DNA update fires when GoalVerifier returns ADVANCES
@@ -1507,10 +1534,12 @@ it("AC-6: updateParliamentDNA is called when GoalVerifier returns ADVANCES", asy
     };
   }
 
-  const participants = [makeOwl("Owl1"), makeOwl("Owl2")];
-  await updateParliamentDNA(participants, "PROCEED", "architecture", {} as any, "ADVANCES");
+  const synthesizer = makeOwl("Owl1");
+  const challenger = makeOwl("Owl2");
+  const participants = [synthesizer, challenger];
+  await updateParliamentDNA(synthesizer, challenger, participants, "PROCEED", "architecture", {} as any, "ADVANCES");
   // Synthesizer's expertiseGrowth should increase
-  expect(participants[0].dna.expertiseGrowth["architecture"]).toBeGreaterThan(0);
+  expect(synthesizer.dna.expertiseGrowth["architecture"]).toBeGreaterThan(0);
   spy.mockRestore();
 });
 
@@ -1534,24 +1563,28 @@ it("AC-7: updateParliamentDNA skips all mutations when goalVerifierResult is BLO
 
   const owl = makeOwl("TestOwl");
   const snapshotBefore = JSON.stringify(owl.dna.expertiseGrowth);
-  await updateParliamentDNA([owl], "HOLD", "design", {} as any, "BLOCKED");
+  await updateParliamentDNA(owl, undefined, [owl], "HOLD", "design", {} as any, "BLOCKED");
   expect(JSON.stringify(owl.dna.expertiseGrowth)).toBe(snapshotBefore);
 });
 
 // Test AC-10: IntentClarifier CLARIFY verdict blocks Parliament
-it("AC-10: Parliament does not fire when IntentClarifier returns CLARIFY", async () => {
-  // Mock the intent clarifier returning CLARIFY
-  const intentResult = { verdict: "CLARIFY" as const, interpretation: "" };
-  const parliamentAutoTriggerCheck = vi.fn();
-
-  // Gateway skips Parliament block when verdict === 'CLARIFY'
-  if (intentResult.verdict === "CLARIFY") {
-    // Parliament auto-trigger should NOT be called
-  } else {
-    parliamentAutoTriggerCheck();
-  }
-
-  expect(parliamentAutoTriggerCheck).not.toHaveBeenCalled();
+it("AC-10: gateway skips Parliament auto-trigger when IntentClarifier returns CLARIFY", async () => {
+  // Verify that the IntentClarifier can return a CLARIFY verdict for an ambiguous message.
+  // The full gateway-level guard (that Parliament does not fire) requires a gateway integration test
+  // which is better suited to a separate E2E test once core.ts Task 10 Step 4 is committed.
+  // This test validates the IntentClarifier produces the CLARIFY signal that gateway reads.
+  const { IntentClarifier } = await import("../../src/clarification/intent-clarifier.js");
+  const mockRouter = { resolve: vi.fn().mockReturnValue({ provider: "test", model: "m", tier: "low" as const }) };
+  const mockProvider = {
+    chat: vi.fn().mockResolvedValue({
+      content: JSON.stringify({ verdict: "CLARIFY", confidence: 0.9, questionToAsk: "Can you clarify what you mean?" }),
+    }),
+  };
+  const clarifier = new IntentClarifier(mockRouter as any, new Map([["test", mockProvider]]) as any);
+  const result = await clarifier.evaluate("help me with this thing", {} as any, {} as any);
+  expect(result.verdict).toBe("CLARIFY");
+  // When gateway sees CLARIFY, it returns early WITHOUT calling ParliamentAutoTrigger.check()
+  // This is verified structurally in gateway/core.ts Task 10 Step 4 (early-return before parliament block)
 });
 ```
 
@@ -1568,6 +1601,7 @@ Expected: AC-4, AC-5, AC-6, AC-7, AC-10 pass (these are mostly logic tests of th
 ```typescript
 import { updateParliamentDNA } from "../owls/evolution.js";
 import { GoalVerifier } from "../tools/goal-verifier.js";
+import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
 ```
 
@@ -1579,10 +1613,11 @@ import type { SubGoal } from "../engine/types.js";
 **3c. Initialize `goalVerifier`** — in the constructor setup block alongside `multiRoundDebate` initialization (around line 718–723 in core.ts), add:
 ```typescript
     // Wire GoalVerifier for Parliament post-session verification
-    if (ctx.intelligenceRouter) {
+    // NOTE: field is ctx.intelligence (not ctx.intelligenceRouter) — verified in src/gateway/types.ts:347
+    if (ctx.intelligence) {
       const providerMap = new Map<string, import("../providers/base.js").ModelProvider>();
       if (ctx.provider) providerMap.set(ctx.config.defaultProvider ?? "default", ctx.provider);
-      this.goalVerifier = GoalVerifier.create(ctx.intelligenceRouter, providerMap);
+      this.goalVerifier = GoalVerifier.create(ctx.intelligence, providerMap);
     }
 ```
 
@@ -1616,8 +1651,9 @@ With:
             }
             // POST-SESSION: inject into ContextPipeline, verify with GoalVerifier, evolve DNA
             const synthesis = debateSession.synthesis ?? "";
-            const minorityContent = debateSession.challenges[0]?.challengeContent
-              ?? debateSession.positions.find(p => p.position === "AGAINST")?.argument
+            // Minority position = dissenting Round 1 position (spec: "minority_position"), NOT the Round 2 challenge text
+            const minorityContent = debateSession.positions.find(p => p.position === "AGAINST")?.argument
+              ?? debateSession.challenges[0]?.challengeContent
               ?? "";
             const formattedSynthesis =
               `[Parliament concluded on "${debateSession.config.topic}"] Verdict: ${debateSession.verdict ?? "CONSENSUS_REACHED"}\n` +
@@ -1636,10 +1672,10 @@ With:
                 // Try to get active sub-goal from TaskLedger
                 let activeSubGoal: SubGoal | undefined;
                 if (this.db) {
-                  const incomplete = await (new (await import("../engine/task-ledger.js")).TaskLedgerStore(this.db))
-                    .loadIncomplete(message.userId ?? "default").catch(() => null);
+                  const incomplete = await new TaskLedgerStore(this.db)
+                    .loadIncomplete(message.userId ?? "default").catch(() => null as null);
                   if (incomplete) {
-                    activeSubGoal = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress" };
+                    activeSubGoal = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress", dependsOn: [] };
                   }
                 }
                 if (activeSubGoal) {
@@ -1657,7 +1693,13 @@ With:
             try {
               const participants = debateSession.config.participants;
               const topicCategory = worthiness.category ?? "other";
-              await updateParliamentDNA(participants, debateSession.verdict ?? "", topicCategory, this.db, verifierVerdict);
+              // Identify synthesizer using same persona-search logic as MultiRoundDebateManager.runRound3()
+              const synthOwl = participants.find(p => (p.persona as any).mentorPersonality)
+                ?? participants.find(p => p.persona.name === 'Noctua')
+                ?? participants.find(p => (p.persona as any).specialty === 'architect')
+                ?? participants[0];
+              const challOwl = participants.find(p => p !== synthOwl);
+              await updateParliamentDNA(synthOwl, challOwl, participants, debateSession.verdict ?? "", topicCategory, this.db, verifierVerdict);
               if (verifierVerdict === "ADVANCES" && this.ctx.owlRegistry) {
                 for (const p of participants) {
                   await this.ctx.owlRegistry.saveDNA(p.persona.name).catch(() => {});
@@ -1701,10 +1743,10 @@ Replace the existing block ending at `return { content: ...#Parliament }` with t
             if (this.goalVerifier) {
               let activeSubGoal: SubGoal | undefined;
               if (this.db) {
-                const incomplete = await (new (await import("../engine/task-ledger.js")).TaskLedgerStore(this.db))
+                const incomplete = await new TaskLedgerStore(this.db)
                   .loadIncomplete(session.userId ?? "default").catch(() => null);
                 if (incomplete) {
-                  activeSubGoal = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress" };
+                  activeSubGoal = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress", dependsOn: [] };
                 }
               }
               if (activeSubGoal) {
@@ -1721,7 +1763,13 @@ Replace the existing block ending at `return { content: ...#Parliament }` with t
           } catch { /* non-fatal */ }
           try {
             const participants = debateSession.config.participants;
-            await updateParliamentDNA(participants, debateSession.verdict ?? "", "other", this.db, verifierVerdict);
+            // topicCategory: Block B has no TopicWorthinessEvaluator result, so "other" is the fallback
+            const synthOwl = participants.find(p => (p.persona as any).mentorPersonality)
+              ?? participants.find(p => p.persona.name === 'Noctua')
+              ?? participants.find(p => (p.persona as any).specialty === 'architect')
+              ?? participants[0];
+            const challOwl = participants.find(p => p !== synthOwl);
+            await updateParliamentDNA(synthOwl, challOwl, participants, debateSession.verdict ?? "", "other", this.db, verifierVerdict);
             if (verifierVerdict === "ADVANCES" && this.ctx.owlRegistry) {
               for (const p of participants) {
                 await this.ctx.owlRegistry.saveDNA(p.persona.name).catch(() => {});
@@ -1736,11 +1784,7 @@ Replace the existing block ending at `return { content: ...#Parliament }` with t
           };
 ```
 
-**Verify `ctx.intelligenceRouter` exists on `GatewayContext`** by checking `src/gateway/types.ts`:
-```bash
-grep -n "intelligenceRouter" src/gateway/types.ts
-```
-If the field is named differently, adjust Step 3c to match.
+**Verify `ctx.intelligence` field on `GatewayContext`** (already confirmed in `src/gateway/types.ts:347` — field is `intelligence`, not `intelligenceRouter`).
 
 - [ ] **Step 4: Run integration tests**
 
@@ -1775,6 +1819,65 @@ Expected: zero matches.
 ```bash
 git add src/gateway/core.ts __tests__/parliament/parliament-integration.test.ts
 git commit -m "feat(e10): wire post-session ContextPipeline + GoalVerifier + DNA evolution in gateway"
+```
+
+---
+
+## Task 11: Refactor `orchestrator.ts` — delegate `convene()` to `MultiRoundDebateManager`
+
+> **Why this task exists:** The spec calls for deleting the duplicate `runRound1/2/3` methods in `orchestrator.ts` that are exact copies of `MultiRoundDebateManager`. Without this, Parliament sessions routed through the orchestrator (rather than through `multiRoundDebate` directly) will still use the old sequential Round 1 — violating AC-2 and AC-3 for that code path.
+
+**Files:**
+- Modify: `src/parliament/orchestrator.ts`
+- No new test file — regression coverage via existing `npx vitest run __tests__/parliament/`
+
+- [ ] **Step 1: Identify duplicates to delete**
+
+```bash
+grep -n "private async runRound" src/parliament/orchestrator.ts
+```
+Expected: 3 matches (runRound1, runRound2, runRound3).
+
+- [ ] **Step 2: Delete the three duplicate round methods**
+
+In `src/parliament/orchestrator.ts`, **delete** the bodies of `runRound1()`, `runRound2()`, and `runRound3()`. These are exact copies of the same methods in `MultiRoundDebateManager`.
+
+- [ ] **Step 3: Update `convene()` to delegate to `MultiRoundDebateManager`**
+
+Replace the existing `convene()` body (which calls `this.runRound1()`, `this.runRound2()`, `this.runRound3()`) with delegation to `this.multiRoundDebate.runDebate(session)`. Keep the post-session block (Pellet generation + `parliamentVerdicts.record()` + `owlLearnings.add()`) unchanged.
+
+Before:
+```typescript
+// (existing orchestrator.ts convene() body)
+await this.runRound1(session, perspectives);
+await this.runRound2(session, perspectives);
+await this.runRound3(session, perspectives);
+```
+
+After:
+```typescript
+await this.multiRoundDebate.runDebate(session);
+```
+
+- [ ] **Step 4: Verify `multiRoundDebate` field exists on orchestrator**
+
+```bash
+grep -n "multiRoundDebate" src/parliament/orchestrator.ts
+```
+If not present, add: `private readonly multiRoundDebate: MultiRoundDebateManager;` and initialize in constructor with `new MultiRoundDebateManager(this.provider, this.config, this.db, this.router)`.
+
+- [ ] **Step 5: Run existing Parliament tests**
+
+```bash
+npx vitest run __tests__/parliament/
+```
+Expected: all existing tests pass; zero regressions. Round 1 is now parallel (via `MultiRoundDebateManager`) for orchestrator path too.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/parliament/orchestrator.ts
+git commit -m "feat(e10): orchestrator delegates convene() to MultiRoundDebateManager — removes duplicate round methods"
 ```
 
 ---
@@ -1816,6 +1919,7 @@ git commit -m "docs: mark Element 10 Parliament as implemented"
 | 6 — Lite router | 1 |
 | 7 — Protocol extension | 0 (covered by existing tests) |
 | 8 — Sparse debate | 3 |
-| 9 — updateParliamentDNA | 4 |
+| 9 — updateParliamentDNA | 5 (added PARTIAL + non-fatal test) |
 | 10 — Gateway wiring | 5 |
-| **Total** | **~25** |
+| 11 — Orchestrator delegation | 0 (covered by existing parliament tests) |
+| **Total** | **~26** |
