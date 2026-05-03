@@ -1345,11 +1345,11 @@ export class MemoryDatabase {
          FROM proactive_engagement
          WHERE job_type = ? AND created_at >= ?`,
       )
-      .get(jobType, cutoff) as { total: number; replies: number } | undefined;
+      .get(jobType, cutoff) as { total: number; replies: number | null } | undefined;
 
     if (!row || row.total < opts.minSamples) return null;
     return {
-      replyRate: row.total > 0 ? row.replies / row.total : 0,
+      replyRate: row.total > 0 ? (row.replies ?? 0) / row.total : 0,
       sampleCount: row.total,
     };
   }
@@ -3445,20 +3445,23 @@ export function applyV22Migration(db: Database.Database): void {
   // Create the canonical schema first, then ALTER for v22 columns.
   db.exec(`
     CREATE TABLE IF NOT EXISTS proactive_jobs (
-      id              TEXT PRIMARY KEY,
-      type            TEXT NOT NULL,
-      user_id         TEXT NOT NULL,
-      scheduled_at    TEXT NOT NULL,
-      payload         TEXT NOT NULL,
-      status          TEXT NOT NULL DEFAULT 'pending',
-      priority        INTEGER NOT NULL DEFAULT 5,
-      attempts        INTEGER NOT NULL DEFAULT 0,
+      id          TEXT PRIMARY KEY,
+      type        TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      scheduled_at TEXT NOT NULL,
+      payload     TEXT NOT NULL DEFAULT '{}',
+      status      TEXT NOT NULL DEFAULT 'pending',
+      priority    INTEGER NOT NULL DEFAULT 5,
+      attempts    INTEGER NOT NULL DEFAULT 0,
       last_attempt_at TEXT,
-      created_at      TEXT NOT NULL
+      error       TEXT,
+      created_at  TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_jobs_status_time
+
+    CREATE INDEX IF NOT EXISTS idx_pj_status_scheduled
       ON proactive_jobs (status, scheduled_at);
-    CREATE INDEX IF NOT EXISTS idx_jobs_user_status
+
+    CREATE INDEX IF NOT EXISTS idx_pj_user
       ON proactive_jobs (user_id, status);
   `);
 
