@@ -66,12 +66,6 @@ const MIN_TAG_OVERLAP = 2;
 const TAG_WEIGHT = 1.0;
 /** Weight per shared concept */
 const CONCEPT_WEIGHT = 0.5;
-/** Minimum BM25 normalized similarity to create an edge */
-const BM25_EDGE_THRESHOLD = 0.3;
-/** Weight for BM25 similarity edge */
-const BM25_WEIGHT = 2.0;
-/** Max BM25 candidates to check per pellet during build */
-const BM25_CANDIDATES = 5;
 
 // ─── PelletGraph ────────────────────────────────────────────────
 
@@ -215,7 +209,7 @@ export class PelletGraph {
   /**
    * @deprecated BM25 search is no longer available. Use KuzuPelletGraph instead.
    */
-  findRelatedByQuery(query: string, limit = 10): RelatedPellet[] {
+  findRelatedByQuery(_query: string, _limit = 10): RelatedPellet[] {
     // BM25 removed; return empty array
     return [];
   }
@@ -339,7 +333,7 @@ export class PelletGraph {
   }
 
   private async buildBm25Edges(pellets: Pellet[]): Promise<void> {
-    // BM25 edges removed — TF-IDF engine is deprecated
+    // no-op stub — TF-IDF removed
     // Yield to keep event loop responsive
     for (let i = 0; i < pellets.length; i++) {
       if (i % 50 === 49) {

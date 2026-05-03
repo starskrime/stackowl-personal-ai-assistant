@@ -4,9 +4,9 @@
  * Enterprise-grade skill matching that replaces primitive keyword scoring.
  * Five-tier routing:
  *
- *   Tier 1 — BM25 retrieval (sub-ms, offline)
- *     Uses TfIdfEngine with field boosting: name(3x) > description(2x) > instructions(1x)
- *     Returns top-25 candidates (up from 10)
+ *   Tier 1 — BM25 retrieval fallback (no-op, deprecated)
+ *     TfIdfEngine has been removed. Tier 1 is now a no-op stub.
+ *     Returns top-25 candidates with equal scores.
  *
  *   Tier 2 — Usage-weighted re-ranking
  *     Boosts skills with higher recency-adjusted success rates from SkillTracker
@@ -14,7 +14,7 @@
  *
  *   Tier 3 — Semantic re-ranking (optional, embedding-powered)
  *     Cosine similarity on embeddings (user message vs skill descriptions)
- *     Hybrid: BM25×0.4 + cosine×0.6; only fires if embeddings are available
+ *     Hybrid: normalized-tier1×0.4 + cosine×0.6; only fires if embeddings are available
  *
  *   Tier 4 — Overlap deduplication
  *     Jaccard similarity (tokenized instructions); 0.5 threshold
@@ -26,7 +26,7 @@
  *     Fuzzy name matching: "code interpreter" → `code_interpreter`
  *
  * Architecture:
- *   - TfIdfEngine is used in-memory (no disk persistence for skill index — rebuilt on startup)
+ *   - Tier 1 (BM25) is now a no-op stub returning equal-scored candidates
  *   - LLM disambiguation is gated: only fires when ambiguous AND provider is available
  *   - Semantic re-ranking is gated: only fires if provider returns non-empty embeddings
  *   - Results are cached per SHA256(message) with 200-entry LRU

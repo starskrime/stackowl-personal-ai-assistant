@@ -3,9 +3,9 @@
  *
  * Five-tier routing for intelligent per-turn tool selection:
  *
- *   Tier 1 — BM25 retrieval (sub-ms, offline)
- *     Indexes: tool.name (5x boost) + description (2x)
- *     Returns top-25 candidates from the full tool registry
+ *   Tier 1 — BM25 retrieval fallback (no-op, deprecated)
+ *     TfIdfEngine has been removed. Tier 1 is now a no-op stub.
+ *     Returns top-25 candidates with equal scores.
  *
  *   Tier 2 — Recency-weighted usage re-ranking
  *     Boost tools with higher recency-adjusted success rates from ToolTracker
@@ -13,7 +13,7 @@
  *
  *   Tier 3 — Semantic re-ranking (optional, embedding-powered)
  *     Cosine similarity: embed(userMessage) vs embed(tool.name + description)
- *     Hybrid: BM25×0.4 + cosine×0.6; fires only if provider returns embeddings
+ *     Hybrid: normalized-tier1×0.4 + cosine×0.6; fires only if provider returns embeddings
  *
  *   Tier 4 — Overlap deduplication
  *     Jaccard on parameter names; 0.5 threshold
@@ -24,7 +24,7 @@
  *     Fuzzy name match as fallback for LLM output
  *
  * Architecture:
- *   - TfIdfEngine in-memory (rebuilt on reindex())
+ *   - Tier 1 (BM25) is now a no-op stub returning equal-scored candidates
  *   - LLM disambiguation gated: only fires when ambiguous AND provider available
  *   - Semantic re-ranking gated: only fires if provider returns non-empty embeddings
  *   - Results cached per SHA256(message) with 200-entry LRU
