@@ -50,32 +50,31 @@ describe("schema v22", () => {
   beforeEach(() => {
     db = new Database(":memory:");
     db.pragma("journal_mode = WAL");
-    // Create minimal prior schema
-    db.exec(`CREATE TABLE IF NOT EXISTS proactive_jobs (
-      id TEXT PRIMARY KEY, type TEXT NOT NULL, user_id TEXT NOT NULL,
-      scheduled_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
-      status TEXT NOT NULL DEFAULT 'pending', priority INTEGER NOT NULL DEFAULT 5,
-      attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT,
-      error TEXT, created_at TEXT NOT NULL
-    )`);
+    // No prior schema — applyV22Migration must CREATE the table itself
+    // (covers the case where stackowl.db has never seen proactive_jobs).
   });
 
   afterEach(() => { db.close(); });
 
-  it("creates proactive_deliveries table", () => {
+  it("creates proactive_jobs, proactive_deliveries, proactive_engagement tables", () => {
     applyV22Migration(db);
     const tables = db.prepare(
       `SELECT name FROM sqlite_master WHERE type='table'`
     ).all() as { name: string }[];
     const names = tables.map(t => t.name);
+    expect(names).toContain("proactive_jobs");
     expect(names).toContain("proactive_deliveries");
     expect(names).toContain("proactive_engagement");
   });
 
-  it("adds retry_count column to proactive_jobs", () => {
+  it("adds retry_count, suppress_count, goal_id, error columns to proactive_jobs", () => {
     applyV22Migration(db);
-    const cols = db.prepare(`PRAGMA table_info(proactive_jobs)`).all() as { name: string }[];
-    expect(cols.map(c => c.name)).toContain("retry_count");
+    const cols = (db.prepare(`PRAGMA table_info(proactive_jobs)`).all() as { name: string }[])
+      .map(c => c.name);
+    expect(cols).toContain("retry_count");
+    expect(cols).toContain("suppress_count");
+    expect(cols).toContain("goal_id");
+    expect(cols).toContain("error");
   });
 
   it("is idempotent — safe to run twice", () => {
@@ -83,6 +82,27 @@ describe("schema v22", () => {
       applyV22Migration(db);
       applyV22Migration(db);
     }).not.toThrow();
+  });
+
+  it("upgrades a pre-existing proactive_jobs table without dropping data", () => {
+    // Simulate the pre-v22 case: ProactiveJobQueue created the table earlier.
+    db.exec(`CREATE TABLE proactive_jobs (
+      id TEXT PRIMARY KEY, type TEXT NOT NULL, user_id TEXT NOT NULL,
+      scheduled_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending', priority INTEGER NOT NULL DEFAULT 5,
+      attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT, created_at TEXT NOT NULL
+    )`);
+    db.prepare(
+      `INSERT INTO proactive_jobs (id, type, user_id, scheduled_at, payload, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run("j1", "check_in", "u1", new Date().toISOString(), "{}", new Date().toISOString());
+
+    applyV22Migration(db);
+
+    const row = db.prepare(`SELECT id, retry_count, suppress_count FROM proactive_jobs WHERE id = ?`).get("j1") as any;
+    expect(row.id).toBe("j1");
+    expect(row.retry_count).toBe(0);
+    expect(row.suppress_count).toBe(0);
   });
 });
 ```
@@ -120,10 +140,41 @@ Find the location of `applyV21Migration` in `src/memory/db.ts` and add directly 
 
 ```typescript
 export function applyV22Migration(db: Database.Database): void {
-  // Add retry_count to proactive_jobs if it doesn't exist
+  // proactive_jobs may not exist yet on this DB if ProactiveJobQueue
+  // has never been instantiated against it (it lives in proactive-jobs.db today).
+  // Create the canonical schema first, then ALTER for v22 columns.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proactive_jobs (
+      id              TEXT PRIMARY KEY,
+      type            TEXT NOT NULL,
+      user_id         TEXT NOT NULL,
+      scheduled_at    TEXT NOT NULL,
+      payload         TEXT NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      priority        INTEGER NOT NULL DEFAULT 5,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TEXT,
+      created_at      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_jobs_status_time
+      ON proactive_jobs (status, scheduled_at);
+    CREATE INDEX IF NOT EXISTS idx_jobs_user_status
+      ON proactive_jobs (user_id, status);
+  `);
+
+  // Add v22 columns idempotently. Each ALTER guarded by table_info check.
   const jobCols = (db.pragma("table_info(proactive_jobs)") as { name: string }[]).map(c => c.name);
   if (!jobCols.includes("retry_count")) {
     db.exec(`ALTER TABLE proactive_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!jobCols.includes("suppress_count")) {
+    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN suppress_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!jobCols.includes("goal_id")) {
+    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN goal_id TEXT`);
+  }
+  if (!jobCols.includes("error")) {
+    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN error TEXT`);
   }
 
   // Delivery outcomes table
@@ -160,6 +211,8 @@ export function applyV22Migration(db: Database.Database): void {
   `);
 }
 ```
+
+**Why CREATE TABLE first:** the main `stackowl.db` may have never seen `proactive_jobs` (today it lives in a separate `proactive-jobs.db`). Without the CREATE, the subsequent ALTER TABLE statements would fail. The CREATE matches the schema in `job-queue.ts:87-105` exactly so `ProactiveJobQueue` can later be re-pointed at this DB without re-running its own `createSchema()`.
 
 - [ ] **Step 6: Wire applyV22Migration into runMigrations()**
 
@@ -456,12 +509,76 @@ npx vitest run __tests__/job-queue-migration.test.ts
 
 Expected: 3 tests PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Wire migrateJobsDb + main-DB constructor into Telegram adapter**
+
+Without this step, `migrateJobsDb()` is unreachable from production. The legacy `proactive-jobs.db` file will keep being written and the v22 schema additions will be invisible to runtime code.
+
+In `src/gateway/adapters/telegram.ts` around line 880, find the block that constructs `ProactiveJobQueue` and replace it:
+
+```typescript
+// BEFORE:
+let jobQueue: import("../../heartbeat/job-queue.js").ProactiveJobQueue | undefined;
+try {
+  const { ProactiveJobQueue } = await import("../../heartbeat/job-queue.js");
+  jobQueue = new ProactiveJobQueue(cwd);
+} catch (err) {
+  log.engine.warn(`[Telegram] ProactiveJobQueue init failed: ${err instanceof Error ? err.message : err}`);
+}
+
+// AFTER:
+let jobQueue: import("../../heartbeat/job-queue.js").ProactiveJobQueue | undefined;
+try {
+  const { ProactiveJobQueue, migrateJobsDb } = await import("../../heartbeat/job-queue.js");
+  const mainDb = self.gateway.getDb?.()?.raw;  // MemoryDatabase exposes .raw : Database
+  if (mainDb) {
+    migrateJobsDb(cwd, mainDb);                // one-time consolidation; no-op if already migrated
+    jobQueue = new ProactiveJobQueue(mainDb);  // share the main DB connection
+  } else {
+    // Fallback: keep legacy behavior if the gateway doesn't expose the DB yet
+    log.engine.warn("[Telegram] Main DB unavailable — falling back to standalone proactive-jobs.db");
+    jobQueue = new ProactiveJobQueue(cwd);
+  }
+} catch (err) {
+  log.engine.warn(`[Telegram] ProactiveJobQueue init failed: ${err instanceof Error ? err.message : err}`);
+}
+```
+
+> **Note on `getDb()?.raw`:** `MemoryDatabase` already wraps a `better-sqlite3` instance. If it doesn't currently expose the raw handle, add a `get raw(): Database.Database { return this.db; }` accessor in `src/memory/db.ts` first. This is a one-line addition; do it as part of this step.
+
+- [ ] **Step 8: Add raw accessor to MemoryDatabase if missing**
+
+Check `src/memory/db.ts`:
 
 ```bash
-git add src/heartbeat/job-queue.ts __tests__/job-queue-migration.test.ts
-git commit -m "feat(job-queue): accept external DB instance + migrateJobsDb export"
+grep -n "get raw\|public raw\|raw:" src/memory/db.ts
 ```
+
+If no accessor exists, add to the `MemoryDatabase` class:
+
+```typescript
+/** Raw better-sqlite3 handle for migrations and tools that need direct access. */
+get raw(): Database.Database {
+  return this.db;
+}
+```
+
+- [ ] **Step 9: Run heartbeat tests + lint — expect PASS**
+
+```bash
+npm run build 2>&1 | head -10
+npx vitest run __tests__/heartbeat.test.ts __tests__/job-queue-migration.test.ts 2>&1 | tail -10
+```
+
+Expected: build clean, tests pass.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/heartbeat/job-queue.ts src/memory/db.ts src/gateway/adapters/telegram.ts __tests__/job-queue-migration.test.ts
+git commit -m "feat(job-queue): accept external DB instance, wire migrateJobsDb at startup"
+```
+
+> **Slack adapter note:** `src/gateway/adapters/slack.ts:585` does NOT currently construct `ProactiveJobQueue` — it only constructs `ProactivePinger` without `jobQueue`. Either leave it as-is (Slack stays on in-memory pinger paths) or, if Slack should also benefit from durable jobs, replicate Step 7's pattern there. Decision: defer Slack; document in the task summary commit. The CLI adapter likewise has no jobQueue today and is out of scope here.
 
 ---
 
@@ -678,19 +795,49 @@ const importantTools: string[] = this.toolTracker
   : [];
 ```
 
-- [ ] **Step 5: Run tests — expect PASS**
+- [ ] **Step 5: Update CognitiveLoop call site to pass toolTracker**
+
+Without this, the new optional `toolTracker` param stays `undefined` in production and `importantTools` silently becomes an empty array — worse than the hardcoded list, not better.
+
+In `src/cognition/loop.ts:215`, find:
+
+```typescript
+this.capabilityScanner = new CapabilityScanner(
+  deps.config,
+  deps.toolRegistry,
+  deps.skillsRegistry,
+  deps.microLearner,
+);
+```
+
+Replace with:
+
+```typescript
+this.capabilityScanner = new CapabilityScanner(
+  deps.config,
+  deps.toolRegistry,
+  deps.skillsRegistry,
+  deps.microLearner,
+  deps.toolRegistry?.getTracker() ?? undefined,
+);
+```
+
+`ToolRegistry.getTracker()` already exists at `src/tools/registry.ts:80` and returns `ToolTracker | null` — that's the singleton instance the registry already uses to record tool selections. No new wiring needed.
+
+- [ ] **Step 6: Run tests — expect PASS**
 
 ```bash
 npx vitest run __tests__/capability-scanner.test.ts
+npm run build 2>&1 | head -10
 ```
 
-Expected: PASS.
+Expected: PASS, build clean.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/heartbeat/capability-scanner.ts __tests__/capability-scanner.test.ts
-git commit -m "fix(capability-scanner): replace hardcoded importantTools with ToolTracker query"
+git add src/heartbeat/capability-scanner.ts src/cognition/loop.ts __tests__/capability-scanner.test.ts
+git commit -m "fix(capability-scanner): replace hardcoded importantTools with ToolTracker query (+ wire call site)"
 ```
 
 ---
@@ -867,6 +1014,16 @@ export interface DeliveryVerification {
   suppressUntil?: Date;
 }
 
+/**
+ * Filters proactive messages before delivery via a single cheap-tier LLM call.
+ *
+ * **Provider constraint:** the injected `provider` MUST host the model that
+ * `router.resolve("classification")` returns. We currently only consume
+ * `resolved.model`; we do NOT dispatch across providers. If the cheap-tier model
+ * lives on a different provider (e.g. Anthropic Haiku while the main provider
+ * is Ollama), pass that provider explicitly here. A future iteration can take a
+ * `Record<string, ModelProvider>` registry and dispatch by `resolved.provider`.
+ */
 export class DeliveryVerifier {
   constructor(
     private readonly provider: ModelProvider,
@@ -962,45 +1119,91 @@ git commit -m "feat(heartbeat): add DeliveryVerifier with ADVANCES/NEUTRAL/NOISE
 
 - [ ] **Step 1: Write failing tests**
 
-Add to `__tests__/heartbeat.test.ts`:
+Add to `__tests__/heartbeat.test.ts`. Tests pass a mock `db` object directly (no `better-sqlite3` mock needed — `PingContext.db` is a duck-typed MemoryDatabase):
 
 ```typescript
-import { MemoryDatabase } from "../src/memory/db.js";
-
-// Mock better-sqlite3 for DB tests in ProactivePinger
-vi.mock("better-sqlite3", () => {
-  const mockDb: any = {
-    pragma: vi.fn(),
-    exec: vi.fn(),
-    prepare: vi.fn().mockReturnValue({
-      run: vi.fn(),
-      get: vi.fn().mockReturnValue(undefined),
-      all: vi.fn().mockReturnValue([]),
-    }),
-    close: vi.fn(),
-  };
-  return { default: vi.fn(() => mockDb) };
-});
-
-describe("ProactivePinger — silent drop fix", () => {
-  it("reschedules job instead of dropping when eventBus unavailable", async () => {
+describe("ProactivePinger — retry escalation", () => {
+  it("reschedules with backoff when retry_count < 3", async () => {
     const reschedule = vi.fn();
+    const markFailed = vi.fn();
     const mockQueue = {
-      getDueJobs: vi.fn().mockReturnValue([{
-        id: "job1", type: "check_in", userId: "user1",
-        scheduledAt: new Date().toISOString(), payload: "{}",
-        status: "running", priority: 5, attempts: 1, createdAt: new Date().toISOString(),
-        retry_count: 0,
-      }]),
+      getDueJobs: vi.fn().mockReturnValue([]),
       markRunning: vi.fn(),
       markDone: vi.fn(),
-      markFailed: vi.fn(),
+      markFailed,
       reschedule,
       schedule: vi.fn(),
       getNextScheduled: vi.fn().mockReturnValue(null),
+      getRetryCount: vi.fn().mockReturnValue(1),
+      incrementRetry: vi.fn(),
     };
 
+    const pingContext: PingContext = {
+      provider: makeMockProvider(),
+      owl: makeMockOwl(),
+      config: makeMockConfig(),
+      capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
+      jobQueue: mockQueue as any,
+      // No eventBus, no sendToUser → triggers retry path
+    };
+
+    const pinger = new ProactivePinger(
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: false,
+        morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
+      pingContext,
+    );
+
+    // Direct call to escalate path
+    await (pinger as any).handleUndeliverable("job1", "no transport available");
+    expect(mockQueue.incrementRetry).toHaveBeenCalledWith("job1");
+    expect(reschedule).toHaveBeenCalled();
+    expect(markFailed).not.toHaveBeenCalled();
+  });
+
+  it("marks job failed when retry_count >= 3", async () => {
+    const reschedule = vi.fn();
+    const markFailed = vi.fn();
+    const writeDelivery = vi.fn();
+    const mockQueue = {
+      reschedule,
+      markFailed,
+      getRetryCount: vi.fn().mockReturnValue(3),
+      incrementRetry: vi.fn(),
+    };
+    const mockDb = { writeProactiveDelivery: writeDelivery, writeProactiveEngagement: vi.fn() } as any;
+
+    const pingContext: PingContext = {
+      provider: makeMockProvider(),
+      owl: makeMockOwl(),
+      config: makeMockConfig(),
+      capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
+      jobQueue: mockQueue as any,
+      db: mockDb,
+      userId: "user1",
+    };
+
+    const pinger = new ProactivePinger(
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: false,
+        morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
+      pingContext,
+    );
+
+    await (pinger as any).handleUndeliverable("job1", "no transport available");
+    expect(markFailed).toHaveBeenCalledWith("job1", expect.any(String));
+    expect(reschedule).not.toHaveBeenCalled();
+    expect(writeDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "job1", status: "failed" }),
+    );
+  });
+});
+
+describe("ProactivePinger — DeliveryVerifier integration", () => {
+  it("discards NOISE verdict and writes discarded delivery row", async () => {
+    const writeDelivery = vi.fn();
     const sendToUser = vi.fn();
+    const mockDb = { writeProactiveDelivery: writeDelivery, writeProactiveEngagement: vi.fn() } as any;
+    const mockQueue = { markDone: vi.fn(), markFailed: vi.fn(), reschedule: vi.fn() };
+
     const pingContext: PingContext = {
       provider: makeMockProvider(),
       owl: makeMockOwl(),
@@ -1008,22 +1211,64 @@ describe("ProactivePinger — silent drop fix", () => {
       capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
       sendToUser,
       jobQueue: mockQueue as any,
-      // No eventBus and no gatewayEventBus
+      db: mockDb,
+      userId: "user1",
+      deliveryVerifier: {
+        verify: vi.fn().mockResolvedValue({ verdict: "NOISE", reason: "duplicate" }),
+      } as any,
     };
 
-    const pinger = new ProactivePinger({ enabled: true, checkInIntervalMinutes: 30,
-      morningBrief: false, morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
+    const pinger = new ProactivePinger(
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: false,
+        morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
       pingContext,
     );
 
-    await (pinger as any).processJobQueue("user1", mockQueue as any);
-    // Should NOT have called sendToUser (job type check_in requires send) — but key assertion:
-    // Should have called reschedule, NOT markFailed, since retry_count is 0
-    // (In this test, check_in will call generateAndSend which will use sendToUser
-    //  since there's no eventBus — that's a separate path. The key is the retry logic
-    //  in generateAndSend when eventBus is absent)
-    // Simplest assertion: markFailed not called for retry_count < 3
-    expect(mockQueue.markFailed).not.toHaveBeenCalledWith("job1", expect.stringContaining("EventBus"));
+    await (pinger as any).executeJob({
+      id: "job1", type: "check_in", userId: "user1",
+      scheduledAt: new Date().toISOString(), payload: "{}",
+      status: "running", priority: 5, attempts: 1, createdAt: new Date().toISOString(),
+    });
+
+    expect(sendToUser).not.toHaveBeenCalled();
+    expect(writeDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "discarded", verdict: "NOISE" }),
+    );
+    expect(mockQueue.markDone).toHaveBeenCalledWith("job1");
+  });
+
+  it("reschedules NEUTRAL verdict and skips delivery", async () => {
+    const sendToUser = vi.fn();
+    const reschedule = vi.fn();
+    const mockQueue = { markDone: vi.fn(), markFailed: vi.fn(), reschedule };
+
+    const pingContext: PingContext = {
+      provider: makeMockProvider(),
+      owl: makeMockOwl(),
+      config: makeMockConfig(),
+      capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
+      sendToUser,
+      jobQueue: mockQueue as any,
+      userId: "user1",
+      deliveryVerifier: {
+        verify: vi.fn().mockResolvedValue({ verdict: "NEUTRAL", reason: "low value", suppressMinutes: 60 }),
+      } as any,
+    };
+
+    const pinger = new ProactivePinger(
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: false,
+        morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
+      pingContext,
+    );
+
+    await (pinger as any).executeJob({
+      id: "job1", type: "check_in", userId: "user1",
+      scheduledAt: new Date().toISOString(), payload: "{}",
+      status: "running", priority: 5, attempts: 1, createdAt: new Date().toISOString(),
+    });
+
+    expect(sendToUser).not.toHaveBeenCalled();
+    expect(reschedule).toHaveBeenCalled();
   });
 });
 
@@ -1071,13 +1316,82 @@ npx vitest run __tests__/heartbeat.test.ts 2>&1 | tail -20
 
 Expected: new tests FAIL — `db` not in PingContext, `deliverProactive` signature mismatch.
 
-- [ ] **Step 3: Add db to PingContext interface**
+- [ ] **Step 3: Add db, userId, and deliveryVerifier to PingContext interface**
 
 In `src/heartbeat/proactive.ts`, add to `PingContext`:
 
 ```typescript
 /** MemoryDatabase — used to record delivery outcomes */
 db?: import("../memory/db.js").MemoryDatabase;
+/** Stable user identifier for delivery/engagement rows */
+userId?: string;
+/** DeliveryVerifier — gates outbound proactive sends */
+deliveryVerifier?: import("./delivery-verifier.js").DeliveryVerifier;
+```
+
+Add private class fields to `ProactivePinger`:
+
+```typescript
+private lastDeliveryId: string = "";
+```
+
+- [ ] **Step 3.5: Wire DeliveryVerifier into executeJob**
+
+Find `executeJob` at line ~272 in `src/heartbeat/proactive.ts`. Insert verifier dispatch at the top of the method body, **before** the switch statement, so every outbound job is gated:
+
+```typescript
+private async executeJob(job: ProactiveJob): Promise<void> {
+  const { deliveryVerifier, db, userId, jobQueue } = this.context;
+
+  // Gate: ask DeliveryVerifier whether this delivery should proceed
+  if (deliveryVerifier) {
+    let payload: any = {};
+    try { payload = job.payload ? JSON.parse(job.payload) : {}; } catch { /* keep {} */ }
+
+    const verdict = await deliveryVerifier.verify({
+      jobType: job.type,
+      goalId: payload.goalId,
+      summary: payload.summary,
+      userId: job.userId,
+    });
+
+    if (verdict.verdict === "NOISE") {
+      db?.writeProactiveDelivery({
+        id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        jobId: job.id,
+        channel: "none",
+        userId: userId ?? job.userId,
+        verdict: "NOISE",
+        status: "discarded",
+        deliveredAt: new Date().toISOString(),
+      });
+      jobQueue?.markDone(job.id);
+      log.engine.debug(`[ProactivePinger] NOISE verdict — discarded job ${job.id}: ${verdict.reason}`);
+      return;
+    }
+
+    if (verdict.verdict === "NEUTRAL") {
+      const suppressMs = (verdict.suppressMinutes ?? 60) * 60_000;
+      jobQueue?.reschedule(job.id, new Date(Date.now() + suppressMs));
+      db?.writeProactiveDelivery({
+        id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        jobId: job.id,
+        channel: "none",
+        userId: userId ?? job.userId,
+        verdict: "NEUTRAL",
+        status: "suppressed",
+        deliveredAt: new Date().toISOString(),
+      });
+      log.engine.debug(`[ProactivePinger] NEUTRAL verdict — suppressed job ${job.id} for ${verdict.suppressMinutes ?? 60}min`);
+      return;
+    }
+    // ADVANCES → fall through to existing switch
+  }
+
+  // ── existing switch (job.type) follows ──
+  switch (job.type) {
+    case "morning_brief":
+    // ... (existing cases unchanged)
 ```
 
 - [ ] **Step 4: Update deliverProactive to accept jobId and record outcome**
@@ -1146,7 +1460,7 @@ private async deliverProactive(
 
 Add `private lastDeliveryId: string = ""` to the class fields.
 
-- [ ] **Step 5: Fix the silent drop in generateAndSend**
+- [ ] **Step 5: Replace the silent drop with retry escalation**
 
 Find the section around line 842 in `proactive.ts` that contains:
 ```typescript
@@ -1155,7 +1469,7 @@ Find the section around line 842 in `proactive.ts` that contains:
 }
 ```
 
-Replace the entire condition block with:
+Replace the entire condition block with the prefer-eventBus → fallback-to-direct → retry-on-failure ladder:
 
 ```typescript
 if (this.context.eventBus) {
@@ -1165,10 +1479,64 @@ if (this.context.eventBus) {
   });
   this.lastPingTime = Date.now();
   this.unansweredPings++;
-} else {
+} else if (this.context.gatewayEventBus || this.context.sendToUser) {
   // EventBus unavailable — use direct delivery path instead of dropping
-  // deliverProactive handles the fallback to sendToUser
-  await this.deliverProactive(fullPrompt, _type);
+  await this.deliverProactive(fullPrompt, _type, this.currentJobId);
+} else {
+  // No transport at all — escalate via retry handler
+  await this.handleUndeliverable(this.currentJobId, "no transport available (eventBus, gatewayEventBus, sendToUser all missing)");
+}
+```
+
+Add a private field `private currentJobId: string = ""` to the class. Inside `executeJob`, set `this.currentJobId = job.id` at the very top so the inner methods can reference it.
+
+Add a new `handleUndeliverable` method to ProactivePinger:
+
+```typescript
+/**
+ * Retry-or-escalate handler for undeliverable jobs.
+ * - retry_count < 3: increment + reschedule with exponential backoff (60s, 120s, 240s)
+ * - retry_count >= 3: mark failed + write failed delivery row
+ */
+private async handleUndeliverable(jobId: string, reason: string): Promise<void> {
+  const { jobQueue, db, userId } = this.context;
+  if (!jobQueue || !jobId) return;
+
+  const retryCount = jobQueue.getRetryCount?.(jobId) ?? 0;
+
+  if (retryCount < 3) {
+    jobQueue.incrementRetry?.(jobId);
+    const backoffMs = 60_000 * Math.pow(2, retryCount);  // 60s, 120s, 240s
+    jobQueue.reschedule?.(jobId, new Date(Date.now() + backoffMs));
+    log.engine.warn(`[ProactivePinger] Job ${jobId} undeliverable (${reason}); retry ${retryCount + 1}/3 in ${backoffMs / 1000}s`);
+    return;
+  }
+
+  // 3-strikes: escalate to failed
+  jobQueue.markFailed?.(jobId, `undeliverable after 3 retries: ${reason}`);
+  db?.writeProactiveDelivery({
+    id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    jobId,
+    channel: "none",
+    userId: userId ?? "unknown",
+    verdict: "ADVANCES",
+    status: "failed",
+    deliveredAt: new Date().toISOString(),
+  });
+  log.engine.error(`[ProactivePinger] Job ${jobId} failed after 3 retries: ${reason}`);
+}
+```
+
+The `getRetryCount` and `incrementRetry` methods on `ProactiveJobQueue` are added in Task 1's job-queue patch (alongside the schema v22 retry_count column). If they don't exist yet, add stubs to `src/heartbeat/job-queue.ts`:
+
+```typescript
+getRetryCount(jobId: string): number {
+  const row = this.db.prepare("SELECT retry_count FROM proactive_jobs WHERE id = ?").get(jobId) as any;
+  return row?.retry_count ?? 0;
+}
+
+incrementRetry(jobId: string): void {
+  this.db.prepare("UPDATE proactive_jobs SET retry_count = COALESCE(retry_count, 0) + 1 WHERE id = ?").run(jobId);
 }
 ```
 
@@ -1211,6 +1579,151 @@ Expected: existing tests pass + new delivery tests pass.
 git add src/heartbeat/proactive.ts
 git commit -m "fix(proactive): replace silent drop with retry path; add delivery recording + recordEngagement"
 ```
+
+---
+
+## Task 6.5: Wire recordEngagement from Gateway Adapter (CLI)
+
+The `recordEngagement` method on ProactivePinger is dead code unless a gateway adapter calls it when a user replies to a proactive delivery. This task wires the CLI adapter as the reference implementation; Telegram/Slack follow the same pattern (deferred — CLI is the verifier path).
+
+**Files:**
+- Modify: `src/gateway/envelope.ts` — add optional `inReplyToDeliveryId` field
+- Modify: `src/gateway/adapters/cli.ts` — track `lastDeliveryId`, call `pinger.recordEngagement()` on user reply
+- Test: extend `__tests__/heartbeat.test.ts`
+
+- [ ] **Step 1: Write failing test for engagement recording**
+
+Add to `__tests__/heartbeat.test.ts`:
+
+```typescript
+describe("ProactivePinger — engagement recording", () => {
+  it("records reply latency when user replies to a delivery", () => {
+    const writeEngagement = vi.fn();
+    const mockDb = { writeProactiveDelivery: vi.fn(), writeProactiveEngagement: writeEngagement } as any;
+
+    const pingContext: PingContext = {
+      provider: makeMockProvider(),
+      owl: makeMockOwl(),
+      config: makeMockConfig(),
+      capabilityLedger: { getCapabilities: vi.fn().mockReturnValue([]) } as any,
+      db: mockDb,
+    };
+
+    const pinger = new ProactivePinger(
+      { enabled: true, checkInIntervalMinutes: 30, morningBrief: false,
+        morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
+      pingContext,
+    );
+
+    pinger.recordEngagement("del_xyz", "morning_brief", true, 42, "g1");
+    expect(writeEngagement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryId: "del_xyz",
+        jobType: "morning_brief",
+        replied: true,
+        replyLatencySeconds: 42,
+        goalId: "g1",
+      }),
+    );
+  });
+});
+```
+
+- [ ] **Step 2: Run test — expect PASS (recordEngagement was added in Task 6 Step 6)**
+
+```bash
+npx vitest run __tests__/heartbeat.test.ts -t "engagement recording"
+```
+
+Expected: PASS — this test verifies Task 6's `recordEngagement` works; the wiring below makes it actually fire from the CLI.
+
+- [ ] **Step 3: Add `inReplyToDeliveryId` field to gateway envelope**
+
+In `src/gateway/envelope.ts`, extend `MessageEnvelope` (or whichever type the adapter constructs):
+
+```typescript
+export interface MessageEnvelope {
+  // ... existing fields
+  /** If this user message is a reply to a proactive delivery, the delivery ID */
+  inReplyToDeliveryId?: string;
+}
+```
+
+- [ ] **Step 4: Track lastDeliveryId in CLI adapter and call recordEngagement on reply**
+
+In `src/gateway/adapters/cli.ts`, locate the place where:
+1. Outbound proactive messages are received (subscribe to `proactive` channel envelopes from `gatewayEventBus`)
+2. Inbound user input is read
+
+Add to the adapter class:
+
+```typescript
+private lastDeliveryId: string | null = null;
+private lastDeliveryAt: number = 0;
+private lastDeliveryJobType: string = "";
+```
+
+When a proactive envelope is published to the user, capture its delivery context. The `ProactivePinger` exposes `lastDeliveryId` after each `deliverProactive` call — read it via a public getter (add `get lastDelivery() { return { id: this.lastDeliveryId, jobType: this.currentJobType, at: this.lastPingTime }; }` to ProactivePinger), or have `deliverProactive` emit the `del_*` ID alongside the published envelope (preferred — see envelope extension above):
+
+```typescript
+// In ProactivePinger.deliverProactive — extend the envelope publish
+gatewayEventBus.publish(makeEnvelope({
+  userId,
+  content: message,
+  channel: "proactive",
+  deliveryId,        // NEW
+  jobType,           // NEW
+}));
+```
+
+Extend `makeEnvelope` / `MessageEnvelope` to carry `deliveryId?: string` and `jobType?: string` for outbound proactive messages.
+
+In the CLI adapter's outbound subscriber:
+
+```typescript
+gatewayEventBus.subscribe((env) => {
+  if (env.channel === "proactive" && env.deliveryId) {
+    this.lastDeliveryId = env.deliveryId;
+    this.lastDeliveryAt = Date.now();
+    this.lastDeliveryJobType = env.jobType ?? "unknown";
+  }
+  // ... existing render path
+});
+```
+
+In the CLI adapter's inbound user-input handler, before forwarding the message to the engine:
+
+```typescript
+if (this.lastDeliveryId && this.pinger) {
+  const latencySec = Math.round((Date.now() - this.lastDeliveryAt) / 1000);
+  this.pinger.recordEngagement(
+    this.lastDeliveryId,
+    this.lastDeliveryJobType,
+    /* replied */ true,
+    latencySec,
+  );
+  this.lastDeliveryId = null;  // one-shot — don't double-record
+}
+```
+
+The adapter must hold a reference to the `ProactivePinger` instance. If it doesn't already, accept it via the constructor (alongside the existing `gatewayEventBus`).
+
+- [ ] **Step 5: Run full heartbeat suite**
+
+```bash
+npx vitest run __tests__/heartbeat.test.ts
+```
+
+Expected: all heartbeat tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/heartbeat/proactive.ts src/gateway/envelope.ts src/gateway/adapters/cli.ts __tests__/heartbeat.test.ts
+git commit -m "feat(gateway): wire recordEngagement from CLI adapter — track reply latency on proactive deliveries"
+```
+
+> **Note (Telegram/Slack deferral):** The same wiring applies to Telegram and Slack adapters but is deferred to Element 12.5. CLI is the verification path — once it produces clean engagement rows, the same pattern propagates with a 5-line change per adapter.
 
 ---
 
@@ -1360,9 +1873,9 @@ Also delete the import of `MemoryConsolidator` at the top of the file:
 import { MemoryConsolidator } from "./consolidation.js";  // DELETE THIS LINE
 ```
 
-- [ ] **Step 6: Update executeJob switch to remove dead cases**
+- [ ] **Step 6: Update executeJob switch — remove dead cases, add goal_progress_update**
 
-In the `executeJob` switch statement, remove or replace with no-ops the cases that called deleted stubs:
+In the `executeJob` switch statement, remove or replace with no-ops the cases that called deleted stubs, and add a real handler for `goal_progress_update`:
 
 ```typescript
 case "memory_consolidation":
@@ -1377,6 +1890,28 @@ case "dream_reflexion":
 case "skill_evolution":
   log.engine.debug("[ProactivePinger] skill_evolution handled by CognitiveLoop — skipping");
   break;
+case "goal_progress_update": {
+  let payload: { goalId?: string; summary?: string } = {};
+  try { payload = job.payload ? JSON.parse(job.payload) : {}; } catch { /* keep {} */ }
+
+  if (!payload.goalId || !payload.summary) {
+    log.engine.warn(`[ProactivePinger] goal_progress_update missing payload — marking done`);
+    this.context.jobQueue?.markDone(job.id);
+    break;
+  }
+
+  // Build goal-aware message via lightweight helper (NOT full E5 ContextPipeline)
+  const goalContext = await this.assembleGoalContext();
+  const prompt =
+    `Inform the user about progress on a goal they're tracking. ` +
+    `Be brief (1-2 sentences max), specific, and reference the actual progress.\n\n` +
+    `Goal context:\n${goalContext || "(no active goals loaded)"}\n\n` +
+    `Progress summary: ${payload.summary}`;
+
+  await this.generateAndSend(prompt, "goal_progress_update");
+  this.context.jobQueue?.markDone(job.id);
+  break;
+}
 ```
 
 - [ ] **Step 7: Run full test suite**
@@ -1840,6 +2375,45 @@ grep "SCHEMA_VERSION" src/memory/db.ts
 ```
 
 Expected: `const SCHEMA_VERSION = 22;`
+
+- [ ] **Behavioral E2E: NOISE verdict discards delivery**
+
+Run a contrived job with `payload: { duplicate: true }` and a stub `DeliveryVerifier` returning `{ verdict: "NOISE" }`. Confirm:
+- `proactive_deliveries` row written with `status = "discarded"` and `verdict = "NOISE"`
+- `sendToUser` / `gatewayEventBus.publish` NOT called
+- Job marked done (not retried)
+
+- [ ] **Behavioral E2E: NEUTRAL verdict reschedules**
+
+Same fixture with `{ verdict: "NEUTRAL", suppressMinutes: 60 }`. Confirm:
+- `jobQueue.reschedule` called with `now + 60min`
+- `proactive_deliveries` row written with `status = "suppressed"`
+- `sendToUser` NOT called
+
+- [ ] **Behavioral E2E: retry escalation — 3 strikes then fail**
+
+Drive `handleUndeliverable` 4 times for the same job ID with no transport. Confirm:
+- Calls 1-3: `incrementRetry` + `reschedule` with backoff (60s, 120s, 240s)
+- Call 4: `markFailed` + `proactive_deliveries` row with `status = "failed"`
+
+- [ ] **Behavioral E2E: goal_progress_update delivers goal-aware message**
+
+Enqueue a `goal_progress_update` job with `payload: { goalId: "g1", summary: "Study session complete" }` and a goalGraph with goal `g1` titled "Ship feature X". Confirm:
+- `generateAndSend` called with prompt containing both "Ship feature X" and "Study session complete"
+- After send, `proactive_deliveries` row exists for the job
+
+- [ ] **Behavioral E2E: engagement recorded with reply latency**
+
+Publish a proactive envelope via gatewayEventBus, wait 30s, then send a user reply via the CLI adapter. Confirm:
+- `proactive_engagement` row written with `replied = true` and `replyLatencySeconds ≈ 30`
+- The row's `deliveryId` matches the published envelope's `deliveryId`
+
+- [ ] **Behavioral E2E: jobs DB migration is idempotent**
+
+With existing `proactive-jobs.db` containing 5 jobs, start the gateway. Confirm:
+- All 5 jobs appear in main `stackowl.db` `proactive_jobs` table
+- A second startup does NOT duplicate them
+- Backup file `proactive-jobs.db.bak.<timestamp>` exists in workspace
 
 - [ ] **Final commit if any cleanup needed**
 

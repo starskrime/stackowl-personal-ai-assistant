@@ -78,24 +78,18 @@ Rollback: rename `.bak` back. `ProactiveJobQueue` is updated to use the main DB 
 ### New tables
 
 ```sql
--- Migrated from proactive-jobs.db
-CREATE TABLE proactive_jobs (
-  id           TEXT PRIMARY KEY,
-  type         TEXT NOT NULL,
-  payload      TEXT NOT NULL,          -- JSON
-  priority     INTEGER NOT NULL DEFAULT 50,
-  status       TEXT NOT NULL DEFAULT 'pending',
-                                       -- pending|running|done|failed|discarded
-  goal_id      TEXT,
-  scheduled_for TEXT,                  -- ISO8601, null = immediate
-  suppress_count INTEGER DEFAULT 0,
-  retry_count    INTEGER DEFAULT 0,   -- EventBus delivery retry counter (max 3)
-  created_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL,
-  error        TEXT
-);
-CREATE INDEX idx_proactive_jobs_status
-  ON proactive_jobs(status, priority DESC, scheduled_for);
+-- Existing table (created by ProactiveJobQueue.createSchema()) extended via ALTER TABLE
+-- Pre-existing columns: id, type, user_id, scheduled_at, payload, status, priority,
+--                       attempts, last_attempt_at, created_at
+-- v22 ALTER TABLE adds:
+--   retry_count    INTEGER NOT NULL DEFAULT 0  -- EventBus delivery retry counter (max 3)
+--   suppress_count INTEGER NOT NULL DEFAULT 0  -- DeliveryVerifier consecutive NEUTRAL count
+--   goal_id        TEXT                        -- nullable; set when job ties to a goal
+--   error          TEXT                        -- nullable; populated on failure
+--
+-- Effective table after v22:
+-- id, type, user_id, scheduled_at, payload, status, priority, attempts,
+-- last_attempt_at, created_at, retry_count, suppress_count, goal_id, error
 
 -- Delivery outcomes (one row per delivery attempt)
 CREATE TABLE proactive_deliveries (
@@ -132,15 +126,23 @@ CREATE TABLE proactive_engagement (
 The 30s worker tick and job-queue consumer are kept. Four changes:
 
 ### 3a — Silent drop fix
-Replace `proactive.ts:842` `console.warn` + drop with structured retry: if EventBus unavailable, set job `status = "pending"`, `scheduled_for = now + 60s`. Write a `proactive_deliveries` row with `status = "failed"` only after 3 consecutive retry failures on the same job.
+Replace `proactive.ts:842` `console.warn` + drop with structured retry. The fallback path:
 
-### 3b — Message assembly via ContextPipeline
-Replace `buildProactiveMessage()` string templates with a `ContextPipeline` pass:
-- Layer 1 (priority 100): job payload (type + goal context)
-- Layer 2 (priority 80): user's active goals from GoalGraph
-- Layer 3 (priority 60): owl DNA (verbosity, tone from `learnedPreferences`)
+1. Read `retry_count` from the job row.
+2. If `retry_count < 3`: increment `retry_count`, set `status = "pending"`, `scheduled_at = now + 60s` (exponential backoff: 60s, 120s, 240s). Emit no delivery row yet.
+3. If `retry_count >= 3`: write a `proactive_deliveries` row with `status = "failed"`, mark job `status = "failed"`, log structured error.
 
-Pipeline assembles and truncates to channel limits (4096 Telegram, 2000 Slack). Proactive messages become goal-aware by construction.
+This eliminates the silent drop and bounds retry blast radius. The full E5 ContextPipeline is **not** used here — proactive assembly uses a lightweight helper instead (see § 3b).
+
+### 3b — Goal-aware message assembly (lightweight helper)
+Replace `buildProactiveMessage()` string templates with a small `assembleGoalContext()` helper that reads:
+- Active goals from GoalGraph (top 3 by recency, ordered by status)
+- Recent user history from session store (last 3 user messages, 80-char snippets)
+- Owl DNA (verbosity, tone from `learnedPreferences`) injected via prompt prefix
+
+The helper concatenates these into a single context string passed into the LLM prompt. Channel-limit truncation (4096 Telegram, 2000 Slack) happens in `deliverProactive`. Proactive messages become goal-aware by construction without paying the cost of loading the full E5 ContextPipeline (cache/health/DAG planner) on every 30s tick.
+
+> **Decision note:** the original draft proposed using ContextPipeline directly. We chose the lightweight helper because (a) E5 ContextPipeline assembly p95 is ~150ms cold, comparable to the 400ms DeliveryVerifier budget, (b) proactive messages don't need DAG planning or cache invalidation, and (c) the helper is testable in isolation without standing up the full pipeline. If proactive assembly later needs reflexion notes or trajectory grounding, we promote it to ContextPipeline at that point.
 
 ### 3c — Delivery outcome recording
 After every delivery attempt, write a `proactive_deliveries` row. When the channel adapter receives a user reply to a proactive message (matched by message ID or session context), write a `proactive_engagement` row. Closes the feedback loop to `AutonomousPlanner`.
@@ -240,12 +242,18 @@ All new components are test-driven. Estimated +40 tests on top of existing heart
 
 ## Verification Checklist (before merge)
 
+**Structural:**
 - [ ] `npm test` — all existing tests pass; +40 new tests pass
 - [ ] `proactive-jobs.db` migration verified: in-flight jobs survive restart
-- [ ] `DeliveryVerifier.verify()` p95 < 400ms under load
-- [ ] Proactive message assembled via ContextPipeline includes active goal context
-- [ ] `maybeDream`, `maybeKnowledgeCouncil`, `maybeEvolveSkills`, `maybeConsolidateMemory` absent from compiled output
 - [ ] `consolidation.ts` absent from repo
+- [ ] `maybeDream`, `maybeKnowledgeCouncil`, `maybeEvolveSkills`, `maybeConsolidateMemory` absent from compiled output
 - [ ] `CapabilityScanner.importantTools` absent from compiled output (no array literal)
-- [ ] `proactive_deliveries` row written for every delivery attempt (success and failure)
-- [ ] `proactive_engagement` row written when user replies to a proactive message
+- [ ] Schema v22 columns present: `retry_count`, `suppress_count`, `goal_id`, `error`
+
+**Behavioral (E2E):**
+- [ ] **NOISE-discard path:** Mock cheap-tier LLM to return `{"verdict":"NOISE"}`. Enqueue a `check_in` job. Run pinger tick. Assert: `proactive_deliveries` has one row with `status = "discarded"`, `sendToUser` was never called, `gatewayEventBus.publish` was never called.
+- [ ] **Job migration path:** Place a fixture `proactive-jobs.db` with 5 pending rows in workspace. Boot app. Assert: main `stackowl.db` `proactive_jobs` table has 5 rows, `proactive-jobs.db.bak` exists, `proactive-jobs.db` is gone.
+- [ ] **Goal-update delivery path:** Trigger `cognitiveLoop.maybeEnqueueGoalUpdate("g1", "study summary")`. Run job-queue worker tick. Assert: `gatewayEventBus.publish` was called with content containing the goal title from `GoalGraph` (not the goal ID).
+- [ ] **Engagement recording:** Send a proactive message via CLI adapter. User replies. Assert: `proactive_engagement` row written with `replied = 1`, `reply_latency_seconds` populated.
+- [ ] **DeliveryVerifier latency:** `verify()` p95 < 400ms under load (measured with 100 sequential calls against the cheap-tier model).
+- [ ] **Retry escalation:** Force `eventBus = null` and `sendToUser = null`. Enqueue a `check_in` job. Run worker 4 ticks. Assert: ticks 1-3 increment `retry_count`; tick 4 marks job `failed` and writes `proactive_deliveries` row with `status = "failed"`.
