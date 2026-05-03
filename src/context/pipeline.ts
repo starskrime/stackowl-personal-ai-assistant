@@ -16,6 +16,11 @@ const PIPELINE_TIMEOUT_MS = 5_000;
 
 export class ContextPipeline {
   private readonly batches: ContextLayer[][];
+  private readonly shortTermLayers = new Map<string, {
+    content: string;
+    priority: number;
+    ttlTurns: number;
+  }>();
 
   constructor(
     private readonly layers: ContextLayer[],
@@ -24,6 +29,14 @@ export class ContextPipeline {
     dagPlanner: DAGPlanner,
   ) {
     this.batches = dagPlanner.buildBatches(layers);
+  }
+
+  setShortTermLayer(
+    key: string,
+    content: string,
+    opts: { priority: number; ttlTurns: number },
+  ): void {
+    this.shortTermLayers.set(key, { content, priority: opts.priority, ttlTurns: opts.ttlTurns });
   }
 
   async run(
@@ -55,9 +68,26 @@ export class ContextPipeline {
       );
     }
 
-    const output = [...this.layers]
+    // Collect short-term layers that still have TTL > 0
+    const shortTermEntries: Array<{ content: string; priority: number; key: string }> = [];
+    for (const [key, stl] of this.shortTermLayers) {
+      if (stl.ttlTurns > 0) {
+        shortTermEntries.push({ content: stl.content, priority: stl.priority, key });
+        stl.ttlTurns -= 1;
+        if (stl.ttlTurns === 0) {
+          this.shortTermLayers.delete(key);
+        }
+      }
+    }
+
+    const output = [
+      ...[...this.layers]
+        .sort((a, b) => a.priority - b.priority)
+        .map((l) => ({ content: results.get(l.produces[0] ?? l.name) ?? "", priority: l.priority })),
+      ...shortTermEntries,
+    ]
       .sort((a, b) => a.priority - b.priority)
-      .map((l) => results.get(l.produces[0] ?? l.name) ?? "")
+      .map((e) => e.content)
       .filter(Boolean)
       .join("\n");
 
