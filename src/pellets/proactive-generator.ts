@@ -88,6 +88,7 @@ export class ProactiveKnowledgeGenerator {
       return [];
     }
 
+    // Write timestamp before work to prevent concurrent re-entry; accepted risk: crash before completion skips next run
     if (this.db) await this.db.setPelletGenRun("council", now);
     log.engine.info("[ProactiveGenerator] Running knowledge council session...");
 
@@ -139,6 +140,7 @@ export class ProactiveKnowledgeGenerator {
       return [];
     }
 
+    // Write timestamp before work to prevent concurrent re-entry; accepted risk: crash before completion skips next run
     if (this.db) await this.db.setPelletGenRun("dream", now);
     log.engine.info("[ProactiveGenerator] Running dream reflexion session...");
 
@@ -203,6 +205,7 @@ export class ProactiveKnowledgeGenerator {
       return [];
     }
 
+    // Write timestamp before work to prevent concurrent re-entry; accepted risk: crash before completion skips next run
     if (this.db) await this.db.setPelletGenRun("evolve", now);
     log.engine.info("[ProactiveGenerator] Running skill evolution knowledge capture...");
 

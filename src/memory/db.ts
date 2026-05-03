@@ -1310,6 +1310,7 @@ export class MemoryDatabase {
 
   // ── Pellet generation run timestamps ───────────────────────────
 
+  // better-sqlite3 is synchronous; async declared for caller API consistency
   async getPelletGenRun(key: string): Promise<Date | null> {
     const row = this.db.prepare(
       "SELECT last_run_at FROM pellet_generation_runs WHERE key = ?"
@@ -3342,17 +3343,12 @@ function applyV20Migration(db: Database.Database): void {
 }
 
 function applyV21Migration(db: Database.Database): void {
-  const tableExists = (db.prepare(
-    "SELECT name FROM sqlite_master WHERE type='table' AND name='pellet_generation_runs'"
-  ).get() as { name: string } | undefined) !== undefined;
-  if (!tableExists) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS pellet_generation_runs (
-        key         TEXT PRIMARY KEY,
-        last_run_at TEXT NOT NULL
-      );
-    `);
-  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pellet_generation_runs (
+      key         TEXT PRIMARY KEY,
+      last_run_at TEXT NOT NULL
+    );
+  `);
 }
 
 /**
