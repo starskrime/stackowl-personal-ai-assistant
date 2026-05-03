@@ -9,6 +9,8 @@ import type { SessionStore } from "../memory/store.js";
 import type { EventBus } from "../events/bus.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { ContinuityClass } from "../cognition/continuity-engine.js";
+import type { KnowledgeGraph } from "../knowledge/graph.js";
+import type { PredictiveQueue } from "../predictive/queue.js";
 
 export type { ContinuityClass };
 
@@ -19,6 +21,8 @@ export interface ContextDependencies {
   sessionStore: SessionStore;
   eventBus?: EventBus;
   config: StackOwlConfig;
+  knowledgeGraph?: KnowledgeGraph;
+  predictiveQueue?: PredictiveQueue;
 }
 
 export interface TriageSignals {

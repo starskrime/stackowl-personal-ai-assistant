@@ -12,10 +12,12 @@ export class KnowledgeGraphLayer implements ContextLayer {
     return hash(t.userMessage.slice(0, 40) + "kg");
   }
 
-  async build(req: ContextRequest, _t: TriageSignals, _deps: LayerResults): Promise<string> {
-    const kg = (req.session as any).knowledgeGraphContext as string | undefined;
+  async build(req: ContextRequest, t: TriageSignals, _deps: LayerResults): Promise<string> {
+    const kg = req.deps.knowledgeGraph;
     if (!kg) return "";
-    return `<knowledge_graph>\n${kg}\n</knowledge_graph>`;
+    const ctx = kg.queryContext(t.userMessage);
+    if (!ctx) return "";
+    return `<knowledge_graph>\n${ctx}\n</knowledge_graph>`;
   }
 }
 

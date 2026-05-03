@@ -72,6 +72,8 @@ export class ContextBuilder {
       sessionStore: this.ctx.sessionStore,
       eventBus: this.ctx.eventBus,
       config: this.ctx.config,
+      knowledgeGraph: this.ctx.knowledgeGraph,
+      predictiveQueue: this.ctx.predictiveQueue,
     };
 
     const { output, trace } = await pipeline.run(
