@@ -71,6 +71,9 @@ export class DesireExecutor {
             owls: [owlName],
             generatedAt: new Date().toISOString(),
             version: 1,
+            successCount: 0,
+            failureCount: 0,
+            provenance: [],
           });
           pelletSaved = true;
           log.engine.info(`[DesireExecutor] Saved pellet: "${pelletTitle}"`);

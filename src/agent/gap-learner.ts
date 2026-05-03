@@ -161,6 +161,9 @@ export class GapLearner {
           `## What I Learned`,
           content,
         ].join("\n"),
+        successCount: 0,
+        failureCount: 0,
+        provenance: [],
       };
 
       await this.pelletStore.save(pellet, { skipDedup: true });

@@ -119,6 +119,9 @@ Respond strictly in the following JSON format:
           tags: ["reflexion", "behavioral-patch", "rule"],
           content: parsed.heuristic,
           version: 1,
+          successCount: 0,
+          failureCount: 0,
+          provenance: [],
         });
 
         // Mark this failure as processed so future dream() calls don't re-analyze
@@ -189,6 +192,9 @@ Respond strictly in the following JSON format:
           tags: ["reflexion", "behavioral-patch", "rule", context.reason],
           content: parsed.heuristic,
           version: 1,
+          successCount: 0,
+          failureCount: 0,
+          provenance: [],
         });
         log.evolution.info(
           `[Reflexion:immediate] Patch generated for ${context.reason}: "${parsed.heuristic.slice(0, 60)}"`,
@@ -271,6 +277,9 @@ Respond strictly in the following JSON format:
               tags: ["reflexion", "positive-pattern", "best-practice"],
               content: parsed.pattern,
               version: 1,
+              successCount: 0,
+              failureCount: 0,
+              provenance: [],
             });
             log.evolution.info(`   🌟 Positive Pattern: "${parsed.pattern}"`);
           }

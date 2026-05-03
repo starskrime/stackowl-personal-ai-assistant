@@ -598,6 +598,9 @@ export class KnowledgeSynthesizer {
       ],
       version: 1,
       content: content.slice(0, 2000),
+      successCount: 0,
+      failureCount: 0,
+      provenance: [],
     };
   }
 

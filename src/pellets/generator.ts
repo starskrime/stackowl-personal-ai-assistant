@@ -103,6 +103,9 @@ export class PelletGenerator {
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
       version: 1,
       content: parsed.content || "Content generation failed.",
+      successCount: 0,
+      failureCount: 0,
+      provenance: [],
     };
   }
 }

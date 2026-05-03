@@ -213,6 +213,9 @@ export class KnowledgeResearcher {
       tags: [domain.toLowerCase(), "self-study", "knowledge"],
       version: 1,
       content: cleanContent,
+      successCount: 0,
+      failureCount: 0,
+      provenance: [],
     };
 
     await this.pelletStore.save(pellet);

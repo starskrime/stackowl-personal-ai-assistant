@@ -41,6 +41,9 @@ export interface Pellet {
   supersedes?: string;
   mergedFrom?: string[];
   lastMergedAt?: string;
+  successCount: number;
+  failureCount: number;
+  provenance: string[];
 }
 
 // ─── PelletStore ─────────────────────────────────────────────────
@@ -159,6 +162,9 @@ export class PelletStore {
         tags: Array.isArray(data.tags) ? data.tags : [],
         version: data.version || 1,
         content: content.trim(),
+        successCount: 0,
+        failureCount: 0,
+        provenance: [],
       };
       if (data.supersedes) p.supersedes = data.supersedes;
       if (Array.isArray(data.merged_from)) p.mergedFrom = data.merged_from;

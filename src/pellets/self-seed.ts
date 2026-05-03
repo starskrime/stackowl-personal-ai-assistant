@@ -35,6 +35,9 @@ function makePellet(
     tags,
     content,
     version: 1,
+    successCount: 0,
+    failureCount: 0,
+    provenance: [],
   };
 }
 

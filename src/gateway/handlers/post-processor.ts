@@ -773,6 +773,9 @@ export class PostProcessor {
             `## References`,
             `Corrects gap-learning pellet: ${pelletId}`,
           ].join("\n"),
+          successCount: 0,
+          failureCount: 0,
+          provenance: [],
         };
         await pelletStore.save(correctionPellet, { skipDedup: true });
         log.engine.info(`[PostProcessor] Gap correction saved for pellet ${pelletId}`);
