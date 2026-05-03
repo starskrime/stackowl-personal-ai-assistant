@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1190,9 +1190,14 @@ export class MemoryDatabase {
     }
     if (current < 19) {
       applyV19Migration(this.db);
+      this.db.pragma(`user_version = 19`);
     }
+    if (current < 20) {
+      applyV20Migration(this.db);
+      this.db.pragma(`user_version = 20`);
+    }
+    // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
-      this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
       log.engine.info(`[MemoryDatabase] Schema migrated to v${SCHEMA_VERSION}`);
     }
   }
@@ -3166,7 +3171,11 @@ export class StackOwlDB {
     }
     if (current < 19) {
       applyV19Migration(this.db);
-      this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
+      this.db.pragma(`user_version = 19`);
+    }
+    if (current < 20) {
+      applyV20Migration(this.db);
+      this.db.pragma(`user_version = 20`);
     }
   }
 }
@@ -3282,6 +3291,33 @@ function applyV19Migration(db: Database.Database): void {
   }
 }
 
+function applyV20Migration(db: Database.Database): void {
+  // Ensure trajectory_turns exists (may not exist in minimal test DBs or StackOwlDB)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS trajectory_turns (
+      id                  TEXT PRIMARY KEY,
+      trajectory_id       TEXT NOT NULL,
+      turn_index          INTEGER NOT NULL,
+      role                TEXT NOT NULL,
+      content             TEXT NOT NULL,
+      tool_name           TEXT,
+      tool_input          TEXT,
+      tool_output         TEXT,
+      created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      parliament_session_id TEXT
+    );
+  `);
+  // Guard: only create the index if trajectory_id column exists (table may have pre-existed without it)
+  const turnCols = (db.prepare("PRAGMA table_info(trajectory_turns)").all() as { name: string }[]).map(c => c.name);
+  if (turnCols.includes("trajectory_id")) {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_traj ON trajectory_turns(trajectory_id);`);
+  }
+  // Guard: add parliament_session_id column if table already existed without it
+  if (!turnCols.includes("parliament_session_id")) {
+    db.exec(`ALTER TABLE trajectory_turns ADD COLUMN parliament_session_id TEXT;`);
+  }
+}
+
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
  * Accepts an in-memory or on-disk Database instance; idempotent.
@@ -3355,6 +3391,9 @@ export function applyMigrations(db: Database.Database): void {
   }
   if (current < 19) {
     applyV19Migration(db);
+  }
+  if (current < 20) {
+    applyV20Migration(db);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }

@@ -20,8 +20,8 @@ describe('schema v19 — clarification_asked column', () => {
     expect(col!.dflt_value).toBe('0');
   });
 
-  it('schema version is 19', () => {
+  it('schema version is 20', () => {
     const v = (db.pragma('user_version') as Array<{ user_version: number }>)[0].user_version;
-    expect(v).toBe(19);
+    expect(v).toBe(20);
   });
 });
