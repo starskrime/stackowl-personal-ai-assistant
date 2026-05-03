@@ -24,7 +24,7 @@ export class KnowledgeGraphLayer implements ContextLayer {
 export class RelevantPelletsLayer implements ContextLayer {
   name = "RelevantPelletsLayer";
   priority = 115;
-  maxTokens = 500;
+  maxTokens = 1_000;
   produces = ["pellets"];
   dependsOn = [];
   getCacheKey(): string | null { return null; }
@@ -34,11 +34,14 @@ export class RelevantPelletsLayer implements ContextLayer {
     const pelletStore = req.deps.pelletStore;
     if (!pelletStore) return "";
     try {
-      const pellets = await pelletStore.search(t.userMessage);
-      if (!pellets.length) return "";
+      const scored = await (pelletStore as any).searchWithGraphScored(t.userMessage, 5) as Array<{ p: import("../../pellets/store.js").Pellet; score: number }>;
+      if (!scored.length) return "";
+
+      req.retrievedPelletIds = scored.map((s) => s.p.id);
+
       const lines = ["<relevant_pellets>"];
-      for (const p of pellets.slice(0, 3)) {
-        lines.push(`  <pellet title="${p.title}">${p.content.slice(0, 300)}</pellet>`);
+      for (const { p } of scored) {
+        lines.push(`  <pellet title="${p.title}">${p.content.slice(0, 500)}</pellet>`);
       }
       lines.push("</relevant_pellets>");
       return lines.join("\n");

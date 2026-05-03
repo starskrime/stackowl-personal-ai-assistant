@@ -46,6 +46,7 @@ export interface ContextRequest {
   readonly continuityResult: ContinuityResult | null;
   readonly digest: ConversationDigest | null;
   readonly deps: ContextDependencies;
+  retrievedPelletIds?: string[];
 }
 
 export type LayerResults = ReadonlyMap<string, string>;

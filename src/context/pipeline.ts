@@ -21,6 +21,7 @@ export class ContextPipeline {
     priority: number;
     ttlTurns: number;
   }>();
+  public lastRetrievedPelletIds: string[] = [];
 
   constructor(
     private readonly layers: ContextLayer[],
@@ -94,6 +95,8 @@ export class ContextPipeline {
     log.engine.info(
       `ContextPipeline: ${trace.length} layers, ${trace.filter((t) => t.fired).length} fired`,
     );
+
+    this.lastRetrievedPelletIds = request.retrievedPelletIds ?? [];
 
     return { output, trace };
   }
