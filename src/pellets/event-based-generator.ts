@@ -81,27 +81,6 @@ function extractEvolutionData(payload: {
   };
 }
 
-function extractDecisionData(payload: {
-  sessionId: string;
-  channelId: string;
-  userId: string;
-  content: string;
-  owlName: string;
-  toolsUsed: string[];
-}): ExtractedEventData | null {
-  const hasDecision = payload.content.includes("decision") ||
-    payload.content.includes("decided") ||
-    payload.content.includes("conclusion") ||
-    payload.content.includes("recommendation");
-  if (!hasDecision || !payload.toolsUsed?.length) return null;
-  return {
-    sourceName: `decision:${payload.sessionId}`,
-    sourceMaterial: `Owl "${payload.owlName}" made a decision using tools [${payload.toolsUsed.join(", ")}]. Decision: ${payload.content.slice(0, 1000)}.`,
-    tags: ["decision-capture", "tool-driven"],
-    owlsInvolved: [payload.owlName],
-  };
-}
-
 // ─── Event-Based Pellet Generator ───────────────────────────────
 
 export class EventBasedPelletGenerator {
@@ -237,14 +216,34 @@ export class EventBasedPelletGenerator {
     owlName: string;
     toolsUsed: string[];
   }): Promise<void> {
-    const data = extractDecisionData(payload);
-    if (!data) return;
+    if (!payload.toolsUsed?.length) return;
 
-    log.engine.info(
-      `[EventBasedPelletGenerator] Decision detected — generating pellet`,
+    let isSignificant = false;
+    try {
+      const raw = await this.router.resolve(
+        "classification",
+        `Classify this AI assistant response:\n"${payload.content.slice(0, 500)}"\n\n` +
+        `Reply with JSON only: {"isDecision":bool,"isInsight":bool,"isCorrection":bool}`,
+      );
+      const classification = JSON.parse(raw.trim());
+      isSignificant = classification.isDecision || classification.isInsight || classification.isCorrection;
+    } catch {
+      isSignificant = false;
+    }
+
+    if (!isSignificant) return;
+
+    log.engine.info(`[EventBasedPelletGenerator] Decision/insight detected — generating pellet`);
+
+    await this.generateFromEvent(
+      {
+        sourceName: `decision:${payload.sessionId}`,
+        sourceMaterial: `Owl "${payload.owlName}" made a decision using tools [${payload.toolsUsed.join(", ")}]. Decision: ${payload.content.slice(0, 1000)}.`,
+        tags: ["decision-capture", "tool-driven"],
+        owlsInvolved: [payload.owlName],
+      },
+      "decision-capture",
     );
-
-    await this.generateFromEvent(data, "decision-capture");
   }
 
   /**
