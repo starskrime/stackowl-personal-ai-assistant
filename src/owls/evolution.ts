@@ -702,6 +702,59 @@ export class OwlEvolutionEngine {
   }
 }
 
+function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+/**
+ * Updates Parliament participants' DNA after a completed debate session.
+ * Only mutates when GoalVerifier returned ADVANCES.
+ * Follows the same proportional-delta pattern as updateClarificationAutonomy().
+ *
+ * Mutations are in-memory only. The caller (gateway/core.ts) is responsible
+ * for persisting via owlRegistry.saveDNA() for each participant.
+ */
+export async function updateParliamentDNA(
+  synthesizer: import('./persona.js').OwlInstance | undefined,
+  challenger: import('./persona.js').OwlInstance | undefined,
+  participants: import('./persona.js').OwlInstance[],
+  _verdict: string,
+  topicCategory: string,
+  _db: import('../memory/db.js').MemoryDatabase,
+  goalVerifierResult: 'ADVANCES' | 'PARTIAL' | 'BLOCKED' | 'NEUTRAL',
+): Promise<void> {
+  if (goalVerifierResult !== 'ADVANCES') return;
+
+  try {
+    const LEARNING_RATE = 0.05;
+
+    if (synthesizer) {
+      synthesizer.dna.expertiseGrowth[topicCategory] = clamp(
+        (synthesizer.dna.expertiseGrowth[topicCategory] ?? 0.5) + LEARNING_RATE,
+        0.1, 0.9,
+      );
+    }
+
+    if (challenger) {
+      const ctKey = 'critical_thinking';
+      // Challenger's critical_thinking grows at half the rate of the synthesizer's topic gain.
+      // Derive from synthesizer's new value so the ratio holds regardless of starting point.
+      const synthNewValue = synthesizer
+        ? (synthesizer.dna.expertiseGrowth[topicCategory] ?? 0.5)
+        : 0.5 + LEARNING_RATE;
+      challenger.dna.expertiseGrowth[ctKey] = clamp(synthNewValue / 2, 0.1, 0.9);
+    }
+
+    for (const owl of participants) {
+      if (owl.dna.evolvedTraits.delegationPreference === 'autonomous') {
+        const key = 'delegation_autonomy';
+        const current = (owl.dna.learnedPreferences[key] as number) ?? 0.5;
+        owl.dna.learnedPreferences[key] = clamp(current - LEARNING_RATE, 0.1, 0.9);
+      }
+    }
+  } catch { /* non-fatal — DNA mutation failures must not crash Parliament */ }
+}
+
 /**
  * Updates clarification_autonomy_score in DNA based on reward signal.
  * Called from evolve() after trait mutation. Uses proportional delta (not Math.sign).
