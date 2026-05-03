@@ -46,6 +46,8 @@ export class TaskQueue {
   private config: TaskQueueConfig;
   private queue: QueuedTask[] = [];
   private active = 0;
+  private activeHigh = 0;
+  private criticalDrainResolvers: Array<() => void> = [];
   private stats = { completed: 0, failed: 0 };
 
   constructor(config?: Partial<TaskQueueConfig>) {
@@ -102,6 +104,16 @@ export class TaskQueue {
     }
   }
 
+  /** Wait until all high-priority tasks are dequeued and completed. */
+  drainCritical(): Promise<void> {
+    if (!this.queue.some(t => t.priority === "high") && this.activeHigh === 0) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.criticalDrainResolvers.push(resolve);
+    });
+  }
+
   getStats(): TaskQueueStats {
     return {
       pending: this.queue.length,
@@ -115,6 +127,7 @@ export class TaskQueue {
     while (this.active < this.config.concurrency && this.queue.length > 0) {
       const task = this.queue.shift()!;
       this.active++;
+      if (task.priority === "high") this.activeHigh++;
 
       const startMs = Date.now();
       task
@@ -140,8 +153,26 @@ export class TaskQueue {
           );
         })
         .finally(() => {
+          const wasHigh = task.priority === "high";
+          if (wasHigh) this.activeHigh--;
           this.active--;
-          this.processNext();
+
+          const hasPendingCritical = wasHigh &&
+            this.activeHigh === 0 &&
+            !this.queue.some(t => t.priority === "high") &&
+            this.criticalDrainResolvers.length > 0;
+
+          if (hasPendingCritical) {
+            // Fire resolvers first (as microtasks), then schedule processNext
+            // so drainCritical consumers observe completion before normal tasks start.
+            const resolvers = this.criticalDrainResolvers.splice(0);
+            Promise.resolve().then(() => {
+              for (const resolve of resolvers) resolve();
+            });
+            setTimeout(() => this.processNext(), 0);
+          } else {
+            this.processNext();
+          }
         });
     }
   }
