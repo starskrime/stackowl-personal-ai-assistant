@@ -109,6 +109,21 @@ export class ProactiveJobQueue {
       CREATE INDEX IF NOT EXISTS idx_pj_user
         ON proactive_jobs (user_id, status);
     `);
+
+    // v22 columns — idempotent ALTER guards mirror applyV22Migration in
+    // src/memory/db.ts. Required for the standalone-fallback path so Task 6
+    // retry/suppress writes don't fail against a fresh proactive-jobs.db.
+    const cols = (this.db.pragma("table_info(proactive_jobs)") as { name: string }[]).map(c => c.name);
+    if (!cols.includes("retry_count")) {
+      this.db.exec(`ALTER TABLE proactive_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!cols.includes("suppress_count")) {
+      this.db.exec(`ALTER TABLE proactive_jobs ADD COLUMN suppress_count INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!cols.includes("goal_id")) {
+      this.db.exec(`ALTER TABLE proactive_jobs ADD COLUMN goal_id TEXT`);
+    }
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_pj_goal ON proactive_jobs (goal_id, status)`);
   }
 
   // ─── Enqueue ─────────────────────────────────────────────────
