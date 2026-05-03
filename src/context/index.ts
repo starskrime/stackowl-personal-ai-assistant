@@ -20,6 +20,7 @@ import { BehavioralPatchLayer, ActiveIntentsLayer, OwlLearningsLayer } from "./l
 import { TemporalAwarenessLayer, ChannelFormatHintLayer, ModeDirectiveLayer, SocraticModeLayer } from "./layers/infrastructure.js";
 import { UnifiedMemoryRetrievalLayer } from "./layers/memory-retrieval.js";
 import { KnowledgeGraphLayer, RelevantPelletsLayer } from "./layers/knowledge.js";
+import { PredictiveContextLayer } from "./layers/predictive.js";
 import { UserBehaviorProfileLayer, InferredPreferencesLayer, PredictedNeedsLayer } from "./layers/profile.js";
 import { CollabContextLayer, AmbientContextLayer } from "./layers/ambient.js";
 import { DepthDirectiveLayer, OpinionInjectionLayer, UserMentalModelLayer, EchoChamberGuardLayer, GroundStateLayer } from "./layers/calibration.js";
@@ -66,6 +67,7 @@ export function createContextPipeline(deps: ContextPipelineDeps): ContextPipelin
     new OwlLearningsLayer(),
     new UnifiedMemoryRetrievalLayer(deps.unifiedMemoryRetriever),
     new KnowledgeGraphLayer(),
+    new PredictiveContextLayer(),
     new RelevantPelletsLayer(),
     new UserBehaviorProfileLayer(),
     new InferredPreferencesLayer(),
