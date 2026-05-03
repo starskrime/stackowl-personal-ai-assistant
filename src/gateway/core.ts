@@ -391,14 +391,6 @@ export class OwlGateway {
       this.userMentalModel,
     );
 
-    // Attach GoalExtractor to PostProcessor (Phase 1)
-    if (ctx.db && ctx.provider) {
-      import("../agent/goal-extractor.js").then(({ GoalExtractor }) => {
-        const extractor = new GoalExtractor(ctx.provider, ctx.db!);
-        this.postProcessor.setGoalExtractor(extractor);
-      }).catch(() => {});
-    }
-
     // Built-in middleware
     this.middleware.push(new LoggingMiddleware());
     if (ctx.config.gateway?.rateLimit) {
