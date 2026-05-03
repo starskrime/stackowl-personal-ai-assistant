@@ -300,6 +300,27 @@ export class PelletStore {
     }
   }
 
+  /**
+   * Feed GoalVerifier verdict back into retrieved pellets' quality counters.
+   * ADVANCES/PARTIAL → successCount++; BLOCKED → failureCount++; NEUTRAL → no-op.
+   * Non-fatal per ID — a single DB error does not abort the batch.
+   */
+  async recordOutcome(
+    ids: string[],
+    verdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL",
+  ): Promise<void> {
+    if (verdict === "NEUTRAL") return;
+    const successDelta = verdict === "ADVANCES" || verdict === "PARTIAL" ? 1 : 0;
+    const failureDelta = verdict === "BLOCKED" ? 1 : 0;
+    for (const id of ids) {
+      try {
+        await this.lance.updateCounters(id, successDelta, failureDelta);
+      } catch (err) {
+        log.engine.warn(`[PelletStore] recordOutcome failed for ${id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
   // ─── Search ────────────────────────────────────────────────────
 
   /**
@@ -366,6 +387,31 @@ export class PelletStore {
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map((s) => s.pellet);
+  }
+
+  /**
+   * Graph-expanded search with quality re-ranking.
+   * Returns pellets scored by: vectorScore * 0.8 + (successCount / (successCount + failureCount + 1)) * 0.2
+   * Used by RelevantPelletsLayer to surface proven pellets first.
+   */
+  async searchWithGraphScored(
+    query: string,
+    limit = 5,
+  ): Promise<Array<{ p: Pellet; score: number }>> {
+    const pellets = await this.searchWithGraph(query, limit * 2);
+    if (pellets.length === 0) return [];
+
+    // searchWithGraph returns pellets sorted by vector score descending.
+    // Assign a proxy vector score based on rank position using the fetch budget
+    // (limit * 2) as the normaliser — rank 0 scores ~0.9, rank 1 ~0.8, etc.
+    const fetchBudget = limit * 2;
+    const scored = pellets.map((p, i) => {
+      const vectorScore = 1 - (i + 1) / fetchBudget;
+      const qualityScore = p.successCount / (p.successCount + p.failureCount + 1);
+      return { p, score: vectorScore * 0.8 + qualityScore * 0.2 };
+    });
+
+    return scored.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   // ─── Keyword fallback (no embedder) ────────────────────────────

@@ -316,6 +316,21 @@ export class LancePelletStore {
     return hits.filter((h) => h.pellet.id !== pellet.id).slice(0, limit);
   }
 
+  /**
+   * Increment success/failure counters for a pellet without re-embedding.
+   * Uses LanceDB valuesSql to do the increment in-place.
+   */
+  async updateCounters(id: string, successDelta: number, failureDelta: number): Promise<void> {
+    this.assertReady();
+    if (successDelta === 0 && failureDelta === 0) return;
+    // Escape single quotes in ID to prevent SQL injection
+    const escapedId = id.replace(/'/g, "''");
+    const sets: { [col: string]: string } = {};
+    if (successDelta !== 0) sets["success_count"] = `success_count + ${successDelta}`;
+    if (failureDelta !== 0) sets["failure_count"] = `failure_count + ${failureDelta}`;
+    await (this.table as any).update({ where: `id = '${escapedId}'`, valuesSql: sets });
+  }
+
   // ─── Migration ─────────────────────────────────────────────────
 
   /**
