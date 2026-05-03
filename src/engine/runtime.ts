@@ -105,8 +105,6 @@ export interface EngineContext {
   taskStore?: import("../tasks/store.js").TaskStore;
   /** Current background task ID (set when running as a background task) */
   backgroundTaskId?: string;
-  /** RAG-based pellet search — replaces brute-force pellet injection */
-  pelletSearch?: import("../pellets/search.js").PelletSearch;
   /** Diagnostic engine for multi-hypothesis error analysis */
   diagnosticEngine?: DiagnosticEngine;
   /** Depth mode: "quick" (default) or "deep" (multi-iteration research with self-check) */

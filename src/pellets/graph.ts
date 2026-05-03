@@ -18,7 +18,6 @@ import Graph from "graphology";
 import { bfsFromNode } from "graphology-traversal";
 import { connectedComponents } from "graphology-components";
 import type { Pellet, PelletStore } from "./store.js";
-import type { TfIdfEngine } from "./tfidf.js";
 import {
   extractConcepts,
   createConceptIndex,
@@ -76,6 +75,10 @@ const BM25_CANDIDATES = 5;
 
 // ─── PelletGraph ────────────────────────────────────────────────
 
+/**
+ * @deprecated PelletGraph is deprecated in favor of KuzuPelletGraph.
+ * TF-IDF engine has been removed. This class is no longer instantiated.
+ */
 export class PelletGraph {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private graph: any;
@@ -84,7 +87,6 @@ export class PelletGraph {
 
   constructor(
     private pelletStore: PelletStore,
-    private tfidf: TfIdfEngine,
   ) {
     // Resolve CJS/ESM default export
     const G = (
@@ -211,39 +213,11 @@ export class PelletGraph {
   }
 
   /**
-   * Find related pellets by query — combines BM25 search with graph traversal.
-   * First finds top BM25 matches, then expands via graph neighbors.
+   * @deprecated BM25 search is no longer available. Use KuzuPelletGraph instead.
    */
   findRelatedByQuery(query: string, limit = 10): RelatedPellet[] {
-    const bm25Results = this.tfidf.search(query, 3);
-    if (bm25Results.length === 0) return [];
-
-    const allRelated = new Map<string, RelatedPellet>();
-
-    for (const { id } of bm25Results) {
-      const neighbors = this.findRelated(id, 2, limit);
-      for (const neighbor of neighbors) {
-        const existing = allRelated.get(neighbor.id);
-        if (!existing || neighbor.weight > existing.weight) {
-          allRelated.set(neighbor.id, neighbor);
-        }
-      }
-      // Include the BM25 match itself
-      if (!allRelated.has(id) && this.graph.hasNode(id)) {
-        const attrs = this.graph.getNodeAttributes(id) as PelletNodeAttrs;
-        allRelated.set(id, {
-          id,
-          title: attrs.title,
-          weight: 10, // High weight for direct BM25 matches
-          hops: 0,
-          sources: ["bm25-direct"],
-        });
-      }
-    }
-
-    return [...allRelated.values()]
-      .sort((a, b) => b.weight - a.weight)
-      .slice(0, limit);
+    // BM25 removed; return empty array
+    return [];
   }
 
   /**
@@ -365,34 +339,9 @@ export class PelletGraph {
   }
 
   private async buildBm25Edges(pellets: Pellet[]): Promise<void> {
+    // BM25 edges removed — TF-IDF engine is deprecated
+    // Yield to keep event loop responsive
     for (let i = 0; i < pellets.length; i++) {
-      const pellet = pellets[i];
-      const query = `${pellet.title} ${pellet.content.slice(0, 200)}`;
-      const selfScore = this.tfidf.selfScore({
-        title: pellet.title,
-        tags: pellet.tags.join(" "),
-        content: pellet.content,
-      });
-
-      if (selfScore <= 0) continue;
-
-      const candidates = this.tfidf
-        .search(query, BM25_CANDIDATES + 1)
-        .filter((r) => r.id !== pellet.id);
-
-      for (const { id: otherId, score } of candidates) {
-        const similarity = score / selfScore;
-        if (similarity >= BM25_EDGE_THRESHOLD) {
-          this.addOrUpdateEdge(
-            pellet.id,
-            otherId,
-            similarity * BM25_WEIGHT,
-            "bm25",
-          );
-        }
-      }
-
-      // Yield every 50 pellets so the event loop stays responsive during startup
       if (i % 50 === 49) {
         await new Promise<void>(r => setImmediate(r));
       }

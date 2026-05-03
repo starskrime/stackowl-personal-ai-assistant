@@ -215,7 +215,6 @@ import { EventBasedPelletGenerator } from "./pellets/event-based-generator.js";
 import { PelletRetriever } from "./pellets/pellet-retriever.js";
 import { KnowledgeBase } from "./pellets/knowledge-base.js";
 import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
-import { SemanticDeduplicator } from "./pellets/semantic-dedup.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
 
@@ -938,18 +937,6 @@ async function buildGateway(
   }, 30_000);
   log.engine.info("[Init] ProactiveKnowledgeGenerator scheduled");
 
-  // SemanticDeduplicator — enhanced deduplication (Epic 7.5)
-  // Note: PelletStore already uses PelletDeduplicator from dedup.ts for save-time dedup.
-  // SemanticDeduplicator can be used for pre-save deduplication checks or batch operations.
-  const semanticDedup = new SemanticDeduplicator(
-    async (pellet, limit) => {
-      const threshold = 0.35;
-      const results = await b.pelletStore.search(pellet.content, limit, threshold);
-      return results.map((p) => ({ pellet: p, score: 1 - threshold }));
-    },
-    provider,
-  );
-
   // Self-Learning Coordinator — wires SignalBus, MutationTracker, and UserPreferenceModel
   const selfLearningCoordinator = new SelfLearningCoordinator(
     b.microLearner,
@@ -1186,7 +1173,6 @@ async function buildGateway(
     knowledgeBase,
     proactiveGenerator,
     eventBasedGenerator,
-    semanticDedup,
   });
 
   return gateway;

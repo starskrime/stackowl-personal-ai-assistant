@@ -34,7 +34,6 @@ import { createHash } from "node:crypto";
 import type { ToolDefinition } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { ToolTracker } from "./tracker.js";
-import { TfIdfEngine } from "../pellets/tfidf.js";
 import { log } from "../logger.js";
 
 export type ToolMatchMethod =
@@ -55,7 +54,6 @@ export class ToolIntentRouter {
   private definitions: ToolDefinition[] = [];
   private provider: ModelProvider | null;
   private tracker: ToolTracker | null;
-  private tfidf: TfIdfEngine;
   private cache: Map<string, ToolMatch[]> = new Map();
   private static readonly MAX_CACHE = 200;
   private static readonly AMBIGUITY_THRESHOLD = 0.2;
@@ -65,33 +63,14 @@ export class ToolIntentRouter {
   constructor(provider?: ModelProvider, tracker?: ToolTracker) {
     this.provider = provider ?? null;
     this.tracker = tracker ?? null;
-    this.tfidf = new TfIdfEngine("/dev/null");
   }
 
   /** Rebuild the BM25 index from current tool definitions */
   reindex(definitions: ToolDefinition[]): void {
     this.definitions = definitions;
-
-    for (const def of definitions) {
-      this.tfidf.removeDocument(def.name);
-    }
-
-    for (const def of definitions) {
-      const paramSchema = def.parameters?.properties ?? {};
-      const paramSummary = Object.entries(paramSchema)
-        .map(([k, v]) => `${k}: ${v.description}`)
-        .join(" ");
-
-      this.tfidf.addDocument(def.name, {
-        title: def.name,
-        tags: def.description,
-        content: paramSummary,
-      });
-    }
-
     this.cache.clear();
     log.engine.debug(
-      `[ToolIntentRouter] Indexed ${definitions.length} tools for BM25 retrieval`,
+      `[ToolIntentRouter] Indexed ${definitions.length} tools (BM25 deprecated, using simple fallback)`,
     );
   }
 
@@ -109,27 +88,19 @@ export class ToolIntentRouter {
       return cached.slice(0, maxTools);
     }
 
-    const bm25Results = this.tfidf.search(
-      userMessage,
-      ToolIntentRouter.BM25_RETRIEVAL_LIMIT,
-    );
-
-    if (bm25Results.length === 0) {
-      log.engine.debug("[ToolIntentRouter] No BM25 matches found");
+    // BM25 search deprecated; return all definitions with equal scores
+    if (this.definitions.length === 0) {
+      log.engine.debug("[ToolIntentRouter] No tools available");
       return [];
     }
 
-    let matches: ToolMatch[] = [];
-    for (const result of bm25Results) {
-      const def = this.definitions.find((d) => d.name === result.id);
-      if (!def) continue;
-
-      matches.push({
+    let matches: ToolMatch[] = this.definitions
+      .slice(0, ToolIntentRouter.BM25_RETRIEVAL_LIMIT)
+      .map((def) => ({
         definition: def,
-        score: result.score,
-        method: "bm25",
-      });
-    }
+        score: 0.5, // Equal fallback score
+        method: "bm25" as const,
+      }));
 
     // Tier 2: Usage-weighted re-ranking
     if (this.tracker) {

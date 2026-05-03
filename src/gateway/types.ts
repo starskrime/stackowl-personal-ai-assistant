@@ -341,7 +341,6 @@ export interface GatewayContext {
   knowledgeBase?: import("../pellets/knowledge-base.js").KnowledgeBase;
   proactiveGenerator?: import("../pellets/proactive-generator.js").ProactiveKnowledgeGenerator;
   eventBasedGenerator?: import("../pellets/event-based-generator.js").EventBasedPelletGenerator;
-  semanticDedup?: import("../pellets/semantic-dedup.js").SemanticDeduplicator;
 
   // ─── Intelligence Router (tiered model routing) ───────────
   intelligence?: import("../intelligence/router.js").IntelligenceRouter;

@@ -37,7 +37,6 @@ import type { ModelProvider } from "../providers/base.js";
 import type { Skill } from "./types.js";
 import type { SkillsRegistry } from "./registry.js";
 import type { SkillTracker } from "./tracker.js";
-import { TfIdfEngine } from "../pellets/tfidf.js";
 import { log } from "../logger.js";
 
 export type MatchMethod =
@@ -58,7 +57,6 @@ export class IntentRouter {
   private registry: SkillsRegistry;
   private provider: ModelProvider | null;
   private tracker: SkillTracker | null;
-  private tfidf: TfIdfEngine;
   private cache: Map<string, IntentMatch[]> = new Map();
   /** Skill description embedding cache — computed once at startup, reused for every semantic re-rank */
   private skillEmbeddingCache: Map<string, number[]> = new Map();
@@ -73,8 +71,6 @@ export class IntentRouter {
     this.registry = registry;
     this.provider = provider ?? null;
     this.tracker = tracker ?? null;
-    // In-memory TF-IDF — no disk persistence (rebuilt on startup)
-    this.tfidf = new TfIdfEngine("/dev/null");
     this.reindex();
   }
 
@@ -108,25 +104,8 @@ export class IntentRouter {
   /** Rebuild the BM25 index from current registry contents */
   reindex(): void {
     const skills = this.registry.listEnabled();
-
-    // Remove all existing documents first
-    for (const skill of this.registry.listAll()) {
-      this.tfidf.removeDocument(skill.name);
-    }
-
-    for (const skill of skills) {
-      // Convert snake_case to space-separated for better BM25 matching
-      const spacedName = skill.name.replace(/_/g, " ");
-
-      this.tfidf.addDocument(skill.name, {
-        title: spacedName,
-        tags: skill.description,
-        content: skill.instructions,
-      });
-    }
-
     log.engine.debug(
-      `[IntentRouter] Indexed ${skills.length} skills for BM25 retrieval`,
+      `[IntentRouter] Indexed ${skills.length} skills (BM25 deprecated, using simple fallback)`,
     );
   }
 
@@ -143,26 +122,20 @@ export class IntentRouter {
       return cached.slice(0, maxResults);
     }
 
-    // 2. BM25 retrieval (top 25 — semantic re-ranking will narrow further)
-    const bm25Results = this.tfidf.search(userMessage, 25);
-
-    if (bm25Results.length === 0) {
-      log.engine.debug("[IntentRouter] No BM25 matches found");
+    // 2. BM25 retrieval deprecated; return enabled skills with equal scores
+    const skills = this.registry.listEnabled();
+    if (skills.length === 0) {
+      log.engine.debug("[IntentRouter] No skills available");
       return [];
     }
 
-    // Map BM25 results to IntentMatch
-    let matches: IntentMatch[] = [];
-    for (const result of bm25Results) {
-      const skill = this.registry.get(result.id);
-      if (!skill) continue;
-
-      matches.push({
+    let matches: IntentMatch[] = skills
+      .slice(0, 25)
+      .map((skill) => ({
         skill,
-        score: result.score,
-        method: "bm25",
-      });
-    }
+        score: 0.5, // Equal fallback score
+        method: "bm25" as const,
+      }));
 
     // 3. Usage-weighted re-ranking (boost by recency-adjusted success rate)
     if (this.tracker) {
