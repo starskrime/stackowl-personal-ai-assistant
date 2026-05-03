@@ -18,7 +18,7 @@
 | 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
 | 7 | Tool layer (registry, execution, permissions) | 🔧 Phase 7a + 7d complete — 633 tests passing. Phase 7b/7c gated on production data. | 2026-05-02 |
-| 8 | PostProcessor (save, learn, evolve, queue) | ⬜ pending | — |
+| 8 | PostProcessor (save, learn, evolve, queue) | 🔧 reviewed — improvements committed | 2026-05-02 |
 | 9 | Parliament (multi-owl debate) | ⬜ pending | — |
 | 10 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
 | 11 | Heartbeat (proactive messages, job queue) | ⬜ pending | — |
@@ -378,6 +378,44 @@ GROUP BY verification_result;
 #### ⏰ Phase 7c Readiness Gate — CHECK DATE: ~2026-05-23
 
 After Phase 7b has run ~2 weeks in production, evaluate Phase 7c (SET + FPC). Check `tool_edges` table has ≥50 rows with meaningful success_rate variance before starting.
+
+---
+
+## Element 8: PostProcessor — Priority Pipeline, Bidirectional Wiring & Telemetry
+
+### Status: 🔧 Implemented + merged
+
+### Scope
+`src/gateway/handlers/post-processor.ts`, `src/queue/task-queue.ts`,
+`src/memory/db.ts` (schema v18), `src/context/layer.ts`,
+`src/context/layers/knowledge.ts`, `src/context/layers/predictive.ts` (new),
+`src/context/index.ts`, `src/gateway/handlers/context-builder.ts`,
+`src/knowledge/graph.ts`, `src/gateway/core.ts`
+
+### Findings
+- 23 PostProcessor jobs with no priority system; slow dna-evolve blocked fast digest-update
+- 11/23 jobs had no error handling — silent failures
+- 4 zombie jobs (knowledge-extract, timeline-snapshot, goal-extraction, predictive-prep) wrote to storage but no context layer ever read the output
+- 3 synchronous calls (coordinator.processMessage, patternAnalyzer.recordAction, sentimentProbe) had no guard — any crash aborted process()
+- KnowledgeGraphLayer read from (req.session as any).knowledgeGraphContext — a cast never populated
+- PredictiveQueue had no context layer at all
+
+### Improvements Implemented
+- **Three-tier TaskQueue**: CRITICAL(high) / STANDARD(normal) / BACKGROUND(low) — drainCritical() awaited in handleCore() before next LLM call
+- **Schema v18**: post_processor_job_runs telemetry table — every job records success/failure/duration
+- **enqueueJob() wrapper**: all jobs converted, error telemetry automatic, no more silent failures
+- **Decision 9 guards**: try/catch on coordinator.processMessage, patternAnalyzer, sentimentProbe arm/onNextMessage
+- **Decision 8 null guard**: ctx.db!.rawDb → ctx.db?.rawDb optional chaining
+- **Zombie removal**: timeline-snapshot, goal-extraction (+ setGoalExtractor, maybeExtractGoals) removed; knowledge-extract re-added at 10-message BACKGROUND interval
+- **KnowledgeGraphLayer**: rewritten to read from req.deps.knowledgeGraph via new queryContext() method — genuinely bidirectional
+- **PredictiveContextLayer**: new — reads getReadyTasks() from PredictiveQueue, injects <predicted_next> block into system prompt
+- **ContextDependencies**: knowledgeGraph + predictiveQueue wired from GatewayContext via context-builder.ts
+
+### Schema
+- v18: post_processor_job_runs(job_name, tier, success, error_code, duration_ms, user_id, session_id, ts)
+
+### Bidirectionality map: 21 active jobs, all with confirmed read-back paths
+- Spec: docs/superpowers/specs/2026-05-02-postprocessor-element8-design.md
 
 ---
 
