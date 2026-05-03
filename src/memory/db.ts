@@ -3142,7 +3142,7 @@ export class StackOwlDB {
     }
     if (current < 18) {
       applyV18Migration(this.db);
-      this.db.pragma(`user_version = 18`);
+      this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
     }
   }
 }
@@ -3236,7 +3236,7 @@ function applyV18Migration(db: Database.Database): void {
       duration_ms  INTEGER,
       user_id      TEXT,
       session_id   TEXT,
-      ts           TEXT    DEFAULT (datetime('now'))
+      ts           TEXT    NOT NULL  DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_ppjr_job_ts
       ON post_processor_job_runs(job_name, ts);
