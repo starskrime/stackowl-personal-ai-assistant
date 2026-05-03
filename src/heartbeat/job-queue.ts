@@ -266,6 +266,21 @@ export class ProactiveJobQueue {
   }
 
   /**
+   * Get the retry count for a job.
+   */
+  getRetryCount(jobId: string): number {
+    const row = this.db.prepare("SELECT retry_count FROM proactive_jobs WHERE id = ?").get(jobId) as any;
+    return row?.retry_count ?? 0;
+  }
+
+  /**
+   * Increment the retry count for a job.
+   */
+  incrementRetry(jobId: string): void {
+    this.db.prepare("UPDATE proactive_jobs SET retry_count = COALESCE(retry_count, 0) + 1 WHERE id = ?").run(jobId);
+  }
+
+  /**
    * Prune old done/failed/skipped jobs older than retentionDays.
    */
   cleanup(retentionDays = 7): number {

@@ -46,7 +46,7 @@ export interface PingContext {
   capabilityLedger: CapabilityLedger;
   toolRegistry?: ToolRegistry;
   /** Callback to send a message to the user */
-  sendToUser: (message: string) => Promise<void>;
+  sendToUser?: (message: string) => Promise<void>;
   /** Get recent session history for context */
   getRecentHistory?: () => ChatMessage[];
   /** The user ID to run consolidation for */
@@ -84,6 +84,12 @@ export interface PingContext {
   eventBus?: import("../events/bus.js").EventBus;
   /** GatewayEventBus — when set, proactive messages are routed through the delivery bus */
   gatewayEventBus?: import("../gateway/event-bus.js").GatewayEventBus;
+  /** MemoryDatabase — used to record delivery outcomes */
+  db?: import("../memory/db.js").MemoryDatabase;
+  /** Stable user identifier for delivery/engagement rows */
+  // Note: userId is already declared above; this comment is for documentation only.
+  /** DeliveryVerifier — gates outbound proactive sends */
+  deliveryVerifier?: import("./delivery-verifier.js").DeliveryVerifier;
 }
 
 export type PingType =
@@ -123,6 +129,8 @@ export class ProactivePinger {
   private lastSelfStudyDate: string = "";
   // lastDreamTime and lastSkillEvolutionDate removed — proactive learning disabled
   private unansweredPings: number = 0;
+  private lastDeliveryId: string = "";
+  private currentJobId: string = "";
   private _backgroundWorker: import("../agent/background-worker.js").BackgroundWorker | null = null;
 
   constructor(context: PingContext, config?: Partial<PingConfig>) {
@@ -270,6 +278,54 @@ export class ProactivePinger {
    * Execute a single job from the queue.
    */
   private async executeJob(job: import("./job-queue.js").ProactiveJob): Promise<void> {
+    this.currentJobId = job.id;
+    const { deliveryVerifier, db, userId, jobQueue } = this.context;
+
+    if (deliveryVerifier) {
+      let payload: any = {};
+      try { payload = job.payload ? JSON.parse(job.payload) : {}; } catch { /* keep {} */ }
+
+      const verdict = await deliveryVerifier.verify({
+        jobType: job.type,
+        goalId: payload.goalId,
+        messagePreview: payload.summary ?? "",
+        activeGoals: payload.activeGoals ?? [],
+        userId: job.userId,
+      } as any);
+
+      if (verdict.verdict === "NOISE") {
+        db?.writeProactiveDelivery({
+          id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          jobId: job.id,
+          channel: "none",
+          userId: userId ?? job.userId,
+          verdict: "NOISE",
+          status: "discarded",
+          deliveredAt: new Date().toISOString(),
+        });
+        jobQueue?.markDone(job.id);
+        log.engine.debug(`[ProactivePinger] NOISE verdict — discarded job ${job.id}: ${verdict.reason}`);
+        return;
+      }
+
+      if (verdict.verdict === "NEUTRAL") {
+        const suppressMs = ((verdict as any).suppressMinutes ?? 60) * 60_000;
+        jobQueue?.reschedule(job.id, new Date(Date.now() + suppressMs));
+        db?.writeProactiveDelivery({
+          id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          jobId: job.id,
+          channel: "none",
+          userId: userId ?? job.userId,
+          verdict: "NEUTRAL",
+          status: "suppressed",
+          deliveredAt: new Date().toISOString(),
+        });
+        log.engine.debug(`[ProactivePinger] NEUTRAL verdict — suppressed job ${job.id} for ${(verdict as any).suppressMinutes ?? 60}min`);
+        return;
+      }
+      // ADVANCES → fall through to existing switch
+    }
+
     switch (job.type) {
       case "morning_brief":
         await this.sendMorningBrief();
@@ -759,6 +815,8 @@ export class ProactivePinger {
         `📌 **Goal check-in** — you have ${stale.length} goal(s) with no recent progress:\n` +
         goalSummaries +
         `\n\nWant me to pick one and start working on it?`,
+        "goal_check",
+        this.currentJobId,
       );
     } catch (err) {
       log.engine.warn(
@@ -767,19 +825,69 @@ export class ProactivePinger {
     }
   }
 
-  private async deliverProactive(message: string): Promise<void> {
-    const { gatewayEventBus, userId } = this.context;
+  /** Returns the delivery ID of the last successfully recorded proactive delivery. */
+  getLastDeliveryId(): string {
+    return this.lastDeliveryId;
+  }
+
+  private async deliverProactive(
+    message: string,
+    _jobType: string = "unknown",
+    jobId: string = "",
+    verdict: string = "skipped_check",
+  ): Promise<void> {
+    const { gatewayEventBus, userId, db } = this.context;
+    const deliveryId = `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const channel = gatewayEventBus ? "gateway" : "direct";
+
     if (gatewayEventBus && userId) {
       gatewayEventBus.publish(makeEnvelope({
         userId,
         content: { text: message, streamable: false },
         urgency: "proactive",
         trigger: "proactive",
-        ttlMs: 4 * 60 * 60 * 1000,  // drop if user unreachable after 4h
+        ttlMs: 4 * 60 * 60 * 1000,
       }));
-      return;
+      db?.writeProactiveDelivery({
+        id: deliveryId,
+        jobId,
+        channel,
+        userId,
+        messagePreview: message.slice(0, 100),
+        verdict,
+        deliveredAt: new Date().toISOString(),
+        status: "delivered",
+      });
+      this.lastDeliveryId = deliveryId;
+      this.lastPingTime = Date.now();
+    } else if (this.context.sendToUser) {
+      try {
+        await this.context.sendToUser(message);
+        db?.writeProactiveDelivery({
+          id: deliveryId,
+          jobId,
+          channel: "direct",
+          userId: userId ?? "unknown",
+          messagePreview: message.slice(0, 100),
+          verdict,
+          deliveredAt: new Date().toISOString(),
+          status: "delivered",
+        });
+        this.lastDeliveryId = deliveryId;
+        this.lastPingTime = Date.now();
+      } catch (err) {
+        log.engine.warn(`[ProactivePinger] sendToUser failed: ${err}`);
+        db?.writeProactiveDelivery({
+          id: deliveryId,
+          jobId,
+          channel: "direct",
+          userId: userId ?? "unknown",
+          verdict,
+          status: "failed",
+        });
+      }
     }
-    await this.context.sendToUser(message);
+    // No else — if neither is available, job stays pending (retry logic handles it)
   }
 
   /**
@@ -834,16 +942,60 @@ export class ProactivePinger {
           prompt: fullPrompt,
           type: _type,
         });
-        
-        // Pings are unanswered until the user replies
         this.lastPingTime = Date.now();
         this.unansweredPings++;
+      } else if (this.context.gatewayEventBus || this.context.sendToUser) {
+        await this.deliverProactive(fullPrompt, _type, this.currentJobId);
       } else {
-        console.warn("[ProactivePinger] EventBus not available, dropping ping.");
+        await this.handleUndeliverable(this.currentJobId, "no transport available (eventBus, gatewayEventBus, sendToUser all missing)");
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[ProactivePinger] Failed to generate ping: ${msg}`);
     }
+  }
+
+  private async handleUndeliverable(jobId: string, reason: string): Promise<void> {
+    const { jobQueue, db, userId } = this.context;
+    if (!jobQueue || !jobId) return;
+
+    const retryCount = jobQueue.getRetryCount?.(jobId) ?? 0;
+
+    if (retryCount < 3) {
+      jobQueue.incrementRetry?.(jobId);
+      const backoffMs = 60_000 * Math.pow(2, retryCount);
+      jobQueue.reschedule?.(jobId, new Date(Date.now() + backoffMs));
+      log.engine.warn(`[ProactivePinger] Job ${jobId} undeliverable (${reason}); retry ${retryCount + 1}/3 in ${backoffMs / 1000}s`);
+      return;
+    }
+
+    jobQueue.markFailed?.(jobId, `undeliverable after 3 retries: ${reason}`);
+    db?.writeProactiveDelivery({
+      id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      jobId,
+      channel: "none",
+      userId: userId ?? "unknown",
+      verdict: "ADVANCES",
+      status: "failed",
+      deliveredAt: new Date().toISOString(),
+    });
+    log.engine.error(`[ProactivePinger] Job ${jobId} failed after 3 retries: ${reason}`);
+  }
+
+  recordEngagement(
+    deliveryId: string,
+    jobType: string,
+    replied: boolean,
+    replyLatencySeconds?: number,
+    goalId?: string,
+  ): void {
+    this.context.db?.writeProactiveEngagement({
+      id: `eng_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      deliveryId,
+      jobType,
+      goalId,
+      replied,
+      replyLatencySeconds,
+    });
   }
 }
