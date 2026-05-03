@@ -122,7 +122,7 @@ import { OwlOrchestrator as OwlOrchestratorV2 } from "../engine/orchestrator.js"
 import { ImprovementScheduler } from "../engine/improvement-scheduler.js";
 import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js";
 import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/reflexion-engine.js";
-import { updateParliamentDNA } from "../owls/evolution.js";
+import { updateParliamentDNA, updatePelletGeneratorDNA } from "../owls/evolution.js";
 import { GoalVerifier } from "../tools/goal-verifier.js";
 import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
@@ -2360,6 +2360,44 @@ export class OwlGateway {
         session.id,
         response.content,
       );
+    }
+
+    // ─── Pellet flywheel hooks (run after every turn, non-fatal) ─────────
+    const _pelletIds = this.ctx.contextPipeline?.lastRetrievedPelletIds ?? [];
+    let _pelletVerdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
+
+    if (_pelletIds.length > 0 && this.goalVerifier && engineCtx.activeSubGoal) {
+      try {
+        const _vr = await this.goalVerifier.verify({
+          toolName: "context_retrieval",
+          toolArgs: {},
+          toolResult: response.content.slice(0, 500),
+          subGoal: engineCtx.activeSubGoal,
+          userMessage: message.text,
+        });
+        _pelletVerdict = _vr?.verdict ?? "NEUTRAL";
+      } catch { /* non-fatal */ }
+    }
+
+    // Hook 4: feed verdict back into retrieved pellets
+    if (_pelletIds.length > 0 && _pelletVerdict !== "NEUTRAL" && this.ctx.pelletStore) {
+      this.ctx.pelletStore.recordOutcome(_pelletIds, _pelletVerdict).catch((err: unknown) =>
+        log.engine.warn("[gateway] recordOutcome failed", err),
+      );
+    }
+
+    // Hook 5: reinforce DNA of owls who generated helpful pellets
+    if (_pelletVerdict === "ADVANCES" && _pelletIds.length > 0 && this.ctx.owlRegistry && this.ctx.pelletStore) {
+      Promise.all(_pelletIds.map((id) => this.ctx.pelletStore!.get(id)))
+        .then((retrieved) => {
+          const owlNames = [...new Set(retrieved.flatMap((p) => p?.owls ?? []).filter(Boolean))];
+          const topicCategory = retrieved.find(Boolean)?.tags?.[0] ?? "general";
+          if (owlNames.length > 0) {
+            return updatePelletGeneratorDNA(owlNames, topicCategory, this.ctx.owlRegistry!);
+          }
+          return undefined;
+        })
+        .catch((err: unknown) => log.engine.warn("[gateway] updatePelletGeneratorDNA failed", err));
     }
 
     return toGatewayResponse(response);
