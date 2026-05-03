@@ -1364,11 +1364,23 @@ export class MemoryDatabase {
     deliveredAt?: string;
     status: string;
   }): void {
+    // ON CONFLICT update — re-deliveries refresh status/verdict/delivery_at
+    // but preserve user_replied_at and created_at, which are only ever
+    // written by the original delivery / a later UPDATE when the user
+    // engages. Using INSERT OR REPLACE here would silently destroy them.
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO proactive_deliveries
+        `INSERT INTO proactive_deliveries
          (id, job_id, channel, user_id, message_preview, verdict, delivered_at, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           job_id = excluded.job_id,
+           channel = excluded.channel,
+           user_id = excluded.user_id,
+           message_preview = excluded.message_preview,
+           verdict = excluded.verdict,
+           delivered_at = excluded.delivered_at,
+           status = excluded.status`,
       )
       .run(
         params.id,
@@ -3440,82 +3452,92 @@ function applyV21Migration(db: Database.Database): void {
 }
 
 export function applyV22Migration(db: Database.Database): void {
-  // proactive_jobs may not exist yet on this DB if ProactiveJobQueue
-  // has never been instantiated against it (it lives in proactive-jobs.db today).
-  // Create the canonical schema first, then ALTER for v22 columns.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS proactive_jobs (
-      id          TEXT PRIMARY KEY,
-      type        TEXT NOT NULL,
-      user_id     TEXT NOT NULL,
-      scheduled_at TEXT NOT NULL,
-      payload     TEXT NOT NULL DEFAULT '{}',
-      status      TEXT NOT NULL DEFAULT 'pending',
-      priority    INTEGER NOT NULL DEFAULT 5,
-      attempts    INTEGER NOT NULL DEFAULT 0,
-      last_attempt_at TEXT,
-      error       TEXT,
-      created_at  TEXT NOT NULL
-    );
+  // Wrap the whole migration in a single transaction so concurrent connections
+  // (heartbeat worker, telegram bot, main engine) cannot race the
+  // table_info-then-ALTER check-and-act sequence and produce
+  // "duplicate column name" errors on the loser. better-sqlite3's
+  // db.transaction() upgrades to BEGIN IMMEDIATE on the first write,
+  // serializing all writers; the inner steps remain idempotent so a
+  // SQLITE_BUSY rollback just retries cleanly on the next call.
+  const run = db.transaction(() => {
+    // proactive_jobs may not exist yet on this DB if ProactiveJobQueue
+    // has never been instantiated against it (it lives in proactive-jobs.db today).
+    // Create the canonical schema first, then ALTER for v22 columns.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS proactive_jobs (
+        id          TEXT PRIMARY KEY,
+        type        TEXT NOT NULL,
+        user_id     TEXT NOT NULL,
+        scheduled_at TEXT NOT NULL,
+        payload     TEXT NOT NULL DEFAULT '{}',
+        status      TEXT NOT NULL DEFAULT 'pending',
+        priority    INTEGER NOT NULL DEFAULT 5,
+        attempts    INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at TEXT,
+        error       TEXT,
+        created_at  TEXT NOT NULL
+      );
 
-    CREATE INDEX IF NOT EXISTS idx_pj_status_scheduled
-      ON proactive_jobs (status, scheduled_at);
+      CREATE INDEX IF NOT EXISTS idx_pj_status_scheduled
+        ON proactive_jobs (status, scheduled_at);
 
-    CREATE INDEX IF NOT EXISTS idx_pj_user
-      ON proactive_jobs (user_id, status);
-  `);
+      CREATE INDEX IF NOT EXISTS idx_pj_user
+        ON proactive_jobs (user_id, status);
+    `);
 
-  // Add v22 columns idempotently. Each ALTER guarded by table_info check.
-  const jobCols = (db.pragma("table_info(proactive_jobs)") as { name: string }[]).map(c => c.name);
-  if (!jobCols.includes("retry_count")) {
-    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
-  }
-  if (!jobCols.includes("suppress_count")) {
-    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN suppress_count INTEGER NOT NULL DEFAULT 0`);
-  }
-  if (!jobCols.includes("goal_id")) {
-    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN goal_id TEXT`);
-  }
-  if (!jobCols.includes("error")) {
-    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN error TEXT`);
-  }
+    // Add v22 columns idempotently. Each ALTER guarded by table_info check.
+    const jobCols = (db.pragma("table_info(proactive_jobs)") as { name: string }[]).map(c => c.name);
+    if (!jobCols.includes("retry_count")) {
+      db.exec(`ALTER TABLE proactive_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!jobCols.includes("suppress_count")) {
+      db.exec(`ALTER TABLE proactive_jobs ADD COLUMN suppress_count INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!jobCols.includes("goal_id")) {
+      db.exec(`ALTER TABLE proactive_jobs ADD COLUMN goal_id TEXT`);
+    }
+    if (!jobCols.includes("error")) {
+      db.exec(`ALTER TABLE proactive_jobs ADD COLUMN error TEXT`);
+    }
 
-  // goal_id index — added after the ALTER guards because the column
-  // does not exist on legacy v21 DBs until the ALTER above runs.
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_pj_goal ON proactive_jobs (goal_id, status)`);
+    // goal_id index — added after the ALTER guards because the column
+    // does not exist on legacy v21 DBs until the ALTER above runs.
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_pj_goal ON proactive_jobs (goal_id, status)`);
 
-  // Delivery outcomes table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS proactive_deliveries (
-      id              TEXT PRIMARY KEY,
-      job_id          TEXT NOT NULL,
-      channel         TEXT NOT NULL,
-      user_id         TEXT NOT NULL,
-      message_preview TEXT,
-      verdict         TEXT NOT NULL,
-      delivered_at    TEXT,
-      status          TEXT NOT NULL,
-      user_replied_at TEXT,
-      created_at      TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_pd_job ON proactive_deliveries(job_id);
-    CREATE INDEX IF NOT EXISTS idx_pd_user ON proactive_deliveries(user_id, created_at);
-  `);
+    // Delivery outcomes table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS proactive_deliveries (
+        id              TEXT PRIMARY KEY,
+        job_id          TEXT NOT NULL,
+        channel         TEXT NOT NULL,
+        user_id         TEXT NOT NULL,
+        message_preview TEXT,
+        verdict         TEXT NOT NULL,
+        delivered_at    TEXT,
+        status          TEXT NOT NULL,
+        user_replied_at TEXT,
+        created_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pd_job ON proactive_deliveries(job_id);
+      CREATE INDEX IF NOT EXISTS idx_pd_user ON proactive_deliveries(user_id, created_at);
+    `);
 
-  // Engagement signal table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS proactive_engagement (
-      id                    TEXT PRIMARY KEY,
-      delivery_id           TEXT NOT NULL,
-      job_type              TEXT NOT NULL,
-      goal_id               TEXT,
-      replied               INTEGER NOT NULL DEFAULT 0,
-      reply_latency_seconds INTEGER,
-      created_at            TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_pe_job_type ON proactive_engagement(job_type, created_at);
-    CREATE INDEX IF NOT EXISTS idx_pe_goal ON proactive_engagement(goal_id);
-  `);
+    // Engagement signal table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS proactive_engagement (
+        id                    TEXT PRIMARY KEY,
+        delivery_id           TEXT NOT NULL,
+        job_type              TEXT NOT NULL,
+        goal_id               TEXT,
+        replied               INTEGER NOT NULL DEFAULT 0 CHECK (replied IN (0, 1)),
+        reply_latency_seconds INTEGER,
+        created_at            TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pe_job_type ON proactive_engagement(job_type, created_at);
+      CREATE INDEX IF NOT EXISTS idx_pe_goal ON proactive_engagement(goal_id);
+    `);
+  });
+  run();
 }
 
 /**
