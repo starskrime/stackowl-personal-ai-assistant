@@ -28,6 +28,7 @@ import { loadConfig } from "./config/loader.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
 import { ToolRegistry } from "./tools/registry.js";
+import { ToolTracker } from "./tools/tracker.js";
 import { ShellTool } from "./tools/shell.js";
 import { CredentialsTool } from "./tools/credentials.js";
 import { SandboxTool } from "./tools/sandbox.js";
@@ -456,6 +457,11 @@ async function bootstrap() {
     .catch((err) =>
       console.warn(`[MemoryDatabase] JSON import failed: ${err}`),
     );
+
+  // Tool Tracker — SQLite-backed tool execution history (Element 7 / schema v23).
+  // Wired here so registry.execute() records every tool call into tool_executions.
+  const toolTracker = new ToolTracker(memoryDb);
+  toolRegistry.setTracker(toolTracker);
 
   // Episodic Memory — LLM-extracted session summaries for cross-session recall
   const episodicMemory = new EpisodicMemory(workspacePath, undefined, memoryDb);

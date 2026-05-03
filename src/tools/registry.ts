@@ -305,7 +305,9 @@ export class ToolRegistry {
       const durationMs = Date.now() - startTime;
 
       if (this._tracker) {
-        this._tracker.recordSuccess(name, durationMs);
+        this._tracker.recordSuccess(name, durationMs, {
+          sessionId: context.engineContext?.sessionId,
+        });
       }
 
       // Truncate long results to prevent context bloat
@@ -362,13 +364,23 @@ export class ToolRegistry {
       return result;
     } catch (error) {
       const durationMs = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode =
+        error instanceof ToolExecutionError
+          ? "EXEC_FAILED"
+          : error instanceof Error
+            ? error.constructor.name
+            : "UNKNOWN";
       if (this._tracker) {
-        this._tracker.recordFailure(name, durationMs);
+        this._tracker.recordFailure(name, durationMs, {
+          errorCode,
+          errorMessage,
+          sessionId: context.engineContext?.sessionId,
+        });
       }
       this._eventBus?.emit({ type: "tool:result", toolName: name, success: false, durationMs, truncated: false });
       if (error instanceof ToolExecutionError) throw error;
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new ToolExecutionError(name, msg);
+      throw new ToolExecutionError(name, errorMessage);
     }
   }
 
