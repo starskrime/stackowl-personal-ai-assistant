@@ -3,7 +3,9 @@ import { describe, it, expect, vi } from "vitest";
 describe("EventBasedPelletGenerator — router classification", () => {
   it("generates pellet when router classifies as decision", async () => {
     const { EventBasedPelletGenerator } = await import("../../src/pellets/event-based-generator.js");
-    const mockRouter = { resolve: vi.fn().mockResolvedValue('{"isDecision":true,"isInsight":false,"isCorrection":false}') };
+    const mockRouter = {
+      resolve: vi.fn().mockResolvedValue('{"isDecision":true,"isInsight":false,"isCorrection":false}'),
+    };
     const mockStore = { save: vi.fn().mockResolvedValue({ verdict: "CREATE" }) };
     const mockGenerator = {
       generate: vi.fn().mockResolvedValue({
@@ -17,12 +19,14 @@ describe("EventBasedPelletGenerator — router classification", () => {
     const gen = new (EventBasedPelletGenerator as any)(mockEventBus, mockStore, mockRouter);
     gen.generator = mockGenerator;
 
-    const result = await gen.generateFromEvent(
-      { sourceName: "s", sourceMaterial: "decided to use Postgres", tags: [], owlsInvolved: [] },
-      "decision-capture",
-    );
+    await gen.handleMessageResponded({
+      sessionId: "s1", channelId: "c", userId: "u",
+      content: "we decided to use Postgres for the project",
+      owlName: "Noctua", toolsUsed: ["web"],
+    });
+
+    expect(mockRouter.resolve).toHaveBeenCalledWith("classification", expect.stringContaining("Classify"));
     expect(mockStore.save).toHaveBeenCalled();
-    expect(result).not.toBeNull();
   });
 
   it("does not generate pellet when router returns all false", async () => {
