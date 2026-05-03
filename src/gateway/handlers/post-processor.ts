@@ -53,10 +53,9 @@ export class PostProcessor {
     // so DNA evolution can increase challengeLevel (reducing sycophancy) over time.
     this.sentimentProbe = new SentimentProbe((sentiment, incrementChallenge) => {
       if (incrementChallenge && this._lastProcessUserId) {
-        this.taskQueue.enqueue("sentiment-challenge-update", async () => {
-          try {
-            this.ctx.db!.rawDb.prepare(
-              `UPDATE outcome_journal
+        this.enqueueJob("sentiment-challenge-update", "critical", async () => {
+          this.ctx.db!.rawDb.prepare(
+            `UPDATE outcome_journal
                SET challenge_instances = challenge_instances + 1
                WHERE id = (
                  SELECT id FROM outcome_journal
@@ -64,15 +63,10 @@ export class PostProcessor {
                  ORDER BY created_at DESC
                  LIMIT 1
                )`,
-            ).run(this._lastProcessUserId);
-            log.engine.info(
-              `[PostProcessor:sentiment] Correction detected — incremented challenge_instances for user=${this._lastProcessUserId}`,
-            );
-          } catch (err) {
-            log.engine.warn(
-              `[PostProcessor:sentiment] Failed to increment challenge_instances: ${err instanceof Error ? err.message : err}`,
-            );
-          }
+          ).run(this._lastProcessUserId);
+          log.engine.info(
+            `[PostProcessor:sentiment] Correction detected — incremented challenge_instances for user=${this._lastProcessUserId}`,
+          );
         });
       }
     });
@@ -187,7 +181,7 @@ export class PostProcessor {
 
     // Learning — prefer new orchestrator (TopicFusion + Synthesis), fallback to legacy
     if (this.ctx.learningOrchestrator) {
-      this.taskQueue.enqueue("learning-orchestrator", async () => {
+      this.enqueueJob("learning-orchestrator", "standard", async () => {
         const cycle =
           await this.ctx.learningOrchestrator!.processConversation(messages);
         if (cycle.error) {
@@ -207,7 +201,7 @@ export class PostProcessor {
         }
       });
     } else if (this.ctx.learningEngine) {
-      this.taskQueue.enqueue("learning", async () => {
+      this.enqueueJob("learning", "standard", async () => {
         await this.ctx.learningEngine!.processConversation(messages);
         log.engine.info("[PostProcessor:learning] Legacy engine completed");
       });
@@ -219,8 +213,9 @@ export class PostProcessor {
       this.messageCount % evolutionInterval === 0 &&
       this.ctx.evolutionEngine
     ) {
-      this.taskQueue.enqueue(
+      this.enqueueJob(
         `dna-evolve(${this.ctx.owl.persona.name})`,
+        "background",
         async () => {
           // Gate: check MutationTracker analysis before mutating
           const analysis = this.coordinator?.gateEvolution();
@@ -275,7 +270,7 @@ export class PostProcessor {
     // Syncs opinions, desires, and mood into DNA mutations so inner life
     // actually influences future behavior instead of being decorative.
     if (this.innerLifeBridge && this.ctx.innerLife && this.messageCount % 5 === 0) {
-      this.taskQueue.enqueue("inner-life-dna-sync", async () => {
+      this.enqueueJob("inner-life-dna-sync", "background", async () => {
         const innerState = this.ctx.innerLife!.getState();
         if (!innerState) return; // State not loaded yet
         const feedback = await this.innerLifeBridge!.sync(
@@ -326,7 +321,7 @@ export class PostProcessor {
       }
 
       if (this.messageCount % 5 === 0) {
-        this.taskQueue.enqueue("coordinator-save", () =>
+        this.enqueueJob("coordinator-save", "standard", () =>
           this.coordinator!.save(),
         );
       }
@@ -335,7 +330,7 @@ export class PostProcessor {
     // UserPreferenceModel → DNA learnedPreferences feedback loop
     // When UserPreferenceModel infers a high-confidence preference, reflect it in DNA
     if (this.coordinator && this.messageCount % 20 === 0) {
-      this.taskQueue.enqueue("dna-preference-feedback", async () => {
+      this.enqueueJob("dna-preference-feedback", "background", async () => {
         const highConf = this.coordinator!.flushHighConfidencePrefs(0.7);
         if (highConf.length === 0) return;
 
@@ -381,7 +376,7 @@ export class PostProcessor {
     if (this.anticipator && this.messageCount % 20 === 0) {
       const existingSkills =
         this.ctx.skillsLoader?.getRegistry()?.listEnabled() ?? [];
-      this.taskQueue.enqueue("anticipation", async () => {
+      this.enqueueJob("anticipation", "background", async () => {
         const anticipations =
           await this.anticipator!.anticipate(existingSkills);
         if (anticipations.length > 0) {
@@ -422,7 +417,7 @@ export class PostProcessor {
         this.ctx.owl.persona.name,
       );
       if (snapshot) {
-        this.taskQueue.enqueue("timeline-snapshot", () =>
+        this.enqueueJob("timeline-snapshot", "background", () =>
           this.ctx.timelineManager!.save(),
         );
       }
@@ -434,7 +429,7 @@ export class PostProcessor {
       messages.length > 0 &&
       this.messageCount % 5 === 0
     ) {
-      this.taskQueue.enqueue("knowledge-extract", async () => {
+      this.enqueueJob("knowledge-extract", "background", async () => {
         await this.ctx.knowledgeReasoner!.extractFromConversation(messages);
         await this.ctx.knowledgeGraph?.save();
       });
@@ -448,7 +443,7 @@ export class PostProcessor {
       messages.length > 0 &&
       this.messageCount % 10 === 0
     ) {
-      this.taskQueue.enqueue("fact-extract", async () => {
+      this.enqueueJob("fact-extract", "standard", async () => {
         const userId = metadata?.userId ?? "default";
         const extracted = await this.ctx.factExtractor!.extract(
           messages,
@@ -465,7 +460,7 @@ export class PostProcessor {
 
     // Memory feedback decay (every 50 messages)
     if (this.ctx.memoryFeedback && this.messageCount % 50 === 0) {
-      this.taskQueue.enqueue("memory-decay", async () => {
+      this.enqueueJob("memory-decay", "standard", async () => {
         const result = await this.ctx.memoryFeedback!.decayConfidence();
         if (result.decayed > 0 || result.removed > 0) {
           log.memory.info(
@@ -500,23 +495,17 @@ export class PostProcessor {
     if (this.ctx.compressor && this.ctx.db && sessionId && metadata?.userId) {
       const msgCount = this.ctx.db.messages.countSession(sessionId);
       if (msgCount > 0 && msgCount % 20 === 0) {
-        this.taskQueue.enqueue("compress", async () => {
-          try {
-            const result = await this.ctx.compressor!.compress(
-              sessionId,
-              metadata.userId!,
-              metadata.owlName ?? this.ctx.owl.persona.name,
-              messages,
-            );
-            if (result) {
-              log.engine.info(
-                `[PostProcessor:compress] Batch compressed — ${result.factsWritten} facts, ` +
-                `${result.learningsWritten} learnings, ~${result.tokensSaved} tokens saved`,
-              );
-            }
-          } catch (err) {
-            log.engine.warn(
-              `[PostProcessor:compress] Failed: ${err instanceof Error ? err.message : err}`,
+        this.enqueueJob("compress", "standard", async () => {
+          const result = await this.ctx.compressor!.compress(
+            sessionId,
+            metadata.userId!,
+            metadata.owlName ?? this.ctx.owl.persona.name,
+            messages,
+          );
+          if (result) {
+            log.engine.info(
+              `[PostProcessor:compress] Batch compressed — ${result.factsWritten} facts, ` +
+              `${result.learningsWritten} learnings, ~${result.tokensSaved} tokens saved`,
             );
           }
         });
@@ -529,14 +518,8 @@ export class PostProcessor {
     // The digest is injected at the TOP of the next prompt so the model
     // knows what it just produced without re-parsing raw tool results.
     if (this.ctx.digestManager && sessionId) {
-      this.taskQueue.enqueue("digest-update", async () => {
-        try {
-          await this.ctx.digestManager!.update(sessionId, messages);
-        } catch (err) {
-          log.engine.warn(
-            `[PostProcessor:digest] Update failed: ${err instanceof Error ? err.message : err}`,
-          );
-        }
+      this.enqueueJob("digest-update", "critical", async () => {
+        await this.ctx.digestManager!.update(sessionId, messages);
       });
     }
 
@@ -564,28 +547,22 @@ export class PostProcessor {
             : "";
         const tools = metadata!.toolsUsed!.join(", ");
 
-        this.taskQueue.enqueue("success-recipe", async () => {
-          try {
-            await this.ctx.factStore!.add({
-              userId: metadata?.userId ?? "default",
-              fact: `I successfully handled "${userRequest}" using [${tools}]. Result: ${summary}`,
-              entity: metadata!.toolsUsed![0],
-              category: "skill",
-              confidence: 0.85,
-              source: "inferred",
-              expiresAt: new Date(
-                Date.now() + 90 * 24 * 60 * 60 * 1000, // 90 days
-              ).toISOString(),
-            });
-            await this.ctx.factStore!.save();
-            log.engine.info(
-              `[PostProcessor:success-recipe] Recorded success using [${tools}]`,
-            );
-          } catch (err) {
-            log.engine.warn(
-              `[PostProcessor:success-recipe] Failed: ${err instanceof Error ? err.message : err}`,
-            );
-          }
+        this.enqueueJob("success-recipe", "standard", async () => {
+          await this.ctx.factStore!.add({
+            userId: metadata?.userId ?? "default",
+            fact: `I successfully handled "${userRequest}" using [${tools}]. Result: ${summary}`,
+            entity: metadata!.toolsUsed![0],
+            category: "skill",
+            confidence: 0.85,
+            source: "inferred",
+            expiresAt: new Date(
+              Date.now() + 90 * 24 * 60 * 60 * 1000, // 90 days
+            ).toISOString(),
+          });
+          await this.ctx.factStore!.save();
+          log.engine.info(
+            `[PostProcessor:success-recipe] Recorded success using [${tools}]`,
+          );
         });
       }
     }
@@ -596,7 +573,7 @@ export class PostProcessor {
     // lessons before similar future tasks (Reflexion loop closure).
     if (this.intelligenceReflexion && metadata?.loopExhausted) {
       const toolsUsed = metadata.toolsUsed ?? [];
-      this.taskQueue.enqueue("reflexion-write", async () => {
+      this.enqueueJob("reflexion-write", "standard", async () => {
         await this.intelligenceReflexion!.onTaskFailed({
           userId: metadata.userId ?? "",
           taskDescription: messages[0]?.content?.slice(0, 200) ?? "",
@@ -625,24 +602,18 @@ export class PostProcessor {
           ? "loop_exhausted"
           : `tool_failures_${metadata?.toolFailureCount}`;
 
-        this.taskQueue.enqueue("quality-reflexion", async () => {
-          try {
-            await this.ctx.reflexionEngine!.reflectOnFailure({
-              userMessage: typeof lastUserMsg.content === "string"
-                ? lastUserMsg.content.slice(0, 200)
-                : "",
-              toolsAttempted,
-              reason,
-              sessionId: sessionId ?? "unknown",
-            });
-            log.engine.info(
-              `[PostProcessor:quality] Recorded failure for reflexion: ${reason} (tools: ${toolsAttempted})`,
-            );
-          } catch (err) {
-            log.engine.warn(
-              `[PostProcessor:quality] Reflexion recording failed: ${err instanceof Error ? err.message : err}`,
-            );
-          }
+        this.enqueueJob("quality-reflexion", "standard", async () => {
+          await this.ctx.reflexionEngine!.reflectOnFailure({
+            userMessage: typeof lastUserMsg.content === "string"
+              ? lastUserMsg.content.slice(0, 200)
+              : "",
+            toolsAttempted,
+            reason,
+            sessionId: sessionId ?? "unknown",
+          });
+          log.engine.info(
+            `[PostProcessor:quality] Recorded failure for reflexion: ${reason} (tools: ${toolsAttempted})`,
+          );
         });
       }
     }
@@ -657,15 +628,15 @@ export class PostProcessor {
     // Periodic persistence (every 10 messages)
     if (this.messageCount % 10 === 0) {
       if (this.ctx.patternAnalyzer) {
-        this.taskQueue.enqueue("pattern-save", () =>
+        this.enqueueJob("pattern-save", "background", () =>
           this.ctx.patternAnalyzer!.save(),
         );
       }
       if (this.ctx.trustChain) {
-        this.taskQueue.enqueue("trust-save", () => this.ctx.trustChain!.save());
+        this.enqueueJob("trust-save", "background", () => this.ctx.trustChain!.save());
       }
       if (this.ctx.predictiveQueue) {
-        this.taskQueue.enqueue("predictive-prep", async () => {
+        this.enqueueJob("predictive-prep", "background", async () => {
           const newTasks =
             await this.ctx.predictiveQueue!.generatePredictions();
           for (const task of newTasks) {
@@ -677,7 +648,7 @@ export class PostProcessor {
 
     // SleepTimeConsolidator — surface cross-session patterns after session ends
     if (this.sleepConsolidator && metadata?.userId && sessionId) {
-      this.taskQueue.enqueue("sleep-consolidation", async () => {
+      this.enqueueJob("sleep-consolidation", "standard", async () => {
         await this.sleepConsolidator!.onSessionEnded(metadata.userId!, sessionId);
       });
     }
@@ -702,7 +673,7 @@ export class PostProcessor {
     if (!this._goalExtractor) return;
     if (this.messageCount % 3 !== 0) return;
     const extractor = this._goalExtractor;
-    this.taskQueue.enqueue("goal-extraction", async () => {
+    this.enqueueJob("goal-extraction", "background", async () => {
       await extractor.extractFromConversation(messages, sessionId, userId);
     });
   }
@@ -799,7 +770,7 @@ export class PostProcessor {
     const pelletStore = this.ctx.pelletStore;
     const owlName = this.ctx.owl.persona.name;
 
-    this.taskQueue.enqueue("gap-feedback", async () => {
+    this.enqueueJob("gap-feedback", "standard", async () => {
       if (isCorrectionSignal) {
         // Save the correction as a new pellet linking to the original
         const correctionPellet = {
