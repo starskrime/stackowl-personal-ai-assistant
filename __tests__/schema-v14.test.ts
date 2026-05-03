@@ -48,9 +48,9 @@ describe("schema v14", () => {
     expect(cols).toContain("follow_up_sentiment");
   });
 
-  it("schema version is 21", () => {
+  it("schema version is at least 22", () => {
     const raw = (db as any).db ?? (db as any).rawDb;
     const v = (raw.pragma("user_version") as {user_version:number}[])[0]?.user_version;
-    expect(v).toBe(21);
+    expect(v).toBeGreaterThanOrEqual(22);
   });
 });

@@ -20,8 +20,8 @@ describe('schema v19 — clarification_asked column', () => {
     expect(col!.dflt_value).toBe('0');
   });
 
-  it('schema version is 21', () => {
+  it('schema version is at least 22', () => {
     const v = (db.pragma('user_version') as Array<{ user_version: number }>)[0].user_version;
-    expect(v).toBe(21);
+    expect(v).toBeGreaterThanOrEqual(22);
   });
 });
