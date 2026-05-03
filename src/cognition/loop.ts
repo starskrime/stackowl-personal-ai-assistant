@@ -217,6 +217,7 @@ export class CognitiveLoop {
         deps.toolRegistry,
         deps.skillsRegistry,
         deps.microLearner,
+        deps.toolRegistry?.getTracker() ?? undefined,
       );
     }
   }
