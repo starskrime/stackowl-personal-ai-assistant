@@ -1,4 +1,5 @@
 import type { ModelProvider } from '../providers/base.js';
+import type { IntelligenceRouter } from '../intelligence/router.js';
 
 export interface RiskAssessment {
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
@@ -27,15 +28,18 @@ Respond with JSON:
 
 export class PreActionQuestioner {
   private modelProvider: ModelProvider;
+  private router: IntelligenceRouter;
   private pendingQuestions: import('./types.js').PreActionQuestion[] = [];
   private confirmedActions: Set<string> = new Set();
 
-  constructor(modelProvider: ModelProvider) {
+  constructor(modelProvider: ModelProvider, router: IntelligenceRouter) {
     this.modelProvider = modelProvider;
+    this.router = router;
   }
 
   async assessRisk(toolName: string, params: Record<string, unknown>): Promise<RiskAssessment> {
     try {
+      const resolved = this.router.resolve('clarification');
       const response = await this.modelProvider.chat(
         [
           {
@@ -45,14 +49,14 @@ export class PreActionQuestioner {
               .replace('{JSON.stringify(params)}', JSON.stringify(params)),
           },
         ],
-        undefined,
+        resolved.model,
         { temperature: 0.1 }
       );
 
       const parsed = this.parseLlmResponse(response.content);
       if (!parsed) {
         return {
-          riskLevel: 'medium',
+          riskLevel: 'low',
           riskReasons: ['Failed to parse LLM response'],
           shouldConfirm: false,
           confirmationQuestion: null,
