@@ -322,6 +322,24 @@ describe("ProactivePinger — goal-aware assembly", () => {
   });
 });
 
+describe("consolidation.ts removal", () => {
+  it("MemoryConsolidator is not imported in ProactivePinger", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(
+      new URL("../src/heartbeat/proactive.ts", import.meta.url).pathname,
+      "utf-8",
+    );
+    expect(source).not.toContain("./consolidation");
+    expect(source).not.toMatch(/from "\.\/consolidation/);
+  });
+
+  it("src/heartbeat/consolidation.ts file no longer exists", async () => {
+    const { existsSync } = await import("node:fs");
+    const consolidationPath = new URL("../src/heartbeat/consolidation.ts", import.meta.url).pathname;
+    expect(existsSync(consolidationPath)).toBe(false);
+  });
+});
+
 describe("AutonomousPlanner — learned priorities", () => {
   function makePlannerWithDb(engagementStats: Record<string, { replyRate: number; sampleCount: number } | null>) {
     const mockDb = {
