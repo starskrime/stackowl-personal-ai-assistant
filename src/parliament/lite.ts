@@ -20,6 +20,7 @@ import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { ParliamentVerdictSignal } from "../memory/db.js";
+import type { IntelligenceRouter } from "../intelligence/router.js";
 import { log } from "../logger.js";
 
 export interface LiteParliamentInput {
@@ -54,6 +55,7 @@ export class ParliamentLite {
     private provider: ModelProvider,
     private config: StackOwlConfig,
     private db?: MemoryDatabase,
+    private router?: IntelligenceRouter,
   ) {}
 
   async deliberate(input: LiteParliamentInput): Promise<LiteParliamentResult> {
@@ -63,6 +65,10 @@ export class ParliamentLite {
     log.engine.info(
       `[ParliamentLite] "${input.topic}" — ${advocate.persona.name} vs ${devil.persona.name}`,
     );
+
+    const model = this.router?.resolve("classification").model
+      ?? this.config.providers?.anthropic?.defaultModel
+      ?? undefined;
 
     const recallBlock = input.recallContext
       ? `\nPast Parliament decisions on related topics:\n${input.recallContext}\n\n`
@@ -89,7 +95,7 @@ export class ParliamentLite {
               `Format: VOTE: [PROCEED/HOLD/ABORT/REVISE] — <one-sentence rationale>`,
           },
         ],
-        this.config.providers?.anthropic?.defaultModel ?? "claude-haiku-4-5-20251001",
+        model,
       ).catch(() => ({ content: "VOTE: [HOLD] — Could not evaluate at this time." })),
 
       this.provider.chat(
@@ -105,7 +111,7 @@ export class ParliamentLite {
               `Format: VOTE: [PROCEED/HOLD/ABORT/REVISE] — <one-sentence rationale>`,
           },
         ],
-        this.config.providers?.anthropic?.defaultModel ?? "claude-haiku-4-5-20251001",
+        model,
       ).catch(() => ({ content: "VOTE: [HOLD] — Could not evaluate at this time." })),
     ]);
 
@@ -134,7 +140,7 @@ export class ParliamentLite {
             `Format: VERDICT: <PROCEED/HOLD/ABORT/REVISE> — <rationale>`,
         },
       ],
-      this.config.providers?.anthropic?.defaultModel ?? "claude-haiku-4-5-20251001",
+      model,
     ).catch(() => ({ content: "VERDICT: HOLD — Could not synthesize verdict." }));
 
     const verdict = this.parseVerdict(synthesisRes.content);
