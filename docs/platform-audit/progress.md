@@ -19,16 +19,17 @@
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
 | 7 | Tool layer (registry, execution, permissions) | 🔧 Phase 7a + 7d complete — 633 tests passing. Phase 7b/7c gated on production data. | 2026-05-02 |
 | 8 | PostProcessor (save, learn, evolve, queue) | 🔧 reviewed — improvements committed | 2026-05-02 |
-| 9 | Parliament (multi-owl debate) | ⬜ pending | — |
-| 10 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
-| 11 | Heartbeat (proactive messages, job queue) | ⬜ pending | — |
-| 12 | Learning Engine (reactive + proactive self-study) | ⬜ pending | — |
-| 13 | Evolution (DNA mutation, reflexion, APO) | ⬜ pending | — |
-| 14 | Memory DB (SQLite facts, episodes, attempts) | ⬜ pending | — |
-| 15 | Perches (file watchers, event broadcast) | ⬜ pending | — |
-| 16 | Owl system (DNA, inner life, specialization) | ⬜ pending | — |
-| 17 | Providers (model routing, health, cost) | ⬜ pending | — |
-| 18 | Skills engine (match, inject, synthesize) | ⬜ pending | — |
+| 9 | **Clarification & Intent Detection** | 📐 spec approved — implementation plan pending | 2026-05-02 |
+| 10 | Parliament (multi-owl debate) | ⬜ pending | — |
+| 11 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
+| 12 | Heartbeat (proactive messages, job queue) | ⬜ pending | — |
+| 13 | Learning Engine (reactive + proactive self-study) | ⬜ pending | — |
+| 14 | Evolution (DNA mutation, reflexion, APO) | ⬜ pending | — |
+| 15 | Memory DB (SQLite facts, episodes, attempts) | ⬜ pending | — |
+| 16 | Perches (file watchers, event broadcast) | ⬜ pending | — |
+| 17 | Owl system (DNA, inner life, specialization) | ⬜ pending | — |
+| 18 | Providers (model routing, health, cost) | ⬜ pending | — |
+| 19 | Skills engine (match, inject, synthesize) | ⬜ pending | — |
 
 ---
 
