@@ -756,6 +756,35 @@ export async function updateParliamentDNA(
 }
 
 /**
+ * Reinforces expertise of owls who generated pellets that advanced the user's goal.
+ * Called from gateway/core.ts Hook 5 when GoalVerifier returns ADVANCES.
+ * Learning rate: 0.03 (smaller than Parliament's 0.05 — pellet signal is indirect).
+ */
+export async function updatePelletGeneratorDNA(
+  owlNames: string[],
+  topicCategory: string,
+  owlRegistry: import('./registry.js').OwlRegistry,
+): Promise<void> {
+  const LEARNING_RATE = 0.03;
+  const allOwls = owlRegistry.listOwls();
+
+  for (const name of owlNames) {
+    const owl = allOwls.find((o) => o.persona.name === name);
+    if (!owl) continue;
+    try {
+      owl.dna.expertiseGrowth[topicCategory] = clamp(
+        (owl.dna.expertiseGrowth[topicCategory] ?? 0.5) + LEARNING_RATE,
+        0.1,
+        0.9,
+      );
+      await owlRegistry.saveDNA(name);
+    } catch (err) {
+      log.engine.warn(`[evolution] pelletGeneratorDNA failed for ${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+/**
  * Updates clarification_autonomy_score in DNA based on reward signal.
  * Called from evolve() after trait mutation. Uses proportional delta (not Math.sign).
  *
