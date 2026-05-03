@@ -15,6 +15,8 @@ import type { ParliamentSession, ParliamentPhase, OwlPosition, OwlChallenge } fr
 import { buildPerspectivePrompt } from "./perspectives.js";
 import type { PerspectiveOverlay, PerspectiveRole } from "./perspectives.js";
 import { assignPerspectives } from "./perspectives.js";
+import { DiversityFilter } from "./diversity-filter.js";
+import type { IntelligenceRouter } from "../intelligence/router.js";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -38,12 +40,18 @@ export interface MultiRoundDebateConfig {
 
 export class MultiRoundDebateManager {
   private engine: OwlEngine;
+  private diversityFilter?: DiversityFilter;
 
   constructor(
     private provider: ModelProvider,
     private config: StackOwlConfig,
+    router?: IntelligenceRouter,
+    providers?: Map<string, ModelProvider>,
   ) {
     this.engine = new OwlEngine();
+    if (router && providers) {
+      this.diversityFilter = new DiversityFilter(router, providers);
+    }
   }
 
   /**
@@ -80,7 +88,7 @@ export class MultiRoundDebateManager {
 
     const tags = ["FOR", "AGAINST", "CONDITIONAL", "NEUTRAL", "ANALYSIS"] as const;
 
-    for (const owl of session.config.participants) {
+    const positionPromises = session.config.participants.map(async (owl) => {
       const perspective = perspectives.get(owl.persona.name);
       const roleLabel = perspective
         ? `${perspective.label} ${perspective.emoji}`
@@ -136,10 +144,47 @@ export class MultiRoundDebateManager {
         argument: cleanArg,
       };
 
+      return { position, owl };
+    });
+
+    const results = await Promise.allSettled(positionPromises);
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const owl = session.config.participants[i];
+      const perspective = perspectives.get(owl.persona.name);
+
+      let position: OwlPosition;
+      if (result.status === "fulfilled") {
+        position = result.value.position;
+      } else {
+        // Fallback: neutral position on error
+        position = {
+          owlName: owl.persona.name,
+          owlEmoji: perspective?.emoji || owl.persona.emoji,
+          position: "NEUTRAL",
+          argument: "No position available.",
+        };
+      }
+
       session.positions.push(position);
 
       if (cb?.onPositionReady) {
         await cb.onPositionReady(position);
+      }
+    }
+
+    // Run DiversityFilter to identify the top-2 most-disagreeing positions
+    if (this.diversityFilter && session.positions.length >= 2) {
+      try {
+        const { pair, reasoning } = await this.diversityFilter.selectDivergingPair(session.positions);
+        session.diversePair = pair;
+        session.diversityReasoning = reasoning || undefined;
+      } catch {
+        session.diversePair = [
+          session.positions[0],
+          session.positions[session.positions.length - 1],
+        ];
       }
     }
   }
@@ -161,7 +206,9 @@ export class MultiRoundDebateManager {
       await session.config.callbacks.onRoundStart(2, "round2_challenge");
     }
 
-    const allPositions = session.positions
+    // Use only the diverging pair for Round 2 to prevent context pollution
+    const targetPositions = session.diversePair ?? session.positions;
+    const allPositions = targetPositions
       .map((p) => {
         const persp = perspectives.get(p.owlName);
         const label = persp ? `${persp.label}` : p.owlName;
@@ -194,10 +241,10 @@ export class MultiRoundDebateManager {
     const perspective = perspectives.get(challenger.persona.name);
     let prompt =
       `PARLIAMENT TOPIC: ${session.config.topic}\n\n` +
-      `Other participants have stated their positions:\n${allPositions}\n\n` +
-      `Task: Review the positions. If you see a gaping hole in someone's logic, a missed risk, or a naive assumption, ` +
+      `The two most fundamentally disagreeing positions are:\n${allPositions}\n\n` +
+      `Task: Review these positions. If you see a gaping hole in someone's logic, a missed risk, or a naive assumption, ` +
       `call them out specifically. Name the participant you are challenging. Keep it to 2-3 sentences. ` +
-      `If everyone is mostly right, play devil's advocate.`;
+      `If both positions are mostly reasonable, play devil's advocate against the stronger one.`;
 
     if (perspective) {
       prompt = buildPerspectivePrompt(prompt, perspective);
@@ -299,7 +346,14 @@ export class MultiRoundDebateManager {
       })
       .join("\n");
 
-    const history = `TOPIC: ${session.config.topic}\n\nPositions:\n${positionsText}\n\nChallenges:\n${challengesText}`;
+    const diversityContext = session.diversePair
+      ? `\nKey disagreement: ${session.diversePair[0].owlName} vs ${session.diversePair[1].owlName}` +
+        (session.diversityReasoning ? ` — ${session.diversityReasoning}` : "")
+      : "";
+
+    const history =
+      `TOPIC: ${session.config.topic}\n\nPositions:\n${positionsText}\n\nChallenges:\n${challengesText}` +
+      diversityContext;
 
     const prompt =
       `Here is the transcript of a Parliament session:\n\n${history}\n\n` +

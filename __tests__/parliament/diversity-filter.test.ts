@@ -14,11 +14,11 @@ describe("DiversityFilter", () => {
       makePos("Owl2", "We should use a monolith"),
       makePos("Owl3", "We should use serverless"),
     ];
-    const mockProvider = { chat: vi.fn().mockResolvedValue({ content: '{"indices": [0, 1]}' }) };
+    const mockProvider = { chat: vi.fn().mockResolvedValue({ content: '{"indices": [0, 1], "reasoning": "microservices vs monolith is the core disagreement"}' }) };
     const mockRouter = { resolve: vi.fn().mockReturnValue({ provider: "test", model: "m", tier: "low" as const }) };
     const mockProviders = new Map([["test", mockProvider]]);
     const filter = new DiversityFilter(mockRouter as any, mockProviders as any);
-    const [a, b] = await filter.selectDivergingPair(positions);
+    const { pair: [a, b] } = await filter.selectDivergingPair(positions);
     expect(a.owlName).toBe("Owl1");
     expect(b.owlName).toBe("Owl2");
   });
@@ -32,7 +32,7 @@ describe("DiversityFilter", () => {
     const mockProvider = { chat: vi.fn().mockRejectedValue(new Error("network error")) };
     const mockRouter = { resolve: vi.fn().mockReturnValue({ provider: "test", model: "m", tier: "low" as const }) };
     const filter = new DiversityFilter(mockRouter as any, new Map([["test", mockProvider]]) as any);
-    const [a, b] = await filter.selectDivergingPair(positions);
+    const { pair: [a, b] } = await filter.selectDivergingPair(positions);
     expect(a.owlName).toBe("Owl1");
     expect(b.owlName).toBe("Owl3");
   });
@@ -42,8 +42,21 @@ describe("DiversityFilter", () => {
     const mockProvider = { chat: vi.fn().mockResolvedValue({ content: '{"indices": [0, 1]}' }) };
     const mockRouter = { resolve: vi.fn().mockReturnValue({ provider: "test", model: "m", tier: "low" as const }) };
     const filter = new DiversityFilter(mockRouter as any, new Map([["test", mockProvider]]) as any);
-    const [a, b] = await filter.selectDivergingPair(positions);
+    const { pair: [a, b] } = await filter.selectDivergingPair(positions);
     expect(a.owlName).toBe("OwlA");
     expect(b.owlName).toBe("OwlB");
+  });
+
+  it("captures reasoning from LLM response", async () => {
+    const positions = [
+      makePos("Owl1", "use microservices"),
+      makePos("Owl2", "use monolith"),
+      makePos("Owl3", "use serverless"),
+    ];
+    const mockProvider = { chat: vi.fn().mockResolvedValue({ content: '{"indices": [0, 1], "reasoning": "fundamental architecture disagreement"}' }) };
+    const mockRouter = { resolve: vi.fn().mockReturnValue({ provider: "test", model: "m", tier: "low" as const }) };
+    const filter = new DiversityFilter(mockRouter as any, new Map([["test", mockProvider]]) as any);
+    const { reasoning } = await filter.selectDivergingPair(positions);
+    expect(reasoning).toBe("fundamental architecture disagreement");
   });
 });

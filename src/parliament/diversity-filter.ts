@@ -11,13 +11,13 @@ export class DiversityFilter {
 
   async selectDivergingPair(
     positions: OwlPosition[],
-  ): Promise<[OwlPosition, OwlPosition]> {
-    const fallback: [OwlPosition, OwlPosition] = [
-      positions[0],
-      positions[positions.length - 1],
-    ];
+  ): Promise<{ pair: [OwlPosition, OwlPosition]; reasoning: string }> {
+    const fallback = {
+      pair: [positions[0], positions[positions.length - 1]] as [OwlPosition, OwlPosition],
+      reasoning: "",
+    };
 
-    if (positions.length <= 2) return fallback;
+    if (positions.length <= 2) return { pair: fallback.pair, reasoning: "" };
 
     try {
       const resolved = this.router.resolve("classification");
@@ -30,21 +30,22 @@ export class DiversityFilter {
 
       const prompt =
         `Given these ${positions.length} positions on a debate topic, identify the two that most ` +
-        `fundamentally disagree with each other.\n\n` +
+        `fundamentally disagree with each other, and briefly explain why.\n\n` +
         `Positions:\n${positionList}\n\n` +
-        `Reply with ONLY valid JSON: {"indices": [<first_index>, <second_index>]}`;
+        `Reply with ONLY valid JSON: {"indices": [<first_index>, <second_index>], "reasoning": "<one sentence why they disagree most>"}`;
 
       const response = await provider.chat(
         [{ role: "user", content: prompt }],
         resolved.model,
-        { temperature: 0, maxTokens: 50 },
+        { temperature: 0, maxTokens: 100 },
       );
 
       const match = response.content.match(/\{[\s\S]*?\}/);
       if (!match) return fallback;
 
-      const parsed = JSON.parse(match[0]) as { indices?: unknown };
+      const parsed = JSON.parse(match[0]) as { indices?: unknown; reasoning?: unknown };
       const indices = parsed.indices;
+      const reasoning = typeof parsed.reasoning === "string" ? parsed.reasoning : "";
 
       if (
         !Array.isArray(indices) ||
@@ -58,7 +59,10 @@ export class DiversityFilter {
         return fallback;
       }
 
-      return [positions[indices[0]], positions[indices[1]]];
+      return {
+        pair: [positions[indices[0]], positions[indices[1]]],
+        reasoning,
+      };
     } catch (err) {
       log.parliament.debug(
         `[DiversityFilter] Error selecting diverging pair: ${err instanceof Error ? err.message : String(err)} — using fallback`,
