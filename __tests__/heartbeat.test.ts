@@ -122,7 +122,8 @@ describe("ProactivePinger — DeliveryVerifier integration", () => {
     const writeDelivery = vi.fn();
     const sendToUser = vi.fn();
     const mockDb = { writeProactiveDelivery: writeDelivery, writeProactiveEngagement: vi.fn() } as any;
-    const mockQueue = { markDone: vi.fn(), markFailed: vi.fn(), reschedule: vi.fn() };
+    const schedule = vi.fn();
+    const mockQueue = { markDone: vi.fn(), markFailed: vi.fn(), reschedule: vi.fn(), schedule };
 
     const pingContext: PingContext = {
       provider: makeMockProvider(),
@@ -144,7 +145,7 @@ describe("ProactivePinger — DeliveryVerifier integration", () => {
         morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
     );
 
-    await (pinger as any).executeJob({
+    const handled = await (pinger as any).executeJob({
       id: "job1", type: "check_in", userId: "user1",
       scheduledAt: new Date().toISOString(), payload: "{}",
       status: "running", priority: 5, attempts: 1, createdAt: new Date().toISOString(),
@@ -155,6 +156,9 @@ describe("ProactivePinger — DeliveryVerifier integration", () => {
       expect.objectContaining({ status: "discarded", verdict: "NOISE" }),
     );
     expect(mockQueue.markDone).toHaveBeenCalledWith("job1");
+    // Regression: NOISE must signal "handled" so the worker-tick caller
+    // skips its outer markDone + reenqueue (those are run by the inner path).
+    expect(handled).toBe(true);
   });
 
   it("reschedules NEUTRAL verdict and skips delivery", async () => {
@@ -171,7 +175,11 @@ describe("ProactivePinger — DeliveryVerifier integration", () => {
       jobQueue: mockQueue as any,
       userId: "user1",
       deliveryVerifier: {
-        verify: vi.fn().mockResolvedValue({ verdict: "NEUTRAL", reason: "low value", suppressMinutes: 60 }),
+        verify: vi.fn().mockResolvedValue({
+          verdict: "NEUTRAL",
+          reason: "low value",
+          suppressUntil: new Date(Date.now() + 60 * 60_000),
+        }),
       } as any,
     };
 
@@ -181,7 +189,7 @@ describe("ProactivePinger — DeliveryVerifier integration", () => {
         morningBriefHour: 9, quietHoursStart: 22, quietHoursEnd: 7 },
     );
 
-    await (pinger as any).executeJob({
+    const handled = await (pinger as any).executeJob({
       id: "job1", type: "check_in", userId: "user1",
       scheduledAt: new Date().toISOString(), payload: "{}",
       status: "running", priority: 5, attempts: 1, createdAt: new Date().toISOString(),
@@ -189,6 +197,10 @@ describe("ProactivePinger — DeliveryVerifier integration", () => {
 
     expect(sendToUser).not.toHaveBeenCalled();
     expect(reschedule).toHaveBeenCalled();
+    // Regression: NEUTRAL must signal "handled" so the worker-tick caller
+    // does NOT overwrite the just-scheduled future status with markDone.
+    expect(handled).toBe(true);
+    expect(mockQueue.markDone).not.toHaveBeenCalled();
   });
 });
 

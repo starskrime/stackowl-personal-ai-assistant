@@ -259,11 +259,12 @@ export class ProactivePinger {
       queue.markRunning(job.id);
 
       try {
-        await this.executeJob(job);
-        queue.markDone(job.id);
-
-        // Re-enqueue recurring jobs for their next occurrence
-        this.reenqueueRecurring(job, userId, queue);
+        const handled = await this.executeJob(job);
+        if (!handled) {
+          // executeJob did not finalize the job itself — caller closes it out
+          queue.markDone(job.id);
+          this.reenqueueRecurring(job, userId, queue);
+        }
 
         log.engine.debug(`[ProactivePinger] Job ${job.type} completed`);
       } catch (err) {
@@ -277,7 +278,7 @@ export class ProactivePinger {
   /**
    * Execute a single job from the queue.
    */
-  private async executeJob(job: import("./job-queue.js").ProactiveJob): Promise<void> {
+  private async executeJob(job: import("./job-queue.js").ProactiveJob): Promise<boolean> {
     this.currentJobId = job.id;
     const { deliveryVerifier, db, userId, jobQueue } = this.context;
 
@@ -290,8 +291,9 @@ export class ProactivePinger {
         goalId: payload.goalId,
         messagePreview: payload.summary ?? "",
         activeGoals: payload.activeGoals ?? [],
-        userId: job.userId,
-      } as any);
+        priority: job.priority,
+        idleSeconds: payload.idleSeconds,
+      });
 
       if (verdict.verdict === "NOISE") {
         db?.writeProactiveDelivery({
@@ -300,28 +302,33 @@ export class ProactivePinger {
           channel: "none",
           userId: userId ?? job.userId,
           verdict: "NOISE",
+          messagePreview: payload.summary?.slice(0, 100),
           status: "discarded",
           deliveredAt: new Date().toISOString(),
         });
         jobQueue?.markDone(job.id);
+        // NOISE: still re-enqueue the next recurring instance (skip THIS one only)
+        this.reenqueueRecurring(job, userId ?? job.userId, jobQueue!);
         log.engine.debug(`[ProactivePinger] NOISE verdict — discarded job ${job.id}: ${verdict.reason}`);
-        return;
+        return true;
       }
 
       if (verdict.verdict === "NEUTRAL") {
-        const suppressMs = ((verdict as any).suppressMinutes ?? 60) * 60_000;
-        jobQueue?.reschedule(job.id, new Date(Date.now() + suppressMs));
+        const suppressUntil =
+          verdict.suppressUntil ?? new Date(Date.now() + 2 * 60 * 60_000);
+        jobQueue?.reschedule(job.id, suppressUntil);
         db?.writeProactiveDelivery({
           id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
           jobId: job.id,
           channel: "none",
           userId: userId ?? job.userId,
           verdict: "NEUTRAL",
+          messagePreview: payload.summary?.slice(0, 100),
           status: "suppressed",
           deliveredAt: new Date().toISOString(),
         });
-        log.engine.debug(`[ProactivePinger] NEUTRAL verdict — suppressed job ${job.id} for ${(verdict as any).suppressMinutes ?? 60}min`);
-        return;
+        log.engine.debug(`[ProactivePinger] NEUTRAL verdict — suppressed job ${job.id} until ${suppressUntil.toISOString()}`);
+        return true;
       }
       // ADVANCES → fall through to existing switch
     }
@@ -362,6 +369,7 @@ export class ProactivePinger {
       default:
         log.engine.warn(`[ProactivePinger] Unknown job type: ${(job as any).type}`);
     }
+    return false;
   }
 
   /**
