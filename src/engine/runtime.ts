@@ -143,6 +143,8 @@ export interface EngineContext {
   activeSubGoal?: SubGoal;
   /** Original user message text — passed to GoalVerifier for context */
   userMessage?: string;
+  /** When set, the LLM is instructed to begin its response with this interpretation prefix */
+  narrationPrefix?: string;
 }
 
 export interface PendingCapabilityGap {
@@ -886,6 +888,11 @@ export class OwlEngine {
       ? finalSystemPrompt + taskStateBlock
       : finalSystemPrompt;
 
+    const narrationSystemPrompt = context.narrationPrefix
+      ? finalSystemPromptWithTaskState +
+        `\n\n## Response Instructions\n\nBegin your response with exactly: "I'll ${context.narrationPrefix}" — then continue normally.`
+      : finalSystemPromptWithTaskState;
+
     // 2b. Sanitize history — remove references to tools that no longer exist.
     // Stale tool calls from defunct tools poison the context and confuse local models.
     const currentToolDefs = toolRegistry?.getAllDefinitions();
@@ -1000,10 +1007,10 @@ ${userMessage}
       // an independent task with no prior context, breaking back-references.
       finalUserMessage = userMessage;
     }
-    log.engine.info(`[Runtime] System prompt length: ${finalSystemPromptWithTaskState.length} chars, history: ${historyToUse.length} msgs`);
+    log.engine.info(`[Runtime] System prompt length: ${narrationSystemPrompt.length} chars, history: ${historyToUse.length} msgs`);
 
     const messages: ChatMessage[] = [
-      { role: "system", content: finalSystemPromptWithTaskState },
+      { role: "system", content: narrationSystemPrompt },
       ...historyToUse,
       { role: "user", content: finalUserMessage },
     ];
