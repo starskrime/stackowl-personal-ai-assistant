@@ -46,6 +46,8 @@ export const AppleCalendarTool: ToolImplementation = {
       },
       required: ["action"],
     },
+    capabilities: ["calendar_query", "calendar_create"],
+    executionPolicy: { timeoutMs: 10_000, maxRetries: 1, retryDelayMs: 1_000 },
   },
 
   async execute(

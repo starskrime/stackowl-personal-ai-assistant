@@ -59,6 +59,7 @@ export function createWebUnifiedTool(deps: WebUnifiedDeps): ToolImplementation {
         required: ["action"],
       },
       capabilities: ["web_search", "web_fetch", "web_interact"],
+      executionPolicy: { timeoutMs: 30_000, maxRetries: 1, retryDelayMs: 1_500 },
     },
     category: "network",
     execute: async (args, context) => {

@@ -26,6 +26,7 @@ export const DbQueryTool: ToolImplementation = {
       required: ["dbPath", "sql"],
     },
     capabilities: ["db_query", "data_read"],
+    executionPolicy: { timeoutMs: 15_000, maxRetries: 0 },
   },
 
   category: "cognitive",

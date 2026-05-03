@@ -142,6 +142,16 @@ export class ToolRegistry {
   }
 
   /**
+   * Get a single tool definition by name (allowed or deprecated).
+   * Returns undefined if the tool is not registered.
+   * Used by quality-checklist tests and the cortex (CWTG/SET) for metadata
+   * lookup — including deprecated tools so historical edges remain queryable.
+   */
+  getDefinition(name: string): ToolDefinition | undefined {
+    return this.tools.get(name)?.definition;
+  }
+
+  /**
    * Get ALL allowed tool definitions synchronously (no routing).
    * Use for: history sanitization, capability checks, admin operations.
    */

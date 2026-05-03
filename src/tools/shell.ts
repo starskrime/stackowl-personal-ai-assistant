@@ -308,6 +308,8 @@ export const ShellTool: ToolImplementation = {
       },
       required: ["command", "mode"],
     },
+    capabilities: ["shell_exec", "process_spawn"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   async execute(

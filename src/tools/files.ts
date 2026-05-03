@@ -55,6 +55,8 @@ export const ReadFileTool: ToolImplementation = {
       },
       required: ["path"],
     },
+    capabilities: ["file_read"],
+    executionPolicy: { timeoutMs: 5_000, maxRetries: 0 },
   },
 
   async execute(
@@ -114,6 +116,8 @@ export const WriteFileTool: ToolImplementation = {
       required: ["path", "content"],
     },
     sequential: true,
+    capabilities: ["file_write"],
+    executionPolicy: { timeoutMs: 5_000, maxRetries: 0 },
   },
 
   async execute(
@@ -173,6 +177,8 @@ export const EditFileTool: ToolImplementation = {
       required: ["path", "old_string", "new_string"],
     },
     sequential: true,
+    capabilities: ["file_write", "file_edit"],
+    executionPolicy: { timeoutMs: 5_000, maxRetries: 0 },
   },
 
   async execute(

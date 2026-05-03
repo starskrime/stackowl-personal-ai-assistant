@@ -59,6 +59,7 @@ export const ScheduleTool: ToolImplementation = {
       required: ["action"],
     },
     capabilities: ["schedule", "reminder"],
+    executionPolicy: { timeoutMs: 10_000, maxRetries: 0 },
   },
 
   category: "cognitive",

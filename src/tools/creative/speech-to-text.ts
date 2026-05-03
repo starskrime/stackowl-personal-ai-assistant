@@ -40,6 +40,8 @@ export const SpeechToTextTool: ToolImplementation = {
       },
       required: ["file_path"],
     },
+    capabilities: ["speech_to_text", "audio_transcribe"],
+    executionPolicy: { timeoutMs: 120_000, maxRetries: 1, retryDelayMs: 2_000 },
   },
 
   async execute(

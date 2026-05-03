@@ -39,6 +39,8 @@ export const DataVisualizationTool: ToolImplementation = {
       },
       required: ["chart_type", "labels", "data", "title"],
     },
+    capabilities: ["data_viz", "chart_create"],
+    executionPolicy: { timeoutMs: 15_000, maxRetries: 1, retryDelayMs: 1_500 },
   },
 
   async execute(

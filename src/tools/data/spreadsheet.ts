@@ -99,6 +99,8 @@ export const SpreadsheetTool: ToolImplementation = {
       },
       required: ["action", "name"],
     },
+    capabilities: ["spreadsheet_io", "tabular_query"],
+    executionPolicy: { timeoutMs: 10_000, maxRetries: 0 },
   },
 
   async execute(

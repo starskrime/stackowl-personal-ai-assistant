@@ -34,6 +34,7 @@ export const CodeSandboxTool: ToolImplementation = {
       required: ["language", "code"],
     },
     capabilities: ["code_execution", "sandbox"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   category: "shell",

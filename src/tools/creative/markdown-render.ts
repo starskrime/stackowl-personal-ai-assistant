@@ -103,6 +103,8 @@ export const MarkdownRenderTool: ToolImplementation = {
       },
       required: ["content", "output"],
     },
+    capabilities: ["doc_render", "html_create"],
+    executionPolicy: { timeoutMs: 5_000, maxRetries: 0 },
   },
 
   async execute(

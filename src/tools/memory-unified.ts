@@ -71,6 +71,7 @@ export function createMemoryUnifiedTool(deps: MemoryUnifiedDeps): ToolImplementa
         required: ["action"],
       },
       capabilities: ["memory_search", "memory_store", "memory_get", "memory_write", "memory_invalidate"],
+      executionPolicy: { timeoutMs: 10_000, maxRetries: 0 },
     },
     category: "memory" as any,
     execute: async (args, context) => {

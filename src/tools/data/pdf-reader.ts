@@ -29,6 +29,8 @@ export const PDFReaderTool: ToolImplementation = {
       },
       required: ["path"],
     },
+    capabilities: ["document_read", "pdf_extract"],
+    executionPolicy: { timeoutMs: 15_000, maxRetries: 0 },
   },
 
   category: "filesystem",

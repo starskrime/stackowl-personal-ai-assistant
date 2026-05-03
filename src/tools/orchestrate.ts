@@ -18,6 +18,8 @@ export const OrchestrateTasksTool: ToolImplementation = {
       },
       required: ["tasks"],
     },
+    capabilities: ["task_orchestration", "parallel_exec"],
+    executionPolicy: { timeoutMs: 600_000, maxRetries: 0 },
   },
 
   async execute(

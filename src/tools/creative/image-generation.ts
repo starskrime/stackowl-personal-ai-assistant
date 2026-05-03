@@ -35,6 +35,8 @@ export const ImageGenerationTool: ToolImplementation = {
       },
       required: ["prompt"],
     },
+    capabilities: ["image_create", "ai_generate"],
+    executionPolicy: { timeoutMs: 120_000, maxRetries: 1, retryDelayMs: 3_000 },
   },
 
   async execute(

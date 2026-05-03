@@ -39,6 +39,7 @@ export const VisionTool: ToolImplementation = {
       required: ["imagePath", "question"],
     },
     capabilities: ["vision", "multimodal"],
+    executionPolicy: { timeoutMs: 60_000, maxRetries: 1, retryDelayMs: 2_000 },
   },
 
   category: "cognitive",
