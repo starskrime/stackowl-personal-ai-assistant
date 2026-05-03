@@ -942,6 +942,10 @@ export class OwlGateway {
     message: GatewayMessage,
     callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse> {
+    // Drain CRITICAL (high-priority) PostProcessor jobs from the previous turn
+    // before building context so digest-update is guaranteed to have completed.
+    await this.taskQueue.drainCritical();
+
     // Greeting-reset check: if user sends a lone greeting and session has history,
     // end and evict the old session so they start fresh.
     if (this.ctx.sessionService && SessionService.isGreetingPattern(message.text)) {
