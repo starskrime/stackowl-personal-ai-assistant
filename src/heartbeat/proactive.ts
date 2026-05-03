@@ -10,7 +10,6 @@ import { makeEnvelope } from "../gateway/delivery-envelope.js";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
-import { MemoryConsolidator } from "./consolidation.js";
 import { ToolPruner } from "../evolution/pruner.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { CapabilityLedger } from "../evolution/ledger.js";
@@ -46,7 +45,7 @@ export interface PingContext {
   capabilityLedger: CapabilityLedger;
   toolRegistry?: ToolRegistry;
   /** Callback to send a message to the user */
-  sendToUser: (message: string) => Promise<void>;
+  sendToUser?: (message: string) => Promise<void>;
   /** Get recent session history for context */
   getRecentHistory?: () => ChatMessage[];
   /** The user ID to run consolidation for */
@@ -84,6 +83,12 @@ export interface PingContext {
   eventBus?: import("../events/bus.js").EventBus;
   /** GatewayEventBus — when set, proactive messages are routed through the delivery bus */
   gatewayEventBus?: import("../gateway/event-bus.js").GatewayEventBus;
+  /** MemoryDatabase — used to record delivery outcomes */
+  db?: import("../memory/db.js").MemoryDatabase;
+  /** Stable user identifier for delivery/engagement rows */
+  // Note: userId is already declared above; this comment is for documentation only.
+  /** DeliveryVerifier — gates outbound proactive sends */
+  deliveryVerifier?: import("./delivery-verifier.js").DeliveryVerifier;
 }
 
 export type PingType =
@@ -91,7 +96,8 @@ export type PingType =
   | "check_in"
   | "reminder"
   | "idea"
-  | "follow_up";
+  | "follow_up"
+  | "goal_progress_update";
 
 // ─── Default Config ──────────────────────────────────────────────
 
@@ -123,6 +129,8 @@ export class ProactivePinger {
   private lastSelfStudyDate: string = "";
   // lastDreamTime and lastSkillEvolutionDate removed — proactive learning disabled
   private unansweredPings: number = 0;
+  private lastDeliveryId: string = "";
+  private currentJobId: string = "";
   private _backgroundWorker: import("../agent/background-worker.js").BackgroundWorker | null = null;
 
   constructor(context: PingContext, config?: Partial<PingConfig>) {
@@ -251,11 +259,12 @@ export class ProactivePinger {
       queue.markRunning(job.id);
 
       try {
-        await this.executeJob(job);
-        queue.markDone(job.id);
-
-        // Re-enqueue recurring jobs for their next occurrence
-        this.reenqueueRecurring(job, userId, queue);
+        const handled = await this.executeJob(job);
+        if (!handled) {
+          // executeJob did not finalize the job itself — caller closes it out
+          queue.markDone(job.id);
+          this.reenqueueRecurring(job, userId, queue);
+        }
 
         log.engine.debug(`[ProactivePinger] Job ${job.type} completed`);
       } catch (err) {
@@ -269,7 +278,61 @@ export class ProactivePinger {
   /**
    * Execute a single job from the queue.
    */
-  private async executeJob(job: import("./job-queue.js").ProactiveJob): Promise<void> {
+  private async executeJob(job: import("./job-queue.js").ProactiveJob): Promise<boolean> {
+    this.currentJobId = job.id;
+    const { deliveryVerifier, db, userId, jobQueue } = this.context;
+
+    if (deliveryVerifier) {
+      let payload: any = {};
+      try { payload = job.payload ? JSON.parse(job.payload) : {}; } catch { /* keep {} */ }
+
+      const verdict = await deliveryVerifier.verify({
+        jobType: job.type,
+        goalId: payload.goalId,
+        messagePreview: payload.summary ?? "",
+        activeGoals: payload.activeGoals ?? [],
+        priority: job.priority,
+        idleSeconds: payload.idleSeconds,
+      });
+
+      if (verdict.verdict === "NOISE") {
+        db?.writeProactiveDelivery({
+          id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          jobId: job.id,
+          channel: "none",
+          userId: userId ?? job.userId,
+          verdict: "NOISE",
+          messagePreview: payload.summary?.slice(0, 100),
+          status: "discarded",
+          deliveredAt: new Date().toISOString(),
+        });
+        jobQueue?.markDone(job.id);
+        // NOISE: still re-enqueue the next recurring instance (skip THIS one only)
+        this.reenqueueRecurring(job, userId ?? job.userId, jobQueue!);
+        log.engine.debug(`[ProactivePinger] NOISE verdict — discarded job ${job.id}: ${verdict.reason}`);
+        return true;
+      }
+
+      if (verdict.verdict === "NEUTRAL") {
+        const suppressUntil =
+          verdict.suppressUntil ?? new Date(Date.now() + 2 * 60 * 60_000);
+        jobQueue?.reschedule(job.id, suppressUntil);
+        db?.writeProactiveDelivery({
+          id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          jobId: job.id,
+          channel: "none",
+          userId: userId ?? job.userId,
+          verdict: "NEUTRAL",
+          messagePreview: payload.summary?.slice(0, 100),
+          status: "suppressed",
+          deliveredAt: new Date().toISOString(),
+        });
+        log.engine.debug(`[ProactivePinger] NEUTRAL verdict — suppressed job ${job.id} until ${suppressUntil.toISOString()}`);
+        return true;
+      }
+      // ADVANCES → fall through to existing switch
+    }
+
     switch (job.type) {
       case "morning_brief":
         await this.sendMorningBrief();
@@ -278,7 +341,7 @@ export class ProactivePinger {
         await this.sendCheckIn();
         break;
       case "memory_consolidation":
-        await this.maybeConsolidateMemory();
+        log.engine.debug("[ProactivePinger] memory_consolidation handled by CognitiveLoop — skipping");
         break;
       case "tool_pruning":
         await this.maybePruneTools();
@@ -287,17 +350,38 @@ export class ProactivePinger {
         await this.maybeSelfStudy();
         break;
       case "knowledge_council":
-        await this.maybeKnowledgeCouncil();
+        log.engine.debug("[ProactivePinger] knowledge_council handled by CognitiveLoop — skipping");
         break;
       case "dream_reflexion":
-        await this.maybeDream();
+        log.engine.debug("[ProactivePinger] dream_reflexion handled by CognitiveLoop — skipping");
         break;
       case "skill_evolution":
-        await this.maybeEvolveSkills();
+        log.engine.debug("[ProactivePinger] skill_evolution handled by CognitiveLoop — skipping");
         break;
       case "goal_check":
         await this.maybeCheckGoals();
         break;
+      case "goal_progress_update": {
+        let payload: { goalId?: string; summary?: string } = {};
+        try { payload = job.payload ? JSON.parse(job.payload) : {}; } catch { /* keep {} */ }
+
+        if (!payload.goalId || !payload.summary) {
+          log.engine.warn(`[ProactivePinger] goal_progress_update missing payload — marking done`);
+          this.context.jobQueue?.markDone(job.id);
+          break;
+        }
+
+        const goalContext = await this.assembleGoalContext();
+        const prompt =
+          `Inform the user about progress on a goal they're tracking. ` +
+          `Be brief (1-2 sentences max), specific, and reference the actual progress.\n\n` +
+          `Goal context:\n${goalContext || "(no active goals loaded)"}\n\n` +
+          `Progress summary: ${payload.summary}`;
+
+        await this.generateAndSend(prompt, "goal_progress_update");
+        this.context.jobQueue?.markDone(job.id);
+        break;
+      }
       case "background_task":
         if (this._backgroundWorker) {
           await this._backgroundWorker.tick();
@@ -306,6 +390,7 @@ export class ProactivePinger {
       default:
         log.engine.warn(`[ProactivePinger] Unknown job type: ${(job as any).type}`);
     }
+    return false;
   }
 
   /**
@@ -575,44 +660,6 @@ export class ProactivePinger {
   }
 
   /**
-   * Maybe run the daily memory consolidation job.
-   * Extracts persistent facts from the day's chat logs and saves them to owl_dna.json.
-   */
-  private async maybeConsolidateMemory(): Promise<void> {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const dateKey = now.toISOString().split("T")[0];
-
-    // Run at 3 AM by default (when the user is asleep)
-    // Hardcoded for now, but could be added to PingConfig
-    if (hour !== 3 || minute !== 0) return;
-    if (this.lastConsolidationDate === dateKey) return;
-
-    this.lastConsolidationDate = dateKey;
-
-    // Ensure we know who we are consolidating for
-    const userId = this.context.userId;
-    if (!userId) {
-      console.log(
-        "[ProactivePinger] Skipping consolidation: no userId in context",
-      );
-      return;
-    }
-
-    try {
-      const consolidator = new MemoryConsolidator(
-        this.context.provider,
-        this.context.owl,
-        this.context.config.workspace,
-      );
-      await consolidator.consolidateSession(userId);
-    } catch (e) {
-      console.error("[ProactivePinger] Memory consolidation failed:", e);
-    }
-  }
-
-  /**
    * Maybe run the autonomous tool pruner.
    * Scans for failing tools and attempts to rewrite or archive them.
    */
@@ -692,47 +739,59 @@ export class ProactivePinger {
     }
   }
 
-  /**
-   * Knowledge Council — owls learn independently, then brainstorm and validate.
-   * Runs weekly during quiet hours (3 AM on Sundays by default).
-   */
-  private async maybeKnowledgeCouncil(): Promise<void> {
-    // DISABLED — Knowledge Council burned tokens proactively.
-    // Learning now only happens reactively (on actual failures).
-    return;
-  }
-
-  /**
-   * Idle-Time Dreaming — reflects on past mistakes to adapt heuristics.
-   */
-  private async maybeDream(): Promise<void> {
-    // DISABLED — Dreaming is handled by CognitiveLoop's reflexion_dream action.
-    // No need to duplicate with a separate timer.
-    return;
-  }
-
-  /**
-   * Skill Evolution + Pattern Mining — runs at 5 AM, once per day.
-   *
-   * Two phases:
-   *   1. SkillEvolver: critiques every registered skill and rewrites low-scoring ones
-   *      (Self-Refine loop, max 2 iterations each).
-   *   2. PatternMiner: scans recent session history for repeated successful tool
-   *      sequences and crystallizes them as new SKILL.md files (LATS-inspired).
-   *
-   * Neither phase sends anything to the user — all work is silent.
-   */
-  private async maybeEvolveSkills(): Promise<void> {
-    // DISABLED — Skill evolution and pattern mining burned tokens proactively.
-    // Learning now only happens reactively (on actual failures).
-    return;
-  }
-
   // ── Queue-compatible wrappers (called by job executor) ────────
 
-  /** Thin wrapper so job executor can call by job type name */
+  /**
+   * Assemble goal-aware context string for proactive message prompts.
+   * Priority-ordered: active goals (high) > recent history (low).
+   */
+  private async assembleGoalContext(): Promise<string> {
+    const parts: string[] = [];
+
+    if (this.context.goalGraph) {
+      try {
+        await this.context.goalGraph.load();
+        const activeGoals = this.context.goalGraph.getActive?.() ?? [];
+        if (activeGoals.length > 0) {
+          parts.push(
+            `Active goals:\n${activeGoals.slice(0, 3).map((g: any) => `- ${g.title}`).join("\n")}`,
+          );
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    if (this.context.getRecentHistory) {
+      const history = this.context.getRecentHistory();
+      if (history.length > 0) {
+        const lastUserMessages = history
+          .filter(m => m.role === "user")
+          .slice(-3)
+          .map(m => (typeof m.content === "string" ? m.content : "").slice(0, 80));
+        if (lastUserMessages.length > 0) {
+          parts.push(`Recent context: ${lastUserMessages.join(" | ")}`);
+        }
+      }
+    }
+
+    return parts.join("\n\n");
+  }
+
+  /** Job-queue path: goal-anchored morning brief (queue handles time gating). */
   private async sendMorningBrief(): Promise<void> {
-    return this.maybeMorningBrief();
+    const dayOfWeek = new Date().toLocaleDateString("en-US", { weekday: "long" });
+    const goalContext = await this.assembleGoalContext();
+
+    if (!goalContext) return; // Skip if nothing real to say
+
+    const prompt =
+      `It's ${dayOfWeek} morning. Generate a concise morning brief (2-3 sentences max). ` +
+      `${goalContext}\n\n` +
+      `Reference the actual context above — do not invent generic motivational filler. ` +
+      `Sound like a real assistant who knows what the user is working on.`;
+
+    await this.generateAndSend(prompt, "morning_brief");
   }
 
   /** Thin wrapper so job executor can call by job type name */
@@ -759,6 +818,8 @@ export class ProactivePinger {
         `📌 **Goal check-in** — you have ${stale.length} goal(s) with no recent progress:\n` +
         goalSummaries +
         `\n\nWant me to pick one and start working on it?`,
+        "goal_check",
+        this.currentJobId,
       );
     } catch (err) {
       log.engine.warn(
@@ -767,19 +828,71 @@ export class ProactivePinger {
     }
   }
 
-  private async deliverProactive(message: string): Promise<void> {
-    const { gatewayEventBus, userId } = this.context;
+  /** Returns the delivery ID of the last successfully recorded proactive delivery. */
+  getLastDeliveryId(): string {
+    return this.lastDeliveryId;
+  }
+
+  private async deliverProactive(
+    message: string,
+    _jobType: string = "unknown",
+    jobId: string = "",
+    verdict: string = "skipped_check",
+  ): Promise<void> {
+    const { gatewayEventBus, userId, db } = this.context;
+    const deliveryId = `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const channel = gatewayEventBus ? "gateway" : "direct";
+
     if (gatewayEventBus && userId) {
       gatewayEventBus.publish(makeEnvelope({
         userId,
         content: { text: message, streamable: false },
         urgency: "proactive",
         trigger: "proactive",
-        ttlMs: 4 * 60 * 60 * 1000,  // drop if user unreachable after 4h
+        ttlMs: 4 * 60 * 60 * 1000,
+        deliveryId,
+        jobType: _jobType,
       }));
-      return;
+      db?.writeProactiveDelivery({
+        id: deliveryId,
+        jobId,
+        channel,
+        userId,
+        messagePreview: message.slice(0, 100),
+        verdict,
+        deliveredAt: new Date().toISOString(),
+        status: "delivered",
+      });
+      this.lastDeliveryId = deliveryId;
+      this.lastPingTime = Date.now();
+    } else if (this.context.sendToUser) {
+      try {
+        await this.context.sendToUser(message);
+        db?.writeProactiveDelivery({
+          id: deliveryId,
+          jobId,
+          channel: "direct",
+          userId: userId ?? "unknown",
+          messagePreview: message.slice(0, 100),
+          verdict,
+          deliveredAt: new Date().toISOString(),
+          status: "delivered",
+        });
+        this.lastDeliveryId = deliveryId;
+        this.lastPingTime = Date.now();
+      } catch (err) {
+        log.engine.warn(`[ProactivePinger] sendToUser failed: ${err}`);
+        db?.writeProactiveDelivery({
+          id: deliveryId,
+          jobId,
+          channel: "direct",
+          userId: userId ?? "unknown",
+          verdict,
+          status: "failed",
+        });
+      }
     }
-    await this.context.sendToUser(message);
+    // No else — if neither is available, job stays pending (retry logic handles it)
   }
 
   /**
@@ -834,16 +947,60 @@ export class ProactivePinger {
           prompt: fullPrompt,
           type: _type,
         });
-        
-        // Pings are unanswered until the user replies
         this.lastPingTime = Date.now();
         this.unansweredPings++;
+      } else if (this.context.gatewayEventBus || this.context.sendToUser) {
+        await this.deliverProactive(fullPrompt, _type, this.currentJobId);
       } else {
-        console.warn("[ProactivePinger] EventBus not available, dropping ping.");
+        await this.handleUndeliverable(this.currentJobId, "no transport available (eventBus, gatewayEventBus, sendToUser all missing)");
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[ProactivePinger] Failed to generate ping: ${msg}`);
     }
+  }
+
+  private async handleUndeliverable(jobId: string, reason: string): Promise<void> {
+    const { jobQueue, db, userId } = this.context;
+    if (!jobQueue || !jobId) return;
+
+    const retryCount = jobQueue.getRetryCount?.(jobId) ?? 0;
+
+    if (retryCount < 3) {
+      jobQueue.incrementRetry?.(jobId);
+      const backoffMs = 60_000 * Math.pow(2, retryCount);
+      jobQueue.reschedule?.(jobId, new Date(Date.now() + backoffMs));
+      log.engine.warn(`[ProactivePinger] Job ${jobId} undeliverable (${reason}); retry ${retryCount + 1}/3 in ${backoffMs / 1000}s`);
+      return;
+    }
+
+    jobQueue.markFailed?.(jobId, `undeliverable after 3 retries: ${reason}`);
+    db?.writeProactiveDelivery({
+      id: `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      jobId,
+      channel: "none",
+      userId: userId ?? "unknown",
+      verdict: "ADVANCES",
+      status: "failed",
+      deliveredAt: new Date().toISOString(),
+    });
+    log.engine.error(`[ProactivePinger] Job ${jobId} failed after 3 retries: ${reason}`);
+  }
+
+  recordEngagement(
+    deliveryId: string,
+    jobType: string,
+    replied: boolean,
+    replyLatencySeconds?: number,
+    goalId?: string,
+  ): void {
+    this.context.db?.writeProactiveEngagement({
+      id: `eng_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      deliveryId,
+      jobType,
+      goalId,
+      replied,
+      replyLatencySeconds,
+    });
   }
 }

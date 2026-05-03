@@ -24,7 +24,7 @@
 
 import Database from "better-sqlite3";
 import { join } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { log } from "../logger.js";
 
 // ─── Job Types ───────────────────────────────────────────────────
@@ -39,7 +39,8 @@ export type JobType =
   | "dream_reflexion"        // Reflexion/self-improvement pass
   | "skill_evolution"        // Evolve owl skills
   | "background_task"        // Arbitrary background work
-  | "goal_check";            // Review active goals
+  | "goal_check"             // Review active goals
+  | "goal_progress_update";  // Notify user about progress on a tracked goal
 
 export type JobStatus = "pending" | "running" | "done" | "failed" | "skipped";
 
@@ -67,17 +68,22 @@ export interface ProactiveJob {
 
 export class ProactiveJobQueue {
   private db: Database.Database;
+  private ownDb = false; // true if we created the DB ourselves
 
-  constructor(workspacePath: string) {
-    const dbPath = join(workspacePath, "proactive-jobs.db");
-
-    if (!existsSync(workspacePath)) {
-      mkdirSync(workspacePath, { recursive: true });
+  constructor(workspacePathOrDb: string | Database.Database) {
+    if (typeof workspacePathOrDb === "string") {
+      const workspacePath = workspacePathOrDb;
+      const dbPath = join(workspacePath, "proactive-jobs.db");
+      if (!existsSync(workspacePath)) {
+        mkdirSync(workspacePath, { recursive: true });
+      }
+      this.db = new Database(dbPath);
+      this.db.pragma("journal_mode = WAL");
+      this.db.pragma("synchronous = NORMAL");
+      this.ownDb = true;
+    } else {
+      this.db = workspacePathOrDb;
     }
-
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("synchronous = NORMAL");
     this.createSchema();
     log.engine.debug("[JobQueue] Initialized proactive job queue");
   }
@@ -104,6 +110,21 @@ export class ProactiveJobQueue {
       CREATE INDEX IF NOT EXISTS idx_pj_user
         ON proactive_jobs (user_id, status);
     `);
+
+    // v22 columns — idempotent ALTER guards mirror applyV22Migration in
+    // src/memory/db.ts. Required for the standalone-fallback path so Task 6
+    // retry/suppress writes don't fail against a fresh proactive-jobs.db.
+    const cols = (this.db.pragma("table_info(proactive_jobs)") as { name: string }[]).map(c => c.name);
+    if (!cols.includes("retry_count")) {
+      this.db.exec(`ALTER TABLE proactive_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!cols.includes("suppress_count")) {
+      this.db.exec(`ALTER TABLE proactive_jobs ADD COLUMN suppress_count INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!cols.includes("goal_id")) {
+      this.db.exec(`ALTER TABLE proactive_jobs ADD COLUMN goal_id TEXT`);
+    }
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_pj_goal ON proactive_jobs (goal_id, status)`);
   }
 
   // ─── Enqueue ─────────────────────────────────────────────────
@@ -246,6 +267,21 @@ export class ProactiveJobQueue {
   }
 
   /**
+   * Get the retry count for a job.
+   */
+  getRetryCount(jobId: string): number {
+    const row = this.db.prepare("SELECT retry_count FROM proactive_jobs WHERE id = ?").get(jobId) as any;
+    return row?.retry_count ?? 0;
+  }
+
+  /**
+   * Increment the retry count for a job.
+   */
+  incrementRetry(jobId: string): void {
+    this.db.prepare("UPDATE proactive_jobs SET retry_count = COALESCE(retry_count, 0) + 1 WHERE id = ?").run(jobId);
+  }
+
+  /**
    * Prune old done/failed/skipped jobs older than retentionDays.
    */
   cleanup(retentionDays = 7): number {
@@ -262,6 +298,48 @@ export class ProactiveJobQueue {
   }
 
   close(): void {
-    this.db.close();
+    if (this.ownDb) {
+      this.db.close();
+    }
+  }
+}
+
+/**
+ * One-time migration: copy pending jobs from the legacy proactive-jobs.db
+ * into the main stackowl.db, then rename the old file to .bak.
+ * Safe to call repeatedly — no-op if old file doesn't exist.
+ */
+export function migrateJobsDb(workspacePath: string, mainDb: Database.Database): void {
+  const oldPath = join(workspacePath, "proactive-jobs.db");
+  if (!existsSync(oldPath)) return;
+
+  try {
+    const oldDb = new Database(oldPath, { readonly: true });
+    const rows = oldDb.prepare(`SELECT * FROM proactive_jobs WHERE status = 'pending'`).all() as any[];
+    oldDb.close();
+
+    if (rows.length > 0) {
+      const insert = mainDb.prepare(`
+        INSERT OR IGNORE INTO proactive_jobs
+          (id, type, user_id, scheduled_at, payload, status, priority,
+           attempts, last_attempt_at, error, retry_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      `);
+      const insertAll = mainDb.transaction((jobs: any[]) => {
+        for (const j of jobs) {
+          insert.run(
+            j.id, j.type, j.user_id, j.scheduled_at, j.payload,
+            j.status, j.priority, j.attempts, j.last_attempt_at,
+            j.error, j.created_at,
+          );
+        }
+      });
+      insertAll(rows);
+    }
+
+    renameSync(oldPath, oldPath + ".bak");
+    log.engine.info(`[JobQueue] Migrated ${rows.length} pending jobs from proactive-jobs.db; renamed to .bak`);
+  } catch (err) {
+    log.engine.warn(`[JobQueue] Migration from proactive-jobs.db failed: ${err}`);
   }
 }

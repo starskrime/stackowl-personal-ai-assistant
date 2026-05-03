@@ -37,6 +37,7 @@ export type ActionType =
   | "explore_capabilities"
   | "anticipatory_research"
   | "review_tool_outcomes"
+  | "goal_progress_update"
   | "none";
 
 export interface PlannedAction {
@@ -69,6 +70,19 @@ const DEFAULT_CONFIG: PlannerConfig = {
 
 // ─── Planner ─────────────────────────────────────────────────────
 
+export interface PlannerDeps {
+  goalGraph: GoalGraph;
+  learningEngine?: LearningEngine;
+  preferenceStore?: PreferenceStore;
+  skillsRegistry?: SkillsRegistry;
+  taskStore?: TaskStore;
+  patternMiner?: PatternMiner;
+  capabilityScanner?: CapabilityScanner;
+  skillsDir?: string;
+  db?: import("../memory/db.js").MemoryDatabase;
+  onAction: (action: PlannedAction) => Promise<void>;
+}
+
 export class AutonomousPlanner {
   private config: PlannerConfig;
   private timer: NodeJS.Timeout | null = null;
@@ -79,18 +93,12 @@ export class AutonomousPlanner {
   /** Track last user message time for idle detection */
   private lastUserMessageAt: number = Date.now();
 
+  private get goalGraph(): GoalGraph {
+    return this.deps.goalGraph;
+  }
+
   constructor(
-    private goalGraph: GoalGraph,
-    private deps: {
-      learningEngine?: LearningEngine;
-      preferenceStore?: PreferenceStore;
-      skillsRegistry?: SkillsRegistry;
-      taskStore?: TaskStore;
-      patternMiner?: PatternMiner;
-      capabilityScanner?: CapabilityScanner;
-      skillsDir?: string;
-      onAction: (action: PlannedAction) => Promise<void>;
-    },
+    private deps: PlannerDeps,
     config?: Partial<PlannerConfig>,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -178,6 +186,20 @@ export class AutonomousPlanner {
 
   // ─── Candidate Generation ──────────────────────────────────────
 
+  /**
+   * Returns a data-driven priority score for a given action type.
+   * Uses the reply rate from proactive_engagement (last 30 days, min 20 samples).
+   * Falls back to basePriority on cold start.
+   * Score is clamped to [basePriority - 20, basePriority + 20].
+   */
+  private async learnedPriority(type: ActionType, basePriority: number): Promise<number> {
+    if (!this.deps.db) return basePriority;
+    const stats = this.deps.db.getEngagementStats(type, { days: 30, minSamples: 20 });
+    if (!stats) return basePriority;
+    const learned = Math.round(stats.replyRate * 100);
+    return Math.max(basePriority - 20, Math.min(basePriority + 20, learned));
+  }
+
   private async generateCandidates(): Promise<PlannedAction[]> {
     const candidates: PlannedAction[] = [];
     const now = new Date();
@@ -191,9 +213,10 @@ export class AutonomousPlanner {
     if (!isQuiet) {
       const staleGoals = this.goalGraph.getStale(5); // 5 days without mention
       for (const goal of staleGoals.slice(0, 2)) {
+        const base = 80 - staleGoals.indexOf(goal) * 10;
         candidates.push({
           type: "follow_up_stale_goal",
-          priority: 80 - staleGoals.indexOf(goal) * 10,
+          priority: await this.learnedPriority("follow_up_stale_goal", base),
           description: `Follow up on "${goal.title}" — not mentioned in ${Math.round((Date.now() - goal.lastActiveAt) / (1000 * 60 * 60 * 24))} days`,
           goalId: goal.id,
         });
@@ -206,7 +229,7 @@ export class AutonomousPlanner {
       for (const goal of blocked.slice(0, 2)) {
         candidates.push({
           type: "advance_blocked_goal",
-          priority: 70,
+          priority: await this.learnedPriority("advance_blocked_goal", 70),
           description: `Help unblock "${goal.title}" — reason: ${goal.blockedReason ?? "unknown"}`,
           goalId: goal.id,
         });
@@ -222,7 +245,7 @@ export class AutonomousPlanner {
     ) {
       candidates.push({
         type: "morning_brief",
-        priority: 90, // High priority during morning window
+        priority: await this.learnedPriority("morning_brief", 90),
         description: "Deliver morning brief with goals status + agenda",
       });
       // Will be marked done after execution to prevent re-trigger
@@ -232,7 +255,7 @@ export class AutonomousPlanner {
     if (this.deps.learningEngine && this.idleMinutes > 10) {
       candidates.push({
         type: "self_study",
-        priority: isQuiet ? 50 : 40, // Higher priority during quiet hours
+        priority: await this.learnedPriority("self_study", isQuiet ? 50 : 40),
         description: "Proactive learning session — study queued topics",
       });
     }
@@ -241,7 +264,7 @@ export class AutonomousPlanner {
     if (isQuiet && this.deps.skillsRegistry) {
       candidates.push({
         type: "skill_evolution",
-        priority: 30,
+        priority: await this.learnedPriority("skill_evolution", 30),
         description: "Evolve and improve existing skills",
       });
     }
@@ -250,7 +273,7 @@ export class AutonomousPlanner {
     if (isQuiet && this.lastConsolidationDate !== dateKey) {
       candidates.push({
         type: "memory_consolidation",
-        priority: 50,
+        priority: await this.learnedPriority("memory_consolidation", 50),
         description: "Consolidate daily memories and extract persistent facts",
       });
     }
@@ -267,7 +290,7 @@ export class AutonomousPlanner {
         if (hoursSinceActive > 4) {
           candidates.push({
             type: "check_in",
-            priority: 20,
+            priority: await this.learnedPriority("check_in", 20),
             description: `Check in — stale goal: "${topGoal.title}" (${topGoal.progress}%, idle ${Math.round(hoursSinceActive)}h)`,
             goalId: topGoal.id,
           });
@@ -283,7 +306,7 @@ export class AutonomousPlanner {
     ) {
       candidates.push({
         type: "mine_patterns",
-        priority: 60,
+        priority: await this.learnedPriority("mine_patterns", 60),
         description:
           "Mine conversation patterns and crystallize into new skills",
       });
@@ -293,7 +316,7 @@ export class AutonomousPlanner {
     if (this.deps.capabilityScanner && this.idleMinutes > 15) {
       candidates.push({
         type: "explore_capabilities",
-        priority: 45,
+        priority: await this.learnedPriority("explore_capabilities", 45),
         description:
           "Scan platform config for unused adapters, tools, and MCP servers",
       });
@@ -303,7 +326,7 @@ export class AutonomousPlanner {
     if (this.deps.learningEngine && this.idleMinutes > 5) {
       candidates.push({
         type: "anticipatory_research",
-        priority: 35,
+        priority: await this.learnedPriority("anticipatory_research", 35),
         description: "Pre-research topics the user is likely to ask about next",
       });
     }
@@ -312,7 +335,7 @@ export class AutonomousPlanner {
     if (this.idleMinutes > 20) {
       candidates.push({
         type: "review_tool_outcomes",
-        priority: 25,
+        priority: await this.learnedPriority("review_tool_outcomes", 25),
         description:
           "Analyze tool success/failure patterns and identify improvements",
       });

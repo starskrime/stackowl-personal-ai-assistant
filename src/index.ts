@@ -1252,11 +1252,19 @@ async function chatCommand(owlName?: string) {
       chatIdsPath: join(b.workspacePath, "known_chat_ids.json"),
     });
     gateway.register(telegramAdapter);
-    telegramAdapter.start().catch((err) => {
-      console.error(
-        chalk.red(`✗ Telegram failed: ${err instanceof Error ? err.message : err}`),
-      );
-    });
+    telegramAdapter
+      .start()
+      .then(() => {
+        // Share the proactive pinger with CLI so user replies get
+        // recorded as engagement signals (Element 12 — Task 6.5).
+        const pinger = telegramAdapter.getPinger();
+        if (pinger) adapter.setPinger(pinger);
+      })
+      .catch((err) => {
+        console.error(
+          chalk.red(`✗ Telegram failed: ${err instanceof Error ? err.message : err}`),
+        );
+      });
   }
 
   process.on("SIGINT", async () => {
@@ -2041,6 +2049,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
   // 4. Check for Telegram
   // Note: grammY's bot.start() blocks forever (long-polling), so we start it
   // without await. The onStart callback confirms it's running.
+  let pendingTelegramAdapter: TelegramAdapter | null = null;
   if (b.config.telegram?.botToken) {
     const telegramAdapter = new TelegramAdapter(gateway, {
       botToken: b.config.telegram.botToken,
@@ -2048,6 +2057,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
       chatIdsPath: join(b.workspacePath, "known_chat_ids.json"),
     });
     gateway.register(telegramAdapter);
+    pendingTelegramAdapter = telegramAdapter;
     telegramAdapter.start().catch((err) => {
       console.error(
         chalk.red(
@@ -2074,6 +2084,23 @@ async function allCommand(opts: { owl?: string; port?: string }) {
   // 5. Start CLI adapter
   const cliAdapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
   gateway.register(cliAdapter);
+
+  // Element 12 — Task 6.5: share Telegram's ProactivePinger with CLI so user
+  // replies on either channel record engagement signals. Pinger is constructed
+  // inside Telegram's async `start()`, so we poll briefly to catch it once
+  // initialization completes.
+  if (pendingTelegramAdapter) {
+    const tgRef = pendingTelegramAdapter;
+    const tryAttachPinger = (attempt: number): void => {
+      const pinger = tgRef.getPinger();
+      if (pinger) {
+        cliAdapter.setPinger(pinger);
+        return;
+      }
+      if (attempt < 50) setTimeout(() => tryAttachPinger(attempt + 1), 200);
+    };
+    tryAttachPinger(0);
+  }
 
   // Perch: broadcast through gateway
   const perch = new PerchManager(

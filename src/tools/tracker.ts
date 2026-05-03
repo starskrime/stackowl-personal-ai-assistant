@@ -100,6 +100,18 @@ export class ToolTracker {
     return this.stats.get(toolName);
   }
 
+  /**
+   * Returns the top N tools sorted by selectionCount descending.
+   * Used by CapabilityScanner to determine which tools are "important"
+   * based on actual usage instead of a hardcoded list.
+   */
+  getTopBySelectionCount(n: number): Array<{ name: string; stats: ToolUsageStats }> {
+    return Array.from(this.stats.entries())
+      .sort((a, b) => b[1].selectionCount - a[1].selectionCount)
+      .slice(0, n)
+      .map(([name, stats]) => ({ name, stats }));
+  }
+
   /** Get success rate for a tool (0-1), or undefined if no data */
   getSuccessRate(toolName: string): number | undefined {
     const s = this.stats.get(toolName);

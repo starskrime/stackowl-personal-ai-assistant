@@ -53,6 +53,9 @@ export class TelegramAdapter implements ChannelAdapter {
 
   private bot: Bot;
   private pinger: ProactivePinger | null = null;
+
+  /** Exposes the wired ProactivePinger so other adapters can share it. */
+  getPinger(): ProactivePinger | null { return this.pinger; }
   private _backgroundWorker: import("../../agent/background-worker.js").BackgroundWorker | null = null;
   private activeChatIds: Set<number> = new Set();
   private userState: Map<number, UserState> = new Map();
@@ -881,8 +884,15 @@ export class TelegramAdapter implements ChannelAdapter {
     // replaces the 8 independent setInterval timers with a single worker.
     let jobQueue: import("../../heartbeat/job-queue.js").ProactiveJobQueue | undefined;
     try {
-      const { ProactiveJobQueue } = await import("../../heartbeat/job-queue.js");
-      jobQueue = new ProactiveJobQueue(cwd);
+      const { ProactiveJobQueue, migrateJobsDb } = await import("../../heartbeat/job-queue.js");
+      const mainDb = self.gateway.getDb?.()?.rawDb;
+      if (mainDb) {
+        migrateJobsDb(cwd, mainDb);
+        jobQueue = new ProactiveJobQueue(mainDb);
+      } else {
+        log.engine.warn("[Telegram] Main DB unavailable — falling back to standalone proactive-jobs.db");
+        jobQueue = new ProactiveJobQueue(cwd);
+      }
     } catch (err) {
       log.engine.warn(`[Telegram] ProactiveJobQueue init failed: ${err instanceof Error ? err.message : err}`);
     }

@@ -15,6 +15,7 @@ import type { StackOwlConfig } from "../config/loader.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { MicroLearner } from "../learning/micro-learner.js";
+import type { ToolTracker } from "../tools/tracker.js";
 import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ export class CapabilityScanner {
     private toolRegistry?: ToolRegistry,
     private skillsRegistry?: SkillsRegistry,
     private microLearner?: MicroLearner,
+    private toolTracker?: ToolTracker,
   ) {}
 
   /**
@@ -165,16 +167,10 @@ export class CapabilityScanner {
       .listEnabled()
       .map((s) => `${s.name} ${s.description}`.toLowerCase());
 
-    // Core tools that should have skills
-    const importantTools = [
-      "web_crawl",
-      "duckduckgo_search",
-      "generate_image",
-      "send_telegram_message",
-      "send_file",
-      "read_file",
-      "write_file",
-    ];
+    // Core tools that should have skills — data-driven from ToolTracker usage history
+    const importantTools: string[] = this.toolTracker
+      ? this.toolTracker.getTopBySelectionCount(15).map((e) => e.name)
+      : [];
 
     for (const tool of toolDefs) {
       // Skip if a skill already covers this tool
