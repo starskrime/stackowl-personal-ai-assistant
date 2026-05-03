@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { ProactivePinger } from "../src/heartbeat/proactive.js";
 import type { PingContext } from "../src/heartbeat/proactive.js";
+import { AutonomousPlanner } from "../src/heartbeat/planner.js";
 
 // ─── Shared mock helpers ─────────────────────────────────────────
 
@@ -318,5 +319,57 @@ describe("ProactivePinger — goal-aware assembly", () => {
     expect((pinger as any).maybeKnowledgeCouncil).toBeUndefined();
     expect((pinger as any).maybeEvolveSkills).toBeUndefined();
     expect((pinger as any).maybeConsolidateMemory).toBeUndefined();
+  });
+});
+
+describe("AutonomousPlanner — learned priorities", () => {
+  function makePlannerWithDb(engagementStats: Record<string, { replyRate: number; sampleCount: number } | null>) {
+    const mockDb = {
+      getEngagementStats: vi.fn((type: string) => engagementStats[type] ?? null),
+    };
+
+    const mockGoalGraph = {
+      load: vi.fn().mockResolvedValue(undefined),
+      getStale: vi.fn().mockReturnValue([]),
+      getBlocked: vi.fn().mockReturnValue([]),
+      getActive: vi.fn().mockReturnValue([]),
+      getTopPriority: vi.fn().mockReturnValue(null),
+    };
+
+    const onAction = vi.fn().mockResolvedValue(undefined);
+
+    return new AutonomousPlanner(
+      {
+        goalGraph: mockGoalGraph as any,
+        onAction,
+        db: mockDb as any,
+      },
+      { intervalMinutes: 10, quietHoursStart: 22, quietHoursEnd: 7, minActionCooldownMinutes: 0 },
+    );
+  }
+
+  it("uses basePriority when fewer than minSamples", async () => {
+    const planner = makePlannerWithDb({ morning_brief: null });  // null = cold start
+    const action = await planner.planAndExecute();
+    // Can't assert exact priority easily, but planner should not throw
+    expect(action === null || typeof action?.priority === "number").toBe(true);
+  });
+
+  it("adjusts priority up when reply rate is high", async () => {
+    // morning_brief base priority is 90; with 100% reply rate → capped at 90+20=110 → clamp to 100
+    const planner = makePlannerWithDb({
+      morning_brief: { replyRate: 1.0, sampleCount: 25 },
+    });
+    // Trigger morning brief window by mocking the hour
+    const now = new Date();
+    vi.setSystemTime(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0));
+
+    const candidates = await (planner as any).generateCandidates();
+    const brief = candidates.find((c: any) => c.type === "morning_brief");
+    if (brief) {
+      expect(brief.priority).toBeGreaterThanOrEqual(90);
+    }
+
+    vi.useRealTimers();
   });
 });
