@@ -6,6 +6,7 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
+import type { IntelligenceRouter } from "../intelligence/router.js";
 import { log } from "../logger.js";
 
 // ─── Types ─────────────────────────────────────────────────────
@@ -25,10 +26,6 @@ export interface TopicWorthinessResult {
   indicators: string[];
   category: WorthinessCategory;
 }
-
-// ─── Constants ─────────────────────────────────────────────────
-
-export const THRESHOLD = 0.6;
 
 const EVALUATION_PROMPT = `Evaluate if this topic warrants multi-owl deliberation (Parliament).
 
@@ -59,6 +56,7 @@ Respond with JSON:
 export class TopicWorthinessEvaluator {
   constructor(
     private provider: ModelProvider,
+    private router?: IntelligenceRouter,
   ) {}
 
   /**
@@ -67,19 +65,18 @@ export class TopicWorthinessEvaluator {
    * @returns TopicWorthinessResult with score, confidence, and reasoning
    *
    * Decision logic:
-   * - score >= THRESHOLD (0.6) AND confidence >= 0.4 → isWorthy = true
-   * - score < THRESHOLD → isWorthy = false
-   * - confidence < 0.4 → always skip (even if score is high)
+   * - Trust LLM isWorthy directly — no secondary threshold gate
    */
   async evaluate(topic: string): Promise<TopicWorthinessResult> {
     log.parliament.debug(`[TopicWorthiness] Evaluating: "${topic.slice(0, 60)}..."`);
 
     const prompt = EVALUATION_PROMPT.replace("{topic}", topic);
+    const model = this.router?.resolve("classification").model;
 
     try {
       const response = await this.provider.chat(
         [{ role: "user", content: prompt }],
-        undefined,
+        model,
         { temperature: 0, maxTokens: 200 },
       );
 
@@ -89,8 +86,8 @@ export class TopicWorthinessEvaluator {
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         const confidence = Math.min(1.0, Math.max(0.0, parsed.confidence ?? 0.5));
-        const isWorthy = (parsed.isWorthy ?? false) && confidence >= 0.4;
-        const score = isWorthy ? Math.max(THRESHOLD, confidence) : Math.min(THRESHOLD - 0.1, confidence);
+        const isWorthy = parsed.isWorthy === true;
+        const score = isWorthy ? Math.max(0.6, confidence) : Math.min(0.5, confidence);
 
         const result: TopicWorthinessResult = {
           isWorthy,
