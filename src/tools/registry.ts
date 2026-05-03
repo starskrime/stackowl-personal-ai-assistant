@@ -52,6 +52,7 @@ export class ToolRegistry {
   private _tracker: ToolTracker | null = null;
   private _eventBus: GatewayEventBus | null = null;
   private _goalVerifier: GoalVerifier | null = null;
+  private _riskGuard: import('../clarification/tool-risk-guard.js').ToolRiskGuard | null = null;
   private _semanticGate = new SemanticToolGate();
   private _gateIndexed = false;
 
@@ -70,6 +71,10 @@ export class ToolRegistry {
 
   setGoalVerifier(verifier: GoalVerifier): void {
     this._goalVerifier = verifier;
+  }
+
+  setRiskGuard(guard: import('../clarification/tool-risk-guard.js').ToolRiskGuard): void {
+    this._riskGuard = guard;
   }
 
   getTracker(): ToolTracker | null {
@@ -282,6 +287,14 @@ export class ToolRegistry {
     );
     if (violations.length > 0) {
       throw new ToolValidationError(name, violations);
+    }
+
+    // Risk guard — Mode B pre-action check (fires after schema validation, before execution)
+    if (this._riskGuard) {
+      const riskResult = await this._riskGuard.check(name, args, tool.definition.executionPolicy ?? {});
+      if (!riskResult.allowed) {
+        return riskResult.userFacingMessage;
+      }
     }
 
     const startTime = Date.now();
