@@ -10,7 +10,7 @@
 
 import type { ChatMessage } from "../../providers/base.js";
 import type { GatewayContext } from "../types.js";
-import type { TaskQueue } from "../../queue/task-queue.js";
+import type { TaskQueue, TaskPriority } from "../../queue/task-queue.js";
 import type { EventBus } from "../../events/bus.js";
 import type { CostTracker } from "../../costs/tracker.js";
 import type { SelfLearningCoordinator } from "../../learning/coordinator.js";
@@ -21,12 +21,19 @@ import type { SleepTimeConsolidator } from "../../intelligence/sleep-time-consol
 import { SentimentProbe } from "../../intelligence/sentiment-probe.js";
 import { log } from "../../logger.js";
 
+const TIER_PRIORITY: Record<"critical" | "standard" | "background", TaskPriority> = {
+  critical: "high",
+  standard: "normal",
+  background: "low",
+};
+
 export class PostProcessor {
   private messageCount = 0;
   private intelligenceReflexion: IntelligenceReflexionEngine | null = null;
   private sleepConsolidator: SleepTimeConsolidator | null = null;
   private sentimentProbe: SentimentProbe | null = null;
   private _lastProcessUserId = "";
+  private _lastSessionId: string | null = null;
 
   constructor(
     private ctx: GatewayContext,
@@ -95,6 +102,7 @@ export class PostProcessor {
 
     // Capture userId at the start of process() for SentimentProbe callback
     this._lastProcessUserId = metadata?.userId ?? "";
+    this._lastSessionId = sessionId ?? null;
 
     // ── SentimentProbe — fire on current user message, then re-arm ──────────
     // The probe was armed after the PREVIOUS assistant response. Now the user
@@ -698,6 +706,59 @@ export class PostProcessor {
       await extractor.extractFromConversation(messages, sessionId, userId);
     });
   }
+
+  // ─── Job Enqueueing Infrastructure ───────────────────────────
+
+  private enqueueJob(
+    name: string,
+    tier: "critical" | "standard" | "background",
+    fn: () => Promise<void>,
+  ): void {
+    const priority = TIER_PRIORITY[tier];
+    this.taskQueue.enqueue(name, async () => {
+      const start = Date.now();
+      try {
+        await fn();
+        this.recordJobRun(name, tier, true, Date.now() - start);
+      } catch (err) {
+        const code = err instanceof Error ? err.constructor.name : "unknown";
+        log.engine.warn(
+          `[PostProcessor:${name}] Failed: ${err instanceof Error ? err.message : err}`,
+        );
+        this.recordJobRun(name, tier, false, Date.now() - start, code);
+      }
+    }, priority);
+  }
+
+  private recordJobRun(
+    name: string,
+    tier: string,
+    success: boolean,
+    durationMs: number,
+    errorCode?: string,
+  ): void {
+    if (!this.ctx.db) return;
+    try {
+      this.ctx.db.rawDb.prepare(
+        `INSERT INTO post_processor_job_runs
+         (job_name, tier, success, error_code, duration_ms, user_id, session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        name,
+        tier,
+        success ? 1 : 0,
+        errorCode ?? null,
+        durationMs,
+        this._lastProcessUserId || null,
+        this._lastSessionId || null,
+      );
+    } catch {
+      // telemetry must never crash the caller
+    }
+  }
+
+  // Test-only alias — exposes enqueueJob for unit testing
+  private enqueueJobForTest = this.enqueueJob.bind(this);
 
   // ─── Gap Learning Feedback ────────────────────────────────────
 
