@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1182,6 +1182,9 @@ export class MemoryDatabase {
       // v17: owl intelligence tables — task ledger, reflexion critiques,
       // skill templates, outcome journal; plus new columns on facts.
       applyV17Migration(this.db);
+    }
+    if (current < 18) {
+      applyV18Migration(this.db);
     }
     if (current < SCHEMA_VERSION) {
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -3137,6 +3140,10 @@ export class StackOwlDB {
       applyV17Migration(this.db);
       this.db.pragma(`user_version = 17`);
     }
+    if (current < 18) {
+      applyV18Migration(this.db);
+      this.db.pragma(`user_version = 18`);
+    }
   }
 }
 
@@ -3218,6 +3225,26 @@ function applyV17Migration(db: Database.Database): void {
   }
 }
 
+function applyV18Migration(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS post_processor_job_runs (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_name     TEXT    NOT NULL,
+      tier         TEXT    NOT NULL,
+      success      INTEGER NOT NULL,
+      error_code   TEXT,
+      duration_ms  INTEGER,
+      user_id      TEXT,
+      session_id   TEXT,
+      ts           TEXT    DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ppjr_job_ts
+      ON post_processor_job_runs(job_name, ts);
+    CREATE INDEX IF NOT EXISTS idx_ppjr_success
+      ON post_processor_job_runs(success, ts);
+  `);
+}
+
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
  * Accepts an in-memory or on-disk Database instance; idempotent.
@@ -3267,9 +3294,15 @@ export function applyMigrations(db: Database.Database): void {
 
   if (current < 17) {
     applyV17Migration(db);
-    db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
+  if (current < 18) {
+    applyV18Migration(db);
+  }
+  db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
+
+/** Alias for applyMigrations — used by tests that import this name. */
+export const applyAllMigrationsToRawDb = applyMigrations;
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
