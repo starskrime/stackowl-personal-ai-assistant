@@ -122,6 +122,10 @@ import { OwlOrchestrator as OwlOrchestratorV2 } from "../engine/orchestrator.js"
 import { ImprovementScheduler } from "../engine/improvement-scheduler.js";
 import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js";
 import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/reflexion-engine.js";
+import { updateParliamentDNA } from "../owls/evolution.js";
+import { GoalVerifier } from "../tools/goal-verifier.js";
+import { TaskLedgerStore } from "../engine/task-ledger.js";
+import type { SubGoal } from "../engine/types.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -230,6 +234,7 @@ export class OwlGateway {
   private multiRoundDebate: MultiRoundDebateManager | null = null;
   private debatePelletGenerator: DebatePelletGenerator | null = null;
   private routingWirer: RoutingWirer | null = null;
+  private goalVerifier: GoalVerifier | null = null;
 
   // ─── Instincts ────────────────────────────────────────────────
   private instinctRegistry: InstinctRegistry = new InstinctRegistry();
@@ -740,6 +745,14 @@ export class OwlGateway {
     }
     if (this.routingWirer) {
       log.engine.info("[parliament] RoutingWirer initialized");
+    }
+
+    // Wire GoalVerifier for Parliament post-session verification
+    // NOTE: field is ctx.intelligence (not ctx.intelligenceRouter) — verified in src/gateway/types.ts
+    if (ctx.intelligence) {
+      const providerMap = new Map<string, import("../providers/base.js").ModelProvider>();
+      if (ctx.provider) providerMap.set(ctx.config.defaultProvider ?? "default", ctx.provider);
+      this.goalVerifier = GoalVerifier.create(ctx.intelligence, providerMap);
     }
 
     // ─── Epic 1: Learning Modules ─────────────────────────────────
@@ -1885,9 +1898,65 @@ export class OwlGateway {
             if (this.debatePelletGenerator) {
               await this.debatePelletGenerator.generateFromSession(debateSession, pelletStore);
             }
+            // POST-SESSION: inject into ContextPipeline, verify with GoalVerifier, evolve DNA
+            const synthesis = debateSession.synthesis ?? "";
+            // Minority position = dissenting Round 1 position, NOT the Round 2 challenge text
+            const minorityContent = debateSession.positions.find(p => p.position === "AGAINST")?.argument
+              ?? debateSession.challenges[0]?.challengeContent
+              ?? "";
+            const formattedSynthesis =
+              `[Parliament concluded on "${debateSession.config.topic}"] Verdict: ${debateSession.verdict ?? "CONSENSUS_REACHED"}\n` +
+              `The council's synthesis: ${synthesis.slice(0, 300)}\n` +
+              (minorityContent ? `Key dissent: ${minorityContent.slice(0, 150)}\n` : "");
+            try {
+              this.ctx.contextPipeline?.setShortTermLayer(
+                "parliament_synthesis",
+                formattedSynthesis,
+                { priority: 117, ttlTurns: 3 },
+              );
+            } catch { /* non-fatal */ }
+            let verifierVerdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
+            try {
+              if (this.goalVerifier) {
+                let activeSubGoal: SubGoal | undefined;
+                if (this.ctx.db) {
+                  const incomplete = await new TaskLedgerStore(this.ctx.db)
+                    .loadIncomplete(message.userId ?? "default").catch(() => null as null);
+                  if (incomplete) {
+                    activeSubGoal = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress", dependsOn: [] };
+                  }
+                }
+                if (activeSubGoal) {
+                  const vResult = await this.goalVerifier.verify({
+                    toolName: "parliament",
+                    toolArgs: {},
+                    toolResult: synthesis,
+                    subGoal: activeSubGoal,
+                    userMessage: message.text,
+                  });
+                  verifierVerdict = vResult.verdict;
+                }
+              }
+            } catch { /* non-fatal */ }
+            try {
+              const participants = debateSession.config.participants;
+              const topicCategory = worthiness.category ?? "other";
+              // Identify synthesizer using same persona-search logic as MultiRoundDebateManager.runRound3()
+              const synthOwl = participants.find(p => (p.persona as any).mentorPersonality)
+                ?? participants.find(p => p.persona.name === 'Noctua')
+                ?? participants.find(p => (p.persona as any).specialty === 'architect')
+                ?? participants[0];
+              const challOwl = participants.find(p => p !== synthOwl);
+              await updateParliamentDNA(synthOwl, challOwl, participants, debateSession.verdict ?? "", topicCategory, this.ctx.db!, verifierVerdict);
+              if (verifierVerdict === "ADVANCES" && this.ctx.owlRegistry) {
+                for (const p of participants) {
+                  await this.ctx.owlRegistry.saveDNA(p.persona.name).catch(() => {});
+                }
+              }
+            } catch { /* non-fatal */ }
             // Return the synthesis as the response
             return {
-              content: debateSession.synthesis || "Parliament concluded without synthesis.",
+              content: synthesis || "Parliament concluded without synthesis.",
               owlName: this.ctx.owl.persona.name,
               owlEmoji: this.ctx.owl.persona.emoji,
               toolsUsed: [],
@@ -1959,10 +2028,65 @@ export class OwlGateway {
           if (this.debatePelletGenerator) {
             await this.debatePelletGenerator.generateFromSession(debateSession, this.ctx.pelletStore);
           }
-          const synthesis = debateSession.synthesis || "Parliament concluded without synthesis.";
+          // POST-SESSION: inject into ContextPipeline, verify with GoalVerifier, evolve DNA
+          const synthesis = debateSession.synthesis ?? "";
+          // Block B: challenge first, then AGAINST position
+          const minorityContentB = debateSession.challenges[0]?.challengeContent
+            ?? debateSession.positions.find(p => p.position === "AGAINST")?.argument
+            ?? "";
+          const formattedSynthesisB =
+            `[Parliament concluded on "${debateSession.config.topic}"] Verdict: ${debateSession.verdict ?? "CONSENSUS_REACHED"}\n` +
+            `The council's synthesis: ${synthesis.slice(0, 300)}\n` +
+            (minorityContentB ? `Key dissent: ${minorityContentB.slice(0, 150)}\n` : "");
+          try {
+            this.ctx.contextPipeline?.setShortTermLayer(
+              "parliament_synthesis",
+              formattedSynthesisB,
+              { priority: 117, ttlTurns: 3 },
+            );
+          } catch { /* non-fatal */ }
+          let verifierVerdictB: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
+          try {
+            if (this.goalVerifier) {
+              let activeSubGoalB: SubGoal | undefined;
+              if (this.ctx.db) {
+                const incomplete = await new TaskLedgerStore(this.ctx.db)
+                  .loadIncomplete(message.userId ?? "default").catch(() => null as null);
+                if (incomplete) {
+                  activeSubGoalB = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress", dependsOn: [] };
+                }
+              }
+              if (activeSubGoalB) {
+                const vResult = await this.goalVerifier.verify({
+                  toolName: "parliament",
+                  toolArgs: {},
+                  toolResult: synthesis,
+                  subGoal: activeSubGoalB,
+                  userMessage: text,
+                });
+                verifierVerdictB = vResult.verdict;
+              }
+            }
+          } catch { /* non-fatal */ }
+          try {
+            const participantsB = debateSession.config.participants;
+            const topicCategoryB = "other";
+            // Identify synthesizer using same persona-search logic as MultiRoundDebateManager.runRound3()
+            const synthOwlB = participantsB.find(p => (p.persona as any).mentorPersonality)
+              ?? participantsB.find(p => p.persona.name === 'Noctua')
+              ?? participantsB.find(p => (p.persona as any).specialty === 'architect')
+              ?? participantsB[0];
+            const challOwlB = participantsB.find(p => p !== synthOwlB);
+            await updateParliamentDNA(synthOwlB, challOwlB, participantsB, debateSession.verdict ?? "", topicCategoryB, this.ctx.db!, verifierVerdictB);
+            if (verifierVerdictB === "ADVANCES" && this.ctx.owlRegistry) {
+              for (const p of participantsB) {
+                await this.ctx.owlRegistry.saveDNA(p.persona.name).catch(() => {});
+              }
+            }
+          } catch { /* non-fatal */ }
           // Tag response with #Parliament
           return {
-            content: `${synthesis}\n\n#Parliament`,
+            content: `${synthesis || "Parliament concluded without synthesis."}\n\n#Parliament`,
             owlName: this.ctx.owl.persona.name,
             owlEmoji: this.ctx.owl.persona.emoji,
             toolsUsed: [],
