@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1196,6 +1196,10 @@ export class MemoryDatabase {
       applyV20Migration(this.db);
       this.db.pragma(`user_version = 20`);
     }
+    if (current < 21) {
+      applyV21Migration(this.db);
+      this.db.pragma(`user_version = 21`);
+    }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
       log.engine.info(`[MemoryDatabase] Schema migrated to v${SCHEMA_VERSION}`);
@@ -1302,6 +1306,21 @@ export class MemoryDatabase {
         synthesized_at = excluded.synthesized_at,
         expires_at     = excluded.expires_at
     `).run(userId, personaJson, expiresAt);
+  }
+
+  // ── Pellet generation run timestamps ───────────────────────────
+
+  async getPelletGenRun(key: string): Promise<Date | null> {
+    const row = this.db.prepare(
+      "SELECT last_run_at FROM pellet_generation_runs WHERE key = ?"
+    ).get(key) as { last_run_at: string } | undefined;
+    return row ? new Date(row.last_run_at) : null;
+  }
+
+  async setPelletGenRun(key: string, date: Date): Promise<void> {
+    this.db.prepare(
+      "INSERT INTO pellet_generation_runs (key, last_run_at) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET last_run_at = excluded.last_run_at"
+    ).run(key, date.toISOString());
   }
 }
 
@@ -3177,6 +3196,10 @@ export class StackOwlDB {
       applyV20Migration(this.db);
       this.db.pragma(`user_version = 20`);
     }
+    if (current < 21) {
+      applyV21Migration(this.db);
+      this.db.pragma(`user_version = 21`);
+    }
   }
 }
 
@@ -3318,6 +3341,20 @@ function applyV20Migration(db: Database.Database): void {
   }
 }
 
+function applyV21Migration(db: Database.Database): void {
+  const tableExists = (db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='pellet_generation_runs'"
+  ).get() as { name: string } | undefined) !== undefined;
+  if (!tableExists) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pellet_generation_runs (
+        key         TEXT PRIMARY KEY,
+        last_run_at TEXT NOT NULL
+      );
+    `);
+  }
+}
+
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
  * Accepts an in-memory or on-disk Database instance; idempotent.
@@ -3394,6 +3431,9 @@ export function applyMigrations(db: Database.Database): void {
   }
   if (current < 20) {
     applyV20Migration(db);
+  }
+  if (current < 21) {
+    applyV21Migration(db);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }

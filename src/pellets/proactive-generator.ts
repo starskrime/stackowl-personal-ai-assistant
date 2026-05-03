@@ -9,6 +9,7 @@ import type { PelletStore, Pellet } from "./store.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
+import type { MemoryDatabase } from "../memory/db.js";
 import { PelletGenerator } from "./generator.js";
 import { KnowledgeBase } from "./knowledge-base.js";
 import { log } from "../logger.js";
@@ -34,9 +35,6 @@ export const DEFAULT_CONFIG: ProactiveGenerationConfig = {
 export class ProactiveKnowledgeGenerator {
   private generator: PelletGenerator;
   private knowledgeBase: KnowledgeBase;
-  private lastCouncilRun: string = "";
-  private lastDreamRun: string = "";
-  private lastEvolveRun: string = "";
 
   constructor(
     private pelletStore: PelletStore,
@@ -44,6 +42,7 @@ export class ProactiveKnowledgeGenerator {
     private owl: OwlInstance,
     private config: StackOwlConfig,
     private generationConfig: Partial<ProactiveGenerationConfig> = {},
+    private db?: MemoryDatabase,
   ) {
     this.generator = new PelletGenerator();
     this.knowledgeBase = new KnowledgeBase(pelletStore);
@@ -77,8 +76,9 @@ export class ProactiveKnowledgeGenerator {
    */
   async runKnowledgeCouncil(): Promise<Pellet[]> {
     const now = new Date();
-    const hoursSinceLastRun = this.lastCouncilRun
-      ? (now.getTime() - new Date(this.lastCouncilRun).getTime()) / (1000 * 60 * 60)
+    const lastRun = this.db ? await this.db.getPelletGenRun("council") : null;
+    const hoursSinceLastRun = lastRun
+      ? (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60)
       : Infinity;
 
     if (hoursSinceLastRun < (this.generationConfig.councilIntervalHours ?? DEFAULT_CONFIG.councilIntervalHours)) {
@@ -88,7 +88,7 @@ export class ProactiveKnowledgeGenerator {
       return [];
     }
 
-    this.lastCouncilRun = now.toISOString();
+    if (this.db) await this.db.setPelletGenRun("council", now);
     log.engine.info("[ProactiveGenerator] Running knowledge council session...");
 
     const gaps = await this.evaluateKnowledgeGaps();
@@ -129,8 +129,9 @@ export class ProactiveKnowledgeGenerator {
     }
 
     const now = new Date();
-    const hoursSinceLastRun = this.lastDreamRun
-      ? (now.getTime() - new Date(this.lastDreamRun).getTime()) / (1000 * 60 * 60)
+    const lastDreamRun = this.db ? await this.db.getPelletGenRun("dream") : null;
+    const hoursSinceLastRun = lastDreamRun
+      ? (now.getTime() - lastDreamRun.getTime()) / (1000 * 60 * 60)
       : Infinity;
 
     if (hoursSinceLastRun < 24) {
@@ -138,7 +139,7 @@ export class ProactiveKnowledgeGenerator {
       return [];
     }
 
-    this.lastDreamRun = now.toISOString();
+    if (this.db) await this.db.setPelletGenRun("dream", now);
     log.engine.info("[ProactiveGenerator] Running dream reflexion session...");
 
     try {
@@ -192,8 +193,9 @@ export class ProactiveKnowledgeGenerator {
     }
 
     const now = new Date();
-    const hoursSinceLastRun = this.lastEvolveRun
-      ? (now.getTime() - new Date(this.lastEvolveRun).getTime()) / (1000 * 60 * 60)
+    const lastEvolveRun = this.db ? await this.db.getPelletGenRun("evolve") : null;
+    const hoursSinceLastRun = lastEvolveRun
+      ? (now.getTime() - lastEvolveRun.getTime()) / (1000 * 60 * 60)
       : Infinity;
 
     if (hoursSinceLastRun < 24) {
@@ -201,7 +203,7 @@ export class ProactiveKnowledgeGenerator {
       return [];
     }
 
-    this.lastEvolveRun = now.toISOString();
+    if (this.db) await this.db.setPelletGenRun("evolve", now);
     log.engine.info("[ProactiveGenerator] Running skill evolution knowledge capture...");
 
     try {
