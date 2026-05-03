@@ -54,7 +54,7 @@ export class PostProcessor {
     this.sentimentProbe = new SentimentProbe((sentiment, incrementChallenge) => {
       if (incrementChallenge && this._lastProcessUserId) {
         this.enqueueJob("sentiment-challenge-update", "critical", async () => {
-          this.ctx.db!.rawDb.prepare(
+          this.ctx.db?.rawDb?.prepare(
             `UPDATE outcome_journal
                SET challenge_instances = challenge_instances + 1
                WHERE id = (
@@ -63,7 +63,7 @@ export class PostProcessor {
                  ORDER BY created_at DESC
                  LIMIT 1
                )`,
-          ).run(this._lastProcessUserId);
+          )?.run(this._lastProcessUserId);
           log.engine.info(
             `[PostProcessor:sentiment] Correction detected — incremented challenge_instances for user=${this._lastProcessUserId}`,
           );
@@ -103,15 +103,21 @@ export class PostProcessor {
     // has replied — classify their sentiment before doing anything else.
     // After classification we re-arm so the NEXT user message is also checked.
     if (this.sentimentProbe) {
-      const lastUserContent =
-        messages.findLast?.((m) => m.role === "user")?.content ??
-        [...messages].reverse().find((m) => m.role === "user")?.content ??
-        "";
-      const textToClassify =
-        typeof lastUserContent === "string" ? lastUserContent : "";
-      this.sentimentProbe.onNextMessage(textToClassify);
-      // Re-arm for the next incoming message
-      this.sentimentProbe.arm(metadata?.userId ?? "default");
+      try {
+        const lastUserContent =
+          messages.findLast?.((m) => m.role === "user")?.content ??
+          [...messages].reverse().find((m) => m.role === "user")?.content ??
+          "";
+        const textToClassify =
+          typeof lastUserContent === "string" ? lastUserContent : "";
+        this.sentimentProbe.onNextMessage(textToClassify);
+        // Re-arm for the next incoming message
+        this.sentimentProbe.arm(metadata?.userId ?? "default");
+      } catch (err) {
+        log.engine.warn(
+          `[PostProcessor:sentimentProbe] Failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
 
     // Emit event
@@ -313,11 +319,17 @@ export class PostProcessor {
             }
           }
         }
-        this.coordinator.processMessage(
-          lastUserMsg.content,
-          toolsUsed.length > 0 ? toolsUsed : undefined,
-          metadata?.channelId,
-        );
+        try {
+          this.coordinator.processMessage(
+            lastUserMsg.content,
+            toolsUsed.length > 0 ? toolsUsed : undefined,
+            metadata?.channelId,
+          );
+        } catch (err) {
+          log.engine.warn(
+            `[PostProcessor:coordinator.processMessage] Failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
       }
 
       if (this.messageCount % 5 === 0) {
@@ -472,19 +484,29 @@ export class PostProcessor {
 
     // Pattern recording
     if (this.ctx.patternAnalyzer) {
-      const lastUserMsg = [...messages]
-        .reverse()
-        .find((m) => m.role === "user");
-      if (lastUserMsg) {
-        this.ctx.patternAnalyzer.recordAction(
-          lastUserMsg.content.slice(0, 100),
-          [],
-        );
+      const lastMsg = [...messages].reverse().find((m) => m.role === "user");
+      if (lastMsg) {
+        try {
+          this.ctx.patternAnalyzer.recordAction(
+            lastMsg.content.slice(0, 100),
+            [],
+          );
+        } catch (err) {
+          log.engine.warn(
+            `[PostProcessor:patternAnalyzer.recordAction] Failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
       }
 
       if (this.coordinator && this.messageCount % 15 === 0) {
-        const profile = this.coordinator.getMicroLearnerProfile();
-        this.ctx.patternAnalyzer?.enrichFromProfile(profile);
+        try {
+          const profile = this.coordinator.getMicroLearnerProfile();
+          this.ctx.patternAnalyzer.enrichFromProfile(profile);
+        } catch (err) {
+          log.engine.warn(
+            `[PostProcessor:patternAnalyzer.enrichFromProfile] Failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
       }
     }
 
