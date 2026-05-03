@@ -312,7 +312,7 @@ export class PelletDeduplicator {
 
       let retryContent: string;
       if (this.router) {
-        retryContent = await this.router.resolve("classification", retryPrompt);
+        retryContent = await this.router.resolve("classification", prompt + "\n\n" + retryPrompt);
       } else {
         const retryResponse = await this.provider!.chat(
           [
