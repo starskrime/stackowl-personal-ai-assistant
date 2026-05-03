@@ -25,7 +25,7 @@ describe("PelletGenerator — IntelligenceRouter path", () => {
     const pellet = await generator.generate("turn 1: user: hello\nassistant: hi", "test-session");
     expect(mockRouter.resolve).toHaveBeenCalledOnce();
     const [tier, prompt] = mockRouter.resolve.mock.calls[0];
-    expect(tier).toBe("generation");
+    expect(tier).toBe("synthesis");
     expect(prompt).toContain("turn 1: user: hello");
   });
 
@@ -46,5 +46,11 @@ describe("PelletGenerator — IntelligenceRouter path", () => {
     await generator.generate("some content", "src");
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it("returns null when router returns non-JSON", async () => {
+    mockRouter.resolve.mockResolvedValueOnce("Here is your pellet: blah blah not json");
+    const result = await generator.generate("some content", "src");
+    expect(result).toBeNull();
   });
 });

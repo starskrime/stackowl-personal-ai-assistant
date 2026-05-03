@@ -5,19 +5,19 @@
  * into a highly structured knowledge artifact (Pellet).
  *
  * The constructor accepts a duck-typed GenerationRouter so it can be
- * trivially mocked in tests. Use PelletGenerator.create() to wire up
- * the real IntelligenceRouter + provider map in production.
+ * trivially mocked in tests. Production callers wire up a real router
+ * via makeProviderRouter(provider) or by passing an IntelligenceRouter
+ * adapter directly.
  */
 
 import { v4 as uuidv4 } from "uuid";
-import type { IntelligenceRouter } from "../intelligence/router.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { Pellet } from "./store.js";
 import { log } from "../logger.js";
 
 // ─── Duck-typed interface ─────────────────────────────────────────
-// Accepts both the real IntelligenceRouter (via create()) and simple
-// test mocks that return the generated text directly.
+// Accepts both the real IntelligenceRouter and simple test mocks
+// that return the generated text directly.
 
 export interface GenerationRouter {
   resolve(tier: string, prompt: string): Promise<string>;
@@ -47,34 +47,6 @@ export class PelletGenerator {
   constructor(private router: GenerationRouter) {}
 
   /**
-   * Wire up a real IntelligenceRouter + provider map.
-   * Uses the "synthesis" task type (high tier) to pick the model.
-   */
-  static create(
-    router: IntelligenceRouter,
-    providers: Map<string, ModelProvider>,
-  ): PelletGenerator {
-    const adapted: GenerationRouter = {
-      async resolve(_tier: string, prompt: string): Promise<string> {
-        const resolved = router.resolve("synthesis");
-        const provider = providers.get(resolved.provider);
-        if (!provider) {
-          throw new Error(
-            `[PelletGenerator] Provider "${resolved.provider}" not found in registry`,
-          );
-        }
-        const response = await provider.chat(
-          [{ role: "user", content: prompt }],
-          resolved.model,
-          { temperature: 0.3 },
-        );
-        return response.content;
-      },
-    };
-    return new PelletGenerator(adapted);
-  }
-
-  /**
    * Generate a pellet from unstructured source material using IntelligenceRouter.
    * Returns null if sourceMaterial is empty or if the LLM returns unparseable JSON.
    */
@@ -101,7 +73,7 @@ export class PelletGenerator {
 
     let jsonStr: string;
     try {
-      jsonStr = await this.router.resolve("generation", prompt);
+      jsonStr = await this.router.resolve("synthesis", prompt);
     } catch (err) {
       log.engine.warn(
         `[PelletGenerator] router.resolve failed: ${err instanceof Error ? err.message : String(err)}`,
