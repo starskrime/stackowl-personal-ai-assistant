@@ -22,7 +22,7 @@
 | 9 | **Clarification & Intent Detection** | ✅ implemented | 2026-05-02 |
 | 10 | Parliament (multi-owl debate) | ✅ implemented — parallel Round 1, DiversityFilter, sparse Round 2, ContextPipeline/GoalVerifier/DNA wiring. 31 new tests, 793 total passing. | 2026-05-03 |
 | 11 | Pellet system (generate, store, retrieve, dedup) | ✅ implemented — quality flywheel: IntelligenceRouter routing throughout, recordOutcome + searchWithGraphScored re-ranking, schema v21, gateway hooks 4+5, updatePelletGeneratorDNA. 38 new tests, 831 total passing. | 2026-05-03 |
-| 12 | Heartbeat (proactive messages, job queue) | 🔬 design approved — spec written, plan next | 2026-05-03 |
+| 12 | Heartbeat (proactive messages, job queue) | ✅ implemented — schema v22, single proactive_jobs DB, DeliveryVerifier (ADVANCES/NEUTRAL/NOISE), retry escalation, recordEngagement wiring, AutonomousPlanner learned priorities, goal_progress_update jobs, consolidation.ts deleted. 866 tests passing. | 2026-05-03 |
 | 13 | Learning Engine (reactive + proactive self-study) | ⬜ pending | — |
 | 14 | Evolution (DNA mutation, reflexion, APO) | ⬜ pending | — |
 | 15 | Memory DB (SQLite facts, episodes, attempts) | ⬜ pending | — |
