@@ -30,7 +30,6 @@ import { DiagnosticEngine } from "./diagnostic-engine.js";
 import type { DiagnosticInput } from "./diagnostic-engine.js";
 import type { ToolMastery } from "../tools/tool-mastery.js";
 import type { FallbackSequencer } from "../tools/fallback-sequencer.js";
-import type { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
 import type { DomainToolMap } from "../delegation/domain-tool-map.js";
 import type { SubGoal } from "./types.js";
 
@@ -131,10 +130,8 @@ export interface EngineContext {
   eventBus?: import("../events/bus.js").EventBus;
   /** Tool mastery tracker — adjusts confidence based on historical success/failure */
   toolMastery?: ToolMastery;
-  /** Learned fallback sequences for failed tools */
+  /** Learned fallback sequences for failed tools (DB-backed via tool_edges) */
   fallbackSequencer?: FallbackSequencer;
-  /** Discovers new fallback paths when existing ones fail */
-  fallbackDiscoverer?: FallbackDiscoverer;
   /** Dynamic domain-to-tool rankings based on success rates */
   domainToolMap?: DomainToolMap;
   /** Active sub-goal from TaskLedger — passed to GoalVerifier during tool execution */
@@ -1514,20 +1511,10 @@ ${userMessage}
                   }
                 }
 
-                // Record fallback sequence outcome to learned modules
-                if (context.fallbackSequencer || context.fallbackDiscoverer) {
-                  const owlName = context.owl?.persona?.name ?? "default";
-                  const taskType = ((context as any)._approachTaskKw as string | undefined) ?? "default";
-                  const sequence = [toolCall.name, ...(TOOL_FALLBACKS[toolCall.name] ?? [])];
-                  if (isHardFailure) {
-                    context.fallbackSequencer?.recordFallbackOutcome(
-                      owlName, toolCall.name, taskType, sequence, false,
-                    );
-                    context.fallbackDiscoverer?.recordAttempt(
-                      toolCall.name, taskType, sequence, false,
-                    );
-                  }
-                }
+                // Fallback outcomes are now recorded by EdgeAccumulator (Element 7 T9),
+                // which subscribes to tool:result events on the gateway event bus and
+                // writes to the tool_edges table. The old in-memory FallbackSequencer
+                // / FallbackDiscoverer learning loop is gone — DB-backed only.
               }
 
               if (isHardFailure) {

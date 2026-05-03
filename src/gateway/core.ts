@@ -85,7 +85,6 @@ import { ToolRiskGuard } from "../clarification/tool-risk-guard.js";
 import { join } from "node:path";
 import { ToolMastery } from "../tools/tool-mastery.js";
 import { FallbackSequencer } from "../tools/fallback-sequencer.js";
-import { FallbackDiscoverer } from "../tools/fallback-discoverer.js";
 import { DomainToolMap } from "../delegation/domain-tool-map.js";
 import { TaskDecomposer } from "../delegation/decomposer.js";
 import { ResultSynthesizer } from "../delegation/result-synthesizer.js";
@@ -175,8 +174,7 @@ export class OwlGateway {
 
   // ─── Epic 4: Tool Mastery Modules ─────────────────────────────
   readonly toolMastery: ToolMastery;
-  readonly fallbackSequencer: FallbackSequencer;
-  readonly fallbackDiscoverer: FallbackDiscoverer;
+  fallbackSequencer!: FallbackSequencer;
   readonly domainToolMap: DomainToolMap;
   taskDecomposer: TaskDecomposer | null = null;
   resultSynthesizer: ResultSynthesizer | null = null;
@@ -349,8 +347,7 @@ export class OwlGateway {
 
     // ─── Epic 4: Initialize Tool Mastery Modules ──────────────
     this.toolMastery = new ToolMastery();
-    this.fallbackSequencer = new FallbackSequencer();
-    this.fallbackDiscoverer = new FallbackDiscoverer();
+    // FallbackSequencer constructed below after ctx.db is guaranteed
     this.domainToolMap = new DomainToolMap();
     if (ctx.provider) {
       this.taskDecomposer = new TaskDecomposer(ctx.provider);
@@ -476,6 +473,9 @@ export class OwlGateway {
       log.engine.info("[memory] MemoryDatabase (SQLite) initialized");
     }
     this.deliveryRouter.setDb(ctx.db.rawDb);
+
+    // FallbackSequencer needs MemoryDatabase — construct now that ctx.db exists
+    this.fallbackSequencer = new FallbackSequencer(ctx.db);
 
     // Auto-initialize MessageCompressor (Phase 2 — batch summarization every 20 msgs)
     if (!ctx.compressor && ctx.db) {
