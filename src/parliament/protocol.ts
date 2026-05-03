@@ -59,4 +59,8 @@ export interface ParliamentSession {
   verdict?: string;
   startedAt: number;
   completedAt?: number;
+  /** Set after Round 1 by DiversityFilter — the two most-disagreeing positions */
+  diversePair?: [OwlPosition, OwlPosition];
+  /** Reasoning from DiversityFilter about why these two positions diverge most */
+  diversityReasoning?: string;
 }
