@@ -3480,6 +3480,10 @@ export function applyV22Migration(db: Database.Database): void {
     db.exec(`ALTER TABLE proactive_jobs ADD COLUMN error TEXT`);
   }
 
+  // goal_id index — added after the ALTER guards because the column
+  // does not exist on legacy v21 DBs until the ALTER above runs.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_pj_goal ON proactive_jobs (goal_id, status)`);
+
   // Delivery outcomes table
   db.exec(`
     CREATE TABLE IF NOT EXISTS proactive_deliveries (

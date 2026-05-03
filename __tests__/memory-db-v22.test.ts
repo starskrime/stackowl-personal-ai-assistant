@@ -33,6 +33,16 @@ describe("schema v22", () => {
     expect(cols).toContain("error");
   });
 
+  it("creates idx_pj_goal index on proactive_jobs(goal_id, status)", () => {
+    applyV22Migration(db);
+    const indexes = (db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='proactive_jobs'`
+    ).all() as { name: string }[]).map(i => i.name);
+    expect(indexes).toContain("idx_pj_goal");
+    expect(indexes).toContain("idx_pj_status_scheduled");
+    expect(indexes).toContain("idx_pj_user");
+  });
+
   it("is idempotent — safe to run twice", () => {
     expect(() => {
       applyV22Migration(db);
