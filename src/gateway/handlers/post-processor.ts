@@ -421,32 +421,6 @@ export class PostProcessor {
       });
     }
 
-    // Timeline auto-snapshot (every 10 messages)
-    if (this.ctx.timelineManager && sessionId) {
-      const snapshot = this.ctx.timelineManager.autoSnapshot(
-        sessionId,
-        messages,
-        this.ctx.owl.persona.name,
-      );
-      if (snapshot) {
-        this.enqueueJob("timeline-snapshot", "background", () =>
-          this.ctx.timelineManager!.save(),
-        );
-      }
-    }
-
-    // Knowledge extraction (every 5 messages)
-    if (
-      this.ctx.knowledgeReasoner &&
-      messages.length > 0 &&
-      this.messageCount % 5 === 0
-    ) {
-      this.enqueueJob("knowledge-extract", "background", async () => {
-        await this.ctx.knowledgeReasoner!.extractFromConversation(messages);
-        await this.ctx.knowledgeGraph?.save();
-      });
-    }
-
     // Fact extraction from conversations (Mem0-inspired memory layer)
     // Extract structured facts every 10 messages when extractor is available
     if (
@@ -467,6 +441,18 @@ export class PostProcessor {
             `[PostProcessor] Extracted ${extracted.length} facts from conversation`,
           );
         }
+      });
+    }
+
+    // Knowledge extraction (every 10 messages, BACKGROUND — feeds KnowledgeGraphLayer)
+    if (
+      this.ctx.knowledgeReasoner &&
+      messages.length > 0 &&
+      this.messageCount % 10 === 0
+    ) {
+      this.enqueueJob("knowledge-extract", "background", async () => {
+        await this.ctx.knowledgeReasoner!.extractFromConversation(messages);
+        await this.ctx.knowledgeGraph?.save();
       });
     }
 
@@ -640,13 +626,6 @@ export class PostProcessor {
       }
     }
 
-    // Goal extraction (every 3 messages) — detect persistent goals from conversation
-    this.maybeExtractGoals(
-      messages,
-      sessionId ?? "unknown",
-      metadata?.userId ?? "default",
-    );
-
     // Periodic persistence (every 10 messages)
     if (this.messageCount % 10 === 0) {
       if (this.ctx.patternAnalyzer) {
@@ -680,25 +659,9 @@ export class PostProcessor {
     return this.messageCount;
   }
 
-  /**
-   * Attach a GoalExtractor so PostProcessor can detect persistent goals.
-   * Called during gateway setup when db + provider are available.
-   */
-  setGoalExtractor(extractor: import("../../agent/goal-extractor.js").GoalExtractor): void {
-    this._goalExtractor = extractor;
-  }
-
-  private _goalExtractor: import("../../agent/goal-extractor.js").GoalExtractor | null = null;
-
-  /** Extract goals from conversation every 3 messages. */
-  private maybeExtractGoals(messages: ChatMessage[], sessionId: string, userId: string): void {
-    if (!this._goalExtractor) return;
-    if (this.messageCount % 3 !== 0) return;
-    const extractor = this._goalExtractor;
-    this.enqueueJob("goal-extraction", "background", async () => {
-      await extractor.extractFromConversation(messages, sessionId, userId);
-    });
-  }
+  // NOTE: setGoalExtractor() and _goalExtractor field were removed — goal-extraction
+  // was a zombie job (no context layer reads the output). GoalExtractor code preserved.
+  // If a context layer is added, re-wire via a different mechanism.
 
   // ─── Job Enqueueing Infrastructure ───────────────────────────
 
