@@ -32,7 +32,10 @@ export interface GrowthMetrics {
 // ─── Knowledge Base ───────────────────────────────────────────────
 
 export class KnowledgeBase {
-  constructor(private pelletStore: PelletStore) {}
+  constructor(
+    private pelletStore: PelletStore,
+    private router?: { resolve(tier: string, prompt: string): Promise<string> },
+  ) {}
 
   /**
    * Get comprehensive statistics about the knowledge base.
@@ -69,7 +72,7 @@ export class KnowledgeBase {
     }
 
     const avgPelletAgeDays = allPellets.length > 0 ? totalAge / allPellets.length / (24 * 60 * 60 * 1000) : 0;
-    const coverageGaps = this.computeCoverageGaps(topics);
+    const coverageGaps = await this.computeCoverageGaps(topics);
 
     const growthRate = this.computeGrowthRate(allPellets);
     const lastUpdated = allPellets.length > 0
@@ -195,7 +198,21 @@ export class KnowledgeBase {
     return Math.round(((thisWeek - lastWeek) / lastWeek) * 100);
   }
 
-  private computeCoverageGaps(topics: Set<string>): string[] {
+  private async computeCoverageGaps(topics: Set<string>): Promise<string[]> {
+    if (this.router) {
+      try {
+        const covered = JSON.stringify([...topics].slice(0, 50));
+        const raw = await this.router.resolve(
+          "classification",
+          `Given these covered topics: ${covered}\nList 5-10 important topics NOT covered. Reply with a JSON array of strings only.`,
+        );
+        const parsed = JSON.parse(raw.trim());
+        if (Array.isArray(parsed)) return parsed as string[];
+      } catch {
+        // fall through to hardcoded list
+      }
+    }
+
     const commonTopics = [
       "typescript", "javascript", "node.js", "api", "database",
       "architecture", "testing", "debugging", "performance",

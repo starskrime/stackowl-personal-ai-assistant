@@ -163,6 +163,7 @@ export class PelletDeduplicator {
     private searchSimilar: SimilarFn,
     private provider?: ModelProvider,
     config?: Partial<DedupConfig>,
+    private router?: { resolve(tier: string, prompt: string): Promise<string> },
   ) {
     this.config = { ...DEFAULT_DEDUP_CONFIG, ...config };
   }
@@ -226,8 +227,8 @@ export class PelletDeduplicator {
       };
     }
 
-    // Use LLM for nuanced decision
-    if (this.config.useLlm && this.provider) {
+    // Use LLM for nuanced decision (router takes precedence over direct provider)
+    if (this.config.useLlm && (this.router || this.provider)) {
       return await this.decideWithLlm(incoming, existing, similarity);
     }
 
@@ -273,22 +274,28 @@ export class PelletDeduplicator {
       `For non-MERGE verdicts, omit merged_title, merged_content, and merged_tags.`;
 
     try {
-      const response = await this.provider!.chat(
-        [
-          {
-            role: "system",
-            content:
-              "You are a knowledge base curator. Output only valid JSON. Be concise.",
-          },
-          { role: "user", content: prompt },
-        ],
-        undefined,
-        // 2048 tokens: enough for a MERGE response with up to 300 words of merged_content
-        // (≈500 tokens content + JSON overhead + reasoning). 1024 caused truncation mid-JSON.
-        { temperature: 0, maxTokens: 2048 },
-      );
+      let rawContent: string;
+      if (this.router) {
+        rawContent = await this.router.resolve("classification", prompt);
+      } else {
+        const response = await this.provider!.chat(
+          [
+            {
+              role: "system",
+              content:
+                "You are a knowledge base curator. Output only valid JSON. Be concise.",
+            },
+            { role: "user", content: prompt },
+          ],
+          undefined,
+          // 2048 tokens: enough for a MERGE response with up to 300 words of merged_content
+          // (≈500 tokens content + JSON overhead + reasoning). 1024 caused truncation mid-JSON.
+          { temperature: 0, maxTokens: 2048 },
+        );
+        rawContent = response.content;
+      }
 
-      const result = this.parseDecisionResponse(response.content, existing, incoming, similarity);
+      const result = this.parseDecisionResponse(rawContent, existing, incoming, similarity);
       if (result) return result;
 
       // ── Retry: ask for minimal JSON only (verdict + reasoning) ─────────────────────────────────
@@ -298,28 +305,33 @@ export class PelletDeduplicator {
       log.engine.info(
         `[PelletDedup] First JSON parse failed — retrying with minimal-output prompt`,
       );
-      const retryResponse = await this.provider!.chat(
-        [
-          {
-            role: "system",
-            content: "You are a knowledge base curator. Output only valid JSON. Be concise.",
-          },
-          { role: "user", content: prompt },
-          { role: "assistant", content: response.content },
-          {
-            role: "user",
-            content:
-              `Your previous response was not valid JSON. ` +
-              `Reply with ONLY this minimal JSON (no merged_content, no trailing commas, no comments):\n` +
-              `{"verdict": "MERGE or SUPERSEDE or CREATE or SKIP", "reasoning": "one sentence"}`,
-          },
-        ],
-        undefined,
-        { temperature: 0, maxTokens: 128 },
-      );
+      const retryPrompt =
+        `Your previous response was not valid JSON. ` +
+        `Reply with ONLY this minimal JSON (no merged_content, no trailing commas, no comments):\n` +
+        `{"verdict": "MERGE or SUPERSEDE or CREATE or SKIP", "reasoning": "one sentence"}`;
+
+      let retryContent: string;
+      if (this.router) {
+        retryContent = await this.router.resolve("classification", retryPrompt);
+      } else {
+        const retryResponse = await this.provider!.chat(
+          [
+            {
+              role: "system",
+              content: "You are a knowledge base curator. Output only valid JSON. Be concise.",
+            },
+            { role: "user", content: prompt },
+            { role: "assistant", content: rawContent },
+            { role: "user", content: retryPrompt },
+          ],
+          undefined,
+          { temperature: 0, maxTokens: 128 },
+        );
+        retryContent = retryResponse.content;
+      }
 
       const retryResult = this.parseDecisionResponse(
-        retryResponse.content, existing, incoming, similarity,
+        retryContent, existing, incoming, similarity,
       );
       if (retryResult) return retryResult;
 
