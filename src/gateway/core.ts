@@ -77,12 +77,11 @@ import { FeedbackStore } from "../feedback/store.js";
 import { OutputFilter, resolveOutputMode } from "./output-filter.js";
 import { SessionBriefGenerator } from "../cognition/session-brief.js";
 import { LoopDetector } from "../cognition/loop-detector.js";
-import { AmbiguityDetector } from "../clarification/ambiguity-detector.js";
-import { PreExecutionConfirmer } from "../clarification/pre-execution-confirmer.js";
+import { IntentClarifier } from "../clarification/intent-clarifier.js";
 import { PreActionQuestioner } from "../clarification/pre-action-questioner.js";
-import { UnclaritySurfacer } from "../clarification/unclarity-surfacer.js";
-import { clarificationCoordinator } from "../clarification/coordinator.js";
-import type { ClarificationQuestion } from "../clarification/types.js";
+import { ClarificationCoordinator } from "../clarification/coordinator.js";
+import { SessionAutonomyBias } from "../clarification/session-autonomy-bias.js";
+import { ToolRiskGuard } from "../clarification/tool-risk-guard.js";
 import { join } from "node:path";
 import { ToolMastery } from "../tools/tool-mastery.js";
 import { FallbackSequencer } from "../tools/fallback-sequencer.js";
@@ -165,11 +164,10 @@ export class OwlGateway {
   private sessionBriefGenerator: SessionBriefGenerator | null = null;
   private loopDetector: LoopDetector = new LoopDetector();
 
-  // ─── Epic 3: Clarification Modules ─────────────────────────────
-  readonly ambiguityDetector: import("../clarification/ambiguity-detector.js").AmbiguityDetector;
-  readonly preExecutionConfirmer: import("../clarification/pre-execution-confirmer.js").PreExecutionConfirmer;
-  readonly preActionQuestioner: import("../clarification/pre-action-questioner.js").PreActionQuestioner;
-  readonly unclaritySurfacer: import("../clarification/unclarity-surfacer.js").UnclaritySurfacer;
+  // ─── Element 9: Clarification Modules ─────────────────────────────
+  readonly intentClarifier: IntentClarifier;
+  readonly preActionQuestioner: PreActionQuestioner;
+  private readonly clarificationCoordinator: ClarificationCoordinator;
 
   // ─── Epic 4: Tool Mastery Modules ─────────────────────────────
   readonly toolMastery: ToolMastery;
@@ -331,11 +329,18 @@ export class OwlGateway {
     // User mental model — behavioral state inference
     this.userMentalModel = new UserMentalModel();
 
-    // ─── Epic 3: Initialize Clarification Modules ───────────────
-    this.ambiguityDetector = new AmbiguityDetector(ctx.provider);
-    this.preExecutionConfirmer = new PreExecutionConfirmer();
-    this.preActionQuestioner = new PreActionQuestioner(ctx.provider);
-    this.unclaritySurfacer = new UnclaritySurfacer();
+    // ─── Element 9: Initialize Clarification Modules ────────────
+    const _clarificationRouter = ctx.intelligence ?? new IntelligenceRouter(
+      { tiers: { high: { provider: ctx.config.defaultProvider, model: ctx.config.defaultModel }, mid: { provider: ctx.config.defaultProvider, model: ctx.config.defaultModel }, low: { provider: ctx.config.defaultProvider, model: ctx.config.defaultModel } }, defaults: {} },
+      ctx.config.defaultProvider,
+      ctx.config.defaultModel,
+    );
+    this.clarificationCoordinator = new ClarificationCoordinator();
+    this.intentClarifier = new IntentClarifier(ctx.provider, _clarificationRouter, this.clarificationCoordinator);
+    this.preActionQuestioner = new PreActionQuestioner(ctx.provider, _clarificationRouter);
+    if (ctx.toolRegistry) {
+      ctx.toolRegistry.setRiskGuard(new ToolRiskGuard(this.preActionQuestioner));
+    }
 
     // ─── Epic 4: Initialize Tool Mastery Modules ──────────────
     this.toolMastery = new ToolMastery();
@@ -1686,48 +1691,53 @@ export class OwlGateway {
       })());
     }
 
-    // ─── Epic 3.1: Ambiguity Detection — BEFORE engine execution ─────
-    // Detect ambiguous input early and ask clarifying questions before wasting tokens
-    const ambiguityResult = await this.ambiguityDetector.detectAmbiguity(message.text);
-    if (ambiguityResult.needsClarification && ambiguityResult.question) {
-      const sessionKey = message.sessionId || 'default';
-      if (!clarificationCoordinator.shouldAsk('AmbiguityDetector', ambiguityResult.question, sessionKey)) {
-        log.engine.info(`[AmbiguityDetector] Suppressing duplicate question`);
-      } else {
-        log.engine.info(`[AmbiguityDetector] Ambiguous input detected: ${ambiguityResult.ambiguitySignals.map(s => s.type).join(", ")}`);
-        return {
-          content: ambiguityResult.question.question,
-          owlName: this.ctx.owl.persona.name,
-          owlEmoji: this.ctx.owl.persona.emoji,
-          toolsUsed: [],
-        };
-      }
+    // ─── Intent Clarification (Element 9) — before engine execution ─────────
+    const sessionKey = message.sessionId ?? 'default';
+
+    let clarificationInput = message.text;
+    let clarificationHistory = [...(session.messages ?? [])];
+
+    if ((session as any).pendingExecution) {
+      const pending = (session as any).pendingExecution as { originalMessage: string };
+      clarificationInput = pending.originalMessage;
+      clarificationHistory = [...clarificationHistory, { role: 'user' as const, content: message.text }];
+      (session as any).pendingExecution = null;
     }
 
-    // ─── Epic 3.5: Pre-Execution Confirmation — BEFORE engine execution ─────
-    // Check for high-stakes or vague requests and confirm before proceeding
-    const confirmation = this.preExecutionConfirmer.assessRequest(message.text);
-    if (confirmation && confirmation.confidence < 0.8) {
-      const confirmQuestion: ClarificationQuestion = {
-        id: confirmation.id,
-        ambiguitySignal: {
-          type: 'underspecified_scope',
-          description: confirmation.uncertaintyAreas.join('; '),
-          confidence: confirmation.confidence,
-          originalText: message.text,
-        },
-        question: this.preExecutionConfirmer.getConfirmationQuestion(confirmation),
-        contextPreserved: [],
-        timestamp: confirmation.timestamp,
-      };
-      const sessionKey = message.sessionId || 'default';
+    const clarificationBias: SessionAutonomyBias = (session as any).clarificationBias ?? new SessionAutonomyBias();
+    (session as any).clarificationBias = clarificationBias;
 
-      if (!clarificationCoordinator.shouldAsk('PreExecutionConfirmer', confirmQuestion, sessionKey)) {
-        log.engine.info(`[PreExecutionConfirmer] Suppressing duplicate question`);
+    const intentResult = await this.intentClarifier.evaluate(
+      clarificationInput,
+      clarificationHistory.slice(-3),
+      this.ctx.owl.dna,
+      clarificationBias,
+      sessionKey,
+    );
+
+    if (intentResult.verdict === 'USER_CONFUSED') {
+      return {
+        content: `Let me help you think through this. ${intentResult.reasoning}`,
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+      };
+    }
+
+    if (intentResult.verdict === 'CLARIFY') {
+      if ((session as any)._clarifyRetry) {
+        delete (session as any)._clarifyRetry;
       } else {
-        log.engine.info(`[PreExecutionConfirmer] Low confidence (${confirmation.confidence.toFixed(2)}), requesting confirmation`);
+        (session as any).pendingExecution = { originalMessage: clarificationInput };
+        (session as any)._clarifyRetry = true;
+
+        const trajectoryId = (session as any)._currentTrajectoryId;
+        if (trajectoryId && (this.ctx as any).db) {
+          (this.ctx as any).db.trajectories.markClarificationAsked(trajectoryId);
+        }
+
         return {
-          content: this.preExecutionConfirmer.getConfirmationQuestion(confirmation),
+          content: intentResult.question!,
           owlName: this.ctx.owl.persona.name,
           owlEmoji: this.ctx.owl.persona.emoji,
           toolsUsed: [],
@@ -1881,6 +1891,11 @@ export class OwlGateway {
       continuityResult ?? null,
     );
 
+    // ─── Element 9: Wire narrationPrefix from intent classification ──────
+    if (intentResult.verdict === 'NARRATE' && intentResult.interpretation) {
+      engineCtx.narrationPrefix = intentResult.interpretation;
+    }
+
     // ─── Routing — @mention + SecretaryRouter ────────────────────
     let activeOwlName = this.ctx.owl.persona.name;
     if (!this.secretaryRouter && this.ctx.specializedRegistry) {
@@ -2011,17 +2026,6 @@ export class OwlGateway {
       userId: message.userId,
       channelId: message.channelId,
     });
-
-    // ─── Epic 3.3: Unclarity Surfacing — AFTER engine response ───────
-    // Proactively surface unclarities from the user's perspective after execution
-    const priorMessages = session.messages.slice(-3).map(m => m.content);
-    const unclarity = this.unclaritySurfacer.detectUnclarity(message.text, priorMessages);
-    if (unclarity && this.unclaritySurfacer.shouldSurfaceProactively(message.text, priorMessages)) {
-      const surfacingQuestion = this.unclaritySurfacer.surfaceUnclarity(unclarity);
-      log.engine.info(`[UnclaritySurfacer] Surfacing unclarity: ${unclarity.description}`);
-      // Prepend the surfacing question to the response
-      response.content = `${surfacingQuestion}\n\n${response.content}`;
-    }
 
     // Update working context with owl's response
     if (this.ctx.workingContextManager) {
