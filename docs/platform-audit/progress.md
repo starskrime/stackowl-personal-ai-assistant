@@ -19,7 +19,7 @@
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
 | 7 | Tool layer (registry, execution, permissions) | 🔧 Phase 7a + 7d complete — 633 tests passing. Phase 7b/7c gated on production data. | 2026-05-02 |
 | 8 | PostProcessor (save, learn, evolve, queue) | 🔧 reviewed — improvements committed | 2026-05-02 |
-| 9 | **Clarification & Intent Detection** | 📐 spec approved — implementation plan pending | 2026-05-02 |
+| 9 | **Clarification & Intent Detection** | ✅ implemented | 2026-05-02 |
 | 10 | Parliament (multi-owl debate) | ⬜ pending | — |
 | 11 | Pellet system (generate, store, retrieve, dedup) | ⬜ pending | — |
 | 12 | Heartbeat (proactive messages, job queue) | ⬜ pending | — |
