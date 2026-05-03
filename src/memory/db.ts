@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1200,6 +1200,10 @@ export class MemoryDatabase {
       applyV21Migration(this.db);
       this.db.pragma(`user_version = 21`);
     }
+    if (current < 22) {
+      applyV22Migration(this.db);
+      this.db.pragma(`user_version = 22`);
+    }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
       log.engine.info(`[MemoryDatabase] Schema migrated to v${SCHEMA_VERSION}`);
@@ -1322,6 +1326,86 @@ export class MemoryDatabase {
     this.db.prepare(
       "INSERT INTO pellet_generation_runs (key, last_run_at) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET last_run_at = excluded.last_run_at"
     ).run(key, date.toISOString());
+  }
+
+  // ── Proactive engagement ────────────────────────────────────────
+
+  getEngagementStats(
+    jobType: string,
+    opts: { days: number; minSamples: number },
+  ): { replyRate: number; sampleCount: number } | null {
+    const cutoff = new Date(
+      Date.now() - opts.days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const row = this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(replied) AS replies
+         FROM proactive_engagement
+         WHERE job_type = ? AND created_at >= ?`,
+      )
+      .get(jobType, cutoff) as { total: number; replies: number } | undefined;
+
+    if (!row || row.total < opts.minSamples) return null;
+    return {
+      replyRate: row.total > 0 ? row.replies / row.total : 0,
+      sampleCount: row.total,
+    };
+  }
+
+  writeProactiveDelivery(params: {
+    id: string;
+    jobId: string;
+    channel: string;
+    userId: string;
+    messagePreview?: string;
+    verdict: string;
+    deliveredAt?: string;
+    status: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO proactive_deliveries
+         (id, job_id, channel, user_id, message_preview, verdict, delivered_at, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        params.id,
+        params.jobId,
+        params.channel,
+        params.userId,
+        params.messagePreview?.slice(0, 100) ?? null,
+        params.verdict,
+        params.deliveredAt ?? null,
+        params.status,
+        new Date().toISOString(),
+      );
+  }
+
+  writeProactiveEngagement(params: {
+    id: string;
+    deliveryId: string;
+    jobType: string;
+    goalId?: string;
+    replied: boolean;
+    replyLatencySeconds?: number;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO proactive_engagement
+         (id, delivery_id, job_type, goal_id, replied, reply_latency_seconds, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        params.id,
+        params.deliveryId,
+        params.jobType,
+        params.goalId ?? null,
+        params.replied ? 1 : 0,
+        params.replyLatencySeconds ?? null,
+        new Date().toISOString(),
+      );
   }
 }
 
@@ -3201,6 +3285,10 @@ export class StackOwlDB {
       applyV21Migration(this.db);
       this.db.pragma(`user_version = 21`);
     }
+    if (current < 22) {
+      applyV22Migration(this.db);
+      this.db.pragma(`user_version = 22`);
+    }
   }
 }
 
@@ -3351,6 +3439,78 @@ function applyV21Migration(db: Database.Database): void {
   `);
 }
 
+export function applyV22Migration(db: Database.Database): void {
+  // proactive_jobs may not exist yet on this DB if ProactiveJobQueue
+  // has never been instantiated against it (it lives in proactive-jobs.db today).
+  // Create the canonical schema first, then ALTER for v22 columns.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proactive_jobs (
+      id              TEXT PRIMARY KEY,
+      type            TEXT NOT NULL,
+      user_id         TEXT NOT NULL,
+      scheduled_at    TEXT NOT NULL,
+      payload         TEXT NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      priority        INTEGER NOT NULL DEFAULT 5,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TEXT,
+      created_at      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_jobs_status_time
+      ON proactive_jobs (status, scheduled_at);
+    CREATE INDEX IF NOT EXISTS idx_jobs_user_status
+      ON proactive_jobs (user_id, status);
+  `);
+
+  // Add v22 columns idempotently. Each ALTER guarded by table_info check.
+  const jobCols = (db.pragma("table_info(proactive_jobs)") as { name: string }[]).map(c => c.name);
+  if (!jobCols.includes("retry_count")) {
+    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!jobCols.includes("suppress_count")) {
+    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN suppress_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!jobCols.includes("goal_id")) {
+    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN goal_id TEXT`);
+  }
+  if (!jobCols.includes("error")) {
+    db.exec(`ALTER TABLE proactive_jobs ADD COLUMN error TEXT`);
+  }
+
+  // Delivery outcomes table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proactive_deliveries (
+      id              TEXT PRIMARY KEY,
+      job_id          TEXT NOT NULL,
+      channel         TEXT NOT NULL,
+      user_id         TEXT NOT NULL,
+      message_preview TEXT,
+      verdict         TEXT NOT NULL,
+      delivered_at    TEXT,
+      status          TEXT NOT NULL,
+      user_replied_at TEXT,
+      created_at      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pd_job ON proactive_deliveries(job_id);
+    CREATE INDEX IF NOT EXISTS idx_pd_user ON proactive_deliveries(user_id, created_at);
+  `);
+
+  // Engagement signal table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proactive_engagement (
+      id                    TEXT PRIMARY KEY,
+      delivery_id           TEXT NOT NULL,
+      job_type              TEXT NOT NULL,
+      goal_id               TEXT,
+      replied               INTEGER NOT NULL DEFAULT 0,
+      reply_latency_seconds INTEGER,
+      created_at            TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pe_job_type ON proactive_engagement(job_type, created_at);
+    CREATE INDEX IF NOT EXISTS idx_pe_goal ON proactive_engagement(goal_id);
+  `);
+}
+
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
  * Accepts an in-memory or on-disk Database instance; idempotent.
@@ -3430,6 +3590,9 @@ export function applyMigrations(db: Database.Database): void {
   }
   if (current < 21) {
     applyV21Migration(db);
+  }
+  if (current < 22) {
+    applyV22Migration(db);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
