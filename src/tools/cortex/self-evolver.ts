@@ -12,6 +12,7 @@
  * these are infrastructure invariants, not classification heuristics.
  */
 import type { MemoryDatabase } from "../../memory/db.js";
+import type { ShadowRunner } from "./shadow-runner.js";
 
 /**
  * Tools whose code or behavior must never be auto-rewritten by SET.
@@ -45,6 +46,12 @@ export interface SelfEvolverDeps {
   hitlChannel: {
     propose(msg: string): Promise<{ approved: boolean } | null>;
   };
+  /**
+   * Resolve a tool name to its source-file path. Returns null when the tool
+   * has no rewriteable source on disk (e.g. MCP-supplied tools, dynamically
+   * registered tools). SET skips any candidate without a resolvable path.
+   */
+  resolveToolPath?: (toolName: string) => string | null;
 }
 
 export interface FindCandidateOptions {
@@ -59,6 +66,16 @@ export interface EvolutionCandidate {
   successRate: number;
   failureCount: number;
 }
+
+export interface RunOnceResult {
+  runId: number;
+  toolName: string;
+  baselinePath: string;
+  candidatePath: string;
+}
+
+/** Max failure traces to feed into the rewrite prompt (cost ceiling). */
+const MAX_FAILURE_TRACES = 50;
 
 export class SelfEvolver {
   constructor(private readonly deps: SelfEvolverDeps) {}
@@ -93,6 +110,79 @@ export class SelfEvolver {
       toolName: row.tool_name,
       successRate: row.successes / row.total,
       failureCount: row.total - row.successes,
+    };
+  }
+
+  /**
+   * Drives one full SET cycle. Called weekly by ImprovementScheduler.
+   *
+   * Steps:
+   *   1. Concurrency lock — abort if any `tool_evolution_runs.status='running'`.
+   *      Hard safety constraint: at most one rewrite in flight at a time.
+   *   2. Pick worst non-critical candidate.
+   *   3. Resolve source path (skip if unresolvable — MCP-supplied tools etc.).
+   *   4. Pull recent failure traces (capped at MAX_FAILURE_TRACES).
+   *   5. Propose to user via HITL. Decline (or null) ⇒ abort.
+   *   6. Dispatch PatchTool to produce a rewrite at a sibling path.
+   *   7. Start a ShadowRunner run so subsequent invocations can record into it.
+   *
+   * Returns the new run's metadata, or null if any gate aborted the cycle.
+   */
+  async runOnce(
+    shadowRunner: ShadowRunner,
+    opts: FindCandidateOptions = {},
+  ): Promise<RunOnceResult | null> {
+    const active = this.deps.db.rawDb
+      .prepare(
+        "SELECT COUNT(*) AS n FROM tool_evolution_runs WHERE status = 'running'",
+      )
+      .get() as { n: number };
+    if (active.n > 0) return null;
+
+    const candidate = await this.findCandidate(opts);
+    if (!candidate) return null;
+
+    const baselinePath = this.deps.resolveToolPath?.(candidate.toolName) ?? null;
+    if (!baselinePath) return null;
+
+    const failureRows = this.deps.db.rawDb
+      .prepare(
+        `SELECT error_message FROM tool_executions
+            WHERE tool_name = ? AND success = 0 AND error_message IS NOT NULL
+            ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(candidate.toolName, MAX_FAILURE_TRACES) as Array<{
+      error_message: string;
+    }>;
+    const failureTraces = failureRows.map((r) => r.error_message);
+
+    const proposal =
+      `SET proposes rewriting tool "${candidate.toolName}" — ` +
+      `success rate ${(candidate.successRate * 100).toFixed(1)}% over ` +
+      `${candidate.failureCount} failures. Approve rewrite?`;
+    const verdict = await this.deps.hitlChannel.propose(proposal);
+    if (!verdict || !verdict.approved) return null;
+
+    const candidatePath = await this.deps.patchTool.execute({
+      toolPath: baselinePath,
+      instruction:
+        `Rewrite this tool to handle the failure modes shown in the traces. ` +
+        `Preserve the public interface exactly.`,
+      failureTraces,
+    });
+
+    const runId = shadowRunner.start({
+      baselineTool: candidate.toolName,
+      candidateTool: `${candidate.toolName}__v2`,
+      baselinePath,
+      candidatePath,
+    });
+
+    return {
+      runId,
+      toolName: candidate.toolName,
+      baselinePath,
+      candidatePath,
     };
   }
 }
