@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { v4 as uuid } from "uuid";
 import { MemoryRepository } from "../src/memory/repository.js";
 import { applyV25Migration } from "../src/memory/db.js";
+import { GatewayEventBus, type GatewaySystemEvent } from "../src/gateway/event-bus.js";
 
 function makeEmbedding(seed: number): Float32Array {
   const arr = new Float32Array(8);
@@ -212,5 +213,50 @@ describe("MemoryRepository.insertBatch — validation & upsert", () => {
     ).toThrow();
     expect(repo.getById("ok")).toBeNull();
     expect(repo.getById("bad")).toBeNull();
+  });
+});
+
+describe("MemoryRepository — events", () => {
+  let db: Database.Database;
+  let bus: GatewayEventBus;
+  let repo: MemoryRepository;
+  let captured: GatewaySystemEvent[];
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    applyV25Migration(db);
+    bus = new GatewayEventBus();
+    captured = [];
+    bus.on("memory:written", (e) => captured.push(e));
+    bus.on("memory:invalidated", (e) => captured.push(e));
+    repo = new MemoryRepository(db, bus);
+  });
+
+  it("emits memory:written for each inserted record", () => {
+    repo.insertBatch([
+      { id: "a", kind: "semantic", content: "x", importance: 0.5, goal_id: "g1" },
+      { id: "b", kind: "episodic", content: "y", importance: 0.7 },
+    ]);
+    const written = captured.filter((e) => e.type === "memory:written");
+    expect(written).toHaveLength(2);
+    expect(written[0]).toMatchObject({ id: "a", kind: "semantic", goal_id: "g1", importance: 0.5 });
+    expect(written[1]).toMatchObject({ id: "b", kind: "episodic", goal_id: null });
+  });
+
+  it("emits memory:invalidated", () => {
+    repo.insertBatch([{ id: "a", kind: "semantic", content: "x", importance: 0.5 }]);
+    repo.invalidate("a", { reason: "user corrected", invalidatedBy: "test" });
+    const inv = captured.find((e) => e.type === "memory:invalidated");
+    expect(inv).toBeDefined();
+    expect(inv).toMatchObject({ id: "a", reason: "user corrected", invalidated_by: "test" });
+  });
+
+  it("does not require a bus (optional dependency)", () => {
+    const repoNoBus = new MemoryRepository(db);
+    expect(() =>
+      repoNoBus.insertBatch([{ id: "z", kind: "semantic", content: "x", importance: 0.5 }]),
+    ).not.toThrow();
   });
 });

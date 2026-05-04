@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import type { GatewayEventBus } from "../gateway/event-bus.js";
 
 export type MemoryKind = "semantic" | "episodic" | "working" | "procedural" | "reflexive";
 
@@ -70,7 +71,10 @@ export interface MemoryStats {
 }
 
 export class MemoryRepository {
-  constructor(private readonly db: Database.Database) {}
+  constructor(
+    private readonly db: Database.Database,
+    private readonly bus?: GatewayEventBus,
+  ) {}
 
   async search(query: string, opts: MemorySearchOptions = {}): Promise<MemoryRecord[]> {
     const { kinds, topK = 50, minImportance, includeInvalid = false, goalId } = opts;
@@ -151,6 +155,18 @@ export class MemoryRepository {
       }
     });
     insertMany(records);
+
+    if (this.bus) {
+      for (const r of records) {
+        this.bus.emit({
+          type: "memory:written",
+          id: r.id,
+          kind: r.kind,
+          goal_id: r.goal_id ?? null,
+          importance: r.importance,
+        });
+      }
+    }
   }
 
   invalidate(id: string, opts: InvalidateOptions): void {
@@ -176,6 +192,13 @@ export class MemoryRepository {
       }
     });
     tx();
+
+    this.bus?.emit({
+      type: "memory:invalidated",
+      id,
+      reason: opts.reason,
+      invalidated_by: opts.invalidatedBy,
+    });
   }
 
   getById(id: string): MemoryRecord | null {

@@ -19,6 +19,8 @@ export type GatewaySystemEvent =
   | { type: "fact:extracted";    userId: string; factText: string; factId: string }
   | { type: "fact:retracted";    sessionId: string; turnIndex: number; toolName: string; reason: string }
   | { type: "session:ended";     userId: string; sessionId: string }
+  | { type: "memory:written";    id: string; kind: string; goal_id: string | null; importance: number }
+  | { type: "memory:invalidated";id: string; reason: string; invalidated_by: string }
 
 const DELIVER_EVENT = "gateway:deliver"
 
