@@ -488,11 +488,27 @@ After Phase 7b has run ~2 weeks in production, evaluate Phase 7c (SET + FPC). Ch
 - Reflexive memories explicitly excluded from prompt (no `ReflexiveMemoryLayer`).
 - ~105 new tests planned across unit/integration/migration/perf layers.
 
+### Phase 4 — Implementation (2026-05-04, in progress on `feature/element-15-memory`)
+- Plan: `docs/superpowers/plans/2026-05-03-element15-memory-architecture-v1.md` (32 tasks across phases A-J)
+- Phase A (typed surface skeleton) — Tasks 1-3 ✅ committed
+  - `src/memory/repository.ts` introduced with full read/write API + tests
+  - `randomUUID()` for `memory_invalidations` / `memory_contradictions` / `memory_access_log` IDs (avoids same-ms collisions)
+- Phase B (live migration pipeline) — Tasks 4-7 ✅ committed
+  - `applyV25Migration` ships with `memories` + `memory_invalidations` + `memory_contradictions` + `memory_access_log` tables, indexes, and CHECK constraints (kind enum / verdict enum / importance ∈ [0,1])
+  - `backupBeforeV25(dbPath)` writes `.v24-backup-<ts>` sidecar before mutation; called from `MemoryDatabase` constructor when current_version < 25
+  - Three migration entry points wired (`MemoryDatabase.runMigrations` ×2, standalone `applyMigrations`)
+  - Legacy merge: `INSERT OR IGNORE` from `facts` (→ semantic), `episodes` (→ episodic), `pellets` (→ semantic), `summaries` (→ episodic). `tableHasColumns` guard handles older same-named tables created by earlier migrations.
+  - Production audit before merge: real targets are facts (150 rows) / episodes (13) / summaries (3) / pellets (0). Plan's example schemas didn't exist; merge written against actual production schema.
+  - Integration test: file-backed legacy db → backup → migrate → repository.search by kind. End-to-end pass.
+- Test counts: 1042 passing (was 1023). 19 new v25 tests + repository tests added.
+
 ### Commits
 - `4141fc0` — Phase 3 design spec
+- (Phase A) Tasks 1-3 — repository skeleton, randomUUID hardening
+- (Phase B) Tasks 4-7 — v25 schema + backup + legacy merge + integration test (`a26cca7` is HEAD of Phase B)
 
 ### Status
-🔄 Awaiting Boss review of design spec before writing-plans (Phase 4).
+🔄 Phase B complete. Phase C next: insertBatch upsert + validation + event emission.
 
 ---
 
