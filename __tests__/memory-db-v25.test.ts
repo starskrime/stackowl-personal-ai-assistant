@@ -295,3 +295,73 @@ describe("v25 migration — legacy data merge", () => {
     expect(legacyRow?.fact).toBe("keep me");
   });
 });
+
+describe("v25 migration — integration", () => {
+  it("end-to-end: file-backed legacy db migrates, backs up, and is searchable via repository", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "v25-int-"));
+    const dbPath = path.join(tmp, "stackowl.db");
+
+    const seed = new Database(dbPath);
+    seed.pragma("journal_mode = WAL");
+    seed.exec(`
+      CREATE TABLE facts (
+        id TEXT PRIMARY KEY, user_id TEXT, owl_name TEXT, fact TEXT NOT NULL,
+        entity TEXT, category TEXT, confidence REAL, source TEXT, embedding TEXT,
+        access_count INTEGER, expires_at TEXT, created_at TEXT, updated_at TEXT,
+        invalidated_at TEXT
+      );
+      CREATE TABLE episodes (
+        id TEXT PRIMARY KEY, session_id TEXT, user_id TEXT, owl_name TEXT,
+        summary TEXT NOT NULL, key_facts TEXT, topics TEXT, sentiment TEXT,
+        importance REAL, embedding TEXT, created_at TEXT
+      );
+      CREATE TABLE pellets (
+        id TEXT PRIMARY KEY, tag TEXT, title TEXT, content TEXT NOT NULL, created_at TEXT
+      );
+      INSERT INTO facts (id, fact, confidence, created_at, updated_at)
+        VALUES
+          ('f1', 'user prefers concise replies', 0.7, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+          ('f2', 'user works in TypeScript', 0.6, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z');
+      INSERT INTO episodes (id, summary, importance, created_at)
+        VALUES ('e1', 'session about element 15', 0.8, '2026-04-30T00:00:00Z');
+      INSERT INTO pellets (id, content, created_at)
+        VALUES ('p1', 'parliament synthesis on memory design', '2026-05-01T00:00:00Z');
+    `);
+    seed.close();
+
+    const backupPath = backupBeforeV25(dbPath);
+    expect(backupPath).not.toBeNull();
+    expect(fs.existsSync(backupPath as string)).toBe(true);
+
+    const live = new Database(dbPath);
+    live.pragma("journal_mode = WAL");
+    live.pragma("foreign_keys = ON");
+    applyV25Migration(live);
+
+    const all = live
+      .prepare(`SELECT id, kind, content FROM memories ORDER BY id`)
+      .all() as Array<{ id: string; kind: string; content: string }>;
+    expect(all).toEqual([
+      { id: "e1", kind: "episodic", content: "session about element 15" },
+      { id: "f1", kind: "semantic", content: "user prefers concise replies" },
+      { id: "f2", kind: "semantic", content: "user works in TypeScript" },
+      { id: "p1", kind: "semantic", content: "parliament synthesis on memory design" },
+    ]);
+
+    const legacyFacts = live.prepare(`SELECT COUNT(*) AS c FROM facts`).get() as { c: number };
+    expect(legacyFacts.c).toBe(2);
+
+    const { MemoryRepository } = await import("../src/memory/repository.js");
+    const repo = new MemoryRepository(live);
+    const semanticOnly = await repo.search("user", { kinds: ["semantic"], topK: 10 });
+    expect(semanticOnly.length).toBe(3);
+    expect(semanticOnly.every((r) => r.kind === "semantic")).toBe(true);
+
+    const episodicOnly = await repo.search("session", { kinds: ["episodic"], topK: 10 });
+    expect(episodicOnly).toHaveLength(1);
+    expect(episodicOnly[0].id).toBe("e1");
+
+    live.close();
+    fs.rmSync(tmp, { recursive: true });
+  });
+});
