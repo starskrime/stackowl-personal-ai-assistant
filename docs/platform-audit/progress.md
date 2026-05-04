@@ -25,7 +25,7 @@
 | 12 | Heartbeat (proactive messages, job queue) | ✅ implemented — schema v22, single proactive_jobs DB, DeliveryVerifier (ADVANCES/NEUTRAL/NOISE), retry escalation, recordEngagement wiring, AutonomousPlanner learned priorities, goal_progress_update jobs, consolidation.ts deleted. 866 tests passing. | 2026-05-03 |
 | 13 | Learning Engine (reactive + proactive self-study) | ⬜ pending | — |
 | 14 | Evolution (DNA mutation, reflexion, APO) | ⬜ pending | — |
-| 15 | Memory DB (SQLite facts, episodes, attempts) | ⬜ pending | — |
+| 15 | Memory DB (SQLite facts, episodes, attempts) | 🔄 Phase 1 audit + Phase 2 research + Phase 3 design spec complete; awaiting Boss spec review before writing-plans | 2026-05-03 |
 | 16 | Perches (file watchers, event broadcast) | ⬜ pending | — |
 | 17 | Owl system (DNA, inner life, specialization) | ⬜ pending | — |
 | 18 | Providers (model routing, health, cost) | ⬜ pending | — |
@@ -458,6 +458,41 @@ After Phase 7b has run ~2 weeks in production, evaluate Phase 7c (SET + FPC). Ch
 
 ### Bidirectionality map: 21 active jobs, all with confirmed read-back paths
 - Spec: docs/superpowers/specs/2026-05-02-postprocessor-element8-design.md
+
+---
+
+## Element 15: Memory DB (rewrite)
+
+### Scope
+21 files in `src/memory/`, ~9,942 LOC. `db.ts` god-class is 3,803 lines / 41 tables / 24 schema migrations / 32 `applyV*` methods. Outside consumers of `MemoryDatabase.rawDb`: 9 (5 in `src/intelligence/`).
+
+### Phase 1 — Audit (2026-05-03, Winston)
+- Audit doc: `_bmad-output/planning-artifacts/element15-memory-architecture-audit-2026-05-03.md`
+- Findings: 25 hardcoded-classification violations cited with line numbers; schema drift on `trajectory_turns`/`trajectories`/`task_ledgers`; rawDb encapsulation breach at `db.ts:404`; KEEP/REWRITE/EXTEND/MERGE/DELETE/MOVE verdicts per file and per table.
+- Verdicts: `db.ts` → REWRITE. `consolidator.ts`, `context-manager.ts`, `prior-context-retriever.ts` → DELETE. `preference-recognizer` + `preference-enforcer` + `fact-extractor` → MERGE. 12 tables MOVE-OUT; 10 DELETE → ~19 surviving memory tables.
+
+### Phase 2 — Research (2026-05-03, Mary)
+- Research doc: `_bmad-output/planning-artifacts/research/market-stackowl-element15-memory-db-research-2026-05-03.md`
+- 10 production memory systems profiled (Mem0, Letta/MemGPT, Zep, Cognee, LangChain, LlamaIndex, ChatGPT, Claude, Cursor, Continue.dev) with cited 2024-2026 pain points.
+- 10 arXiv papers analyzed (Reflexion, MemoryBank, Generative Agents, MemGPT, A-MEM, Mem0, Sleep-time Compute, LongMemEval, LoCoMo, AgentEvolver).
+- Creative-gap thesis: 5 architectural moves no competitor or paper composes. Headline evidence: mem0ai/mem0#4573 — 97.8% junk in unfiltered memory extraction.
+
+### Phase 3 — Design (2026-05-03, brainstorming)
+- Spec: `docs/superpowers/specs/2026-05-03-element15-memory-architecture-design.md`
+- v1 ships moves #1 (goal-conditioned writes), #4 (event-driven invalidation), #5 (TTL-layered rendering). v2 holds moves #2 (parliament retention), #3 (DNA coupling).
+- 3 new files: `memory/repository.ts`, `memory/writer.ts`, `memory/layer.ts`. Existing `db.ts` shrinks to schema-owner + migration runner.
+- 12 tables (down from 41): 5 memory kinds + 3 substrate (kept) + 4 linkage/audit. Single v25 migration with row-count verification + on-disk backup.
+- LLM tool: `memory(action: "search" | "invalidate")`. Writes are event-driven only; no `Remember` tool.
+- Operator surface: gateway-uniform `/memory` command (CLI/Telegram/web identical).
+- Approval gate on invalidate: `importance ≥ 0.8` routes through HitlChannel.
+- Reflexive memories explicitly excluded from prompt (no `ReflexiveMemoryLayer`).
+- ~105 new tests planned across unit/integration/migration/perf layers.
+
+### Commits
+- `4141fc0` — Phase 3 design spec
+
+### Status
+🔄 Awaiting Boss review of design spec before writing-plans (Phase 4).
 
 ---
 
