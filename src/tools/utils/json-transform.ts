@@ -24,6 +24,8 @@ export const JSONTransformTool: ToolImplementation = {
       },
       required: ["data", "operation"],
     },
+    capabilities: ["data_transform", "json_parse"],
+    executionPolicy: { timeoutMs: 5_000, maxRetries: 0 },
   },
 
   async execute(

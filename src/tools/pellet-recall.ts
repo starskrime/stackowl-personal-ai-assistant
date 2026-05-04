@@ -56,6 +56,8 @@ export const PelletRecallTool: ToolImplementation = {
       },
       required: ["action"],
     },
+    capabilities: ["memory_search", "knowledge_retrieve"],
+    executionPolicy: { timeoutMs: 10_000, maxRetries: 0 },
   },
 
   async execute(

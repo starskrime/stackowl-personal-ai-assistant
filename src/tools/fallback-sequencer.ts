@@ -1,116 +1,43 @@
 /**
- * StackOwl — Fallback Sequencer
+ * StackOwl — Fallback Sequencer (DB-backed)
  *
- * Applies learned fallback sequences when tools fail, not static ones.
- * Works with FallbackDiscoverer to improve recovery strategies over time.
+ * Reads learned fallback edges from `tool_edges` (schema v23). Edges are
+ * populated by the EdgeAccumulator (Element 7 T9) as a side-effect of
+ * successful recovery sequences observed in production.
+ *
+ * Replaces the in-memory `learnedSequences` map of the previous incarnation —
+ * learning now persists across restarts.
  */
 
-import { log } from "../logger.js";
-
-export interface FallbackSequence {
-  toolName: string;
-  fallbackOrder: string[];
-  learnedFrom: "static" | "discovered";
-}
-
-export interface FallbackOutcome {
-  sequence: string[];
-  success: boolean;
-  failureReason?: string;
-}
+import type { MemoryDatabase } from "../memory/db.js";
 
 export class FallbackSequencer {
-  private learnedSequences: Map<string, FallbackSequence> = new Map();
-  private outcomeHistory: Map<string, FallbackOutcome[]> = new Map();
+  constructor(private readonly db: MemoryDatabase) {}
 
-  private key(owlName: string, toolName: string, taskType: string): string {
-    return `${owlName}::${toolName}::${taskType}`;
-  }
-
-  recordFallbackOutcome(
-    owlName: string,
-    toolName: string,
-    taskType: string,
-    sequence: string[],
-    success: boolean,
-    failureReason?: string,
-  ): void {
-    const k = this.key(owlName, toolName, taskType);
-    const outcomes = this.outcomeHistory.get(k) ?? [];
-    outcomes.push({ sequence, success, failureReason });
-    this.outcomeHistory.set(k, outcomes);
-
-    this.updateLearnedSequence(owlName, toolName, taskType, sequence, success);
-  }
-
-  private updateLearnedSequence(
-    owlName: string,
-    toolName: string,
-    taskType: string,
-    sequence: string[],
-    success: boolean,
-  ): void {
-    const k = this.key(owlName, toolName, taskType);
-    const existing = this.learnedSequences.get(k);
-
-    if (!existing || success) {
-      this.learnedSequences.set(k, {
-        toolName,
-        fallbackOrder: sequence,
-        learnedFrom: "discovered",
-      });
-
-      log.engine.debug(
-        `[FallbackSequencer] Learned new sequence for ${toolName}: ${sequence.join(" -> ")}`,
-      );
-    }
-  }
-
-  getFallbackSequence(
-    owlName: string,
-    toolName: string,
-    taskType: string,
-  ): string[] {
-    const k = this.key(owlName, toolName, taskType);
-    const learned = this.learnedSequences.get(k);
-
-    if (learned) {
-      log.engine.debug(
-        `[FallbackSequencer] Using learned sequence for ${toolName}: ${learned.fallbackOrder.join(" -> ")}`,
-      );
-      return learned.fallbackOrder;
-    }
-
-    return this.getDefaultSequence(toolName);
-  }
-
-  private getDefaultSequence(toolName: string): string[] {
-    const defaults: Record<string, string[]> = {
-      web_fetch: ["web_search", "pellet_recall", "recall"],
-      read_file: ["shell", "pellet_recall", "recall"],
-      write_file: ["shell", "remember"],
-      shell: ["read_file", "recall"],
-      default: ["recall", "remember", "pellet_recall"],
-    };
-
-    return defaults[toolName] ?? defaults["default"];
-  }
-
-  getLearnedSequence(
-    owlName: string,
-    toolName: string,
-    taskType: string,
-  ): FallbackSequence | undefined {
-    const k = this.key(owlName, toolName, taskType);
-    return this.learnedSequences.get(k);
-  }
-
-  getOutcomeHistory(
-    owlName: string,
-    toolName: string,
-    taskType: string,
-  ): FallbackOutcome[] {
-    const k = this.key(owlName, toolName, taskType);
-    return this.outcomeHistory.get(k) ?? [];
+  /**
+   * Returns the highest-success-rate alternative tool for the given
+   * (fromTool, capabilityTag) edge, excluding any tools already tried.
+   *
+   * Edges with fewer than 3 samples are ignored — too noisy to trust.
+   */
+  getNextFallback(
+    fromTool: string,
+    capabilityTag: string,
+    exclude: string[] = [],
+  ): string | null {
+    const placeholders = exclude.map(() => "?").join(",") || "''";
+    const row = this.db.rawDb
+      .prepare(
+        `SELECT to_tool FROM tool_edges
+           WHERE from_tool = ? AND capability_tag = ?
+             AND sample_count >= 3
+             AND to_tool NOT IN (${placeholders})
+           ORDER BY success_rate DESC, sample_count DESC
+           LIMIT 1`,
+      )
+      .get(fromTool, capabilityTag, ...exclude) as
+      | { to_tool: string }
+      | undefined;
+    return row?.to_tool ?? null;
   }
 }

@@ -1,10 +1,26 @@
 import { v4 as uuidv4 } from "uuid";
 import type { OutcomeJournal } from "./outcome-journal.js";
 import type { MemoryDatabase } from "../memory/db.js";
+import type { SelfEvolver } from "../tools/cortex/self-evolver.js";
+import type { ShadowRunner } from "../tools/cortex/shadow-runner.js";
 import { log } from "../logger.js";
 
 interface QuietHour { start: number; end: number; }
 interface SchedulerConfig { quietHours: QuietHour[]; }
+
+/**
+ * Optional SET (Self-Evolving Tools) wiring. When both are present, the
+ * scheduler runs `selfEvolver.runOnce(shadowRunner)` on a weekly cadence —
+ * the hard safety constraint of "at most 1 SET rewrite per week" is enforced
+ * here (cadence) and inside SelfEvolver itself (concurrency lock on
+ * `tool_evolution_runs`).
+ */
+export interface ToolEvolutionDeps {
+  selfEvolver: SelfEvolver;
+  shadowRunner: ShadowRunner;
+}
+
+const WEEK_MS = 7 * 24 * 60 * 60_000;
 
 export class ImprovementScheduler {
   private running = false;
@@ -14,6 +30,7 @@ export class ImprovementScheduler {
     private readonly journal: OutcomeJournal,
     private readonly db: MemoryDatabase,
     private readonly config: SchedulerConfig,
+    private readonly toolEvolution?: ToolEvolutionDeps,
   ) {}
 
   start(): void {
@@ -36,7 +53,30 @@ export class ImprovementScheduler {
       }
     }, 60 * 60_000));
 
-    log.engine.info("[ImprovementScheduler] Started — journal review (15min), pruning (1h)");
+    // Job 3: SET tool evolution (weekly, only when wired)
+    if (this.toolEvolution) {
+      this.timers.push(setInterval(async () => {
+        if (this.isInQuietHours()) return;
+        try { await this.runToolEvolution(); } catch (e) {
+          log.engine.warn(`[ImprovementScheduler] Tool evolution error: ${e}`);
+        }
+      }, WEEK_MS));
+    }
+
+    const jobs = this.toolEvolution
+      ? "journal review (15min), pruning (1h), tool evolution (weekly)"
+      : "journal review (15min), pruning (1h)";
+    log.engine.info(`[ImprovementScheduler] Started — ${jobs}`);
+  }
+
+  /**
+   * Run one SET cycle. Safe to call manually. Returns the run metadata when
+   * a rewrite was started, or null when the cycle aborted at any gate.
+   */
+  async runToolEvolution() {
+    if (!this.toolEvolution) return null;
+    const { selfEvolver, shadowRunner } = this.toolEvolution;
+    return selfEvolver.runOnce(shadowRunner);
   }
 
   stop(): void {

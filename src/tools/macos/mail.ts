@@ -38,6 +38,8 @@ export const AppleMailTool: ToolImplementation = {
       },
       required: ["action"],
     },
+    capabilities: ["mail_send", "mail_read"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 1, retryDelayMs: 2_000 },
   },
 
   async execute(

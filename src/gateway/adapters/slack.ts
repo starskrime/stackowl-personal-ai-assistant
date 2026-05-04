@@ -29,6 +29,8 @@ import { log } from "../../logger.js";
 import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import type { StreamEvent } from "../../providers/base.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
+import { formatToolEvent } from "../narration-formatter.js";
+import type { GatewayEventBus, GatewaySystemEvent } from "../event-bus.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -644,5 +646,48 @@ export class SlackAdapter implements ChannelAdapter {
         `Could not persist channel IDs: ${err instanceof Error ? err.message : err}`,
       );
     }
+  }
+}
+
+export interface SlackPostMessageArgs {
+  channel: string;
+  text: string;
+}
+
+export interface SlackNarrationDeps {
+  postMessage: (args: SlackPostMessageArgs) => Promise<unknown> | unknown;
+  channel: string;
+}
+
+/**
+ * Subscribe to tool:* events on the given bus and stream narration to a Slack channel.
+ * Throttled to one message per 3s — Slack rate limits are tighter than Telegram and
+ * narration in busy channels is noisy.
+ */
+export function subscribeSlackNarration(
+  bus: GatewayEventBus,
+  deps: SlackNarrationDeps,
+): void {
+  const events: Array<GatewaySystemEvent["type"]> = [
+    "tool:start",
+    "tool:result",
+    "tool:goal_advance",
+    "tool:goal_blocked",
+  ];
+  let lastSentAt = 0;
+  const minIntervalMs = 3000;
+  for (const ev of events) {
+    bus.on(ev as any, async (event: any) => {
+      const now = Date.now();
+      if (now - lastSentAt < minIntervalMs) return;
+      const line = formatToolEvent(event);
+      if (!line) return;
+      lastSentAt = now;
+      try {
+        await deps.postMessage({ channel: deps.channel, text: line });
+      } catch (err) {
+        log.slack.warn(`Narration post failed: ${(err as Error).message}`);
+      }
+    });
   }
 }

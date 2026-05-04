@@ -34,6 +34,8 @@ export const MermaidDiagramTool: ToolImplementation = {
       },
       required: ["code"],
     },
+    capabilities: ["diagram_render", "image_create"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   async execute(

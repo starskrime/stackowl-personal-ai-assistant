@@ -17,7 +17,7 @@
 | 4 | RoutingCoordinator (owl selection + pin) | 🔧 reviewed — improvements committed | 2026-04-29 |
 | 5 | ContextBuilder (memory + pellets + skills) | 🔧 reviewed — improvements committed | 2026-04-30 |
 | 6 | OwlEngine — ReAct loop | 🔧 reviewed — improvements committed | 2026-05-01 |
-| 7 | Tool layer (registry, execution, permissions) | 🔧 Phase 7a + 7d complete — 633 tests passing. Phase 7b/7c gated on production data. | 2026-05-02 |
+| 7 | Tool layer (registry, execution, permissions) | ✅ Phase 7a + 7b + 7c + 7d shipped (3496 tests). 23-task continuation plan complete 2026-05-03: schema v23/v24, ToolTracker→SQLite, multi-channel narration, FallbackSequencer DB-backed, ToolGraph (Dijkstra), PersonalizedRouter (KNN), SelfEvolver+ShadowRunner, FactEnvelope+retraction, frontmost-aware live_browser (Safari JXA + Chrome CDP w/ auto-bootstrap). | 2026-05-03 |
 | 8 | PostProcessor (save, learn, evolve, queue) | 🔧 reviewed — improvements committed | 2026-05-02 |
 | 9 | **Clarification & Intent Detection** | ✅ implemented | 2026-05-02 |
 | 10 | Parliament (multi-owl debate) | ✅ implemented — parallel Round 1, DiversityFilter, sparse Round 2, ContextPipeline/GoalVerifier/DNA wiring. 31 new tests, 793 total passing. | 2026-05-03 |
@@ -356,6 +356,47 @@ Every platform component (Parliament, Evolution, session extraction, episodic me
 - After Phase 7d: 633 tests (+48 new tests)
 
 **Phase 7b/7c status:** Gated on production data. Plans are written; implementation deferred until data justifies it.
+
+### Phase 7b/7c/7d Continuation (2026-05-03) — All 23 tasks complete
+
+The user opted to ship 7b + 7c inline (without measurement gates) plus the live-browser sub-track. All 23 tasks (T1–T23) committed on `feature/element-7-cortex-t2-t22`.
+
+**Cortex (T1–T17):**
+1. Schema v23 — `tool_executions` + `tool_edges` tables with indexes
+2. ToolTracker JSON → SQLite migration (preserves error reasons)
+3. Telegram adapter narration subscription
+4. Slack adapter narration subscription
+5. FallbackSequencer DB-backed (replaces in-memory `learnedSequences`)
+6. MCP tool execution wrapped through `ToolRegistry.execute()` lifecycle
+7. Top-30 tools backfilled with `capabilities[]` + `executionPolicy`
+8. `ToolGraph` (Dijkstra/single-hop replan over capability-tagged edges)
+9. `EdgeAccumulator` — writes tool→tool transitions to `tool_edges` with EWMA
+10. `ToolGraph` wired into registry's `BLOCKED` path for LLM-free recovery
+11. `PersonalizedRouter` — KNN over user trajectory history (`UserMemoryStore`)
+12. `ToolPriorLayer` for `ContextPipeline` (priority 8)
+13. `SelfEvolver` scaffolding + `CRITICAL_TOOLS` exclusion list
+14. `ShadowRunner` — 100-call gated promotion, ≥5pp improvement threshold
+15. `SelfEvolver.runOnce()` + weekly job in `ImprovementScheduler` (HITL-gated)
+16. `FactEnvelopeStore` — in-memory provenance keyed by (sessionId, turnIndex)
+17. `fact:retracted` event + `ContextPipeline.removeShortTermLayer()` + `FactRetractor`
+
+**Live browser (T18–T22):**
+18. `detectFrontmostBrowser()` (osascript via System Events) — returns "safari" | "chrome" | null
+19. `SafariDriver` — JXA wrapper for `Application('Safari')` + `do JavaScript`
+20. `ChromeDriver` + `PuppeteerChromeBackend` — CDP wrapper with active-page tracking
+21. Chrome auto-bootstrap — detect debug port → relaunch with `--restore-last-session`
+22. Unified `live_browser` tool — frontmost-aware action dispatch (single tool, 12 actions)
+
+**Integration (T23):**
+23. `live_browser` registered in `src/index.ts` with full production wiring (frontmost detector + Safari/Chrome drivers + Chrome bootstrap → BrowserBridge.connect)
+
+**Schema migrations:** v23 (T1), v24 (T14 — `tool_evolution_runs`)
+
+**Test counts:**
+- Before T1: 866 tests
+- After T23: 3496 tests passing across 384 files
+
+**Branch:** `feature/element-7-cortex-t2-t22` (ready for merge)
 
 #### ⏰ Phase 7b Readiness Gate — CHECK DATE: 2026-05-09
 

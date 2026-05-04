@@ -46,4 +46,35 @@ describe("ImprovementScheduler", () => {
     );
     expect(sched.isInQuietHours()).toBe(true);
   });
+
+  it("runToolEvolution returns null when SET is not wired", async () => {
+    const sched = new ImprovementScheduler(
+      new OutcomeJournal(db), db, { quietHours: [] },
+    );
+    const result = await sched.runToolEvolution();
+    expect(result).toBeNull();
+  });
+
+  it("runToolEvolution delegates to selfEvolver.runOnce when wired", async () => {
+    const calls: unknown[] = [];
+    const fakeSelfEvolver = {
+      runOnce: async (sr: unknown) => {
+        calls.push(sr);
+        return { runId: 42, toolName: "web", baselinePath: "x", candidatePath: "y" };
+      },
+    };
+    const fakeShadowRunner = { tag: "shadow" };
+    const sched = new ImprovementScheduler(
+      new OutcomeJournal(db), db, { quietHours: [] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { selfEvolver: fakeSelfEvolver as any, shadowRunner: fakeShadowRunner as any },
+    );
+    const result = await sched.runToolEvolution();
+    expect(result).toEqual({
+      runId: 42, toolName: "web",
+      baselinePath: "x", candidatePath: "y",
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toBe(fakeShadowRunner);
+  });
 });

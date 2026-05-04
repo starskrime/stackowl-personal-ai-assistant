@@ -25,6 +25,7 @@ export const DocumentTool: ToolImplementation = {
       required: ["action", "filePath"],
     },
     capabilities: ["document_parse", "file_read"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   category: "cognitive",

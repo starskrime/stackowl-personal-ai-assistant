@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 24;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1207,6 +1207,10 @@ export class MemoryDatabase {
     if (current < 23) {
       applyV23Migration(this.db);
       this.db.pragma(`user_version = 23`);
+    }
+    if (current < 24) {
+      applyV24Migration(this.db);
+      this.db.pragma(`user_version = 24`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -3385,6 +3389,10 @@ export class StackOwlDB {
       applyV23Migration(this.db);
       this.db.pragma(`user_version = 23`);
     }
+    if (current < 24) {
+      applyV24Migration(this.db);
+      this.db.pragma(`user_version = 24`);
+    }
   }
 }
 
@@ -3660,6 +3668,31 @@ export function applyV23Migration(db: Database.Database): void {
   `);
 }
 
+export function applyV24Migration(db: Database.Database): void {
+  // v24: Tool Cortex SET (Self-Evolving Tools) — shadow-execution run state.
+  // Tracks baseline vs. candidate success/total counters across process
+  // boundaries so a shadow run survives restarts and can be evaluated by
+  // any process holding the same DB.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tool_evolution_runs (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      baseline_tool       TEXT NOT NULL,
+      candidate_tool      TEXT NOT NULL,
+      baseline_path       TEXT NOT NULL,
+      candidate_path      TEXT NOT NULL,
+      baseline_successes  INTEGER NOT NULL DEFAULT 0,
+      baseline_total      INTEGER NOT NULL DEFAULT 0,
+      candidate_successes INTEGER NOT NULL DEFAULT 0,
+      candidate_total     INTEGER NOT NULL DEFAULT 0,
+      status              TEXT NOT NULL DEFAULT 'running',
+      started_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_evol_runs_status
+      ON tool_evolution_runs(status);
+  `);
+}
+
 /**
  * Apply all MemoryDatabase migrations to the given SQLite connection.
  * Accepts an in-memory or on-disk Database instance; idempotent.
@@ -3745,6 +3778,9 @@ export function applyMigrations(db: Database.Database): void {
   }
   if (current < 23) {
     applyV23Migration(db);
+  }
+  if (current < 24) {
+    applyV24Migration(db);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }

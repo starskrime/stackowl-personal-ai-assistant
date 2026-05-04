@@ -28,6 +28,7 @@ import { loadConfig } from "./config/loader.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
 import { ToolRegistry } from "./tools/registry.js";
+import { ToolTracker } from "./tools/tracker.js";
 import { ShellTool } from "./tools/shell.js";
 import { CredentialsTool } from "./tools/credentials.js";
 import { SandboxTool } from "./tools/sandbox.js";
@@ -131,6 +132,19 @@ import { DocumentTool }    from "./tools/document.js";
 import { CodeSandboxTool } from "./tools/code-sandbox.js";
 import { DbQueryTool }     from "./tools/db-query.js";
 import { ScheduleTool }    from "./tools/schedule.js";
+// ── Tool Cortex T22 — frontmost-aware live browser control ──
+import { createLiveBrowserTool } from "./tools/live-browser/index.js";
+import { detectFrontmostBrowser } from "./tools/live-browser/frontmost.js";
+import { SafariDriver } from "./tools/live-browser/safari-driver.js";
+import { ChromeDriver } from "./tools/live-browser/chrome-driver.js";
+import { PuppeteerChromeBackend } from "./tools/live-browser/chrome-backend.js";
+import {
+  ensureChromeBootstrap,
+  defaultIsPortOpen,
+  defaultRelaunchChrome,
+  defaultWaitForPort,
+} from "./tools/live-browser/bootstrap.js";
+import { BrowserBridge } from "./tools/computer-use/browser/cdp.js";
 import { createInvokeSkillTool } from "./tools/invoke-skill.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
@@ -457,6 +471,11 @@ async function bootstrap() {
       console.warn(`[MemoryDatabase] JSON import failed: ${err}`),
     );
 
+  // Tool Tracker — SQLite-backed tool execution history (Element 7 / schema v23).
+  // Wired here so registry.execute() records every tool call into tool_executions.
+  const toolTracker = new ToolTracker(memoryDb);
+  toolRegistry.setTracker(toolTracker);
+
   // Episodic Memory — LLM-extracted session summaries for cross-session recall
   const episodicMemory = new EpisodicMemory(workspacePath, undefined, memoryDb);
   await episodicMemory.load();
@@ -735,6 +754,29 @@ async function bootstrap() {
   toolRegistry.register(CodeSandboxTool);
   toolRegistry.register(DbQueryTool);
   toolRegistry.register(ScheduleTool);
+
+  // ── Tool Cortex T22 — unified live_browser ──
+  // Frontmost detection + Safari (JXA) / Chrome (CDP) drivers, with one-shot
+  // bootstrap that relaunches Chrome with --remote-debugging-port=9222 when
+  // needed. Side effects are wired here so the tool itself stays testable.
+  toolRegistry.register(
+    createLiveBrowserTool({
+      detectFrontmost: detectFrontmostBrowser,
+      safariDriverFactory: () => new SafariDriver(),
+      chromeDriverFactory: () =>
+        new ChromeDriver(new PuppeteerChromeBackend(BrowserBridge.getInstance())),
+      ensureChromeBootstrap: () =>
+        ensureChromeBootstrap({
+          isPortOpen: () => defaultIsPortOpen(),
+          // No interactive prompt yet — first invocation auto-approves the
+          // relaunch. A future HITL hook will gate this through the channel.
+          prompt: async () => true,
+          relaunchChrome: defaultRelaunchChrome,
+          waitForPort: () => defaultWaitForPort(),
+          connect: () => BrowserBridge.getInstance().connect(),
+        }),
+    }),
+  );
 
   // invoke_skill — LLM can explicitly invoke a named skill
   toolRegistry.register(createInvokeSkillTool());

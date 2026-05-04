@@ -40,6 +40,14 @@ export class ContextPipeline {
     this.shortTermLayers.set(key, { content, priority: opts.priority, ttlTurns: opts.ttlTurns });
   }
 
+  /**
+   * Drop a short-term layer (used by fact retraction — see FactRetractor).
+   * Returns true when an entry was removed, false when no key matched.
+   */
+  removeShortTermLayer(key: string): boolean {
+    return this.shortTermLayers.delete(key);
+  }
+
   async run(
     request: ContextRequest,
     triage: TriageSignals,

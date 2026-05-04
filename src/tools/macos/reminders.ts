@@ -38,6 +38,8 @@ export const AppleRemindersTool: ToolImplementation = {
       },
       required: ["action"],
     },
+    capabilities: ["reminder_query", "reminder_create"],
+    executionPolicy: { timeoutMs: 10_000, maxRetries: 1, retryDelayMs: 1_000 },
   },
 
   async execute(

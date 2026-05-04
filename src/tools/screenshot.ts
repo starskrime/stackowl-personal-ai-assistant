@@ -32,6 +32,8 @@ export const ScreenshotTool: ToolImplementation = {
       },
       required: [],
     },
+    capabilities: ["screen_capture", "image_create"],
+    executionPolicy: { timeoutMs: 10_000, maxRetries: 0 },
   },
 
   async execute(

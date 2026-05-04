@@ -22,6 +22,8 @@ export class SummonParliamentTool implements ToolImplementation {
       },
       required: ["topic"],
     },
+    capabilities: ["multi_agent_debate", "knowledge_synthesis"],
+    executionPolicy: { timeoutMs: 600_000, maxRetries: 0 },
   } as unknown as ToolDefinition;
 
   async execute(

@@ -61,6 +61,8 @@ export const ClipboardTool: ToolImplementation = {
       },
       required: ["action"],
     },
+    capabilities: ["clipboard_read", "clipboard_write"],
+    executionPolicy: { timeoutMs: 5_000, maxRetries: 0 },
   },
 
   async execute(

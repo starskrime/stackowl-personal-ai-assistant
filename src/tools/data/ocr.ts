@@ -22,6 +22,8 @@ export const OCRTool: ToolImplementation = {
       },
       required: ["path"],
     },
+    capabilities: ["ocr", "image_to_text"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   category: "filesystem",

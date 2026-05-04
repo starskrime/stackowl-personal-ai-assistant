@@ -53,6 +53,8 @@ export class ToolRegistry {
   private _eventBus: GatewayEventBus | null = null;
   private _goalVerifier: GoalVerifier | null = null;
   private _riskGuard: import('../clarification/tool-risk-guard.js').ToolRiskGuard | null = null;
+  private _toolGraph: import('./cortex/tool-graph.js').ToolGraph | null = null;
+  private _edgeAccumulator: import('./cortex/edge-accumulator.js').EdgeAccumulator | null = null;
   private _semanticGate = new SemanticToolGate();
   private _gateIndexed = false;
 
@@ -75,6 +77,14 @@ export class ToolRegistry {
 
   setRiskGuard(guard: import('../clarification/tool-risk-guard.js').ToolRiskGuard): void {
     this._riskGuard = guard;
+  }
+
+  setToolGraph(g: import('./cortex/tool-graph.js').ToolGraph): void {
+    this._toolGraph = g;
+  }
+
+  setEdgeAccumulator(a: import('./cortex/edge-accumulator.js').EdgeAccumulator): void {
+    this._edgeAccumulator = a;
   }
 
   getTracker(): ToolTracker | null {
@@ -139,6 +149,16 @@ export class ToolRegistry {
     for (const [cat, perm] of Object.entries(perms)) {
       this.permissions[cat] = perm;
     }
+  }
+
+  /**
+   * Get a single tool definition by name (allowed or deprecated).
+   * Returns undefined if the tool is not registered.
+   * Used by quality-checklist tests and the cortex (CWTG/SET) for metadata
+   * lookup — including deprecated tools so historical edges remain queryable.
+   */
+  getDefinition(name: string): ToolDefinition | undefined {
+    return this.tools.get(name)?.definition;
   }
 
   /**
@@ -254,6 +274,8 @@ export class ToolRegistry {
     name: string,
     args: Record<string, unknown>,
     context: ToolContext,
+    /** Internal: recursion depth for ToolGraph single-hop replan. Capped at 1. */
+    _replanDepth = 0,
   ): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
@@ -305,7 +327,9 @@ export class ToolRegistry {
       const durationMs = Date.now() - startTime;
 
       if (this._tracker) {
-        this._tracker.recordSuccess(name, durationMs);
+        this._tracker.recordSuccess(name, durationMs, {
+          sessionId: context.engineContext?.sessionId,
+        });
       }
 
       // Truncate long results to prevent context bloat
@@ -348,6 +372,39 @@ export class ToolRegistry {
               subGoal: subGoal.description,
               suggestion: verification.suggestion,
             });
+
+            // CWTG single-hop replan: if a ToolGraph is configured, the failing
+            // tool advertises a capability tag, and we haven't already taken a
+            // fallback hop, ask the graph for the next-best alternative and
+            // execute it. The graph's edge filter excludes the failing tool;
+            // the depth cap prevents the recursive call from re-replanning.
+            const capability = tool.definition.capabilities?.[0];
+            if (this._toolGraph && capability && _replanDepth === 0) {
+              const fallback = this._toolGraph.replan(name, capability);
+              if (fallback && this.tools.has(fallback)) {
+                this._eventBus?.emit({
+                  type: "tool:fallback",
+                  fromTool: name,
+                  toTool: fallback,
+                  reason: verification.reason,
+                });
+                const fallbackStart = Date.now();
+                const fallbackResult = await this.execute(
+                  fallback,
+                  args,
+                  context,
+                  _replanDepth + 1,
+                );
+                this._edgeAccumulator?.observe({
+                  fromTool: name,
+                  toTool: fallback,
+                  capabilityTag: capability,
+                  success: true,
+                  durationMs: Date.now() - fallbackStart,
+                });
+                return fallbackResult;
+              }
+            }
           }
 
           // For BLOCKED and PARTIAL, wrap result with warning so LLM knows
@@ -362,13 +419,23 @@ export class ToolRegistry {
       return result;
     } catch (error) {
       const durationMs = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode =
+        error instanceof ToolExecutionError
+          ? "EXEC_FAILED"
+          : error instanceof Error
+            ? error.constructor.name
+            : "UNKNOWN";
       if (this._tracker) {
-        this._tracker.recordFailure(name, durationMs);
+        this._tracker.recordFailure(name, durationMs, {
+          errorCode,
+          errorMessage,
+          sessionId: context.engineContext?.sessionId,
+        });
       }
       this._eventBus?.emit({ type: "tool:result", toolName: name, success: false, durationMs, truncated: false });
       if (error instanceof ToolExecutionError) throw error;
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new ToolExecutionError(name, msg);
+      throw new ToolExecutionError(name, errorMessage);
     }
   }
 
