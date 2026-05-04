@@ -3892,4 +3892,81 @@ export function applyV25Migration(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_access_memory ON memory_access_log(memory_id);
   `);
+
+  mergeLegacyIntoMemories(db);
+}
+
+function tableHasColumns(db: Database.Database, table: string, required: string[]): boolean {
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(table) as { name: string } | undefined;
+  if (!row) return false;
+  const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  return required.every((c) => cols.includes(c));
+}
+
+function mergeLegacyIntoMemories(db: Database.Database): void {
+  if (tableHasColumns(db, "facts", ["id", "fact", "confidence", "created_at", "invalidated_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, invalid_at, created_at, updated_at)
+      SELECT
+        id,
+        'semantic',
+        fact,
+        COALESCE(MIN(MAX(confidence, 0), 1), 0.5),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        invalidated_at,
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(updated_at, created_at, '1970-01-01T00:00:00Z')
+      FROM facts;
+    `);
+  }
+  if (tableHasColumns(db, "episodes", ["id", "summary", "importance", "created_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, created_at, updated_at)
+      SELECT
+        id,
+        'episodic',
+        summary,
+        COALESCE(MIN(MAX(importance, 0), 1), 0.5),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z')
+      FROM episodes;
+    `);
+  }
+  if (tableHasColumns(db, "pellets", ["id", "content", "created_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, created_at, updated_at)
+      SELECT
+        id,
+        'semantic',
+        content,
+        0.5,
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z')
+      FROM pellets;
+    `);
+  }
+  if (tableHasColumns(db, "summaries", ["id", "summary_text", "created_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, created_at, updated_at)
+      SELECT
+        id,
+        'episodic',
+        summary_text,
+        0.5,
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z')
+      FROM summaries;
+    `);
+  }
 }
