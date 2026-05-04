@@ -3803,9 +3803,59 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 /**
- * Schema v25 migration — Element 15 memory architecture.
- * Stub for Task 1 skeleton tests; full implementation lands in Task 4.
+ * Schema v25 migration — Element 15 memory architecture (minimal v1 schema).
+ *
+ * v1 ships the typed surface against this minimal schema. Task 4 expands
+ * to legacy-data migration + full column set + bitemporal CHECK constraints.
  */
-export function applyV25Migration(_db: Database.Database): void {
-  // Intentional no-op for skeleton tests; implemented in Task 4.
+export function applyV25Migration(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      content TEXT NOT NULL,
+      embedding BLOB,
+      importance REAL NOT NULL DEFAULT 0.5,
+      goal_id TEXT,
+      subgoal_id TEXT,
+      verdict TEXT,
+      source_turn_id TEXT,
+      source_channel TEXT,
+      valid_at TEXT NOT NULL,
+      invalid_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      last_accessed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind);
+    CREATE INDEX IF NOT EXISTS idx_memories_valid ON memories(invalid_at);
+    CREATE INDEX IF NOT EXISTS idx_memories_goal ON memories(goal_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance);
+
+    CREATE TABLE IF NOT EXISTS memory_invalidations (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id),
+      reason TEXT NOT NULL,
+      invalidated_by TEXT NOT NULL,
+      invalidated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_inv_memory ON memory_invalidations(memory_id);
+
+    CREATE TABLE IF NOT EXISTS memory_contradictions (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id),
+      contradicts_id TEXT NOT NULL REFERENCES memories(id),
+      detected_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_contra_memory ON memory_contradictions(memory_id);
+
+    CREATE TABLE IF NOT EXISTS memory_access_log (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id),
+      accessed_at TEXT NOT NULL,
+      context TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_access_memory ON memory_access_log(memory_id);
+  `);
 }
