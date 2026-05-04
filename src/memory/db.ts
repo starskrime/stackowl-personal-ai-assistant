@@ -3801,3 +3801,11 @@ function cosineSimilarity(a: number[], b: number[]): number {
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom === 0 ? 0 : dot / denom;
 }
+
+/**
+ * Schema v25 migration — Element 15 memory architecture.
+ * Stub for Task 1 skeleton tests; full implementation lands in Task 4.
+ */
+export function applyV25Migration(_db: Database.Database): void {
+  // Intentional no-op for skeleton tests; implemented in Task 4.
+}
