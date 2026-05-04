@@ -113,6 +113,11 @@ export class MemoryRepository {
 
   insertBatch(records: MemoryInsert[]): void {
     if (records.length === 0) return;
+    for (const r of records) {
+      if (r.importance < 0 || r.importance > 1) {
+        throw new Error(`importance must be in [0,1], got ${r.importance} for id=${r.id}`);
+      }
+    }
     const stmt = this.db.prepare(`
       INSERT INTO memories
         (id, kind, content, embedding, importance, goal_id, subgoal_id, verdict,
@@ -120,6 +125,12 @@ export class MemoryRepository {
       VALUES
         (@id, @kind, @content, @embedding, @importance, @goal_id, @subgoal_id, @verdict,
          @source_turn_id, @source_channel, @now, @now, @now)
+      ON CONFLICT(id) DO UPDATE SET
+        content = excluded.content,
+        embedding = excluded.embedding,
+        importance = excluded.importance,
+        verdict = excluded.verdict,
+        updated_at = excluded.updated_at
     `);
     const insertMany = this.db.transaction((rows: MemoryInsert[]) => {
       const now = new Date().toISOString();

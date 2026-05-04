@@ -165,3 +165,52 @@ describe("MemoryRepository.getById / history / recordAccess / stats", () => {
     expect(s.invalidated).toBe(0);
   });
 });
+
+describe("MemoryRepository.insertBatch — validation & upsert", () => {
+  let db: Database.Database;
+  let repo: MemoryRepository;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    applyV25Migration(db);
+    repo = new MemoryRepository(db);
+  });
+
+  it("rejects importance > 1", () => {
+    expect(() =>
+      repo.insertBatch([{ id: "x", kind: "semantic", content: "c", importance: 1.5 }]),
+    ).toThrow();
+  });
+
+  it("rejects importance < 0", () => {
+    expect(() =>
+      repo.insertBatch([{ id: "x", kind: "semantic", content: "c", importance: -0.1 }]),
+    ).toThrow();
+  });
+
+  it("upserts on conflicting id (replaces content + bumps updated_at)", async () => {
+    const id = "u1";
+    repo.insertBatch([{ id, kind: "semantic", content: "first", importance: 0.5 }]);
+    const before = repo.getById(id)!;
+    await new Promise((r) => setTimeout(r, 10));
+    repo.insertBatch([{ id, kind: "semantic", content: "second", importance: 0.6 }]);
+    const after = repo.getById(id)!;
+    expect(after.content).toBe("second");
+    expect(after.importance).toBe(0.6);
+    expect(after.updated_at).not.toBe(before.updated_at);
+    expect(after.created_at).toBe(before.created_at);
+  });
+
+  it("transaction rolls back on partial failure (rejects whole batch on bad row)", () => {
+    expect(() =>
+      repo.insertBatch([
+        { id: "ok", kind: "semantic", content: "ok", importance: 0.5 },
+        { id: "bad", kind: "semantic", content: "x", importance: 2.0 },
+      ]),
+    ).toThrow();
+    expect(repo.getById("ok")).toBeNull();
+    expect(repo.getById("bad")).toBeNull();
+  });
+});
