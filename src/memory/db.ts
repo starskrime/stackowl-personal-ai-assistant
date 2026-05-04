@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1211,6 +1211,10 @@ export class MemoryDatabase {
     if (current < 24) {
       applyV24Migration(this.db);
       this.db.pragma(`user_version = 24`);
+    }
+    if (current < 25) {
+      applyV25Migration(this.db);
+      this.db.pragma(`user_version = 25`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -3393,6 +3397,10 @@ export class StackOwlDB {
       applyV24Migration(this.db);
       this.db.pragma(`user_version = 24`);
     }
+    if (current < 25) {
+      applyV25Migration(this.db);
+      this.db.pragma(`user_version = 25`);
+    }
   }
 }
 
@@ -3782,6 +3790,9 @@ export function applyMigrations(db: Database.Database): void {
   if (current < 24) {
     applyV24Migration(db);
   }
+  if (current < 25) {
+    applyV25Migration(db);
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -3812,13 +3823,13 @@ export function applyV25Migration(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('semantic','episodic','working','procedural','reflexive')),
       content TEXT NOT NULL,
       embedding BLOB,
-      importance REAL NOT NULL DEFAULT 0.5,
+      importance REAL NOT NULL DEFAULT 0.5 CHECK (importance >= 0 AND importance <= 1),
       goal_id TEXT,
       subgoal_id TEXT,
-      verdict TEXT,
+      verdict TEXT CHECK (verdict IS NULL OR verdict IN ('ADVANCES','PARTIAL','BLOCKED','NEUTRAL')),
       source_turn_id TEXT,
       source_channel TEXT,
       valid_at TEXT NOT NULL,
