@@ -2927,6 +2927,12 @@ export class OwlGateway {
   getMcpManager() {
     return this.ctx.mcpManager;
   }
+  getMemoryRepo() {
+    return this.ctx.memoryRepo;
+  }
+  getMemoryWriter() {
+    return this.ctx.memoryWriter;
+  }
   getEvolution() {
     return this.ctx.evolution;
   }

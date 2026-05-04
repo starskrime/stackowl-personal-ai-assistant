@@ -303,6 +303,10 @@ export interface GatewayContext {
   // ─── SQLite Memory Database (replaces all JSON file stores) ──
   db?: MemoryDatabase;
 
+  // ─── Element 15 — Canonical memory surface ─────────────────
+  memoryRepo?: import("../memory/repository.js").MemoryRepository;
+  memoryWriter?: import("../memory/writer.js").MemoryWriter;
+
   // ─── Message Compressor (Phase 2 — batch summarization) ──────
   compressor?: import("../memory/compressor.js").MessageCompressor;
 

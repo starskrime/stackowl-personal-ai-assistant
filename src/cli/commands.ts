@@ -15,6 +15,7 @@ import { SpecializationCreateWizard } from "./specialization-wizard.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
 import { McpCommandRouter } from "../gateway/commands/mcp-router.js";
+import { dispatchMemoryCommand } from "../gateway/commands/memory-router.js";
 import { saveConfig } from "../config/loader.js";
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -202,6 +203,7 @@ const cmdHelp: CommandFn = async (_args, ui) => {
     C("/capabilities".padEnd(20)) + D("List synthesized tools"),
     C("/skills".padEnd(20)) + D("List or install skills"),
     C("/learning".padEnd(20)) + D("Show learning report"),
+    C("/memory".padEnd(20)) + D("Memory CRUD (list/search/stats/...)"),
     C("/owl".padEnd(20)) + D("Show owl state and memory"),
     C("/onboarding".padEnd(20)) + D("Re-run setup wizard"),
     C("/quit".padEnd(20)) + D("Save session and exit"),
@@ -344,6 +346,20 @@ const cmdMcp: CommandFn = async (args, ui, gateway) => {
   return true;
 };
 
+const cmdMemory: CommandFn = async (args, ui, gateway) => {
+  const repo = gateway.getMemoryRepo();
+  if (!repo) {
+    ui.printInfo("Memory repository not available.");
+    return true;
+  }
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  const verb = parts[0] || "list";
+  const verbArgs = parts.slice(1);
+  const out = await dispatchMemoryCommand(verb, verbArgs, { repo });
+  ui.printLines(["", ...out.split("\n"), ""]);
+  return true;
+};
+
 // ─── Registry ────────────────────────────────────────────────────
 
 const COMMANDS: Record<string, CommandDef> = {
@@ -373,6 +389,11 @@ const COMMANDS: Record<string, CommandDef> = {
     description: "Manage MCP servers (add/remove/list/status/enable/disable)",
     fn: cmdMcp,
     subcommands: ["list", "status", "add", "remove", "enable", "disable", "tools", "reconnect", "install"],
+  },
+  memory: {
+    description: "Memory CRUD: list/search/stats/history/get/invalidate/export",
+    fn: cmdMemory,
+    subcommands: ["list", "search", "stats", "history", "get", "invalidate", "export"],
   },
   owl: { description: "Show owl state", fn: cmdOwl, subcommands: ["status"] },
 };
