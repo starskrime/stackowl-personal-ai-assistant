@@ -55,6 +55,8 @@ export interface MemoryInsert {
   verdict?: MemoryVerdict;
   source_turn_id?: string;
   source_channel?: string;
+  /** Optional override for bitemporal valid_at. Defaults to now. Used by the legacy merge to preserve original timestamps. */
+  valid_at?: string;
 }
 
 export interface InvalidateOptions {
@@ -70,10 +72,28 @@ export interface MemoryStats {
   avgImportance: number;
 }
 
+export interface MemoryInvalidation {
+  id: string;
+  memory_id: string;
+  reason: string;
+  invalidated_by: string;
+  invalidated_at: string;
+}
+
+export interface MemoryContradiction {
+  id: string;
+  memory_id: string;
+  contradicts_id: string;
+  detected_at: string;
+}
+
+export type EmbedderFn = (query: string) => Float32Array | null;
+
 export class MemoryRepository {
   constructor(
     private readonly db: Database.Database,
     private readonly bus?: GatewayEventBus,
+    private readonly embedder?: EmbedderFn,
   ) {}
 
   async search(query: string, opts: MemorySearchOptions = {}): Promise<MemoryRecord[]> {
@@ -128,7 +148,7 @@ export class MemoryRepository {
          source_turn_id, source_channel, valid_at, created_at, updated_at)
       VALUES
         (@id, @kind, @content, @embedding, @importance, @goal_id, @subgoal_id, @verdict,
-         @source_turn_id, @source_channel, @now, @now, @now)
+         @source_turn_id, @source_channel, @valid_at, @now, @now)
       ON CONFLICT(id) DO UPDATE SET
         content = excluded.content,
         embedding = excluded.embedding,
@@ -143,13 +163,14 @@ export class MemoryRepository {
           id: r.id,
           kind: r.kind,
           content: r.content,
-          embedding: r.embedding ? Buffer.from(r.embedding.buffer) : null,
+          embedding: r.embedding ? this.embeddingToBuffer(r.embedding) : null,
           importance: r.importance,
           goal_id: r.goal_id ?? null,
           subgoal_id: r.subgoal_id ?? null,
           verdict: r.verdict ?? null,
           source_turn_id: r.source_turn_id ?? null,
           source_channel: r.source_channel ?? null,
+          valid_at: r.valid_at ?? now,
           now,
         });
       }
@@ -246,24 +267,28 @@ export class MemoryRepository {
 
   history(id: string): {
     record: MemoryRecord | null;
-    invalidations: unknown[];
-    contradictions: unknown[];
+    invalidations: MemoryInvalidation[];
+    contradictions: MemoryContradiction[];
   } {
     const record = this.getById(id);
     const invalidations = this.db
       .prepare(
         `SELECT * FROM memory_invalidations WHERE memory_id = ? ORDER BY invalidated_at DESC`,
       )
-      .all(id);
+      .all(id) as MemoryInvalidation[];
     const contradictions = this.db
       .prepare(
         `SELECT * FROM memory_contradictions WHERE memory_id = ? OR contradicts_id = ? ORDER BY detected_at DESC`,
       )
-      .all(id, id);
+      .all(id, id) as MemoryContradiction[];
     return { record, invalidations, contradictions };
   }
 
   recordAccess(id: string): void {
+    const exists = this.db.prepare(`SELECT 1 FROM memories WHERE id = ?`).get(id);
+    if (!exists) {
+      throw new Error(`recordAccess: memory id=${id} does not exist`);
+    }
     const now = new Date().toISOString();
     const tx = this.db.transaction(() => {
       this.db
@@ -310,11 +335,13 @@ export class MemoryRepository {
   }
 
   private cosine(a: Float32Array, b: Float32Array): number {
+    if (a.length !== b.length) {
+      throw new Error(`cosine: dim mismatch (a=${a.length}, b=${b.length})`);
+    }
     let dot = 0;
     let na = 0;
     let nb = 0;
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++) {
+    for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
       na += a[i] * a[i];
       nb += b[i] * b[i];
@@ -323,8 +350,26 @@ export class MemoryRepository {
     return dot / (Math.sqrt(na) * Math.sqrt(nb));
   }
 
-  private embedQuery(_query: string): Float32Array | null {
-    return null;
+  private embedQuery(query: string): Float32Array | null {
+    if (!query) return null;
+    if (!this.embedder) return null;
+    return this.embedder(query);
+  }
+
+  /**
+   * Float32Array → Buffer with explicit byteOffset/byteLength.
+   * Critical: Node Buffer pools small typed-array allocations, so `.buffer` may
+   * be a shared 8KB pool. Without offset/length we'd persist garbage.
+   */
+  private embeddingToBuffer(embedding: Float32Array): Buffer {
+    return Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+  }
+
+  /**
+   * Buffer → Float32Array with explicit byteOffset/byteLength. Same reason as above.
+   */
+  private bufferToEmbedding(buf: Buffer): Float32Array {
+    return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
   }
 
   private rowToRecord(row: Record<string, unknown>): MemoryRecord {
@@ -332,7 +377,7 @@ export class MemoryRepository {
       id: row.id as string,
       kind: row.kind as MemoryKind,
       content: row.content as string,
-      embedding: row.embedding ? new Float32Array((row.embedding as Buffer).buffer) : null,
+      embedding: row.embedding ? this.bufferToEmbedding(row.embedding as Buffer) : null,
       importance: row.importance as number,
       goal_id: (row.goal_id as string) ?? null,
       subgoal_id: (row.subgoal_id as string) ?? null,

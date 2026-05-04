@@ -307,3 +307,122 @@ describe("MemoryRepository.searchSemanticByEmbedding", () => {
     expect(result[0].id).toBe("s1");
   });
 });
+
+describe("MemoryRepository — fixes (review pass)", () => {
+  let db: Database.Database;
+  let repo: MemoryRepository;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    applyV25Migration(db);
+    repo = new MemoryRepository(db);
+  });
+
+  it("embedding round-trip preserves exact bytes (Buffer pool safety)", () => {
+    const original = new Float32Array([0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8]);
+    repo.insertBatch([
+      { id: "rt1", kind: "semantic", content: "x", importance: 0.5, embedding: original },
+    ]);
+    const got = repo.getById("rt1")!;
+    expect(got.embedding).not.toBeNull();
+    expect(got.embedding!.length).toBe(original.length);
+    for (let i = 0; i < original.length; i++) {
+      expect(got.embedding![i]).toBeCloseTo(original[i], 6);
+    }
+  });
+
+  it("round-trip survives multiple sliced typed arrays sharing a pooled buffer", () => {
+    const big = new Float32Array(32);
+    for (let i = 0; i < 32; i++) big[i] = i * 0.01;
+    const sliceA = big.subarray(0, 8);
+    const sliceB = big.subarray(8, 16);
+    repo.insertBatch([
+      { id: "sa", kind: "semantic", content: "a", importance: 0.5, embedding: sliceA },
+      { id: "sb", kind: "semantic", content: "b", importance: 0.5, embedding: sliceB },
+    ]);
+    const a = repo.getById("sa")!.embedding!;
+    const b = repo.getById("sb")!.embedding!;
+    expect(a.length).toBe(8);
+    expect(b.length).toBe(8);
+    for (let i = 0; i < 8; i++) {
+      expect(a[i]).toBeCloseTo(sliceA[i], 6);
+      expect(b[i]).toBeCloseTo(sliceB[i], 6);
+    }
+  });
+
+  it("preserves caller-supplied valid_at on insert", () => {
+    const backdated = "2020-01-01T00:00:00.000Z";
+    repo.insertBatch([
+      { id: "bd1", kind: "semantic", content: "x", importance: 0.5, valid_at: backdated },
+    ]);
+    const got = repo.getById("bd1")!;
+    expect(got.valid_at).toBe(backdated);
+  });
+
+  it("UPSERT preserves original valid_at (does not bump to now)", async () => {
+    const backdated = "2020-01-01T00:00:00.000Z";
+    repo.insertBatch([
+      { id: "bd2", kind: "semantic", content: "first", importance: 0.5, valid_at: backdated },
+    ]);
+    await new Promise((r) => setTimeout(r, 5));
+    repo.insertBatch([
+      { id: "bd2", kind: "semantic", content: "second", importance: 0.6 },
+    ]);
+    const got = repo.getById("bd2")!;
+    expect(got.valid_at).toBe(backdated);
+    expect(got.content).toBe("second");
+  });
+
+  it("cosine throws on dim mismatch", async () => {
+    const e3 = new Float32Array([1, 0, 0]);
+    const e4 = new Float32Array([1, 0, 0, 0]);
+    repo.insertBatch([
+      { id: "m1", kind: "semantic", content: "x", importance: 0.5, embedding: e4 },
+    ]);
+    await expect(repo.searchSemanticByEmbedding(e3, { topK: 1 })).rejects.toThrow(/dim mismatch/);
+  });
+
+  it("recordAccess throws on missing id (no orphan log row)", () => {
+    expect(() => repo.recordAccess("does-not-exist")).toThrow(/does not exist/);
+    const count = (db.prepare(`SELECT COUNT(*) AS c FROM memory_access_log`).get() as { c: number })
+      .c;
+    expect(count).toBe(0);
+  });
+
+  it("history() returns typed invalidation + contradiction shapes", () => {
+    repo.insertBatch([
+      { id: "h1", kind: "semantic", content: "old", importance: 0.5 },
+      { id: "h2", kind: "semantic", content: "new", importance: 0.5 },
+    ]);
+    repo.invalidate("h1", { reason: "contradicted", invalidatedBy: "test", contradicts: ["h2"] });
+    const h = repo.history("h1");
+    expect(h.invalidations[0].memory_id).toBe("h1");
+    expect(h.invalidations[0].reason).toBe("contradicted");
+    expect(h.invalidations[0].invalidated_by).toBe("test");
+    expect(h.contradictions[0].memory_id).toBe("h1");
+    expect(h.contradictions[0].contradicts_id).toBe("h2");
+  });
+
+  it("search() with embedder injected returns relevance-ranked results", async () => {
+    const eA = new Float32Array([1, 0, 0, 0]);
+    const eB = new Float32Array([0, 1, 0, 0]);
+    const embedder = (q: string): Float32Array | null => (q === "match-a" ? eA : eB);
+    const repoWithEmbedder = new MemoryRepository(db, undefined, embedder);
+    repoWithEmbedder.insertBatch([
+      { id: "ra", kind: "semantic", content: "a", importance: 0.5, embedding: eA },
+      { id: "rb", kind: "semantic", content: "b", importance: 0.5, embedding: eB },
+    ]);
+    const results = await repoWithEmbedder.search("match-a", { topK: 2 });
+    expect(results[0].id).toBe("ra");
+  });
+
+  it("search() without embedder returns recency+importance only (no throw)", async () => {
+    repo.insertBatch([
+      { id: "ne1", kind: "semantic", content: "x", importance: 0.5 },
+    ]);
+    const results = await repo.search("anything", { topK: 1 });
+    expect(results).toHaveLength(1);
+  });
+});
