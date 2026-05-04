@@ -9,6 +9,7 @@
  * Task 1 ships the skeleton + types. Behavior comes in Tasks 2, 3, 8, 9, 10.
  */
 
+import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 
 export type MemoryKind = "semantic" | "episodic" | "working" | "procedural" | "reflexive";
@@ -152,38 +153,90 @@ export class MemoryRepository {
           `INSERT INTO memory_invalidations (id, memory_id, reason, invalidated_by, invalidated_at)
            VALUES (?, ?, ?, ?, ?)`,
         )
-        .run(`inv_${id}_${Date.now()}`, id, opts.reason, opts.invalidatedBy, now);
+        .run(`inv_${randomUUID()}`, id, opts.reason, opts.invalidatedBy, now);
       if (opts.contradicts) {
         const cstmt = this.db.prepare(
           `INSERT INTO memory_contradictions (id, memory_id, contradicts_id, detected_at)
            VALUES (?, ?, ?, ?)`,
         );
         for (const cId of opts.contradicts) {
-          cstmt.run(`con_${id}_${cId}`, id, cId, now);
+          cstmt.run(`con_${randomUUID()}`, id, cId, now);
         }
       }
     });
     tx();
   }
 
-  getById(_id: string): MemoryRecord | null {
-    throw new Error("not implemented");
+  getById(id: string): MemoryRecord | null {
+    const row = this.db.prepare(`SELECT * FROM memories WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToRecord(row) : null;
   }
 
-  history(_id: string): {
+  history(id: string): {
     record: MemoryRecord | null;
     invalidations: unknown[];
     contradictions: unknown[];
   } {
-    throw new Error("not implemented");
+    const record = this.getById(id);
+    const invalidations = this.db
+      .prepare(
+        `SELECT * FROM memory_invalidations WHERE memory_id = ? ORDER BY invalidated_at DESC`,
+      )
+      .all(id);
+    const contradictions = this.db
+      .prepare(
+        `SELECT * FROM memory_contradictions WHERE memory_id = ? OR contradicts_id = ? ORDER BY detected_at DESC`,
+      )
+      .all(id, id);
+    return { record, invalidations, contradictions };
   }
 
-  recordAccess(_id: string): void {
-    throw new Error("not implemented");
+  recordAccess(id: string): void {
+    const now = new Date().toISOString();
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE memories SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?`,
+        )
+        .run(now, id);
+      this.db
+        .prepare(`INSERT INTO memory_access_log (id, memory_id, accessed_at) VALUES (?, ?, ?)`)
+        .run(`acc_${randomUUID()}`, id, now);
+    });
+    tx();
   }
 
   stats(): MemoryStats {
-    throw new Error("not implemented");
+    const row = this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN invalid_at IS NOT NULL THEN 1 ELSE 0 END) AS invalidated,
+           AVG(importance) AS avg_importance
+         FROM memories`,
+      )
+      .get() as { total: number; invalidated: number | null; avg_importance: number | null };
+
+    const kindRows = this.db
+      .prepare(`SELECT kind, COUNT(*) AS c FROM memories GROUP BY kind`)
+      .all() as Array<{ kind: MemoryKind; c: number }>;
+    const byKind: Record<MemoryKind, number> = {
+      semantic: 0,
+      episodic: 0,
+      working: 0,
+      procedural: 0,
+      reflexive: 0,
+    };
+    for (const r of kindRows) byKind[r.kind] = r.c;
+
+    return {
+      total: row.total ?? 0,
+      byKind,
+      invalidated: row.invalidated ?? 0,
+      avgImportance: row.avg_importance ?? 0,
+    };
   }
 
   private cosine(a: Float32Array, b: Float32Array): number {

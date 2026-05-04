@@ -104,3 +104,64 @@ describe("MemoryRepository.search", () => {
     expect(results[0].importance).toBeGreaterThanOrEqual(0.5);
   });
 });
+
+describe("MemoryRepository.getById / history / recordAccess / stats", () => {
+  let db: Database.Database;
+  let repo: MemoryRepository;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    applyV25Migration(db);
+    repo = new MemoryRepository(db);
+  });
+
+  it("getById returns the record", () => {
+    const id = uuid();
+    repo.insertBatch([{ id, kind: "semantic", content: "x", importance: 0.5 }]);
+    const r = repo.getById(id);
+    expect(r?.id).toBe(id);
+  });
+
+  it("getById returns null for missing", () => {
+    expect(repo.getById("nope")).toBeNull();
+  });
+
+  it("history returns invalidations + contradictions", () => {
+    const id = uuid();
+    const cId = uuid();
+    repo.insertBatch([
+      { id, kind: "semantic", content: "old", importance: 0.5 },
+      { id: cId, kind: "semantic", content: "contradicts old", importance: 0.5 },
+    ]);
+    repo.invalidate(id, { reason: "contradicted", invalidatedBy: "writer", contradicts: [cId] });
+    const h = repo.history(id);
+    expect(h.invalidations).toHaveLength(1);
+    expect(h.contradictions).toHaveLength(1);
+  });
+
+  it("recordAccess increments access_count + updates last_accessed_at", () => {
+    const id = uuid();
+    repo.insertBatch([{ id, kind: "semantic", content: "x", importance: 0.5 }]);
+    repo.recordAccess(id);
+    repo.recordAccess(id);
+    const r = repo.getById(id);
+    expect(r?.access_count).toBe(2);
+    expect(r?.last_accessed_at).not.toBeNull();
+  });
+
+  it("stats returns counts by kind + invalidated + avg importance", () => {
+    repo.insertBatch([
+      { id: uuid(), kind: "semantic", content: "a", importance: 0.4 },
+      { id: uuid(), kind: "semantic", content: "b", importance: 0.6 },
+      { id: uuid(), kind: "episodic", content: "c", importance: 0.8 },
+    ]);
+    const s = repo.stats();
+    expect(s.total).toBe(3);
+    expect(s.byKind.semantic).toBe(2);
+    expect(s.byKind.episodic).toBe(1);
+    expect(s.avgImportance).toBeCloseTo(0.6, 2);
+    expect(s.invalidated).toBe(0);
+  });
+});
