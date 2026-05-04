@@ -13,7 +13,7 @@ import type {
   SafariDriverLike,
   ChromeDriverLike,
 } from "../../src/tools/live-browser/index.js";
-import type { ToolContext } from "../../src/providers/base.js";
+import type { ToolContext } from "../../src/tools/registry.js";
 
 class FakeSafariDriver implements SafariDriverLike {
   calls: Array<{ method: string; args: unknown[] }> = [];

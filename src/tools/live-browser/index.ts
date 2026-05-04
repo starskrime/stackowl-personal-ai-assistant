@@ -15,8 +15,8 @@
  * Every external dependency (frontmost detection, both drivers, Chrome
  * bootstrap) is injectable so unit tests don't touch real browsers.
  */
-import type { ToolContext, ToolDefinition } from "../../providers/base.js";
-import type { ToolImplementation } from "../registry.js";
+import type { ToolDefinition } from "../../providers/base.js";
+import type { ToolContext, ToolImplementation } from "../registry.js";
 
 export interface SafariDriverLike {
   listTabs(): Promise<Array<{ title: string; url: string }>>;
