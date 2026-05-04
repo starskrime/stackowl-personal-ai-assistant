@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import Database from "better-sqlite3";
-import { applyV25Migration } from "../src/memory/db.js";
+import { applyV25Migration, backupBeforeV25 } from "../src/memory/db.js";
 
 describe("v25 migration", () => {
   let db: Database.Database;
@@ -115,5 +118,36 @@ describe("v25 migration", () => {
         `INSERT INTO memories (id, kind, content, importance, valid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run("lo", "semantic", "c", -0.1, "2026-01-01", "2026-01-01", "2026-01-01");
     }).toThrow();
+  });
+});
+
+describe("v25 migration — backup", () => {
+  it("creates a backup file before applying when given a file-backed db path", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "v25-"));
+    const dbPath = path.join(tmp, "memory.db");
+    const db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.exec(`CREATE TABLE legacy (id TEXT PRIMARY KEY); INSERT INTO legacy VALUES ('a');`);
+    db.close();
+
+    const db2 = new Database(dbPath);
+    db2.pragma("journal_mode = WAL");
+    const backupPath = backupBeforeV25(dbPath);
+    applyV25Migration(db2);
+
+    expect(backupPath).not.toBeNull();
+    expect(fs.existsSync(backupPath as string)).toBe(true);
+    expect(backupPath).toContain(".v24-backup");
+    db2.close();
+    fs.rmSync(tmp, { recursive: true });
+  });
+
+  it("backupBeforeV25 returns null for null path (in-memory db)", () => {
+    expect(backupBeforeV25(null)).toBeNull();
+  });
+
+  it("backupBeforeV25 returns null when source file is missing", () => {
+    const missing = path.join(os.tmpdir(), `does-not-exist-${Date.now()}.db`);
+    expect(backupBeforeV25(missing)).toBeNull();
   });
 });

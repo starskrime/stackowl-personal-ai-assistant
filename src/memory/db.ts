@@ -18,7 +18,7 @@
  */
 
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import { log } from "../logger.js";
@@ -401,6 +401,7 @@ export interface AgentTask {
 
 export class MemoryDatabase {
   private db: Database.Database;
+  private dbPath: string | null;
   get rawDb(): Database.Database { return this.db }
 
   readonly messages: MessagesRepo;
@@ -430,12 +431,20 @@ export class MemoryDatabase {
     if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true });
 
     const dbPath = join(dbDir, "stackowl.db");
+    this.dbPath = dbPath;
     this.db = new Database(dbPath);
 
     // Performance pragmas
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma("foreign_keys = ON");
+
+    // Pre-flight backup before v25 — recoverable sidecar of pre-Element-15 state.
+    const currentVersion =
+      (this.db.pragma("user_version") as { user_version: number }[])[0]?.user_version ?? 0;
+    if (currentVersion < 25 && this.dbPath) {
+      backupBeforeV25(this.dbPath);
+    }
 
     this.createSchema();
     this.runMigrations();
@@ -3811,6 +3820,20 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Pre-flight backup before v25 — copies a file-backed SQLite DB to a
+ * timestamped sidecar so the prior state is recoverable if the migration
+ * goes wrong. Returns the backup path on success, or null when no copy
+ * was made (in-memory db, or source file missing).
+ */
+export function backupBeforeV25(dbPath: string | null): string | null {
+  if (!dbPath) return null;
+  if (!existsSync(dbPath)) return null;
+  const backupPath = `${dbPath}.v24-backup-${Date.now()}`;
+  copyFileSync(dbPath, backupPath);
+  return backupPath;
 }
 
 /**
