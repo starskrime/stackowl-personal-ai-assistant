@@ -18,7 +18,7 @@
  */
 
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import { log } from "../logger.js";
@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -401,6 +401,7 @@ export interface AgentTask {
 
 export class MemoryDatabase {
   private db: Database.Database;
+  private dbPath: string | null;
   get rawDb(): Database.Database { return this.db }
 
   readonly messages: MessagesRepo;
@@ -430,12 +431,20 @@ export class MemoryDatabase {
     if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true });
 
     const dbPath = join(dbDir, "stackowl.db");
+    this.dbPath = dbPath;
     this.db = new Database(dbPath);
 
     // Performance pragmas
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma("foreign_keys = ON");
+
+    // Pre-flight backup before v25 — recoverable sidecar of pre-Element-15 state.
+    const currentVersion =
+      (this.db.pragma("user_version") as { user_version: number }[])[0]?.user_version ?? 0;
+    if (currentVersion < 25 && this.dbPath) {
+      backupBeforeV25(this.dbPath);
+    }
 
     this.createSchema();
     this.runMigrations();
@@ -1211,6 +1220,10 @@ export class MemoryDatabase {
     if (current < 24) {
       applyV24Migration(this.db);
       this.db.pragma(`user_version = 24`);
+    }
+    if (current < 25) {
+      applyV25Migration(this.db);
+      this.db.pragma(`user_version = 25`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -3393,6 +3406,10 @@ export class StackOwlDB {
       applyV24Migration(this.db);
       this.db.pragma(`user_version = 24`);
     }
+    if (current < 25) {
+      applyV25Migration(this.db);
+      this.db.pragma(`user_version = 25`);
+    }
   }
 }
 
@@ -3782,6 +3799,9 @@ export function applyMigrations(db: Database.Database): void {
   if (current < 24) {
     applyV24Migration(db);
   }
+  if (current < 25) {
+    applyV25Migration(db);
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -3800,4 +3820,153 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Pre-flight backup before v25 — copies a file-backed SQLite DB to a
+ * timestamped sidecar so the prior state is recoverable if the migration
+ * goes wrong. Returns the backup path on success, or null when no copy
+ * was made (in-memory db, or source file missing).
+ */
+export function backupBeforeV25(dbPath: string | null): string | null {
+  if (!dbPath) return null;
+  if (!existsSync(dbPath)) return null;
+  const backupPath = `${dbPath}.v24-backup-${Date.now()}`;
+  copyFileSync(dbPath, backupPath);
+  return backupPath;
+}
+
+/**
+ * Schema v25 migration — Element 15 memory architecture (minimal v1 schema).
+ *
+ * v1 ships the typed surface against this minimal schema. Task 4 expands
+ * to legacy-data migration + full column set + bitemporal CHECK constraints.
+ */
+export function applyV25Migration(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('semantic','episodic','working','procedural','reflexive')),
+      content TEXT NOT NULL,
+      embedding BLOB,
+      importance REAL NOT NULL DEFAULT 0.5 CHECK (importance >= 0 AND importance <= 1),
+      goal_id TEXT,
+      subgoal_id TEXT,
+      verdict TEXT CHECK (verdict IS NULL OR verdict IN ('ADVANCES','PARTIAL','BLOCKED','NEUTRAL')),
+      source_turn_id TEXT,
+      source_channel TEXT,
+      valid_at TEXT NOT NULL,
+      invalid_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      last_accessed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind);
+    CREATE INDEX IF NOT EXISTS idx_memories_valid ON memories(invalid_at);
+    CREATE INDEX IF NOT EXISTS idx_memories_goal ON memories(goal_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance);
+
+    CREATE TABLE IF NOT EXISTS memory_invalidations (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id),
+      reason TEXT NOT NULL,
+      invalidated_by TEXT NOT NULL,
+      invalidated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_inv_memory ON memory_invalidations(memory_id);
+
+    CREATE TABLE IF NOT EXISTS memory_contradictions (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id),
+      contradicts_id TEXT NOT NULL REFERENCES memories(id),
+      detected_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_contra_memory ON memory_contradictions(memory_id);
+
+    CREATE TABLE IF NOT EXISTS memory_access_log (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id),
+      accessed_at TEXT NOT NULL,
+      context TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_access_memory ON memory_access_log(memory_id);
+  `);
+
+  mergeLegacyIntoMemories(db);
+}
+
+function tableHasColumns(db: Database.Database, table: string, required: string[]): boolean {
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(table) as { name: string } | undefined;
+  if (!row) return false;
+  const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  return required.every((c) => cols.includes(c));
+}
+
+function mergeLegacyIntoMemories(db: Database.Database): void {
+  if (tableHasColumns(db, "facts", ["id", "fact", "confidence", "created_at", "invalidated_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, invalid_at, created_at, updated_at)
+      SELECT
+        id,
+        'semantic',
+        fact,
+        COALESCE(MIN(MAX(confidence, 0), 1), 0.5),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        invalidated_at,
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(updated_at, created_at, '1970-01-01T00:00:00Z')
+      FROM facts;
+    `);
+  }
+  if (tableHasColumns(db, "episodes", ["id", "summary", "importance", "created_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, created_at, updated_at)
+      SELECT
+        id,
+        'episodic',
+        summary,
+        COALESCE(MIN(MAX(importance, 0), 1), 0.5),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z')
+      FROM episodes;
+    `);
+  }
+  if (tableHasColumns(db, "pellets", ["id", "content", "created_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, created_at, updated_at)
+      SELECT
+        id,
+        'semantic',
+        content,
+        0.5,
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z')
+      FROM pellets;
+    `);
+  }
+  if (tableHasColumns(db, "summaries", ["id", "summary_text", "created_at"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, kind, content, importance, valid_at, created_at, updated_at)
+      SELECT
+        id,
+        'episodic',
+        summary_text,
+        0.5,
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z'),
+        COALESCE(created_at, '1970-01-01T00:00:00Z')
+      FROM summaries;
+    `);
+  }
 }

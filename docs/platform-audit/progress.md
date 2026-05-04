@@ -488,11 +488,68 @@ After Phase 7b has run ~2 weeks in production, evaluate Phase 7c (SET + FPC). Ch
 - Reflexive memories explicitly excluded from prompt (no `ReflexiveMemoryLayer`).
 - ~105 new tests planned across unit/integration/migration/perf layers.
 
+### Phase 4 — Implementation (2026-05-04, in progress on `feature/element-15-memory`)
+- Plan: `docs/superpowers/plans/2026-05-03-element15-memory-architecture-v1.md` (32 tasks across phases A-J)
+- Phase A (typed surface skeleton) — Tasks 1-3 ✅ committed
+  - `src/memory/repository.ts` introduced with full read/write API + tests
+  - `randomUUID()` for `memory_invalidations` / `memory_contradictions` / `memory_access_log` IDs (avoids same-ms collisions)
+- Phase B (live migration pipeline) — Tasks 4-7 ✅ committed
+  - `applyV25Migration` ships with `memories` + `memory_invalidations` + `memory_contradictions` + `memory_access_log` tables, indexes, and CHECK constraints (kind enum / verdict enum / importance ∈ [0,1])
+  - `backupBeforeV25(dbPath)` writes `.v24-backup-<ts>` sidecar before mutation; called from `MemoryDatabase` constructor when current_version < 25
+  - Three migration entry points wired (`MemoryDatabase.runMigrations` ×2, standalone `applyMigrations`)
+  - Legacy merge: `INSERT OR IGNORE` from `facts` (→ semantic), `episodes` (→ episodic), `pellets` (→ semantic), `summaries` (→ episodic). `tableHasColumns` guard handles older same-named tables created by earlier migrations.
+  - Production audit before merge: real targets are facts (150 rows) / episodes (13) / summaries (3) / pellets (0). Plan's example schemas didn't exist; merge written against actual production schema.
+  - Integration test: file-backed legacy db → backup → migrate → repository.search by kind. End-to-end pass.
+- Test counts: 1042 passing (was 1023). 19 new v25 tests + repository tests added.
+
 ### Commits
 - `4141fc0` — Phase 3 design spec
+- (Phase A) Tasks 1-3 — repository skeleton, randomUUID hardening
+- (Phase B) Tasks 4-7 — v25 schema + backup + legacy merge + integration test (`a26cca7` is HEAD of Phase B)
 
 ### Status
-🔄 Awaiting Boss review of design spec before writing-plans (Phase 4).
+✅ Element 15 complete. Phases A-H + J shipped; Phase I scoped out. 1144 tests passing across 172 files.
+
+### Phase J — Boot wiring + acceptance ✅ (Tasks 30-32)
+- `src/index.ts`: imports `MemoryRepository`, `MemoryWriter`, `HitlCheckpointStore`, `createMemoryTool`. After gateway construction, builds the trio using `gateway.gatewayEventBus` + `gateway.ctx.intelligence`, assigns `gateway.ctx.memoryRepo` / `memoryWriter`, calls `attachBusListeners()`, and registers the canonical `memory` tool via `b.toolRegistry.register(createMemoryTool({ repo, bus, hitl }))`.
+- Legacy `createMemoryUnifiedTool` registration block (~40 lines, including the raw `UPDATE facts` SQL at the old line 729) deleted entirely. The canonical tool replaces it surface-for-surface.
+- Task 31: `__tests__/memory-integration.test.ts` (5 tests) — proves the end-to-end seam: bus event drives working-memory expiry through writer; HITL gate fires at importance ≥ 0.8 (and not below); CLI/Telegram surfaces produce byte-identical output via shared router; full lifecycle (insert → search via tool → get via router → invalidate via tool → list excludes invalidated → history preserves the invalidation row).
+- Task 32 acceptance: full suite green (1144/1144), `tsc --noEmit` introduces no new errors (only the same 6 pre-existing main-branch errors remain).
+
+### Phase C-G — Repository surface, writer, layers, event bus, canonical tool ✅
+- Phase C-F: insertBatch + invalidate + getById + history + recordAccess + stats + searchSemanticByEmbedding + expireWorkingMemories — all committed with test coverage.
+- Phase G (Tasks 13-21): MemoryWriter (classify → extract → reconcile via IntelligenceRouter cheap-tier; ADD/UPDATE/DELETE/NOOP; engine:turn_complete listener for working-memory TTL; reflexive memory ingest path) + 4 ContextLayer factories (semantic/episodic/working/procedural with token budgets, getCacheKey by sessionId, reflexive excluded by construction) + GatewayEventBus 11 memory:* variants + canonical `createMemoryTool` with HITL approval gate (importance ≥ 0.8 → checkpointId).
+
+### Phase H — `/memory` command parity ✅ (Tasks 22-24)
+- `src/gateway/commands/memory-router.ts`: channel-agnostic `dispatchMemoryCommand(verb, args, { repo })` covering list/search/stats/history/get/invalidate/export with HELP fallback (13 tests).
+- `GatewayContext.memoryRepo` + `memoryWriter` fields added with `gateway.getMemoryRepo()` / `getMemoryWriter()` accessors.
+- CLI `/memory` command registered in `src/cli/commands.ts` (with help-text entry + subcommand completions).
+- Telegram `/memory` command in `src/gateway/adapters/telegram.ts` using `sendChunked` for 4096-char limit. Same dispatcher → identical output across CLI and Telegram (channel parity rule satisfied).
+
+### Phase I — rawDb consumer migration ⚠️ SCOPED OUT
+The audit listed 9 "rawDb memory-table consumers" needing migration. Verified each at implementation time:
+- `intelligence/fact-invalidator.ts` → touches `facts` table (operational, not v25 memory)
+- `intelligence/sleep-time-consolidator.ts` → touches `summaries`
+- `intelligence/reflexion-engine.ts` + `critique-retriever.ts` → touch `reflexion_critiques`
+- `intelligence/skill-template-layer.ts` → touches `skill_templates`
+- `owls/evolution.ts:465` → touches `outcome_journal` (engine telemetry, not memory)
+- `gateway/handlers/post-processor.ts:57,698` → touch `outcome_journal` + `post_processor_job_runs`
+- `index.ts:729` → touches `facts` for the legacy memory-tool's invalidate-by-keyword — wholesale **replaced** by `createMemoryTool` in Phase J Task 30
+- `intelligence/owl-state-reporter.ts:43` → touches `pellets` (legacy memory table; v25 non-destructive merge means it still works post-v25)
+
+v25 is a non-destructive forward-merge: legacy tables (`facts`, `pellets`, `episodes`, `summaries`) remain populated and readable. The new `memories` table coexists. Consumers that read legacy tables are unaffected by Element 15 — they're outside its scope. The only consumer touching the new memory surface that this Element introduces is the `createMemoryTool` registration in `index.ts`, which Task 30 replaces directly.
+
+Phase I was based on an out-of-date audit assumption that v25 would *replace* legacy tables. It doesn't. Tasks 25-29 are dropped. Reopen as a follow-up Element when/if the legacy tables are scheduled for removal.
+
+### Commits (Phases C-H)
+- Phase A-F (Tasks 1-12) — repository surface
+- `6b88654` — feat(memory): writer reconcile + working-memory TTL + reflexive ingest (Tasks 13-16)
+- `e13c315` — feat(memory): four ContextLayer factories with maxTokens truncation (Tasks 17-18)
+- `cc01a49` — test(gateway): cover all 11 memory:* event variants + engine:turn_complete (Task 20)
+- `3c48753` — feat(tools): canonical memory tool with HITL approval gate (Task 21)
+- `85fe634` — feat(memory): /memory command router (Task 22)
+- `d708087` — feat(cli): /memory command via MemoryCommandRouter (Task 23)
+- `50d5e49` — feat(telegram): /memory command (channel parity) (Task 24)
 
 ---
 

@@ -26,6 +26,7 @@ import { TelegramConfigMenu } from "./telegram-config/menu.js";
 import { TelegramVoiceMenu } from "./telegram-config/voice-menu.js";
 import { saveConfig } from "../../config/loader.js";
 import { McpCommandRouter } from "../commands/mcp-router.js";
+import { dispatchMemoryCommand } from "../commands/memory-router.js";
 import { OggConverter } from "../../voice/ogg-converter.js";
 import { WhisperSTT } from "../../voice/stt.js";
 import { formatToolEvent } from "../narration-formatter.js";
@@ -361,6 +362,27 @@ export class TelegramAdapter implements ChannelAdapter {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         await ctx.reply(`❌ MCP error: <code>${msg}</code>`, { parse_mode: "HTML" });
+      }
+    });
+
+    // ── /memory — channel-parity dispatcher (same router as CLI) ──────
+    this.bot.command("memory", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      const repo = this.gateway.getMemoryRepo();
+      if (!repo) {
+        await ctx.reply("⚠️ Memory repository is not available.");
+        return;
+      }
+      const rawArgs = ctx.match?.trim() ?? "";
+      const parts = rawArgs.split(/\s+/).filter(Boolean);
+      const verb = parts[0] || "list";
+      const verbArgs = parts.slice(1);
+      try {
+        const result = await dispatchMemoryCommand(verb, verbArgs, { repo });
+        await this.sendChunked(ctx.chat.id, result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await ctx.reply(`❌ Memory error: <code>${msg}</code>`, { parse_mode: "HTML" });
       }
     });
 

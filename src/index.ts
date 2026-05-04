@@ -123,7 +123,7 @@ import { ScraplingTool } from "./tools/web-scrapling.js";
 import { CamoFoxTool } from "./tools/camofox.js";
 // ── Unified Tool Facades (Phase 7a) ──
 import { createWebUnifiedTool } from "./tools/web-unified.js";
-import { createMemoryUnifiedTool } from "./tools/memory-unified.js";
+import { createMemoryTool } from "./tools/memory-unified.js";
 import { createMacosCommsTool } from "./tools/macos/comms-unified.js";
 import { createMacosSystemTool } from "./tools/macos/system-unified.js";
 // ── Tool Cortex 7d — new capability tools ──
@@ -222,6 +222,9 @@ import { EpisodicMemory } from "./memory/episodic.js";
 import { FactStore } from "./memory/fact-store.js";
 import { FactExtractor } from "./memory/fact-extractor.js";
 import { MemoryDatabase } from "./memory/db.js";
+import { MemoryRepository } from "./memory/repository.js";
+import { MemoryWriter } from "./memory/writer.js";
+import { HitlCheckpointStore } from "./engine/hitl.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
 import { GoalGraph } from "./goals/graph.js";
 // ── Epic 7: Knowledge Building ─────────────────────────────────────
@@ -693,47 +696,8 @@ async function bootstrap() {
     interact: (args, ctx) => toolRegistry.execute("camofox", args, ctx),
   }));
 
-  toolRegistry.register(createMemoryUnifiedTool({
-    search: (args, ctx) => toolRegistry.execute("memory_search", args, ctx),
-    store:  (args, ctx) => toolRegistry.execute("remember", args, ctx),
-    get:    (args, ctx) => toolRegistry.execute("memory_get", args, ctx),
-    write: async (args, ctx) => {
-      const userId = (ctx.engineContext as any)?.userId ?? "default";
-      const content = args["content"] as string;
-      const category = (args["category"] as string) ?? "context";
-      const confidence = typeof args["confidence"] === "number" ? args["confidence"] : 0.8;
-      if (!content) {
-        return JSON.stringify({ success: false, data: null, error: { code: "MISSING_CONTENT", message: "content is required for action:write", suggestion: "Provide a content string" } });
-      }
-      try {
-        const stored = await factStore.add({
-          userId,
-          fact: content,
-          category: category as any,
-          confidence,
-          source: "explicit",
-        });
-        return JSON.stringify({ success: true, data: { written: content, id: stored.id }, error: null });
-      } catch (err) {
-        return JSON.stringify({ success: false, data: null, error: { code: "WRITE_FAILED", message: err instanceof Error ? err.message : String(err), suggestion: "Check that content is a non-empty string" } });
-      }
-    },
-    invalidate: async (args, ctx) => {
-      const userId = (ctx.engineContext as any)?.userId ?? "default";
-      const query = (args["query"] as string) ?? (args["content"] as string);
-      if (!query) {
-        return JSON.stringify({ success: false, data: null, error: { code: "MISSING_QUERY", message: "query is required for action:invalidate", suggestion: "Provide a query string" } });
-      }
-      const now = new Date().toISOString();
-      const escaped = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
-      const result = memoryDb.rawDb.prepare(
-        "UPDATE facts SET invalidated_at = ? WHERE user_id = ? AND fact LIKE ? ESCAPE '\\' AND invalidated_at IS NULL"
-      ).run(now, userId, `%${escaped}%`);
-      // Direct SQL is intentional for performance; mirrors FactInvalidator pattern.
-      // Cache staleness is acceptable here — facts.getAllForUser() re-queries the DB.
-      return JSON.stringify({ success: true, data: { invalidated: (result as any).changes }, error: null });
-    },
-  }));
+  // Element 15 — canonical `memory` tool is registered AFTER gateway construction
+  // (it depends on gateway-owned GatewayEventBus and HitlCheckpointStore).
 
   toolRegistry.register(createMacosCommsTool({
     mail:     (args, ctx) => toolRegistry.execute("apple_mail", args, ctx),
@@ -1213,6 +1177,33 @@ async function buildGateway(
     proactiveGenerator,
     eventBasedGenerator,
   });
+
+  // ─── Element 15 — canonical memory surface ─────────────────────
+  // Repository owns all reads/writes against `memories`/`memory_invalidations`/
+  // `memory_contradictions`/`memory_access_log`. Writer ingests goal-conditioned
+  // extractions and listens for engine:turn_complete to expire working memories.
+  const hitlCheckpointStore = new HitlCheckpointStore(b.memoryDb);
+  const memoryRepo = new MemoryRepository(b.memoryDb.rawDb, gateway.gatewayEventBus);
+  gateway.ctx.memoryRepo = memoryRepo;
+
+  if (gateway.ctx.intelligence) {
+    const memoryWriter = new MemoryWriter({
+      repo: memoryRepo,
+      bus: gateway.gatewayEventBus,
+      router: gateway.ctx.intelligence,
+      providerRegistry: b.providerRegistry,
+    });
+    memoryWriter.attachBusListeners();
+    gateway.ctx.memoryWriter = memoryWriter;
+  }
+
+  // Register canonical `memory` tool (search/get/invalidate; importance ≥ 0.8
+  // invalidations route through HitlCheckpointStore for human approval).
+  b.toolRegistry.register(createMemoryTool({
+    repo: memoryRepo,
+    bus: gateway.gatewayEventBus,
+    hitl: hitlCheckpointStore,
+  }));
 
   return gateway;
 }
