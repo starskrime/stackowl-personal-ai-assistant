@@ -21,6 +21,7 @@ export type GatewaySystemEvent =
   | { type: "session:ended";     userId: string; sessionId: string }
   | { type: "memory:written";    id: string; kind: string; goal_id: string | null; importance: number }
   | { type: "memory:invalidated";id: string; reason: string; invalidated_by: string }
+  | { type: "memory:classify_failed"; turnId: string; reason: string }
 
 const DELIVER_EVENT = "gateway:deliver"
 
