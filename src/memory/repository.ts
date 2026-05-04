@@ -169,6 +169,42 @@ export class MemoryRepository {
     }
   }
 
+  async searchSemanticByEmbedding(
+    queryEmbedding: Float32Array,
+    opts: MemorySearchOptions = {},
+  ): Promise<MemoryRecord[]> {
+    const { kinds, topK = 50, minImportance, includeInvalid = false, goalId } = opts;
+    const where: string[] = [];
+    const params: Record<string, unknown> = {};
+    if (!includeInvalid) where.push("invalid_at IS NULL");
+    if (kinds && kinds.length > 0) {
+      where.push(`kind IN (${kinds.map((_, i) => `@k${i}`).join(",")})`);
+      kinds.forEach((k, i) => (params[`k${i}`] = k));
+    }
+    if (typeof minImportance === "number") {
+      where.push("importance >= @minImportance");
+      params.minImportance = minImportance;
+    }
+    if (goalId) {
+      where.push("goal_id = @goalId");
+      params.goalId = goalId;
+    }
+    const sql = `SELECT * FROM memories ${where.length ? "WHERE " + where.join(" AND ") : ""}`;
+    const rows = this.db.prepare(sql).all(params) as Array<Record<string, unknown>>;
+    const now = Date.now();
+
+    const scored = rows.map((row) => {
+      const record = this.rowToRecord(row);
+      const recencyMs = now - new Date(record.valid_at).getTime();
+      const recency = Math.exp(-recencyMs / (1000 * 60 * 60 * 24 * 7));
+      const relevance = record.embedding ? this.cosine(queryEmbedding, record.embedding) : 0;
+      const score = 0.3 * recency + 0.3 * record.importance + 0.4 * relevance;
+      return { record, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, topK).map((s) => s.record);
+  }
+
   invalidate(id: string, opts: InvalidateOptions): void {
     const now = new Date().toISOString();
     const tx = this.db.transaction(() => {

@@ -260,3 +260,50 @@ describe("MemoryRepository — events", () => {
     ).not.toThrow();
   });
 });
+
+describe("MemoryRepository.searchSemanticByEmbedding", () => {
+  let db: Database.Database;
+  let repo: MemoryRepository;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    applyV25Migration(db);
+    repo = new MemoryRepository(db);
+  });
+
+  it("ranks by cosine similarity to the supplied embedding", async () => {
+    const eA = new Float32Array([1, 0, 0, 0]);
+    const eB = new Float32Array([0, 1, 0, 0]);
+    repo.insertBatch([
+      { id: "a", kind: "semantic", content: "match", importance: 0.5, embedding: eA },
+      { id: "b", kind: "semantic", content: "no match", importance: 0.5, embedding: eB },
+    ]);
+    const result = await repo.searchSemanticByEmbedding(eA, { topK: 2 });
+    expect(result[0].id).toBe("a");
+    expect(result[1].id).toBe("b");
+  });
+
+  it("respects topK", async () => {
+    const e = new Float32Array([1, 0, 0, 0]);
+    repo.insertBatch([
+      { id: "a", kind: "semantic", content: "x", importance: 0.5, embedding: e },
+      { id: "b", kind: "semantic", content: "y", importance: 0.5, embedding: e },
+      { id: "c", kind: "semantic", content: "z", importance: 0.5, embedding: e },
+    ]);
+    const result = await repo.searchSemanticByEmbedding(e, { topK: 2 });
+    expect(result).toHaveLength(2);
+  });
+
+  it("filters by kind", async () => {
+    const e = new Float32Array([1, 0, 0, 0]);
+    repo.insertBatch([
+      { id: "s1", kind: "semantic", content: "x", importance: 0.5, embedding: e },
+      { id: "e1", kind: "episodic", content: "y", importance: 0.5, embedding: e },
+    ]);
+    const result = await repo.searchSemanticByEmbedding(e, { kinds: ["semantic"], topK: 5 });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("s1");
+  });
+});
