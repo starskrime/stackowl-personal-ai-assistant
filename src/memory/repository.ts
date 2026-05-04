@@ -284,6 +284,25 @@ export class MemoryRepository {
     return { record, invalidations, contradictions };
   }
 
+  /**
+   * Mark `working` memories older than `olderThanHours` as invalid.
+   * Returns the number of memories invalidated.
+   */
+  expireWorkingMemories(olderThanHours: number): number {
+    const cutoff = new Date(Date.now() - olderThanHours * 3600_000).toISOString();
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE memories
+            SET invalid_at = @now, updated_at = @now
+          WHERE kind = 'working'
+            AND invalid_at IS NULL
+            AND valid_at < @cutoff`,
+      )
+      .run({ now, cutoff });
+    return result.changes;
+  }
+
   recordAccess(id: string): void {
     const exists = this.db.prepare(`SELECT 1 FROM memories WHERE id = ?`).get(id);
     if (!exists) {

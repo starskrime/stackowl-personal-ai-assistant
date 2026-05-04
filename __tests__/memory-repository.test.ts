@@ -426,3 +426,51 @@ describe("MemoryRepository — fixes (review pass)", () => {
     expect(results).toHaveLength(1);
   });
 });
+
+describe("MemoryRepository.expireWorkingMemories", () => {
+  let db: import("better-sqlite3").Database;
+  let repo: MemoryRepository;
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    applyV25Migration(db);
+    repo = new MemoryRepository(db);
+  });
+
+  it("invalidates working memories older than the cutoff", () => {
+    const old = new Date(Date.now() - 25 * 3600_000).toISOString();
+    repo.insertBatch([
+      { id: "w-old", kind: "working", content: "stale", importance: 0.4, valid_at: old },
+      { id: "w-fresh", kind: "working", content: "fresh", importance: 0.4 },
+    ]);
+    const changed = repo.expireWorkingMemories(24);
+    expect(changed).toBe(1);
+    expect(repo.getById("w-old")?.invalid_at).not.toBeNull();
+    expect(repo.getById("w-fresh")?.invalid_at).toBeNull();
+  });
+
+  it("does not touch non-working kinds", () => {
+    const old = new Date(Date.now() - 100 * 3600_000).toISOString();
+    repo.insertBatch([
+      { id: "s-old", kind: "semantic", content: "durable", importance: 0.6, valid_at: old },
+    ]);
+    const changed = repo.expireWorkingMemories(24);
+    expect(changed).toBe(0);
+    expect(repo.getById("s-old")?.invalid_at).toBeNull();
+  });
+
+  it("does not re-invalidate already-invalid memories", () => {
+    const old = new Date(Date.now() - 100 * 3600_000).toISOString();
+    repo.insertBatch([
+      { id: "w-1", kind: "working", content: "a", importance: 0.4, valid_at: old },
+    ]);
+    repo.invalidate("w-1", { reason: "manual", invalidatedBy: "test" });
+    const changed = repo.expireWorkingMemories(24);
+    expect(changed).toBe(0);
+  });
+
+  it("returns 0 when nothing matches", () => {
+    expect(repo.expireWorkingMemories(24)).toBe(0);
+  });
+});

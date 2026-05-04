@@ -4,20 +4,23 @@
  * Goal-conditioned ingestion pipeline.
  *
  * Pipeline:
- *   1. Trivial-turn short-circuit (length-only guard, no keyword classification).
- *   2. Classify via IntelligenceRouter cheap-tier — extract zero-or-more
- *      memory records as JSON.
- *   3. (Task 13) contradiction check + ADD/UPDATE/DELETE/NOOP reconciler.
- *   4. Persist via MemoryRepository.insertBatch (emits memory:written events).
+ *   1. Trivial-turn short-circuit (length-only).
+ *   2. Classify via IntelligenceRouter cheap-tier.
+ *   3. Reconcile each extraction against top-K similar existing memories
+ *      (ADD / UPDATE / DELETE / NOOP) — invalidations applied first, then inserts.
+ *   4. Persist via MemoryRepository.insertBatch.
  *
- * No hardcoded keyword arrays anywhere — content classification is delegated
- * to the LLM.
+ * Bus listeners:
+ *   - engine:turn_complete → expireWorkingMemories(24h)
+ *
+ * Helpers:
+ *   - recordReflexive(observation) — engine self-observations as `reflexive` kind.
  */
 
 import { randomUUID } from "node:crypto";
-import type { MemoryRepository, MemoryInsert } from "./repository.js";
+import type { MemoryRepository, MemoryInsert, MemoryKind } from "./repository.js";
 import type { GatewayEventBus } from "../gateway/event-bus.js";
-import type { IntelligenceRouter } from "../intelligence/router.js";
+import type { IntelligenceRouter, ResolvedModel } from "../intelligence/router.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 
 export interface WriterTurn {
@@ -45,25 +48,63 @@ export interface WriterDeps {
   providerRegistry: ProviderRegistry;
 }
 
+interface Extraction {
+  kind: MemoryKind;
+  content: string;
+  importance: number;
+}
+
 interface ExtractionResult {
-  extractions: Array<{
-    kind: "semantic" | "episodic" | "working" | "procedural";
-    content: string;
-    importance: number;
-  }>;
+  extractions: Extraction[];
+}
+
+interface ReconcileDecision {
+  action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
+  target_id?: string;
+  reason?: string;
 }
 
 const MIN_MESSAGE_LEN_NEUTRAL = 12;
+const WORKING_MEMORY_TTL_HOURS = 24;
 
 export class MemoryWriter {
   constructor(private readonly deps: WriterDeps) {}
+
+  attachBusListeners(): void {
+    this.deps.bus.on("engine:turn_complete", () => {
+      try {
+        this.deps.repo.expireWorkingMemories(WORKING_MEMORY_TTL_HOURS);
+      } catch (err) {
+        this.deps.bus.emit({ type: "memory:write_failed", reason: (err as Error).message });
+      }
+    });
+  }
+
+  async recordReflexive(input: {
+    sessionId: string;
+    observation: string;
+    importance?: number;
+    goalId?: string;
+  }): Promise<void> {
+    this.deps.repo.insertBatch([
+      {
+        id: randomUUID(),
+        kind: "reflexive",
+        content: input.observation,
+        importance: input.importance ?? 0.5,
+        goal_id: input.goalId,
+        source_channel: "engine-reflexive",
+      },
+    ]);
+  }
 
   async ingest(turn: WriterTurn): Promise<IngestResult> {
     if (this.isTrivial(turn)) {
       return { skipped: true, reason: "trivial-turn" };
     }
 
-    const extraction = await this.classify(turn);
+    const resolved = this.deps.router.resolve("classification");
+    const extraction = await this.classify(turn, resolved);
     if (!extraction) {
       return { skipped: true, reason: "classify-failed" };
     }
@@ -71,7 +112,20 @@ export class MemoryWriter {
       return { skipped: true, reason: "empty-extraction" };
     }
 
-    const records: MemoryInsert[] = extraction.extractions.map((e) => ({
+    const { insert, invalidate } = await this.reconcile(extraction.extractions, resolved);
+
+    for (const id of invalidate) {
+      this.deps.repo.invalidate(id, {
+        reason: "writer-reconcile DELETE",
+        invalidatedBy: "writer",
+      });
+    }
+
+    if (insert.length === 0 && invalidate.length === 0) {
+      return { skipped: true, reason: "noop" };
+    }
+
+    const records: MemoryInsert[] = insert.map((e) => ({
       id: randomUUID(),
       kind: e.kind,
       content: e.content,
@@ -83,13 +137,21 @@ export class MemoryWriter {
       source_channel: turn.channel,
     }));
 
-    this.deps.repo.insertBatch(records);
-    return { skipped: false, written: records.length };
+    try {
+      if (records.length > 0) this.deps.repo.insertBatch(records);
+    } catch (err) {
+      this.deps.bus.emit({ type: "memory:write_failed", reason: (err as Error).message });
+      return { skipped: true, reason: "write-failed" };
+    }
+
+    return { skipped: false, written: records.length, invalidated: invalidate.length };
   }
 
-  private async classify(turn: WriterTurn): Promise<ExtractionResult | null> {
+  private async classify(
+    turn: WriterTurn,
+    resolved: ResolvedModel,
+  ): Promise<ExtractionResult | null> {
     try {
-      const resolved = this.deps.router.resolve("classification");
       const provider = this.deps.providerRegistry.get(resolved.provider);
       const response = await provider.chat(
         [
@@ -109,6 +171,101 @@ export class MemoryWriter {
       this.deps.bus.emit({
         type: "memory:classify_failed",
         turnId: turn.turnId,
+        reason: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
+  private async reconcile(
+    extractions: Extraction[],
+    resolved: ResolvedModel,
+  ): Promise<{ insert: Extraction[]; invalidate: string[] }> {
+    const insert: Extraction[] = [];
+    const invalidate: string[] = [];
+
+    for (const ext of extractions) {
+      const candidates = await this.deps.repo.search(ext.content, {
+        kinds: [ext.kind],
+        topK: 5,
+      });
+      if (candidates.length === 0) {
+        insert.push(ext);
+        continue;
+      }
+
+      const decisions = await this.runReconciler(ext, candidates, resolved);
+      if (decisions === null) {
+        insert.push(ext);
+        continue;
+      }
+
+      let didAdd = false;
+      let didNoop = false;
+      for (const d of decisions) {
+        if (d.action === "ADD") {
+          insert.push(ext);
+          didAdd = true;
+        } else if (d.action === "DELETE" && d.target_id) {
+          invalidate.push(d.target_id);
+          this.deps.bus.emit({
+            type: "memory:contradiction_detected",
+            memoryId: d.target_id,
+            contradictsId: ext.content,
+            reason: d.reason ?? "writer-reconcile",
+          });
+        } else if (d.action === "UPDATE" && d.target_id) {
+          invalidate.push(d.target_id);
+          if (!didAdd) {
+            insert.push(ext);
+            didAdd = true;
+          }
+        } else if (d.action === "NOOP") {
+          didNoop = true;
+        }
+      }
+      // Prevent silent loss: if neither add nor noop nor delete fired, fall back to ADD.
+      if (!didAdd && !didNoop && invalidate.length === 0) {
+        insert.push(ext);
+      }
+    }
+    return { insert, invalidate };
+  }
+
+  private async runReconciler(
+    ext: Extraction,
+    candidates: Awaited<ReturnType<MemoryRepository["search"]>>,
+    resolved: ResolvedModel,
+  ): Promise<ReconcileDecision[] | null> {
+    const prompt = `New memory candidate:
+${JSON.stringify(ext)}
+
+Existing similar memories:
+${candidates.map((c) => `- id=${c.id}: ${c.content} (importance=${c.importance})`).join("\n")}
+
+Decide: emit JSON { "decisions": [ { "action": "ADD"|"UPDATE"|"DELETE"|"NOOP", "target_id"?: "...", "reason": "..." } ] }
+- ADD: insert candidate as new memory.
+- UPDATE: candidate refines existing (specify target_id) — old gets invalidated, new gets inserted.
+- DELETE: candidate contradicts existing (specify target_id) — invalidate, do not insert candidate.
+- NOOP: candidate is duplicate of existing.
+
+JSON only.`;
+
+    try {
+      const provider = this.deps.providerRegistry.get(resolved.provider);
+      const resp = await provider.chat(
+        [
+          { role: "system", content: "JSON-only memory reconciler." },
+          { role: "user", content: prompt },
+        ],
+        resolved.model,
+        { temperature: 0.2, maxTokens: 400 },
+      );
+      const parsed = JSON.parse(resp.content.trim()) as { decisions?: ReconcileDecision[] };
+      return parsed.decisions ?? [];
+    } catch (err) {
+      this.deps.bus.emit({
+        type: "memory:contradict_failed",
         reason: (err as Error).message,
       });
       return null;

@@ -22,6 +22,15 @@ export type GatewaySystemEvent =
   | { type: "memory:written";    id: string; kind: string; goal_id: string | null; importance: number }
   | { type: "memory:invalidated";id: string; reason: string; invalidated_by: string }
   | { type: "memory:classify_failed"; turnId: string; reason: string }
+  | { type: "memory:contradict_failed"; reason: string }
+  | { type: "memory:write_failed"; reason: string }
+  | { type: "memory:contradiction_detected"; memoryId: string; contradictsId: string; reason: string }
+  | { type: "memory:accessed"; id: string; kind: string }
+  | { type: "memory:render_failed"; layerName: string; reason: string }
+  | { type: "memory:invalidate_rejected"; id: string; reason: string }
+  | { type: "memory:slo_breach"; metric: string; observed: number; budget: number }
+  | { type: "memory:health_degraded"; reason: string }
+  | { type: "engine:turn_complete"; sessionId: string }
 
 const DELIVER_EVENT = "gateway:deliver"
 
