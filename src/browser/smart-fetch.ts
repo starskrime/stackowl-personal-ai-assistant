@@ -91,60 +91,11 @@ const CHROME_HEADERS: Record<string, string> = {
   "Upgrade-Insecure-Requests": "1",
 };
 
-// ─── Bot detection ──────────────────────────────────────────────
-
-interface BlockingStatus {
-  blocked: boolean;
-  type?: "cloudflare" | "captcha" | "waf" | "generic";
-}
-
-function detectBlocking(
-  title: string,
-  text: string,
-  status?: number,
-): BlockingStatus {
-  const lTitle = title.toLowerCase();
-  const lText = text.toLowerCase();
-
-  // HTTP-level blocks
-  if (status === 403 || status === 429 || status === 503) {
-    // 503 with Cloudflare challenge content
-    if (lText.includes("cloudflare") || lText.includes("just a moment")) {
-      return { blocked: true, type: "cloudflare" };
-    }
-    if (status === 403) return { blocked: true, type: "waf" };
-    if (status === 429) return { blocked: true, type: "waf" };
-  }
-
-  // Content-level blocks
-  if (
-    lTitle.includes("security checkpoint") ||
-    lTitle.includes("just a moment") ||
-    lTitle.includes("attention required") ||
-    lTitle.includes("access denied")
-  ) {
-    return { blocked: true, type: "cloudflare" };
-  }
-
-  if (
-    lText.includes("verify you are human") ||
-    lText.includes("verifying your browser") ||
-    lText.includes("enable javascript and cookies to continue") ||
-    lText.includes("captcha") ||
-    lText.includes("please complete the security check")
-  ) {
-    return { blocked: true, type: "captcha" };
-  }
-
-  if (
-    (text.length < 200 && lText.includes("checking your browser")) ||
-    (text.length < 300 && lText.includes("ray id"))
-  ) {
-    return { blocked: true, type: "cloudflare" };
-  }
-
-  return { blocked: false };
-}
+// ─── Bot detection (Element 16: moved to BlockingClassifier) ────
+// The legacy keyword-based detector was deleted. Tier runners now consult
+// BlockingClassifier (IntelligenceRouter cheap-tier) for verdicts. The
+// legacy webFetch / fetchWithBrowser paths below stub `blocking` until
+// Phase D removes them entirely.
 
 // ─── HTML → text ────────────────────────────────────────────────
 
@@ -291,7 +242,7 @@ async function fetchWithBrowser(
         return document.body?.innerText || "";
       });
 
-      const blocking = detectBlocking(title, text);
+      const blocking = { blocked: false } as { blocked: boolean; type?: string };
       if (blocking.blocked) {
         return {
           title,
@@ -358,7 +309,7 @@ async function fetchWithBrowserRetry(
         return document.body?.innerText || "";
       });
 
-      const blocking = detectBlocking(title, text);
+      const blocking = { blocked: false } as { blocked: boolean; type?: string };
 
       return {
         title,
@@ -404,7 +355,7 @@ export async function webFetch(
     const fast = await fetchFast(url, timeout, options?.headers);
     if (fast) {
       const { title, text } = htmlToText(fast.html);
-      const blocking = detectBlocking(title, text, fast.status);
+      const blocking = { blocked: false } as { blocked: boolean; type?: string };
 
       if (!blocking.blocked) {
         const trimmed =
