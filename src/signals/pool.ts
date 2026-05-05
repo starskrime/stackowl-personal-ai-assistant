@@ -182,6 +182,51 @@ export class SignalPool {
     }
   }
 
+  async heartbeatTick(): Promise<void> {
+    const now = Date.now();
+    for (const [id, s] of this.signals) {
+      if (s.timestamp + s.ttlMs < now) {
+        this.signals.delete(id);
+        this.deps.bus.emit({
+          type: "signal:expired",
+          signal: s,
+          reason: "ttl",
+        } as any);
+      }
+    }
+    const goal = this.deps.goalGraph.getTopPriority();
+    if (!goal) return;
+    const candidates = [...this.signals.values()]
+      .filter(
+        (s) =>
+          !s.userSurfaceable &&
+          (s.priority === "medium" || s.priority === "high"),
+      )
+      .slice(0, 5);
+    for (const s of candidates) {
+      try {
+        const result = await this.deps.verifier.verify(
+          signalToVerifyArgs(s, goal),
+        );
+        if (result.verdict === "ADVANCES") {
+          s.userSurfaceable = true;
+          this.signals.set(s.id, s);
+          this.deps.bus.emit({
+            type: "signal:promoted",
+            signal: s,
+            goal: { id: goal.id, title: goal.title },
+            rationale: result.reason,
+            verdict: "ADVANCES",
+          } as any);
+        }
+      } catch (err) {
+        log.engine.warn(
+          `[SignalPool] heartbeat verify failed: ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+
   private enforceLimit(): void {
     const max = this.deps.config.maxSignals;
     if (this.signals.size <= max) return;
