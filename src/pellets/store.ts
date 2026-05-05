@@ -449,6 +449,33 @@ export class PelletStore {
     });
   }
 
+  /** Return the internal Kuzu graph instance. */
+  async getGraph(): Promise<KuzuPelletGraph> {
+    await this.init();
+    return this.graph;
+  }
+
+  /**
+   * Find pellets related to the given pellet ID.
+   * Uses graph neighbors if the graph is built; falls back to content similarity search.
+   */
+  async findRelated(id: string, limit = 5): Promise<Pellet[]> {
+    await this.init();
+    const target = await this.get(id);
+    if (!target) return [];
+
+    if (this.graph.isBuilt) {
+      const neighborIds = await this.graph.getNeighbors(id, 1, limit);
+      const candidates = await this.lance.getByIds(neighborIds);
+      return candidates.filter((p) => p.id !== id).slice(0, limit);
+    }
+
+    // Fall back to keyword/vector search when graph isn't built
+    const query = target.tags.join(" ") || target.title;
+    const results = await this.search(query, limit + 1);
+    return results.filter((p) => p.id !== id).slice(0, limit);
+  }
+
   // ─── Backward compat shims ─────────────────────────────────────
   // These kept existing callers (bulk-dedup, CLI) working.
 
