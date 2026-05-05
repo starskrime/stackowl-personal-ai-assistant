@@ -8,6 +8,7 @@ import { readFile, writeFile, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { IntelligenceConfig } from "../intelligence/router.js";
+import type { SignalSource } from "../ambient/types.js";
 
 // ─── Config Types ────────────────────────────────────────────────
 
@@ -637,4 +638,26 @@ export async function saveConfig(
   const json = JSON.stringify(config, null, 2);
   await writeFile(tmpPath, json, "utf-8");
   await rename(tmpPath, configPath);
+}
+
+let consentMutex: Promise<void> = Promise.resolve();
+
+/**
+ * Atomically grant or revoke consent for an ambient signal source.
+ * Serialized per-process via a mutex chain so concurrent calls don't race.
+ */
+export async function mutateConsent(
+  basePath: string,
+  source: SignalSource,
+  granted: boolean,
+): Promise<void> {
+  const next = consentMutex.then(async () => {
+    const config = await loadConfig(basePath);
+    const perches = ((config as any).perches ??= {});
+    const consent = (perches.consent ??= {});
+    consent[source] = granted;
+    await saveConfig(basePath, config);
+  });
+  consentMutex = next.catch(() => undefined);
+  return next;
 }
