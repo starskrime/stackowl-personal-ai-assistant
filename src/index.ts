@@ -161,8 +161,6 @@ import { EvolutionHandler } from "./evolution/handler.js";
 import { SkillsEngine } from "./skills/engine.js";
 import { SkillsMigrator } from "./skills/migrator.js";
 import { SkillInstaller, parseInstallSource } from "./skills/installer.js";
-import { PerchManager } from "./perch/manager.js";
-import { FilePerch } from "./perch/file-perch.js";
 import { StackOwlServer } from "./server/index.js";
 import { OwlGateway } from "./gateway/core.js";
 import { TelegramAdapter } from "./gateway/adapters/telegram.js";
@@ -832,14 +830,6 @@ async function bootstrap() {
     pelletStore,
   );
 
-  // Perch Points
-  const perchManager = new PerchManager(
-    providerRegistry.getDefault(),
-    config,
-    owlRegistry,
-  );
-  perchManager.addPerch(new FilePerch(workspacePath));
-
   return {
     config,
     providerRegistry,
@@ -849,7 +839,6 @@ async function bootstrap() {
     pelletStore,
     evolutionEngine,
     skillsEngine,
-    perchManager,
     workspacePath,
     evolution,
     synthesizer,
@@ -1323,12 +1312,6 @@ async function chatCommand(owlName?: string) {
         gateway = await buildGateway(b, owl);
       },
     },
-    {
-      label: "Starting perch watchers",
-      fn: async () => {
-        await b.perchManager.startAll();
-      },
-    },
   ];
 
   await splash.run(steps, () => ({
@@ -1366,7 +1349,6 @@ async function chatCommand(owlName?: string) {
   }
 
   process.on("SIGINT", async () => {
-    b.perchManager.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -1447,10 +1429,7 @@ async function voiceCommand(opts: {
   });
   gateway.register(adapter);
 
-  await b.perchManager.startAll();
-
   process.on("SIGINT", async () => {
-    b.perchManager.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -1924,19 +1903,8 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   });
   gateway.register(adapter);
 
-  // Perch: broadcast through gateway so all channels receive it
-  const perch = new PerchManager(
-    provider,
-    b.config,
-    b.owlRegistry,
-    (msg: string) => gateway.broadcastProactive(msg),
-  );
-  perch.addPerch(new FilePerch(b.workspacePath));
-  await perch.startAll();
-
   const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down..."));
-    perch.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -2003,19 +1971,8 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
   });
   gateway.register(adapter);
 
-  // Perch: broadcast through gateway
-  const perch = new PerchManager(
-    provider,
-    b.config,
-    b.owlRegistry,
-    (msg: string) => gateway.broadcastProactive(msg),
-  );
-  perch.addPerch(new FilePerch(b.workspacePath));
-  await perch.startAll();
-
   const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down..."));
-    perch.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -2200,19 +2157,8 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     tryAttachPinger(0);
   }
 
-  // Perch: broadcast through gateway
-  const perch = new PerchManager(
-    provider,
-    b.config,
-    b.owlRegistry,
-    (msg: string) => gateway.broadcastProactive(msg),
-  );
-  perch.addPerch(new FilePerch(b.workspacePath));
-  await perch.startAll();
-
   const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down all channels..."));
-    perch.stopAll();
     cliAdapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
