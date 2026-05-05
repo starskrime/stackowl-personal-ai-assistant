@@ -199,8 +199,7 @@ check_prerequisites() {
     log_info "Scrapling ready"
   fi
 
-  # ── CamoFox (anti-detection Firefox browser) ──
-  setup_camofox
+  # CamoFox install moved to: stackowl backends install camofox
 }
 
 install_scrapling() {
@@ -268,69 +267,7 @@ exit(0 if has_chromium else 1)
 }
 
 # ─── CamoFox Setup ──────────────────────────────────────────────
-
-setup_camofox() {
-  local url="http://localhost:9377"
-  echo ""
-  echo -e "${DIM}─────────────────────────────────────────────────${RESET}"
-  log_step "CamoFox — Anti-detection Firefox browser"
-
-  # Write config if not already configured
-  if ! camofox_enabled; then
-    write_camofox_config "$url"
-    log_info "CamoFox enabled (npm, $url)"
-  else
-    url=$(camofox_url)
-    echo -e "  ${DIM}Configured: $url${RESET}"
-  fi
-
-  # Start via npx if not already running
-  if camofox_server_running "$url"; then
-    log_info "CamoFox server is running at $url"
-  else
-    start_camofox_npx "$url"
-  fi
-}
-
-start_camofox_npx() {
-  local url="$1"
-  local port
-  port=$(echo "$url" | sed 's/.*:\([0-9][0-9]*\).*/\1/'); [[ "$port" =~ ^[0-9]+$ ]] || port="9377"
-
-  # Check if camofox-browser is installed globally or locally
-  if command -v camofox-browser &>/dev/null; then
-    log_step "Starting CamoFox server in background (camofox-browser --port $port)..."
-    CAMOFOX_PORT="$port" camofox-browser &>/tmp/camofox.log &
-  elif [ -f "$SCRIPT_DIR/node_modules/.bin/camofox-browser" ]; then
-    log_step "Starting CamoFox server in background..."
-    CAMOFOX_PORT="$port" "$SCRIPT_DIR/node_modules/.bin/camofox-browser" &>/tmp/camofox.log &
-  else
-    log_step "Installing camofox-browser..."
-    npm install -g camofox-browser 2>&1 | tail -2
-    if command -v camofox-browser &>/dev/null; then
-      CAMOFOX_PORT="$port" camofox-browser &>/tmp/camofox.log &
-    else
-      log_warn "Could not install camofox-browser. Try: npm install -g camofox-browser"
-      log_dim  "Then run: camofox-browser"
-      return
-    fi
-  fi
-
-  local cf_pid=$!
-  # Wait up to 8s for the server to become ready
-  local waited=0
-  while [ $waited -lt 8 ]; do
-    sleep 1
-    waited=$((waited + 1))
-    if camofox_server_running "$url"; then
-      log_info "CamoFox server started (PID $cf_pid, port $port) — logs: /tmp/camofox.log"
-      return
-    fi
-  done
-
-  log_warn "CamoFox server didn't respond after ${waited}s — it may still be starting."
-  log_dim  "Check logs: tail -f /tmp/camofox.log"
-}
+# CamoFox install moved to: stackowl backends install camofox
 
 show_camofox_docker() {
   local url="$1"
