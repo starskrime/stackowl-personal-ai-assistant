@@ -52,7 +52,4 @@ __tests__/.test_workspace/
 skills-stats.json
 stackowl.config copy.json
 
-# Tests
-__tests__/
-
 .worktrees/

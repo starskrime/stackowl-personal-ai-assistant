@@ -2,6 +2,12 @@ import type { GatewaySystemEvent } from "./event-bus.js";
 
 export type ToolSystemEvent = Extract<GatewaySystemEvent, { type: `tool:${string}` }>;
 
+export function formatSignalPromoted(
+  e: Extract<GatewaySystemEvent, { type: "signal:promoted" }>,
+): string {
+  return `🔭 [${e.signal.source}] ${e.signal.title} — advances "${e.goal.title}" (verdict: ${e.verdict})`;
+}
+
 const WEB_SEARCH_TOOLS = new Set(["duckduckgo_search", "web_search", "google_search"]);
 const WEB_FETCH_TOOLS  = new Set(["web_crawl", "scrapling_fetch"]);
 const MEM_SEARCH_TOOLS = new Set(["recall_memory", "memory_search", "pellet_recall", "memory"]);

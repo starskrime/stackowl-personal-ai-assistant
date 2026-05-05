@@ -1,12 +1,17 @@
 import { EventEmitter } from "node:events"
 import type { DeliveryEnvelope } from "./delivery-envelope.js"
+import type { ContextSignal, SignalSource } from "../ambient/types.js"
 
 export type GatewaySystemEvent =
   | { type: "pellet:created";    pelletId: string;  userId: string }
   | { type: "learning:complete"; summary: string;   userId: string }
   | { type: "evolution:done";    owlName: string;   changes: string[] }
   | { type: "parliament:done";   topic: string;     verdict: string; userId: string }
-  | { type: "perch:event";       source: string;    detail: string;  userId: string }
+  | { type: "signal:emitted";        signal: ContextSignal }
+  | { type: "signal:expired";        signal: ContextSignal; reason: "ttl" | "evicted" }
+  | { type: "signal:promoted";       signal: ContextSignal; goal: { id: string; title: string }; rationale: string; verdict: "ADVANCES" }
+  | { type: "signal:suppressed";     signal: ContextSignal; verdict: "NEUTRAL" | "PARTIAL" | "BLOCKED" }
+  | { type: "signal:consent_changed"; source: SignalSource; granted: boolean }
   | { type: "commitment:due";    text: string;      userId: string }
   | { type: "cost:alert";        spent: number;     budget: number;  userId: string }
   | { type: "tool:start";        toolName: string; args: Record<string, unknown>; turnId: string }

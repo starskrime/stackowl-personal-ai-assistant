@@ -161,8 +161,6 @@ import { EvolutionHandler } from "./evolution/handler.js";
 import { SkillsEngine } from "./skills/engine.js";
 import { SkillsMigrator } from "./skills/migrator.js";
 import { SkillInstaller, parseInstallSource } from "./skills/installer.js";
-import { PerchManager } from "./perch/manager.js";
-import { FilePerch } from "./perch/file-perch.js";
 import { StackOwlServer } from "./server/index.js";
 import { OwlGateway } from "./gateway/core.js";
 import { TelegramAdapter } from "./gateway/adapters/telegram.js";
@@ -235,6 +233,17 @@ import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
 import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
+import { SignalPool } from "./signals/pool.js";
+import { SignalClassifier } from "./signals/classifier.js";
+import {
+  GitStatusCollector,
+  TimeContextCollector,
+  SystemCollector,
+  ActiveFileCollector,
+  ClipboardCollector,
+  FileSystemCollector,
+} from "./signals/collectors.js";
+import { GoalVerifier } from "./tools/goal-verifier.js";
 
 // ─── Boot helpers ────────────────────────────────────────────────
 
@@ -821,14 +830,6 @@ async function bootstrap() {
     pelletStore,
   );
 
-  // Perch Points
-  const perchManager = new PerchManager(
-    providerRegistry.getDefault(),
-    config,
-    owlRegistry,
-  );
-  perchManager.addPerch(new FilePerch(workspacePath));
-
   return {
     config,
     providerRegistry,
@@ -838,7 +839,6 @@ async function bootstrap() {
     pelletStore,
     evolutionEngine,
     skillsEngine,
-    perchManager,
     workspacePath,
     evolution,
     synthesizer,
@@ -1199,7 +1199,7 @@ async function buildGateway(
       b.commitmentTracker,
       b.intentStateMachine,
       b.goalGraph,
-      undefined, // contextMesh initialized separately in gateway
+      undefined, // signalPool wired in Task 19
     ),
     // ─── Epic 7: Knowledge Building Modules ─────────────────
     pelletRetriever,
@@ -1225,6 +1225,30 @@ async function buildGateway(
     });
     memoryWriter.attachBusListeners();
     gateway.ctx.memoryWriter = memoryWriter;
+
+    // ─── Element 16b — SignalPool (ambient signal mesh) ──────────
+    const providerMap = new Map<string, import("./providers/base.js").ModelProvider>();
+    providerMap.set(b.config.defaultProvider ?? "default", provider);
+    const signalPool = new SignalPool({
+      bus: gateway.gatewayEventBus,
+      classifier: SignalClassifier.create(gateway.ctx.intelligence, providerMap),
+      verifier: GoalVerifier.create(gateway.ctx.intelligence, providerMap),
+      goalGraph: b.goalGraph,
+      config: {
+        maxSignals: 32,
+        consent: ((b.config as any).perches?.consent) ?? {},
+      },
+      memoryRepo,
+      workspacePath: b.workspacePath,
+    });
+    signalPool.addCollector(new GitStatusCollector(b.workspacePath));
+    signalPool.addCollector(new TimeContextCollector());
+    signalPool.addCollector(new SystemCollector());
+    signalPool.addCollector(new ActiveFileCollector(b.workspacePath));
+    signalPool.addCollector(new ClipboardCollector());
+    signalPool.addCollector(new FileSystemCollector(b.workspacePath));
+    gateway.ctx.signalPool = signalPool;
+    signalPool.start();
   }
 
   // Register canonical `memory` tool (search/get/invalidate; importance ≥ 0.8
@@ -1288,12 +1312,6 @@ async function chatCommand(owlName?: string) {
         gateway = await buildGateway(b, owl);
       },
     },
-    {
-      label: "Starting perch watchers",
-      fn: async () => {
-        await b.perchManager.startAll();
-      },
-    },
   ];
 
   await splash.run(steps, () => ({
@@ -1331,7 +1349,6 @@ async function chatCommand(owlName?: string) {
   }
 
   process.on("SIGINT", async () => {
-    b.perchManager.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -1412,10 +1429,7 @@ async function voiceCommand(opts: {
   });
   gateway.register(adapter);
 
-  await b.perchManager.startAll();
-
   process.on("SIGINT", async () => {
-    b.perchManager.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -1889,19 +1903,8 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   });
   gateway.register(adapter);
 
-  // Perch: broadcast through gateway so all channels receive it
-  const perch = new PerchManager(
-    provider,
-    b.config,
-    b.owlRegistry,
-    (msg: string) => gateway.broadcastProactive(msg),
-  );
-  perch.addPerch(new FilePerch(b.workspacePath));
-  await perch.startAll();
-
   const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down..."));
-    perch.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -1968,19 +1971,8 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
   });
   gateway.register(adapter);
 
-  // Perch: broadcast through gateway
-  const perch = new PerchManager(
-    provider,
-    b.config,
-    b.owlRegistry,
-    (msg: string) => gateway.broadcastProactive(msg),
-  );
-  perch.addPerch(new FilePerch(b.workspacePath));
-  await perch.startAll();
-
   const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down..."));
-    perch.stopAll();
     adapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
@@ -2165,19 +2157,8 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     tryAttachPinger(0);
   }
 
-  // Perch: broadcast through gateway
-  const perch = new PerchManager(
-    provider,
-    b.config,
-    b.owlRegistry,
-    (msg: string) => gateway.broadcastProactive(msg),
-  );
-  perch.addPerch(new FilePerch(b.workspacePath));
-  await perch.startAll();
-
   const shutdown = async () => {
     console.log(chalk.dim("\n🦉 Shutting down all channels..."));
-    perch.stopAll();
     cliAdapter.stop();
     await b.browserPool?.shutdown();
     process.exit(0);
