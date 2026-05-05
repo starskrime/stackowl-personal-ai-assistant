@@ -123,6 +123,7 @@ import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js
 import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/reflexion-engine.js";
 import { updateParliamentDNA, updatePelletGeneratorDNA } from "../owls/evolution.js";
 import { GoalVerifier } from "../tools/goal-verifier.js";
+import { formatSignalPromoted } from "./narration-formatter.js";
 import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
 
@@ -2733,6 +2734,13 @@ export class OwlGateway {
       this.ctx.signalPool.start();
       log.engine.info("[feature] SignalPool started");
     }
+
+    // Channel-parity narration for promoted signals
+    this.gatewayEventBus.on("signal:promoted", (e) => {
+      const text = formatSignalPromoted(e);
+      log.engine.info(`[signal] ${text}`);
+      void this.broadcastProactive(text);
+    });
 
     // Trust Chain — load trust scores from disk
     if (this.ctx.trustChain) {
