@@ -1,6 +1,12 @@
 import { execSync, type ExecSyncOptions } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { readdirSync, statSync } from "node:fs";
+import { randomUUID, createHash } from "node:crypto";
+import {
+  readdirSync,
+  statSync,
+  existsSync,
+  readFileSync,
+  watch,
+} from "node:fs";
 import { join } from "node:path";
 import { log } from "../logger.js";
 import type {
@@ -248,5 +254,152 @@ export class ClipboardCollector implements SignalCollector {
       log.engine.warn(`[ClipboardCollector] ${(err as Error).message}`);
       return [];
     }
+  }
+}
+
+interface FileSnapshot {
+  hash: string;
+  size: number;
+  lineCount: number;
+}
+
+export class FileSystemCollector implements SignalCollector {
+  readonly source: SignalSource = "perch";
+  readonly mode = "push" as const;
+
+  private watcher: ReturnType<typeof watch> | null = null;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private snapshots = new Map<string, FileSnapshot>();
+  private pendingChanges = new Map<
+    string,
+    {
+      type: "created" | "modified" | "deleted";
+      linesAdded?: number;
+      linesRemoved?: number;
+    }
+  >();
+  private targetDir = "";
+  private emitFn: ((s: ContextSignal) => void) | null = null;
+
+  constructor(private rootPath: string) {}
+
+  start(emit: (s: ContextSignal) => void): void {
+    this.emitFn = emit;
+    const srcDir = join(this.rootPath, "src");
+    this.targetDir = existsSync(srcDir) ? srcDir : this.rootPath;
+    try {
+      this.watcher = watch(
+        this.targetDir,
+        { recursive: true },
+        (eventType, filename) => {
+          if (filename && this.shouldProcess(filename)) {
+            this.handleFileChange(eventType, filename);
+          }
+        },
+      );
+    } catch (err) {
+      log.engine.warn(
+        `[FileSystemCollector] start failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  stop(): void {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+  }
+
+  /**
+   * Coarse perf prefilter — relevance is the classifier's job.
+   */
+  private shouldProcess(filename: string): boolean {
+    if (filename.startsWith(".")) return false;
+    if (filename.endsWith(".tmp") || filename.endsWith("~")) return false;
+    if (
+      filename.includes("node_modules/") ||
+      filename.includes("node_modules\\")
+    )
+      return false;
+    if (filename.includes("dist/") || filename.includes("dist\\")) return false;
+    if (filename.includes(".git/") || filename.includes(".git\\")) return false;
+    if (filename.includes("sessions/") || filename.includes("pellets/"))
+      return false;
+    return true;
+  }
+
+  private handleFileChange(_eventType: string, filename: string): void {
+    const fullPath = join(this.targetDir, filename);
+    const prev = this.snapshots.get(filename);
+
+    if (!existsSync(fullPath)) {
+      if (prev) {
+        this.pendingChanges.set(filename, {
+          type: "deleted",
+          linesRemoved: prev.lineCount,
+        });
+        this.snapshots.delete(filename);
+      }
+    } else {
+      try {
+        const content = readFileSync(fullPath, "utf-8");
+        const hash = createHash("md5").update(content).digest("hex");
+        if (prev && prev.hash === hash) return;
+        const lineCount = content.split("\n").length;
+        const size = statSync(fullPath).size;
+        if (!prev) {
+          this.pendingChanges.set(filename, {
+            type: "created",
+            linesAdded: lineCount,
+          });
+        } else {
+          this.pendingChanges.set(filename, {
+            type: "modified",
+            linesAdded: Math.max(0, lineCount - prev.lineCount),
+            linesRemoved: Math.max(0, prev.lineCount - lineCount),
+          });
+        }
+        this.snapshots.set(filename, { hash, size, lineCount });
+      } catch {
+        return;
+      }
+    }
+
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.debounceTimer = setTimeout(() => this.flush(), 5000);
+  }
+
+  private flush(): void {
+    if (this.pendingChanges.size === 0 || !this.emitFn) return;
+    const created: string[] = [];
+    const modified: string[] = [];
+    const deleted: string[] = [];
+    let added = 0;
+    let removed = 0;
+    for (const [file, change] of this.pendingChanges) {
+      if (change.type === "created") created.push(file);
+      else if (change.type === "modified") modified.push(file);
+      else deleted.push(file);
+      added += change.linesAdded ?? 0;
+      removed += change.linesRemoved ?? 0;
+    }
+    const parts: string[] = [];
+    if (created.length) parts.push(`Created: ${created.join(", ")}`);
+    if (modified.length) parts.push(`Modified: ${modified.join(", ")}`);
+    if (deleted.length) parts.push(`Deleted: ${deleted.join(", ")}`);
+    const totalFiles = this.pendingChanges.size;
+    const title =
+      totalFiles === 1
+        ? created[0] || modified[0] || deleted[0]
+        : `${totalFiles} files changed (+${added}/-${removed})`;
+    const content =
+      parts.join(". ") + (added || removed ? ` (+${added}/-${removed} lines)` : "");
+    this.pendingChanges.clear();
+    this.emitFn(makeSignal("perch", title, content, 60_000, { added, removed }));
   }
 }
