@@ -152,7 +152,7 @@ export class ContextMesh {
 
   private async runCollector(collector: SignalCollector): Promise<void> {
     try {
-      const signals = await collector.collect();
+      const signals = (await collector.collect?.()) ?? [];
       // Remove old signals from this source
       for (const [id, existing] of this.signals) {
         if (existing.source === collector.source) {

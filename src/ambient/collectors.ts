@@ -34,6 +34,7 @@ function makeSignal(
 
 export class GitStatusCollector implements SignalCollector {
   readonly source: SignalSource = "git";
+  readonly mode = "poll" as const;
   readonly intervalMs = 60_000;
 
   constructor(private workspacePath: string) {}
@@ -89,6 +90,7 @@ export class GitStatusCollector implements SignalCollector {
 
 export class TimeContextCollector implements SignalCollector {
   readonly source: SignalSource = "time_of_day";
+  readonly mode = "poll" as const;
   readonly intervalMs = 300_000;
 
   async collect(): Promise<ContextSignal[]> {
@@ -141,6 +143,7 @@ export class TimeContextCollector implements SignalCollector {
 
 export class SystemCollector implements SignalCollector {
   readonly source: SignalSource = "system";
+  readonly mode = "poll" as const;
   readonly intervalMs = 300_000;
 
   async collect(): Promise<ContextSignal[]> {
@@ -192,6 +195,7 @@ export class SystemCollector implements SignalCollector {
 
 export class ActiveFileCollector implements SignalCollector {
   readonly source: SignalSource = "active_file";
+  readonly mode = "poll" as const;
   readonly intervalMs = 30_000;
 
   constructor(private workspacePath: string) {}
@@ -272,6 +276,7 @@ export class ActiveFileCollector implements SignalCollector {
 
 export class ClipboardCollector implements SignalCollector {
   readonly source: SignalSource = "clipboard";
+  readonly mode = "poll" as const;
   readonly intervalMs = 10_000;
   private lastContent = "";
 
