@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 26;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1224,6 +1224,10 @@ export class MemoryDatabase {
     if (current < 25) {
       applyV25Migration(this.db);
       this.db.pragma(`user_version = 25`);
+    }
+    if (current < 26) {
+      applyV26WebAttemptMetadataMigration(this.db);
+      this.db.pragma(`user_version = 26`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -3410,6 +3414,10 @@ export class StackOwlDB {
       applyV25Migration(this.db);
       this.db.pragma(`user_version = 25`);
     }
+    if (current < 26) {
+      applyV26WebAttemptMetadataMigration(this.db);
+      this.db.pragma(`user_version = 26`);
+    }
   }
 }
 
@@ -3802,6 +3810,9 @@ export function applyMigrations(db: Database.Database): void {
   if (current < 25) {
     applyV25Migration(db);
   }
+  if (current < 26) {
+    applyV26WebAttemptMetadataMigration(db);
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -3968,5 +3979,12 @@ function mergeLegacyIntoMemories(db: Database.Database): void {
         COALESCE(created_at, '1970-01-01T00:00:00Z')
       FROM summaries;
     `);
+  }
+}
+
+export function applyV26WebAttemptMetadataMigration(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(tool_executions)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "attempt_metadata")) {
+    db.exec(`ALTER TABLE tool_executions ADD COLUMN attempt_metadata TEXT;`);
   }
 }
