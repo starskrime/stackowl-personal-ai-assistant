@@ -648,7 +648,9 @@ export async function webFetchEnvelope(
   if (camoClient) {
     tiers.push(createCamoFoxTier({ availability, client: camoClient, classifier }));
   }
-  // Task 8 will append createObscuraTier here.
+  // Obscura: type-only safety valve (Element 16c). Runtime activation deferred to Phase B.
+  // The stub always emits skipped-disabled; passing { enabled: false } is fine.
+  tiers.push(createObscuraTier({ enabled: false }));
 
   return runEscalationChain(tiers, url, { bus, hint: deps.hint });
 }
@@ -684,6 +686,27 @@ export function createScraplingTier(deps: ScraplingTierDeps): TierRunner & { ins
         const isTimeout = err instanceof Error && err.message === "scrapling-timeout";
         return { attempt: { tier: 1, name: "scrapling", durationMs: Date.now() - t0, outcome: isTimeout ? "timeout" : "error" } };
       }
+    },
+  };
+}
+
+/**
+ * Obscura tier — TYPE-ONLY safety valve.
+ *
+ * Element 16c locks Obscura as a reserved TierName slot. No runtime
+ * client ships this round (Mary's research: pre-1.0, lacking benchmarks).
+ * The runner always emits `skipped-disabled` so attemptedTiers reflects
+ * the reservation without claiming work was attempted.
+ */
+export function createObscuraTier(_opts: { enabled: boolean }): TierRunner {
+  return {
+    tier: 3,
+    name: "obscura",
+    isAvailable: () => true,
+    async run(_url, _ctx) {
+      return {
+        attempt: { tier: 3, name: "obscura", outcome: "skipped-disabled", durationMs: 0 },
+      };
     },
   };
 }
