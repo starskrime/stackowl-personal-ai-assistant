@@ -25,8 +25,9 @@
 | 12 | Heartbeat (proactive messages, job queue) | ✅ implemented — schema v22, single proactive_jobs DB, DeliveryVerifier (ADVANCES/NEUTRAL/NOISE), retry escalation, recordEngagement wiring, AutonomousPlanner learned priorities, goal_progress_update jobs, consolidation.ts deleted. 866 tests passing. | 2026-05-03 |
 | 13 | Learning Engine (reactive + proactive self-study) | ⬜ pending | — |
 | 14 | Evolution (DNA mutation, reflexion, APO) | ⬜ pending | — |
-| 15 | Memory DB (SQLite facts, episodes, attempts) | 🔄 Phase 1 audit + Phase 2 research + Phase 3 design spec complete; awaiting Boss spec review before writing-plans | 2026-05-03 |
-| 16 | Perches (file watchers, event broadcast) | ⬜ pending | — |
+| 15 | Memory DB (SQLite facts, episodes, attempts) | ✅ shipped — Phase J complete (Tasks 30-32), 1144 tests passing | 2026-05-03 |
+| 16a | **Web Browsing Honesty & Wiring** (Phase A) | ✅ shipped — merged `d59dc00` 2026-05-04. Structured `WebToolResult` envelopes, 3-tier dispatcher (http→camofox→scrapling), `<tool_attempt_summary>`, GoalVerifier envelope-driven, channel-parity narration, schema v26. 4842 tests passing. | 2026-05-04 |
+| 16b | Perches (file watchers, event broadcast) — original Element 16 scope | ⬜ pending (preempted by Phase A web honesty) | — |
 | 17 | Owl system (DNA, inner life, specialization) | ⬜ pending | — |
 | 18 | Providers (model routing, health, cost) | ⬜ pending | — |
 | 19 | Skills engine (match, inject, synthesize) | ⬜ pending | — |
