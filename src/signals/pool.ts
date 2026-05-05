@@ -11,6 +11,7 @@ import type { GoalGraph } from "../goals/graph.js";
 import type { GoalVerifier } from "../tools/goal-verifier.js";
 import type { MemoryRepository } from "../memory/repository.js";
 import type { SignalClassifier } from "./classifier.js";
+import { signalToVerifyArgs } from "./goal-adapter.js";
 import { log } from "../logger.js";
 
 const PRIORITY_ORDER: Record<string, number> = {
@@ -139,10 +140,46 @@ export class SignalPool {
     else if (confidence >= 0.7) priority = "medium";
     else priority = "low";
 
-    const admitted: ContextSignal = { ...signal, priority };
+    const admitted: ContextSignal = {
+      ...signal,
+      priority,
+      userSurfaceable: false,
+    };
     this.signals.set(admitted.id, admitted);
     this.enforceLimit();
     this.deps.bus.emit({ type: "signal:emitted", signal: admitted } as any);
+
+    // Stage 2: only verify high-priority signals against active goal
+    if (priority !== "high") return;
+    const goal = this.deps.goalGraph.getTopPriority();
+    if (!goal) return;
+
+    try {
+      const verifyArgs = signalToVerifyArgs(admitted, goal);
+      const result = await this.deps.verifier.verify(verifyArgs);
+      if (result.verdict === "ADVANCES") {
+        admitted.userSurfaceable = true;
+        this.signals.set(admitted.id, admitted);
+        this.deps.bus.emit({
+          type: "signal:promoted",
+          signal: admitted,
+          goal: { id: goal.id, title: goal.title },
+          rationale: result.reason,
+          verdict: "ADVANCES",
+        } as any);
+      } else {
+        this.deps.bus.emit({
+          type: "signal:suppressed",
+          signal: admitted,
+          verdict: result.verdict,
+        } as any);
+      }
+    } catch (err) {
+      log.engine.warn(
+        `[SignalPool] verifier failed: ${(err as Error).message}`,
+      );
+      // Signal stays in pool; will be retried on heartbeat sweep.
+    }
   }
 
   private enforceLimit(): void {
