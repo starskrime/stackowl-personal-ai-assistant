@@ -522,6 +522,7 @@ export async function runEscalationChain(
     if (res.data) return { success: true, data: res.data };
     if (res.attempt.outcome === "blocked") {
       ctx.bus.emit({ type: "web:tier_blocked", tier: r.tier, name: r.name, blockedReason: res.attempt.blockedReason ?? "other", durationMs: res.attempt.durationMs } as any);
+      ctx.bus.emit({ type: "web:escalating", fromTier: r.tier, toTier: r.tier + 1, reason: res.attempt.blockedReason ?? "other" } as any);
     }
   }
 
