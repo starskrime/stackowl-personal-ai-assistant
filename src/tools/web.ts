@@ -6,7 +6,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
-import { webFetch } from "../browser/smart-fetch.js";
+import { webFetchEnvelope } from "../browser/smart-fetch.js";
 
 export const WebCrawlTool: ToolImplementation = {
   definition: {
@@ -58,21 +58,8 @@ export const WebCrawlTool: ToolImplementation = {
     }
 
     try {
-      const result = await webFetch(url, { maxLength: 25000, timeout: 30000 });
-      if (result.blocked) {
-        return serializeWebToolResult({
-          success: false,
-          error: {
-            code: "ALL_TIERS_UNAVAILABLE",
-            message: `${url} — bot/CAPTCHA protection (${result.blockType ?? "unknown"})`,
-            attemptedTiers: [{ tier: 1, name: "http", durationMs: 0, outcome: "blocked", blockedReason: "other" }],
-          },
-        });
-      }
-      return serializeWebToolResult({
-        success: true,
-        data: { kind: "page", url: result.url, title: result.title, content: result.text },
-      });
+      const envelope = await webFetchEnvelope(url);
+      return serializeWebToolResult(envelope);
     } catch (error) {
       return serializeWebToolResult({
         success: false,

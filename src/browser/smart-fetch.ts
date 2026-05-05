@@ -656,6 +656,56 @@ export interface ScraplingTierDeps {
 const TIER3_BUDGET_MS = 25000;
 const SCRAPLING_INSTALL_HINT = "pip install 'scrapling[all]' && patchright install chromium";
 
+// ─── Default dispatcher (Element 16 Task 26) ────────────────────
+//
+// `webFetchEnvelope` runs the 3-tier chain and returns the envelope
+// directly — replacing the lossy `webFetch -> FetchResult -> envelope`
+// reshape that hid attempted-tier metadata. Callers that already have
+// classifier/availability/scrapling deps can inject them; otherwise we
+// fall back to a no-op classifier (status-code-only blocking) and the
+// module-level CamoFox client.
+
+export interface WebFetchEnvelopeDeps {
+  classifier?: { classify: BlockingClassifier["classify"] };
+  availability?: Pick<RuntimeAvailability, "isReady">;
+  scrapling?: {
+    probe: () => Promise<{ ok: boolean; version?: string; error?: string }>;
+    run: (url: string) => Promise<{ title: string; url: string; content: string }>;
+  };
+  bus?: GatewayEventBus;
+  hint?: "anti-bot";
+}
+
+const NOOP_CLASSIFIER: { classify: BlockingClassifier["classify"] } = {
+  classify: async () => ({ blocked: false, confidence: 0, source: "fallback" }),
+};
+
+const NOOP_BUS: GatewayEventBus = { emit: () => {} } as unknown as GatewayEventBus;
+
+const NOOP_AVAILABILITY: Pick<RuntimeAvailability, "isReady"> = {
+  isReady: async () => false,
+};
+
+export async function webFetchEnvelope(
+  url: string,
+  deps: WebFetchEnvelopeDeps = {},
+): Promise<WebToolResult> {
+  const classifier = deps.classifier ?? NOOP_CLASSIFIER;
+  const availability = deps.availability ?? NOOP_AVAILABILITY;
+  const bus = deps.bus ?? NOOP_BUS;
+  const camoClient = getCamoFoxClient();
+
+  const tiers: TierRunner[] = [createHttpTier({ classifier })];
+  if (camoClient) {
+    tiers.push(createCamoFoxTier({ availability, client: camoClient, classifier }));
+  }
+  if (deps.scrapling) {
+    tiers.push(createScraplingTier({ probe: deps.scrapling.probe, runScrapling: deps.scrapling.run }));
+  }
+
+  return runEscalationChain(tiers, url, { bus, hint: deps.hint });
+}
+
 export function createScraplingTier(deps: ScraplingTierDeps): TierRunner & { installHint(): string } {
   let probed: { ok: boolean } | null = null;
   let installHintMessage = SCRAPLING_INSTALL_HINT;
