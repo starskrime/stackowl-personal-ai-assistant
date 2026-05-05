@@ -94,3 +94,22 @@ export function formatToolEvent(event: ToolSystemEvent): string | null {
       return null;
   }
 }
+
+import type { TierAttempt } from "../browser/envelope.js";
+
+export type NarrationChannel = "cli" | "telegram" | "slack" | "web";
+
+export function formatWebAttempts(attempts: TierAttempt[], channel: NarrationChannel): string {
+  if (channel === "cli") {
+    return attempts.map((a) => {
+      const ext = a.httpStatus ? `${a.httpStatus}, ${a.blockedReason ?? a.outcome}` : (a.blockedReason ?? a.outcome);
+      return `  → ${a.name} (${ext})`;
+    }).join("\n");
+  }
+  if (channel === "telegram" || channel === "slack") {
+    return `Tried ${attempts.length} ways: ${attempts.map((a) => `${a.name} ${a.outcome}`).join(", ")}.`;
+  }
+  // web
+  const rows = attempts.map((a) => `<li>${a.tier}. ${a.name} — ${a.outcome}${a.blockedReason ? " (" + a.blockedReason + ")" : ""}</li>`).join("");
+  return `<details><summary>Tier attempts (${attempts.length})</summary><ol>${rows}</ol></details>`;
+}
