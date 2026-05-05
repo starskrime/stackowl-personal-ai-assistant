@@ -586,3 +586,59 @@ export async function runEscalationChain(
     },
   };
 }
+
+import type { BlockingClassifier } from "./blocking-classifier.js";
+
+export interface HttpTierDeps {
+  classifier: Pick<BlockingClassifier, "classify">;
+  fetcher?: (url: string, timeoutMs: number) => Promise<{ status: number; body: string; contentType: string }>;
+}
+
+const TIER1_TIMEOUT_MS = 4000;
+
+const TRIGGER_STATUSES = new Set([401, 403, 429, 503]);
+
+export function createHttpTier(deps: HttpTierDeps): TierRunner {
+  const fetcher = deps.fetcher ?? defaultHttpFetch;
+  return {
+    tier: 1,
+    name: "http",
+    isAvailable: () => true,
+    async run(url, _ctx) {
+      const t0 = Date.now();
+      let resp: { status: number; body: string; contentType: string };
+      try { resp = await fetcher(url, TIER1_TIMEOUT_MS); }
+      catch {
+        return { attempt: { tier: 1, name: "http", durationMs: Date.now() - t0, outcome: "timeout" } };
+      }
+
+      const trigger = TRIGGER_STATUSES.has(resp.status) || resp.status >= 500
+        || (resp.status !== 200 && resp.body.length < 1024);
+      if (trigger) {
+        const v = await deps.classifier.classify({ url, httpStatus: resp.status, bodyPreview: resp.body.slice(0, 2048) });
+        if (v.blocked) {
+          return { attempt: {
+            tier: 1, name: "http", durationMs: Date.now() - t0,
+            outcome: "blocked", blockedReason: (v.reason ?? "other") as any, httpStatus: resp.status,
+          } };
+        }
+      }
+
+      const { title, text } = htmlToText(resp.body);
+      return {
+        attempt: { tier: 1, name: "http", durationMs: Date.now() - t0, outcome: "success", httpStatus: resp.status },
+        data: { kind: "page", url, title, content: text, contentType: resp.contentType },
+      };
+    },
+  };
+}
+
+async function defaultHttpFetch(url: string, timeoutMs: number) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, headers: CHROME_HEADERS, redirect: "follow" });
+    const body = await r.text();
+    return { status: r.status, body, contentType: r.headers.get("content-type") ?? "" };
+  } finally { clearTimeout(t); }
+}
