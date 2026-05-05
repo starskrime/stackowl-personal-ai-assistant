@@ -87,7 +87,7 @@ describe("FallbackSequencer — DB-backed", () => {
       .prepare(
         "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, sample_count) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run("web_fetch", "scrapling", "web_fetch", "", 0.5, 10);
+      .run("web_fetch", "scrapling", "web_fetch", "", 0.9, 10);
     db.rawDb
       .prepare(
         "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, sample_count) VALUES (?, ?, ?, ?, ?, ?)",
