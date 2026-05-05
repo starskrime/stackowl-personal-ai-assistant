@@ -1199,7 +1199,7 @@ async function buildGateway(
       b.commitmentTracker,
       b.intentStateMachine,
       b.goalGraph,
-      undefined, // contextMesh initialized separately in gateway
+      undefined, // signalPool wired in Task 19
     ),
     // ─── Epic 7: Knowledge Building Modules ─────────────────
     pelletRetriever,

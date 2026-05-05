@@ -2728,10 +2728,10 @@ export class OwlGateway {
   // ─── Feature Module Initialization ──────────────────────────
 
   private initFeatureModules(): void {
-    // Context Mesh — start ambient signal collectors
-    if (this.ctx.contextMesh) {
-      this.ctx.contextMesh.start();
-      log.engine.info("[feature] Context Mesh started");
+    // SignalPool — start ambient signal collectors
+    if (this.ctx.signalPool) {
+      this.ctx.signalPool.start();
+      log.engine.info("[feature] SignalPool started");
     }
 
     // Trust Chain — load trust scores from disk
@@ -2815,7 +2815,7 @@ export class OwlGateway {
       this.ctx.patternAnalyzer?.save?.().catch(() => {});
       this.ctx.predictiveQueue?.save?.().catch(() => {});
       this.ctx.skillArena?.save?.().catch(() => {});
-      this.ctx.contextMesh?.stop?.();
+      this.ctx.signalPool?.stop?.();
       this.ctx.backgroundJobRunner?.stop();
     };
     process.once("beforeExit", saveOnExit);

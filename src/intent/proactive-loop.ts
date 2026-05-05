@@ -15,7 +15,7 @@
 import type { CommitmentTracker } from "../intent/commitment-tracker.js";
 import type { IntentStateMachine } from "../intent/state-machine.js";
 import type { GoalGraph } from "../goals/graph.js";
-import type { ContextMesh } from "../ambient/mesh.js";
+import type { SignalPool } from "../signals/pool.js";
 import { log } from "../logger.js";
 
 export type ProactiveItemType =
@@ -37,7 +37,7 @@ export class ProactiveIntentionLoop {
     private commitmentTracker: CommitmentTracker | undefined,
     private intentStateMachine: IntentStateMachine | undefined,
     private goalGraph: GoalGraph | undefined,
-    private contextMesh: ContextMesh | undefined,
+    private signalPool: SignalPool | undefined,
   ) {}
 
   /**
@@ -99,8 +99,8 @@ export class ProactiveIntentionLoop {
     }
 
     // 4. High-priority ambient signals
-    if (this.contextMesh) {
-      const signals = this.contextMesh.getState().signals;
+    if (this.signalPool) {
+      const signals = this.signalPool.getState().signals;
       for (const signal of signals.slice(0, 3)) {
         if (signal.priority === "critical" || signal.priority === "high") {
           items.push({
