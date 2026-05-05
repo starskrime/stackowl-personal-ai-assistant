@@ -1,4 +1,5 @@
 import type { ModelProvider } from '../providers/base.js';
+import type { IntelligenceRouter } from '../intelligence/router.js';
 import type { VerificationResult } from './types.js';
 
 export interface ConfirmationIntent {
@@ -34,15 +35,78 @@ const DEFAULT_CONFIG: EscalationHandlerConfig = {
   minConfidenceForEscalation: 0.5,
 };
 
+export type ConfirmationClassifier = (
+  response: string,
+  context?: string,
+) => Promise<ConfirmationIntent>;
+
+const unavailableClassifier: ConfirmationClassifier = async () => ({
+  intent: 'unclear',
+  confidence: 0,
+  reasoning: 'No classifier wired',
+});
+
 export class EscalationHandler {
   private config: EscalationHandlerConfig;
+  private classifier: ConfirmationClassifier;
   private escalationHistory: Map<string, EscalationRecord> = new Map();
   private pendingEscalations: Map<string, EscalationMessage> = new Map();
-  private modelProvider: ModelProvider;
 
-  constructor(modelProvider: ModelProvider, config: Partial<EscalationHandlerConfig> = {}) {
-    this.modelProvider = modelProvider;
+  /**
+   * Wire EscalationHandler to the IntelligenceRouter cheap-tier classifier.
+   * Mirrors GoalVerifier.create(): resolves "classification" at call time,
+   * delegates the chat to the resolved provider with the resolved model.
+   */
+  static create(
+    router: IntelligenceRouter,
+    providers: Map<string, ModelProvider>,
+    config: Partial<EscalationHandlerConfig> = {},
+  ): EscalationHandler {
+    const classifier: ConfirmationClassifier = async (response, context) => {
+      const resolved = router.resolve('classification');
+      const provider = providers.get(resolved.provider);
+      if (!provider) {
+        return { intent: 'unclear', confidence: 0, reasoning: 'provider not found' };
+      }
+      const prompt = `Parse this user response to a confirmation question.
+
+User said: "${response}"
+Confirmation question was: "${context ?? 'Did this accomplish what you were looking for?'}"
+
+Determine if the user:
+1. Said yes/confirmed (agreed to proceed)
+2. Said no/rejected (did not agree)
+3. Is unclear/neutral
+
+Respond with JSON only:
+{"intent":"confirm|reject|unclear","confidence":0.0,"reasoning":"brief"}`;
+
+      try {
+        const result = await provider.chat(
+          [{ role: 'user', content: prompt }],
+          resolved.model,
+          { temperature: 0 },
+        );
+        const match = result.content.match(/\{[\s\S]*\}/);
+        if (!match) return { intent: 'unclear', confidence: 0, reasoning: 'unparseable' };
+        const parsed = JSON.parse(match[0]) as ConfirmationIntent;
+        if (!['confirm', 'reject', 'unclear'].includes(parsed.intent)) {
+          return { intent: 'unclear', confidence: 0, reasoning: 'invalid intent' };
+        }
+        return parsed;
+      } catch {
+        return { intent: 'unclear', confidence: 0, reasoning: 'classifier failed' };
+      }
+    };
+    return new EscalationHandler(config, classifier);
+  }
+
+  constructor(
+    config: Partial<EscalationHandlerConfig> = {},
+    classifier: ConfirmationClassifier = unavailableClassifier,
+  ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.classifier = classifier;
   }
 
   createEscalationMessage(
@@ -59,10 +123,7 @@ export class EscalationHandler {
     };
 
     this.pendingEscalations.set(taskId, escalation);
-    this.escalationHistory.set(taskId, {
-      taskId,
-      escalation,
-    });
+    this.escalationHistory.set(taskId, { taskId, escalation });
 
     this.logBehavioral('behavioral.escalation.triggered', taskId);
     return escalation;
@@ -87,7 +148,7 @@ export class EscalationHandler {
     const record = this.escalationHistory.get(taskId);
     if (!record) return;
 
-    const parsed = await this.parseUserConfirmation(response, context);
+    const parsed = await this.classifier(response, context);
     record.userResponse = response;
     record.userConfirmed = parsed.intent === 'confirm';
     record.respondedAt = new Date().toISOString();
@@ -103,40 +164,6 @@ export class EscalationHandler {
     this.pendingEscalations.delete(taskId);
   }
 
-  async parseUserConfirmation(response: string, context?: string): Promise<ConfirmationIntent> {
-    const prompt = `Parse this user response to a confirmation question.
-
-User said: "${response}"
-Confirmation question was: "${context ?? 'Did this accomplish what you were looking for?'}"
-
-Determine if the user:
-1. Said yes/confirmed (agreed to proceed)
-2. Said no/rejected (did not agree)
-3. Is unclear/neutral
-
-Respond with JSON:
-{
-  "intent": "confirm|reject|unclear",
-  "confidence": 0.0-1.0,
-  "reasoning": "brief explanation"
-}`;
-
-    const result = await this.modelProvider.chat([
-      { role: 'user', content: prompt }
-    ]);
-
-    const content = result.content;
-    try {
-      const parsed = JSON.parse(content) as ConfirmationIntent;
-      if (!['confirm', 'reject', 'unclear'].includes(parsed.intent)) {
-        return { intent: 'unclear', confidence: 0, reasoning: 'Invalid intent from LLM' };
-      }
-      return parsed;
-    } catch {
-      return { intent: 'unclear', confidence: 0, reasoning: 'Failed to parse LLM response' };
-    }
-  }
-
   getEscalationRecord(taskId: string): EscalationRecord | undefined {
     return this.escalationHistory.get(taskId);
   }
@@ -149,7 +176,14 @@ Respond with JSON:
     return new Map(this.escalationHistory);
   }
 
-  private logBehavioral(event: 'behavioral.escalation.triggered' | 'behavioral.escalation.user_confirmed' | 'behavioral.escalation.user_rejected' | 'behavioral.escalation.user_unclear', taskId: string): void {
+  private logBehavioral(
+    event:
+      | 'behavioral.escalation.triggered'
+      | 'behavioral.escalation.user_confirmed'
+      | 'behavioral.escalation.user_rejected'
+      | 'behavioral.escalation.user_unclear',
+    taskId: string,
+  ): void {
     console.log(
       `${new Date().toISOString()} INFO [EscalationHandler] ${event} taskId=${taskId}`,
     );

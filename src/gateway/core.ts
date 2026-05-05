@@ -749,9 +749,10 @@ export class OwlGateway {
 
     // Wire GoalVerifier for Parliament post-session verification
     // NOTE: field is ctx.intelligence (not ctx.intelligenceRouter) — verified in src/gateway/types.ts
+    const providerMap = new Map<string, import("../providers/base.js").ModelProvider>();
+    if (ctx.provider) providerMap.set(ctx.config.defaultProvider ?? "default", ctx.provider);
+
     if (ctx.intelligence) {
-      const providerMap = new Map<string, import("../providers/base.js").ModelProvider>();
-      if (ctx.provider) providerMap.set(ctx.config.defaultProvider ?? "default", ctx.provider);
       this.goalVerifier = GoalVerifier.create(ctx.intelligence, providerMap);
     }
 
@@ -762,7 +763,9 @@ export class OwlGateway {
     this.outcomeVerifier = new OutcomeVerifier();
     this.falseDoneDetector = new FalseDoneDetector(this.ctx.provider);
     this.completionTracker = new CompletionTracker();
-    this.escalationHandler = new EscalationHandler(this.ctx.provider);
+    this.escalationHandler = ctx.intelligence
+      ? EscalationHandler.create(ctx.intelligence, providerMap)
+      : new EscalationHandler();
 
     // Initialize new feature modules (all optional, fire-and-forget load)
     this.initFeatureModules();
