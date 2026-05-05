@@ -555,7 +555,7 @@ Phase I was based on an out-of-date audit assumption that v25 would *replace* le
 
 ## Element 16 — Web Browsing Honesty & Wiring (Phase A)
 
-**Status:** Planning complete, awaiting Boss approval to execute (Phase 6)
+**Status:** ✅ Shipped. Merged to main as `d59dc00` on 2026-05-04. 585 files / 4842 tests passing. Phase B (Obscura/new stealth backends) deferred pending Phase A telemetry.
 **Started:** 2026-05-04
 **Driver:** Web tools return narrative "BLOCKED:" strings before all tiers actually run. CamoFox is registered but never observed running (missing from `package.json`, `start.sh` skips silently). Scrapling is reachable in source but invisible to the LLM (deprecated:true). The "umbrella" hides a 4-tier chain the LLM can't see, reason about, or override — so it parrots "I'm blocked" prematurely.
 
@@ -568,11 +568,11 @@ Phase I was based on an out-of-date audit assumption that v25 would *replace* le
 - ✅ **Phase 3 — Architecture review (Winston)** — `_bmad-output/planning-artifacts/element16-web-tools-architecture-review-2026-05-04.md`. 6 locked decisions: structured envelope schema, LLM tool surface, CamoFox bootstrap, Scrapling pipe, GoalVerifier coupling (key off `error.code`, not `"BLOCKED:"` substring), telemetry/narration. Surfaced third dishonesty axis: `runtime.ts:2367` Anti-Bot Override prompt names `scrapling_fetch` + `camofox` (both deprecated/hidden) — LLM is being told to call tools it cannot see.
 - ✅ **Phase 4 — Design spec** — `docs/superpowers/specs/2026-05-04-element16-web-tools-honesty-design.md`. 12 sections, Boss-approved. Locked architecture: 3-tier umbrella (http → camofox → scrapling), live-browser is a peer (not in chain — only opens for auth/visual at LLM's request), `hint?: 'anti-bot'` closed enum, generic envelope-driven prompt (Flavor X), lazy classifier with status-code triggers, fine-grained per-tier bus events. 3 NEW files: `src/browser/envelope.ts`, `src/runtime/availability.ts`, `src/browser/blocking-classifier.ts`.
 - ✅ **Phase 5 — Implementation plan** — `docs/superpowers/plans/2026-05-04-element16-web-tools-honesty.md`. 27 TDD tasks across 8 phases, 2828 lines. Realistic implementation time: 9-10 engineer-hours. Highest-risk task: Task 15 (`registry.ts:411-413` envelope-aware rewrite — every tool crosses this code path). Plan agent flagged 5 spec ambiguities for engineer judgement, patched 3 spec coverage gaps. `start.sh:270-333` deletion (CamoFox install moves out of dev script into the assistant's existing onboarding wizard at `src/cli/onboarding.ts` Section D). `package.json` adds `camofox-browser` to `optionalDependencies`.
-- ⬜ **Phase 6 — Execute** — Deferred. Will use `superpowers:subagent-driven-development` in fresh worktree `feature/element-16-web-tools`. Awaits separate Boss approval.
+- ✅ **Phase 6 — Execute** — All 26 TDD tasks executed inline (worktree `feature/element-16-web-tools`, now merged + cleaned). 25 source-only commits + merge commit `d59dc00`. New: `src/browser/envelope.ts`, `src/runtime/availability.ts`, `src/browser/blocking-classifier.ts`. 3-tier dispatcher (`http → camofox → scrapling`) wired through `webFetchEnvelope`; `<tool_attempt_summary>` replaces `BLOCKED:` narrative; GoalVerifier keys off `error.code`; CamoFox install moved from `start.sh` to `stackowl backends install`; `camofox-browser` added to `optionalDependencies`. Schema v26 (`tool_executions.attempt_metadata`) for Phase B telemetry gating.
 
-### Commits (planning round)
+### Commits
 
-*(none yet — planning artifacts pending commit decision)*
+Merge: `d59dc00 Merge Element 16 — Web Browsing Honesty & Wiring (Phase A)` (25 commits + merge).
 
 ---
 
