@@ -103,4 +103,70 @@ describe("EdgeAccumulator", () => {
       "web_crawl",
     ]);
   });
+
+  it("defaults host_root to empty string when not provided", () => {
+    acc.observe({
+      fromTool: "web",
+      toTool: "web_crawl",
+      capabilityTag: "web_fetch",
+      success: true,
+      durationMs: 100,
+    });
+    const row = db.rawDb
+      .prepare(
+        "SELECT host_root FROM tool_edges WHERE from_tool=? AND to_tool=? AND capability_tag=?",
+      )
+      .get("web", "web_crawl", "web_fetch") as { host_root: string };
+    expect(row.host_root).toBe("");
+  });
+
+  it("records explicit hostRoot", () => {
+    acc.observe({
+      fromTool: "web",
+      toTool: "web_crawl",
+      capabilityTag: "web_fetch",
+      success: true,
+      durationMs: 100,
+      hostRoot: "github.com",
+    });
+    const row = db.rawDb
+      .prepare(
+        "SELECT host_root FROM tool_edges WHERE from_tool=? AND to_tool=? AND capability_tag=? AND host_root=?",
+      )
+      .get("web", "web_crawl", "web_fetch", "github.com") as {
+      host_root: string;
+    };
+    expect(row.host_root).toBe("github.com");
+  });
+
+  it("host-scoped and global rows coexist as separate edges", () => {
+    acc.observe({
+      fromTool: "web_fetch",
+      toTool: "scrapling",
+      capabilityTag: "web_fetch",
+      success: true,
+      durationMs: 100,
+    });
+    acc.observe({
+      fromTool: "web_fetch",
+      toTool: "scrapling",
+      capabilityTag: "web_fetch",
+      success: false,
+      durationMs: 500,
+      hostRoot: "github.com",
+    });
+    const rows = db.rawDb
+      .prepare(
+        "SELECT host_root, success_rate FROM tool_edges WHERE from_tool=? AND to_tool=? AND capability_tag=? ORDER BY host_root",
+      )
+      .all("web_fetch", "scrapling", "web_fetch") as {
+      host_root: string;
+      success_rate: number;
+    }[];
+    expect(rows).toHaveLength(2);
+    const global = rows.find((r) => r.host_root === "");
+    const github = rows.find((r) => r.host_root === "github.com");
+    expect(global?.success_rate).toBe(1);
+    expect(github?.success_rate).toBe(0);
+  });
 });
