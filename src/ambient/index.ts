@@ -5,7 +5,10 @@ export type {
   SignalCollector,
   MeshState,
   AmbientRule,
+  ConsentMap,
 } from "./types.js";
+
+export { DEFAULT_CONSENT } from "./types.js";
 
 export {
   GitStatusCollector,
@@ -13,6 +16,7 @@ export {
   SystemCollector,
   ActiveFileCollector,
   ClipboardCollector,
-} from "./collectors.js";
+  FileSystemCollector,
+} from "../signals/collectors.js";
 
-export { ContextMesh } from "./mesh.js";
+export { SignalPool } from "../signals/pool.js";
