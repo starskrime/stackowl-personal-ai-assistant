@@ -68,7 +68,10 @@ export class SignalPool {
       } else if (c.mode === "poll" && c.collect && c.intervalMs) {
         void this.runPollCollector(c);
         this.timers.push(
-          setInterval(() => void this.runPollCollector(c), c.intervalMs),
+          setInterval(() => {
+            if (!this.collectors.includes(c)) return;
+            void this.runPollCollector(c);
+          }, c.intervalMs),
         );
       }
     }
@@ -246,7 +249,32 @@ export class SignalPool {
     }
   }
 
-  private async runPollCollector(_c: SignalCollector): Promise<void> {
-    // Implemented in Task 9
+  private failureCounts = new Map<SignalSource, number>();
+
+  private async runPollCollector(c: SignalCollector): Promise<void> {
+    if (!c.collect) return;
+    try {
+      const signalsP = c.collect();
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("collector timeout")), 2_000),
+      );
+      const signals = await Promise.race([signalsP, timeout]);
+      this.failureCounts.set(c.source, 0);
+      for (const s of signals) {
+        await this.injectSignal(s);
+      }
+    } catch (err) {
+      const count = (this.failureCounts.get(c.source) ?? 0) + 1;
+      this.failureCounts.set(c.source, count);
+      log.engine.debug(
+        `[SignalPool] collector ${c.source} failed: ${(err as Error).message}`,
+      );
+      if (count >= 3) {
+        log.engine.warn(
+          `[SignalPool] collector ${c.source} deregistered after 3 failures`,
+        );
+        this.collectors = this.collectors.filter((x) => x !== c);
+      }
+    }
   }
 }
