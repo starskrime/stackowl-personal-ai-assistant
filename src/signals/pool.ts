@@ -151,7 +151,7 @@ export class SignalPool {
     };
     this.signals.set(admitted.id, admitted);
     this.enforceLimit();
-    this.deps.bus.emit({ type: "signal:emitted", signal: admitted } as any);
+    this.deps.bus.emit({ type: "signal:emitted", signal: admitted });
 
     // Stage 2: only verify high-priority signals against active goal
     if (priority !== "high") return;
@@ -172,7 +172,7 @@ export class SignalPool {
           type: "signal:suppressed",
           signal: admitted,
           verdict: result.verdict,
-        } as any);
+        });
       }
     } catch (err) {
       log.engine.warn(
@@ -191,7 +191,7 @@ export class SignalPool {
           type: "signal:expired",
           signal: s,
           reason: "ttl",
-        } as any);
+        });
       }
     }
     const goal = this.deps.goalGraph.getTopPriority();
@@ -236,7 +236,7 @@ export class SignalPool {
       goal,
       rationale,
       verdict: "ADVANCES",
-    } as any);
+    });
     if (this.deps.memoryRepo) {
       try {
         this.deps.memoryRepo.insertBatch([
@@ -274,7 +274,7 @@ export class SignalPool {
         type: "signal:expired",
         signal: evicted,
         reason: "evicted",
-      } as any);
+      });
     }
   }
 
