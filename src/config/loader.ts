@@ -251,6 +251,13 @@ export interface StackOwlConfig {
     /** Request timeout in ms. Default: 30000 */
     defaultTimeout?: number;
   };
+  /** Web fetch / smart-fetch tier configuration */
+  webFetch?: {
+    obscura?: {
+      /** Enable the Obscura tier (Tier 3 reserve). Default false — type-only safety valve until v1.0 + independent benchmarks. */
+      enabled?: boolean;
+    };
+  };
   /** Voice channel configuration (used by `stackowl voice` and /voice in Telegram) */
   voice?: {
     /** Whisper model for offline STT. Default: "base.en". */
@@ -443,6 +450,12 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
       research: {
         ...DEFAULT_CONFIG.research!,
         ...(userConfig.research || {}),
+      },
+      webFetch: {
+        ...(userConfig.webFetch || {}),
+        obscura: {
+          enabled: userConfig.webFetch?.obscura?.enabled === true,
+        },
       },
     };
 
