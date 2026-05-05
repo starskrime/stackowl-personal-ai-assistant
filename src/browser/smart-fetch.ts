@@ -642,3 +642,56 @@ async function defaultHttpFetch(url: string, timeoutMs: number) {
     return { status: r.status, body, contentType: r.headers.get("content-type") ?? "" };
   } finally { clearTimeout(t); }
 }
+
+import type { RuntimeAvailability } from "../runtime/availability.js";
+import type { CamoFoxClient } from "./camofox-client.js";
+
+export interface CamoFoxTierDeps {
+  availability: Pick<RuntimeAvailability, "isReady">;
+  client: CamoFoxClient | null;
+  classifier?: Pick<BlockingClassifier, "classify">;
+}
+
+const TIER2_BUDGET_MS = 20000;
+
+export function createCamoFoxTier(deps: CamoFoxTierDeps): TierRunner {
+  return {
+    tier: 2,
+    name: "camofox",
+    isAvailable: async () => {
+      if (!deps.client) return false;
+      return await deps.availability.isReady("camofox");
+    },
+    async run(url, _ctx) {
+      const t0 = Date.now();
+      const userId = "stackowl-smartfetch";
+      let tabId: string | null = null;
+      try {
+        const tab = await deps.client!.createTab(userId, url);
+        tabId = tab.tabId;
+        const snap = await Promise.race([
+          deps.client!.snapshot(tabId, userId),
+          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("camofox-timeout")), TIER2_BUDGET_MS)),
+        ]);
+        if (!snap) throw new Error("camofox-empty");
+        const text = (snap.snapshot ?? "").replace(/\[[\w\s]+\]\s*/g, "").replace(/\be\d+\b/g, "").replace(/\s{2,}/g, " ").trim();
+
+        if (deps.classifier) {
+          const v = await deps.classifier.classify({ url, httpStatus: 200, bodyPreview: text.slice(0, 2048) });
+          if (v.blocked) {
+            return { attempt: { tier: 2, name: "camofox", durationMs: Date.now() - t0, outcome: "blocked", blockedReason: (v.reason ?? "other") as any } };
+          }
+        }
+        return {
+          attempt: { tier: 2, name: "camofox", durationMs: Date.now() - t0, outcome: "success" },
+          data: { kind: "page", url: snap.url ?? url, content: text },
+        };
+      } catch (err) {
+        const isTimeout = err instanceof Error && err.message === "camofox-timeout";
+        return { attempt: { tier: 2, name: "camofox", durationMs: Date.now() - t0, outcome: isTimeout ? "timeout" : "error" } };
+      } finally {
+        if (tabId) await deps.client!.closeTab(tabId, userId).catch(() => {});
+      }
+    },
+  };
+}
