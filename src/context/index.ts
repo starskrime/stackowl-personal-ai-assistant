@@ -35,6 +35,7 @@ import { CritiqueRetriever } from "../intelligence/critique-retriever.js";
 import { ChallengeDirectiveLayer } from "../intelligence/challenge-directive.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { OwlRegistry } from "../owls/registry.js";
+import type { SignalPool } from "../signals/pool.js";
 
 export interface ContextPipelineDeps {
   userPersonaSynthesizer: UserPersonaSynthesizer;
@@ -44,6 +45,8 @@ export interface ContextPipelineDeps {
   db?: MemoryDatabase;
   /** Optional OwlRegistry — enables ChallengeDirectiveLayer to read live DNA. */
   owlRegistry?: OwlRegistry;
+  /** Optional SignalPool — enables AmbientContextLayer when provided. */
+  signalPool?: SignalPool;
 }
 
 export function createContextPipeline(deps: ContextPipelineDeps): ContextPipeline {
@@ -73,7 +76,7 @@ export function createContextPipeline(deps: ContextPipelineDeps): ContextPipelin
     new InferredPreferencesLayer(),
     new PredictedNeedsLayer(),
     new CollabContextLayer(),
-    new AmbientContextLayer(),
+    ...(deps.signalPool ? [new AmbientContextLayer(deps.signalPool)] : []),
     new DepthDirectiveLayer(),
     new OpinionInjectionLayer(),
     new UserMentalModelLayer(),
