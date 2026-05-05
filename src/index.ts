@@ -235,6 +235,17 @@ import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
 import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
+import { SignalPool } from "./signals/pool.js";
+import { SignalClassifier } from "./signals/classifier.js";
+import {
+  GitStatusCollector,
+  TimeContextCollector,
+  SystemCollector,
+  ActiveFileCollector,
+  ClipboardCollector,
+  FileSystemCollector,
+} from "./signals/collectors.js";
+import { GoalVerifier } from "./tools/goal-verifier.js";
 
 // ─── Boot helpers ────────────────────────────────────────────────
 
@@ -1225,6 +1236,30 @@ async function buildGateway(
     });
     memoryWriter.attachBusListeners();
     gateway.ctx.memoryWriter = memoryWriter;
+
+    // ─── Element 16b — SignalPool (ambient signal mesh) ──────────
+    const providerMap = new Map<string, import("./providers/base.js").ModelProvider>();
+    providerMap.set(b.config.defaultProvider ?? "default", provider);
+    const signalPool = new SignalPool({
+      bus: gateway.gatewayEventBus,
+      classifier: SignalClassifier.create(gateway.ctx.intelligence, providerMap),
+      verifier: GoalVerifier.create(gateway.ctx.intelligence, providerMap),
+      goalGraph: b.goalGraph,
+      config: {
+        maxSignals: 32,
+        consent: ((b.config as any).perches?.consent) ?? {},
+      },
+      memoryRepo,
+      workspacePath: b.workspacePath,
+    });
+    signalPool.addCollector(new GitStatusCollector(b.workspacePath));
+    signalPool.addCollector(new TimeContextCollector());
+    signalPool.addCollector(new SystemCollector());
+    signalPool.addCollector(new ActiveFileCollector(b.workspacePath));
+    signalPool.addCollector(new ClipboardCollector());
+    signalPool.addCollector(new FileSystemCollector(b.workspacePath));
+    gateway.ctx.signalPool = signalPool;
+    signalPool.start();
   }
 
   // Register canonical `memory` tool (search/get/invalidate; importance ≥ 0.8
