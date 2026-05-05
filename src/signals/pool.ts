@@ -5,6 +5,7 @@ import type {
   SignalCollector,
   SignalSource,
 } from "../ambient/types.js";
+import { DEFAULT_CONSENT } from "../ambient/types.js";
 import type { GatewayEventBus } from "../gateway/event-bus.js";
 import type { GoalGraph } from "../goals/graph.js";
 import type { GoalVerifier } from "../tools/goal-verifier.js";
@@ -119,8 +120,48 @@ export class SignalPool {
     return `<ambient_context updated="${new Date().toISOString()}">\n${lines.join("\n")}\n</ambient_context>`;
   }
 
-  async injectSignal(_signal: ContextSignal): Promise<void> {
-    // Implemented in Task 6 (admission gates) and Task 7 (verifier promotion)
+  async injectSignal(signal: ContextSignal): Promise<void> {
+    // Gate 1: consent (no router cost for denied sources)
+    const consent = this.deps.config.consent;
+    const allowed = consent[signal.source] ?? DEFAULT_CONSENT[signal.source];
+    if (!allowed) return;
+
+    // Gate 2: enabledSources (no router cost for disabled sources)
+    const enabled = this.deps.config.enabledSources;
+    if (enabled && !enabled.includes(signal.source)) return;
+
+    // Stage 1: cheap-tier classifier prefilter
+    const { keep, confidence } = await this.deps.classifier.classify(signal);
+    if (!keep) return;
+
+    let priority = signal.priority;
+    if (confidence >= 0.9) priority = "high";
+    else if (confidence >= 0.7) priority = "medium";
+    else priority = "low";
+
+    const admitted: ContextSignal = { ...signal, priority };
+    this.signals.set(admitted.id, admitted);
+    this.enforceLimit();
+    this.deps.bus.emit({ type: "signal:emitted", signal: admitted } as any);
+  }
+
+  private enforceLimit(): void {
+    const max = this.deps.config.maxSignals;
+    if (this.signals.size <= max) return;
+    const sorted = [...this.signals.values()].sort(
+      (a, b) =>
+        (PRIORITY_ORDER[b.priority] ?? 3) -
+          (PRIORITY_ORDER[a.priority] ?? 3) || a.timestamp - b.timestamp,
+    );
+    while (sorted.length > max) {
+      const evicted = sorted.shift()!;
+      this.signals.delete(evicted.id);
+      this.deps.bus.emit({
+        type: "signal:expired",
+        signal: evicted,
+        reason: "evicted",
+      } as any);
+    }
   }
 
   private async runPollCollector(_c: SignalCollector): Promise<void> {
