@@ -695,3 +695,46 @@ export function createCamoFoxTier(deps: CamoFoxTierDeps): TierRunner {
     },
   };
 }
+
+export interface ScraplingTierDeps {
+  probe: () => Promise<{ ok: boolean; version?: string; error?: string }>;
+  runScrapling: (url: string) => Promise<{ title: string; url: string; content: string }>;
+}
+
+const TIER3_BUDGET_MS = 25000;
+const SCRAPLING_INSTALL_HINT = "pip install 'scrapling[all]' && patchright install chromium";
+
+export function createScraplingTier(deps: ScraplingTierDeps): TierRunner & { installHint(): string } {
+  let probed: { ok: boolean } | null = null;
+  let installHintMessage = SCRAPLING_INSTALL_HINT;
+
+  return {
+    tier: 3,
+    name: "scrapling",
+    isAvailable: async () => {
+      if (probed) return probed.ok;
+      const r = await deps.probe();
+      probed = { ok: r.ok };
+      if (!r.ok && r.error) installHintMessage = `${SCRAPLING_INSTALL_HINT}  # probe error: ${r.error}`;
+      return r.ok;
+    },
+    installHint: () => installHintMessage,
+    async run(url, _ctx) {
+      const t0 = Date.now();
+      try {
+        const r = await Promise.race([
+          deps.runScrapling(url),
+          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("scrapling-timeout")), TIER3_BUDGET_MS)),
+        ]);
+        if (!r) throw new Error("scrapling-empty");
+        return {
+          attempt: { tier: 3, name: "scrapling", durationMs: Date.now() - t0, outcome: "success" },
+          data: { kind: "page", url: r.url, title: r.title, content: r.content },
+        };
+      } catch (err) {
+        const isTimeout = err instanceof Error && err.message === "scrapling-timeout";
+        return { attempt: { tier: 3, name: "scrapling", durationMs: Date.now() - t0, outcome: isTimeout ? "timeout" : "error" } };
+      }
+    },
+  };
+}
