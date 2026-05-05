@@ -25,6 +25,7 @@ import {
   TimeContextCollector,
   SystemCollector,
   ActiveFileCollector,
+  ClipboardCollector,
 } from "../../src/signals/collectors.js";
 
 describe("GitStatusCollector", () => {
@@ -88,5 +89,39 @@ describe("ActiveFileCollector", () => {
     const c = new ActiveFileCollector("/tmp");
     const signals = await c.collect!();
     expect(signals).toEqual([]);
+  });
+});
+
+describe("ClipboardCollector", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns empty on non-darwin", async () => {
+    const orig = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const c = new ClipboardCollector();
+    const signals = await c.collect!();
+    expect(signals).toEqual([]);
+    Object.defineProperty(process, "platform", { value: orig });
+  });
+
+  it("emits clipboard signal at priority low (truncated to 200 chars)", async () => {
+    if (process.platform !== "darwin") return;
+    (execSync as any).mockImplementation((cmd: string) =>
+      cmd === "pbpaste" ? "x".repeat(500) : "",
+    );
+    const c = new ClipboardCollector();
+    const signals = await c.collect!();
+    expect(signals[0].priority).toBe("low");
+    expect(signals[0].content.length).toBeLessThanOrEqual(204);
+  });
+
+  it("does not re-emit the same content twice", async () => {
+    if (process.platform !== "darwin") return;
+    (execSync as any).mockImplementation(() => "stable content");
+    const c = new ClipboardCollector();
+    const first = await c.collect!();
+    const second = await c.collect!();
+    expect(first.length).toBe(1);
+    expect(second).toEqual([]);
   });
 });

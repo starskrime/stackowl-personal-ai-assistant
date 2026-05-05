@@ -220,3 +220,33 @@ export class ActiveFileCollector implements SignalCollector {
     return out.sort((a, b) => b.mtime - a.mtime).slice(0, 20);
   }
 }
+
+export class ClipboardCollector implements SignalCollector {
+  readonly source: SignalSource = "clipboard";
+  readonly mode = "poll" as const;
+  readonly intervalMs = 10_000;
+  private lastContent = "";
+
+  async collect(): Promise<ContextSignal[]> {
+    if (process.platform !== "darwin") return [];
+    try {
+      const raw = execSync("pbpaste", {
+        encoding: "utf-8",
+        timeout: 3_000,
+      }) as unknown as string;
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed === this.lastContent) return [];
+      this.lastContent = trimmed;
+      const preview =
+        trimmed.length > 200 ? trimmed.slice(0, 200) + "..." : trimmed;
+      return [
+        makeSignal("clipboard", "Clipboard updated", preview, 30_000, {
+          length: trimmed.length,
+        }),
+      ];
+    } catch (err) {
+      log.engine.warn(`[ClipboardCollector] ${(err as Error).message}`);
+      return [];
+    }
+  }
+}
