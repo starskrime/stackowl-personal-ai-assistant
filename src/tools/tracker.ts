@@ -24,7 +24,7 @@ export class ToolTracker {
   recordSuccess(
     toolName: string,
     durationMs: number,
-    ctx: { subgoalId?: string; sessionId?: string } = {},
+    ctx: { subgoalId?: string; sessionId?: string; attemptMetadata?: unknown[] } = {},
   ): void {
     this.db.recordToolExecution({
       toolName,
@@ -32,6 +32,7 @@ export class ToolTracker {
       durationMs,
       subgoalId: ctx.subgoalId,
       sessionId: ctx.sessionId,
+      attemptMetadata: ctx.attemptMetadata ? JSON.stringify(ctx.attemptMetadata) : undefined,
     });
   }
 
@@ -43,6 +44,7 @@ export class ToolTracker {
       errorMessage?: string;
       subgoalId?: string;
       sessionId?: string;
+      attemptMetadata?: unknown[];
     } = {},
   ): void {
     this.db.recordToolExecution({
@@ -53,6 +55,7 @@ export class ToolTracker {
       errorMessage: ctx.errorMessage,
       subgoalId: ctx.subgoalId,
       sessionId: ctx.sessionId,
+      attemptMetadata: ctx.attemptMetadata ? JSON.stringify(ctx.attemptMetadata) : undefined,
     });
   }
 

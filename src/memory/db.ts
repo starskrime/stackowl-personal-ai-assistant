@@ -1460,12 +1460,13 @@ export class MemoryDatabase {
     errorMessage?: string;
     subgoalId?: string;
     sessionId?: string;
+    attemptMetadata?: string;
   }): void {
     this.db
       .prepare(
         `INSERT INTO tool_executions
-           (tool_name, success, duration_ms, error_code, error_message, subgoal_id, session_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (tool_name, success, duration_ms, error_code, error_message, subgoal_id, session_id, attempt_metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         args.toolName,
@@ -1475,6 +1476,7 @@ export class MemoryDatabase {
         args.errorMessage ?? null,
         args.subgoalId ?? null,
         args.sessionId ?? null,
+        args.attemptMetadata ?? null,
       );
   }
 
