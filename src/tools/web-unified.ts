@@ -55,6 +55,12 @@ export function createWebUnifiedTool(deps: WebUnifiedDeps): ToolImplementation {
             description:
               "JavaScript to execute in browser (for action:interact)",
           },
+          hint: {
+            type: "string",
+            enum: ["anti-bot"],
+            description:
+              "Optional pre-selection: 'anti-bot' starts the escalation chain at Tier 2 (camofox), skipping Tier 1 HTTP. Use only when you have prior evidence the URL is anti-bot protected. Skipped tiers still appear in attemptedTiers[] with outcome:'skipped-by-hint'.",
+          },
         },
         required: ["action"],
       },
