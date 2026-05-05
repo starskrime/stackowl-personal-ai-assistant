@@ -46,7 +46,11 @@ Respond with JSON only:
 - ADVANCES: result clearly provides information that moves toward the sub-goal
 - PARTIAL: result provides some relevant information but is incomplete
 - BLOCKED: tool failed, hit a paywall, returned irrelevant content, or actively cannot help
-- NEUTRAL: tool succeeded but result is unrelated to the sub-goal`;
+- NEUTRAL: tool succeeded but result is unrelated to the sub-goal
+
+If the tool reports success:false with error.code: BLOCKED_BY_ANTI_BOT or ALL_TIERS_UNAVAILABLE, classify as BLOCKED.
+If error.code: TIMEOUT, classify as PARTIAL.
+If success:true, classify based on whether data answers the goal.`;
 
 // ─── GoalVerifier ─────────────────────────────────────────────────
 
@@ -91,11 +95,40 @@ export class GoalVerifier {
   async verify(args: VerifyArgs): Promise<VerificationResult> {
     const { toolName, toolArgs, toolResult, subGoal, userMessage } = args;
 
-    const userContent = `Sub-goal: ${subGoal.description}
+    let userContent: string;
+    try {
+      const env = JSON.parse(toolResult);
+      if (env && typeof env === "object" && "success" in env) {
+        if (env.success === false && env.error) {
+          const tierSummary = Array.isArray(env.error.attemptedTiers)
+            ? env.error.attemptedTiers.map((t: { name: string; outcome: string }) => `${t.name}:${t.outcome}`).join(", ")
+            : "(none)";
+          userContent = `Sub-goal: ${subGoal.description}
+User request: ${userMessage}
+Tool used: ${toolName}
+Tool args: ${JSON.stringify(toolArgs)}
+Tool error.code: ${env.error.code}
+Tool error.message: ${env.error.message}
+Tiers attempted: [${tierSummary}]`;
+        } else if (env.success === true && env.data) {
+          userContent = `Sub-goal: ${subGoal.description}
+User request: ${userMessage}
+Tool used: ${toolName}
+Tool args: ${JSON.stringify(toolArgs)}
+Tool result data (first 500 chars): ${JSON.stringify(env.data).slice(0, 500)}`;
+        } else {
+          throw new Error("not envelope");
+        }
+      } else {
+        throw new Error("not envelope");
+      }
+    } catch {
+      userContent = `Sub-goal: ${subGoal.description}
 User request: ${userMessage}
 Tool used: ${toolName}
 Tool args: ${JSON.stringify(toolArgs)}
 Tool result (first 500 chars): ${toolResult.slice(0, 500)}`;
+    }
 
     try {
       const provider = await this.router.resolve("classification");

@@ -943,3 +943,27 @@ export class OnboardingWizard {
     return true;
   }
 }
+
+export function renderStealthBackendsSubsection(): string {
+  return [
+    "Stealth web backends",
+    "  [ ] camofox       — anti-detection Firefox (Tier 2)",
+    "  [ ] scrapling     — Python anti-bot scraper (Tier 3)",
+    "  [ ] live-browser  — desktop browser control (interactive)",
+  ].join("\n");
+}
+
+export interface BackendInstaller {
+  camofox?: () => Promise<boolean>;
+  scrapling?: () => Promise<boolean>;
+  "live-browser"?: () => Promise<boolean>;
+}
+
+export async function installSelectedBackend(
+  backend: "camofox" | "scrapling" | "live-browser",
+  installer: BackendInstaller,
+): Promise<boolean> {
+  const fn = installer[backend];
+  if (!fn) return false;
+  return await fn();
+}

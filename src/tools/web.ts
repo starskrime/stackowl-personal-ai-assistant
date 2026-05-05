@@ -6,7 +6,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
-import { webFetch } from "../browser/smart-fetch.js";
+import { webFetchEnvelope } from "../browser/smart-fetch.js";
 
 export const WebCrawlTool: ToolImplementation = {
   definition: {
@@ -32,46 +32,43 @@ export const WebCrawlTool: ToolImplementation = {
     },
   },
 
-  async execute(
-    args: Record<string, unknown>,
-    _context: ToolContext,
-  ): Promise<string> {
+  async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+    const { serializeWebToolResult } = await import("../browser/envelope.js");
     let url = args["url"] as string;
-    if (!url) throw new Error("URL is required");
-
-    // Validate URL
+    if (!url) {
+      return serializeWebToolResult({
+        success: false,
+        error: { code: "INVALID_URL", message: "URL is required", attemptedTiers: [] },
+      });
+    }
     try {
       const parsedUrl = new URL(url);
       if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-        throw new Error("Only http:// and https:// URLs are supported");
+        return serializeWebToolResult({
+          success: false,
+          error: { code: "INVALID_URL", message: "Only http(s) URLs are supported", attemptedTiers: [] },
+        });
       }
       url = parsedUrl.toString();
     } catch {
-      throw new Error(`Invalid URL: ${url}`);
+      return serializeWebToolResult({
+        success: false,
+        error: { code: "INVALID_URL", message: `Invalid URL: ${url}`, attemptedTiers: [] },
+      });
     }
 
     try {
-      const result = await webFetch(url, { maxLength: 25000, timeout: 30000 });
-
-      if (result.blocked) {
-        return (
-          `BLOCKED: ${url} — bot/CAPTCHA protection detected (${result.blockType || "unknown"}).\n` +
-          `The smart fetch layer tried HTTP → stealth Chromium → CamoFox (Firefox) and was still blocked.\n` +
-          `Try these escalation options:\n` +
-          `1. camofox(action='navigate', url='${url}') — interactive Firefox session; can click through consent dialogs or CAPTCHAs\n` +
-          `2. scrapling_fetch(url, mode='stealth') — external anti-bot scraping service\n` +
-          `3. scrapling_fetch(url, mode='dynamic') — full browser with anti-detection patches\n` +
-          `4. computer_use(action='open_url') — real desktop browser, fully undetectable`
-        );
-      }
-
-      const via = result.source !== "fetch" ? ` [via ${result.source}]` : "";
-      return `### ${result.title}${via}\n\n${result.url}\n\n${result.text}`;
+      const envelope = await webFetchEnvelope(url);
+      return serializeWebToolResult(envelope);
     } catch (error) {
-      if (error instanceof Error) {
-        return `Error fetching ${url}: ${error.message}`;
-      }
-      return `Error fetching ${url}: Unknown error`;
+      return serializeWebToolResult({
+        success: false,
+        error: {
+          code: "INTERNAL_ERROR",
+          message: error instanceof Error ? error.message : String(error),
+          attemptedTiers: [],
+        },
+      });
     }
   },
 };

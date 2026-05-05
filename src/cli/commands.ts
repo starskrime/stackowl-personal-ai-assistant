@@ -458,3 +458,69 @@ export class CommandRegistry implements CompletionProvider {
       .join("  ");
   }
 }
+
+// ─── stackowl backends subcommand ───────────────────────────────
+import type { ProbeMap } from "../runtime/availability.js";
+
+export interface BackendsCommandDeps {
+  availabilityPath?: string;
+  probes?: ProbeMap;
+  installer?: {
+    camofox?: () => Promise<boolean>;
+    scrapling?: () => Promise<boolean>;
+    "live-browser"?: () => Promise<boolean>;
+  };
+  trackerStats?: Record<string, { success: number; total: number }>;
+}
+
+export async function backendsCommand(
+  argv: string[],
+  deps: BackendsCommandDeps = {},
+): Promise<string> {
+  const { RuntimeAvailability } = await import("../runtime/availability.js");
+  const ra = new RuntimeAvailability(deps.availabilityPath, deps.probes);
+  const sub = argv[0] ?? "list";
+
+  if (sub === "list") {
+    const map = await ra.load();
+    return Object.entries(map)
+      .map(([k, v]) =>
+        `${k.padEnd(14)} installed=${v.installed} ready=${v.ready} ${v.version ? "v" + v.version : ""}`,
+      )
+      .join("\n");
+  }
+
+  if (sub === "repair") {
+    const map = await ra.probeAll();
+    return `repair complete:\n${Object.entries(map)
+      .map(([k, v]) => `  ${k}: ready=${v.ready}`)
+      .join("\n")}`;
+  }
+
+  if (sub === "stats") {
+    const s = deps.trackerStats ?? {};
+    const fmt = (name: string, label: string) => {
+      const r = s[name];
+      if (!r) return `${label}: no data`;
+      return `${label}: success rate ${Math.round((r.success / r.total) * 100)}%  (n=${r.success}/${r.total})`;
+    };
+    return [
+      "=== Web fetch stats (last 7 days) ===",
+      fmt("http", "Tier 1 (http)       "),
+      fmt("camofox", "Tier 2 (camofox)    "),
+      fmt("scrapling", "Tier 3 (scrapling)  "),
+    ].join("\n");
+  }
+
+  if (sub === "install") {
+    const which = argv[1];
+    if (!which || !(which in (deps.installer ?? {}))) {
+      return "usage: stackowl backends install <camofox|scrapling|live-browser>";
+    }
+    const fn = deps.installer![which as keyof typeof deps.installer]!;
+    const ok = await fn();
+    return `install ${which}: ${ok ? "ok" : "failed"}`;
+  }
+
+  return "usage: stackowl backends list|install|repair|stats";
+}

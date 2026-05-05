@@ -225,113 +225,56 @@ export const ScraplingTool: ToolImplementation = {
     },
   },
 
-  async execute(
-    args: Record<string, unknown>,
-    _context: ToolContext,
-  ): Promise<string> {
+  async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+    const { serializeWebToolResult } = await import("../browser/envelope.js");
     const url = args.url as string;
-    if (!url) return "Error: URL is required.";
+    if (!url) return serializeWebToolResult({ success: false, error: { code: "INVALID_URL", message: "URL is required", attemptedTiers: [] } });
 
-    // Validate URL
-    try {
-      const parsed = new URL(url);
-      if (!["http:", "https:"].includes(parsed.protocol)) {
-        return "Error: Only http:// and https:// URLs are supported.";
-      }
-    } catch {
-      return `Error: Invalid URL: ${url}`;
+    const probeFn = (ctx as any)._scraplingProbe ?? probeReadiness;
+    const probe = await probeFn();
+    if (!probe.ok) {
+      return serializeWebToolResult({
+        success: false,
+        error: {
+          code: "ALL_TIERS_UNAVAILABLE",
+          message: `Scrapling not installed: ${probe.error ?? "unknown"}`,
+          attemptedTiers: [{ tier: 3, name: "scrapling", durationMs: 0, outcome: "unavailable" }],
+          suggestedEscalation: SCRAPLING_INSTALL_HINT_TOOL,
+        },
+      });
     }
 
     const mode = (args.mode as FetcherMode) || "basic";
-    if (!["basic", "stealth", "dynamic"].includes(mode)) {
-      return `Error: Invalid mode "${mode}". Use basic, stealth, or dynamic.`;
-    }
-
     const selector = args.selector as string | undefined;
     const waitFor = args.wait_for as string | undefined;
     const headless = args.headless as boolean | undefined;
-
-    if (waitFor && mode !== "dynamic") {
-      return "Error: wait_for parameter only works with 'dynamic' mode.";
-    }
-
     try {
-      const script = buildFetchScript(url, mode, {
-        selector,
-        waitFor,
-        headless,
-      });
-
+      const script = buildFetchScript(url, mode, { selector, waitFor, headless });
       const output = await runPython(script);
-
-      // Parse the JSON output
-      const result = JSON.parse(output.trim()) as {
-        title: string;
-        url: string;
-        length: number;
-        content: string;
-      };
-
-      // Detect Cloudflare/bot challenge pages
-      const contentLower = result.content.toLowerCase();
-      const titleLower = result.title.toLowerCase();
-      const isBlocked =
-        titleLower.includes("just a moment") ||
-        titleLower.includes("attention required") ||
-        titleLower.includes("security checkpoint") ||
-        contentLower.includes("verify you are human") ||
-        contentLower.includes("checking your browser") ||
-        contentLower.includes("security verification") ||
-        contentLower.includes("enable javascript and cookies to continue");
-
-      if (isBlocked) {
-        if (mode === "basic") {
-          return (
-            `BLOCKED: ${url} has Cloudflare/bot protection. Scrapling basic mode couldn't bypass it.\n` +
-            `Try: scrapling_fetch(url='${url}', mode='stealth') — uses real browser fingerprint to bypass Cloudflare.`
-          );
-        }
-        return (
-          `BLOCKED: ${url} has aggressive bot protection that Scrapling ${mode} mode couldn't bypass.\n` +
-          `Use computer_use as final fallback:\n` +
-          `1. computer_use(action='open_url', text='${url}')\n` +
-          `2. computer_use(action='wait', amount=3000)\n` +
-          `3. computer_use(action='analyze_screen') — read the actual page content`
-        );
-      }
-
-      if (!result.content || result.content.length < 50) {
-        return (
-          `Page returned very little content (${result.length} chars). ` +
-          (mode === "basic"
-            ? "Try mode='stealth' to bypass bot detection, or mode='dynamic' for JS-rendered pages."
-            : mode === "stealth"
-              ? "Try mode='dynamic' for JS-rendered pages, or use computer_use tool as fallback."
-              : "The page may require login or have anti-bot protection that even Scrapling can't bypass. " +
-                "Use computer_use tool (open_url + analyze_screen) as final fallback.")
-        );
-      }
-
-      return `### ${result.title}\n\n${result.url}\n\n${result.content}`;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-
-      // Provide helpful escalation guidance
-      if (msg.includes("not installed")) {
-        return msg; // Installation instructions already included
-      }
-
-      if (mode === "basic") {
-        return (
-          `Scrapling basic fetch failed: ${msg}\n\n` +
-          `Try escalating:\n` +
-          `1. scrapling_fetch(url, mode='stealth') — bypasses Cloudflare/TLS detection\n` +
-          `2. scrapling_fetch(url, mode='dynamic') — full browser rendering\n` +
-          `3. computer_use(action='open_url', text=url) → computer_use(action='analyze_screen') — real desktop browser`
-        );
-      }
-
-      return `Scrapling ${mode} fetch failed: ${msg}`;
+      const result = JSON.parse(output.trim()) as { title: string; url: string; length: number; content: string };
+      return serializeWebToolResult({ success: true, data: { kind: "page", url: result.url, title: result.title, content: result.content } });
+    } catch (err) {
+      return serializeWebToolResult({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: err instanceof Error ? err.message : String(err), attemptedTiers: [{ tier: 3, name: "scrapling", durationMs: 0, outcome: "error" }] },
+      });
     }
   },
 };
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const pexec = promisify(execFile);
+
+export async function probeReadiness(opts?: { runImportCheck?: () => Promise<string> }): Promise<{ ok: boolean; version?: string; error?: string }> {
+  try {
+    const stdout = opts?.runImportCheck
+      ? await opts.runImportCheck()
+      : (await pexec("python3", ["-c", "import scrapling; print(scrapling.__version__)"], { timeout: 5000 })).stdout;
+    return { ok: true, version: stdout.trim() };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+const SCRAPLING_INSTALL_HINT_TOOL = "pip install 'scrapling[all]' && patchright install chromium";

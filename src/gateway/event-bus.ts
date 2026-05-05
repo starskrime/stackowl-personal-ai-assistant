@@ -30,6 +30,10 @@ export type GatewaySystemEvent =
   | { type: "memory:invalidate_rejected"; id: string; reason: string }
   | { type: "memory:slo_breach"; metric: string; observed: number; budget: number }
   | { type: "memory:health_degraded"; reason: string }
+  | { type: "web:tier_attempted"; tier: number; name: string; url: string; startedAt: number }
+  | { type: "web:tier_blocked"; tier: number; name: string; blockedReason: string; durationMs: number }
+  | { type: "web:escalating"; fromTier: number; toTier: number; reason: string }
+  | { type: "web:blocking_classified"; url: string; source: "cache" | "router" | "fallback"; latency: number; blocked: boolean; reason: string | null }
   | { type: "engine:turn_complete"; sessionId: string }
 
 const DELIVER_EVENT = "gateway:deliver"

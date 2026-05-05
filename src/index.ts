@@ -236,6 +236,30 @@ import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
 
+// ─── Boot helpers ────────────────────────────────────────────────
+
+export async function probeCamoFoxAtBoot(
+  availability: { update: (backend: "camofox", status: Record<string, unknown>) => Promise<void> },
+  cfg: { baseUrl: string },
+): Promise<void> {
+  let ready = false;
+  let lastError: string | undefined;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    const r = await fetch(`${cfg.baseUrl}/tabs`, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+    ready = r.ok;
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+  }
+  await availability.update("camofox", {
+    installed: ready,
+    ready,
+    lastProbe: new Date().toISOString(),
+    lastError,
+  });
+}
+
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
 
 async function bootstrap() {
@@ -262,13 +286,19 @@ async function bootstrap() {
     initSmartFetch(browserPool);
   }
 
-  // Initialize CamoFox (Tier 4 anti-detection browser) — enabled by default
+  // Initialize CamoFox (anti-detection browser) — keep client wired for tools…
   if (config.camofox?.enabled !== false) {
     initCamoFox({
       baseUrl: config.camofox?.baseUrl ?? "http://localhost:9377",
       apiKey: config.camofox?.apiKey,
       defaultUserId: config.camofox?.defaultUserId ?? "stackowl",
       defaultTimeout: config.camofox?.defaultTimeout ?? 30000,
+    });
+    // …and probe-only readiness check writes the availability map for the LLM.
+    const { RuntimeAvailability } = await import("./runtime/availability.js");
+    const runtimeAvailability = new RuntimeAvailability();
+    await probeCamoFoxAtBoot(runtimeAvailability, {
+      baseUrl: config.camofox?.baseUrl ?? "http://localhost:9377",
     });
   }
 

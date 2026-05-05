@@ -91,60 +91,11 @@ const CHROME_HEADERS: Record<string, string> = {
   "Upgrade-Insecure-Requests": "1",
 };
 
-// ─── Bot detection ──────────────────────────────────────────────
-
-interface BlockingStatus {
-  blocked: boolean;
-  type?: "cloudflare" | "captcha" | "waf" | "generic";
-}
-
-function detectBlocking(
-  title: string,
-  text: string,
-  status?: number,
-): BlockingStatus {
-  const lTitle = title.toLowerCase();
-  const lText = text.toLowerCase();
-
-  // HTTP-level blocks
-  if (status === 403 || status === 429 || status === 503) {
-    // 503 with Cloudflare challenge content
-    if (lText.includes("cloudflare") || lText.includes("just a moment")) {
-      return { blocked: true, type: "cloudflare" };
-    }
-    if (status === 403) return { blocked: true, type: "waf" };
-    if (status === 429) return { blocked: true, type: "waf" };
-  }
-
-  // Content-level blocks
-  if (
-    lTitle.includes("security checkpoint") ||
-    lTitle.includes("just a moment") ||
-    lTitle.includes("attention required") ||
-    lTitle.includes("access denied")
-  ) {
-    return { blocked: true, type: "cloudflare" };
-  }
-
-  if (
-    lText.includes("verify you are human") ||
-    lText.includes("verifying your browser") ||
-    lText.includes("enable javascript and cookies to continue") ||
-    lText.includes("captcha") ||
-    lText.includes("please complete the security check")
-  ) {
-    return { blocked: true, type: "captcha" };
-  }
-
-  if (
-    (text.length < 200 && lText.includes("checking your browser")) ||
-    (text.length < 300 && lText.includes("ray id"))
-  ) {
-    return { blocked: true, type: "cloudflare" };
-  }
-
-  return { blocked: false };
-}
+// ─── Bot detection (Element 16: moved to BlockingClassifier) ────
+// The legacy keyword-based detector was deleted. Tier runners now consult
+// BlockingClassifier (IntelligenceRouter cheap-tier) for verdicts. The
+// legacy webFetch / fetchWithBrowser paths below stub `blocking` until
+// Phase D removes them entirely.
 
 // ─── HTML → text ────────────────────────────────────────────────
 
@@ -291,7 +242,7 @@ async function fetchWithBrowser(
         return document.body?.innerText || "";
       });
 
-      const blocking = detectBlocking(title, text);
+      const blocking = { blocked: false } as { blocked: boolean; type?: string };
       if (blocking.blocked) {
         return {
           title,
@@ -358,7 +309,7 @@ async function fetchWithBrowserRetry(
         return document.body?.innerText || "";
       });
 
-      const blocking = detectBlocking(title, text);
+      const blocking = { blocked: false } as { blocked: boolean; type?: string };
 
       return {
         title,
@@ -404,7 +355,7 @@ export async function webFetch(
     const fast = await fetchFast(url, timeout, options?.headers);
     if (fast) {
       const { title, text } = htmlToText(fast.html);
-      const blocking = detectBlocking(title, text, fast.status);
+      const blocking = { blocked: false } as { blocked: boolean; type?: string };
 
       if (!blocking.blocked) {
         const trimmed =
@@ -519,4 +470,273 @@ export async function webFetch(
  */
 export function hasBrowserPool(): boolean {
   return browserPool?.isReady ?? false;
+}
+
+// ─── 3-tier dispatcher (Element 16 Phase A) ─────────────────────
+
+import type { GatewayEventBus } from "../gateway/event-bus.js";
+import type { TierAttempt, WebToolData, WebToolResult } from "./envelope.js";
+
+export interface TierRunOk { attempt: TierAttempt; data: WebToolData }
+export interface TierRunFail { attempt: TierAttempt; data?: undefined }
+export type TierRunResult = TierRunOk | TierRunFail;
+
+export interface TierRunner {
+  tier: number;
+  name: "http" | "camofox" | "scrapling";
+  isAvailable(): boolean | Promise<boolean>;
+  run(url: string, ctx: { bus: GatewayEventBus }): Promise<TierRunResult>;
+}
+
+export interface DispatcherCtx {
+  bus: GatewayEventBus;
+  hint?: "anti-bot";
+}
+
+export async function runEscalationChain(
+  runners: TierRunner[],
+  url: string,
+  ctx: DispatcherCtx,
+): Promise<WebToolResult> {
+  const attempts: TierAttempt[] = [];
+  for (const r of runners) {
+    if (ctx.hint === "anti-bot" && r.tier === 1) {
+      attempts.push({ tier: 1, name: r.name, durationMs: 0, outcome: "skipped-by-hint" });
+      continue;
+    }
+    const available = await r.isAvailable();
+    if (!available) {
+      attempts.push({ tier: r.tier, name: r.name, durationMs: 0, outcome: "unavailable" });
+      continue;
+    }
+    const t0 = Date.now();
+    ctx.bus.emit({ type: "web:tier_attempted", tier: r.tier, name: r.name, url, startedAt: t0 } as any);
+    let res: TierRunResult;
+    try { res = await r.run(url, { bus: ctx.bus }); }
+    catch {
+      const a: TierAttempt = { tier: r.tier, name: r.name, durationMs: Date.now() - t0, outcome: "error" };
+      attempts.push(a);
+      continue;
+    }
+    attempts.push(res.attempt);
+    if (res.data) return { success: true, data: res.data };
+    if (res.attempt.outcome === "blocked") {
+      ctx.bus.emit({ type: "web:tier_blocked", tier: r.tier, name: r.name, blockedReason: res.attempt.blockedReason ?? "other", durationMs: res.attempt.durationMs } as any);
+      ctx.bus.emit({ type: "web:escalating", fromTier: r.tier, toTier: r.tier + 1, reason: res.attempt.blockedReason ?? "other" } as any);
+    }
+  }
+
+  const allUnavailable = attempts.every(a => a.outcome === "unavailable" || a.outcome === "skipped-by-hint");
+  return {
+    success: false,
+    error: {
+      code: allUnavailable ? "ALL_TIERS_UNAVAILABLE" : "BLOCKED_BY_ANTI_BOT",
+      message: allUnavailable
+        ? "No web fetch tier was available. Run `stackowl backends install` to install camofox/scrapling."
+        : "All web fetch tiers exhausted; the page remained blocked.",
+      attemptedTiers: attempts,
+    },
+  };
+}
+
+import type { BlockingClassifier } from "./blocking-classifier.js";
+
+export interface HttpTierDeps {
+  classifier: Pick<BlockingClassifier, "classify">;
+  fetcher?: (url: string, timeoutMs: number) => Promise<{ status: number; body: string; contentType: string }>;
+}
+
+const TIER1_TIMEOUT_MS = 4000;
+
+const TRIGGER_STATUSES = new Set([401, 403, 429, 503]);
+
+export function createHttpTier(deps: HttpTierDeps): TierRunner {
+  const fetcher = deps.fetcher ?? defaultHttpFetch;
+  return {
+    tier: 1,
+    name: "http",
+    isAvailable: () => true,
+    async run(url, _ctx) {
+      const t0 = Date.now();
+      let resp: { status: number; body: string; contentType: string };
+      try { resp = await fetcher(url, TIER1_TIMEOUT_MS); }
+      catch {
+        return { attempt: { tier: 1, name: "http", durationMs: Date.now() - t0, outcome: "timeout" } };
+      }
+
+      const trigger = TRIGGER_STATUSES.has(resp.status) || resp.status >= 500
+        || (resp.status !== 200 && resp.body.length < 1024);
+      if (trigger) {
+        const v = await deps.classifier.classify({ url, httpStatus: resp.status, bodyPreview: resp.body.slice(0, 2048) });
+        if (v.blocked) {
+          return { attempt: {
+            tier: 1, name: "http", durationMs: Date.now() - t0,
+            outcome: "blocked", blockedReason: (v.reason ?? "other") as any, httpStatus: resp.status,
+          } };
+        }
+      }
+
+      const { title, text } = htmlToText(resp.body);
+      return {
+        attempt: { tier: 1, name: "http", durationMs: Date.now() - t0, outcome: "success", httpStatus: resp.status },
+        data: { kind: "page", url, title, content: text, contentType: resp.contentType },
+      };
+    },
+  };
+}
+
+async function defaultHttpFetch(url: string, timeoutMs: number) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, headers: CHROME_HEADERS, redirect: "follow" });
+    const body = await r.text();
+    return { status: r.status, body, contentType: r.headers.get("content-type") ?? "" };
+  } finally { clearTimeout(t); }
+}
+
+import type { RuntimeAvailability } from "../runtime/availability.js";
+import type { CamoFoxClient } from "./camofox-client.js";
+
+export interface CamoFoxTierDeps {
+  availability: Pick<RuntimeAvailability, "isReady">;
+  client: CamoFoxClient | null;
+  classifier?: Pick<BlockingClassifier, "classify">;
+}
+
+const TIER2_BUDGET_MS = 20000;
+
+export function createCamoFoxTier(deps: CamoFoxTierDeps): TierRunner {
+  return {
+    tier: 2,
+    name: "camofox",
+    isAvailable: async () => {
+      if (!deps.client) return false;
+      return await deps.availability.isReady("camofox");
+    },
+    async run(url, _ctx) {
+      const t0 = Date.now();
+      const userId = "stackowl-smartfetch";
+      let tabId: string | null = null;
+      try {
+        const tab = await deps.client!.createTab(userId, url);
+        tabId = tab.tabId;
+        const snap = await Promise.race([
+          deps.client!.snapshot(tabId, userId),
+          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("camofox-timeout")), TIER2_BUDGET_MS)),
+        ]);
+        if (!snap) throw new Error("camofox-empty");
+        const text = (snap.snapshot ?? "").replace(/\[[\w\s]+\]\s*/g, "").replace(/\be\d+\b/g, "").replace(/\s{2,}/g, " ").trim();
+
+        if (deps.classifier) {
+          const v = await deps.classifier.classify({ url, httpStatus: 200, bodyPreview: text.slice(0, 2048) });
+          if (v.blocked) {
+            return { attempt: { tier: 2, name: "camofox", durationMs: Date.now() - t0, outcome: "blocked", blockedReason: (v.reason ?? "other") as any } };
+          }
+        }
+        return {
+          attempt: { tier: 2, name: "camofox", durationMs: Date.now() - t0, outcome: "success" },
+          data: { kind: "page", url: snap.url ?? url, content: text },
+        };
+      } catch (err) {
+        const isTimeout = err instanceof Error && err.message === "camofox-timeout";
+        return { attempt: { tier: 2, name: "camofox", durationMs: Date.now() - t0, outcome: isTimeout ? "timeout" : "error" } };
+      } finally {
+        if (tabId) await deps.client!.closeTab(tabId, userId).catch(() => {});
+      }
+    },
+  };
+}
+
+export interface ScraplingTierDeps {
+  probe: () => Promise<{ ok: boolean; version?: string; error?: string }>;
+  runScrapling: (url: string) => Promise<{ title: string; url: string; content: string }>;
+}
+
+const TIER3_BUDGET_MS = 25000;
+const SCRAPLING_INSTALL_HINT = "pip install 'scrapling[all]' && patchright install chromium";
+
+// ─── Default dispatcher (Element 16 Task 26) ────────────────────
+//
+// `webFetchEnvelope` runs the 3-tier chain and returns the envelope
+// directly — replacing the lossy `webFetch -> FetchResult -> envelope`
+// reshape that hid attempted-tier metadata. Callers that already have
+// classifier/availability/scrapling deps can inject them; otherwise we
+// fall back to a no-op classifier (status-code-only blocking) and the
+// module-level CamoFox client.
+
+export interface WebFetchEnvelopeDeps {
+  classifier?: { classify: BlockingClassifier["classify"] };
+  availability?: Pick<RuntimeAvailability, "isReady">;
+  scrapling?: {
+    probe: () => Promise<{ ok: boolean; version?: string; error?: string }>;
+    run: (url: string) => Promise<{ title: string; url: string; content: string }>;
+  };
+  bus?: GatewayEventBus;
+  hint?: "anti-bot";
+}
+
+const NOOP_CLASSIFIER: { classify: BlockingClassifier["classify"] } = {
+  classify: async () => ({ blocked: false, confidence: 0, source: "fallback" }),
+};
+
+const NOOP_BUS: GatewayEventBus = { emit: () => {} } as unknown as GatewayEventBus;
+
+const NOOP_AVAILABILITY: Pick<RuntimeAvailability, "isReady"> = {
+  isReady: async () => false,
+};
+
+export async function webFetchEnvelope(
+  url: string,
+  deps: WebFetchEnvelopeDeps = {},
+): Promise<WebToolResult> {
+  const classifier = deps.classifier ?? NOOP_CLASSIFIER;
+  const availability = deps.availability ?? NOOP_AVAILABILITY;
+  const bus = deps.bus ?? NOOP_BUS;
+  const camoClient = getCamoFoxClient();
+
+  const tiers: TierRunner[] = [createHttpTier({ classifier })];
+  if (camoClient) {
+    tiers.push(createCamoFoxTier({ availability, client: camoClient, classifier }));
+  }
+  if (deps.scrapling) {
+    tiers.push(createScraplingTier({ probe: deps.scrapling.probe, runScrapling: deps.scrapling.run }));
+  }
+
+  return runEscalationChain(tiers, url, { bus, hint: deps.hint });
+}
+
+export function createScraplingTier(deps: ScraplingTierDeps): TierRunner & { installHint(): string } {
+  let probed: { ok: boolean } | null = null;
+  let installHintMessage = SCRAPLING_INSTALL_HINT;
+
+  return {
+    tier: 3,
+    name: "scrapling",
+    isAvailable: async () => {
+      if (probed) return probed.ok;
+      const r = await deps.probe();
+      probed = { ok: r.ok };
+      if (!r.ok && r.error) installHintMessage = `${SCRAPLING_INSTALL_HINT}  # probe error: ${r.error}`;
+      return r.ok;
+    },
+    installHint: () => installHintMessage,
+    async run(url, _ctx) {
+      const t0 = Date.now();
+      try {
+        const r = await Promise.race([
+          deps.runScrapling(url),
+          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("scrapling-timeout")), TIER3_BUDGET_MS)),
+        ]);
+        if (!r) throw new Error("scrapling-empty");
+        return {
+          attempt: { tier: 3, name: "scrapling", durationMs: Date.now() - t0, outcome: "success" },
+          data: { kind: "page", url: r.url, title: r.title, content: r.content },
+        };
+      } catch (err) {
+        const isTimeout = err instanceof Error && err.message === "scrapling-timeout";
+        return { attempt: { tier: 3, name: "scrapling", durationMs: Date.now() - t0, outcome: isTimeout ? "timeout" : "error" } };
+      }
+    },
+  };
 }

@@ -134,8 +134,21 @@ export const CamoFoxTool: ToolImplementation = {
 
   async execute(
     args: Record<string, unknown>,
-    _context: ToolContext,
+    context: ToolContext,
   ): Promise<string> {
+    const { serializeWebToolResult } = await import("../browser/envelope.js");
+    const availability = (context as any)?._availability;
+    if (availability && !(await availability.isReady("camofox"))) {
+      return serializeWebToolResult({
+        success: false,
+        error: {
+          code: "ALL_TIERS_UNAVAILABLE",
+          message: "CamoFox is not installed/ready. Run `stackowl backends install camofox`.",
+          attemptedTiers: [{ tier: 2, name: "camofox", durationMs: 0, outcome: "unavailable" }],
+          suggestedEscalation: "stackowl backends install camofox",
+        },
+      });
+    }
     const client = getCamoFoxClient();
     if (!client) {
       return (
