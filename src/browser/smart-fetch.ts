@@ -520,3 +520,69 @@ export async function webFetch(
 export function hasBrowserPool(): boolean {
   return browserPool?.isReady ?? false;
 }
+
+// ─── 3-tier dispatcher (Element 16 Phase A) ─────────────────────
+
+import type { GatewayEventBus } from "../gateway/event-bus.js";
+import type { TierAttempt, WebToolData, WebToolResult } from "./envelope.js";
+
+export interface TierRunOk { attempt: TierAttempt; data: WebToolData }
+export interface TierRunFail { attempt: TierAttempt; data?: undefined }
+export type TierRunResult = TierRunOk | TierRunFail;
+
+export interface TierRunner {
+  tier: number;
+  name: "http" | "camofox" | "scrapling";
+  isAvailable(): boolean | Promise<boolean>;
+  run(url: string, ctx: { bus: GatewayEventBus }): Promise<TierRunResult>;
+}
+
+export interface DispatcherCtx {
+  bus: GatewayEventBus;
+  hint?: "anti-bot";
+}
+
+export async function runEscalationChain(
+  runners: TierRunner[],
+  url: string,
+  ctx: DispatcherCtx,
+): Promise<WebToolResult> {
+  const attempts: TierAttempt[] = [];
+  for (const r of runners) {
+    if (ctx.hint === "anti-bot" && r.tier === 1) {
+      attempts.push({ tier: 1, name: r.name, durationMs: 0, outcome: "skipped-by-hint" });
+      continue;
+    }
+    const available = await r.isAvailable();
+    if (!available) {
+      attempts.push({ tier: r.tier, name: r.name, durationMs: 0, outcome: "unavailable" });
+      continue;
+    }
+    const t0 = Date.now();
+    ctx.bus.emit({ type: "web:tier_attempted", tier: r.tier, name: r.name, url, startedAt: t0 } as any);
+    let res: TierRunResult;
+    try { res = await r.run(url, { bus: ctx.bus }); }
+    catch {
+      const a: TierAttempt = { tier: r.tier, name: r.name, durationMs: Date.now() - t0, outcome: "error" };
+      attempts.push(a);
+      continue;
+    }
+    attempts.push(res.attempt);
+    if (res.data) return { success: true, data: res.data };
+    if (res.attempt.outcome === "blocked") {
+      ctx.bus.emit({ type: "web:tier_blocked", tier: r.tier, name: r.name, blockedReason: res.attempt.blockedReason ?? "other", durationMs: res.attempt.durationMs } as any);
+    }
+  }
+
+  const allUnavailable = attempts.every(a => a.outcome === "unavailable" || a.outcome === "skipped-by-hint");
+  return {
+    success: false,
+    error: {
+      code: allUnavailable ? "ALL_TIERS_UNAVAILABLE" : "BLOCKED_BY_ANTI_BOT",
+      message: allUnavailable
+        ? "No web fetch tier was available. Run `stackowl backends install` to install camofox/scrapling."
+        : "All web fetch tiers exhausted; the page remained blocked.",
+      attemptedTiers: attempts,
+    },
+  };
+}
