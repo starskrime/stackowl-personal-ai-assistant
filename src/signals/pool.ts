@@ -13,6 +13,7 @@ import type { MemoryRepository } from "../memory/repository.js";
 import type { SignalClassifier } from "./classifier.js";
 import { signalToVerifyArgs } from "./goal-adapter.js";
 import { log } from "../logger.js";
+import { randomUUID } from "node:crypto";
 
 const PRIORITY_ORDER: Record<string, number> = {
   critical: 0,
@@ -161,15 +162,11 @@ export class SignalPool {
       const verifyArgs = signalToVerifyArgs(admitted, goal);
       const result = await this.deps.verifier.verify(verifyArgs);
       if (result.verdict === "ADVANCES") {
-        admitted.userSurfaceable = true;
-        this.signals.set(admitted.id, admitted);
-        this.deps.bus.emit({
-          type: "signal:promoted",
-          signal: admitted,
-          goal: { id: goal.id, title: goal.title },
-          rationale: result.reason,
-          verdict: "ADVANCES",
-        } as any);
+        await this.promote(
+          admitted,
+          { id: goal.id, title: goal.title },
+          result.reason,
+        );
       } else {
         this.deps.bus.emit({
           type: "signal:suppressed",
@@ -212,20 +209,52 @@ export class SignalPool {
           signalToVerifyArgs(s, goal),
         );
         if (result.verdict === "ADVANCES") {
-          s.userSurfaceable = true;
-          this.signals.set(s.id, s);
-          this.deps.bus.emit({
-            type: "signal:promoted",
-            signal: s,
-            goal: { id: goal.id, title: goal.title },
-            rationale: result.reason,
-            verdict: "ADVANCES",
-          } as any);
+          await this.promote(
+            s,
+            { id: goal.id, title: goal.title },
+            result.reason,
+          );
         }
       } catch (err) {
         log.engine.warn(
           `[SignalPool] heartbeat verify failed: ${(err as Error).message}`,
         );
+      }
+    }
+  }
+
+  private async promote(
+    signal: ContextSignal,
+    goal: { id: string; title: string },
+    rationale: string,
+  ): Promise<void> {
+    signal.userSurfaceable = true;
+    this.signals.set(signal.id, signal);
+    this.deps.bus.emit({
+      type: "signal:promoted",
+      signal,
+      goal,
+      rationale,
+      verdict: "ADVANCES",
+    } as any);
+    if (this.deps.memoryRepo) {
+      try {
+        this.deps.memoryRepo.insertBatch([
+          {
+            id: randomUUID(),
+            kind: "reflexive",
+            content: `[${signal.source}] ${signal.title}\n${signal.content}`,
+            importance: 0.6,
+            goal_id: goal.id,
+            verdict: "ADVANCES",
+            source_channel: signal.source,
+          },
+        ]);
+      } catch (err) {
+        log.engine.warn(
+          `[SignalPool] memory store failed: ${(err as Error).message}`,
+        );
+        // fail-open: emission already happened
       }
     }
   }
