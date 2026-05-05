@@ -343,6 +343,15 @@ export class ToolRegistry {
 
       this._eventBus?.emit({ type: "tool:result", toolName: name, success: true, durationMs, truncated });
 
+      // Envelope passthrough — emit <tool_attempt_summary> regardless of GAV
+      try {
+        const { parseWebToolResult, buildAttemptSummaryXml } = await import("../browser/envelope.js");
+        const env = parseWebToolResult(result);
+        if (env && !env.success && !result.includes("<tool_attempt_summary")) {
+          result = result + "\n\n" + buildAttemptSummaryXml(env);
+        }
+      } catch { /* envelope parse is best-effort */ }
+
       // GAV: verify result against active sub-goal (skip if no sub-goal or no verifier)
       if (this._goalVerifier && context.engineContext?.activeSubGoal) {
         const subGoal = context.engineContext.activeSubGoal;
@@ -407,8 +416,13 @@ export class ToolRegistry {
             }
           }
 
-          // For BLOCKED and PARTIAL, wrap result with warning so LLM knows
-          if (verification.verdict === "BLOCKED" || verification.verdict === "PARTIAL") {
+          // Envelope-aware: web tools return JSON-stringified WebToolResult.
+          // For envelope errors, the unconditional passthrough above already
+          // appended <tool_attempt_summary>; only fall back to the legacy
+          // <tool_result_warning> for non-envelope tools.
+          const { parseWebToolResult } = await import("../browser/envelope.js");
+          const envelope = parseWebToolResult(result);
+          if (!envelope && (verification.verdict === "BLOCKED" || verification.verdict === "PARTIAL")) {
             result = result + `\n\n<tool_result_warning verdict="${verification.verdict}">${verification.reason}${verification.suggestion ? ` Suggestion: ${verification.suggestion}` : ""}</tool_result_warning>`;
           }
         } catch {
