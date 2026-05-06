@@ -23,7 +23,7 @@ export const PelletRecallTool: ToolImplementation = {
       "  - Before answering questions about past decisions, learnings, or user preferences",
       "  - When you sense a topic might have been covered before",
       "  - When starting a task that could benefit from prior context",
-      "  - When web_crawl or research returns something you think you've seen before",
+      "  - When web_fetch or research returns something you think you've seen before",
       "",
       "Actions:",
       "  search       — semantic search across all pellets (uses embeddings, not keywords)",

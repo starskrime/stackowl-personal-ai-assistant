@@ -90,7 +90,7 @@ export class AttemptLog {
    *
    * Example output:
    *   Turn 1: run_shell_command("curl https://...") → FAILED (curl: not found in sandbox)
-   *   Turn 1: web_crawl("https://...") → SUCCESS
+   *   Turn 1: web_fetch("https://...") → SUCCESS
    *   Turn 2: run_shell_command("python3 script.py") → FAILED (python3 not in Alpine)
    */
   toPromptBlock(): string {
