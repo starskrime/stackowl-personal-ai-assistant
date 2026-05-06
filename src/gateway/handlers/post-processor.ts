@@ -27,6 +27,12 @@ const TIER_PRIORITY: Record<"critical" | "standard" | "background", TaskPriority
   background: "low",
 };
 
+const CRITIQUE_PROMPT_TEMPLATE =
+  `You are a learning assistant. In exactly two sentences:\n` +
+  `Sentence 1: What went wrong when the assistant called "{tool_name}" and received a "{verdict}" result? (Context: "{verifier_reason}")\n` +
+  `Sentence 2: In one concrete action, how should the assistant approach this differently next time?\n` +
+  `Write only the two sentences. No headers, no explanation.`;
+
 export class PostProcessor {
   private messageCount = 0;
   private intelligenceReflexion: IntelligenceReflexionEngine | null = null;
@@ -651,6 +657,42 @@ export class PostProcessor {
     if (this.sleepConsolidator && metadata?.userId && sessionId) {
       this.enqueueJob("sleep-consolidation", "standard", async () => {
         await this.sleepConsolidator!.onSessionEnded(metadata.userId!, sessionId);
+      });
+    }
+
+    // ── Failure critique: BLOCKED/PARTIAL → owl_learnings ──────────
+    if (this.ctx.db && sessionId) {
+      const owlName = metadata?.owlName ?? this.ctx.owl.persona.name;
+      this.enqueueJob("learning-failure-critique", "background", async () => {
+        const failedTurns =
+          this.ctx.db!.trajectories.getSessionFailures(sessionId!) ?? [];
+        if (failedTurns.length === 0) return;
+
+        for (const turn of failedTurns.slice(0, 3)) {
+          const prompt = CRITIQUE_PROMPT_TEMPLATE
+            .replace("{tool_name}", turn.tool_name ?? "unknown")
+            .replace("{verdict}", turn.verification_result)
+            .replace("{verifier_reason}", turn.verifier_reason ?? "");
+
+          try {
+            const response = await this.ctx.provider.chat([
+              { role: "user", content: prompt },
+            ]);
+            const critique = response.content.trim();
+            if (critique) {
+              this.ctx.db!.owlLearnings.admitIfWorthy(
+                owlName,
+                critique,
+                "failure",
+                0.6,
+              );
+            }
+          } catch (err) {
+            log.evolution.warn(
+              `[PostProcessor:critique] Failed to generate critique: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
       });
     }
   }
