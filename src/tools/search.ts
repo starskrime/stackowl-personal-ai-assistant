@@ -1,5 +1,5 @@
 /**
- * StackOwl — DuckDuckGo HTML Search Tool.
+ * StackOwl — Web Search Tool (DDG HTML backend).
  *
  * Returns a JSON-serialized WebToolResult envelope on every path
  * (success / no-results / HTTP error / timeout / blocked).
@@ -22,7 +22,7 @@ export const WebSearchTool: ToolImplementation = {
   definition: {
     name: "web_search",
     description:
-      "Search the web. Returns titles, URLs, and snippets via the web_search envelope. " +
+      "Search the web. Returns titles, URLs, and snippets. " +
       "Use this as your FIRST step when you need current/real-time information " +
       "(news, prices, flight status, weather, etc.) or to find URLs to read with web_fetch. " +
       "Do NOT search for the same query twice — rephrase or call web_fetch on a specific URL instead. " +
@@ -45,7 +45,7 @@ export const WebSearchTool: ToolImplementation = {
 
   async execute(
     args: Record<string, unknown>,
-    _context: ToolContext,
+    context: ToolContext,
   ): Promise<string> {
     const query = (args["query"] as string)?.trim();
     if (!query) throw new Error("Search query is required");
@@ -137,7 +137,7 @@ export const WebSearchTool: ToolImplementation = {
 
       if (results.length === 0) {
         // Classify via cheap-tier model — no hardcoded keywords.
-        const classifier = _context.classifier;
+        const classifier = context.classifier;
         if (classifier) {
           const verdict = await classifier.classify({
             url: searchUrl,
@@ -192,5 +192,5 @@ export const WebSearchTool: ToolImplementation = {
   },
 };
 
-/** @deprecated Use WebSearchTool. Alias retained until Task 16 sweep. */
+/** @deprecated Use WebSearchTool directly. */
 export const DuckDuckGoSearchTool = WebSearchTool;

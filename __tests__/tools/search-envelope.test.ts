@@ -70,5 +70,7 @@ describe("search.ts — rename to web_search", () => {
   it("exports WebSearchTool with name 'web_search'", () => {
     expect(RenamedSearch.definition.name).toBe("web_search");
     expect(RenamedSearch.definition.deprecated).toBeFalsy();
+    expect(RenamedSearch.definition.description).toContain("web_fetch");
+    expect(RenamedSearch.definition.description).toContain("live_browser");
   });
 });
