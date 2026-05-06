@@ -236,12 +236,10 @@ export class TrustChain {
     if (name === "git_push") return "git_push";
 
     if (
-      name === "web_crawl" ||
       name === "web_fetch" ||
-      name === "duckduckgo_search"
+      name === "web_search"
     )
       return "web_fetch";
-    if (name === "scrapling_fetch") return "web_scrape";
 
     if (name === "send_file") return "send_file";
     if (name === "send_message") return "send_message";

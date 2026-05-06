@@ -15,7 +15,7 @@ export type WebToolErrorCode =
   | "ALL_TIERS_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
-export type TierName = "http" | "camofox" | "scrapling";
+export type TierName = "camofox" | "scrapling" | "obscura";
 
 export type TierOutcome =
   | "success"
@@ -23,7 +23,9 @@ export type TierOutcome =
   | "timeout"
   | "unavailable"
   | "error"
-  | "skipped-by-hint";
+  | "skipped-by-hint"
+  | "skipped-by-learned-routing"
+  | "skipped-disabled";
 
 export type BlockedReason =
   | "cloudflare"
@@ -68,9 +70,10 @@ const ERROR_CODES: ReadonlySet<string> = new Set<WebToolErrorCode>([
   "INTERNAL_ERROR",
 ]);
 
-const NAMES: ReadonlySet<TierName> = new Set<TierName>(["http", "camofox", "scrapling"]);
+const NAMES: ReadonlySet<TierName> = new Set<TierName>(["camofox", "scrapling", "obscura"]);
 const OUTCOMES: ReadonlySet<TierOutcome> = new Set<TierOutcome>([
-  "success", "blocked", "timeout", "unavailable", "error", "skipped-by-hint",
+  "success", "blocked", "timeout", "unavailable", "error",
+  "skipped-by-hint", "skipped-by-learned-routing", "skipped-disabled",
 ]);
 
 const ALIAS_CODES = new Set<WebToolErrorCode>(["BLOCKED_BY_ANTI_BOT", "ALL_TIERS_UNAVAILABLE"]);

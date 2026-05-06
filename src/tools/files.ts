@@ -43,7 +43,7 @@ export const ReadFileTool: ToolImplementation = {
     description:
       "Read a file's contents with line numbers. Truncates at 20KB. " +
       "Use for inspecting workspace files, configs, logs, and code. " +
-      "For web pages, use web_crawl instead.",
+      "For web pages, use web_fetch instead.",
     parameters: {
       type: "object",
       properties: {

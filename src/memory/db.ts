@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1228,6 +1228,10 @@ export class MemoryDatabase {
     if (current < 26) {
       applyV26WebAttemptMetadataMigration(this.db);
       this.db.pragma(`user_version = 26`);
+    }
+    if (current < 27) {
+      applyV27HostRootMigration(this.db);
+      this.db.pragma(`user_version = 27`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -3420,6 +3424,10 @@ export class StackOwlDB {
       applyV26WebAttemptMetadataMigration(this.db);
       this.db.pragma(`user_version = 26`);
     }
+    if (current < 27) {
+      applyV27HostRootMigration(this.db);
+      this.db.pragma(`user_version = 27`);
+    }
   }
 }
 
@@ -3815,6 +3823,9 @@ export function applyMigrations(db: Database.Database): void {
   if (current < 26) {
     applyV26WebAttemptMetadataMigration(db);
   }
+  if (current < 27) {
+    applyV27HostRootMigration(db);
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -3989,4 +4000,48 @@ export function applyV26WebAttemptMetadataMigration(db: Database.Database): void
   if (!cols.some((c) => c.name === "attempt_metadata")) {
     db.exec(`ALTER TABLE tool_executions ADD COLUMN attempt_metadata TEXT;`);
   }
+}
+
+/**
+ * Schema v27 — Element 16c: host-aware learned tool routing.
+ *
+ * Adds `host_root TEXT NOT NULL DEFAULT ''` to `tool_edges` and extends the
+ * primary key to (from_tool, to_tool, capability_tag, host_root) so global
+ * (host_root='') and per-host learned edges coexist as distinct rows.
+ * SQLite cannot extend a PK via ALTER TABLE — we rebuild with table-swap.
+ *
+ * Idempotent: if the column already exists, only ensure the secondary index.
+ */
+export function applyV27HostRootMigration(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(tool_edges)`).all() as Array<{
+    name: string;
+  }>;
+  if (cols.some((c) => c.name === "host_root")) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_tool_edges_host_capability
+        ON tool_edges(host_root, capability_tag, from_tool);
+    `);
+    return;
+  }
+  db.exec(`
+    BEGIN;
+    CREATE TABLE tool_edges_new (
+      from_tool       TEXT NOT NULL,
+      to_tool         TEXT NOT NULL,
+      capability_tag  TEXT NOT NULL,
+      host_root       TEXT NOT NULL DEFAULT '',
+      success_rate    REAL NOT NULL DEFAULT 0,
+      avg_duration_ms INTEGER NOT NULL DEFAULT 0,
+      sample_count    INTEGER NOT NULL DEFAULT 0,
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (from_tool, to_tool, capability_tag, host_root)
+    );
+    INSERT INTO tool_edges_new (from_tool, to_tool, capability_tag, host_root, success_rate, avg_duration_ms, sample_count, updated_at)
+      SELECT from_tool, to_tool, capability_tag, '', success_rate, avg_duration_ms, sample_count, updated_at FROM tool_edges;
+    DROP TABLE tool_edges;
+    ALTER TABLE tool_edges_new RENAME TO tool_edges;
+    CREATE INDEX idx_tool_edges_capability ON tool_edges(capability_tag, from_tool);
+    CREATE INDEX idx_tool_edges_host_capability ON tool_edges(host_root, capability_tag, from_tool);
+    COMMIT;
+  `);
 }

@@ -3,7 +3,6 @@ import { ToolRegistry } from "../../src/tools/registry.js";
 import { GatewayEventBus } from "../../src/gateway/event-bus.js";
 import { GoalVerifier } from "../../src/tools/goal-verifier.js";
 import { formatToolEvent } from "../../src/gateway/narration-formatter.js";
-import { createWebUnifiedTool } from "../../src/tools/web-unified.js";
 import { createMemoryUnifiedTool } from "../../src/tools/memory-unified.js";
 import type { SubGoal } from "../../src/engine/types.js";
 
@@ -12,7 +11,7 @@ describe("Phase 7a Tool Cortex — integration", () => {
     it("narration fires on tool:start and is silent on tool:goal_advance", () => {
       const startMsg = formatToolEvent({
         type: "tool:start",
-        toolName: "duckduckgo_search",
+        toolName: "web_search",
         args: { query: "test" },
         turnId: "t1",
       });
@@ -20,7 +19,7 @@ describe("Phase 7a Tool Cortex — integration", () => {
 
       const advanceMsg = formatToolEvent({
         type: "tool:goal_advance",
-        toolName: "duckduckgo_search",
+        toolName: "web_search",
         subGoal: "find info",
         verdict: "ADVANCES",
       });
@@ -95,19 +94,9 @@ describe("Phase 7a Tool Cortex — integration", () => {
   });
 
   describe("Unified tools", () => {
-    it("web tool has capabilities tag", () => {
-      const tool = createWebUnifiedTool({});
-      expect(tool.definition.capabilities).toContain("web_search");
-    });
-
     it("memory tool has capabilities tag", () => {
       const tool = createMemoryUnifiedTool({});
       expect(tool.definition.capabilities).toContain("memory_search");
-    });
-
-    it("web tool name is 'web' (not 'duckduckgo_search')", () => {
-      const tool = createWebUnifiedTool({});
-      expect(tool.definition.name).toBe("web");
     });
   });
 });

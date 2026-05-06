@@ -1,12 +1,16 @@
 /**
- * StackOwl — Google Search Tool (Simple HTTP)
+ * StackOwl — Web Search Tool (DDG HTML backend).
  *
- * Performs web searches using a simple API approach.
- * Returns structured results - title, URL, snippet.
+ * Returns a JSON-serialized WebToolResult envelope on every path
+ * (success / no-results / HTTP error / timeout / blocked).
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
-import { camoFoxSearch } from "./camofox.js";
+import {
+  serializeWebToolResult,
+  type WebToolResult,
+  type WebToolErrorCode,
+} from "../browser/envelope.js";
 
 interface SearchResult {
   title: string;
@@ -14,75 +18,21 @@ interface SearchResult {
   snippet: string;
 }
 
-/**
- * Parse a CamoFox accessibility snapshot as search results.
- * The snapshot format is: "[role] text [link eN] anchor-text ..."
- * We extract links with surrounding text as title+snippet pairs.
- */
-function parseSnapshotAsSearchResults(query: string, snapshot: string): string {
-  // Extract lines containing links
-  const lines = snapshot.split("\n").map((l) => l.trim()).filter(Boolean);
-  const results: SearchResult[] = [];
-
-  for (let i = 0; i < lines.length && results.length < 10; i++) {
-    const line = lines[i];
-    // Look for patterns like: [link eN] Title  followed by a URL on the next line
-    const linkMatch = line.match(/\[link\s+e\d+\]\s*(.+)/);
-    if (!linkMatch) continue;
-
-    const title = linkMatch[1].replace(/\[.*?\]/g, "").trim();
-    if (!title || title.length < 4) continue;
-
-    // Find URL in nearby lines
-    let url = "";
-    for (let j = i + 1; j <= i + 3 && j < lines.length; j++) {
-      const urlMatch = lines[j].match(/https?:\/\/\S+/);
-      if (urlMatch) {
-        url = urlMatch[0].replace(/[,)]$/, "");
-        break;
-      }
-    }
-    if (!url) continue;
-
-    // Use next non-URL line as snippet
-    const snippet =
-      lines
-        .slice(i + 1, i + 4)
-        .find((l) => !l.startsWith("http") && l.length > 20)
-        ?.replace(/\[.*?\]/g, "")
-        .trim() ?? "";
-
-    results.push({ title, url, snippet });
-  }
-
-  if (results.length === 0) {
-    return `Search results for: "${query}" [via camofox]\n\n${snapshot.slice(0, 2000)}`;
-  }
-
-  const lines2 = results.map(
-    (r, i) =>
-      `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet || "(no snippet)"}`,
-  );
-  return `Search results for: "${query}" [via camofox]\n\n${lines2.join("\n\n")}`;
-}
-
-export const DuckDuckGoSearchTool: ToolImplementation = {
+export const WebSearchTool: ToolImplementation = {
   definition: {
-    name: "duckduckgo_search",
-    deprecated: true,
+    name: "web_search",
     description:
-      "Search the web for information. Returns titles, URLs, and snippets. " +
+      "Search the web. Returns titles, URLs, and snippets. " +
       "Use this as your FIRST step when you need current/real-time information " +
-      "(news, prices, flight status, weather, etc.) or to find URLs to read with web_crawl. " +
-      "Do NOT search for the same query twice — rephrase or try web_crawl on a specific URL instead. " +
-      "After 2 searches on the same topic, STOP and use the results you already have.",
+      "(news, prices, flight status, weather, etc.) or to find URLs to read with web_fetch. " +
+      "Do NOT search for the same query twice — rephrase or call web_fetch on a specific URL instead. " +
+      "If results return a BLOCKED_BY_ANTI_BOT envelope, escalate to live_browser.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description:
-            'A specific, targeted search query. Be precise — "THY83J flight status DFW arrival" is better than "Turkish Airlines flight"',
+          description: "A specific, targeted search query.",
         },
         num: {
           type: "number",
@@ -91,11 +41,13 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
       },
       required: ["query"],
     },
+    capabilities: ["web_search", "internet_query"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   async execute(
     args: Record<string, unknown>,
-    _context: ToolContext,
+    context: ToolContext,
   ): Promise<string> {
     const query = (args["query"] as string)?.trim();
     if (!query) throw new Error("Search query is required");
@@ -121,7 +73,16 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        return `Search failed: HTTP ${response.status}`;
+        const r: WebToolResult = {
+          success: false,
+          error: {
+            code: (response.status === 429 ? "RATE_LIMITED" : "INTERNAL_ERROR") as WebToolErrorCode,
+            message: `DDG HTTP ${response.status}`,
+            attemptedTiers: [{ tier: 1, name: "scrapling", outcome: "error", durationMs: 0, httpStatus: response.status }],
+            suggestedEscalation: "live_browser",
+          },
+        };
+        return serializeWebToolResult(r);
       }
 
       const html = await response.text();
@@ -177,40 +138,59 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
       }
 
       if (results.length === 0) {
-        // Detect CAPTCHA / bot-block and fall back to CamoFox @google_search
-        const lHtml = html.toLowerCase();
-        const isCaptcha =
-          lHtml.includes("captcha") ||
-          lHtml.includes("verify you are human") ||
-          lHtml.includes("unusual traffic") ||
-          lHtml.includes("robot") ||
-          lHtml.includes("blocked") ||
-          lHtml.includes("please complete the security check");
-
-        if (isCaptcha) {
-          const camoSnapshot = await camoFoxSearch("@google_search", query);
-          if (camoSnapshot) {
-            return parseSnapshotAsSearchResults(query, camoSnapshot);
+        // Classify via cheap-tier model — no hardcoded keywords.
+        const classifier = context.classifier;
+        if (classifier) {
+          const verdict = await classifier.classify({
+            url: searchUrl,
+            httpStatus: response.status,
+            bodyPreview: html.slice(0, 2048),
+          });
+          if (verdict.blocked) {
+            const r: WebToolResult = {
+              success: false,
+              error: {
+                code: "BLOCKED_BY_ANTI_BOT",
+                message: `DDG returned a CAPTCHA / anti-bot page for "${query}".`,
+                attemptedTiers: [
+                  { tier: 1, name: "scrapling", outcome: "blocked", durationMs: 0, blockedReason: verdict.reason ?? "captcha" },
+                ],
+                suggestedEscalation: "live_browser",
+              },
+            };
+            return serializeWebToolResult(r);
           }
         }
-
-        return `No results found for "${query}". Try a different search term.`;
+        const r: WebToolResult = {
+          success: true,
+          data: { kind: "search", query, results: [] },
+        };
+        return serializeWebToolResult(r);
       }
 
-      const lines = results.map(
-        (r, i) =>
-          `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet || "(no snippet)"}`,
-      );
-
-      return `Search results for: "${query}"\n\n${lines.join("\n\n")}`;
+      const r: WebToolResult = {
+        success: true,
+        data: {
+          kind: "search",
+          query,
+          results: results.slice(0, limit),
+        },
+      };
+      return serializeWebToolResult(r);
     } catch (error) {
-      if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          return `Search timeout. Try a simpler query.`;
-        }
-        return `Search error: ${error.message}`;
-      }
-      return `Search failed: Unknown error`;
+      const code: WebToolErrorCode = error instanceof Error && error.name === "AbortError" ? "TIMEOUT" : "INTERNAL_ERROR";
+      const message = error instanceof Error ? error.message : "unknown error";
+      const r: WebToolResult = {
+        success: false,
+        error: {
+          code,
+          message,
+          attemptedTiers: [{ tier: 1, name: "scrapling", outcome: code === "TIMEOUT" ? "timeout" : "error", durationMs: 0 }],
+          suggestedEscalation: "live_browser",
+        },
+      };
+      return serializeWebToolResult(r);
     }
   },
 };
+

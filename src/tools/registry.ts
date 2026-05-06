@@ -21,12 +21,14 @@ import {
 } from "./errors.js";
 import type { ToolIntentRouter } from "./intent-router.js";
 import type { ToolTracker } from "./tracker.js";
+import type { BlockingClassifier } from "../browser/blocking-classifier.js";
 
 export type { ToolDefinition };
 
 export interface ToolContext {
   cwd: string;
   engineContext?: EngineContext;
+  classifier?: Pick<BlockingClassifier, "classify">;
 }
 
 export interface ToolImplementation {

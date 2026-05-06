@@ -2,10 +2,13 @@
  * StackOwl — Element 7 T9 — EdgeAccumulator
  *
  * Writer side of the cost-weighted tool graph. Each `observe()` call updates
- * the (from_tool, to_tool, capability_tag) row in `tool_edges` with running
- * averages: success_rate is the proportion of successful observations,
+ * the (from_tool, to_tool, capability_tag, host_root) row in `tool_edges` with
+ * running averages: success_rate is the proportion of successful observations,
  * avg_duration_ms is the running mean. Single SQL UPDATE per observation —
  * no per-call query cost beyond a primary-key probe.
+ *
+ * `host_root` is optional (defaults to empty string = global, untyped). When
+ * supplied (Element 16c), enables host-scoped learned routing for `web_fetch`.
  */
 import type { MemoryDatabase } from "../../memory/db.js";
 
@@ -15,29 +18,33 @@ export interface EdgeObservation {
   capabilityTag: string;
   success: boolean;
   durationMs: number;
+  hostRoot?: string;
 }
 
 export class EdgeAccumulator {
   constructor(private readonly db: MemoryDatabase) {}
 
   observe(obs: EdgeObservation): void {
+    const hostRoot = obs.hostRoot ?? "";
+
     const existing = this.db.rawDb
       .prepare(
-        "SELECT success_rate, avg_duration_ms, sample_count FROM tool_edges WHERE from_tool = ? AND to_tool = ? AND capability_tag = ?",
+        "SELECT success_rate, avg_duration_ms, sample_count FROM tool_edges WHERE from_tool = ? AND to_tool = ? AND capability_tag = ? AND host_root = ?",
       )
-      .get(obs.fromTool, obs.toTool, obs.capabilityTag) as
+      .get(obs.fromTool, obs.toTool, obs.capabilityTag, hostRoot) as
       | { success_rate: number; avg_duration_ms: number; sample_count: number }
       | undefined;
 
     if (!existing) {
       this.db.rawDb
         .prepare(
-          "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, success_rate, avg_duration_ms, sample_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+          "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, avg_duration_ms, sample_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
         )
         .run(
           obs.fromTool,
           obs.toTool,
           obs.capabilityTag,
+          hostRoot,
           obs.success ? 1 : 0,
           obs.durationMs,
           1,
@@ -55,7 +62,7 @@ export class EdgeAccumulator {
     );
     this.db.rawDb
       .prepare(
-        "UPDATE tool_edges SET success_rate = ?, avg_duration_ms = ?, sample_count = ?, updated_at = datetime('now') WHERE from_tool = ? AND to_tool = ? AND capability_tag = ?",
+        "UPDATE tool_edges SET success_rate = ?, avg_duration_ms = ?, sample_count = ?, updated_at = datetime('now') WHERE from_tool = ? AND to_tool = ? AND capability_tag = ? AND host_root = ?",
       )
       .run(
         newRate,
@@ -64,6 +71,7 @@ export class EdgeAccumulator {
         obs.fromTool,
         obs.toTool,
         obs.capabilityTag,
+        hostRoot,
       );
   }
 }

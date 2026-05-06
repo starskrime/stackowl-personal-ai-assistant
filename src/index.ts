@@ -34,8 +34,8 @@ import { CredentialsTool } from "./tools/credentials.js";
 import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
-import { DuckDuckGoSearchTool } from "./tools/search.js";
-import { WebCrawlTool } from "./tools/web.js";
+import { WebSearchTool as InternalWebSearchTool } from "./tools/search.js";
+import { WebFetchTool } from "./tools/web.js";
 import { SessionStore } from "./memory/store.js";
 import { StackOwlEventBus } from "./events/index.js";
 import { TaskQueue } from "./queue/index.js";
@@ -122,7 +122,6 @@ import { ComputerUseTool } from "./tools/computer-use/index.js";
 import { ScraplingTool } from "./tools/web-scrapling.js";
 import { CamoFoxTool } from "./tools/camofox.js";
 // ── Unified Tool Facades (Phase 7a) ──
-import { createWebUnifiedTool } from "./tools/web-unified.js";
 import { createMemoryTool } from "./tools/memory-unified.js";
 import { createMacosCommsTool } from "./tools/macos/comms-unified.js";
 import { createMacosSystemTool } from "./tools/macos/system-unified.js";
@@ -331,7 +330,6 @@ async function bootstrap() {
 
   // Initialize tools
   const toolRegistry = new ToolRegistry();
-  const { WebSearchTool } = await import("./compat/index.js");
   const { SessionsListTool, SessionsHistoryTool, SessionStatusTool } =
     await import("./compat/tools/sessions.js");
   const { MemorySearchTool, MemoryGetTool } =
@@ -348,12 +346,8 @@ async function bootstrap() {
     // ── Credentials ──
     CredentialsTool,
     // ── Web & search ──
-    DuckDuckGoSearchTool,
-    WebCrawlTool,
-    new WebSearchTool(
-      "brave",
-      process.env.BRAVE_API_KEY || process.env.WEB_SEARCH_API_KEY,
-    ),
+    InternalWebSearchTool,
+    WebFetchTool,
     new BrowserTool(workspacePath),
     // ── Media & files ──
     SendFileTool,
@@ -723,17 +717,6 @@ async function bootstrap() {
     createMonitorTool(healthChecker),
     createConnectorTool(connectorResolver),
   ]);
-
-  // ── Unified tool facades (Phase 7a consolidation) ──────────────
-  // Each unified tool dispatches internally to the already-registered individual tools.
-  // The individual tools are marked deprecated: true in their definitions, so they are
-  // hidden from getAllDefinitions() / LLM-visible tool lists but remain callable
-  // by internal code via toolRegistry.execute().
-  toolRegistry.register(createWebUnifiedTool({
-    search: (args, ctx) => toolRegistry.execute("duckduckgo_search", args, ctx),
-    fetch:  (args, ctx) => toolRegistry.execute("web_crawl", args, ctx),
-    interact: (args, ctx) => toolRegistry.execute("camofox", args, ctx),
-  }));
 
   // Element 15 — canonical `memory` tool is registered AFTER gateway construction
   // (it depends on gateway-owned GatewayEventBus and HitlCheckpointStore).

@@ -19,13 +19,35 @@ export class FallbackSequencer {
    * (fromTool, capabilityTag) edge, excluding any tools already tried.
    *
    * Edges with fewer than 3 samples are ignored — too noisy to trust.
+   *
+   * When `hostRoot` is provided (non-empty), prefers rows scoped to that host,
+   * falling back to global ('') rows when no host-specific edge exists.
    */
   getNextFallback(
     fromTool: string,
     capabilityTag: string,
     exclude: string[] = [],
+    hostRoot?: string,
   ): string | null {
     const placeholders = exclude.map(() => "?").join(",") || "''";
+
+    if (hostRoot && hostRoot !== "") {
+      const row = this.db.rawDb
+        .prepare(
+          `SELECT to_tool FROM tool_edges
+             WHERE from_tool = ? AND capability_tag = ?
+               AND sample_count >= 3
+               AND to_tool NOT IN (${placeholders})
+               AND host_root IN (?, '')
+             ORDER BY (host_root = ?) DESC, success_rate DESC, sample_count DESC
+             LIMIT 1`,
+        )
+        .get(fromTool, capabilityTag, ...exclude, hostRoot, hostRoot) as
+        | { to_tool: string }
+        | undefined;
+      return row?.to_tool ?? null;
+    }
+
     const row = this.db.rawDb
       .prepare(
         `SELECT to_tool FROM tool_edges

@@ -52,8 +52,8 @@ export interface DNADecisions {
 /** Maps expertise domains to relevant tools */
 const DOMAIN_TOOL_MAP: Record<string, string[]> = {
   // Development
-  typescript: ["run_shell_command", "read_file", "write_file", "web_crawl"],
-  javascript: ["run_shell_command", "read_file", "write_file", "web_crawl"],
+  typescript: ["run_shell_command", "read_file", "write_file", "web_fetch"],
+  javascript: ["run_shell_command", "read_file", "write_file", "web_fetch"],
   python: ["run_shell_command", "read_file", "write_file"],
   rust: ["run_shell_command", "read_file", "write_file"],
   golang: ["run_shell_command", "read_file", "write_file"],
@@ -62,18 +62,18 @@ const DOMAIN_TOOL_MAP: Record<string, string[]> = {
   kubernetes: ["run_shell_command"],
 
   // Research & Communication
-  research: ["web_crawl", "duckduckgo_search", "read_file"],
+  research: ["web_fetch", "web_search", "read_file"],
   writing: ["write_file", "read_file"],
   communication: ["send_telegram_message", "send_file"],
 
   // Data & Finance
   data_analysis: ["run_shell_command", "read_file", "write_file"],
-  finance: ["duckduckgo_search", "web_crawl", "read_file"],
-  market_analysis: ["duckduckgo_search", "web_crawl"],
+  finance: ["web_search", "web_fetch", "read_file"],
+  market_analysis: ["web_search", "web_fetch"],
 
   // Media
-  image: ["generate_image", "send_file", "duckduckgo_search"],
-  media: ["generate_image", "send_file", "web_crawl"],
+  image: ["generate_image", "send_file", "web_search"],
+  media: ["generate_image", "send_file", "web_fetch"],
 };
 
 // ─── Decision Layer ──────────────────────────────────────────────

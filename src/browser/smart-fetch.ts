@@ -475,7 +475,7 @@ export function hasBrowserPool(): boolean {
 // ─── 3-tier dispatcher (Element 16 Phase A) ─────────────────────
 
 import type { GatewayEventBus } from "../gateway/event-bus.js";
-import type { TierAttempt, WebToolData, WebToolResult } from "./envelope.js";
+import type { TierAttempt, TierName, WebToolData, WebToolResult } from "./envelope.js";
 
 export interface TierRunOk { attempt: TierAttempt; data: WebToolData }
 export interface TierRunFail { attempt: TierAttempt; data?: undefined }
@@ -483,7 +483,7 @@ export type TierRunResult = TierRunOk | TierRunFail;
 
 export interface TierRunner {
   tier: number;
-  name: "http" | "camofox" | "scrapling";
+  name: TierName;
   isAvailable(): boolean | Promise<boolean>;
   run(url: string, ctx: { bus: GatewayEventBus }): Promise<TierRunResult>;
 }
@@ -491,14 +491,39 @@ export interface TierRunner {
 export interface DispatcherCtx {
   bus: GatewayEventBus;
   hint?: "anti-bot";
+  sequencer?: { getNextFallback(from: string, cap: string, excl: string[], host?: string): string | null };
+}
+
+function extractHostRoot(url: string): string {
+  try {
+    const u = new URL(url);
+    const parts = u.hostname.split(".");
+    return parts.length >= 2 ? parts.slice(-2).join(".") : u.hostname;
+  } catch {
+    return "";
+  }
 }
 
 export async function runEscalationChain(
-  runners: TierRunner[],
+  inputRunners: TierRunner[],
   url: string,
   ctx: DispatcherCtx,
 ): Promise<WebToolResult> {
+  let runners = [...inputRunners];
   const attempts: TierAttempt[] = [];
+
+  const hostRoot = extractHostRoot(url);
+  const preferred = ctx.sequencer?.getNextFallback("", "web_fetch", [], hostRoot);
+  if (preferred) {
+    const idx = runners.findIndex((r) => r.name === preferred);
+    if (idx > 0) {
+      for (let i = 0; i < idx; i++) {
+        attempts.push({ tier: runners[i].tier, name: runners[i].name, outcome: "skipped-by-learned-routing", durationMs: 0 });
+      }
+      runners = [runners[idx], ...runners.slice(idx + 1)];
+    }
+  }
+
   for (const r of runners) {
     if (ctx.hint === "anti-bot" && r.tier === 1) {
       attempts.push({ tier: 1, name: r.name, durationMs: 0, outcome: "skipped-by-hint" });
@@ -526,7 +551,12 @@ export async function runEscalationChain(
     }
   }
 
-  const allUnavailable = attempts.every(a => a.outcome === "unavailable" || a.outcome === "skipped-by-hint");
+  const allUnavailable = attempts.every(
+    (a) =>
+      a.outcome === "unavailable" ||
+      a.outcome === "skipped-by-hint" ||
+      a.outcome === "skipped-by-learned-routing",
+  );
   return {
     success: false,
     error: {
@@ -541,60 +571,6 @@ export async function runEscalationChain(
 
 import type { BlockingClassifier } from "./blocking-classifier.js";
 
-export interface HttpTierDeps {
-  classifier: Pick<BlockingClassifier, "classify">;
-  fetcher?: (url: string, timeoutMs: number) => Promise<{ status: number; body: string; contentType: string }>;
-}
-
-const TIER1_TIMEOUT_MS = 4000;
-
-const TRIGGER_STATUSES = new Set([401, 403, 429, 503]);
-
-export function createHttpTier(deps: HttpTierDeps): TierRunner {
-  const fetcher = deps.fetcher ?? defaultHttpFetch;
-  return {
-    tier: 1,
-    name: "http",
-    isAvailable: () => true,
-    async run(url, _ctx) {
-      const t0 = Date.now();
-      let resp: { status: number; body: string; contentType: string };
-      try { resp = await fetcher(url, TIER1_TIMEOUT_MS); }
-      catch {
-        return { attempt: { tier: 1, name: "http", durationMs: Date.now() - t0, outcome: "timeout" } };
-      }
-
-      const trigger = TRIGGER_STATUSES.has(resp.status) || resp.status >= 500
-        || (resp.status !== 200 && resp.body.length < 1024);
-      if (trigger) {
-        const v = await deps.classifier.classify({ url, httpStatus: resp.status, bodyPreview: resp.body.slice(0, 2048) });
-        if (v.blocked) {
-          return { attempt: {
-            tier: 1, name: "http", durationMs: Date.now() - t0,
-            outcome: "blocked", blockedReason: (v.reason ?? "other") as any, httpStatus: resp.status,
-          } };
-        }
-      }
-
-      const { title, text } = htmlToText(resp.body);
-      return {
-        attempt: { tier: 1, name: "http", durationMs: Date.now() - t0, outcome: "success", httpStatus: resp.status },
-        data: { kind: "page", url, title, content: text, contentType: resp.contentType },
-      };
-    },
-  };
-}
-
-async function defaultHttpFetch(url: string, timeoutMs: number) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, { signal: ctrl.signal, headers: CHROME_HEADERS, redirect: "follow" });
-    const body = await r.text();
-    return { status: r.status, body, contentType: r.headers.get("content-type") ?? "" };
-  } finally { clearTimeout(t); }
-}
-
 import type { RuntimeAvailability } from "../runtime/availability.js";
 import type { CamoFoxClient } from "./camofox-client.js";
 
@@ -604,7 +580,7 @@ export interface CamoFoxTierDeps {
   classifier?: Pick<BlockingClassifier, "classify">;
 }
 
-const TIER2_BUDGET_MS = 20000;
+const TIER2_BUDGET_MS_CAMOFOX = 20000;
 
 export function createCamoFoxTier(deps: CamoFoxTierDeps): TierRunner {
   return {
@@ -623,7 +599,7 @@ export function createCamoFoxTier(deps: CamoFoxTierDeps): TierRunner {
         tabId = tab.tabId;
         const snap = await Promise.race([
           deps.client!.snapshot(tabId, userId),
-          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("camofox-timeout")), TIER2_BUDGET_MS)),
+          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("camofox-timeout")), TIER2_BUDGET_MS_CAMOFOX)),
         ]);
         if (!snap) throw new Error("camofox-empty");
         const text = (snap.snapshot ?? "").replace(/\[[\w\s]+\]\s*/g, "").replace(/\be\d+\b/g, "").replace(/\s{2,}/g, " ").trim();
@@ -653,7 +629,7 @@ export interface ScraplingTierDeps {
   runScrapling: (url: string) => Promise<{ title: string; url: string; content: string }>;
 }
 
-const TIER3_BUDGET_MS = 25000;
+const TIER1_BUDGET_MS_SCRAPLING = 25000;
 const SCRAPLING_INSTALL_HINT = "pip install 'scrapling[all]' && patchright install chromium";
 
 // ─── Default dispatcher (Element 16 Task 26) ────────────────────
@@ -695,13 +671,16 @@ export async function webFetchEnvelope(
   const bus = deps.bus ?? NOOP_BUS;
   const camoClient = getCamoFoxClient();
 
-  const tiers: TierRunner[] = [createHttpTier({ classifier })];
-  if (camoClient) {
-    tiers.push(createCamoFoxTier({ availability, client: camoClient, classifier }));
-  }
+  const tiers: TierRunner[] = [];
   if (deps.scrapling) {
     tiers.push(createScraplingTier({ probe: deps.scrapling.probe, runScrapling: deps.scrapling.run }));
   }
+  if (camoClient) {
+    tiers.push(createCamoFoxTier({ availability, client: camoClient, classifier }));
+  }
+  // Obscura: type-only safety valve (Element 16c). Runtime activation deferred to Phase B.
+  // The stub always emits skipped-disabled; passing { enabled: false } is fine.
+  tiers.push(createObscuraTier({ enabled: false }));
 
   return runEscalationChain(tiers, url, { bus, hint: deps.hint });
 }
@@ -711,7 +690,7 @@ export function createScraplingTier(deps: ScraplingTierDeps): TierRunner & { ins
   let installHintMessage = SCRAPLING_INSTALL_HINT;
 
   return {
-    tier: 3,
+    tier: 1,
     name: "scrapling",
     isAvailable: async () => {
       if (probed) return probed.ok;
@@ -726,17 +705,38 @@ export function createScraplingTier(deps: ScraplingTierDeps): TierRunner & { ins
       try {
         const r = await Promise.race([
           deps.runScrapling(url),
-          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("scrapling-timeout")), TIER3_BUDGET_MS)),
+          new Promise<null>((_r, rej) => setTimeout(() => rej(new Error("scrapling-timeout")), TIER1_BUDGET_MS_SCRAPLING)),
         ]);
         if (!r) throw new Error("scrapling-empty");
         return {
-          attempt: { tier: 3, name: "scrapling", durationMs: Date.now() - t0, outcome: "success" },
+          attempt: { tier: 1, name: "scrapling", durationMs: Date.now() - t0, outcome: "success" },
           data: { kind: "page", url: r.url, title: r.title, content: r.content },
         };
       } catch (err) {
         const isTimeout = err instanceof Error && err.message === "scrapling-timeout";
-        return { attempt: { tier: 3, name: "scrapling", durationMs: Date.now() - t0, outcome: isTimeout ? "timeout" : "error" } };
+        return { attempt: { tier: 1, name: "scrapling", durationMs: Date.now() - t0, outcome: isTimeout ? "timeout" : "error" } };
       }
+    },
+  };
+}
+
+/**
+ * Obscura tier — TYPE-ONLY safety valve.
+ *
+ * Element 16c locks Obscura as a reserved TierName slot. No runtime
+ * client ships this round (Mary's research: pre-1.0, lacking benchmarks).
+ * The runner always emits `skipped-disabled` so attemptedTiers reflects
+ * the reservation without claiming work was attempted.
+ */
+export function createObscuraTier(_opts: { enabled: boolean }): TierRunner {
+  return {
+    tier: 3,
+    name: "obscura",
+    isAvailable: () => true,
+    async run(_url, _ctx) {
+      return {
+        attempt: { tier: 3, name: "obscura", outcome: "skipped-disabled", durationMs: 0 },
+      };
     },
   };
 }

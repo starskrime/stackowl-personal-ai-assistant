@@ -9,8 +9,8 @@ describe("Telegram narration", () => {
     subscribeTelegramNarration(bus, { send, chatId: "123" });
     bus.emit({
       type: "tool:start",
-      toolName: "web",
-      args: { action: "search", query: "x" },
+      toolName: "web_search",
+      args: { query: "x" },
       turnId: "t1",
     });
     await new Promise((r) => setImmediate(r));
@@ -24,7 +24,7 @@ describe("Telegram narration", () => {
     subscribeTelegramNarration(bus, { send, chatId: "123" });
     bus.emit({
       type: "tool:goal_blocked",
-      toolName: "web",
+      toolName: "web_search",
       subGoal: "find news",
       suggestion: "try memory_search",
     });
@@ -36,9 +36,9 @@ describe("Telegram narration", () => {
     const bus = new GatewayEventBus();
     const send = vi.fn();
     subscribeTelegramNarration(bus, { send, chatId: "123" });
-    bus.emit({ type: "tool:start", toolName: "web", args: { action: "search", query: "a" }, turnId: "t1" });
-    bus.emit({ type: "tool:start", toolName: "web", args: { action: "search", query: "b" }, turnId: "t1" });
-    bus.emit({ type: "tool:start", toolName: "web", args: { action: "search", query: "c" }, turnId: "t1" });
+    bus.emit({ type: "tool:start", toolName: "web_search", args: { query: "a" }, turnId: "t1" });
+    bus.emit({ type: "tool:start", toolName: "web_search", args: { query: "b" }, turnId: "t1" });
+    bus.emit({ type: "tool:start", toolName: "web_search", args: { query: "c" }, turnId: "t1" });
     await new Promise((r) => setImmediate(r));
     expect(send).toHaveBeenCalledTimes(1);
   });

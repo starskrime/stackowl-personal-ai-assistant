@@ -1,24 +1,18 @@
 /**
- * StackOwl — Web Crawl Tool
+ * StackOwl — Web Fetch Tool
  *
  * Fetches and cleans text from any URL. Uses the smart fetch layer
- * which automatically escalates from HTTP → stealth browser when blocked.
+ * which escalates scrapling → camofox (Obscura reserved) when blocked.
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { webFetchEnvelope } from "../browser/smart-fetch.js";
 
-export const WebCrawlTool: ToolImplementation = {
+export const WebFetchTool: ToolImplementation = {
   definition: {
-    name: "web_crawl",
-    deprecated: true,
+    name: "web_fetch",
     description:
-      "Fetch and extract text content from a specific URL. Use this AFTER duckduckgo_search " +
-      "to read a page you found, or when you already know the exact URL. " +
-      "Returns cleaned text (no HTML). Good for: articles, documentation, API docs, data pages. " +
-      "Automatically escalates: HTTP → stealth Chromium → CamoFox (Firefox, anti-detection). " +
-      "For interactive sites (forms, SPAs, login flows, clicking buttons) use the camofox tool instead. " +
-      "Limit: 25KB text.",
+      "Fetch and extract content from a URL. Tries scrapling, then camofox (Obscura is reserved). Returns a structured envelope with the page text or a typed error code. Use hint:'anti-bot' if you already have evidence the site uses Cloudflare/PerimeterX/Akamai — this skips the lightweight tier. On ALL_TIERS_UNAVAILABLE or BLOCKED_BY_ANTI_BOT, escalate to live_browser.",
     parameters: {
       type: "object",
       properties: {
@@ -27,9 +21,16 @@ export const WebCrawlTool: ToolImplementation = {
           description:
             "Full URL to fetch (e.g. https://example.com/article). Must start with http:// or https://",
         },
+        hint: {
+          type: "string",
+          enum: ["anti-bot"],
+          description: "Skip Tier 1 (scrapling) and start with camofox.",
+        },
       },
       required: ["url"],
     },
+    capabilities: ["web_fetch", "http_request"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
@@ -72,3 +73,4 @@ export const WebCrawlTool: ToolImplementation = {
     }
   },
 };
+

@@ -6,7 +6,6 @@
  */
 
 export { BrowserTool } from "./tools/browser.js";
-export { WebSearchTool } from "./tools/web-search.js";
 export { ToolProfileManager } from "./profiles.js";
 export { DockerSandbox, executeWithSandbox } from "./sandbox.js";
 

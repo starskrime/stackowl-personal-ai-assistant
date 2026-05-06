@@ -2,20 +2,20 @@ import { describe, it, expect } from "vitest";
 import { formatToolEvent } from "../../src/gateway/narration-formatter.js";
 
 describe("formatToolEvent", () => {
-  it("returns search narration for tool:start with duckduckgo_search", () => {
+  it("returns search narration for tool:start with web_search", () => {
     const msg = formatToolEvent({
       type: "tool:start",
-      toolName: "duckduckgo_search",
+      toolName: "web_search",
       args: { query: "TypeScript 5.5 release notes" },
       turnId: "t1",
     });
     expect(msg).toBe('Searching the web for "TypeScript 5.5 release notes"…');
   });
 
-  it("returns fetch narration for tool:start with web_crawl", () => {
+  it("returns fetch narration for tool:start with web_fetch", () => {
     const msg = formatToolEvent({
       type: "tool:start",
-      toolName: "web_crawl",
+      toolName: "web_fetch",
       args: { url: "https://example.com/docs" },
       turnId: "t1",
     });
@@ -26,7 +26,7 @@ describe("formatToolEvent", () => {
   it("returns null for tool:result success (silent on success)", () => {
     const msg = formatToolEvent({
       type: "tool:result",
-      toolName: "web_crawl",
+      toolName: "web_fetch",
       success: true,
       durationMs: 200,
       truncated: false,
@@ -37,7 +37,7 @@ describe("formatToolEvent", () => {
   it("returns failure narration for tool:result failure", () => {
     const msg = formatToolEvent({
       type: "tool:result",
-      toolName: "web_crawl",
+      toolName: "web_fetch",
       success: false,
       durationMs: 100,
       truncated: false,
@@ -48,17 +48,17 @@ describe("formatToolEvent", () => {
   it("returns blocked narration with suggestion", () => {
     const msg = formatToolEvent({
       type: "tool:goal_blocked",
-      toolName: "duckduckgo_search",
+      toolName: "web_search",
       subGoal: "find price data",
-      suggestion: "try web_crawl with specific URL",
+      suggestion: "try web_fetch with specific URL",
     });
-    expect(msg).toContain("try web_crawl with specific URL");
+    expect(msg).toContain("try web_fetch with specific URL");
   });
 
   it("returns null for tool:goal_advance (silent on progress)", () => {
     const msg = formatToolEvent({
       type: "tool:goal_advance",
-      toolName: "web_crawl",
+      toolName: "web_fetch",
       subGoal: "find article",
       verdict: "ADVANCES",
     });

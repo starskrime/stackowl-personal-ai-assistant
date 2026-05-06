@@ -81,4 +81,47 @@ describe("FallbackSequencer — DB-backed", () => {
     const seq2 = new FallbackSequencer(db);
     expect(seq2.getNextFallback("web", "search")).toBe("memory");
   });
+
+  it("prefers host-scoped edge over global when both exist", () => {
+    db.rawDb
+      .prepare(
+        "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, sample_count) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("web_fetch", "scrapling", "web_fetch", "", 0.9, 10);
+    db.rawDb
+      .prepare(
+        "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, sample_count) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("web_fetch", "camofox", "web_fetch", "github.com", 0.6, 5);
+    expect(
+      seq.getNextFallback("web_fetch", "web_fetch", [], "github.com"),
+    ).toBe("camofox");
+  });
+
+  it("falls back to global edge when no host-specific row exists", () => {
+    db.rawDb
+      .prepare(
+        "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, sample_count) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("web_fetch", "scrapling", "web_fetch", "", 0.7, 10);
+    expect(
+      seq.getNextFallback("web_fetch", "web_fetch", [], "github.com"),
+    ).toBe("scrapling");
+  });
+
+  it("ignores host-scoped edge with sample_count < 3 (falls through to global)", () => {
+    db.rawDb
+      .prepare(
+        "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, sample_count) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("web_fetch", "camofox", "web_fetch", "cnn.com", 1.0, 2);
+    db.rawDb
+      .prepare(
+        "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, sample_count) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("web_fetch", "scrapling", "web_fetch", "", 0.5, 10);
+    expect(seq.getNextFallback("web_fetch", "web_fetch", [], "cnn.com")).toBe(
+      "scrapling",
+    );
+  });
 });
