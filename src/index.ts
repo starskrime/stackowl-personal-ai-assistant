@@ -35,7 +35,7 @@ import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
 import { WebSearchTool as InternalWebSearchTool } from "./tools/search.js";
-import { WebCrawlTool } from "./tools/web.js";
+import { WebFetchTool } from "./tools/web.js";
 import { SessionStore } from "./memory/store.js";
 import { StackOwlEventBus } from "./events/index.js";
 import { TaskQueue } from "./queue/index.js";
@@ -349,7 +349,7 @@ async function bootstrap() {
     CredentialsTool,
     // ── Web & search ──
     InternalWebSearchTool,
-    WebCrawlTool,
+    WebFetchTool,
     new WebSearchTool(
       "brave",
       process.env.BRAVE_API_KEY || process.env.WEB_SEARCH_API_KEY,
