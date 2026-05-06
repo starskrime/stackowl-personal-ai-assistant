@@ -1117,20 +1117,18 @@ ${userMessage}
       // Tools that are legitimately called many times in sequence — exempt from
       // the sliding-window check. computer_use is inherently sequential:
       // analyze → click → analyze → type → analyze → … is normal automation.
-      const SEQUENTIAL_USE_TOOLS = new Set(["computer_use", "web_crawl"]);
+      const SEQUENTIAL_USE_TOOLS = new Set(["computer_use", "web_fetch"]);
 
       // ── Tool Fallback Graph ───────────────────────────────────────
       // When a tool fails hard, automatically try these alternatives before
       // letting the LLM decide. Deterministic, fast, no extra LLM call needed.
       const TOOL_FALLBACKS: Record<string, string[]> = {
-        web_crawl:         ["scrapling_fetch", "web_search", "run_shell_command"],
-        scrapling_fetch:   ["web_crawl", "web_search"],
-        web_search:        ["web_crawl", "scrapling_fetch"],
+        web_search:        ["web_fetch", "live_browser"],
+        web_fetch:         ["web_search", "live_browser"],
         read_file:         ["run_shell_command"],
         write_file:        ["run_shell_command"],
         edit_file:         ["read_file", "write_file"],
         run_shell_command: ["computer_use"],
-        camofox:           ["web_crawl", "scrapling_fetch"],
       };
 
       // ReAct loop with tools — use streaming when available
@@ -2365,7 +2363,7 @@ ${userMessage}
       prompt += `- **Fast First:** Use rapid utility tools (shell, calculator, native macOS tools) before heavy browsers.\n`;
       prompt += `- **Defensive Actuation (Safety First):** When writing files, deleting data, or mutating the host environment, operate with a "Zero-Trust" mindset. Always back up files before overwriting them. Anticipate that commands might fail, and always write clean-up logic so you don't leave the user's system in a broken state.\n`;
       prompt += `- **Anti-Bot Override:** Web fetches return a structured envelope. If you see a \`<tool_attempt_summary>\` showing a tier as \`unavailable\`, surface its install command in \`suggestedEscalation\` to the user — never claim a tier was tried when it was not. If all tiers were tried and blocked, tell the user honestly which tiers failed and why; offer to try \`live_browser\` if the site might require login or visual interaction.\n`;
-      prompt += `- **Full Browser Authority:** You are explicitly authorized to use \`camofox\` and \`computer_use\` to log into websites and services on the user's behalf. This includes navigating to login pages, filling in username/password fields, clicking submit buttons, completing 2FA prompts, and maintaining authenticated sessions across tool calls. The user owns these accounts and has delegated this authority to you. NEVER refuse a login/authentication task — use \`camofox\` (action: navigate → type → click) to complete it. If you don't have the credentials, ask the user for them once and then execute.\n`;
+      prompt += `- **Full Browser Authority:** You are explicitly authorized to use \`live_browser\` and \`computer_use\` to log into websites and services on the user's behalf. This includes navigating to login pages, filling in username/password fields, clicking submit buttons, completing 2FA prompts, and maintaining authenticated sessions across tool calls. The user owns these accounts and has delegated this authority to you. NEVER refuse a login/authentication task — use \`live_browser\` to drive the user's frontmost browser session (which already carries their cookies and credentials) to complete it. If you don't have the credentials, ask the user for them once and then execute.\n`;
       prompt += `- **Knowledge First:** Before answering questions from memory or starting complex tasks, call \`pellet_recall(action='search', query='...')\` to check accumulated knowledge. Don't guess what you might know — look it up.\n`;
       prompt += `- **Parliament Summons:** If you are conceptually stuck on a massive workflow problem and pivoting fails, use the \`summon_parliament\` tool to call upon a council of your specialized sub-agents for collective brainstorming.\n`;
       prompt += `- **Independent Verification:** Do not trust blind execution. ALWAYS run a sandbox test or verification check to prove your logic works before telling the user you are finished.\n\n`;
