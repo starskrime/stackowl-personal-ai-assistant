@@ -2081,6 +2081,23 @@ class OwlPerfRepo {
   }
 }
 
+// ─── Jaccard similarity helpers (ported from mistake-detector.ts) ─
+
+function computeSimilarity(setA: string[], setB: string[]): number {
+  const a = new Set(setA.map((w) => w.toLowerCase()));
+  const b = new Set(setB.map((w) => w.toLowerCase()));
+  const intersection = [...a].filter((w) => b.has(w)).length;
+  const union = new Set([...a, ...b]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((w) => w.length > 2);
+}
+
 class OwlLearningsRepo {
   constructor(private db: Database.Database) {}
 
@@ -2166,6 +2183,52 @@ class OwlLearningsRepo {
       SELECT * FROM owl_learnings WHERE owl_name = ? AND category = ? AND LOWER(SUBSTR(learning, 1, 60)) = ?
     `).all(owlName, category, prefix) as any[];
     return rows.length > 0 ? rowToLearning(rows[0]) : null;
+  }
+
+  admitIfWorthy(
+    owlName: string,
+    learning: string,
+    category: LearningCategory,
+    confidence: number,
+  ): { id: string } | null {
+    const recent = this.db.prepare(`
+      SELECT learning FROM owl_learnings
+      WHERE owl_name = ? AND created_at > datetime('now', '-30 days')
+    `).all(owlName) as Array<{ learning: string }>;
+
+    const newTokens = tokenize(learning);
+    for (const row of recent) {
+      const existingTokens = tokenize(row.learning);
+      if (computeSimilarity(newTokens, existingTokens) >= 0.6) {
+        return null;
+      }
+    }
+
+    const result = this.add(owlName, learning, category, undefined, confidence);
+    return { id: result.id };
+  }
+
+  evictStale(): number {
+    const result = this.db.prepare(`
+      DELETE FROM owl_learnings
+      WHERE confidence < 0.3
+        AND reinforcement_count <= 1
+        AND created_at < datetime('now', '-14 days')
+    `).run();
+    return result.changes;
+  }
+
+  getForOwlSorted(owlName: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT learning FROM owl_learnings
+      WHERE owl_name = ?
+      ORDER BY
+        CASE category WHEN 'failure' THEN 0 ELSE 1 END,
+        confidence DESC,
+        reinforcement_count DESC
+      LIMIT 6
+    `).all(owlName) as Array<{ learning: string }>;
+    return rows.map((r) => r.learning);
   }
 }
 
@@ -2358,6 +2421,7 @@ class PromptOptimizationRepo {
 
 class ApproachLibraryRepo {
   constructor(private db: Database.Database) {}
+  private readonly cooldown = new Map<string, number>();
 
   record(
     owlName: string,
@@ -2407,6 +2471,57 @@ class ApproachLibraryRepo {
       ORDER BY created_at DESC LIMIT ?
     `).all(toolName, limit) as any[];
     return rows.map(rowToApproach);
+  }
+
+  getEffectivenessScore(owlName: string, toolName: string): number {
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) FILTER (WHERE outcome = 'success') AS success_count,
+        COUNT(*) FILTER (WHERE outcome = 'failure') AS failure_count,
+        MAX(created_at) FILTER (WHERE outcome = 'success') AS last_success
+      FROM approach_library
+      WHERE owl_name = ? AND tool_name = ?
+    `).get(owlName, toolName) as {
+      success_count: number;
+      failure_count: number;
+      last_success: string | null;
+    } | undefined;
+
+    if (!row || row.success_count + row.failure_count === 0) return 0.5;
+
+    const baseScore = row.success_count / (row.success_count + row.failure_count);
+    const ageMs = Date.now() - new Date(row.last_success ?? 0).getTime();
+    const decayFactor = Math.pow(0.5, ageMs / (14 * 24 * 60 * 60 * 1000));
+    return baseScore * decayFactor + (1 - decayFactor) * 0.5;
+  }
+
+  getRepeatFailureWarning(toolName: string, taskKeywords: string[]): string | null {
+    const last = this.cooldown.get(toolName);
+    if (last !== undefined && Date.now() - last < 3_600_000) return null;
+
+    const rows = this.db.prepare(`
+      SELECT task_keywords, failure_reason
+      FROM approach_library
+      WHERE tool_name = ? AND outcome = 'failure'
+      ORDER BY created_at DESC
+      LIMIT 20
+    `).all(toolName) as Array<{ task_keywords: string; failure_reason: string | null }>;
+
+    for (const row of rows) {
+      const similarity = computeSimilarity(
+        taskKeywords,
+        tokenize(row.task_keywords),
+      );
+      if (similarity >= 0.6) {
+        this.cooldown.set(toolName, Date.now());
+        return (
+          `Warning: similar task failed previously with ${toolName}. ` +
+          `Past failure: ${row.failure_reason ?? "unknown reason"}. ` +
+          `Consider an alternative approach.`
+        );
+      }
+    }
+    return null;
   }
 }
 
@@ -2618,6 +2733,40 @@ class TrajectoriesRepo {
       ORDER BY turn_index ASC
     `).all(trajectoryId) as any[];
     return rows.map(rowToTrajectoryTurn);
+  }
+
+  getFailureDensityTopics(daysBack: number, minOccurrences: number): string[] {
+    try {
+      const rows = this.db.prepare(`
+        SELECT tool_name
+        FROM trajectory_turns
+        WHERE verification_result IN ('BLOCKED', 'PARTIAL')
+          AND created_at > datetime('now', '-' || ? || ' days')
+          AND tool_name IS NOT NULL
+        GROUP BY tool_name
+        HAVING COUNT(*) >= ?
+        ORDER BY COUNT(*) DESC
+        LIMIT 10
+      `).all(daysBack, minOccurrences) as Array<{ tool_name: string }>;
+      return rows.map((r) => r.tool_name);
+    } catch {
+      return [];
+    }
+  }
+
+  getSessionFailures(sessionId: string): Array<{
+    tool_name: string | null;
+    verification_result: string;
+    verifier_reason: string | null;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT tt.tool_name, tt.verification_result, tt.verifier_reason
+      FROM trajectory_turns tt
+      JOIN trajectories t ON t.id = tt.trajectory_id
+      WHERE t.session_id = ?
+        AND tt.verification_result IN ('BLOCKED', 'PARTIAL')
+    `).all(sessionId) as any[];
+    return rows;
   }
 }
 
