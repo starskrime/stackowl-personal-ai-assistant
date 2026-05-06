@@ -1,6 +1,7 @@
 import type { StackOwlConfig } from "../config/loader.js";
 import type { PatternMiner } from "../skills/pattern-miner.js";
-import type { LearningEngine } from "../learning/self-study.js";
+import type { LearningOrchestrator } from "../learning/orchestrator.js";
+import type { MemoryDatabase } from "../memory/db.js";
 import type { ToolOutcomeStore } from "../tools/outcome-store.js";
 import type { CapabilityScanner, ScanResult } from "./capability-scanner.js";
 
@@ -44,7 +45,8 @@ export interface IdleEngineCallbacks {
   onResult: (result: IdleActivityResult) => void;
   patternMiner?: PatternMiner;
   capabilityScanner?: CapabilityScanner;
-  learningEngine?: LearningEngine;
+  learningOrchestrator?: LearningOrchestrator;
+  db?: MemoryDatabase;
   toolOutcomeStore?: ToolOutcomeStore;
 }
 
@@ -114,13 +116,14 @@ export class IdleActivityEngine {
     if (!this.isIdle()) return null;
 
     const { enabled } = this.config;
-    const { patternMiner, capabilityScanner, learningEngine, toolOutcomeStore } = this.callbacks;
+    const { patternMiner, capabilityScanner, learningOrchestrator, toolOutcomeStore } =
+      this.callbacks;
 
     if (enabled.patternMining && patternMiner) return "pattern_mining";
     if (enabled.capabilityExploration && capabilityScanner) return "capability_exploration";
-    if (enabled.anticipatoryResearch && learningEngine) return "anticipatory_research";
+    if (enabled.anticipatoryResearch && learningOrchestrator) return "anticipatory_research";
     if (enabled.toolOutcomeReview && toolOutcomeStore) return "tool_outcome_review";
-    if (enabled.knowledgeRefresh && learningEngine) return "knowledge_refresh";
+    if (enabled.knowledgeRefresh && learningOrchestrator) return "knowledge_refresh";
 
     return null;
   }
@@ -172,10 +175,16 @@ export class IdleActivityEngine {
   }
 
   private async runAnticipatoryResearch(): Promise<IdleActivityResult> {
-    if (!this.callbacks.learningEngine) {
+    if (!this.callbacks.learningOrchestrator) {
       return { activity: "anticipatory_research", success: false };
     }
-    await this.callbacks.learningEngine.runStudySession();
+    const failureDensityTopics = this.callbacks.db
+      ? (this.callbacks.db.trajectories.getFailureDensityTopics(7, 2) ?? [])
+      : [];
+    await this.callbacks.learningOrchestrator.runProactiveSession({
+      failureDensityTopics,
+      maxTopics: 3,
+    });
     return { activity: "anticipatory_research", success: true };
   }
 
@@ -195,10 +204,10 @@ export class IdleActivityEngine {
   }
 
   private async runKnowledgeRefresh(): Promise<IdleActivityResult> {
-    if (!this.callbacks.learningEngine) {
+    if (!this.callbacks.learningOrchestrator) {
       return { activity: "knowledge_refresh", success: false };
     }
-    await this.callbacks.learningEngine.runStudySession({ limit: 1 } as any);
+    await this.callbacks.learningOrchestrator.runProactiveSession({ maxTopics: 1 });
     return { activity: "knowledge_refresh", success: true };
   }
 }
