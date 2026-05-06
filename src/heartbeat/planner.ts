@@ -15,7 +15,6 @@
  */
 
 import type { GoalGraph } from "../goals/graph.js";
-import type { LearningEngine } from "../learning/self-study.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { TaskStore } from "../tasks/store.js";
@@ -72,7 +71,7 @@ const DEFAULT_CONFIG: PlannerConfig = {
 
 export interface PlannerDeps {
   goalGraph: GoalGraph;
-  learningEngine?: LearningEngine;
+  learningOrchestrator?: import("../learning/orchestrator.js").LearningOrchestrator;
   preferenceStore?: PreferenceStore;
   skillsRegistry?: SkillsRegistry;
   taskStore?: TaskStore;
@@ -252,7 +251,7 @@ export class AutonomousPlanner {
     }
 
     // ── 4. Self-study (any idle period, not just quiet hours) ──
-    if (this.deps.learningEngine && this.idleMinutes > 10) {
+    if (this.deps.learningOrchestrator && this.idleMinutes > 10) {
       candidates.push({
         type: "self_study",
         priority: await this.learnedPriority("self_study", isQuiet ? 50 : 40),
@@ -323,7 +322,7 @@ export class AutonomousPlanner {
     }
 
     // ── 10. Anticipatory research → pre-study likely topics ──
-    if (this.deps.learningEngine && this.idleMinutes > 5) {
+    if (this.deps.learningOrchestrator && this.idleMinutes > 5) {
       candidates.push({
         type: "anticipatory_research",
         priority: await this.learnedPriority("anticipatory_research", 35),

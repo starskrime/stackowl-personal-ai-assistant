@@ -926,7 +926,6 @@ export class TelegramAdapter implements ChannelAdapter {
       owl,
       config,
       capabilityLedger: self.gateway.getCapabilityLedger()!,
-      learningEngine: self.gateway.getLearningEngine(),
       learningOrchestrator: self.gateway.getLearningOrchestrator(),
       preferenceStore: self.gateway.getPreferenceStore(),
       reflexionEngine: self.gateway.getReflexionEngine(),

@@ -144,7 +144,6 @@ import type { PelletStore } from "../pellets/store.js";
 import type { CapabilityLedger } from "../evolution/ledger.js";
 import type { EvolutionHandler } from "../evolution/handler.js";
 import type { OwlEvolutionEngine } from "../owls/evolution.js";
-import type { LearningEngine } from "../learning/self-study.js";
 import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import type { SkillsEngine } from "../skills/engine.js";
@@ -210,7 +209,6 @@ export interface GatewayContext {
   capabilityLedger?: CapabilityLedger;
   evolution?: EvolutionHandler;
   evolutionEngine?: OwlEvolutionEngine;
-  learningEngine?: LearningEngine;
   learningOrchestrator?: LearningOrchestrator;
   innerLife?: OwlInnerLife;
   skillsEngine?: SkillsEngine;

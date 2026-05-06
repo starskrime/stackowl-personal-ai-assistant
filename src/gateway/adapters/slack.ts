@@ -589,7 +589,6 @@ export class SlackAdapter implements ChannelAdapter {
       owl,
       config,
       capabilityLedger: this.gateway.getCapabilityLedger()!,
-      learningEngine: this.gateway.getLearningEngine(),
       preferenceStore: this.gateway.getPreferenceStore(),
       reflexionEngine: this.gateway.getReflexionEngine(),
       toolRegistry: this.gateway.getToolRegistry(),

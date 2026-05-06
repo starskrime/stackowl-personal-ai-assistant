@@ -13,7 +13,6 @@ import type { StackOwlConfig } from "../config/loader.js";
 import { ToolPruner } from "../evolution/pruner.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { CapabilityLedger } from "../evolution/ledger.js";
-import type { LearningEngine } from "../learning/self-study.js";
 import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
@@ -52,9 +51,7 @@ export interface PingContext {
   userId?: string;
   /** Persistent job queue — replaces the 8 independent setInterval timers */
   jobQueue?: import("./job-queue.js").ProactiveJobQueue;
-  /** Learning engine for proactive self-study sessions */
-  learningEngine?: LearningEngine;
-  /** New unified learning orchestrator (TopicFusion + Synthesis + Reflexion) */
+  /** Unified learning orchestrator (TopicFusion + Synthesis + Reflexion) */
   learningOrchestrator?: LearningOrchestrator;
   /** User preference store — used to check dynamic quiet hours */
   preferenceStore?: PreferenceStore;
@@ -694,7 +691,7 @@ export class ProactivePinger {
    * No message is sent to the user; knowledge is stored as Pellets.
    */
   private async maybeSelfStudy(): Promise<void> {
-    if (!this.context.learningEngine && !this.context.learningOrchestrator)
+    if (!this.context.learningOrchestrator)
       return;
 
     const now = new Date();
@@ -713,26 +710,14 @@ export class ProactivePinger {
         "[ProactivePinger] 🧠 Starting overnight self-study session...",
       );
 
-      // Use new orchestrator if available
-      if (this.context.learningOrchestrator) {
-        const cycle =
-          await this.context.learningOrchestrator.runProactiveSession();
-        if (cycle.synthesisReport) {
-          console.log(
-            `[ProactivePinger] ✓ Self-study (orchestrator) done: ` +
-              `${cycle.topicsPrioritized} topics, ` +
-              `${cycle.synthesisReport.pelletsCreated} pellets created`,
-          );
-        }
-      } else {
-        const result = await this.context.learningEngine!.runStudySession(4);
-        if (result.studied.length > 0) {
-          console.log(
-            `[ProactivePinger] ✓ Self-study done: studied [${result.studied.join(", ")}], ` +
-              `${result.pelletsCreated} pellets created, ` +
-              `${result.newFrontierTopics.length} new topics discovered`,
-          );
-        }
+      const cycle =
+        await this.context.learningOrchestrator.runProactiveSession();
+      if (cycle.synthesisReport) {
+        console.log(
+          `[ProactivePinger] ✓ Self-study (orchestrator) done: ` +
+            `${cycle.topicsPrioritized} topics, ` +
+            `${cycle.synthesisReport.pelletsCreated} pellets created`,
+        );
       }
     } catch (err) {
       console.error("[ProactivePinger] Self-study session failed:", err);

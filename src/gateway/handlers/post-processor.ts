@@ -212,11 +212,6 @@ export class PostProcessor {
           );
         }
       });
-    } else if (this.ctx.learningEngine) {
-      this.enqueueJob("learning", "standard", async () => {
-        await this.ctx.learningEngine!.processConversation(messages);
-        log.engine.info("[PostProcessor:learning] Legacy engine completed");
-      });
     }
 
     // DNA evolution (every N messages) — now gated by MutationTracker

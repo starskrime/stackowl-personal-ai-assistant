@@ -287,13 +287,13 @@ const cmdCapabilities: CommandFn = async (_args, ui, gateway) => {
 };
 
 const cmdLearning: CommandFn = async (_args, ui, gateway) => {
-  const learning = gateway.getLearningEngine();
-  if (!learning) {
+  const orchestrator = gateway.getLearningOrchestrator();
+  if (!orchestrator) {
     ui.printInfo("Learning engine not available.");
     return true;
   }
 
-  const report = await learning.getLearningReport();
+  const report = await orchestrator.getFullReport();
   const lines = ["", YB("Learning Report"), sep(), ...report.split("\n"), ""];
   ui.printLines(lines);
   return true;

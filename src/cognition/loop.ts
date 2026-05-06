@@ -32,7 +32,6 @@ import type { OwlInstance } from "../owls/persona.js";
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { LearningOrchestrator } from "../learning/orchestrator.js";
-import type { LearningEngine } from "../learning/self-study.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { SessionStore } from "../memory/store.js";
@@ -97,7 +96,6 @@ export interface CognitiveLoopDeps {
   config: StackOwlConfig;
   innerLife?: OwlInnerLife;
   learningOrchestrator?: LearningOrchestrator;
-  learningEngine?: LearningEngine;
   reflexionEngine?: ReflexionEngine;
   skillsRegistry?: SkillsRegistry;
   sessionStore?: SessionStore;

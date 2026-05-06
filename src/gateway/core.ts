@@ -2470,15 +2470,6 @@ export class OwlGateway {
           `[endSession:learning] ✗ orchestrator failed: ${err instanceof Error ? err.message : err}`,
         );
       }
-    } else if (this.ctx.learningEngine) {
-      try {
-        await this.ctx.learningEngine.processConversation(messages);
-        log.engine.info("[endSession:learning] ✓ completed");
-      } catch (err) {
-        log.engine.warn(
-          `[endSession:learning] ✗ failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
     }
 
     // ReflexionEngine consolidation — retired (Phase 3 L3 consolidation).
@@ -2961,9 +2952,6 @@ export class OwlGateway {
 
   getWorkspacePath(): string {
     return this.ctx.cwd ?? process.cwd();
-  }
-  getLearningEngine() {
-    return this.ctx.learningEngine;
   }
   getLearningOrchestrator() {
     return this.ctx.learningOrchestrator;
@@ -3477,7 +3465,7 @@ export class OwlGateway {
     message: GatewayMessage,
     callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse | null> {
-    if (!this.ctx.learningEngine && !this.ctx.learningOrchestrator) return null;
+    if (!this.ctx.learningOrchestrator) return null;
 
     const text = message.text.trim();
 
