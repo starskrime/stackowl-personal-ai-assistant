@@ -276,3 +276,42 @@ describe("ApproachLibraryRepo.getRepeatFailureWarning", () => {
     expect(result).not.toBeNull();
   });
 });
+
+// ─── OwlLearningsRepo.getForOwlSorted ─────────────────────────────
+
+describe("OwlLearningsRepo.getForOwlSorted", () => {
+  it("returns failure category entries before non-failure entries", () => {
+    (db as any).rawDb.prepare(`
+      INSERT INTO owl_learnings (id, owl_name, learning, category, confidence, reinforcement_count, created_at, updated_at)
+      VALUES
+        ('s1', 'owl1', 'skill insight', 'insight', 0.9, 1, datetime('now'), datetime('now')),
+        ('s2', 'owl1', 'failure lesson', 'failure', 0.5, 1, datetime('now'), datetime('now'))
+    `).run();
+    const results = db.owlLearnings.getForOwlSorted("owl1");
+    expect(results[0]).toBe("failure lesson");
+  });
+
+  it("returns at most 6 items when more than 6 exist", () => {
+    for (let i = 0; i < 10; i++) {
+      (db as any).rawDb.prepare(`
+        INSERT INTO owl_learnings (id, owl_name, learning, category, confidence, reinforcement_count, created_at, updated_at)
+        VALUES (?, 'owl1', ?, 'insight', 0.7, 1, datetime('now'), datetime('now'))
+      `).run(`id_${i}`, `learning ${i}`);
+    }
+    const results = db.owlLearnings.getForOwlSorted("owl1");
+    expect(results.length).toBeLessThanOrEqual(6);
+  });
+
+  it("returns strings not objects", () => {
+    db.owlLearnings.admitIfWorthy("owl1", "test insight", "insight", 0.7);
+    const results = db.owlLearnings.getForOwlSorted("owl1");
+    for (const r of results) {
+      expect(typeof r).toBe("string");
+    }
+  });
+
+  it("returns [] when owl has no learnings", () => {
+    const results = db.owlLearnings.getForOwlSorted("nonexistent_owl");
+    expect(results).toEqual([]);
+  });
+});
