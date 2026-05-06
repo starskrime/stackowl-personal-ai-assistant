@@ -48,15 +48,3 @@ export type {
   ConsolidationResult,
 } from "../memory/reflexion.js";
 
-// Mistake pattern detection
-export { MistakePatternDetector } from "./mistake-detector.js";
-export type {
-  MistakePattern,
-  MistakePatternStore,
-  PatternWarning,
-  ApproachRecord,
-} from "./mistake-detector.js";
-
-// Approach Library — pattern storage & retrieval
-export { ApproachLibrary } from "./approach-library.js";
-export type { ApproachPattern, PatternRecord } from "./approach-library.js";

@@ -7,8 +7,15 @@
  */
 
 import type { ToolDefinition } from "../providers/base.js";
-import type { ApproachPattern } from "../learning/approach-library.js";
 import { log } from "../logger.js";
+
+// ApproachPattern for tool recency scoring
+export interface ApproachPattern {
+  successCount: number;
+  failureCount: number;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+}
 
 export interface ToolSelectionContext {
   taskType: string;
