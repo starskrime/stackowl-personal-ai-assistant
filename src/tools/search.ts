@@ -68,7 +68,15 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        return `Search failed: HTTP ${response.status}`;
+        return JSON.stringify({
+          success: false,
+          error: {
+            code: response.status === 429 ? "RATE_LIMITED" : "INTERNAL_ERROR",
+            message: `DDG HTTP ${response.status}`,
+            attemptedTiers: [{ tier: 1, name: "scrapling", outcome: "error", durationMs: 0, httpStatus: response.status }],
+            suggestedEscalation: "live_browser",
+          },
+        });
       }
 
       const html = await response.text();
@@ -130,7 +138,7 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
           const verdict = await classifier.classify({
             url: searchUrl,
             httpStatus: response.status,
-            bodyPreview: html.slice(0, 4000),
+            bodyPreview: html.slice(0, 2048),
           });
           if (verdict.blocked) {
             return JSON.stringify({
@@ -146,23 +154,32 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
             });
           }
         }
-        return `No results found for "${query}". Try a different search term.`;
+        return JSON.stringify({
+          success: true,
+          data: { kind: "search", query, results: [] },
+        });
       }
 
-      const lines = results.map(
-        (r, i) =>
-          `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet || "(no snippet)"}`,
-      );
-
-      return `Search results for: "${query}"\n\n${lines.join("\n\n")}`;
+      return JSON.stringify({
+        success: true,
+        data: {
+          kind: "search",
+          query,
+          results: results.slice(0, limit),
+        },
+      });
     } catch (error) {
-      if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          return `Search timeout. Try a simpler query.`;
-        }
-        return `Search error: ${error.message}`;
-      }
-      return `Search failed: Unknown error`;
+      const code: string = error instanceof Error && error.name === "AbortError" ? "TIMEOUT" : "INTERNAL_ERROR";
+      const message = error instanceof Error ? error.message : "unknown error";
+      return JSON.stringify({
+        success: false,
+        error: {
+          code,
+          message,
+          attemptedTiers: [{ tier: 1, name: "scrapling", outcome: code === "TIMEOUT" ? "timeout" : "error", durationMs: 0 }],
+          suggestedEscalation: "live_browser",
+        },
+      });
     }
   },
 };

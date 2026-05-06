@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { DuckDuckGoSearchTool } from "../../src/tools/search.js";
+import { parseWebToolResult } from "../../src/browser/envelope.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -23,5 +24,21 @@ describe("search.ts — BlockingClassifier wired (Element 16c)", () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error.code).toBe("BLOCKED_BY_ANTI_BOT");
     expect(parsed.error.suggestedEscalation).toBe("live_browser");
+  });
+});
+
+describe("search.ts envelope return", () => {
+  it("returns WebToolResult JSON with kind:'search' on success", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(`<a class="result__a" href="https://example.com">Title</a><a class="result__snippet">Snip</a>`, { status: 200 }),
+    ) as any;
+    const out = await DuckDuckGoSearchTool.execute({ query: "ok" }, {} as any);
+    const env = parseWebToolResult(out);
+    expect(env).not.toBeNull();
+    expect(env?.success).toBe(true);
+    if (env?.success && env.data.kind === "search") {
+      expect(env.data.query).toBe("ok");
+      expect(Array.isArray(env.data.results)).toBe(true);
+    }
   });
 });
