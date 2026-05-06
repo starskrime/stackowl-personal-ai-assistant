@@ -24,6 +24,17 @@ import type {
   ConsolidationResult,
 } from "../memory/reflexion.js";
 
+export interface ProactiveContext {
+  /** Tool names with ≥ minOccurrences failures in the last daysBack days */
+  failureDensityTopics?: string[];
+  /** Patterns from ToolOutcomeStore or pattern miner (optional enrichment) */
+  upcomingPatterns?: string[];
+  /** Topics from owl_learnings where confidence < 0.5 (optional enrichment) */
+  lowConfidenceTopics?: string[];
+  /** Cap on topics to study. Default: 3 */
+  maxTopics?: number;
+}
+
 export interface LearningCycle {
   id: string;
   trigger: "reactive" | "scheduled" | "manual";
@@ -249,24 +260,103 @@ export class LearningOrchestrator {
   }
 
   /**
-   * Proactive learning session — DISABLED.
-   * Previously deep-researched random knowledge graph topics, burning tokens.
-   * Learning now only happens reactively (on failure via synthesis queue).
-   * Kept as no-op for backward compatibility.
+   * Proactive learning session — evidence-based.
+   * Selects topics from failure-density signals and the KG study queue,
+   * synthesizes pellets, and records the cycle. Returns immediately with
+   * zeroed counts if there is nothing to study.
    */
-  async runProactiveSession(): Promise<LearningCycle> {
-    const now = new Date().toISOString();
-    return this.recordCycle({
-      id: `proactive_${Date.now()}`,
+  async runProactiveSession(context?: ProactiveContext): Promise<LearningCycle> {
+    const startTime = Date.now();
+    const cycleId = `proactive_${Date.now()}`;
+    const max = context?.maxTopics ?? 3;
+
+    // Quality gate: if no context supplied, check KG queue — bail if also empty
+    if (!context) {
+      const kgQueue = this.graphManager.getStudyQueue(1);
+      if (kgQueue.length === 0) {
+        const now = new Date().toISOString();
+        return this.recordCycle({
+          id: cycleId,
+          trigger: "scheduled",
+          startedAt: now,
+          completedAt: now,
+          insightsExtracted: 0,
+          topicsPrioritized: 0,
+          criticalTopics: 0,
+          durationMs: 0,
+          success: true,
+        });
+      }
+    }
+
+    // Topic selection — priority order:
+    //   1. failureDensityTopics  2. KG frontier  3. upcomingPatterns
+    let topics: string[] = [];
+
+    if (context?.failureDensityTopics?.length) {
+      topics = context.failureDensityTopics.slice(0, max);
+    }
+
+    if (topics.length < max) {
+      const kgQueue = this.graphManager.getStudyQueue(max - topics.length);
+      topics = [
+        ...topics,
+        ...kgQueue.map((t: { normalizedName: string }) => t.normalizedName),
+      ].slice(0, max);
+    }
+
+    if (topics.length < max && context?.upcomingPatterns?.length) {
+      topics = [
+        ...topics,
+        ...context.upcomingPatterns,
+      ].slice(0, max);
+    }
+
+    if (topics.length === 0) {
+      const now = new Date().toISOString();
+      return this.recordCycle({
+        id: cycleId,
+        trigger: "scheduled",
+        startedAt: now,
+        completedAt: now,
+        insightsExtracted: 0,
+        topicsPrioritized: 0,
+        criticalTopics: 0,
+        durationMs: 0,
+        success: true,
+      });
+    }
+
+    const startedAt = new Date().toISOString();
+    const cycle: LearningCycle = {
+      id: cycleId,
       trigger: "scheduled",
-      startedAt: now,
-      completedAt: now,
+      startedAt,
       insightsExtracted: 0,
-      topicsPrioritized: 0,
+      topicsPrioritized: topics.length,
       criticalTopics: 0,
       durationMs: 0,
-      success: true,
-    });
+      success: false,
+    };
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const synthesisReport = await (this.synthesizer as any).synthesize(topics);
+      cycle.synthesisReport = synthesisReport;
+      topics.forEach((t) => this.graphManager.touchDomain(t, "self-study"));
+      if (synthesisReport?.pelletsCreated) {
+        this.stats.totalPelletsCreated += synthesisReport.pelletsCreated;
+      }
+      this.stats.totalTopicsStudied += topics.length;
+      cycle.success = true;
+    } catch (err) {
+      log.evolution.warn(`[ProactiveSession] Failed: ${err}`);
+      cycle.error = String(err);
+    }
+
+    cycle.completedAt = new Date().toISOString();
+    cycle.durationMs = Date.now() - startTime;
+    return this.recordCycle(cycle);
   }
 
   async learnTopic(
