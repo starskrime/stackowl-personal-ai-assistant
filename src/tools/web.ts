@@ -72,5 +72,3 @@ export const WebFetchTool: ToolImplementation = {
   },
 };
 
-/** @deprecated Use WebFetchTool directly. Removed in Task 16. */
-export const WebCrawlTool = WebFetchTool;

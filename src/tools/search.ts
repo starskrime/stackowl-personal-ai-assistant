@@ -192,5 +192,3 @@ export const WebSearchTool: ToolImplementation = {
   },
 };
 
-/** @deprecated Use WebSearchTool directly. */
-export const DuckDuckGoSearchTool = WebSearchTool;
