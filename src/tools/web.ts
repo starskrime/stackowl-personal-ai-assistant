@@ -2,7 +2,7 @@
  * StackOwl — Web Fetch Tool
  *
  * Fetches and cleans text from any URL. Uses the smart fetch layer
- * which automatically escalates from HTTP → stealth browser when blocked.
+ * which escalates scrapling → camofox (Obscura reserved) when blocked.
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
