@@ -56,7 +56,7 @@ const REQUEST_TYPE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:file|read|write|save|create|open)\b/i, "file_ops"],
   [/\b(?:run|execute|command|shell|terminal)\b/i, "shell_ops"],
   [/\b(?:image|picture|photo|generate|draw)\b/i, "image_gen"],
-  [/\b(?:web|crawl|scrape|fetch|url|page)\b/i, "web_crawl"],
+  [/\b(?:web|crawl|scrape|fetch|url|page)\b/i, "web_fetch"],
   [/\b(?:code|program|debug|fix|implement)\b/i, "coding"],
   [/\b(?:analyze|research|compare|review)\b/i, "analysis"],
   [/\b(?:summarize|tldr|brief|overview)\b/i, "summarization"],
