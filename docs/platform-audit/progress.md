@@ -577,6 +577,35 @@ Merge: `d59dc00 Merge Element 16 — Web Browsing Honesty & Wiring (Phase A)` (2
 
 ---
 
+## Element 16c — Web Fetch Simplification
+
+**Status:** ✅ DONE  
+**Completed:** 2026-05-05  
+**Worktree:** `feature/element-16c`
+
+Eight architectural phases shipped, net file delta in `src/`: −2 files, zero new `src/` files beyond plan. 20 tasks, 1251 tests passing.
+
+### Phases
+
+- ✅ **Phase 1 — v27 host_root migration for learned routing** — Schema v27 adds `host_root` column to `tool_edges`; `EdgeAccumulator` writes canonical host roots; `FallbackSequencer.getLearnedSequence()` queries by `host_root` for portable routing memory across URL paths.
+- ✅ **Phase 2 — host-aware EdgeAccumulator + FallbackSequencer** — `EdgeAccumulator` extracts host root from tool input URLs; `FallbackSequencer` queries `tool_edges` by `host_root` so learned sequences transfer across URL paths on the same domain.
+- ✅ **Phase 3 — WebToolResult envelope (drops 'http', adds 'obscura' type slot)** — `WebToolResult.type` enum loses `'http'` (replaced by `'fetch'`); adds `'obscura'` slot for future stealth-backend integration; all consumers updated.
+- ✅ **Phase 4 — webFetch.obscura.enabled config + type safety** — `StackOwlConfig.webFetch.obscura.enabled` boolean added to config schema and loader; `BlockingClassifier` reads the flag before routing to obscura tier.
+- ✅ **Phase 5 — 3-tier dispatcher (scrapling→camofox→obscura stub), BlockingClassifier** — Dispatcher order rebalanced to `scrapling → camofox → obscura-stub`; `BlockingClassifier` replaces hardcoded CAPTCHA host list with LLM cheap-tier classification; obscura stub returns structured `UNAVAILABLE` envelope when disabled.
+- ✅ **Phase 6 — web_search tool (DDG, envelope return), BlockingClassifier replaces hardcoded list** — `src/tools/search.ts` rewritten: DDG HTML scrape, structured `WebToolResult` envelope return, `BlockingClassifier` replaces the previous hardcoded CAPTCHA/bot-detection keyword array.
+- ✅ **Phase 7 — web_fetch rename (web_crawl→web_fetch, TOOL_FALLBACKS, narration)** — `src/tools/web.ts` tool name changed from `web_crawl` to `web_fetch`; `TOOL_FALLBACKS` registry entry updated; narration formatter updated for new name.
+- ✅ **Phase 8 — Deletions (web-unified.ts, Brave search, aliases), capability matchers, learned-text refs, one-shot scrubber** — `src/tools/web-unified.ts` deleted; Brave search provider removed; tool aliases cleaned up; capability matchers updated; `learned-text` references scrubbed; one-shot migration scrubber runs at startup to retire orphaned `tool_edges` rows referencing deleted tools.
+
+### Net stats
+
+- `src/` file delta: −2 (deleted `web-unified.ts` + Brave provider)
+- New `src/` files: 0 (all work in existing files)
+- Tasks: 20 / 20 complete
+- Tests: 1251 passing, 0 failures
+- TS errors: 9 (≤ 11 pre-existing baseline)
+
+---
+
 ## Backlog / Cross-cutting Issues Found
 
 *(Issues that affect multiple elements — tracked here to avoid losing them)*
