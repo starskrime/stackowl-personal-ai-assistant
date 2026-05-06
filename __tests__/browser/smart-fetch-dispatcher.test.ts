@@ -4,6 +4,26 @@ import { createObscuraTier } from "../../src/browser/smart-fetch.js";
 
 const noopBus = { emit: vi.fn() } as any;
 
+describe("runEscalationChain — host-aware reorder", () => {
+  it("reorders runners when FallbackSequencer suggests a different starting tool for hostRoot", async () => {
+    const calls: string[] = [];
+    const runners: TierRunner[] = [
+      { tier: 1, name: "scrapling", isAvailable: () => true, run: async () => { calls.push("scrapling"); return { attempt: { tier: 1, name: "scrapling", outcome: "blocked", durationMs: 10 } }; } },
+      { tier: 2, name: "camofox", isAvailable: () => true, run: async () => { calls.push("camofox"); return { attempt: { tier: 2, name: "camofox", outcome: "success", durationMs: 20 }, data: { kind: "page", url: "https://linkedin.com/in/x", content: "ok" } }; } },
+    ];
+    const sequencer = {
+      getNextFallback: (_from: string, _cap: string, _excl: string[], host?: string) =>
+        host === "linkedin.com" ? "camofox" : null,
+    };
+    const result = await runEscalationChain(runners, "https://linkedin.com/in/x", {
+      bus: { emit: vi.fn() } as any,
+      sequencer: sequencer as any,
+    });
+    expect(result.success).toBe(true);
+    expect(calls[0]).toBe("camofox");
+  });
+});
+
 describe("runEscalationChain — Element 16c default order", () => {
   it("does not invoke any 'http' tier (http tier deleted)", async () => {
     const runners: TierRunner[] = [

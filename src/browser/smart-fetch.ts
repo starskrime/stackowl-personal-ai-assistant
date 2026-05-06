@@ -491,14 +491,39 @@ export interface TierRunner {
 export interface DispatcherCtx {
   bus: GatewayEventBus;
   hint?: "anti-bot";
+  sequencer?: { getNextFallback(from: string, cap: string, excl: string[], host?: string): string | null };
+}
+
+function extractHostRoot(url: string): string {
+  try {
+    const u = new URL(url);
+    const parts = u.hostname.split(".");
+    return parts.length >= 2 ? parts.slice(-2).join(".") : u.hostname;
+  } catch {
+    return "";
+  }
 }
 
 export async function runEscalationChain(
-  runners: TierRunner[],
+  inputRunners: TierRunner[],
   url: string,
   ctx: DispatcherCtx,
 ): Promise<WebToolResult> {
+  let runners = [...inputRunners];
   const attempts: TierAttempt[] = [];
+
+  const hostRoot = extractHostRoot(url);
+  const preferred = ctx.sequencer?.getNextFallback("", "web_fetch", [], hostRoot);
+  if (preferred) {
+    const idx = runners.findIndex((r) => r.name === preferred);
+    if (idx > 0) {
+      for (let i = 0; i < idx; i++) {
+        attempts.push({ tier: runners[i].tier, name: runners[i].name, outcome: "skipped-by-learned-routing", durationMs: 0 });
+      }
+      runners = [runners[idx], ...runners.slice(0, idx), ...runners.slice(idx + 1)];
+    }
+  }
+
   for (const r of runners) {
     if (ctx.hint === "anti-bot" && r.tier === 1) {
       attempts.push({ tier: 1, name: r.name, durationMs: 0, outcome: "skipped-by-hint" });
