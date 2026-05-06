@@ -29,6 +29,8 @@ export const WebFetchTool: ToolImplementation = {
       },
       required: ["url"],
     },
+    capabilities: ["web_fetch", "http_request"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {

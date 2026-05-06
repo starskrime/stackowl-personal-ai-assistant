@@ -41,6 +41,8 @@ export const WebSearchTool: ToolImplementation = {
       },
       required: ["query"],
     },
+    capabilities: ["web_search", "internet_query"],
+    executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
   async execute(

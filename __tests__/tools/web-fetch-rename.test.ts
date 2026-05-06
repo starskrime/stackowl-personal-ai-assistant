@@ -17,6 +17,6 @@ describe("web.ts — rename to web_fetch", () => {
   });
 
   it("WebCrawlTool back-compat alias resolves to the same object (deleted in Task 16)", () => {
-    expect(WebCrawlTool).toBe(WebFetchTool);
+    expect(WebCrawlTool).toBeUndefined();
   });
 });

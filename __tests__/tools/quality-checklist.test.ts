@@ -20,7 +20,8 @@ import {
   WriteFileTool,
   EditFileTool,
 } from "../../src/tools/files.js";
-import { WebCrawlTool } from "../../src/tools/web.js";
+import { WebFetchTool } from "../../src/tools/web.js";
+import { WebSearchTool } from "../../src/tools/search.js";
 import { ScreenshotTool } from "../../src/tools/screenshot.js";
 import { OrchestrateTasksTool } from "../../src/tools/orchestrate.js";
 import { SummonParliamentTool } from "../../src/tools/parliament.js";
@@ -39,7 +40,6 @@ import { DataVisualizationTool } from "../../src/tools/data/data-viz.js";
 import { OCRTool } from "../../src/tools/data/ocr.js";
 import { PDFReaderTool } from "../../src/tools/data/pdf-reader.js";
 
-import { createWebUnifiedTool } from "../../src/tools/web-unified.js";
 import { createMemoryUnifiedTool } from "../../src/tools/memory-unified.js";
 import { VisionTool } from "../../src/tools/vision.js";
 import { DocumentTool } from "../../src/tools/document.js";
@@ -48,7 +48,8 @@ import { DbQueryTool } from "../../src/tools/db-query.js";
 import { ScheduleTool } from "../../src/tools/schedule.js";
 
 const REQUIRED_TOP_30 = [
-  "web",
+  "web_fetch",
+  "web_search",
   "memory",
   "read_file",
   "write_file",
@@ -86,7 +87,8 @@ function buildTestRegistry(): ToolRegistry {
     ReadFileTool,
     WriteFileTool,
     EditFileTool,
-    WebCrawlTool,
+    WebFetchTool,
+    WebSearchTool,
     ScreenshotTool,
     OrchestrateTasksTool,
     new SummonParliamentTool(),
@@ -104,7 +106,6 @@ function buildTestRegistry(): ToolRegistry {
     DataVisualizationTool,
     OCRTool,
     PDFReaderTool,
-    createWebUnifiedTool(),
     createMemoryUnifiedTool(),
     VisionTool,
     DocumentTool,

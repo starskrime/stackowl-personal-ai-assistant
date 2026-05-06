@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { DuckDuckGoSearchTool } from "../../src/tools/search.js";
+import { WebSearchTool as DuckDuckGoSearchTool } from "../../src/tools/search.js";
 import { WebSearchTool as RenamedSearch } from "../../src/tools/search.js";
 import { parseWebToolResult } from "../../src/browser/envelope.js";
 
