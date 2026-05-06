@@ -28,6 +28,11 @@ describe("search.ts — BlockingClassifier wired (Element 16c)", () => {
 });
 
 describe("search.ts envelope return", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
   it("returns WebToolResult JSON with kind:'search' on success", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response(`<a class="result__a" href="https://example.com">Title</a><a class="result__snippet">Snip</a>`, { status: 200 }),
@@ -39,6 +44,23 @@ describe("search.ts envelope return", () => {
     if (env?.success && env.data.kind === "search") {
       expect(env.data.query).toBe("ok");
       expect(Array.isArray(env.data.results)).toBe(true);
+    }
+  });
+
+  it("returns no-results envelope when HTML has no result__a markup and no classifier", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("<html>nothing here</html>", { status: 200 }),
+    ) as any;
+    const out = await DuckDuckGoSearchTool.execute({ query: "x" }, {} as any);
+    const env = parseWebToolResult(out);
+    expect(env).not.toBeNull();
+    expect(env?.success).toBe(true);
+    if (env?.success && env.data.kind === "search") {
+      expect(env.data.query).toBe("x");
+      expect(env.data.results.length).toBe(0);
+    } else {
+      // Force assertion failure with clear message if shape is wrong
+      expect(env?.success).toBe(true);
     }
   });
 });

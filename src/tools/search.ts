@@ -1,11 +1,16 @@
 /**
- * StackOwl — Google Search Tool (Simple HTTP)
+ * StackOwl — DuckDuckGo HTML Search Tool.
  *
- * Performs web searches using a simple API approach.
- * Returns structured results - title, URL, snippet.
+ * Returns a JSON-serialized WebToolResult envelope on every path
+ * (success / no-results / HTTP error / timeout / blocked).
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import {
+  serializeWebToolResult,
+  type WebToolResult,
+  type WebToolErrorCode,
+} from "../browser/envelope.js";
 
 interface SearchResult {
   title: string;
@@ -68,15 +73,16 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        return JSON.stringify({
+        const r: WebToolResult = {
           success: false,
           error: {
-            code: response.status === 429 ? "RATE_LIMITED" : "INTERNAL_ERROR",
+            code: (response.status === 429 ? "RATE_LIMITED" : "INTERNAL_ERROR") as WebToolErrorCode,
             message: `DDG HTTP ${response.status}`,
             attemptedTiers: [{ tier: 1, name: "scrapling", outcome: "error", durationMs: 0, httpStatus: response.status }],
             suggestedEscalation: "live_browser",
           },
-        });
+        };
+        return serializeWebToolResult(r);
       }
 
       const html = await response.text();
@@ -141,37 +147,40 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
             bodyPreview: html.slice(0, 2048),
           });
           if (verdict.blocked) {
-            return JSON.stringify({
+            const r: WebToolResult = {
               success: false,
               error: {
                 code: "BLOCKED_BY_ANTI_BOT",
-                message: `BLOCKED: DDG returned a CAPTCHA / anti-bot page for "${query}".`,
+                message: `DDG returned a CAPTCHA / anti-bot page for "${query}".`,
                 attemptedTiers: [
                   { tier: 1, name: "scrapling", outcome: "blocked", durationMs: 0, blockedReason: verdict.reason ?? "captcha" },
                 ],
                 suggestedEscalation: "live_browser",
               },
-            });
+            };
+            return serializeWebToolResult(r);
           }
         }
-        return JSON.stringify({
+        const r: WebToolResult = {
           success: true,
           data: { kind: "search", query, results: [] },
-        });
+        };
+        return serializeWebToolResult(r);
       }
 
-      return JSON.stringify({
+      const r: WebToolResult = {
         success: true,
         data: {
           kind: "search",
           query,
           results: results.slice(0, limit),
         },
-      });
+      };
+      return serializeWebToolResult(r);
     } catch (error) {
-      const code: string = error instanceof Error && error.name === "AbortError" ? "TIMEOUT" : "INTERNAL_ERROR";
+      const code: WebToolErrorCode = error instanceof Error && error.name === "AbortError" ? "TIMEOUT" : "INTERNAL_ERROR";
       const message = error instanceof Error ? error.message : "unknown error";
-      return JSON.stringify({
+      const r: WebToolResult = {
         success: false,
         error: {
           code,
@@ -179,7 +188,8 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
           attemptedTiers: [{ tier: 1, name: "scrapling", outcome: code === "TIMEOUT" ? "timeout" : "error", durationMs: 0 }],
           suggestedEscalation: "live_browser",
         },
-      });
+      };
+      return serializeWebToolResult(r);
     }
   },
 };
