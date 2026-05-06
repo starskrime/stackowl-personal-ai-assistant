@@ -257,6 +257,13 @@ export class MicroLearner {
     // ─── Update capability clusters ───────────────────
     this.updateCapabilityClusters();
 
+    // ─── Emit style signals for SignalBus → UserPreferenceModel ──
+    signals.push({ timestamp, type: "style", key: "verbosity", value: Math.min(len / 300, 1) });
+    signals.push({ timestamp, type: "style", key: "question_rate", value: isQuestion ? 1 : 0 });
+    signals.push({ timestamp, type: "style", key: "command_rate", value: isCommand ? 1 : 0 });
+    // ─── Emit temporal signal ─────────────────────────────────────
+    signals.push({ timestamp, type: "temporal", key: "hour", value: now.getHours() / 23 });
+
     this.profile.lastUpdated = timestamp;
     return signals;
   }

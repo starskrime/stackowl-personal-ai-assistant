@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Database as BetterSqlite3 } from "better-sqlite3";
 import type { ModelProvider } from "../providers/base.js";
+import { log } from "../logger.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -59,6 +60,23 @@ export class SleepTimeConsolidator {
     // Per-user debounce: skip if we ran within the last 60 minutes
     const last = this.lastRunAt.get(userId) ?? 0;
     if (Date.now() - last < this.DEBOUNCE_MS) return;
+
+    // SCM-style eviction: prune stale owl_learnings before consolidation
+    try {
+      const evicted = this.raw
+        .prepare(
+          `DELETE FROM owl_learnings
+           WHERE confidence < 0.3
+             AND reinforcement_count <= 1
+             AND created_at < datetime('now', '-14 days')`,
+        )
+        .run().changes;
+      if (evicted > 0) {
+        log.memory.info(`[SleepConsolidator] Evicted ${evicted} stale owl_learnings`);
+      }
+    } catch {
+      // owl_learnings table may not exist in older DB schemas — silently skip
+    }
 
     // Fetch up to 5 recent summaries for this user
     const recentSummaries = this.raw

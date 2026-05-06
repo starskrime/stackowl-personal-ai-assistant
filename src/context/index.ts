@@ -67,7 +67,7 @@ export function createContextPipeline(deps: ContextPipelineDeps): ContextPipelin
     new BehavioralPatchLayer(),
     new ChallengeDirectiveLayer(deps.owlRegistry),
     new ActiveIntentsLayer(),
-    new OwlLearningsLayer(),
+    new OwlLearningsLayer(deps.db),
     new UnifiedMemoryRetrievalLayer(deps.unifiedMemoryRetriever),
     new KnowledgeGraphLayer(),
     new PredictiveContextLayer(),

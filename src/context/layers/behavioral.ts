@@ -1,5 +1,6 @@
 import type { ContextLayer, ContextRequest, TriageSignals, LayerResults } from "../layer.js";
 import { hash } from "../utils.js";
+import type { MemoryDatabase } from "../../memory/db.js";
 
 export class BehavioralPatchLayer implements ContextLayer {
   name = "BehavioralPatchLayer";
@@ -43,12 +44,23 @@ export class OwlLearningsLayer implements ContextLayer {
   dependsOn = [];
   shouldFire(t: TriageSignals): boolean { return !t.isConversational || t.isReturningUser; }
   getCacheKey(_req: ContextRequest, t: TriageSignals): string | null {
-    return hash(t.effectiveUserId + "learnings");
+    return hash(t.effectiveUserId + "learnings_v2");
   }
 
+  constructor(private readonly db?: MemoryDatabase) {}
+
   async build(req: ContextRequest, _t: TriageSignals, _deps: LayerResults): Promise<string> {
-    const learnings = (req.session as any).owlLearnings as string[] | undefined;
+    let learnings: string[] | undefined;
+
+    if (this.db) {
+      const owlName =
+        req.session.metadata.activeOwlName ?? req.session.metadata.owlName;
+      learnings = this.db.owlLearnings.getForOwlSorted(owlName);
+    } else {
+      learnings = (req.session as any).owlLearnings as string[] | undefined;
+    }
+
     if (!learnings?.length) return "";
-    return `<owl_learnings>\n${learnings.slice(0, 5).map((l) => `  - ${l}`).join("\n")}\n</owl_learnings>`;
+    return `<owl_learnings>\n${learnings.slice(0, 6).map((l) => `  - ${l}`).join("\n")}\n</owl_learnings>`;
   }
 }

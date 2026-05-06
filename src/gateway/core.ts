@@ -2350,7 +2350,7 @@ export class OwlGateway {
       const domain = message.text.toLowerCase().slice(0, 50);
       this.runBackground("domain-expertise", (async () => {
         for (const _tool of response.toolsUsed ?? []) {
-          this.domainExpertise!.recordToolExecution(domain, true);
+          this.domainExpertise!.recordToolExecution(domain, (response as any)?.success !== false);
         }
       })());
     }
