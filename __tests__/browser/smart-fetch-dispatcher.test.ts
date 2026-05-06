@@ -21,6 +21,42 @@ describe("runEscalationChain — host-aware reorder", () => {
     });
     expect(result.success).toBe(true);
     expect(calls[0]).toBe("camofox");
+    // scrapling was bypassed — it must never be invoked
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not double-iterate bypassed runners when preferred runner fails", async () => {
+    const calls: string[] = [];
+    const runners: TierRunner[] = [
+      {
+        tier: 1, name: "scrapling", isAvailable: () => true,
+        run: async () => { calls.push("scrapling"); return { attempt: { tier: 1, name: "scrapling", outcome: "error", durationMs: 5 } }; },
+      },
+      {
+        tier: 2, name: "camofox", isAvailable: () => true,
+        run: async () => { calls.push("camofox"); return { attempt: { tier: 2, name: "camofox", outcome: "blocked", durationMs: 12 } }; },
+      },
+    ];
+    const sequencer = {
+      getNextFallback: (_f: string, _c: string, _e: string[], host?: string) =>
+        host === "linkedin.com" ? "camofox" : null,
+    };
+    const result = await runEscalationChain(runners, "https://linkedin.com/in/x", {
+      bus: { emit: vi.fn() } as any,
+      sequencer: sequencer as any,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const scraplingAttempts = result.error.attemptedTiers.filter(a => a.name === "scrapling");
+      expect(scraplingAttempts).toHaveLength(1);
+      expect(scraplingAttempts[0].outcome).toBe("skipped-by-learned-routing");
+      const camofoxAttempts = result.error.attemptedTiers.filter(a => a.name === "camofox");
+      expect(camofoxAttempts).toHaveLength(1);
+      expect(camofoxAttempts[0].outcome).toBe("blocked");
+    }
+    // scrapling skipped → never called; camofox called once.
+    expect(calls).toEqual(["camofox"]);
   });
 });
 

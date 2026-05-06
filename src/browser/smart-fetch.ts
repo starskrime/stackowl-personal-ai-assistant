@@ -520,7 +520,7 @@ export async function runEscalationChain(
       for (let i = 0; i < idx; i++) {
         attempts.push({ tier: runners[i].tier, name: runners[i].name, outcome: "skipped-by-learned-routing", durationMs: 0 });
       }
-      runners = [runners[idx], ...runners.slice(0, idx), ...runners.slice(idx + 1)];
+      runners = [runners[idx], ...runners.slice(idx + 1)];
     }
   }
 
@@ -551,7 +551,12 @@ export async function runEscalationChain(
     }
   }
 
-  const allUnavailable = attempts.every(a => a.outcome === "unavailable" || a.outcome === "skipped-by-hint");
+  const allUnavailable = attempts.every(
+    (a) =>
+      a.outcome === "unavailable" ||
+      a.outcome === "skipped-by-hint" ||
+      a.outcome === "skipped-by-learned-routing",
+  );
   return {
     success: false,
     error: {
