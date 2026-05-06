@@ -124,8 +124,8 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
       }
 
       if (results.length === 0) {
-        // Element 16c: classify via cheap-tier model (no hardcoded keywords).
-        const classifier = (_context as any).classifier;
+        // Classify via cheap-tier model — no hardcoded keywords.
+        const classifier = _context.classifier;
         if (classifier) {
           const verdict = await classifier.classify({
             url: searchUrl,

@@ -1,7 +1,14 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { DuckDuckGoSearchTool } from "../../src/tools/search.js";
 
+const originalFetch = globalThis.fetch;
+
 describe("search.ts — BlockingClassifier wired (Element 16c)", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
   it("invokes BlockingClassifier instead of hardcoded keyword list when 0 results parsed", async () => {
     const classify = vi.fn().mockResolvedValue({ blocked: true, reason: "captcha", confidence: 0.9, source: "router" });
     const fetchSpy = vi.fn().mockResolvedValue(new Response("<html>verify you are human</html>", { status: 200 }));
