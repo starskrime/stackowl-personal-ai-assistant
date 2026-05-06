@@ -148,7 +148,6 @@ import { createInvokeSkillTool } from "./tools/invoke-skill.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
-import { LearningEngine } from "./learning/self-study.js";
 import { LearningOrchestrator } from "./learning/orchestrator.js";
 import { MemoryReflexionEngine } from "./memory/reflexion.js";
 import { OwlInnerLife } from "./owls/inner-life.js";
@@ -463,20 +462,6 @@ async function bootstrap() {
       console.warn(
         `[PelletGraph] Build failed (non-fatal): ${err instanceof Error ? err.message : err}`,
       ),
-    );
-
-  // Learning Engine — instantiated here so bootstrap can share it across CLI + Telegram
-  // (actual owl binding happens after owl selection, so we expose a factory)
-  const learningEngineFactory = (
-    owl: import("./owls/persona.js").OwlInstance,
-  ) =>
-    new LearningEngine(
-      providerRegistry.getDefault(),
-      owl,
-      config,
-      pelletStore,
-      workspacePath,
-      providerRegistry,
     );
 
   // Learning Orchestrator — new unified learning system (TopicFusion + Synthesis + Reflexion)
@@ -827,7 +812,6 @@ async function bootstrap() {
     synthesizer,
     ledger,
     loader,
-    learningEngineFactory,
     learningOrchestratorFactory,
     preferenceStore,
     reflexionEngine,
@@ -1091,7 +1075,6 @@ async function buildGateway(
       config: b.config,
       innerLife,
       learningOrchestrator: b.learningOrchestratorFactory(owl),
-      learningEngine: b.learningEngineFactory(owl),
       reflexionEngine: b.reflexionEngine,
       skillsRegistry: b.skillsLoader?.getRegistry(),
       sessionStore: b.sessionStore,
@@ -1121,7 +1104,6 @@ async function buildGateway(
     capabilityLedger: b.ledger,
     evolution: b.evolution,
     evolutionEngine: b.evolutionEngine,
-    learningEngine: b.learningEngineFactory(owl),
     learningOrchestrator: b.learningOrchestratorFactory(owl),
     innerLife,
     skillsEngine: b.skillsEngine,
