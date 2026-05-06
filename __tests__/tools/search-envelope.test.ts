@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { DuckDuckGoSearchTool } from "../../src/tools/search.js";
+import { WebSearchTool as RenamedSearch } from "../../src/tools/search.js";
 import { parseWebToolResult } from "../../src/browser/envelope.js";
 
 const originalFetch = globalThis.fetch;
@@ -62,5 +63,12 @@ describe("search.ts envelope return", () => {
       // Force assertion failure with clear message if shape is wrong
       expect(env?.success).toBe(true);
     }
+  });
+});
+
+describe("search.ts — rename to web_search", () => {
+  it("exports WebSearchTool with name 'web_search'", () => {
+    expect(RenamedSearch.definition.name).toBe("web_search");
+    expect(RenamedSearch.definition.deprecated).toBeFalsy();
   });
 });

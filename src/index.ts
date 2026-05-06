@@ -34,7 +34,7 @@ import { CredentialsTool } from "./tools/credentials.js";
 import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
-import { DuckDuckGoSearchTool } from "./tools/search.js";
+import { WebSearchTool as InternalWebSearchTool } from "./tools/search.js";
 import { WebCrawlTool } from "./tools/web.js";
 import { SessionStore } from "./memory/store.js";
 import { StackOwlEventBus } from "./events/index.js";
@@ -348,7 +348,7 @@ async function bootstrap() {
     // ── Credentials ──
     CredentialsTool,
     // ── Web & search ──
-    DuckDuckGoSearchTool,
+    InternalWebSearchTool,
     WebCrawlTool,
     new WebSearchTool(
       "brave",

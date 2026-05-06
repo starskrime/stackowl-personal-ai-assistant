@@ -18,23 +18,21 @@ interface SearchResult {
   snippet: string;
 }
 
-export const DuckDuckGoSearchTool: ToolImplementation = {
+export const WebSearchTool: ToolImplementation = {
   definition: {
-    name: "duckduckgo_search",
-    deprecated: true,
+    name: "web_search",
     description:
-      "Search the web for information. Returns titles, URLs, and snippets. " +
+      "Search the web. Returns titles, URLs, and snippets via the web_search envelope. " +
       "Use this as your FIRST step when you need current/real-time information " +
-      "(news, prices, flight status, weather, etc.) or to find URLs to read with web_crawl. " +
-      "Do NOT search for the same query twice — rephrase or try web_crawl on a specific URL instead. " +
-      "After 2 searches on the same topic, STOP and use the results you already have.",
+      "(news, prices, flight status, weather, etc.) or to find URLs to read with web_fetch. " +
+      "Do NOT search for the same query twice — rephrase or call web_fetch on a specific URL instead. " +
+      "If results return a BLOCKED_BY_ANTI_BOT envelope, escalate to live_browser.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description:
-            'A specific, targeted search query. Be precise — "THY83J flight status DFW arrival" is better than "Turkish Airlines flight"',
+          description: "A specific, targeted search query.",
         },
         num: {
           type: "number",
@@ -193,3 +191,6 @@ export const DuckDuckGoSearchTool: ToolImplementation = {
     }
   },
 };
+
+/** @deprecated Use WebSearchTool. Alias retained until Task 16 sweep. */
+export const DuckDuckGoSearchTool = WebSearchTool;
