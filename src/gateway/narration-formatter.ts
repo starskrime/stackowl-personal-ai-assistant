@@ -8,8 +8,8 @@ export function formatSignalPromoted(
   return `🔭 [${e.signal.source}] ${e.signal.title} — advances "${e.goal.title}" (verdict: ${e.verdict})`;
 }
 
-const WEB_SEARCH_TOOLS = new Set(["duckduckgo_search", "web_search", "google_search"]);
-const WEB_FETCH_TOOLS  = new Set(["web_crawl", "scrapling_fetch"]);
+const WEB_SEARCH_TOOLS = new Set(["web_search"]);
+const WEB_FETCH_TOOLS  = new Set(["web_fetch"]);
 const MEM_SEARCH_TOOLS = new Set(["recall_memory", "memory_search", "pellet_recall", "memory"]);
 const MEM_STORE_TOOLS  = new Set(["remember"]);
 
@@ -18,19 +18,6 @@ export function formatToolEvent(event: ToolSystemEvent): string | null {
     case "tool:start": {
       const { toolName, args } = event;
 
-      if (toolName === "web" && typeof args["action"] === "string") {
-        const action = args["action"] as string;
-        if (action === "search") {
-          const q = String(args["query"] ?? "");
-          return q ? `Searching the web for "${q}"…` : "Searching the web…";
-        }
-        if (action === "fetch") {
-          const url = String(args["url"] ?? "");
-          return url ? `Fetching ${url}…` : "Fetching page…";
-        }
-        if (action === "interact") return "Interacting with page…";
-      }
-
       if (WEB_SEARCH_TOOLS.has(toolName)) {
         const q = String(args["query"] ?? args["q"] ?? "");
         return q ? `Searching the web for "${q}"…` : "Searching the web…";
@@ -38,11 +25,6 @@ export function formatToolEvent(event: ToolSystemEvent): string | null {
       if (WEB_FETCH_TOOLS.has(toolName)) {
         const url = String(args["url"] ?? "");
         return url ? `Fetching ${url}…` : "Fetching page…";
-      }
-      if (toolName === "camofox") {
-        const action = String(args["action"] ?? "navigate");
-        const url = String(args["url"] ?? "");
-        return url ? `Browser: ${action} → ${url}…` : `Browser: ${action}…`;
       }
 
       if (toolName === "memory" && typeof args["action"] === "string") {
