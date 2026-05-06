@@ -12,7 +12,7 @@ describe("Phase 7a Tool Cortex — integration", () => {
     it("narration fires on tool:start and is silent on tool:goal_advance", () => {
       const startMsg = formatToolEvent({
         type: "tool:start",
-        toolName: "duckduckgo_search",
+        toolName: "web_search",
         args: { query: "test" },
         turnId: "t1",
       });
@@ -20,7 +20,7 @@ describe("Phase 7a Tool Cortex — integration", () => {
 
       const advanceMsg = formatToolEvent({
         type: "tool:goal_advance",
-        toolName: "duckduckgo_search",
+        toolName: "web_search",
         subGoal: "find info",
         verdict: "ADVANCES",
       });

@@ -16,7 +16,7 @@ describe("CLI narration wiring", () => {
     });
 
     wireToolNarration(bus);
-    bus.emit({ type: "tool:start", toolName: "duckduckgo_search", args: { query: "test" }, turnId: "t1" });
+    bus.emit({ type: "tool:start", toolName: "web_search", args: { query: "test" }, turnId: "t1" });
 
     expect(writes.some(w => w.includes("Searching the web"))).toBe(true);
   });
@@ -31,7 +31,7 @@ describe("CLI narration wiring", () => {
     });
 
     wireToolNarration(bus);
-    bus.emit({ type: "tool:goal_advance", toolName: "web_crawl", subGoal: "find article", verdict: "ADVANCES" });
+    bus.emit({ type: "tool:goal_advance", toolName: "web_fetch", subGoal: "find article", verdict: "ADVANCES" });
 
     expect(writes.length).toBe(0);
   });
