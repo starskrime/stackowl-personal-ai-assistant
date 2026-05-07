@@ -40,6 +40,11 @@ export class ProactiveIntentionLoop {
     private signalPool: SignalPool | undefined,
   ) {}
 
+  /** Wire the signal pool after construction — called from index.ts after pool is started. */
+  setSignalPool(pool: SignalPool): void {
+    this.signalPool = pool;
+  }
+
   /**
    * Evaluate all proactive signals and return the highest priority item to send.
    * Returns null if nothing is due.

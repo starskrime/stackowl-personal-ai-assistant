@@ -1216,6 +1216,7 @@ async function buildGateway(
       new FileSystemCollector(b.workspacePath, b.config.perches?.watchPaths),
     );
     gateway.ctx.signalPool = signalPool;
+    gateway.ctx.proactiveLoop?.setSignalPool(signalPool);
     signalPool.start();
   }
 
