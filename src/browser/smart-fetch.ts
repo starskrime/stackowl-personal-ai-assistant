@@ -624,6 +624,41 @@ export function createCamoFoxTier(deps: CamoFoxTierDeps): TierRunner {
   };
 }
 
+export function createPuppeteerTier(
+  fetcher: import("./puppeteer-fetcher.js").PuppeteerFetcher,
+): TierRunner {
+  return {
+    tier: 3,
+    name: "puppeteer",
+    isAvailable: () => fetcher.probe(),
+    async run(url) {
+      const t0 = Date.now();
+      try {
+        const r = await fetcher.fetch(url);
+        return {
+          attempt: {
+            tier: 3,
+            name: "puppeteer",
+            durationMs: Date.now() - t0,
+            outcome: "success",
+            httpStatus: r.status,
+          },
+          data: { kind: "page", url: r.finalUrl, content: r.html },
+        };
+      } catch {
+        return {
+          attempt: {
+            tier: 3,
+            name: "puppeteer",
+            durationMs: Date.now() - t0,
+            outcome: "error",
+          },
+        };
+      }
+    },
+  };
+}
+
 export interface ScraplingTierDeps {
   probe: () => Promise<{ ok: boolean; version?: string; error?: string }>;
   runScrapling: (url: string) => Promise<{ title: string; url: string; content: string }>;
@@ -648,6 +683,7 @@ export interface WebFetchEnvelopeDeps {
     probe: () => Promise<{ ok: boolean; version?: string; error?: string }>;
     run: (url: string) => Promise<{ title: string; url: string; content: string }>;
   };
+  puppeteer?: import("./puppeteer-fetcher.js").PuppeteerFetcher;
   bus?: GatewayEventBus;
   hint?: "anti-bot";
 }
@@ -677,6 +713,9 @@ export async function webFetchEnvelope(
   }
   if (camoClient) {
     tiers.push(createCamoFoxTier({ availability, client: camoClient, classifier }));
+  }
+  if (deps.puppeteer) {
+    tiers.push(createPuppeteerTier(deps.puppeteer));
   }
   // Obscura: type-only safety valve (Element 16c). Runtime activation deferred to Phase B.
   // The stub always emits skipped-disabled; passing { enabled: false } is fine.
