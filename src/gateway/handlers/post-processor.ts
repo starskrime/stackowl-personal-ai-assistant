@@ -690,6 +690,33 @@ export class PostProcessor {
         }
       });
     }
+
+    // ── Mid-session evolution trigger (D4) ──────────────────────
+    // Every 5 messages: if avg trajectory reward < -0.2 AND last evolution
+    // was > 2h ago, enqueue a background evolution job so the owl can adapt
+    // mid-session instead of waiting until endSession().
+    if (this.ctx.evolutionEngine && this.ctx.db && this.messageCount % 5 === 0) {
+      const owlName = metadata?.owlName ?? this.ctx.owl.persona.name;
+      const recent = this.ctx.db.trajectories.getRecent(owlName, 10);
+      if (recent.length >= 5) {
+        const avgReward =
+          recent.reduce((s: number, t: { reward: number }) => s + t.reward, 0) /
+          recent.length;
+        const lastEvolved = this.ctx.owl.dna.lastEvolved
+          ? new Date(this.ctx.owl.dna.lastEvolved).getTime()
+          : 0;
+        const hoursSinceEvolved = (Date.now() - lastEvolved) / (1000 * 60 * 60);
+
+        if (avgReward < -0.2 && hoursSinceEvolved > 2) {
+          this.enqueueJob("mid-session-evolution", "background", async () => {
+            await this.ctx.evolutionEngine!.evolve(owlName);
+            log.engine.info(
+              `[PostProcessor:mid-session-evolution] avg_reward=${avgReward.toFixed(2)} triggered evolution for ${owlName}`,
+            );
+          });
+        }
+      }
+    }
   }
 
   getMessageCount(): number {
