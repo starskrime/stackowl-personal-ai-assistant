@@ -76,6 +76,11 @@ export class SignalPool {
         );
       }
     }
+    this.timers.push(
+      setInterval(() => {
+        void this.heartbeatTick();
+      }, 60_000),
+    );
   }
 
   stop(): void {

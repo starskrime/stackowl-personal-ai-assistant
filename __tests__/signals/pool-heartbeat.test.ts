@@ -125,4 +125,20 @@ describe("SignalPool.heartbeatTick", () => {
     await expect(pool.heartbeatTick()).resolves.toBeUndefined();
     expect(verify).toHaveBeenCalledTimes(2);
   });
+
+  it("schedules heartbeatTick every 60s via setInterval", async () => {
+    vi.useFakeTimers();
+    const pool = makePool({});
+    const heartbeatSpy = vi
+      .spyOn(pool as any, "heartbeatTick")
+      .mockResolvedValue(undefined);
+
+    pool.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(heartbeatSpy).toHaveBeenCalledTimes(1);
+
+    pool.stop();
+    vi.useRealTimers();
+  });
 });
