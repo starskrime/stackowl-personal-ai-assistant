@@ -615,7 +615,7 @@ describe("loadConfig", () => {
       expect(config.parliament.maxRounds).toBe(3);
       expect(config.parliament.maxOwls).toBe(6);
       expect(config.owlDna.evolutionBatchSize).toBe(5);
-      expect(config.owlDna.decayRatePerWeek).toBe(0.01);
+      expect(config.owlDna.decayRatePerWeek).toBe(0.1);
       expect(config.smartRouting).toBeUndefined();
       expect(config.synthesis!.provider).toBe("anthropic");
       expect(config.synthesis!.model).toBe("claude-sonnet-4-5-20241022");

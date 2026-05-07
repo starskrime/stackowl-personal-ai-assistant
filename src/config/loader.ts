@@ -333,7 +333,7 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   owlDna: {
     enabled: true,
     evolutionBatchSize: 5,
-    decayRatePerWeek: 0.01,
+    decayRatePerWeek: 0.1,
   },
   skills: {
     enabled: false,

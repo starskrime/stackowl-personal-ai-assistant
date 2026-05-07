@@ -415,6 +415,7 @@ export class OwlEvolutionEngine {
       if (mutations.newPreferences) {
         for (const [k, v] of Object.entries(mutations.newPreferences)) {
           const proposed = Number(v);
+          if (isNaN(proposed)) continue;
           const current = owl.dna.learnedPreferences[k] ?? 0.5;
           owl.dna.learnedPreferences[k] = 0.7 * proposed + 0.3 * current;
           logEntries.push(`Learned preference: ${k} = ${owl.dna.learnedPreferences[k].toFixed(3)} (EMA from ${current.toFixed(3)})`);
@@ -451,8 +452,10 @@ export class OwlEvolutionEngine {
 
       if (mutations.expertiseGrowth) {
         for (const [k, amount] of Object.entries(mutations.expertiseGrowth)) {
-          const current = owl.dna.expertiseGrowth[k] || 0;
-          const proposed = Math.min(1.0, current + Number(amount));
+          const current = owl.dna.expertiseGrowth[k] ?? 0;
+          const rawAmount = Number(amount);
+          if (isNaN(rawAmount)) continue;
+          const proposed = Math.min(1.0, current + rawAmount);
           owl.dna.expertiseGrowth[k] = 0.7 * proposed + 0.3 * current;
           logEntries.push(`Grew expertise in ${k} (+${amount}, EMA → ${owl.dna.expertiseGrowth[k].toFixed(3)})`);
           changed = true;
