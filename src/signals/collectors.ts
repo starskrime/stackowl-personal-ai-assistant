@@ -284,6 +284,7 @@ export class FileSystemCollector implements SignalCollector {
   constructor(
     private rootPath: string,
     private configuredPaths?: string[],
+    private debounceMs?: number,
   ) {}
 
   start(emit: (s: ContextSignal) => void): void {
@@ -390,7 +391,7 @@ export class FileSystemCollector implements SignalCollector {
     }
 
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(() => this.flush(), 5000);
+    this.debounceTimer = setTimeout(() => this.flush(), this.debounceMs ?? 5000);
   }
 
   private flush(): void {

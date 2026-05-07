@@ -1164,7 +1164,7 @@ async function buildGateway(
       b.commitmentTracker,
       b.intentStateMachine,
       b.goalGraph,
-      undefined, // signalPool wired in Task 19
+      undefined,
     ),
     // ─── Epic 7: Knowledge Building Modules ─────────────────
     pelletRetriever,
@@ -1213,10 +1213,11 @@ async function buildGateway(
     signalPool.addCollector(new ActiveFileCollector(b.workspacePath));
     signalPool.addCollector(new ClipboardCollector());
     signalPool.addCollector(
-      new FileSystemCollector(b.workspacePath, b.config.perches?.watchPaths),
+      new FileSystemCollector(b.workspacePath, b.config.perches?.watchPaths, b.config.perches?.fileWatchDebounceMs),
     );
     gateway.ctx.signalPool = signalPool;
     gateway.ctx.proactiveLoop?.setSignalPool(signalPool);
+    gateway.ctx.contextPipeline?.wireSignalPool(signalPool);
     signalPool.start();
   }
 

@@ -9,6 +9,8 @@ import type {
   ContextBuildTrace,
   ContextBuildTraceEntry,
 } from "./layer.js";
+import { AmbientContextLayer } from "./layers/ambient.js";
+import type { SignalPool } from "../signals/pool.js";
 import { log } from "../logger.js";
 
 const LAYER_TIMEOUT_MS = 2_000;
@@ -46,6 +48,19 @@ export class ContextPipeline {
    */
   removeShortTermLayer(key: string): boolean {
     return this.shortTermLayers.delete(key);
+  }
+
+  /**
+   * Wire an ambient signal pool after construction.
+   * Called from buildGateway() once the SignalPool has been created so that
+   * AmbientContextLayer is included in every subsequent pipeline run.
+   */
+  wireSignalPool(pool: SignalPool): void {
+    const layer = new AmbientContextLayer(pool);
+    this.layers.push(layer);
+    // Add as its own batch — AmbientContextLayer has no deps, so it is
+    // independent and can execute in parallel with nothing.
+    this.batches.push([layer]);
   }
 
   async run(
