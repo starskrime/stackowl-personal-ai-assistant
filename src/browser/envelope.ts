@@ -15,7 +15,7 @@ export type WebToolErrorCode =
   | "ALL_TIERS_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
-export type TierName = "camofox" | "scrapling" | "obscura";
+export type TierName = "camofox" | "scrapling" | "obscura" | "puppeteer";
 
 export type TierOutcome =
   | "success"
@@ -70,7 +70,7 @@ const ERROR_CODES: ReadonlySet<string> = new Set<WebToolErrorCode>([
   "INTERNAL_ERROR",
 ]);
 
-const NAMES: ReadonlySet<TierName> = new Set<TierName>(["camofox", "scrapling", "obscura"]);
+const NAMES: ReadonlySet<TierName> = new Set<TierName>(["camofox", "scrapling", "obscura", "puppeteer"]);
 const OUTCOMES: ReadonlySet<TierOutcome> = new Set<TierOutcome>([
   "success", "blocked", "timeout", "unavailable", "error",
   "skipped-by-hint", "skipped-by-learned-routing", "skipped-disabled",

@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 
-export type BackendName = "camofox" | "scrapling" | "live-browser";
+export type BackendName = "camofox" | "scrapling" | "live-browser" | "puppeteer";
 
 export interface BackendStatus {
   installed: boolean;
@@ -24,7 +24,7 @@ function emptyStatus(): BackendStatus {
   return { installed: false, ready: false, lastProbe: new Date(0).toISOString() };
 }
 function emptyMap(): AvailabilityMap {
-  return { camofox: emptyStatus(), scrapling: emptyStatus(), "live-browser": emptyStatus() };
+  return { camofox: emptyStatus(), scrapling: emptyStatus(), "live-browser": emptyStatus(), puppeteer: emptyStatus() };
 }
 
 export class RuntimeAvailability {
