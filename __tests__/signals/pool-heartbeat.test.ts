@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SignalPool } from "../../src/signals/pool.js";
 import type { ContextSignal } from "../../src/ambient/types.js";
 import type { Goal } from "../../src/goals/types.js";
@@ -61,6 +61,7 @@ function admit(pool: SignalPool, overrides: Partial<ContextSignal> = {}): Contex
 
 describe("SignalPool.heartbeatTick", () => {
   beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.useRealTimers());
 
   it("evicts TTL-expired signals and emits signal:expired with reason=ttl", async () => {
     const emit = vi.fn();
@@ -139,6 +140,5 @@ describe("SignalPool.heartbeatTick", () => {
     expect(heartbeatSpy).toHaveBeenCalledTimes(1);
 
     pool.stop();
-    vi.useRealTimers();
   });
 });
