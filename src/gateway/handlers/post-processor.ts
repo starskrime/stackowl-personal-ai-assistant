@@ -219,7 +219,8 @@ export class PostProcessor {
     const evolutionInterval = this.ctx.config.owlDna?.evolutionBatchSize ?? 10;
     if (
       this.messageCount % evolutionInterval === 0 &&
-      this.ctx.evolutionEngine
+      this.ctx.evolutionEngine &&
+      !this._midSessionEvolving
     ) {
       this.enqueueJob(
         `dna-evolve(${this.ctx.owl.persona.name})`,
