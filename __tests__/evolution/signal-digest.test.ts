@@ -174,5 +174,11 @@ describe("evolve() signal digest — learningsSection (D5)", () => {
     );
 
     await expect(engine.evolve(owlName)).resolves.not.toThrow();
+    // When learnings are empty, the section must be absent from the prompt
+    const chatCalls = (provider.chat as ReturnType<typeof vi.fn>).mock.calls;
+    if (chatCalls.length > 0) {
+      const allText = chatCalls[0][0].map((m: any) => m.content ?? "").join("\n");
+      expect(allText).not.toContain("RECENT LEARNINGS");
+    }
   });
 });

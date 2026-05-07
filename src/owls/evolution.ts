@@ -333,11 +333,11 @@ export class OwlEvolutionEngine {
         if (learnings.length > 0) {
           learningsSection =
             `\nRECENT LEARNINGS (failure-first, ranked by confidence):\n` +
-            learnings.slice(0, 5).map((l: string, i: number) => `${i + 1}. ${l}`).join("\n") +
+            learnings.slice(0, 5).map((l: string, i: number) => `${i + 1}. ${l.slice(0, 200)}`).join("\n") +
             `\nApply these learnings when proposing trait mutations.\n\n`;
         }
-      } catch {
-        // Non-fatal — learnings may not exist yet
+      } catch (err) {
+        log.evolution.warn(`[Evolution] owlLearnings retrieval failed for ${owlName}: ${err}`);
       }
     }
 
