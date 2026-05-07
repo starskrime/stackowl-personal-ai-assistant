@@ -66,6 +66,8 @@
     "openai": "^6.34.0",
     "pdf-parse": "^2.4.5",
     "puppeteer": "^24.38.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "uuid": "^11.1.0",
     "ws": "^8.18.1",
     "yaml": "^2.7.0"
