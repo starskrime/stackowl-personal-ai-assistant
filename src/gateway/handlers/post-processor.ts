@@ -40,6 +40,7 @@ export class PostProcessor {
   private sentimentProbe: SentimentProbe | null = null;
   private _lastProcessUserId = "";
   private _lastSessionId: string | null = null;
+  private _midSessionEvolving = false;
 
   constructor(
     private ctx: GatewayContext,
@@ -707,12 +708,17 @@ export class PostProcessor {
           : 0;
         const hoursSinceEvolved = (Date.now() - lastEvolved) / (1000 * 60 * 60);
 
-        if (avgReward < -0.2 && hoursSinceEvolved > 2) {
+        if (avgReward < -0.2 && hoursSinceEvolved > 2 && !this._midSessionEvolving) {
+          this._midSessionEvolving = true;
           this.enqueueJob("mid-session-evolution", "background", async () => {
-            await this.ctx.evolutionEngine!.evolve(owlName);
-            log.engine.info(
-              `[PostProcessor:mid-session-evolution] avg_reward=${avgReward.toFixed(2)} triggered evolution for ${owlName}`,
-            );
+            try {
+              await this.ctx.evolutionEngine!.evolve(owlName);
+              log.engine.info(
+                `[PostProcessor:mid-session-evolution] avg_reward=${avgReward.toFixed(2)} triggered evolution for ${owlName}`,
+              );
+            } finally {
+              this._midSessionEvolving = false;
+            }
           });
         }
       }
