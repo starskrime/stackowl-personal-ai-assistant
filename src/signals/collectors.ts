@@ -6,7 +6,7 @@ import {
   existsSync,
   readFileSync,
 } from "node:fs";
-import { join, relative } from "node:path";
+import { join, isAbsolute, basename } from "node:path";
 import { watch as chokidarWatch, type FSWatcher } from "chokidar";
 import { log } from "../logger.js";
 import type {
@@ -303,18 +303,15 @@ export class FileSystemCollector implements SignalCollector {
         ignoreInitial: true,
         usePolling: false,
       });
-      this.watcher.on("add", (p) => {
-        const rel = relative(this.targetDir, p);
-        if (this.shouldProcess(rel)) this.handleFileChange("rename", rel);
-      });
-      this.watcher.on("change", (p) => {
-        const rel = relative(this.targetDir, p);
-        if (this.shouldProcess(rel)) this.handleFileChange("change", rel);
-      });
-      this.watcher.on("unlink", (p) => {
-        const rel = relative(this.targetDir, p);
-        if (this.shouldProcess(rel)) this.handleFileChange("rename", rel);
-      });
+      this.watcher.on("add", (p) =>
+        this.handleFileChange("rename", p),
+      );
+      this.watcher.on("change", (p) =>
+        this.handleFileChange("change", p),
+      );
+      this.watcher.on("unlink", (p) =>
+        this.handleFileChange("rename", p),
+      );
       this.watcher.on("error", (err) =>
         log.engine.warn(`[FileSystemCollector] ${(err as Error).message}`),
       );
@@ -327,7 +324,7 @@ export class FileSystemCollector implements SignalCollector {
 
   stop(): void {
     if (this.watcher) {
-      this.watcher.close();
+      void this.watcher.close();
       this.watcher = null;
     }
     if (this.debounceTimer) {
@@ -340,7 +337,7 @@ export class FileSystemCollector implements SignalCollector {
    * Coarse perf prefilter — relevance is the classifier's job.
    */
   private shouldProcess(filename: string): boolean {
-    if (filename.startsWith(".")) return false;
+    if (basename(filename).startsWith(".")) return false;
     if (filename.endsWith(".tmp") || filename.endsWith("~")) return false;
     if (
       filename.includes("node_modules/") ||
@@ -355,7 +352,8 @@ export class FileSystemCollector implements SignalCollector {
   }
 
   private handleFileChange(_eventType: string, filename: string): void {
-    const fullPath = join(this.targetDir, filename);
+    if (!this.shouldProcess(filename)) return;
+    const fullPath = isAbsolute(filename) ? filename : join(this.targetDir, filename);
     const prev = this.snapshots.get(filename);
 
     if (!existsSync(fullPath)) {

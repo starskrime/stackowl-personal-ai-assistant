@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/logger.js", () => ({
   log: { engine: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() } },
@@ -67,6 +67,8 @@ describe("FileSystemCollector", () => {
     // Restore mockWatcher.on chaining after clearAllMocks
     mockWatcher.on.mockReturnThis();
   });
+
+  afterEach(() => vi.useRealTimers());
 
   // -------------------------------------------------------------------------
   // Basic metadata
@@ -217,5 +219,52 @@ describe("FileSystemCollector", () => {
 
     vi.advanceTimersByTime(6000);
     expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // chokidar options
+  // -------------------------------------------------------------------------
+
+  it("passes persistent:false and ignoreInitial:true to chokidar", async () => {
+    const collector = new FileSystemCollector("/tmp");
+    collector.start!(() => {});
+    expect(chokidarWatchMock).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        persistent: false,
+        ignoreInitial: true,
+        usePolling: false,
+      }),
+    );
+    collector.stop();
+  });
+
+  // -------------------------------------------------------------------------
+  // Event handler registration
+  // -------------------------------------------------------------------------
+
+  it("registers add, change, unlink, and error event handlers", async () => {
+    const collector = new FileSystemCollector("/tmp");
+    collector.start!(() => {});
+    expect(mockWatcher.on).toHaveBeenCalledWith("add", expect.any(Function));
+    expect(mockWatcher.on).toHaveBeenCalledWith("change", expect.any(Function));
+    expect(mockWatcher.on).toHaveBeenCalledWith("unlink", expect.any(Function));
+    expect(mockWatcher.on).toHaveBeenCalledWith("error", expect.any(Function));
+    collector.stop();
+  });
+
+  // -------------------------------------------------------------------------
+  // Falls back to rootPath when src/ does not exist
+  // -------------------------------------------------------------------------
+
+  it("falls back to rootPath when src/ does not exist", async () => {
+    existsSyncMock.mockReturnValue(false);
+    const collector = new FileSystemCollector("/tmp");
+    collector.start!(() => {});
+    expect(chokidarWatchMock).toHaveBeenCalledWith(
+      ["/tmp"],
+      expect.any(Object),
+    );
+    collector.stop();
   });
 });
