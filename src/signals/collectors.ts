@@ -5,9 +5,9 @@ import {
   statSync,
   existsSync,
   readFileSync,
-  watch,
 } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { watch as chokidarWatch, type FSWatcher } from "chokidar";
 import { log } from "../logger.js";
 import type {
   ContextSignal,
@@ -267,7 +267,7 @@ export class FileSystemCollector implements SignalCollector {
   readonly source: SignalSource = "perch";
   readonly mode = "push" as const;
 
-  private watcher: ReturnType<typeof watch> | null = null;
+  private watcher: FSWatcher | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
   private snapshots = new Map<string, FileSnapshot>();
   private pendingChanges = new Map<
@@ -281,21 +281,42 @@ export class FileSystemCollector implements SignalCollector {
   private targetDir = "";
   private emitFn: ((s: ContextSignal) => void) | null = null;
 
-  constructor(private rootPath: string) {}
+  constructor(
+    private rootPath: string,
+    private configuredPaths?: string[],
+  ) {}
 
   start(emit: (s: ContextSignal) => void): void {
     this.emitFn = emit;
-    const srcDir = join(this.rootPath, "src");
-    this.targetDir = existsSync(srcDir) ? srcDir : this.rootPath;
+    const dirsToWatch: string[] =
+      this.configuredPaths && this.configuredPaths.length > 0
+        ? this.configuredPaths
+        : (() => {
+            const srcDir = join(this.rootPath, "src");
+            return [existsSync(srcDir) ? srcDir : this.rootPath];
+          })();
+    this.targetDir = dirsToWatch[0];
+
     try {
-      this.watcher = watch(
-        this.targetDir,
-        { recursive: true },
-        (eventType, filename) => {
-          if (filename && this.shouldProcess(filename)) {
-            this.handleFileChange(eventType, filename);
-          }
-        },
+      this.watcher = chokidarWatch(dirsToWatch, {
+        persistent: false,
+        ignoreInitial: true,
+        usePolling: false,
+      });
+      this.watcher.on("add", (p) => {
+        const rel = relative(this.targetDir, p);
+        if (this.shouldProcess(rel)) this.handleFileChange("rename", rel);
+      });
+      this.watcher.on("change", (p) => {
+        const rel = relative(this.targetDir, p);
+        if (this.shouldProcess(rel)) this.handleFileChange("change", rel);
+      });
+      this.watcher.on("unlink", (p) => {
+        const rel = relative(this.targetDir, p);
+        if (this.shouldProcess(rel)) this.handleFileChange("rename", rel);
+      });
+      this.watcher.on("error", (err) =>
+        log.engine.warn(`[FileSystemCollector] ${(err as Error).message}`),
       );
     } catch (err) {
       log.engine.warn(

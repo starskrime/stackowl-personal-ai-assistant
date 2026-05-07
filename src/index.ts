@@ -1212,7 +1212,9 @@ async function buildGateway(
     signalPool.addCollector(new SystemCollector());
     signalPool.addCollector(new ActiveFileCollector(b.workspacePath));
     signalPool.addCollector(new ClipboardCollector());
-    signalPool.addCollector(new FileSystemCollector(b.workspacePath));
+    signalPool.addCollector(
+      new FileSystemCollector(b.workspacePath, b.config.perches?.watchPaths),
+    );
     gateway.ctx.signalPool = signalPool;
     signalPool.start();
   }
