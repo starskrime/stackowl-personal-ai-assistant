@@ -29,6 +29,7 @@ export interface ToolContext {
   cwd: string;
   engineContext?: EngineContext;
   classifier?: Pick<BlockingClassifier, "classify">;
+  puppeteer?: import("../browser/puppeteer-fetcher.js").PuppeteerFetcher;
 }
 
 export interface ToolImplementation {

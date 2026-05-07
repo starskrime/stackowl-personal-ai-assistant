@@ -136,6 +136,8 @@ export class ContextBuilder {
       userId,
       db: this.ctx.db,
       sessionId: session.id,
+      classifier: this.ctx.blockingClassifier,
+      puppeteer: this.ctx.puppeteer,
     };
   }
 }

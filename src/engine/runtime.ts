@@ -140,6 +140,10 @@ export interface EngineContext {
   userMessage?: string;
   /** When set, the LLM is instructed to begin its response with this interpretation prefix */
   narrationPrefix?: string;
+  /** BlockingClassifier — passed to web tools for CAPTCHA/block detection */
+  classifier?: import("../browser/blocking-classifier.js").BlockingClassifier;
+  /** PuppeteerFetcher — passed to web tools for headless browser fallback */
+  puppeteer?: import("../browser/puppeteer-fetcher.js").PuppeteerFetcher;
 }
 
 export interface PendingCapabilityGap {
@@ -1277,6 +1281,8 @@ ${userMessage}
             activeSubGoal: context.activeSubGoal,
             userMessage: context.userMessage,
           },
+          classifier: context.classifier,
+          puppeteer: context.puppeteer,
         };
 
         // ── ApproachLibrary pre-execution recall ──────────────────────────
@@ -2916,6 +2922,8 @@ ${skillsContext}
           activeSubGoal: request.activeSubGoal,
           userMessage: request.userMessage,
         },
+        classifier: (request as any).classifier,
+        puppeteer: (request as any).puppeteer,
       };
       await Promise.allSettled(
         toolCalls.map(async (tc) => {

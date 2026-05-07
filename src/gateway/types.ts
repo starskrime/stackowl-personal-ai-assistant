@@ -367,4 +367,8 @@ export interface GatewayContext {
   // ─── OwlEngine v2 (Element 6a) ────────────────────────────────────
   orchestrator?: import("../engine/orchestrator.js").OwlOrchestrator;
   improvementScheduler?: import("../engine/improvement-scheduler.js").ImprovementScheduler;
+
+  // ─── Element 16b/16d — Browser fetch pipeline ────────────────────
+  blockingClassifier?: import("../browser/blocking-classifier.js").BlockingClassifier;
+  puppeteer?: import("../browser/puppeteer-fetcher.js").PuppeteerFetcher;
 }
