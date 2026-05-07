@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { StackOwlDB } from "../../src/memory/db.js";
+import { StackOwlDB, MemoryDatabase } from "../../src/memory/db.js";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
-import { unlinkSync } from "fs";
+import { mkdtempSync, unlinkSync, rmSync } from "fs";
 
 function tmpDbPath(): string {
   return join(tmpdir(), `stackowl-test-${randomBytes(4).toString("hex")}.db`);
@@ -14,6 +14,7 @@ describe("Schema v16 migration", () => {
 
   afterEach(() => {
     for (const p of dbPaths) {
+      try { rmSync(p, { recursive: true, force: true }); } catch {}
       try { unlinkSync(p); } catch {}
       try { unlinkSync(p + "-shm"); } catch {}
       try { unlinkSync(p + "-wal"); } catch {}
@@ -67,5 +68,32 @@ describe("Schema v16 migration", () => {
     expect(names).toContain("state");
     expect(names).toContain("source_code");
     expect(names).toContain("created_at");
+  });
+
+  it("recordTurn() writes verification_result and verifier_reason when provided", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "owl-v16-"));
+    dbPaths.push(tmpDir);
+    const db = new MemoryDatabase(tmpDir);
+    const trajId = db.trajectories.begin("sess1", "owl1", "test query");
+    db.trajectories.recordTurn(trajId, 0, "web_fetch", "{}", "result", true, undefined, "BLOCKED", "paywall detected");
+    const raw = (db as any).db as import("better-sqlite3").Database;
+    const row = raw
+      .prepare("SELECT verification_result, verifier_reason FROM trajectory_turns WHERE trajectory_id = ?")
+      .get(trajId) as { verification_result: string; verifier_reason: string };
+    expect(row.verification_result).toBe("BLOCKED");
+    expect(row.verifier_reason).toBe("paywall detected");
+  });
+
+  it("recordTurn() leaves verification_result NULL when not provided", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "owl-v16-"));
+    dbPaths.push(tmpDir);
+    const db = new MemoryDatabase(tmpDir);
+    const trajId = db.trajectories.begin("sess2", "owl1", "test query");
+    db.trajectories.recordTurn(trajId, 0, "web_fetch", "{}", "result", true);
+    const raw = (db as any).db as import("better-sqlite3").Database;
+    const row = raw
+      .prepare("SELECT verification_result FROM trajectory_turns WHERE trajectory_id = ?")
+      .get(trajId) as { verification_result: string | null };
+    expect(row.verification_result).toBeNull();
   });
 });

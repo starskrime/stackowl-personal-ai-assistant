@@ -1320,7 +1320,7 @@ ${userMessage}
         // Fire all tool executions concurrently
         const executionResults = new Map<
           string,
-          { result: string; isHardFailure: boolean }
+          { result: string; isHardFailure: boolean; verificationResult?: string; verifierReason?: string }
         >();
 
         if (executableActions.length > 0) {
@@ -1338,12 +1338,15 @@ ${userMessage}
           const promises = executableActions.map(async (action) => {
             const tc = action.toolCall;
             try {
+              const verdictSink: { verdict?: string; reason?: string } = {};
               const result = await toolRegistry!.execute(
                 tc.name,
                 tc.arguments,
                 toolCtx,
+                0,
+                verdictSink,
               );
-              return { id: tc.id, result, isHardFailure: false };
+              return { id: tc.id, result, isHardFailure: false, verificationResult: verdictSink.verdict, verifierReason: verdictSink.reason };
             } catch (e) {
               return {
                 id: tc.id,
@@ -1559,6 +1562,9 @@ ${userMessage}
                     argSnap,
                     resSnap,
                     !isAnyFailure,
+                    undefined,
+                    execResult.verificationResult,
+                    execResult.verifierReason,
                   );
                   if (isAnyFailure) trajectoryToolFailureCount++;
                   else trajectoryToolSuccessCount++;

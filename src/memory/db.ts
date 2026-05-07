@@ -2635,17 +2635,21 @@ class TrajectoriesRepo {
     resultSnapshot: string,
     success: boolean,
     durationMs?: number,
+    verificationResult?: string,
+    verifierReason?: string,
   ): void {
     this.db.prepare(`
       INSERT INTO trajectory_turns
-        (id, trajectory_id, turn_index, tool_name, args_snapshot, result_snapshot, success, duration_ms)
-      VALUES (?,?,?,?,?,?,?,?)
+        (id, trajectory_id, turn_index, tool_name, args_snapshot, result_snapshot, success, duration_ms, verification_result, verifier_reason)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
     `).run(
       uuidv4(), trajectoryId, turnIndex, toolName,
       argsSnapshot.slice(0, 300),
       resultSnapshot.slice(0, 400),
       success ? 1 : 0,
       durationMs ?? null,
+      verificationResult ?? null,
+      verifierReason ?? null,
     );
   }
 

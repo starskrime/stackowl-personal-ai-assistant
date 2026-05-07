@@ -278,6 +278,8 @@ export class ToolRegistry {
     context: ToolContext,
     /** Internal: recursion depth for ToolGraph single-hop replan. Capped at 1. */
     _replanDepth = 0,
+    /** Optional mutable sink — caller reads verdict after execute() returns. */
+    _verdictSink?: { verdict?: string; reason?: string },
   ): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
@@ -416,6 +418,12 @@ export class ToolRegistry {
                 return fallbackResult;
               }
             }
+          }
+
+          // Surface verdict to caller for trajectory recording.
+          if (_verdictSink) {
+            _verdictSink.verdict = verification.verdict;
+            _verdictSink.reason = verification.reason;
           }
 
           // Envelope-aware: web tools return JSON-stringified WebToolResult.
