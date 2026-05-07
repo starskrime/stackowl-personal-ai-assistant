@@ -57,7 +57,7 @@ export class OwlEvolutionEngine {
     const owl = this.owlRegistry.get(owlName);
     if (!owl) return false;
 
-    const decayRate = this.config.owlDna?.decayRatePerWeek ?? 0.01;
+    const decayRate = this.config.owlDna?.decayRatePerWeek ?? 0.1;
     if (decayRate <= 0) return false;
 
     const lastEvolved = owl.dna.lastEvolved
@@ -414,8 +414,10 @@ export class OwlEvolutionEngine {
 
       if (mutations.newPreferences) {
         for (const [k, v] of Object.entries(mutations.newPreferences)) {
-          owl.dna.learnedPreferences[k] = Number(v);
-          logEntries.push(`Learned preference: ${k} = ${v}`);
+          const proposed = Number(v);
+          const current = owl.dna.learnedPreferences[k] ?? 0.5;
+          owl.dna.learnedPreferences[k] = 0.7 * proposed + 0.3 * current;
+          logEntries.push(`Learned preference: ${k} = ${owl.dna.learnedPreferences[k].toFixed(3)} (EMA from ${current.toFixed(3)})`);
           changed = true;
         }
       }
@@ -450,8 +452,9 @@ export class OwlEvolutionEngine {
       if (mutations.expertiseGrowth) {
         for (const [k, amount] of Object.entries(mutations.expertiseGrowth)) {
           const current = owl.dna.expertiseGrowth[k] || 0;
-          owl.dna.expertiseGrowth[k] = Math.min(1.0, current + Number(amount));
-          logEntries.push(`Grew expertise in ${k} (+${amount})`);
+          const proposed = Math.min(1.0, current + Number(amount));
+          owl.dna.expertiseGrowth[k] = 0.7 * proposed + 0.3 * current;
+          logEntries.push(`Grew expertise in ${k} (+${amount}, EMA → ${owl.dna.expertiseGrowth[k].toFixed(3)})`);
           changed = true;
         }
       }
