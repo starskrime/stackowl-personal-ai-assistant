@@ -38,53 +38,57 @@ export class PuppeteerFetcher {
       createSessionFunction: (pool) =>
         new Session({ sessionPool: pool, userData: {} }),
     });
-    this.browser = await (puppeteer as any).launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-      ],
-    });
+    try {
+      this.browser = await (puppeteer as any).launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-blink-features=AutomationControlled",
+        ],
+      });
+    } catch (err) {
+      await this.sessionPool.teardown();
+      this.sessionPool = null;
+      throw err;
+    }
   }
 
   async fetch(url: string, timeoutMs = 25_000): Promise<PuppeteerFetchResult> {
-    if (!this.browser) {
+    if (!this.browser || !this.sessionPool) {
       throw new Error("PuppeteerFetcher not initialized — call init() first");
     }
-    const session = await this.sessionPool!.getSession();
-    const context: BrowserContext = await this.browser.createBrowserContext();
-    const page = await context.newPage();
+    const session = await this.sessionPool.getSession();
+    let context: BrowserContext | null = null;
     try {
-      const origin = new URL(url).origin;
-      const cookies = session.getCookies(origin);
-      if (cookies.length) {
-        await context.setCookie(...(cookies as any[]));
-      }
+      context = await this.browser.createBrowserContext();
+      const page = await context.newPage();
+
+      const cookies = session.getCookies(new URL(url).origin);
+      if (cookies.length) await context.setCookie(...(cookies as any[]));
 
       const response = await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: timeoutMs,
       });
-      const html = await page.content();
 
-      // Persist cookies back into session for next request
+      if (!response) throw new Error(`Navigation to ${url} failed — no response`);
+
+      const html = await page.content();
       const updatedCookies = await page.cookies();
-      if (updatedCookies.length) {
-        session.setCookies(updatedCookies as any[], origin);
-      }
+      session.setCookiesFromResponse(updatedCookies as any, new URL(url).origin);
       session.markGood();
 
       return {
         html,
         finalUrl: page.url(),
-        status: response?.status() ?? 200,
+        status: response.status(),
       };
     } catch (err) {
       session.markBad();
       throw err;
     } finally {
-      await context.close();
+      await context?.close();
     }
   }
 
