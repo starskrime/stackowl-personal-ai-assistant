@@ -121,6 +121,7 @@ import { OwlOrchestrator as OwlOrchestratorV2 } from "../engine/orchestrator.js"
 import { ImprovementScheduler } from "../engine/improvement-scheduler.js";
 import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js";
 import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/reflexion-engine.js";
+import { ReflexionEngine } from "../evolution/reflexion.js";
 import { updateParliamentDNA, updatePelletGeneratorDNA } from "../owls/evolution.js";
 import { GoalVerifier } from "../tools/goal-verifier.js";
 import { formatSignalPromoted } from "./narration-formatter.js";
@@ -380,6 +381,10 @@ export class OwlGateway {
         try { return (await ctx.provider.embed(text)).embedding; } catch { return []; }
       };
       intelligenceReflexion = new IntelligenceReflexionEngine(ctx.db, ctx.provider, embedFn);
+    }
+
+    if (!ctx.reflexionEngine && ctx.pelletStore) {
+      ctx.reflexionEngine = new ReflexionEngine(ctx.provider, ctx.sessionStore, ctx.pelletStore);
     }
 
     this.postProcessor = new PostProcessor(
