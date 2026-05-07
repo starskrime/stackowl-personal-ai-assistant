@@ -1200,8 +1200,9 @@ async function buildGateway(
       verifier: GoalVerifier.create(gateway.ctx.intelligence, providerMap),
       goalGraph: b.goalGraph,
       config: {
-        maxSignals: 32,
-        consent: ((b.config as any).perches?.consent) ?? {},
+        maxSignals: b.config.perches?.maxSignals ?? 32,
+        consent: b.config.perches?.consent ?? {},
+        enabledSources: b.config.perches?.enabledSources,
       },
       memoryRepo,
       workspacePath: b.workspacePath,

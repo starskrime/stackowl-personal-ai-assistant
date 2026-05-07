@@ -8,7 +8,7 @@ import { readFile, writeFile, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { IntelligenceConfig } from "../intelligence/router.js";
-import type { SignalSource } from "../ambient/types.js";
+import type { SignalSource, ConsentMap } from "../ambient/types.js";
 
 // ─── Config Types ────────────────────────────────────────────────
 
@@ -196,6 +196,19 @@ export interface StackOwlConfig {
     intervalDays?: number;
     /** Enable automated weekly council sessions. Default: true */
     enabled?: boolean;
+  };
+  /** Ambient signal mesh (Perches) configuration */
+  perches?: {
+    /** Per-source consent overrides. Falls back to DEFAULT_CONSENT when absent. */
+    consent?: ConsentMap;
+    /** Maximum signals retained in pool. Default: 32 */
+    maxSignals?: number;
+    /** FileSystemCollector debounce window (ms). Default: 5000 */
+    fileWatchDebounceMs?: number;
+    /** If set, only these sources are registered as collectors. Default: all. */
+    enabledSources?: SignalSource[];
+    /** Override watched paths for FileSystemCollector. Default: workspace src/ or root. */
+    watchPaths?: string[];
   };
   /** Cognitive Loop configuration — self-improvement engine */
   cognition?: {
@@ -666,7 +679,7 @@ export async function mutateConsent(
 ): Promise<void> {
   const next = consentMutex.then(async () => {
     const config = await loadConfig(basePath);
-    const perches = ((config as any).perches ??= {});
+    const perches = (config.perches ??= {});
     const consent = (perches.consent ??= {});
     consent[source] = granted;
     await saveConfig(basePath, config);
