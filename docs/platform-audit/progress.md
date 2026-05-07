@@ -27,7 +27,7 @@
 | 14 | Evolution (DNA mutation, reflexion, APO) | ✅ shipped — −789 LOC net delta. D1: deleted 808-LOC dead code cluster (7 files). D2: wired ReflexionEngine in core.ts. D4: mid-session evolution trigger (avg_reward < −0.2, 2h cooldown, in-flight guard). D5: top-5 owl_learnings injected as RECENT LEARNINGS in evolve() prompt. D6: decayRatePerWeek 0.01→0.1, EMA β=0.7 blending on learnedPreferences + expertiseGrowth. 1319 tests passing. Merged 2026-05-06. | 2026-05-06 |
 | 15 | Memory DB (SQLite facts, episodes, attempts) | ✅ shipped — Phase J complete (Tasks 30-32), 1144 tests passing | 2026-05-03 |
 | 16a | **Web Browsing Honesty & Wiring** (Phase A) | ✅ shipped — merged `d59dc00` 2026-05-04. Structured `WebToolResult` envelopes, 3-tier dispatcher (http→camofox→scrapling), `<tool_attempt_summary>`, GoalVerifier envelope-driven, channel-parity narration, schema v26. 4842 tests passing. | 2026-05-04 |
-| 16b | Perches (file watchers, event broadcast) — original Element 16 scope | ⬜ pending (preempted by Phase A web honesty) | — |
+| 16b | Perches (file watchers, event broadcast) — original Element 16 scope | 🔍 Phase 1 audit complete (9 gaps G1–G9). Phase 2 market research complete (29 sources, 8 sections). Awaiting Boss approval before Winston architecture phase. | 2026-05-06 |
 | 17 | Owl system (DNA, inner life, specialization) | ⬜ pending | — |
 | 18 | Providers (model routing, health, cost) | ⬜ pending | — |
 | 19 | Skills engine (match, inject, synthesize) | ⬜ pending | — |
