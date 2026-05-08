@@ -20,8 +20,12 @@ import type { WebToolResult } from "./envelope.js";
 import { parseGoogleHtml, type SearchResult } from "./google-parser.js";
 import type { CamoFoxClient } from "./camofox-client.js";
 import type { PuppeteerFetcher } from "./puppeteer-fetcher.js";
-import { GatewayEventBus } from "../gateway/event-bus.js";
+import type { GatewayEventBus } from "../gateway/event-bus.js";
 import type { BlockingClassifier } from "./blocking-classifier.js";
+
+// ─── NOOP bus for missing dependencies ──────────────────────────
+
+const NOOP_BUS: GatewayEventBus = { emit: () => {} } as unknown as GatewayEventBus;
 
 // ─── Realistic headers for DDG ───────────────────────────────────
 
@@ -64,15 +68,16 @@ function parseDdgHtml(html: string): SearchResult[] {
 
 // ─── Tier 1: DDG HTML ─────────────────────────────────────────────
 
-export function createDdgHtmlTier(): TierRunner {
+export function createDdgHtmlTier(jitterFn?: () => Promise<void>): TierRunner {
+  const jitter = jitterFn ?? (() => new Promise((r) => setTimeout(r, 300 + Math.random() * 600)));
   return {
     tier: 1,
     name: "scrapling",
     isAvailable: () => true,
     async run(query, _ctx): Promise<TierRunResult> {
       const t0 = Date.now();
-      // 300–900ms jitter to avoid rate-limiting
-      await new Promise((r) => setTimeout(r, 300 + Math.random() * 600));
+      // 300–900ms jitter to avoid rate-limiting (or custom jitter for tests)
+      await jitter();
 
       try {
         const controller = new AbortController();
@@ -392,7 +397,7 @@ export async function searchEnvelope(
   }
 
   // Create context with required bus — provide stub if absent
-  const bus = deps.bus ?? new GatewayEventBus();
+  const bus = deps.bus ?? NOOP_BUS;
   const ctx: DispatcherCtx = { bus };
 
   // runEscalationChain passes the first arg to each tier's run() as-is.
@@ -400,13 +405,12 @@ export async function searchEnvelope(
   const result = await runEscalationChain(tiers, query, ctx);
 
   if (!result.success) {
-    // Always attach suggestedEscalation for search failures
+    const resultErr = (result as any).error;
     return {
       success: false,
-      error: {
-        ...result.error,
-        suggestedEscalation: "live_browser",
-      },
+      error: resultErr.code === "BLOCKED_BY_ANTI_BOT"
+        ? { ...resultErr, suggestedEscalation: "live_browser" }
+        : resultErr,
     };
   }
 
