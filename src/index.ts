@@ -196,7 +196,7 @@ import { ConstellationMiner } from "./constellations/miner.js";
 import { SocraticEngine } from "./socratic/engine.js";
 import { join } from "node:path";
 // ── Persistent Browser Pool ──
-import { BrowserPool, initSmartFetch, initCamoFox } from "./browser/index.js";
+import { BrowserPool, initSmartFetch, initCamoFox, getCamoFoxClient } from "./browser/index.js";
 // ── New Feature Modules (Phase 1-3) ──
 import { InfraProfileStore, InfraDetector } from "./infra/index.js";
 import { ConnectorResolver } from "./connectors/index.js";
@@ -294,6 +294,7 @@ async function bootstrap() {
   }
 
   // Initialize CamoFox (anti-detection browser) — keep client wired for tools…
+  let camofoxClient: import("./browser/camofox-client.js").CamoFoxClient | null = null;
   if (config.camofox?.enabled !== false) {
     initCamoFox({
       baseUrl: config.camofox?.baseUrl ?? "http://localhost:9377",
@@ -307,6 +308,8 @@ async function bootstrap() {
     await probeCamoFoxAtBoot(runtimeAvailability, {
       baseUrl: config.camofox?.baseUrl ?? "http://localhost:9377",
     });
+    // Capture the CamoFox client for wiring into gateway context
+    camofoxClient = getCamoFoxClient();
   }
 
   // Initialize Puppeteer fetcher (Tier 3 autonomous headless browser)
@@ -860,6 +863,7 @@ async function bootstrap() {
     mcpManager,
     planLedger,
     puppeteerFetcher,
+    camofoxClient,
   };
 }
 
@@ -1244,6 +1248,15 @@ async function buildGateway(
     // PuppeteerFetcher — wire into context if initialized during bootstrap
     if (b.puppeteerFetcher) {
       gateway.ctx.puppeteer = b.puppeteerFetcher;
+    }
+
+    // CamoFox client and Tavily API key — wire into context for search escalation
+    if (b.camofoxClient) {
+      gateway.ctx.camofox = b.camofoxClient;
+    }
+    const tavilyApiKey = process.env["TAVILY_API_KEY"] ?? (b.config as any)?.webSearch?.tavilyApiKey;
+    if (tavilyApiKey) {
+      gateway.ctx.tavilyApiKey = tavilyApiKey;
     }
   }
 
