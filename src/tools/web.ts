@@ -33,7 +33,7 @@ export const WebFetchTool: ToolImplementation = {
     executionPolicy: { timeoutMs: 30_000, maxRetries: 0 },
   },
 
-  async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
     const { serializeWebToolResult } = await import("../browser/envelope.js");
     let url = args["url"] as string;
     if (!url) {
@@ -59,7 +59,13 @@ export const WebFetchTool: ToolImplementation = {
     }
 
     try {
-      const envelope = await webFetchEnvelope(url);
+      const envelope = await webFetchEnvelope(url, {
+        scrapling: (context.engineContext as any)?.scrapling,
+        classifier: context.classifier,
+        puppeteer: context.puppeteer,
+        bus: (context.engineContext as any)?.gatewayEventBus,
+        hint: args["hint"] as "anti-bot" | undefined,
+      });
       return serializeWebToolResult(envelope);
     } catch (error) {
       return serializeWebToolResult({
