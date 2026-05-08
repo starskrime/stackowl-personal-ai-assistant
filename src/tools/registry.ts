@@ -30,6 +30,8 @@ export interface ToolContext {
   engineContext?: EngineContext;
   classifier?: Pick<BlockingClassifier, "classify">;
   puppeteer?: import("../browser/puppeteer-fetcher.js").PuppeteerFetcher;
+  camofox?: import("../browser/camofox-client.js").CamoFoxClient;
+  tavilyApiKey?: string;
 }
 
 export interface ToolImplementation {

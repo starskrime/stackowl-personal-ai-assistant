@@ -371,4 +371,8 @@ export interface GatewayContext {
   // ─── Element 16b/16d — Browser fetch pipeline ────────────────────
   blockingClassifier?: import("../browser/blocking-classifier.js").BlockingClassifier;
   puppeteer?: import("../browser/puppeteer-fetcher.js").PuppeteerFetcher;
+
+  // ─── Element 16e — Search escalation ─────────────────────────────
+  camofox?: import("../browser/camofox-client.js").CamoFoxClient;
+  tavilyApiKey?: string;
 }

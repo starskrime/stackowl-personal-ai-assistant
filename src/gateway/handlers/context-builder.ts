@@ -138,6 +138,8 @@ export class ContextBuilder {
       sessionId: session.id,
       classifier: this.ctx.blockingClassifier,
       puppeteer: this.ctx.puppeteer,
+      camofox: this.ctx.camofox,
+      tavilyApiKey: this.ctx.tavilyApiKey,
     };
   }
 }

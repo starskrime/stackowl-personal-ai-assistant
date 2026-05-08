@@ -144,6 +144,10 @@ export interface EngineContext {
   classifier?: import("../browser/blocking-classifier.js").BlockingClassifier;
   /** PuppeteerFetcher — passed to web tools for headless browser fallback */
   puppeteer?: import("../browser/puppeteer-fetcher.js").PuppeteerFetcher;
+  /** CamoFoxClient — passed to search tool for Google-via-CamoFox tier */
+  camofox?: import("../browser/camofox-client.js").CamoFoxClient;
+  /** Tavily Search API key — passed to search tool for Tavily tier */
+  tavilyApiKey?: string;
 }
 
 export interface PendingCapabilityGap {
@@ -1283,6 +1287,8 @@ ${userMessage}
           },
           classifier: context.classifier,
           puppeteer: context.puppeteer,
+          camofox: context.camofox,
+          tavilyApiKey: context.tavilyApiKey,
         };
 
         // ── ApproachLibrary pre-execution recall ──────────────────────────
@@ -2924,6 +2930,8 @@ ${skillsContext}
         },
         classifier: (request as any).classifier,
         puppeteer: (request as any).puppeteer,
+        camofox: (request as any).camofox,
+        tavilyApiKey: (request as any).tavilyApiKey,
       };
       await Promise.allSettled(
         toolCalls.map(async (tc) => {
