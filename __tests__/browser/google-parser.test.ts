@@ -62,6 +62,18 @@ const ENCODED_URL_HTML = `<html><body>
 </div>
 </body></html>`;
 
+const AMP_ENTITY_HTML = `<html><body>
+<div class="g">
+  <h3><a href="https://example.com/page?a=1&amp;b=2">Amp Entity Result</a></h3>
+</div>
+</body></html>`;
+
+const GOOGLE_REDIRECT_HTML = `<html><body>
+<div class="g">
+  <h3><a href="https://www.google.com/url?q=https%3A%2F%2Fexample.com%2Ftarget">Redirect Result</a></h3>
+</div>
+</body></html>`;
+
 describe("parseGoogleHtml", () => {
   it("parses JSON-LD with scalar @type SearchResultsPage", () => {
     const results = parseGoogleHtml(JSON_LD_HTML, "coffee shops nyc");
@@ -101,5 +113,20 @@ describe("parseGoogleHtml", () => {
   it("decodes percent-encoded URLs", () => {
     const results = parseGoogleHtml(ENCODED_URL_HTML, "test");
     expect(results[0]?.url).toBe("https://example.com/encoded");
+  });
+
+  it("decodes &amp; HTML entities in URLs", () => {
+    const results = parseGoogleHtml(AMP_ENTITY_HTML, "test");
+    expect(results).toHaveLength(1);
+    expect(results[0].url).toBe("https://example.com/page?a=1&b=2");
+  });
+
+  it("returns google.com/url?q= redirect as-is (raw scrape behavior)", () => {
+    // Document that /url?q= redirects are returned as-is — caller can unwrap if needed
+    const results = parseGoogleHtml(GOOGLE_REDIRECT_HTML, "test");
+    // The redirect URL passes http check but contains google.com/url —
+    // with the hostname+path filter, /url is NOT in the blocklist, so it passes through
+    expect(results).toHaveLength(1);
+    expect(results[0].url).toContain("google.com/url?q=");
   });
 });

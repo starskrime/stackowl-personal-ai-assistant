@@ -60,7 +60,7 @@ function parseJsonLd(html: string): SearchResult[] {
 }
 
 function parseDivG(html: string): SearchResult[] {
-  const divGRe = /<div[^>]+class="[^"]*\bg\b[^"]*"[^>]*>[\s\S]*?<h3[^>]*>[\s\S]*?<a[^>]+href="([^"#][^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const divGRe = /<div[^>]+class="(?:[^"]*\s)?g(?:\s[^"]*|)"[^>]*>[\s\S]*?<h3[^>]*>[\s\S]*?<a[^>]+href="([^"#][^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
   return extractFromRegex(divGRe, html);
 }
 
@@ -78,14 +78,25 @@ function extractFromRegex(re: RegExp, html: string): SearchResult[] {
     const rawTitle = m[2];
     let url: string;
     try {
-      url = decodeURIComponent(rawUrl);
+      const unescaped = rawUrl.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+      url = decodeURIComponent(unescaped);
     } catch {
-      url = rawUrl;
+      url = rawUrl.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
     }
     const title = rawTitle.replace(/<[^>]+>/g, "").trim();
     if (!url.startsWith("http") || !title || seen.has(url)) continue;
-    // Filter out Google's own navigation links
-    if (url.includes("google.com/search") || url.includes("google.com/preferences")) continue;
+    // Filter out Google's own navigation links (search, preferences)
+    // Use hostname+path matching to avoid dropping legitimate Google developer docs
+    try {
+      const u = new URL(url);
+      if (
+        (u.hostname === "www.google.com" || u.hostname === "google.com") &&
+        (u.pathname.startsWith("/search") || u.pathname.startsWith("/preferences"))
+      ) continue;
+    } catch {
+      // not a parseable URL — will be filtered by startsWith("http") check above
+      continue;
+    }
     seen.add(url);
     results.push({ title, url });
   }
