@@ -1,7 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { searchEnvelope, type SearchEnvelopeDeps } from "../../src/browser/smart-search.js";
 
 const NOOP_BUS = { emit: () => {} } as any;
+
+let originalFetch: typeof globalThis.fetch;
+
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+});
 
 function makeFetchMock(opts: {
   ddgBlocked?: boolean;
@@ -44,6 +55,7 @@ describe("search escalation — DDG succeeds", () => {
     const deps: SearchEnvelopeDeps = {
       tavilyApiKey: "test-key",
       bus: NOOP_BUS,
+      jitterFn: () => Promise.resolve(),
     };
     const result = await searchEnvelope("best coffee", 5, deps);
 
@@ -53,8 +65,6 @@ describe("search escalation — DDG succeeds", () => {
     }
     const tavilyCalls = fetchMock.mock.calls.filter(([url]: any[]) => String(url).includes("tavily"));
     expect(tavilyCalls).toHaveLength(0);
-
-    vi.restoreAllMocks();
   });
 });
 
@@ -65,6 +75,7 @@ describe("search escalation — DDG blocked → Tavily succeeds", () => {
     const deps: SearchEnvelopeDeps = {
       tavilyApiKey: "test-key",
       bus: NOOP_BUS,
+      jitterFn: () => Promise.resolve(),
     };
     const result = await searchEnvelope("blocked query", 5, deps);
 
@@ -72,7 +83,6 @@ describe("search escalation — DDG blocked → Tavily succeeds", () => {
     if (result.success && result.data.kind === "search") {
       expect(result.data.results[0].title).toBe("Tavily Result");
     }
-    vi.restoreAllMocks();
   });
 });
 
@@ -97,6 +107,7 @@ describe("search escalation — CamoFox unavailable → Puppeteer used", () => {
       camofox: mockCamoFox as any,
       puppeteer: mockPuppeteer as any,
       bus: NOOP_BUS,
+      jitterFn: () => Promise.resolve(),
     };
     const result = await searchEnvelope("test query", 5, deps);
 
@@ -109,8 +120,6 @@ describe("search escalation — CamoFox unavailable → Puppeteer used", () => {
       expect.stringContaining("google.com/search"),
       expect.objectContaining({ waitForSelector: "div.g" }),
     );
-
-    vi.restoreAllMocks();
   });
 });
 
@@ -138,16 +147,15 @@ describe("search escalation — all tiers fail", () => {
       camofox: mockCamoFox as any,
       puppeteer: mockPuppeteer as any,
       bus: NOOP_BUS,
+      jitterFn: () => Promise.resolve(),
     };
     const result = await searchEnvelope("fail query", 5, deps);
 
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.code).toBe("BLOCKED_BY_ANTI_BOT");
-      expect(result.error.attemptedTiers.length).toBeGreaterThanOrEqual(3);
+      expect(result.error.attemptedTiers.length).toBe(4);
       expect(result.error.suggestedEscalation).toBe("live_browser");
     }
-
-    vi.restoreAllMocks();
   });
 });

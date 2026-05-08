@@ -360,6 +360,8 @@ export interface SearchEnvelopeDeps {
   classifier?: Pick<BlockingClassifier, "classify">;
   /** Event bus for tier telemetry */
   bus?: GatewayEventBus;
+  /** Jitter function for DDG tier — if absent, defaults to 300–900ms random delay */
+  jitterFn?: () => Promise<void>;
 }
 
 // ─── Entry point ─────────────────────────────────────────────────
@@ -379,7 +381,7 @@ export async function searchEnvelope(
   const tiers: TierRunner[] = [];
 
   // Tier 1: DDG HTML — always included
-  tiers.push(createDdgHtmlTier());
+  tiers.push(createDdgHtmlTier(deps.jitterFn));
 
   // Tier 2: Tavily API — only if key provided
   if (deps.tavilyApiKey) {
