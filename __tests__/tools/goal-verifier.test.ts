@@ -91,7 +91,7 @@ describe("GoalVerifier", () => {
     const router = makeRouter('{"verdict":"PARTIAL","reason":"Found some but not all info"}');
     const verifier = new GoalVerifier(router);
     const result = await verifier.verify({
-      toolName: "duckduckgo_search",
+      toolName: "web_search",
       toolArgs: { query: "typescript version" },
       toolResult: "TypeScript 5.4 released last year",
       subGoal,

@@ -76,7 +76,7 @@ describe("GatewayEventBus tool events", () => {
     const bus = new GatewayEventBus();
     const handler = vi.fn();
     bus.on("tool:goal_blocked", handler);
-    bus.emit({ type: "tool:goal_blocked", toolName: "duckduckgo_search", subGoal: "find price data", suggestion: "try web_crawl with specific URL" });
+    bus.emit({ type: "tool:goal_blocked", toolName: "web_search", subGoal: "find price data", suggestion: "try web_crawl with specific URL" });
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ suggestion: "try web_crawl with specific URL" }));
   });
 })
