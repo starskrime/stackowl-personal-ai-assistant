@@ -138,8 +138,13 @@ describe("searchEnvelope tier inclusion", () => {
       });
     }) as any;
 
+    // Classifier identifies CAPTCHA pages as blocked so DDG escalates to Tavily
+    const classifier = {
+      classify: vi.fn().mockResolvedValue({ blocked: true, reason: "captcha", confidence: 0.95, source: "router" }),
+    };
     const deps: SearchEnvelopeDeps = {
       tavilyApiKey: "test-key",
+      classifier,
       bus: { emit: () => {} } as any,
     };
     const result = await searchEnvelope("blocked query", 5, deps);

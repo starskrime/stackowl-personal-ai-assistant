@@ -68,7 +68,10 @@ function parseDdgHtml(html: string): SearchResult[] {
 
 // ─── Tier 1: DDG HTML ─────────────────────────────────────────────
 
-export function createDdgHtmlTier(jitterFn?: () => Promise<void>): TierRunner {
+export function createDdgHtmlTier(
+  jitterFn?: () => Promise<void>,
+  classifier?: Pick<BlockingClassifier, "classify">,
+): TierRunner {
   const jitter = jitterFn ?? (() => new Promise((r) => setTimeout(r, 300 + Math.random() * 600)));
   return {
     tier: 1,
@@ -106,16 +109,37 @@ export function createDdgHtmlTier(jitterFn?: () => Promise<void>): TierRunner {
         const html = await response.text();
         const results = parseDdgHtml(html);
 
-        // No results — may be a CAPTCHA/anti-bot page → blocked, escalate
+        // No results — use classifier to distinguish blocked vs genuinely empty SERP.
+        // If no classifier is available, default to treating as genuine empty results
+        // (the old heuristic of always blocking on zero results was incorrect).
         if (results.length === 0) {
+          if (classifier) {
+            const verdict = await classifier.classify({
+              url: searchUrl,
+              httpStatus: 200,
+              bodyPreview: html.slice(0, 2048),
+            });
+            if (verdict.blocked) {
+              return {
+                attempt: {
+                  tier: 1,
+                  name: "scrapling",
+                  durationMs: Date.now() - t0,
+                  outcome: "blocked",
+                  blockedReason: "captcha",
+                },
+              };
+            }
+          }
+          // Classifier says not blocked, or no classifier — treat as genuinely empty SERP
           return {
             attempt: {
               tier: 1,
               name: "scrapling",
               durationMs: Date.now() - t0,
-              outcome: "blocked",
-              blockedReason: "captcha",
+              outcome: "success",
             },
+            data: { kind: "search", query, results: [] },
           };
         }
 
@@ -226,7 +250,10 @@ export function createTavilyApiTier(apiKey: string): TierRunner {
 
 // ─── Tier 3: Google via CamoFox ───────────────────────────────────
 
-export function createGoogleCamoFoxTier(client: CamoFoxClient): TierRunner {
+export function createGoogleCamoFoxTier(
+  client: CamoFoxClient,
+  classifier?: Pick<BlockingClassifier, "classify">,
+): TierRunner {
   return {
     tier: 3,
     name: "google-camofox",
@@ -246,17 +273,37 @@ export function createGoogleCamoFoxTier(client: CamoFoxClient): TierRunner {
         );
 
         const html = snap.snapshot ?? "";
+        const googleSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
         const results = parseGoogleHtml(html, query);
 
         if (results.length === 0) {
+          if (classifier) {
+            const verdict = await classifier.classify({
+              url: googleSearchUrl,
+              httpStatus: 200,
+              bodyPreview: html.slice(0, 2048),
+            });
+            if (verdict.blocked) {
+              return {
+                attempt: {
+                  tier: 3,
+                  name: "google-camofox",
+                  durationMs: Date.now() - t0,
+                  outcome: "blocked",
+                  blockedReason: "captcha",
+                },
+              };
+            }
+          }
+          // Classifier says not blocked, or no classifier — treat as genuinely empty SERP
           return {
             attempt: {
               tier: 3,
               name: "google-camofox",
               durationMs: Date.now() - t0,
-              outcome: "blocked",
-              blockedReason: "captcha",
+              outcome: "success",
             },
+            data: { kind: "search", query, results: [] },
           };
         }
 
@@ -291,7 +338,10 @@ export function createGoogleCamoFoxTier(client: CamoFoxClient): TierRunner {
 
 // ─── Tier 4: Google via Puppeteer ────────────────────────────────
 
-export function createGooglePuppeteerTier(fetcher: PuppeteerFetcher): TierRunner {
+export function createGooglePuppeteerTier(
+  fetcher: PuppeteerFetcher,
+  classifier?: Pick<BlockingClassifier, "classify">,
+): TierRunner {
   return {
     tier: 4,
     name: "google-puppeteer",
@@ -307,15 +357,35 @@ export function createGooglePuppeteerTier(fetcher: PuppeteerFetcher): TierRunner
         const results = parseGoogleHtml(r.html, query);
 
         if (results.length === 0) {
+          if (classifier) {
+            const verdict = await classifier.classify({
+              url: searchUrl,
+              httpStatus: r.status,
+              bodyPreview: r.html.slice(0, 2048),
+            });
+            if (verdict.blocked) {
+              return {
+                attempt: {
+                  tier: 4,
+                  name: "google-puppeteer",
+                  durationMs: Date.now() - t0,
+                  outcome: "blocked",
+                  blockedReason: "captcha",
+                  httpStatus: r.status,
+                },
+              };
+            }
+          }
+          // Classifier says not blocked, or no classifier — treat as genuinely empty SERP
           return {
             attempt: {
               tier: 4,
               name: "google-puppeteer",
               durationMs: Date.now() - t0,
-              outcome: "blocked",
-              blockedReason: "captcha",
+              outcome: "success",
               httpStatus: r.status,
             },
+            data: { kind: "search", query, results: [] },
           };
         }
 
@@ -381,7 +451,7 @@ export async function searchEnvelope(
   const tiers: TierRunner[] = [];
 
   // Tier 1: DDG HTML — always included
-  tiers.push(createDdgHtmlTier(deps.jitterFn));
+  tiers.push(createDdgHtmlTier(deps.jitterFn, deps.classifier));
 
   // Tier 2: Tavily API — only if key provided
   if (deps.tavilyApiKey) {
@@ -390,12 +460,12 @@ export async function searchEnvelope(
 
   // Tier 3: Google via CamoFox — only if client provided
   if (deps.camofox) {
-    tiers.push(createGoogleCamoFoxTier(deps.camofox));
+    tiers.push(createGoogleCamoFoxTier(deps.camofox, deps.classifier));
   }
 
   // Tier 4: Google via Puppeteer — only if fetcher provided
   if (deps.puppeteer) {
-    tiers.push(createGooglePuppeteerTier(deps.puppeteer));
+    tiers.push(createGooglePuppeteerTier(deps.puppeteer, deps.classifier));
   }
 
   // Create context with required bus — provide stub if absent
@@ -407,12 +477,11 @@ export async function searchEnvelope(
   const result = await runEscalationChain(tiers, query, ctx);
 
   if (!result.success) {
-    const resultErr = (result as any).error;
     return {
       success: false,
-      error: resultErr.code === "BLOCKED_BY_ANTI_BOT"
-        ? { ...resultErr, suggestedEscalation: "live_browser" }
-        : resultErr,
+      error: result.error.code === "BLOCKED_BY_ANTI_BOT"
+        ? { ...result.error, suggestedEscalation: "live_browser" }
+        : result.error,
     };
   }
 

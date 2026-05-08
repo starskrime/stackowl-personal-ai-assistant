@@ -3,6 +3,18 @@ import { searchEnvelope, type SearchEnvelopeDeps } from "../../src/browser/smart
 
 const NOOP_BUS = { emit: () => {} } as any;
 
+/** Classifier that detects CAPTCHA/block pages when bodyPreview contains "CAPTCHA" */
+const CAPTCHA_CLASSIFIER = {
+  classify: vi.fn().mockImplementation(({ bodyPreview }: { bodyPreview: string }) =>
+    Promise.resolve({
+      blocked: /captcha/i.test(bodyPreview),
+      reason: "captcha",
+      confidence: 0.95,
+      source: "router",
+    }),
+  ),
+};
+
 let originalFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
@@ -74,6 +86,7 @@ describe("search escalation — DDG blocked → Tavily succeeds", () => {
 
     const deps: SearchEnvelopeDeps = {
       tavilyApiKey: "test-key",
+      classifier: CAPTCHA_CLASSIFIER,
       bus: NOOP_BUS,
       jitterFn: () => Promise.resolve(),
     };
@@ -104,6 +117,7 @@ describe("search escalation — CamoFox unavailable → Puppeteer used", () => {
 
     const deps: SearchEnvelopeDeps = {
       tavilyApiKey: "test-key",
+      classifier: CAPTCHA_CLASSIFIER,
       camofox: mockCamoFox as any,
       puppeteer: mockPuppeteer as any,
       bus: NOOP_BUS,
@@ -144,6 +158,7 @@ describe("search escalation — all tiers fail", () => {
 
     const deps: SearchEnvelopeDeps = {
       tavilyApiKey: "test-key",
+      classifier: CAPTCHA_CLASSIFIER,
       camofox: mockCamoFox as any,
       puppeteer: mockPuppeteer as any,
       bus: NOOP_BUS,
