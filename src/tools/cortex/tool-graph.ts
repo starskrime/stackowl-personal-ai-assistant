@@ -6,6 +6,12 @@
  * with the highest historical success rate from `tool_edges`, filtered by a
  * minimum-samples noise floor and any caller-supplied exclusions.
  *
+ * Host-aware extension (Element 16d T7): when a `hostRoot` is provided in
+ * ReplanOptions, the graph first checks for a host-specific edge
+ * (host_root = hostRoot) before falling back to the global pool
+ * (host_root = ''). Without hostRoot, only global rows are considered,
+ * preventing per-host rows from polluting global queries.
+ *
  * Multi-hop extension point: replace the single SELECT with a Dijkstra over
  * (1 - success_rate) weights once chained recovery (A → B → C) is justified
  * by data. Not needed at current scale.
@@ -15,6 +21,8 @@ import type { MemoryDatabase } from "../../memory/db.js";
 export interface ReplanOptions {
   /** Tool names to skip in addition to the current/failing tool. */
   exclude?: string[];
+  /** Hostname (e.g. "amazon.com") to prefer host-specific edges first. */
+  hostRoot?: string;
 }
 
 export interface ToolGraphConfig {
@@ -39,10 +47,28 @@ export class ToolGraph {
     );
     const placeholders = exclude.map(() => "?").join(",");
 
+    // 1. Try host-specific edge first when hostRoot is provided
+    if (opts.hostRoot) {
+      const hostRow = this.db.rawDb
+        .prepare(
+          `SELECT to_tool FROM tool_edges
+              WHERE capability_tag = ? AND host_root = ?
+                AND sample_count >= ?
+                AND to_tool NOT IN (${placeholders})
+              ORDER BY success_rate DESC, sample_count DESC LIMIT 1`,
+        )
+        .get(capabilityTag, opts.hostRoot, minSamples, ...exclude) as
+        | { to_tool: string }
+        | undefined;
+      if (hostRow) return hostRow.to_tool;
+    }
+
+    // 2. Global fallback — filter to host_root = '' to prevent per-host rows
+    //    from appearing as global fallbacks when no hostRoot was provided
     const row = this.db.rawDb
       .prepare(
         `SELECT to_tool FROM tool_edges
-            WHERE capability_tag = ?
+            WHERE capability_tag = ? AND host_root = ''
               AND sample_count >= ?
               AND to_tool NOT IN (${placeholders})
             ORDER BY success_rate DESC, sample_count DESC, avg_duration_ms ASC

@@ -394,7 +394,14 @@ export class ToolRegistry {
             // the depth cap prevents the recursive call from re-replanning.
             const capability = tool.definition.capabilities?.[0];
             if (this._toolGraph && capability && _replanDepth === 0) {
-              const fallback = this._toolGraph.replan(name, capability);
+              const urlHost = (() => {
+                try {
+                  return args.url ? new URL(args.url as string).hostname : "";
+                } catch {
+                  return "";
+                }
+              })();
+              const fallback = this._toolGraph.replan(name, capability, { hostRoot: urlHost });
               if (fallback && this.tools.has(fallback)) {
                 this._eventBus?.emit({
                   type: "tool:fallback",
