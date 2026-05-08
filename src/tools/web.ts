@@ -63,7 +63,7 @@ export const WebFetchTool: ToolImplementation = {
         scrapling: (context.engineContext as any)?.scrapling,
         classifier: context.classifier,
         puppeteer: context.puppeteer,
-        bus: (context.engineContext as any)?.gatewayEventBus,
+        bus: (context.engineContext as any)?.eventBus,
         hint: args["hint"] as "anti-bot" | undefined,
       });
       return serializeWebToolResult(envelope);
