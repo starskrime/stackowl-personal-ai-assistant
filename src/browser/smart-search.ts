@@ -20,7 +20,8 @@ import type { WebToolResult } from "./envelope.js";
 import { parseGoogleHtml, type SearchResult } from "./google-parser.js";
 import type { CamoFoxClient } from "./camofox-client.js";
 import type { PuppeteerFetcher } from "./puppeteer-fetcher.js";
-import type { GatewayEventBus } from "../gateway/event-bus.js";
+import { GatewayEventBus } from "../gateway/event-bus.js";
+import type { BlockingClassifier } from "./blocking-classifier.js";
 
 // ─── Realistic headers for DDG ───────────────────────────────────
 
@@ -164,6 +165,7 @@ export function createTavilyApiTier(apiKey: string): TierRunner {
             include_answer: false,
             max_results: 10,
           }),
+          signal: AbortSignal.timeout(15_000),
         });
 
         if (!response.ok) {
@@ -203,7 +205,7 @@ export function createTavilyApiTier(apiKey: string): TierRunner {
           },
         };
       } catch (err) {
-        const isTimeout = err instanceof Error && err.name === "AbortError";
+        const isTimeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
         return {
           attempt: {
             tier: 2,
@@ -293,7 +295,10 @@ export function createGooglePuppeteerTier(fetcher: PuppeteerFetcher): TierRunner
       const t0 = Date.now();
       try {
         const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=en`;
-        const r = await fetcher.fetch(searchUrl);
+        const r = await fetcher.fetch(searchUrl, {
+          waitForSelector: "div.g",
+          waitForSelectorTimeout: 5000,
+        });
         const results = parseGoogleHtml(r.html, query);
 
         if (results.length === 0) {
@@ -346,8 +351,10 @@ export interface SearchEnvelopeDeps {
   camofox?: CamoFoxClient;
   /** PuppeteerFetcher — if absent, Tier 4 is omitted */
   puppeteer?: PuppeteerFetcher;
+  /** Classifier for blocking detection — if absent, falls back to heuristic detection */
+  classifier?: BlockingClassifier;
   /** Event bus for tier telemetry */
-  bus: GatewayEventBus;
+  bus?: GatewayEventBus;
 }
 
 // ─── Entry point ─────────────────────────────────────────────────
@@ -384,7 +391,9 @@ export async function searchEnvelope(
     tiers.push(createGooglePuppeteerTier(deps.puppeteer));
   }
 
-  const ctx: DispatcherCtx = { bus: deps.bus };
+  // Create context with required bus — provide stub if absent
+  const bus = deps.bus ?? new GatewayEventBus();
+  const ctx: DispatcherCtx = { bus };
 
   // runEscalationChain passes the first arg to each tier's run() as-is.
   // We pass the query as the "url" parameter — each tier interprets it as a query.
