@@ -309,6 +309,18 @@ async function bootstrap() {
     });
   }
 
+  // Initialize Puppeteer fetcher (Tier 3 autonomous headless browser)
+  let puppeteerFetcher: import("./browser/puppeteer-fetcher.js").PuppeteerFetcher | undefined;
+  {
+    const { PuppeteerFetcher } = await import("./browser/puppeteer-fetcher.js");
+    const fetcher = new PuppeteerFetcher();
+    const ready = await fetcher.probe();
+    if (ready) {
+      await fetcher.init();
+      puppeteerFetcher = fetcher;
+    }
+  }
+
   // Initialize provider registry
   const providerRegistry = new ProviderRegistry();
   for (const [name, providerConf] of Object.entries(config.providers)) {
@@ -847,6 +859,7 @@ async function bootstrap() {
     groundState,
     mcpManager,
     planLedger,
+    puppeteerFetcher,
   };
 }
 
@@ -1219,6 +1232,19 @@ async function buildGateway(
     gateway.ctx.proactiveLoop?.setSignalPool(signalPool);
     gateway.ctx.contextPipeline?.wireSignalPool(signalPool);
     signalPool.start();
+
+    // BlockingClassifier — LLM-based anti-bot detection for web tools
+    const { BlockingClassifier } = await import("./browser/blocking-classifier.js");
+    gateway.ctx.blockingClassifier = new BlockingClassifier(
+      gateway.ctx.intelligence,
+      providerMap,
+      gateway.gatewayEventBus,
+    );
+
+    // PuppeteerFetcher — wire into context if initialized during bootstrap
+    if (b.puppeteerFetcher) {
+      gateway.ctx.puppeteer = b.puppeteerFetcher;
+    }
   }
 
   // Register canonical `memory` tool (search/get/invalidate; importance ≥ 0.8
@@ -1321,6 +1347,7 @@ async function chatCommand(owlName?: string) {
   process.on("SIGINT", async () => {
     adapter.stop();
     await b.browserPool?.shutdown();
+    await b.puppeteerFetcher?.close();
     process.exit(0);
   });
 
@@ -1402,6 +1429,7 @@ async function voiceCommand(opts: {
   process.on("SIGINT", async () => {
     adapter.stop();
     await b.browserPool?.shutdown();
+    await b.puppeteerFetcher?.close();
     process.exit(0);
   });
 
@@ -1877,6 +1905,7 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     console.log(chalk.dim("\n🦉 Shutting down..."));
     adapter.stop();
     await b.browserPool?.shutdown();
+    await b.puppeteerFetcher?.close();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
@@ -1945,6 +1974,7 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
     console.log(chalk.dim("\n🦉 Shutting down..."));
     adapter.stop();
     await b.browserPool?.shutdown();
+    await b.puppeteerFetcher?.close();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
@@ -2131,6 +2161,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     console.log(chalk.dim("\n🦉 Shutting down all channels..."));
     cliAdapter.stop();
     await b.browserPool?.shutdown();
+    await b.puppeteerFetcher?.close();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
