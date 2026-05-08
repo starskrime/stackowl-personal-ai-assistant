@@ -357,7 +357,7 @@ export interface SearchEnvelopeDeps {
   /** PuppeteerFetcher — if absent, Tier 4 is omitted */
   puppeteer?: PuppeteerFetcher;
   /** Classifier for blocking detection — if absent, falls back to heuristic detection */
-  classifier?: BlockingClassifier;
+  classifier?: Pick<BlockingClassifier, "classify">;
   /** Event bus for tier telemetry */
   bus?: GatewayEventBus;
 }

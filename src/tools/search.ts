@@ -49,8 +49,7 @@ export const WebSearchTool: ToolImplementation = {
       tavilyApiKey: context.tavilyApiKey,
       camofox: context.camofox,
       puppeteer: context.puppeteer,
-      classifier: context.classifier as any,
-      bus: (context.engineContext as any)?.eventBus,
+      classifier: context.classifier,
     });
 
     return serializeWebToolResult(result);
