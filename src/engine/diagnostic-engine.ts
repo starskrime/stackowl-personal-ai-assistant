@@ -355,7 +355,7 @@ export class DiagnosticEngine {
         label: "Network issue — try alternative",
         reasoning:
           "Network request failed. Use a different tool or approach that doesn't require network.",
-        action: `Switch to an offline approach or a different network tool. If fetching a URL, try web_crawl or duckduckgo_search instead.`,
+        action: `Switch to an offline approach or a different network tool. If fetching a URL, try web_fetch or web_search instead.`,
         likelihood: 0.6,
         feasibility: 0.8,
         risk: 0.1,
@@ -372,7 +372,7 @@ export class DiagnosticEngine {
         label: "Use different tool",
         reasoning:
           "The command isn't available in this environment. Use a built-in tool instead.",
-        action: `Check available tools and use a built-in alternative (e.g., web_crawl instead of curl).`,
+        action: `Check available tools and use a built-in alternative (e.g., web_fetch instead of curl).`,
         likelihood: 0.85,
         feasibility: 0.9,
         risk: 0.05,

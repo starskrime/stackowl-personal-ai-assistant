@@ -2570,8 +2570,8 @@ ${skillsContext}
         // Group tools by category for better understanding
         const toolGuides: Record<string, string[]> = {
           "Web & Browser": [
-            "duckduckgo_search - Search the web for current information",
-            "web_crawl - Get content from a URL",
+            "web_search - Search the web for current information",
+            "web_fetch - Get content from a URL",
             "web_search - Search the web",
             "browser - Full browser automation",
           ],
@@ -2857,7 +2857,7 @@ ${skillsContext}
       `2. If a DIAGNOSTIC HINT is present, follow it exactly — it overrides your assumptions.\n` +
       `3. Do NOT retry the same command with the same arguments.\n` +
       `4. If the tool requires something unavailable here (e.g. curl in a no-network sandbox), ` +
-      `USE A DIFFERENT TOOL (e.g. duckduckgo_search for web search, web_crawl for URL fetching).\n` +
+      `USE A DIFFERENT TOOL (e.g. web_search for web search, web_fetch for URL fetching).\n` +
       hintNote +
       "\n\n" +
       (streak >= maxStreak

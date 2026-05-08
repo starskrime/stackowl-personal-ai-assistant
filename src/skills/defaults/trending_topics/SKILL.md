@@ -2,7 +2,7 @@
 name: trending_topics
 description: Discover what topics are currently trending on social media, news, and search engines
 command-dispatch: tool
-command-tool: duckduckgo_search
+command-tool: web_search
 openclaw:
   emoji: "📈"
 parameters:
@@ -17,17 +17,17 @@ parameters:
 required: []
 steps:
   - id: search_trending
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "trending topics today"
     timeout_ms: 15000
   - id: search_twitter
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "what's trending on Twitter today"
     timeout_ms: 15000
   - id: search_google_trends
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "Google Trends today"
     timeout_ms: 15000

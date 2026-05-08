@@ -2,7 +2,7 @@
 name: wikipedia_summary
 description: Fetch and summarize a Wikipedia article on a given topic with key facts and context
 command-dispatch: tool
-command-tool: duckduckgo_search
+command-tool: web_search
 openclaw:
   emoji: "📚"
 parameters:
@@ -12,7 +12,7 @@ parameters:
 required: [topic]
 steps:
   - id: search_wikipedia
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{topic}} site:en.wikipedia.org"
     timeout_ms: 15000

@@ -2,7 +2,7 @@
 name: travel_planner
 description: Create a detailed travel itinerary with flights, hotels, attractions, and daily schedules
 command-dispatch: tool
-command-tool: duckduckgo_search
+command-tool: web_search
 openclaw:
   emoji: "✈️"
 parameters:
@@ -26,22 +26,22 @@ parameters:
 required: [destination, start_date, end_date]
 steps:
   - id: search_guide
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{destination}} travel guide 2026"
     timeout_ms: 15000
   - id: search_attractions
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{destination}} top attractions"
     timeout_ms: 15000
   - id: search_restaurants
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{destination}} best restaurants"
     timeout_ms: 15000
   - id: search_weather
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{destination}} weather {{start_date}}"
     timeout_ms: 15000

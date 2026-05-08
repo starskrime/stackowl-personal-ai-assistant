@@ -20,7 +20,7 @@ steps:
     args:
       path: "{{file_path}}"
   - id: research_keywords
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{topic || read_content.output.substring(0, 100)}} related keywords search volume"
       num: 5

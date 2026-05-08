@@ -19,7 +19,7 @@ parameters:
 required: [topic]
 steps:
   - id: research
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{topic}} key subtopics"
       num: 5

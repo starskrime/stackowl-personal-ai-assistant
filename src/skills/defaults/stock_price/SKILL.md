@@ -12,7 +12,7 @@ parameters:
 required: [ticker]
 steps:
   - id: search_stock
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{ticker}} stock price today 2026"
       num: 3

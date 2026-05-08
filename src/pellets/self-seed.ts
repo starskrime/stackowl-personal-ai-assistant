@@ -197,7 +197,7 @@ When asked to "go and learn what you are and what you can do", here is the appro
 
 2. **List available tools**: Use \`shell\` to run \`ls\` on my workspace, or check pellets with \`pellet_recall\` query="tools capabilities".
 
-3. **Search the web for my knowledge gaps**: Use \`duckduckgo_search\` to research current events, technology updates, or topics relevant to the user.
+3. **Search the web for my knowledge gaps**: Use \`web_search\` to research current events, technology updates, or topics relevant to the user.
 
 4. **Create pellets from what I learn**: Use parliament sessions or direct pellet creation to store new knowledge permanently.
 

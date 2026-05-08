@@ -12,17 +12,17 @@ parameters:
 required: [claim]
 steps:
   - id: search_primary
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{claim}} fact check"
       num: 5
   - id: search_evidence
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{claim}} evidence"
       num: 5
   - id: search_authoritative
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{claim}} snopes OR politifact OR reuters"
       num: 5

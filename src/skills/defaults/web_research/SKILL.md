@@ -2,7 +2,7 @@
 name: web_research
 description: Perform deep multi-source research on a topic using web search, article crawling, and synthesis
 command-dispatch: tool
-command-tool: duckduckgo_search
+command-tool: web_search
 openclaw:
   emoji: "🔬"
 parameters:
@@ -12,17 +12,17 @@ parameters:
 required: [topic]
 steps:
   - id: search_overview
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{topic}} overview"
     timeout_ms: 15000
   - id: search_latest
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{topic}} latest research 2026"
     timeout_ms: 15000
   - id: search_proscons
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "{{topic}} pros and cons"
     timeout_ms: 15000

@@ -23,7 +23,7 @@ parameters:
 required: [language]
 steps:
   - id: search_pronunciation
-    tool: duckduckgo_search
+    tool: web_search
     args:
       query: "how to pronounce '{{word}}' in {{language}}"
       num: 3
