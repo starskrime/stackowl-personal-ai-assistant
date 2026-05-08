@@ -121,7 +121,7 @@ export type BackendName = "camofox" | "scrapling" | "live-browser" | "puppeteer"
 Replace the inline DDG scrape + try/catch block with:
 ```typescript
 const result = await searchEnvelope(query, num, {
-  camofox: (context.engineContext as any)?.camofoxClient,
+  camofox: context.camofox,
   puppeteer: context.puppeteer,
   classifier: context.classifier,
   bus: (context.engineContext as any)?.eventBus,
@@ -220,7 +220,7 @@ registry.ts ToolContext
   → camofox?: CamoFoxClient                    ← new
 
 search.ts execute()
-  → (context.engineContext as any)?.camofoxClient  (accessed via engineContext, consistent with puppeteer pattern)
+  → context.camofox  (first-class ToolContext field, same pattern as context.puppeteer in 16d)
 ```
 
 Note: `puppeteer` and `classifier` are already on `ToolContext` from 16d — no additional wiring needed for those.
