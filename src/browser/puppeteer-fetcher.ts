@@ -28,6 +28,12 @@ export interface PuppeteerFetchResult {
   status: number;
 }
 
+export interface PuppeteerFetchOptions {
+  timeoutMs?: number;
+  waitForSelector?: string;
+  waitForSelectorTimeout?: number;
+}
+
 export class PuppeteerFetcher {
   private browser: Browser | null = null;
   private sessionPool: SessionPool | null = null;
@@ -54,10 +60,19 @@ export class PuppeteerFetcher {
     }
   }
 
-  async fetch(url: string, timeoutMs = 25_000): Promise<PuppeteerFetchResult> {
+  async fetch(
+    url: string,
+    opts: PuppeteerFetchOptions = {},
+  ): Promise<PuppeteerFetchResult> {
     if (!this.browser || !this.sessionPool) {
       throw new Error("PuppeteerFetcher not initialized — call init() first");
     }
+    const {
+      timeoutMs = 25_000,
+      waitForSelector,
+      waitForSelectorTimeout = 5_000,
+    } = opts;
+
     const session = await this.sessionPool.getSession();
     let context: BrowserContext | null = null;
     try {
@@ -73,6 +88,16 @@ export class PuppeteerFetcher {
       });
 
       if (!response) throw new Error(`Navigation to ${url} failed — no response`);
+
+      if (waitForSelector) {
+        try {
+          await page.waitForSelector(waitForSelector, {
+            timeout: waitForSelectorTimeout,
+          });
+        } catch {
+          // selector didn't appear — proceed with whatever content loaded
+        }
+      }
 
       const html = await page.content();
       const updatedCookies = await page.cookies();
