@@ -1254,7 +1254,7 @@ async function buildGateway(
     if (b.camofoxClient) {
       gateway.ctx.camofox = b.camofoxClient;
     }
-    const tavilyApiKey = process.env["TAVILY_API_KEY"] ?? (b.config as any)?.webSearch?.tavilyApiKey;
+    const tavilyApiKey = process.env["TAVILY_API_KEY"];
     if (tavilyApiKey) {
       gateway.ctx.tavilyApiKey = tavilyApiKey;
     }
