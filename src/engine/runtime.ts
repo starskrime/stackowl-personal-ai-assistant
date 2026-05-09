@@ -148,6 +148,10 @@ export interface EngineContext {
   camofox?: import("../browser/camofox-client.js").CamoFoxClient;
   /** Tavily Search API key — passed to search tool for Tavily tier */
   tavilyApiKey?: string;
+  /** User relationship context — injected as <user_relationship> block after persona (G3) */
+  relationshipContext?: import("../routing/relationship-context.js").RelationshipContext;
+  /** Wired OpinionInjector output — injected as additional system prompt block (G5) */
+  additionalSystemPrompt?: string;
 }
 
 export interface PendingCapabilityGap {
@@ -874,9 +878,25 @@ export class OwlEngine {
       }
     }
 
+    // RelationshipContext — 200-token user history block (G3)
+    let finalSystemPromptWithRelationship = finalSystemPrompt;
+    if (context.relationshipContext && context.userId) {
+      try {
+        const relBlock = await context.relationshipContext.buildPromptBlock(context.userId);
+        if (relBlock) {
+          finalSystemPromptWithRelationship += "\n\n" + relBlock.slice(0, 800) + "\n";
+        }
+      } catch { /* non-critical */ }
+    }
+
+    // Opinion injection — pre-built string from OpinionInjector (G5)
+    if (context.additionalSystemPrompt) {
+      finalSystemPromptWithRelationship += "\n" + context.additionalSystemPrompt + "\n";
+    }
+
     const finalSystemPromptWithTaskState = taskStateBlock
-      ? finalSystemPrompt + taskStateBlock
-      : finalSystemPrompt;
+      ? finalSystemPromptWithRelationship + taskStateBlock
+      : finalSystemPromptWithRelationship;
 
     const narrationSystemPrompt = context.narrationPrefix
       ? finalSystemPromptWithTaskState +

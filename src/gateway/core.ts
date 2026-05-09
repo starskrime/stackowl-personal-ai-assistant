@@ -113,6 +113,7 @@ import { TaskOwnershipManager } from "../routing/task-ownership-manager.js";
 import { RoutingStatusReporter } from "../routing/routing-status-reporter.js";
 import { BackgroundJobRunner } from "../routing/background-job-runner.js";
 import { RelationshipContext } from "../routing/relationship-context.js";
+import { OpinionInjector } from "../owls/opinion-injector.js";
 import { createContextPipeline } from "../context/index.js";
 import { UserPersonaSynthesizer } from "../context/user-persona-synthesizer.js";
 import { UnifiedMemoryRetriever } from "../context/unified-memory-retriever.js";
@@ -180,6 +181,9 @@ export class OwlGateway {
   readonly domainToolMap: DomainToolMap;
   taskDecomposer: TaskDecomposer | null = null;
   resultSynthesizer: ResultSynthesizer | null = null;
+
+  // ─── OpinionInjector (G5) — stateless, one instance per gateway ─
+  private readonly opinionInjector = new OpinionInjector();
 
   // ─── Extracted Handlers (Improvement #4) ───────────────────
   private postProcessor: PostProcessor;
@@ -1991,6 +1995,18 @@ export class OwlGateway {
     // ─── Element 9: Wire narrationPrefix from intent classification ──────
     if (intentResult.verdict === 'NARRATE' && intentResult.interpretation) {
       engineCtx.narrationPrefix = intentResult.interpretation;
+    }
+
+    // ─── G5: Opinion injection — surface relevant owl opinion (≥ 0.65 conf) ──
+    if (this.ctx.innerLife) {
+      const opinions = this.ctx.innerLife.getState()?.opinions ?? [];
+      const match = this.opinionInjector.findRelevant(text, opinions);
+      if (match) {
+        engineCtx.additionalSystemPrompt =
+          (engineCtx.additionalSystemPrompt ?? "") +
+          this.opinionInjector.formatForSystemPrompt(match);
+      }
+      this.opinionInjector.formOpinionAsync(text, this.ctx.innerLife).catch(() => {});
     }
 
     // ─── Routing — @mention + SecretaryRouter ────────────────────
