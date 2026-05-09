@@ -38,7 +38,7 @@ export class SubOwlExecutor {
       }
 
       try {
-        const result = await tool.execute({}, context);
+        const result = await tool.execute(task.args ?? {}, context);
         lastOutput = result;
         toolsUsed.push(toolName);
 

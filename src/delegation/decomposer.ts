@@ -29,6 +29,8 @@ export interface SubTask {
   dependsOn: string[];
   /** Expected output description (used for synthesis context) */
   expectedOutput: string;
+  /** Optional arguments to pass to each tool when executing this subtask */
+  args?: Record<string, unknown>;
 }
 
 export interface DecompositionPlan {
