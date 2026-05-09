@@ -397,6 +397,69 @@ export interface AgentTask {
   completedAt?: string;
 }
 
+// ─── OwlQualityRepo ───────────────────────────────────────────────
+
+export class OwlQualityRepo {
+  constructor(private db: Database.Database) {}
+
+  get(owlName: string, ownerId: string): { ewmaReward: number; turnCount: number } | null {
+    const row = this.db.prepare(
+      `SELECT ewma_reward, turn_count FROM owl_quality_metrics WHERE owl_name = ? AND owner_id = ?`
+    ).get(owlName, ownerId) as { ewma_reward: number; turn_count: number } | undefined
+    return row ? { ewmaReward: row.ewma_reward, turnCount: row.turn_count } : null
+  }
+
+  update(owlName: string, ownerId: string, reward: number): void {
+    const clampedReward = Math.max(0, Math.min(1, reward))
+    const existing = this.get(owlName, ownerId)
+    const oldEwma = existing?.ewmaReward ?? 0.7
+    const newEwma = 0.15 * clampedReward + 0.85 * oldEwma
+    const newCount = (existing?.turnCount ?? 0) + 1
+    this.db.prepare(`
+      INSERT INTO owl_quality_metrics (owl_name, owner_id, ewma_reward, turn_count, last_updated)
+      VALUES (?, ?, ?, ?, datetime('now'))
+      ON CONFLICT (owl_name, owner_id) DO UPDATE SET
+        ewma_reward  = excluded.ewma_reward,
+        turn_count   = excluded.turn_count,
+        last_updated = excluded.last_updated
+    `).run(owlName, ownerId, newEwma, newCount)
+  }
+}
+
+// ─── OwlPinsRepo ──────────────────────────────────────────────────
+
+export class OwlPinsRepo {
+  constructor(private db: Database.Database) {}
+
+  get(userId: string, channelId: string): string | null {
+    const row = this.db.prepare(
+      `SELECT owl_name FROM owl_pins WHERE user_id = ? AND channel_id = ?`
+    ).get(userId, channelId) as { owl_name: string } | undefined
+    if (row) return row.owl_name
+    // Fall back to global pin (legacy / cross-channel)
+    const global = this.db.prepare(
+      `SELECT owl_name FROM owl_pins WHERE user_id = ? AND channel_id = 'global'`
+    ).get(userId) as { owl_name: string } | undefined
+    return global?.owl_name ?? null
+  }
+
+  set(userId: string, channelId: string, owlName: string | null, pinnedAt: string): void {
+    if (owlName === null) {
+      this.db.prepare(
+        `DELETE FROM owl_pins WHERE user_id = ? AND channel_id = ?`
+      ).run(userId, channelId)
+    } else {
+      this.db.prepare(`
+        INSERT INTO owl_pins (user_id, channel_id, owl_name, pinned_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (user_id, channel_id) DO UPDATE SET
+          owl_name  = excluded.owl_name,
+          pinned_at = excluded.pinned_at
+      `).run(userId, channelId, owlName, pinnedAt)
+    }
+  }
+}
+
 // ─── MemoryDatabase ───────────────────────────────────────────────
 
 export class MemoryDatabase {
@@ -424,6 +487,8 @@ export class MemoryDatabase {
   readonly userProfiles: UserProfilesRepo;
   readonly owlTasks: TasksRepo;
   readonly owlJobs: JobsRepo;
+  readonly owlQualityMetrics: OwlQualityRepo;
+  readonly owlPins: OwlPinsRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -468,6 +533,8 @@ export class MemoryDatabase {
     this.userProfiles      = new UserProfilesRepo(this.db);
     this.owlTasks          = new TasksRepo(this.db);
     this.owlJobs           = new JobsRepo(this.db);
+    this.owlQualityMetrics = new OwlQualityRepo(this.db);
+    this.owlPins           = new OwlPinsRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
