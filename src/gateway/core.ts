@@ -3975,29 +3975,25 @@ export class OwlGateway {
         .reverse()
         .find((m) => m.role === "user");
       if (lastUserMsg?.content) {
-        this.ctx.innerLife.thinkInBackground(
-          typeof lastUserMsg.content === "string" ? lastUserMsg.content : "",
-          messages,
-        );
-
-        // Persist the monologue result to digestManager for next-turn injection
-        // via the ContextPipeline InnerMonologueLayer.
-        const innerLife = this.ctx.innerLife;
-        const digestManager = this.ctx.digestManager;
-        if (digestManager && sessionId) {
-          setImmediate(async () => {
-            await new Promise((r) => setTimeout(r, 100));
-            const monologue = innerLife.getLastMonologue?.();
+        const innerLifeRef = this.ctx.innerLife;
+        const digestRef = this.ctx.digestManager;
+        const sidRef = sessionId;
+        const userMsgText =
+          typeof lastUserMsg.content === "string" ? lastUserMsg.content : "";
+        innerLifeRef.thinkInBackground(userMsgText, messages)
+          .then(async () => {
+            if (!digestRef || !sidRef) return;
+            const monologue = innerLifeRef.getLastMonologue?.();
             if (monologue) {
-              await digestManager.setLastMonologue(sessionId, {
+              await digestRef.setLastMonologue(sidRef, {
                 thoughts: monologue.thoughts,
                 responseIntent: monologue.responseIntent,
                 moodCurrent: monologue.moodShift?.current,
                 storedAt: new Date().toISOString(),
               });
             }
-          });
-        }
+          })
+          .catch(() => { /* non-critical */ });
       }
     }
   }
