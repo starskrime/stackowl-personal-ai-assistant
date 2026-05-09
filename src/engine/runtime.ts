@@ -2458,6 +2458,60 @@ ${userMessage}
       verbosityDirectives.normal;
     prompt += `**Verbosity (${dna.evolvedTraits.verbosity}):** ${verbosityDir}\n\n`;
 
+    // humor (0-1 continuous → low/medium/high bucket)
+    const humorLevel = dna.evolvedTraits.humor < 0.3 ? "low"
+      : dna.evolvedTraits.humor > 0.7 ? "high" : "medium"
+    const humorDirectives: Record<string, string> = {
+      low:    "Minimal humor — keep responses substantive and professional.",
+      medium: "Light wit when it fits naturally — don't force it.",
+      high:   "Lean into humor, wordplay, and levity where fitting.",
+    }
+    prompt += `**humor (${humorLevel}):** ${humorDirectives[humorLevel]}\n\n`
+
+    // formality (0-1 → casual/balanced/formal bucket)
+    const formalityLevel = dna.evolvedTraits.formality < 0.35 ? "casual"
+      : dna.evolvedTraits.formality > 0.65 ? "formal" : "balanced"
+    const formalityDirectives: Record<string, string> = {
+      casual:   "Casual tone — talk like a knowledgeable friend.",
+      balanced: "Professional yet warm. Neither stiff nor sloppy.",
+      formal:   "Formal, structured, precise. Avoid contractions.",
+    }
+    prompt += `**formality (${formalityLevel}):** ${formalityDirectives[formalityLevel]}\n\n`
+
+    // proactivity (0-1 → low/medium/high)
+    const proactivityLevel = dna.evolvedTraits.proactivity < 0.3 ? "low"
+      : dna.evolvedTraits.proactivity > 0.7 ? "high" : "medium"
+    const proactivityDirectives: Record<string, string> = {
+      low:    "Answer what's asked. Don't over-volunteer tangential information.",
+      medium: "Surface related ideas when clearly relevant.",
+      high:   "Proactively suggest follow-ups, next steps, and related concerns.",
+    }
+    prompt += `**proactivity (${proactivityLevel}):** ${proactivityDirectives[proactivityLevel]}\n\n`
+
+    // riskTolerance
+    const riskDirectives: Record<string, string> = {
+      cautious:   "Prefer proven, safe approaches. Flag risks clearly before acting.",
+      moderate:   "Balance innovation with caution. Try new approaches when the downside is limited.",
+      aggressive: "Favor bold, fast solutions when stakes allow. Move first, optimize later.",
+    }
+    prompt += `**riskTolerance (${dna.evolvedTraits.riskTolerance}):** ${riskDirectives[dna.evolvedTraits.riskTolerance] ?? riskDirectives.moderate}\n\n`
+
+    // teachingStyle
+    const teachingDirectives: Record<string, string> = {
+      examples:  "Teach through concrete examples. Show before you tell.",
+      direct:    "Give direct instructions. Skip the build-up.",
+      adaptive:  "Match your explanation depth to the complexity of what the user asked.",
+    }
+    prompt += `**teachingStyle (${dna.evolvedTraits.teachingStyle}):** ${teachingDirectives[dna.evolvedTraits.teachingStyle] ?? teachingDirectives.adaptive}\n\n`
+
+    // delegationPreference
+    const delegationDirectives: Record<string, string> = {
+      autonomous:     "Handle tasks yourself where possible. Minimize back-and-forth.",
+      collaborative:  "Suggest other helpers when they'd do better — but stay engaged.",
+      confirmatory:   "Check in before major steps. Prefer user approval over autonomy.",
+    }
+    prompt += `**delegationPreference (${dna.evolvedTraits.delegationPreference}):** ${delegationDirectives[dna.evolvedTraits.delegationPreference] ?? delegationDirectives.collaborative}\n\n`
+
     prompt += `You have had ${dna.interactionStats.totalConversations} conversation(s) with this user. Calibrate familiarity accordingly.\n`;
 
     // Learned preferences — only the strong signals (score > 0.7 or < 0.3)
