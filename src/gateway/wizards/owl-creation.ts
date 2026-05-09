@@ -62,7 +62,9 @@ export class OwlCreationWizard {
     }
   }
 
-  private async runWizard(userId: string, adapter: ChannelAdapterV2): Promise<string> {
+  private async runWizard(userId: string, adapter: ChannelAdapterV2, depth = 0): Promise<string> {
+    if (depth >= 10) return "Too many restarts. Starting fresh — please try `/helper create` again."
+
     // Step 1 — Name
     const name = await adapter.ask(userId, { text: "What should I call your new helper?" })
     if (!name || name.toLowerCase() === "cancel") return "Cancelled."
@@ -105,7 +107,7 @@ export class OwlCreationWizard {
       choices: ["Yes, create it", "No, start over"],
     })
     if (confirm === "No, start over") {
-      return this.runWizard(userId, adapter)
+      return this.runWizard(userId, adapter, depth + 1)
     }
 
     // Step 7 — Recurring task (optional)
@@ -175,9 +177,8 @@ export class OwlCreationWizard {
       `  verbosity: balanced`,
       `  tone: ${tone}`,
       `expertise: []`,
-      `model:`,
-      `  provider: anthropic`,
-      `  modelId: claude-haiku-4-5-20251001`,
+      `provider: anthropic`,
+      `model: claude-haiku-4-5-20251001`,
       `permissions:`,
       `  allowedTools: [${opts.caps.map(c => `"${c}"`).join(", ")}]`,
       `  deniedTools: [${opts.deniedTools.map(d => `"${d}"`).join(", ")}]`,
