@@ -33,7 +33,7 @@ describe("SecretaryRouter", () => {
       const decision = await router.route("Hello", "user_test");
 
       expect(decision.type).toBe("direct");
-      expect(decision.reason).toBe("No specialized owls configured");
+      expect(decision.reason).toBe("No helpers configured");
     });
   });
 

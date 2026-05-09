@@ -71,14 +71,14 @@ const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
     if (owls.length === 0) {
       ui.printLines([
         "",
-        YB("Specialized Owls"),
+        YB("Helpers"),
         sep(),
-        D("No specialized owls yet. Create one with /specialization create"),
+        D("No helpers yet. Create one with /specialization create"),
         "",
       ]);
       return true;
     }
-    const lines: string[] = ["", YB("Specialized Owls"), sep()];
+    const lines: string[] = ["", YB("Helpers"), sep()];
     for (const spec of owls) {
       lines.push(Y(`${spec.emoji || "🦉"} `) + W(spec.name.padEnd(16)) + D(spec.role));
     }
@@ -198,7 +198,7 @@ const cmdHelp: CommandFn = async (_args, ui) => {
     C("/help".padEnd(20)) + D("Show this list"),
     C("/status".padEnd(20)) + D("Provider, model, owl info"),
     C("/owls".padEnd(20)) + D("List owl personas"),
-    C("/specialization".padEnd(20)) + D("Manage specialized owls"),
+    C("/specialization".padEnd(20)) + D("Manage helpers"),
     C("/clear".padEnd(20)) + D("Clear conversation context"),
     C("/capabilities".padEnd(20)) + D("List synthesized tools"),
     C("/skills".padEnd(20)) + D("List or install skills"),
@@ -368,7 +368,7 @@ const COMMANDS: Record<string, CommandDef> = {
   status: { description: "Provider / model / owl info", fn: cmdStatus },
   owls: { description: "List owl personas", fn: cmdOwls },
   specialization: {
-    description: "Manage specialized owls",
+    description: "Manage helpers",
     fn: cmdSpecialization,
     subcommands: ["list", "show", "create", "delete", "update"],
   },

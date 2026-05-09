@@ -8,7 +8,7 @@ export const CredentialsTool: ToolImplementation = {
     name: "credentials_get",
     description:
       "Retrieve a credential value by key name. " +
-      "Each specialized owl can only access credentials in its own folder. " +
+      "Each helper can only access credentials in its own folder. " +
       "Use this when you need an API key or token to perform an action.",
     parameters: {
       type: "object",

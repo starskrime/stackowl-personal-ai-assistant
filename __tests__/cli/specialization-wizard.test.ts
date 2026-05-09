@@ -34,7 +34,7 @@ describe("SpecializationCreateWizard", () => {
   it("should start with welcome message", () => {
     wizard.start(ui as unknown as TerminalRenderer);
     expect(ui.lines.length).toBeGreaterThan(0);
-    expect(ui.lines[1]).toContain("Create Specialized Owl");
+    expect(ui.lines[1]).toContain("Create Helper");
   });
 
   it("should advance from welcome to name when pressing Enter with no input", async () => {

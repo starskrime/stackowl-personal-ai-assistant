@@ -115,9 +115,9 @@ export class SpecializationCreateWizard {
       case "welcome":
         ui.printLines([
           "",
-          YB("Create Specialized Owl"),
+          YB("Create Helper"),
           sep(),
-          D("This wizard will help you create a new specialized owl."),
+          D("This wizard will help you create a new helper."),
           D("Each owl has its own folder with configuration, credentials,"),
           D("permissions, and skill whitelists."),
           "",

@@ -53,7 +53,7 @@ export class SecretaryRouter {
     const specialists = this.folderRegistry?.listSpecialists() ?? [];
 
     if (specialists.length === 0) {
-      const decision = { type: "direct" as const, reason: "No specialized owls configured" };
+      const decision = { type: "direct" as const, reason: "No helpers configured" };
       this.logRoutingDecision(userId, message, decision, "success");
       return decision;
     }
@@ -102,7 +102,7 @@ export class SecretaryRouter {
   ): Promise<RoutingDecision> {
     const specialists = this.folderRegistry?.listSpecialists() ?? [];
     if (specialists.length === 0) {
-      return { type: "direct", reason: "No specialized owls configured" };
+      return { type: "direct", reason: "No helpers configured" };
     }
     if (message.length < MIN_MESSAGE_LENGTH) {
       return { type: "direct", reason: "Message too short to classify" };
