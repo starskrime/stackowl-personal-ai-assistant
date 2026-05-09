@@ -167,6 +167,23 @@ export class ToolRegistry {
   }
 
   /**
+   * Get a snapshot Map of all allowed, non-deprecated tool implementations.
+   * Used by SubOwlRunner to dispatch tool calls inside sub-owl ReAct loops.
+   */
+  getImplementationsMap(): Map<string, ToolImplementation> {
+    const out = new Map<string, ToolImplementation>();
+    for (const [name, impl] of this.tools.entries()) {
+      if (
+        this.checkPermission(impl) === "allowed" &&
+        !impl.definition.deprecated
+      ) {
+        out.set(name, impl);
+      }
+    }
+    return out;
+  }
+
+  /**
    * Get ALL allowed tool definitions synchronously (no routing).
    * Use for: history sanitization, capability checks, admin operations.
    */

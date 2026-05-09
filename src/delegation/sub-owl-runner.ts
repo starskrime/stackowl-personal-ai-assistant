@@ -15,6 +15,7 @@
 
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { DecompositionPlan, SubTask } from "./decomposer.js";
+import type { ToolImplementation, ToolContext } from "../tools/registry.js";
 import { log } from "../logger.js";
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -44,7 +45,10 @@ export class SubOwlRunner {
 
   constructor(
     private provider: ModelProvider,
+    private toolRegistry: Map<string, ToolImplementation | { execute: (args: Record<string, unknown>, ctx: any) => Promise<string>; name: string }> = new Map(),
     private owlPersonality: string = "a capable AI assistant",
+    private workspacePath: string = process.cwd(),
+    private maxIterations: number = 8,
   ) {}
 
   /**
@@ -139,6 +143,18 @@ export class SubOwlRunner {
     }
   }
 
+  // ─── Tool call parser ─────────────────────────────────────────
+
+  private parseToolCall(response: string): { toolName: string; toolArgs: Record<string, unknown> } | null {
+    try {
+      const parsed = JSON.parse(response.trim());
+      if (typeof parsed.tool === "string") {
+        return { toolName: parsed.tool, toolArgs: parsed.args ?? {} };
+      }
+    } catch { /* not a JSON tool call */ }
+    return null;
+  }
+
   // ─── Bounded ReAct loop ───────────────────────────────────────
 
   private async reactLoop(
@@ -162,10 +178,13 @@ export class SubOwlRunner {
       },
     ];
 
+    const maxIter = this.maxIterations ?? this.MAX_ITERATIONS;
     let iterations = 0;
     let lastResponse = "";
 
-    while (iterations < this.MAX_ITERATIONS) {
+    const toolContext: ToolContext = { cwd: this.workspacePath };
+
+    while (iterations < maxIter) {
       iterations++;
 
       const response = await this.provider.chat(history);
@@ -173,24 +192,83 @@ export class SubOwlRunner {
 
       history.push({ role: "assistant", content: lastResponse });
 
-      // Simple completion detection: no tool-call markers or explicit done signal
-      const hasToolCall = lastResponse.includes("<tool_call>") ||
-        lastResponse.includes("```tool") ||
-        lastResponse.startsWith("{\"tool\":");
+      const toolCall = this.parseToolCall(lastResponse);
 
-      if (!hasToolCall || iterations >= this.MAX_ITERATIONS) {
+      if (!toolCall) {
+        // No tool call — this is the final answer
         break;
       }
 
-      // In a real integration the tool would be executed here and result appended.
-      // For now, acknowledge and continue.
-      history.push({
-        role: "user",
-        content: "[Tool execution not available in sub-owl context. Proceed with available information.]",
-      });
+      // Dispatch to tool registry
+      const tool = this.toolRegistry.get(toolCall.toolName);
+      const toolResult = tool
+        ? await tool.execute(toolCall.toolArgs, toolContext).catch(
+            (e: Error) => `[Tool error: ${e.message}]`,
+          )
+        : `[Tool "${toolCall.toolName}" not found in registry]`;
+
+      log.engine.debug(
+        `[SubOwlRunner] Tool ${toolCall.toolName} result: ${toolResult.slice(0, 120)}`,
+      );
+
+      history.push({ role: "user", content: `Tool result: ${toolResult}` });
     }
 
     return { output: lastResponse, iterations };
+  }
+
+  // ─── Simple run() entry-point (takes subtask array) ──────────
+
+  /**
+   * Execute an array of subtasks sequentially and return their combined output.
+   * This is a simplified entry-point for callers that already have a flat list
+   * of SubTask objects (e.g. SubOwlRunner unit tests, inline delegation).
+   */
+  async run(subtasks: SubTask[]): Promise<string> {
+    const results: string[] = [];
+    const completed = new Map<string, SubOwlResult>();
+
+    for (const task of subtasks) {
+      const priorContext = this.buildPriorContext(completed);
+      const startTime = Date.now();
+
+      try {
+        const loopResult = await Promise.race([
+          this.reactLoop(task, priorContext),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`Subtask ${task.id} timed out after ${this.SUBTASK_TIMEOUT_MS}ms`)),
+              this.SUBTASK_TIMEOUT_MS,
+            ),
+          ),
+        ]);
+
+        const owlResult: SubOwlResult = {
+          taskId: task.id,
+          description: task.description,
+          output: loopResult.output,
+          success: true,
+          iterations: loopResult.iterations,
+          durationMs: Date.now() - startTime,
+        };
+        completed.set(task.id, owlResult);
+        results.push(loopResult.output);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const owlResult: SubOwlResult = {
+          taskId: task.id,
+          description: task.description,
+          output: `[Failed: ${msg}]`,
+          success: false,
+          iterations: 0,
+          durationMs: Date.now() - startTime,
+        };
+        completed.set(task.id, owlResult);
+        results.push(`[Failed: ${msg}]`);
+      }
+    }
+
+    return results.join("\n\n");
   }
 
   // ─── Synthesis ────────────────────────────────────────────────

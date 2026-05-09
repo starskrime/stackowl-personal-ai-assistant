@@ -1073,7 +1073,12 @@ export class TaskOrchestrator {
       );
     }
 
-    const runner = new SubOwlRunner(this.provider, baseContext.owl.persona.type);
+    const subOwlToolRegistry = this.toolRegistry?.getImplementationsMap() ?? new Map();
+    const runner = new SubOwlRunner(
+      this.provider,
+      subOwlToolRegistry,
+      baseContext.owl.persona.type,
+    );
     const delegationResult = await runner.runAll(plan);
 
     if (callbacks.onProgress) {
