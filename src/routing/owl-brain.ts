@@ -19,6 +19,7 @@ export interface OwlBrainResult {
 
 export class OwlBrain {
   private getSecretaryRouter: () => SecretaryRouter | null = () => null;
+  private classifyFn: ((prompt: string) => Promise<string>) | null = null;
 
   constructor(
     private specializedRegistry: Pick<SpecializedOwlRegistry, "listSpecialists" | "get" | "getDefault"> | undefined,
@@ -31,6 +32,30 @@ export class OwlBrain {
 
   setSecretaryRouterGetter(fn: () => SecretaryRouter | null): void {
     this.getSecretaryRouter = fn;
+  }
+
+  setClassifyFn(fn: (prompt: string) => Promise<string>): void {
+    this.classifyFn = fn;
+  }
+
+  private async parseNaturalLanguageMention(
+    text: string,
+    activeRoster: string[],
+  ): Promise<{ targeted: string | null; confidence: number }> {
+    if (activeRoster.length === 0 || !this.classifyFn) {
+      return { targeted: null, confidence: 0 };
+    }
+    try {
+      const prompt =
+        `Message: "${text}"\n` +
+        `Active helpers: [${activeRoster.join(", ")}]\n` +
+        `Is the user explicitly addressing one of these helpers by name?\n` +
+        `Reply JSON only: {"targeted": string|null, "confidence": 0-1}`;
+      const raw = await this.classifyFn(prompt);
+      return JSON.parse(raw);
+    } catch {
+      return { targeted: null, confidence: 0 };
+    }
   }
 
   async resolve(
@@ -87,7 +112,49 @@ export class OwlBrain {
       }
     }
 
-    // 3. Session pin resume
+    // 2b. Natural-language mention (runs when message doesn't start with @)
+    if (!text.startsWith("@") && this.specializedRegistry && message.userId && this.classifyFn) {
+      const roster = this.specializedRegistry.listSpecialists().map(s => s.name);
+      const { targeted, confidence } = await this.parseNaturalLanguageMention(text, roster);
+      if (targeted && confidence >= 0.75) {
+        const spec = this.specializedRegistry.get(targeted);
+        if (spec) {
+          if (session) session.metadata.activeOwlName = spec.name;
+          this.db.owlPins.set(message.userId, message.channelId, spec.name, new Date().toISOString());
+          this.applySpecialist(spec, engineCtx, callbacks);
+          await this.injectMemoryContext(spec.name, message.sessionId, text, engineCtx);
+          activeOwlName = spec.name;
+          this.appendHistory(message.userId, spec.name, `nl-mention@${confidence.toFixed(2)}`);
+          log.engine.info(`[OwlBrain] NL mention → "${spec.name}" (conf=${confidence.toFixed(2)})`);
+          return { text, activeOwlName, parliamentHandled: false };
+        }
+      }
+    }
+
+    // 3. Soft-pin miss counter check (runs before session pin resume to allow TTL clearing)
+    if (session?.metadata.activeOwlName && this.specializedRegistry && message.userId) {
+      const router = this.getSecretaryRouter();
+      if (router) {
+        const signals = this.userProfileService
+          ? await this.userProfileService.buildSignals(message.userId, text)
+          : { activePin: null, domainStack: [], recentEpisodes: [], relevantFacts: [], trustLevel: "standard" as const };
+
+        const decision = await router.routeWithSignals(text, message.userId, signals);
+
+        if (decision.type === "specialist" && decision.owl.name === session.metadata.activeOwlName) {
+          session.metadata.softPinMissCount = 0;
+        } else {
+          session.metadata.softPinMissCount = (session.metadata.softPinMissCount ?? 0) + 1;
+          if (session.metadata.softPinMissCount >= 3) {
+            session.metadata.activeOwlName = undefined;
+            session.metadata.softPinMissCount = 0;
+            log.engine.info(`[OwlBrain] Soft-pin cleared after 3 consecutive misses`);
+          }
+        }
+      }
+    }
+
+    // 3b. Session pin resume (only if soft-pin TTL hasn't cleared the pin above)
     if (session?.metadata.activeOwlName && this.specializedRegistry) {
       const pinnedSpec = this.specializedRegistry.get(session.metadata.activeOwlName);
       if (pinnedSpec) {
@@ -104,10 +171,10 @@ export class OwlBrain {
       }
     }
 
-    // 4. Signal-aware routing
+    // 4. Signal-aware routing (soft-pin — session only, no SQLite write)
     if (this.specializedRegistry && message.userId) {
       const router = this.getSecretaryRouter();
-      if (router) {
+      if (router && !session?.metadata.activeOwlName) {
         const signals = this.userProfileService
           ? await this.userProfileService.buildSignals(message.userId, text)
           : { activePin: null, domainStack: [], recentEpisodes: [], relevantFacts: [], trustLevel: "standard" as const };
@@ -115,14 +182,16 @@ export class OwlBrain {
         const decision = await router.routeWithSignals(text, message.userId, signals);
 
         if (decision.type === "specialist") {
-          if (session) session.metadata.activeOwlName = decision.owl.name;
-          // Auto-pins on every signal-routing specialist match; user can clear with @coordinator
-          this.db.userProfiles.setPin(message.userId, decision.owl.name);
+          if (session) {
+            session.metadata.activeOwlName = decision.owl.name;
+            session.metadata.softPinMissCount = 0;
+          }
+          // NOTE: do NOT call db.owlPins.set() here — soft pin is session-only
           this.applySpecialist(decision.owl, engineCtx, callbacks);
           await this.injectMemoryContext(decision.owl.name, message.sessionId, text, engineCtx);
           activeOwlName = decision.owl.name;
           this.appendHistory(message.userId, decision.owl.name, decision.reason);
-          log.engine.info(`[OwlBrain] signals → "${decision.owl.name}" (${decision.reason})`);
+          log.engine.info(`[OwlBrain] signals → "${decision.owl.name}" (soft-pin, ${decision.reason})`);
         } else if (decision.type === "parliament") {
           this.appendHistory(message.userId, "parliament", "parliament trigger");
           return { text, activeOwlName, parliamentHandled: true };

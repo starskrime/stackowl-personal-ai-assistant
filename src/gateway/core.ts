@@ -538,6 +538,23 @@ export class OwlGateway {
       );
       this.owlBrain.setSecretaryRouterGetter(() => this.secretaryRouter);
       ctx.owlBrain = this.owlBrain;
+      if (ctx.provider) {
+        const intelligenceRouter = ctx.intelligence;
+        const provider = ctx.provider;
+        this.owlBrain.setClassifyFn(async (prompt: string) => {
+          try {
+            const resolvedModel = intelligenceRouter?.resolve("classification");
+            const resp = await provider.chat(
+              [{ role: "user", content: prompt }],
+              resolvedModel?.model,
+              { temperature: 0, maxTokens: 200 },
+            );
+            return resp.content;
+          } catch {
+            return JSON.stringify({ targeted: null, confidence: 0 });
+          }
+        });
+      }
       log.engine.info("[OwlBrain] Initialized");
     }
 
