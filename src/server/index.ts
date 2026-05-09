@@ -33,6 +33,7 @@ import {
   makeSessionId,
   makeMessage,
   type OwlGateway,
+  shuffleArray,
 } from "../gateway/core.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
 import { WhisperSTT } from "../voice/stt.js";
@@ -379,7 +380,7 @@ export class StackOwlServer {
 
       const participants = owlNames
         ? owlNames.map((n: string) => this.owlRegistry.get(n)).filter(Boolean)
-        : this.owlRegistry.listOwls().slice(0, 3);
+        : shuffleArray([...this.owlRegistry.listOwls()]).slice(0, 3);
 
       if (participants.length < 2) {
         res.status(400).json({ error: "At least 2 owls required" });

@@ -129,6 +129,17 @@ import { formatSignalPromoted } from "./narration-formatter.js";
 import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
 
+// ─── Utility functions ───────────────────────────────────────────
+
+export function shuffleArray<T>(arr: T[]): T[] {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
 // ─── Constants ───────────────────────────────────────────────────
 
 const MAX_SESSION_HISTORY = 50;
@@ -1913,7 +1924,7 @@ export class OwlGateway {
               id: `debate_${Date.now()}`,
               config: {
                 topic: message.text.slice(0, 200),
-                participants: this.ctx.owlRegistry.listOwls().slice(0, 3),
+                participants: shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3),
                 contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
               },
               phase: "setup",
@@ -2062,7 +2073,7 @@ export class OwlGateway {
             id: `debate_${Date.now()}`,
             config: {
               topic: text.slice(0, 200),
-              participants: this.ctx.owlRegistry.listOwls().slice(0, 3),
+              participants: shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3),
               contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
             },
             phase: "setup",
