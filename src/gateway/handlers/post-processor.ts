@@ -27,6 +27,12 @@ const TIER_PRIORITY: Record<"critical" | "standard" | "background", TaskPriority
   background: "low",
 };
 
+// Reward proxy constants for owl quality EWMA updates
+const REWARD_LOOP_EXHAUSTED = 0.1;
+const REWARD_TOOL_FAILURES = 0.3;
+const REWARD_TOOL_SUCCESS = 0.85;
+const REWARD_NEUTRAL = 0.7;
+
 const CRITIQUE_PROMPT_TEMPLATE =
   `You are a learning assistant. In exactly two sentences:\n` +
   `Sentence 1: What went wrong when the assistant called "{tool_name}" and received a "{verdict}" result? (Context: "{verifier_reason}")\n` +
@@ -197,12 +203,12 @@ export class PostProcessor {
       // can use real performance data instead of static routingQuality DNA.
       try {
         const reward = metadata?.loopExhausted
-          ? 0.1
+          ? REWARD_LOOP_EXHAUSTED
           : (metadata?.toolFailureCount ?? 0) >= 3
-            ? 0.3
+            ? REWARD_TOOL_FAILURES
             : (metadata?.toolsUsed?.length ?? 0) > 0
-              ? 0.85
-              : 0.7; // no tools used — neutral pass
+              ? REWARD_TOOL_SUCCESS
+              : REWARD_NEUTRAL; // no tools used — neutral pass
         this.ctx.db.owlQualityMetrics.update(owlName, userId, reward);
       } catch { /* non-critical */ }
     }

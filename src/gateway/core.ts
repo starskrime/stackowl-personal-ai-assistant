@@ -2032,8 +2032,8 @@ export class OwlGateway {
       this.secretaryRouter = new SecretaryRouter(this.ctx.specializedRegistry);
       if (this.ctx.db) {
         const db = this.ctx.db;
-        this.secretaryRouter.setQualityLookup((owlName: string) => {
-          return db.owlQualityMetrics.get(owlName, "system")?.ewmaReward ?? 0.7;
+        this.secretaryRouter.setQualityLookup((owlName: string, userId: string) => {
+          return db.owlQualityMetrics.get(owlName, userId)?.ewmaReward ?? 0.7;
         });
       }
     }

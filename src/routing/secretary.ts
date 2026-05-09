@@ -42,7 +42,7 @@ interface RoutingTarget {
 
 export class SecretaryRouter {
   private folderRegistry?: SpecializedOwlRegistry;
-  private qualityLookup: ((owlName: string) => number) | null = null;
+  private qualityLookup: ((owlName: string, userId: string) => number) | null = null;
 
   constructor(
     folderRegistry?: SpecializedOwlRegistry,
@@ -50,7 +50,7 @@ export class SecretaryRouter {
     this.folderRegistry = folderRegistry;
   }
 
-  setQualityLookup(fn: (owlName: string) => number): void {
+  setQualityLookup(fn: (owlName: string, userId: string) => number): void {
     this.qualityLookup = fn;
   }
 
@@ -73,7 +73,7 @@ export class SecretaryRouter {
 
     const matchedTarget = this.findBestMatch(messageLower, targets);
     if (matchedTarget && message.length >= MIN_MESSAGE_LENGTH) {
-      const confidence = this.calculateConfidence(messageLower, matchedTarget);
+      const confidence = this.calculateConfidence(messageLower, matchedTarget, userId);
       if (confidence >= ROUTING_CONFIDENCE_THRESHOLD) {
         log.engine.info(`[SecretaryRouter] Keyword → ${matchedTarget.name} (confidence: ${confidence.toFixed(2)})`);
         const spec = specialists.find((s) => s.name === matchedTarget.name);
@@ -199,10 +199,10 @@ export class SecretaryRouter {
     return matches / rules.length;
   }
 
-  private calculateConfidence(messageLower: string, target: RoutingTarget): number {
+  private calculateConfidence(messageLower: string, target: RoutingTarget, userId: string): number {
     const matchScore = this.scoreMatch(messageLower, target);
     const dnaScore = this.qualityLookup
-      ? this.qualityLookup(target.name)
+      ? this.qualityLookup(target.name, userId)
       : (target.routingQuality ?? 0.7);
     return (matchScore * MATCH_WEIGHT) + (dnaScore * DNA_WEIGHT);
   }
