@@ -19,6 +19,7 @@ export interface Session {
     lastUpdatedAt: number;
     title?: string;
     activeOwlName?: string;
+    softPinMissCount?: number;
   };
 }
 

@@ -45,6 +45,11 @@ export class OwlBrain {
     if (activeRoster.length === 0 || !this.classifyFn) {
       return { targeted: null, confidence: 0 };
     }
+
+    if (text.trim().split(/\s+/).length < 2) {
+      return { targeted: null, confidence: 0 };
+    }
+
     try {
       const prompt =
         `Message: "${text}"\n` +
