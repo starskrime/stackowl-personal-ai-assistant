@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 27;
+const SCHEMA_VERSION = 28;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -421,7 +421,6 @@ export class MemoryDatabase {
   readonly parliamentVerdicts: ParliamentVerdictsRepo;
   readonly agentGoals: AgentGoalsRepo;
   readonly agentTasks: AgentTasksRepo;
-  readonly owls: OwlsRepo;
   readonly userProfiles: UserProfilesRepo;
   readonly owlTasks: TasksRepo;
   readonly owlJobs: JobsRepo;
@@ -466,7 +465,6 @@ export class MemoryDatabase {
     this.parliamentVerdicts = new ParliamentVerdictsRepo(this.db);
     this.agentGoals         = new AgentGoalsRepo(this.db);
     this.agentTasks         = new AgentTasksRepo(this.db);
-    this.owls              = new OwlsRepo(this.db);
     this.userProfiles      = new UserProfilesRepo(this.db);
     this.owlTasks          = new TasksRepo(this.db);
     this.owlJobs           = new JobsRepo(this.db);
@@ -1232,6 +1230,10 @@ export class MemoryDatabase {
     if (current < 27) {
       applyV27HostRootMigration(this.db);
       this.db.pragma(`user_version = 27`);
+    }
+    if (current < 28) {
+      applyV28Element17Migration(this.db);
+      this.db.pragma(`user_version = 28`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -3144,123 +3146,6 @@ class AgentTasksRepo {
   }
 }
 
-// ─── OwlsRepo ──────────────────────────────────────────────────────
-
-class OwlsRepo {
-  constructor(private db: Database.Database) {}
-
-  create(owl: Omit<SpecializedOwl, "id" | "createdAt" | "updatedAt">): SpecializedOwl {
-    const id = uuidv4();
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT INTO owls (id, owner_id, name, specialization, personality_prompt, routing_rules, dna, is_main_owl, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      owl.ownerId,
-      owl.name,
-      owl.specialization,
-      owl.personalityPrompt,
-      JSON.stringify(owl.routingRules),
-      JSON.stringify(owl.dna),
-      owl.isMainOwl ? 1 : 0,
-      now,
-      now,
-    );
-    return { ...owl, id, createdAt: now, updatedAt: now };
-  }
-
-  getByOwner(ownerId: string): SpecializedOwl[] {
-    const rows = this.db.prepare(
-      "SELECT * FROM owls WHERE owner_id = ? ORDER BY created_at ASC"
-    ).all(ownerId) as any[];
-    return rows.map(rowToSpecializedOwl);
-  }
-
-  getById(id: string): SpecializedOwl | null {
-    const row = this.db.prepare("SELECT * FROM owls WHERE id = ?").get(id) as any;
-    return row ? rowToSpecializedOwl(row) : null;
-  }
-
-  getByName(ownerId: string, name: string): SpecializedOwl | null {
-    const row = this.db.prepare(
-      "SELECT * FROM owls WHERE owner_id = ? AND name = ?"
-    ).get(ownerId, name) as any;
-    return row ? rowToSpecializedOwl(row) : null;
-  }
-
-  getMainOwl(ownerId: string): SpecializedOwl | null {
-    const row = this.db.prepare(
-      "SELECT * FROM owls WHERE owner_id = ? AND is_main_owl = 1 LIMIT 1"
-    ).get(ownerId) as any;
-    return row ? rowToSpecializedOwl(row) : null;
-  }
-
-  update(id: string, updates: Partial<Omit<SpecializedOwl, "id" | "ownerId" | "createdAt" | "updatedAt">>): void {
-    const sets: string[] = [];
-    const values: any[] = [];
-
-    if (updates.name !== undefined) {
-      sets.push("name = ?");
-      values.push(updates.name);
-    }
-    if (updates.specialization !== undefined) {
-      sets.push("specialization = ?");
-      values.push(updates.specialization);
-    }
-    if (updates.personalityPrompt !== undefined) {
-      sets.push("personality_prompt = ?");
-      values.push(updates.personalityPrompt);
-    }
-    if (updates.routingRules !== undefined) {
-      sets.push("routing_rules = ?");
-      values.push(JSON.stringify(updates.routingRules));
-    }
-    if (updates.dna !== undefined) {
-      sets.push("dna = ?");
-      values.push(JSON.stringify(updates.dna));
-    }
-    if (updates.isMainOwl !== undefined) {
-      sets.push("is_main_owl = ?");
-      values.push(updates.isMainOwl ? 1 : 0);
-    }
-
-    if (sets.length === 0) return;
-
-    sets.push("updated_at = ?");
-    values.push(new Date().toISOString());
-    values.push(id);
-
-    this.db.prepare(`UPDATE owls SET ${sets.join(", ")} WHERE id = ?`).run(...values);
-  }
-
-  delete(id: string): void {
-    this.db.prepare("DELETE FROM owls WHERE id = ?").run(id);
-  }
-
-  count(ownerId: string): number {
-    const row = this.db.prepare(
-      "SELECT COUNT(*) as c FROM owls WHERE owner_id = ?"
-    ).get(ownerId) as any;
-    return row?.c ?? 0;
-  }
-}
-
-function rowToSpecializedOwl(r: any): SpecializedOwl {
-  return {
-    id: r.id,
-    ownerId: r.owner_id,
-    name: r.name,
-    specialization: r.specialization,
-    personalityPrompt: r.personality_prompt,
-    routingRules: JSON.parse(r.routing_rules ?? "[]"),
-    dna: JSON.parse(r.dna ?? "{}"),
-    isMainOwl: r.is_main_owl === 1,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-  };
-}
-
 function rowToGoal(r: Record<string, unknown>): AgentGoal {
   return {
     id: r["id"] as string,
@@ -3580,6 +3465,10 @@ export class StackOwlDB {
     if (current < 27) {
       applyV27HostRootMigration(this.db);
       this.db.pragma(`user_version = 27`);
+    }
+    if (current < 28) {
+      applyV28Element17Migration(this.db);
+      this.db.pragma(`user_version = 28`);
     }
   }
 }
@@ -3979,6 +3868,9 @@ export function applyMigrations(db: Database.Database): void {
   if (current < 27) {
     applyV27HostRootMigration(db);
   }
+  if (current < 28) {
+    applyV28Element17Migration(db);
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -4197,4 +4089,48 @@ export function applyV27HostRootMigration(db: Database.Database): void {
     CREATE INDEX idx_tool_edges_host_capability ON tool_edges(host_root, capability_tag, from_tool);
     COMMIT;
   `);
+}
+
+export function applyV28Element17Migration(db: Database.Database): void {
+  // Drop legacy owls table (created v10, never used by live routing)
+  db.exec(`DROP TABLE IF EXISTS owls;`)
+
+  // Per-owl EWMA reward signal — feeds SecretaryRouter quality weighting
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS owl_quality_metrics (
+      owl_name     TEXT NOT NULL,
+      owner_id     TEXT NOT NULL,
+      turn_count   INTEGER NOT NULL DEFAULT 0,
+      ewma_reward  REAL    NOT NULL DEFAULT 0.7,
+      last_updated TEXT,
+      PRIMARY KEY (owl_name, owner_id)
+    );
+  `)
+
+  // Per-channel pin isolation (replaces single active_pin column on user_profiles)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS owl_pins (
+      user_id    TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      owl_name   TEXT NOT NULL,
+      pinned_at  TEXT NOT NULL,
+      PRIMARY KEY (user_id, channel_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_owl_pins_user ON owl_pins(user_id);
+  `)
+
+  // Recurring autonomous tasks assigned to helpers at creation time
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS owl_recurring_jobs (
+      id               TEXT PRIMARY KEY,
+      helper_name      TEXT NOT NULL,
+      owner_id         TEXT NOT NULL,
+      schedule         TEXT NOT NULL,
+      task_description TEXT NOT NULL,
+      channel_id       TEXT NOT NULL,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      last_run_at      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_owl_recurring_jobs_owner ON owl_recurring_jobs(owner_id);
+  `)
 }
