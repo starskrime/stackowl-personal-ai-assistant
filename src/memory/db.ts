@@ -460,6 +460,40 @@ export class OwlPinsRepo {
   }
 }
 
+// ─── OwlRecurringJobsRepo ─────────────────────────────────────────
+
+export interface RecurringJobRow {
+  id: string
+  helper_name: string
+  owner_id: string
+  schedule: string
+  task_description: string
+  channel_id: string
+}
+
+export class OwlRecurringJobsRepo {
+  constructor(private db: Database.Database) {}
+
+  insert(job: RecurringJobRow): void {
+    this.db.prepare(`
+      INSERT INTO owl_recurring_jobs (id, helper_name, owner_id, schedule, task_description, channel_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(job.id, job.helper_name, job.owner_id, job.schedule, job.task_description, job.channel_id)
+  }
+
+  listByOwner(ownerId: string): RecurringJobRow[] {
+    return this.db.prepare(
+      `SELECT id, helper_name, owner_id, schedule, task_description, channel_id FROM owl_recurring_jobs WHERE owner_id = ? ORDER BY helper_name`
+    ).all(ownerId) as RecurringJobRow[]
+  }
+
+  deleteByHelper(helperName: string, ownerId: string): void {
+    this.db.prepare(
+      `DELETE FROM owl_recurring_jobs WHERE helper_name = ? AND owner_id = ?`
+    ).run(helperName, ownerId)
+  }
+}
+
 // ─── MemoryDatabase ───────────────────────────────────────────────
 
 export class MemoryDatabase {
@@ -489,6 +523,7 @@ export class MemoryDatabase {
   readonly owlJobs: JobsRepo;
   readonly owlQualityMetrics: OwlQualityRepo;
   readonly owlPins: OwlPinsRepo;
+  readonly owlRecurringJobs: OwlRecurringJobsRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -535,6 +570,7 @@ export class MemoryDatabase {
     this.owlJobs           = new JobsRepo(this.db);
     this.owlQualityMetrics = new OwlQualityRepo(this.db);
     this.owlPins           = new OwlPinsRepo(this.db);
+    this.owlRecurringJobs  = new OwlRecurringJobsRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
