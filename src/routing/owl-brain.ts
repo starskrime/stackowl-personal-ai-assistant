@@ -22,7 +22,7 @@ export class OwlBrain {
 
   constructor(
     private specializedRegistry: Pick<SpecializedOwlRegistry, "listSpecialists" | "get" | "getDefault"> | undefined,
-    private db: Pick<MemoryDatabase, "userProfiles">,
+    private db: Pick<MemoryDatabase, "userProfiles" | "owlPins">,
     private defaultOwlName: string,
     private userProfileService: UserProfileService | undefined,
     private pelletStore: PelletStore | undefined,
@@ -44,7 +44,8 @@ export class OwlBrain {
 
     // 1. Restore SQLite pin on first message of session
     if (!session?.metadata.activeOwlName && message.userId && this.specializedRegistry) {
-      const savedPin = this.db.userProfiles.getPin(message.userId);
+      const savedPin = this.db.owlPins.get(message.userId, message.channelId)
+        ?? this.db.userProfiles.getPin(message.userId); // legacy global fallback
       if (savedPin && session) {
         const spec = this.specializedRegistry.get(savedPin);
         if (spec) {
@@ -52,7 +53,7 @@ export class OwlBrain {
           log.engine.info(`[OwlBrain] Restored SQLite pin "${savedPin}" for ${message.userId}`);
         } else {
           // Owl no longer exists — clear stale pin
-          this.db.userProfiles.setPin(message.userId, null);
+          this.db.owlPins.set(message.userId, message.channelId, null, new Date().toISOString());
           log.engine.warn(`[OwlBrain] Cleared stale pin "${savedPin}" for ${message.userId} (owl not found)`);
         }
       }
@@ -65,7 +66,7 @@ export class OwlBrain {
       if (owlName.toLowerCase() === this.defaultOwlName.toLowerCase()) {
         // @coordinator — clear pin
         if (session) session.metadata.activeOwlName = undefined;
-        this.db.userProfiles.setPin(message.userId, null);
+        this.db.owlPins.set(message.userId, message.channelId, null, new Date().toISOString());
         text = rest?.trim() || "Hello";
         this.appendHistory(message.userId, this.defaultOwlName, "@coordinator clear");
         return { text, activeOwlName: this.defaultOwlName, parliamentHandled: false };
@@ -74,7 +75,7 @@ export class OwlBrain {
       if (spec) {
         text = rest?.trim() || "Hello";
         if (session) session.metadata.activeOwlName = spec.name;
-        this.db.userProfiles.setPin(message.userId, spec.name);
+        this.db.owlPins.set(message.userId, message.channelId, spec.name, new Date().toISOString());
         this.applySpecialist(spec, engineCtx, callbacks);
         await this.injectMemoryContext(spec.name, message.sessionId, text, engineCtx);
         activeOwlName = spec.name;
@@ -98,7 +99,7 @@ export class OwlBrain {
         session.metadata.activeOwlName = undefined;
         // Also clear SQLite pin — owl no longer exists
         if (message.userId) {
-          this.db.userProfiles.setPin(message.userId, null);
+          this.db.owlPins.set(message.userId, message.channelId, null, new Date().toISOString());
         }
       }
     }
