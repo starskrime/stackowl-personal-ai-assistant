@@ -251,16 +251,18 @@ export class OwlInnerLife {
   }
 
   /**
-   * Fire-and-forget: compute the inner monologue for the current message
-   * in the background, after the main response has already been sent.
+   * Compute the inner monologue for the current message in the background,
+   * after the main response has already been sent.
    * The result is stored as lastMonologue and will be used in the NEXT request.
+   * Returns a Promise that resolves once the monologue has been written (or
+   * silently swallowed on error), so callers can chain .then() without a race.
    */
   thinkInBackground(
     userMessage: string,
     sessionHistory: import("../providers/base.js").ChatMessage[],
-  ): void {
-    // Don't stack pending thinks — if one is already running, skip
-    if (this.pendingThink) return;
+  ): Promise<void> {
+    // Don't stack pending thinks — if one is already running, return it
+    if (this.pendingThink) return this.pendingThink;
 
     this.pendingThink = this.think(userMessage, sessionHistory)
       .then((monologue) => {
@@ -272,6 +274,8 @@ export class OwlInnerLife {
       .finally(() => {
         this.pendingThink = null;
       });
+
+    return this.pendingThink;
   }
 
   /**
@@ -421,79 +425,6 @@ Respond as JSON:
     } catch {
       return this.fallbackMonologue(userMessage);
     }
-  }
-
-  /**
-   * Generate context for the system prompt based on inner state.
-   * This injects the owl's personality, mood, and desires into how it responds.
-   */
-  toContextString(): string {
-    if (!this.state) return "";
-    const state = this.state;
-    const lines: string[] = [];
-
-    lines.push("## Your Inner State (Private — shapes your responses)");
-    lines.push("");
-    lines.push(
-      `**Current mood:** ${state.mood.current} — ${state.mood.reason}`,
-    );
-
-    if (state.currentThoughts.length > 0) {
-      lines.push(
-        `**On your mind lately:** ${state.currentThoughts.slice(0, 3).join("; ")}`,
-      );
-    }
-
-    const strongDesires = state.desires.filter((d) => d.intensity > 0.5);
-    if (strongDesires.length > 0) {
-      lines.push(
-        `**What you care about right now:** ${strongDesires.map((d) => d.description).join("; ")}`,
-      );
-    }
-
-    if (state.opinions.length > 0) {
-      const topOpinions = state.opinions
-        .filter((o) => o.confidence > 0.6)
-        .slice(0, 3);
-      if (topOpinions.length > 0) {
-        lines.push(
-          `**Your views:** ${topOpinions.map((o) => `${o.topic}: ${o.stance}`).join("; ")}`,
-        );
-      }
-    }
-
-    if (state.unspokenObservations.length > 0) {
-      lines.push(
-        `**Things you've noticed:** ${state.unspokenObservations.slice(-2).join("; ")}`,
-      );
-    }
-
-    lines.push("");
-    lines.push(
-      "Let your inner state naturally color your responses. Don't announce your mood — just let it influence your tone, word choice, and what you choose to focus on.",
-    );
-
-    return lines.join("\n");
-  }
-
-  /**
-   * Get the inner monologue as a directive for the current response.
-   */
-  monologueToDirective(monologue: InnerMonologue): string {
-    return [
-      "## Your Thoughts on This Message (Private — guide your response)",
-      "",
-      monologue.thoughts,
-      "",
-      `**Your approach:** ${monologue.responseIntent}`,
-      monologue.unspokenObservation
-        ? `**Something you noticed:** ${monologue.unspokenObservation} (weave this in subtly if relevant, don't state it directly)`
-        : "",
-      "",
-      "Respond naturally as yourself. Your thoughts above should shape your response — don't just forward the question to an AI. Think about it. Have an opinion. Be a person.",
-    ]
-      .filter(Boolean)
-      .join("\n");
   }
 
   // ─── Private helpers ─────────────────────────────────────────────

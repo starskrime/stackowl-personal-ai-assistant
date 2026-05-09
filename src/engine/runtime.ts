@@ -24,7 +24,7 @@ import { ModelRouter } from "./router.js";
 import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
-import type { OwlInnerLife, InnerMonologue } from "../owls/inner-life.js";
+import type { OwlInnerLife } from "../owls/inner-life.js";
 import { DNADecisionLayer } from "../owls/decision-layer.js";
 import { DiagnosticEngine } from "./diagnostic-engine.js";
 import type { DiagnosticInput } from "./diagnostic-engine.js";
@@ -793,17 +793,6 @@ export class OwlEngine {
     // tool prioritization, risk tolerance. Previously computed but never used.
     const dnaDecisions = DNADecisionLayer.decide(owl, userMessage);
 
-    // 1b. Inner Monologue — use the PREVIOUS turn's monologue (computed async after
-    // the last response). This avoids blocking the current response on an extra LLM call.
-    // thinkInBackground() is fired after the response is sent (in gateway/core.ts),
-    // so by the time the user sends their next message the monologue is ready.
-    const innerMonologue = context.innerLife?.getLastMonologue() ?? undefined;
-    if (innerMonologue) {
-      log.engine.debug(
-        `[InnerLife] Using cached monologue: "${innerMonologue.thoughts.slice(0, 80)}..."`,
-      );
-    }
-
     // 2. Build system prompt (async — may inject pellets + memory + skills)
     // Signal new turn to attempt log BEFORE building the prompt so the injected
     // block reflects the correct current turn number.
@@ -819,8 +808,6 @@ export class OwlEngine {
       context.preferencesContext,
       context.skillsContext,
       attemptLogBlock,
-      context.innerLife,
-      innerMonologue,
       context.channelName,
       context.specialistPrompt,
     );
@@ -2354,8 +2341,6 @@ ${userMessage}
     preferencesContext?: string,
     skillsContext?: string,
     attemptLogBlock?: string,
-    innerLife?: OwlInnerLife,
-    innerMonologue?: InnerMonologue,
     channelName?: string,
     specialistPrompt?: string,
   ): Promise<string> {
@@ -2549,19 +2534,6 @@ ${userMessage}
         prompt += `- ${rule}\n`;
       }
       prompt += "\n";
-    }
-
-    // Inner Life — owl's persistent inner state (mood, desires, opinions)
-    if (innerLife) {
-      const innerStateCtx = innerLife.toContextString();
-      if (innerStateCtx) {
-        prompt += "\n" + innerStateCtx + "\n";
-      }
-    }
-
-    // Inner Monologue — the owl's private thoughts on this specific message
-    if (innerMonologue && innerLife) {
-      prompt += "\n" + innerLife.monologueToDirective(innerMonologue) + "\n";
     }
 
     // User preferences from PreferenceStore — inject only when present
