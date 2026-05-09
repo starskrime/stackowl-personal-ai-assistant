@@ -149,8 +149,9 @@ write_pid_to_session() {
 load_nvm() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   # shellcheck source=/dev/null
-  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-  [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+  # Use || true so set -e doesn't exit when nvm is not yet installed
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
+  [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" || true
 }
 
 install_node_via_nvm() {
