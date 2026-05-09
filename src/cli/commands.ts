@@ -6,12 +6,9 @@
  */
 
 import chalk from "chalk";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import type { OwlGateway } from "../gateway/core.js";
 import type { TerminalRenderer } from "./renderer.js";
 import type { CompletionProvider } from "./completion-engine.js";
-import { SpecializationCreateWizard } from "./specialization-wizard.js";
 import type { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
 import { McpCommandRouter } from "../gateway/commands/mcp-router.js";
@@ -55,138 +52,46 @@ export function resolveOwl(
   return registry?.get(name) ?? null;
 }
 
-// ─── Wizard State ─────────────────────────────────────────────────
-
-let activeWizard: SpecializationCreateWizard | null = null;
-
 // ─── Commands ─────────────────────────────────────────────────────
 
-const cmdSpecialization: CommandFn = async (args, ui, gateway) => {
-  const parts = args.trim().toLowerCase().split(/\s+/);
-  const subcmd = parts[0] || "list";
+const cmdHelper: CommandFn = async (args, ui, gateway) => {
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  const verb = parts[0] || "list";
+  const verbArgs = parts.slice(1);
   const registry = gateway.getSpecializedRegistry();
-
-  if (subcmd === "list") {
-    const owls = registry?.listAll() ?? [];
-    if (owls.length === 0) {
-      ui.printLines([
-        "",
-        YB("Helpers"),
-        sep(),
-        D("No helpers yet. Create one with /specialization create"),
-        "",
-      ]);
-      return true;
-    }
-    const lines: string[] = ["", YB("Helpers"), sep()];
-    for (const spec of owls) {
-      lines.push(Y(`${spec.emoji || "🦉"} `) + W(spec.name.padEnd(16)) + D(spec.role));
-    }
-    lines.push(D(`\n${owls.length} owl(s) total`));
-    lines.push("");
-    ui.printLines(lines);
-    return true;
+  if (registry) {
+    await registry.loadAll(gateway.getWorkspacePath());
   }
-
-  if (subcmd === "show") {
-    const name = parts.slice(1).join(" ");
-    if (!name) { ui.printInfo("Usage: /specialization show <name>"); return true; }
-    const spec = resolveOwl(name, registry);
-    if (!spec) { ui.printInfo(`Owl "${name}" not found.`); return true; }
-    const folderPath = join(gateway.getWorkspacePath(), "owls", spec.name);
-    ui.printLines([
-      "",
-      YB(`${spec.emoji || "🦉"} ${spec.name}`),
-      sep(),
-      D("Role           ") + W(spec.role),
-      D("Expertise      ") + W(spec.expertise.join(", ") || "(none)"),
-      D("Challenge      ") + W(spec.personality.challengeLevel),
-      D("Verbosity      ") + W(spec.personality.verbosity),
-      D("Tone           ") + W(spec.personality.tone),
-      "",
-      YB("Routing Keywords"),
-      sep(),
-      ...(spec.routingRules.keywords.length > 0
-        ? spec.routingRules.keywords.map((k) => D("  • " + k))
-        : [D("  (none)")]),
-      "",
-      YB("Permissions"),
-      sep(),
-      D("Allowed Tools  ") + W(spec.permissions.allowedTools.join(", ") || "all"),
-      D("Denied Tools   ") + W(spec.permissions.deniedTools.join(", ") || "none"),
-      ...(spec.permissions.capabilityConstraints.length > 0
-        ? [D("Constraints    ") + W(spec.permissions.capabilityConstraints.join("; "))]
-        : []),
-      "",
-      YB("Config File"),
-      sep(),
-      D("  " + folderPath + "/specialized_owl.md"),
-      "",
-    ]);
-    return true;
-  }
-
-  if (subcmd === "create") {
-    activeWizard = new SpecializationCreateWizard(gateway.getWorkspacePath());
-    activeWizard.start(ui);
-    ui.setAllowEmptyInput(true);
-    return true;
-  }
-
-  if (subcmd === "delete") {
-    const lastPart = parts[parts.length - 1];
-    const confirmed = (lastPart === "yes" || lastPart === "y") && parts.length > 2;
-    const name = (confirmed ? parts.slice(1, -1) : parts.slice(1)).join(" ");
-    if (!name) { ui.printInfo("Usage: /specialization delete <name>"); return true; }
-    const spec = resolveOwl(name, registry);
-    if (!spec) { ui.printInfo(`Owl "${name}" not found.`); return true; }
-    if (confirmed) {
-      const folderPath = join(gateway.getWorkspacePath(), "owls", spec.name);
-      await rm(folderPath, { recursive: true, force: true });
-      await gateway.reloadSpecializedRegistry();
-      ui.printLines(["", G(`✓ Deleted owl: ${spec.name}`), ""]);
-      return true;
-    }
-    ui.printLines([
-      "",
-      R(`⚠️  Delete "${spec.name}"?`),
-      sep(),
-      D("This action cannot be undone."),
-      D("Confirm: /specialization delete " + spec.name + " yes"),
-      "",
-    ]);
-    return true;
-  }
-
-  if (subcmd === "update") {
-    const name = parts.slice(1).join(" ");
-    if (!name) { ui.printInfo("Usage: /specialization update <name>"); return true; }
-    const spec = resolveOwl(name, registry);
-    if (!spec) { ui.printInfo(`Owl "${name}" not found.`); return true; }
-    const folderPath = join(gateway.getWorkspacePath(), "owls", spec.name);
-    ui.printLines([
-      "",
-      YB(`${spec.emoji || "🦉"} ${spec.name}`),
-      sep(),
-      D("Edit the spec file directly to update this owl:"),
-      "",
-      C("  " + folderPath + "/specialized_owl.md"),
-      "",
-    ]);
-    return true;
-  }
-
-  ui.printLines([
-    "",
-    YB("Specialization Commands"),
-    sep(),
-    C("/specialization list".padEnd(25)) + D("List all your owls"),
-    C("/specialization show <name>".padEnd(25)) + D("Show owl details"),
-    C("/specialization create <desc>".padEnd(25)) + D("Create new owl"),
-    C("/specialization delete <name>".padEnd(25)) + D("Delete owl (confirm)"),
-    C("/specialization update <name>".padEnd(25)) + D("Update owl"),
-    "",
-  ]);
+  const workspacePath = gateway.getWorkspacePath();
+  const { dispatchOwlCommand } = await import("../gateway/commands/owl-router.js");
+  const { OwlCreationWizard } = await import("../gateway/wizards/owl-creation.js");
+  const wizard = new OwlCreationWizard(workspacePath, undefined);
+  const adapter = {
+    ask: async (_userId: string, prompt: { text: string; choices?: string[]; defaultChoice?: string }) => {
+      const { default: readline } = await import("node:readline");
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const choices = prompt.choices ? `\n${prompt.choices.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}` : "";
+      return new Promise<string>((resolve) => {
+        rl.question(`${prompt.text}${choices}\n> `, (ans) => {
+          rl.close();
+          if (!ans && prompt.defaultChoice) resolve(prompt.defaultChoice);
+          else if (prompt.choices) {
+            const idx = parseInt(ans) - 1;
+            resolve(!isNaN(idx) && prompt.choices[idx] ? prompt.choices[idx] : ans);
+          }
+          else resolve(ans);
+        });
+      });
+    },
+  };
+  const result = await dispatchOwlCommand(verb, verbArgs, {
+    registry: registry as any,
+    wizard: wizard as any,
+    userId: "local",
+    channelAdapter: adapter as any,
+    workspacePath,
+  });
+  ui.printLines(["", ...result.split("\n"), ""]);
   return true;
 };
 
@@ -198,7 +103,7 @@ const cmdHelp: CommandFn = async (_args, ui) => {
     C("/help".padEnd(20)) + D("Show this list"),
     C("/status".padEnd(20)) + D("Provider, model, owl info"),
     C("/owls".padEnd(20)) + D("List owl personas"),
-    C("/specialization".padEnd(20)) + D("Manage helpers"),
+    C("/helper".padEnd(20)) + D("Manage helpers"),
     C("/clear".padEnd(20)) + D("Clear conversation context"),
     C("/capabilities".padEnd(20)) + D("List synthesized tools"),
     C("/skills".padEnd(20)) + D("List or install skills"),
@@ -367,10 +272,10 @@ const COMMANDS: Record<string, CommandDef> = {
   "?": { description: "Show command list", fn: cmdHelp },
   status: { description: "Provider / model / owl info", fn: cmdStatus },
   owls: { description: "List owl personas", fn: cmdOwls },
-  specialization: {
+  helper: {
     description: "Manage helpers",
-    fn: cmdSpecialization,
-    subcommands: ["list", "show", "create", "delete", "update"],
+    fn: cmdHelper,
+    subcommands: ["list", "show", "create", "rename", "delete", "design", "capabilities"],
   },
   skills: {
     description: "List or install skills",
@@ -418,16 +323,6 @@ export class CommandRegistry implements CompletionProvider {
     ui: TerminalRenderer,
     gateway: OwlGateway,
   ): Promise<boolean> {
-    if (activeWizard) {
-      const done = await activeWizard.step(input, ui);
-      if (done) {
-        activeWizard = null;
-        await gateway.reloadSpecializedRegistry();
-        ui.setAllowEmptyInput(false);
-      }
-      return true;
-    }
-
     if (!input.startsWith("/")) return false;
 
     // Let /skills fall through to gateway.handle() for wizard routing

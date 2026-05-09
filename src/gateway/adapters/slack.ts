@@ -365,6 +365,40 @@ export class SlackAdapter implements ChannelAdapter {
       }
       await respond({ text: msg });
     });
+
+    // ── /helper — channel-parity dispatcher (same router as CLI/Telegram) ──
+    this.app.command("/helper", async ({ ack, respond, command }) => {
+      await ack();
+      const parts = command.text?.trim().split(/\s+/).filter(Boolean) ?? [];
+      const verb = parts[0] ?? "list";
+      const args = parts.slice(1);
+      const workspacePath = this.gateway.getWorkspacePath();
+      const registry = this.gateway.getSpecializedRegistry();
+      if (registry) {
+        await registry.loadAll(workspacePath);
+      }
+      const { dispatchOwlCommand } = await import("../../gateway/commands/owl-router.js");
+      const { OwlCreationWizard } = await import("../../gateway/wizards/owl-creation.js");
+      const wizard = new OwlCreationWizard(workspacePath, undefined);
+      const channelAdapter = {
+        ask: async (_uid: string, prompt: { text: string; choices?: string[] }) => {
+          return prompt.choices?.[0] ?? "";
+        },
+      };
+      try {
+        const result = await dispatchOwlCommand(verb, args, {
+          registry: registry as any,
+          wizard: wizard as any,
+          userId: command.user_id ?? "unknown",
+          channelAdapter: channelAdapter as any,
+          workspacePath,
+        });
+        await respond({ text: result });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await respond({ text: `❌ Helper error: ${msg}` });
+      }
+    });
   }
 
   // ─── Streaming (edit-in-place) ──────────────────────────────────
