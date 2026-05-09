@@ -35,8 +35,11 @@ export class SpecializedOwlRegistry {
     }
 
     for (const entry of entries) {
-      const specPath = join(owlsDir, entry, "specialized_owl.md");
-      if (!existsSync(specPath)) continue;
+      let specPath = join(owlsDir, entry, "helper.md");
+      if (!existsSync(specPath)) {
+        specPath = join(owlsDir, entry, "specialized_owl.md");
+        if (!existsSync(specPath)) continue;
+      }
 
       try {
         const raw = await readFile(specPath, "utf-8");
@@ -114,3 +117,7 @@ export class SpecializedOwlRegistry {
     this.dnaMap.set(owlName.toLowerCase(), dna);
   }
 }
+
+// ─── Helper rebrand aliases (Element 17) ─────────────────────────
+/** Alias for SpecializedOwlRegistry — use HelperRegistry in new code */
+export type HelperRegistry = SpecializedOwlRegistry

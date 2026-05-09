@@ -45,3 +45,7 @@ export interface SpecializedOwlSpec {
   folderPath?: string;
   credentialsPath?: string;
 }
+
+// ─── Helper rebrand aliases (Element 17) ─────────────────────────
+/** Alias for SpecializedOwlSpec — use HelperSpec in new code */
+export type HelperSpec = SpecializedOwlSpec
