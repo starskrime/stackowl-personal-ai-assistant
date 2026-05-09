@@ -146,36 +146,139 @@ write_pid_to_session() {
 
 # ─── Prerequisites ───────────────────────────────────────────────
 
-install_node_instructions() {
+load_nvm() {
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  # shellcheck source=/dev/null
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+  [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+}
+
+install_node_via_nvm() {
+  log_step "Installing Node.js 22 via nvm..."
+  if [ ! -s "$HOME/.nvm/nvm.sh" ]; then
+    log_step "nvm not found — installing nvm first..."
+    if command -v curl &>/dev/null; then
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+    elif command -v wget &>/dev/null; then
+      wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+    else
+      log_error "curl and wget both missing — cannot install nvm."
+      log_error "Install Node.js 22 manually: https://nodejs.org"
+      exit 1
+    fi
+  fi
+  load_nvm
+  nvm install 22
+  nvm use 22
+  nvm alias default 22
+}
+
+install_node_via_nodesource_apt() {
+  log_step "Installing Node.js 22 via NodeSource (apt)..."
+  if command -v curl &>/dev/null; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  elif command -v wget &>/dev/null; then
+    wget -qO- https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  else
+    log_warn "curl/wget not found — falling back to nvm"
+    install_node_via_nvm
+    return
+  fi
+  sudo apt-get install -y nodejs
+}
+
+install_node_via_nodesource_rpm() {
+  local mgr="$1"
+  log_step "Installing Node.js 22 via NodeSource (${mgr})..."
+  if command -v curl &>/dev/null; then
+    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
+  else
+    log_warn "curl not found — falling back to nvm"
+    install_node_via_nvm
+    return
+  fi
+  sudo "$mgr" install -y nodejs
+}
+
+install_node_auto() {
+  local OS
+  OS="$(uname -s)"
+  log_step "Node.js >= 22 not found — attempting automatic installation..."
   echo ""
-  log_error "Node.js >= 22 is required but was not found."
-  echo ""
-  echo -e "  ${BOLD}Install options:${RESET}"
-  echo -e "  ${CYAN}▸${RESET} Homebrew (macOS/Linux):  ${BOLD}brew install node@22${RESET}"
-  echo -e "  ${CYAN}▸${RESET} nvm (any platform):      ${BOLD}nvm install 22 && nvm use 22${RESET}"
-  echo -e "  ${CYAN}▸${RESET} Download directly:       ${BOLD}https://nodejs.org${RESET}"
-  echo ""
-  exit 1
+
+  case "$OS" in
+    Darwin)
+      if command -v brew &>/dev/null; then
+        log_step "Installing Node.js 22 via Homebrew..."
+        brew install node@22
+        # Homebrew may not auto-link if another node is present
+        brew link --overwrite node@22 2>/dev/null || true
+        # Add both Intel and Apple-silicon brew paths
+        export PATH="/opt/homebrew/opt/node@22/bin:/usr/local/opt/node@22/bin:$PATH"
+      else
+        log_warn "Homebrew not found — falling back to nvm"
+        install_node_via_nvm
+      fi
+      ;;
+    Linux)
+      if command -v apt-get &>/dev/null; then
+        install_node_via_nodesource_apt
+      elif command -v dnf &>/dev/null; then
+        install_node_via_nodesource_rpm dnf
+      elif command -v yum &>/dev/null; then
+        install_node_via_nodesource_rpm yum
+      elif command -v pacman &>/dev/null; then
+        log_step "Installing Node.js via pacman..."
+        sudo pacman -Sy --noconfirm nodejs npm
+      elif command -v apk &>/dev/null; then
+        log_step "Installing Node.js via apk (Alpine)..."
+        sudo apk add --no-cache nodejs npm
+      else
+        log_warn "No known package manager found — falling back to nvm"
+        install_node_via_nvm
+      fi
+      ;;
+    *)
+      log_error "Unsupported OS: $OS"
+      log_error "Please install Node.js 22 manually: https://nodejs.org"
+      exit 1
+      ;;
+  esac
+
+  # Re-source nvm in case it was just installed
+  load_nvm
+
+  if ! command -v node &>/dev/null; then
+    log_error "Automatic installation did not succeed."
+    log_error "Please install Node.js 22 manually: https://nodejs.org"
+    exit 1
+  fi
+  log_info "Node.js $(node -v) installed successfully"
 }
 
 check_prerequisites() {
+  # Source nvm early so a previously-installed nvm Node is visible
+  load_nvm
+
   echo ""
   echo -e "${DIM}─────────────────────────────────────────────────${RESET}"
   log_step "Checking prerequisites..."
 
   # ── Node.js ──
-  if ! command -v node &> /dev/null; then
-    install_node_instructions
+  if ! command -v node &>/dev/null; then
+    install_node_auto
   fi
 
   NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
   if [ "$NODE_VERSION" -lt 22 ]; then
-    log_error "Node.js >= 22 required (found $(node -v))"
-    echo ""
-    echo -e "  ${CYAN}▸${RESET} Upgrade via Homebrew:  ${BOLD}brew install node@22${RESET}"
-    echo -e "  ${CYAN}▸${RESET} Upgrade via nvm:       ${BOLD}nvm install 22 && nvm use 22${RESET}"
-    echo ""
-    exit 1
+    log_warn "Node.js >= 22 required (found $(node -v)) — upgrading automatically..."
+    install_node_auto
+    # Re-read version after upgrade
+    NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
+    if [ "$NODE_VERSION" -lt 22 ]; then
+      log_error "Could not upgrade to Node.js 22. Please upgrade manually."
+      exit 1
+    fi
   fi
   log_info "Node.js $(node -v)"
 
