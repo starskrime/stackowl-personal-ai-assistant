@@ -9,7 +9,6 @@
 # Next runs:  reads session.tmp → starts immediately, no questions
 # Reset mode: delete session.tmp to be asked again
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-git pull &
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,15 +23,19 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-log_info()  { echo -e "${GREEN}✓${RESET} $1"; }
-log_warn()  { echo -e "${YELLOW}⚠${RESET} $1"; }
-log_error() { echo -e "${RED}✗${RESET} $1"; }
-log_step()  { echo -e "${CYAN}▸${RESET} ${BOLD}$1${RESET}"; }
-log_dim()   { echo -e "${DIM}  $1${RESET}"; }
+log_info()    { echo -e "${GREEN}✓${RESET} $1"; }
+log_warn()    { echo -e "${YELLOW}⚠${RESET} $1"; }
+log_error()   { echo -e "${RED}✗${RESET} $1"; }
+log_step()    { echo -e "${CYAN}▸${RESET} ${BOLD}$1${RESET}"; }
+log_dim()     { echo -e "${DIM}  $1${RESET}"; }
+log_sub()     { echo -e "  ${DIM}↳${RESET} $1"; }
+log_section() { echo -e "\n${BLUE}┌─${RESET} ${BOLD}$1${RESET}"; }
+log_cmd()     { echo -e "  ${DIM}\$${RESET} $1"; }
 
 # ─── Banner ─────────────────────────────────────────────────────
 
@@ -144,6 +147,25 @@ write_pid_to_session() {
   " 2>/dev/null || true
 }
 
+# ─── Code Sync ──────────────────────────────────────────────────
+
+sync_code() {
+  log_section "Syncing latest code"
+  log_sub "Running: git pull"
+  local pull_out
+  if pull_out=$(git -C "$SCRIPT_DIR" pull 2>&1); then
+    if echo "$pull_out" | grep -q "Already up to date"; then
+      log_info "Already up to date"
+    else
+      echo "$pull_out" | while IFS= read -r line; do log_dim "$line"; done
+      log_info "Code updated"
+    fi
+  else
+    log_warn "git pull failed — continuing with local version"
+    echo "$pull_out" | while IFS= read -r line; do log_dim "$line"; done
+  fi
+}
+
 # ─── Prerequisites ───────────────────────────────────────────────
 
 load_nvm() {
@@ -155,66 +177,84 @@ load_nvm() {
 }
 
 install_node_via_nvm() {
-  log_step "Installing Node.js 22 via nvm..."
+  log_sub "Method: nvm (Node Version Manager)"
   if [ ! -s "$HOME/.nvm/nvm.sh" ]; then
-    log_step "nvm not found — installing nvm first..."
+    log_sub "nvm not found — installing nvm v0.39.7..."
     if command -v curl &>/dev/null; then
+      log_cmd "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
       curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
     elif command -v wget &>/dev/null; then
+      log_cmd "wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
       wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
     else
       log_error "curl and wget both missing — cannot install nvm."
       log_error "Install Node.js 22 manually: https://nodejs.org"
       exit 1
     fi
+    log_info "nvm installed"
+  else
+    log_sub "nvm already present — using it"
   fi
   load_nvm
+  log_sub "Installing Node.js 22..."
+  log_cmd "nvm install 22"
   nvm install 22
+  log_cmd "nvm use 22 && nvm alias default 22"
   nvm use 22
   nvm alias default 22
 }
 
 install_node_via_nodesource_apt() {
-  log_step "Installing Node.js 22 via NodeSource (apt)..."
+  log_sub "Method: NodeSource apt repository"
+  log_sub "Step 1/2 — downloading NodeSource setup script..."
   if command -v curl &>/dev/null; then
+    log_cmd "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
   elif command -v wget &>/dev/null; then
+    log_cmd "wget -qO- https://deb.nodesource.com/setup_22.x | sudo -E bash -"
     wget -qO- https://deb.nodesource.com/setup_22.x | sudo -E bash -
   else
     log_warn "curl/wget not found — falling back to nvm"
     install_node_via_nvm
     return
   fi
+  log_sub "Step 2/2 — installing nodejs package..."
+  log_cmd "sudo apt-get install -y nodejs"
   sudo apt-get install -y nodejs
 }
 
 install_node_via_nodesource_rpm() {
   local mgr="$1"
-  log_step "Installing Node.js 22 via NodeSource (${mgr})..."
+  log_sub "Method: NodeSource rpm repository (${mgr})"
+  log_sub "Step 1/2 — downloading NodeSource setup script..."
   if command -v curl &>/dev/null; then
+    log_cmd "curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -"
     curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
   else
     log_warn "curl not found — falling back to nvm"
     install_node_via_nvm
     return
   fi
+  log_sub "Step 2/2 — installing nodejs package..."
+  log_cmd "sudo ${mgr} install -y nodejs"
   sudo "$mgr" install -y nodejs
 }
 
 install_node_auto() {
   local OS
   OS="$(uname -s)"
-  log_step "Node.js >= 22 not found — attempting automatic installation..."
+  log_warn "Node.js >= 22 not found — starting automatic installation"
+  log_sub "Detected OS: ${OS}"
   echo ""
 
   case "$OS" in
     Darwin)
       if command -v brew &>/dev/null; then
-        log_step "Installing Node.js 22 via Homebrew..."
+        log_sub "Method: Homebrew"
+        log_cmd "brew install node@22"
         brew install node@22
-        # Homebrew may not auto-link if another node is present
+        log_sub "Linking node@22..."
         brew link --overwrite node@22 2>/dev/null || true
-        # Add both Intel and Apple-silicon brew paths
         export PATH="/opt/homebrew/opt/node@22/bin:/usr/local/opt/node@22/bin:$PATH"
       else
         log_warn "Homebrew not found — falling back to nvm"
@@ -223,16 +263,21 @@ install_node_auto() {
       ;;
     Linux)
       if command -v apt-get &>/dev/null; then
+        log_sub "Detected package manager: apt (Debian/Ubuntu)"
         install_node_via_nodesource_apt
       elif command -v dnf &>/dev/null; then
+        log_sub "Detected package manager: dnf (Fedora/RHEL)"
         install_node_via_nodesource_rpm dnf
       elif command -v yum &>/dev/null; then
+        log_sub "Detected package manager: yum (CentOS/RHEL)"
         install_node_via_nodesource_rpm yum
       elif command -v pacman &>/dev/null; then
-        log_step "Installing Node.js via pacman..."
+        log_sub "Method: pacman (Arch Linux)"
+        log_cmd "sudo pacman -Sy --noconfirm nodejs npm"
         sudo pacman -Sy --noconfirm nodejs npm
       elif command -v apk &>/dev/null; then
-        log_step "Installing Node.js via apk (Alpine)..."
+        log_sub "Method: apk (Alpine Linux)"
+        log_cmd "sudo apk add --no-cache nodejs npm"
         sudo apk add --no-cache nodejs npm
       else
         log_warn "No known package manager found — falling back to nvm"
@@ -265,7 +310,8 @@ check_prerequisites() {
   echo -e "${DIM}─────────────────────────────────────────────────${RESET}"
   log_step "Checking prerequisites..."
 
-  # ── Node.js ──
+  # ── [1/3] Node.js ──────────────────────────────────────────────
+  log_section "[1/3] Node.js"
   if ! command -v node &>/dev/null; then
     install_node_auto
   fi
@@ -274,7 +320,6 @@ check_prerequisites() {
   if [ "$NODE_VERSION" -lt 22 ]; then
     log_warn "Node.js >= 22 required (found $(node -v)) — upgrading automatically..."
     install_node_auto
-    # Re-read version after upgrade
     NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
     if [ "$NODE_VERSION" -lt 22 ]; then
       log_error "Could not upgrade to Node.js 22. Please upgrade manually."
@@ -283,35 +328,45 @@ check_prerequisites() {
   fi
   log_info "Node.js $(node -v)"
 
-  # ── npm dependencies ──
+  # ── [2/3] npm dependencies ─────────────────────────────────────
+  log_section "[2/3] npm dependencies"
   if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
+    log_sub "First run — installing packages. This takes 2–3 minutes on a fresh machine."
+    log_sub "You will see npm output below:"
     echo ""
-    log_step "First run — installing dependencies (this takes a few minutes)..."
+    log_cmd "npm install (in $SCRIPT_DIR)"
+    echo ""
     (cd "$SCRIPT_DIR" && sudo npm install --unsafe-perm)
-    log_info "Dependencies installed"
+    echo ""
+    log_info "npm dependencies installed"
   else
-    log_info "Dependencies ready"
+    log_info "npm dependencies already installed"
+    log_sub "Delete node_modules/ and re-run to force a reinstall"
   fi
 
-  # Config is optional — if missing, the onboarding wizard runs automatically inside tsx.
-
-  # ── Python & Scrapling (anti-bot web scraping) — only on first install ──
+  # ── [3/3] Python & Scrapling ────────────────────────────────────
+  log_section "[3/3] Python & Scrapling (anti-bot web scraping)"
   local SCRAPLING_MARKER="$SCRIPT_DIR/.scrapling_ready"
   if [ ! -f "$SCRAPLING_MARKER" ]; then
     install_scrapling && touch "$SCRAPLING_MARKER"
   else
     log_info "Scrapling ready"
+    log_sub "Delete .scrapling_ready to force a reinstall"
   fi
 
+  echo ""
+  echo -e "${DIM}─────────────────────────────────────────────────${RESET}"
+  log_info "All prerequisites satisfied"
   # CamoFox install moved to: stackowl backends install camofox
 }
 
 install_scrapling() {
-  if ! command -v python3 &> /dev/null; then
+  if ! command -v python3 &>/dev/null; then
     log_warn "Python 3 not found — scrapling_fetch tool will be unavailable."
-    log_dim  "Install Python 3.8+ to enable anti-bot web scraping."
+    log_sub "Install Python 3.8+ to enable anti-bot web scraping."
     return
   fi
+  log_sub "Python: $(python3 --version)"
 
   # Resolve pip: prefer pip3, fall back to pip, fall back to python3 -m pip
   local PIP
@@ -322,49 +377,70 @@ install_scrapling() {
   else
     PIP="python3 -m pip"
   fi
+  log_sub "pip: $PIP"
 
-  # Check if scrapling is already installed
+  # Install scrapling if missing
   if python3 -c "import scrapling" 2>/dev/null; then
     log_info "Scrapling already installed"
   else
-    log_step "Installing Scrapling (anti-bot web scraping)..."
-    sudo $PIP install "scrapling[all]" 2>&1 | tail -3
+    log_sub "Installing scrapling[all] — this downloads several ML packages, may take a minute..."
+    echo ""
+    log_cmd "sudo $PIP install scrapling[all]"
+    echo ""
+    sudo $PIP install "scrapling[all]"
+    echo ""
     if python3 -c "import scrapling" 2>/dev/null; then
-      log_info "Scrapling installed successfully"
+      log_info "scrapling installed"
     else
-      log_warn "Scrapling installation failed — scrapling_fetch tool will be unavailable."
-      log_dim  "Try manually: sudo $PIP install scrapling[all]"
+      log_warn "scrapling installation failed — scrapling_fetch tool will be unavailable."
+      log_sub "Try manually: sudo $PIP install scrapling[all]"
       return
     fi
   fi
 
-  # Check for missing dependencies that scrapling needs
+  # Check for and install any missing optional dependencies
+  log_sub "Checking optional scrapling dependencies..."
   local MISSING_DEPS=""
-
-  python3 -c "import curl_cffi" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS curl_cffi"
-  python3 -c "import browserforge" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS browserforge"
-  python3 -c "import playwright" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS playwright"
-  python3 -c "import patchright" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS patchright"
-  python3 -c "import msgspec" 2>/dev/null || MISSING_DEPS="$MISSING_DEPS msgspec"
+  for pkg in curl_cffi browserforge playwright patchright msgspec; do
+    if python3 -c "import $pkg" 2>/dev/null; then
+      log_sub "  $pkg ✓"
+    else
+      log_sub "  $pkg — not found, will install"
+      MISSING_DEPS="$MISSING_DEPS $pkg"
+    fi
+  done
 
   if [ -n "$MISSING_DEPS" ]; then
-    log_step "Installing Scrapling dependencies:$MISSING_DEPS"
-    sudo $PIP install $MISSING_DEPS 2>&1 | tail -3
+    echo ""
+    log_sub "Installing missing packages:$MISSING_DEPS"
+    log_cmd "sudo $PIP install$MISSING_DEPS"
+    echo ""
+    sudo $PIP install $MISSING_DEPS
+    echo ""
+    log_info "Scrapling dependencies installed"
+  else
+    log_info "All scrapling dependencies present"
   fi
 
   # Install browser binaries for stealth/dynamic modes
   if ! python3 -c "
 import patchright
 from pathlib import Path
-import os
 cache = Path.home() / 'Library' / 'Caches' / 'ms-playwright'
 if not cache.exists():
     cache = Path.home() / '.cache' / 'ms-playwright'
 has_chromium = any('chromium' in str(p) for p in cache.iterdir()) if cache.exists() else False
 exit(0 if has_chromium else 1)
 " 2>/dev/null; then
-    log_step "Installing browser for Scrapling stealth mode..."
-    sudo python3 -m patchright install chromium 2>&1 | tail -3
+    log_sub "Installing Chromium browser for stealth mode (downloads ~150 MB)..."
+    echo ""
+    log_cmd "sudo python3 -m patchright install chromium"
+    echo ""
+    sudo python3 -m patchright install chromium
+    echo ""
+    log_info "Chromium browser installed"
+  else
+    log_info "Chromium browser already installed"
   fi
 
   log_info "Scrapling ready (basic + stealth + dynamic modes)"
@@ -485,6 +561,7 @@ select_launch_mode() {
 
 main() {
   print_banner
+  sync_code
   check_prerequisites
 
   # Show what config will be used (read-only, never modified)
