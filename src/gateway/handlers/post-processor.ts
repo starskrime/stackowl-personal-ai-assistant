@@ -190,6 +190,21 @@ export class PostProcessor {
       } else if ((metadata?.toolsUsed?.length ?? 0) > 0) {
         this.ctx.db.owlPerf.record(owlName, sessionId, userId, "tool_success", topic);
       }
+
+      // ── Update owl quality EWMA after each turn ─────────────────
+      // Derives a [0,1] reward proxy from session metadata signals and writes
+      // it to owl_quality_metrics so SecretaryRouter.calculateConfidence()
+      // can use real performance data instead of static routingQuality DNA.
+      try {
+        const reward = metadata?.loopExhausted
+          ? 0.1
+          : (metadata?.toolFailureCount ?? 0) >= 3
+            ? 0.3
+            : (metadata?.toolsUsed?.length ?? 0) > 0
+              ? 0.85
+              : 0.7; // no tools used — neutral pass
+        this.ctx.db.owlQualityMetrics.update(owlName, userId, reward);
+      } catch { /* non-critical */ }
     }
 
     // Learning — prefer new orchestrator (TopicFusion + Synthesis), fallback to legacy

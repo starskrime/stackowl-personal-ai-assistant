@@ -2030,6 +2030,12 @@ export class OwlGateway {
     let activeOwlName = this.ctx.owl.persona.name;
     if (!this.secretaryRouter && this.ctx.specializedRegistry) {
       this.secretaryRouter = new SecretaryRouter(this.ctx.specializedRegistry);
+      if (this.ctx.db) {
+        const db = this.ctx.db;
+        this.secretaryRouter.setQualityLookup((owlName: string) => {
+          return db.owlQualityMetrics.get(owlName, "system")?.ewmaReward ?? 0.7;
+        });
+      }
     }
     let routingResult: RoutingResult | null = null;
     if (this.owlBrain) {

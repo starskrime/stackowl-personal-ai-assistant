@@ -42,11 +42,16 @@ interface RoutingTarget {
 
 export class SecretaryRouter {
   private folderRegistry?: SpecializedOwlRegistry;
+  private qualityLookup: ((owlName: string) => number) | null = null;
 
   constructor(
     folderRegistry?: SpecializedOwlRegistry,
   ) {
     this.folderRegistry = folderRegistry;
+  }
+
+  setQualityLookup(fn: (owlName: string) => number): void {
+    this.qualityLookup = fn;
   }
 
   async route(message: string, userId: string): Promise<RoutingDecision> {
@@ -196,7 +201,9 @@ export class SecretaryRouter {
 
   private calculateConfidence(messageLower: string, target: RoutingTarget): number {
     const matchScore = this.scoreMatch(messageLower, target);
-    const dnaScore = target.routingQuality ?? 0.7;
+    const dnaScore = this.qualityLookup
+      ? this.qualityLookup(target.name)
+      : (target.routingQuality ?? 0.7);
     return (matchScore * MATCH_WEIGHT) + (dnaScore * DNA_WEIGHT);
   }
 
