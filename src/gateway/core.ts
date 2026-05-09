@@ -99,7 +99,7 @@ import { RoutingWirer } from "../parliament/routing-wirer.js";
 import type { ParliamentSession } from "../parliament/protocol.js";
 import { InstinctRegistry } from "../instincts/registry.js";
 import { InstinctEngine } from "../instincts/engine.js";
-import { RoutingCoordinator, type RoutingResult } from "./handlers/routing-coordinator.js";
+
 import { ChannelRegistry } from "./channel-registry.js";
 import { GatewayEventBus } from "./event-bus.js";
 import { DeliveryRouter } from "./delivery-router.js";
@@ -107,7 +107,7 @@ import { ChannelAdapterV1Shim, defaultCapsForV1 } from "./adapter-v1-shim.js";
 import { SessionService } from "../session/service.js";
 import { UserMemoryStore } from "../session/user-memory-store.js";
 import { migrateJsonSessionsToSQLite } from "../session/migrate.js";
-import { OwlBrain } from "../routing/owl-brain.js";
+import { OwlBrain, type OwlBrainResult } from "../routing/owl-brain.js";
 import { UserProfileService } from "../routing/user-profile-service.js";
 import { TaskOwnershipManager } from "../routing/task-ownership-manager.js";
 import { RoutingStatusReporter } from "../routing/routing-status-reporter.js";
@@ -202,7 +202,6 @@ export class OwlGateway {
   private taskQueue: TaskQueue;
   private gapLearner: GapLearner | null = null;
   private secretaryRouter: SecretaryRouter | null = null;
-  private routingCoordinator: RoutingCoordinator | null = null;
   private owlBrain: OwlBrain | null = null;
 
   // ─── OwlEngine v2 (Element 6a) ──────────────────────────────
@@ -690,14 +689,6 @@ export class OwlGateway {
         ),
       );
     }).catch(() => {});
-
-    this.routingCoordinator = new RoutingCoordinator(
-      ctx.specializedRegistry,
-      () => this.secretaryRouter,
-      ctx.owl.persona.name,
-      ctx.pelletStore,
-      ctx.digestManager,
-    );
 
     // Wire learning orchestrator → cognitive loop gap bridge.
     // When the orchestrator discovers knowledge gaps from conversations,
@@ -2048,16 +2039,12 @@ export class OwlGateway {
         });
       }
     }
-    let routingResult: RoutingResult | null = null;
+    let routingResult: OwlBrainResult | null = null;
     if (this.owlBrain) {
       const brainResult = await this.owlBrain.resolve(text, message, engineCtx, callbacks, session);
       text = brainResult.text;
       activeOwlName = brainResult.activeOwlName;
       routingResult = { text: brainResult.text, activeOwlName: brainResult.activeOwlName, parliamentHandled: brainResult.parliamentHandled };
-    } else if (this.routingCoordinator) {
-      routingResult = await this.routingCoordinator.resolve(text, message, engineCtx, callbacks, session);
-      text = routingResult.text;
-      activeOwlName = routingResult.activeOwlName;
     }
 
     if (routingResult?.parliamentHandled) {

@@ -237,7 +237,7 @@ export class PostProcessor {
     }
 
     // DNA evolution (every N messages) — now gated by MutationTracker
-    const evolutionInterval = this.ctx.config.owlDna?.evolutionBatchSize ?? 10;
+    const evolutionInterval = this.ctx.config.owlDna?.evolutionBatchSize ?? 5;
     if (
       this.messageCount % evolutionInterval === 0 &&
       this.ctx.evolutionEngine &&
