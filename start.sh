@@ -286,7 +286,7 @@ check_prerequisites() {
   if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
     echo ""
     log_step "First run — installing dependencies (this takes a few minutes)..."
-    (cd "$SCRIPT_DIR" && npm install)
+    (cd "$SCRIPT_DIR" && sudo npm install --unsafe-perm)
     log_info "Dependencies installed"
   else
     log_info "Dependencies ready"
@@ -327,12 +327,12 @@ install_scrapling() {
     log_info "Scrapling already installed"
   else
     log_step "Installing Scrapling (anti-bot web scraping)..."
-    $PIP install "scrapling[all]" 2>&1 | tail -3
+    sudo $PIP install "scrapling[all]" 2>&1 | tail -3
     if python3 -c "import scrapling" 2>/dev/null; then
       log_info "Scrapling installed successfully"
     else
       log_warn "Scrapling installation failed — scrapling_fetch tool will be unavailable."
-      log_dim  "Try manually: $PIP install scrapling[all]"
+      log_dim  "Try manually: sudo $PIP install scrapling[all]"
       return
     fi
   fi
@@ -348,7 +348,7 @@ install_scrapling() {
 
   if [ -n "$MISSING_DEPS" ]; then
     log_step "Installing Scrapling dependencies:$MISSING_DEPS"
-    $PIP install $MISSING_DEPS 2>&1 | tail -3
+    sudo $PIP install $MISSING_DEPS 2>&1 | tail -3
   fi
 
   # Install browser binaries for stealth/dynamic modes
@@ -363,7 +363,7 @@ has_chromium = any('chromium' in str(p) for p in cache.iterdir()) if cache.exist
 exit(0 if has_chromium else 1)
 " 2>/dev/null; then
     log_step "Installing browser for Scrapling stealth mode..."
-    python3 -m patchright install chromium 2>&1 | tail -3
+    sudo python3 -m patchright install chromium 2>&1 | tail -3
   fi
 
   log_info "Scrapling ready (basic + stealth + dynamic modes)"
