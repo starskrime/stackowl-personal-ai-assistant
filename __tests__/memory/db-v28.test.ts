@@ -20,8 +20,11 @@ describe("v28 Element17 migration", () => {
   it("creates owl_pins table with composite PK", () => {
     applyV28Element17Migration(db)
     const cols = db.prepare("PRAGMA table_info(owl_pins)").all() as any[]
-    expect(cols.map((c: any) => c.name)).toContain("channel_id")
-    expect(cols.map((c: any) => c.name)).toContain("user_id")
+    const names = cols.map((c: any) => c.name)
+    expect(names).toContain("channel_id")
+    expect(names).toContain("user_id")
+    expect(names).toContain("owl_name")
+    expect(names).toContain("pinned_at")
   })
 
   it("creates owl_recurring_jobs table", () => {
@@ -48,5 +51,22 @@ describe("v28 Element17 migration", () => {
   it("is idempotent", () => {
     applyV28Element17Migration(db)
     expect(() => applyV28Element17Migration(db)).not.toThrow()
+  })
+
+  it("owl_quality_metrics has ewma_reward default 0.7", () => {
+    applyV28Element17Migration(db)
+    db.exec(`INSERT INTO owl_quality_metrics (owl_name, owner_id, turn_count, ewma_reward) VALUES ('aria', 'user1', 0, 0.7)`)
+    const row = db.prepare(`SELECT ewma_reward FROM owl_quality_metrics WHERE owl_name = 'aria'`).get() as any
+    expect(row.ewma_reward).toBeCloseTo(0.7, 5)
+  })
+
+  it("owl_recurring_jobs has required columns", () => {
+    applyV28Element17Migration(db)
+    const cols = db.prepare("PRAGMA table_info(owl_recurring_jobs)").all() as any[]
+    const names = cols.map((c: any) => c.name)
+    expect(names).toContain("helper_name")
+    expect(names).toContain("schedule")
+    expect(names).toContain("task_description")
+    expect(names).toContain("channel_id")
   })
 })

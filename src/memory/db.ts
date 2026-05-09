@@ -4105,6 +4105,7 @@ export function applyV28Element17Migration(db: Database.Database): void {
       last_updated TEXT,
       PRIMARY KEY (owl_name, owner_id)
     );
+    CREATE INDEX IF NOT EXISTS idx_owl_quality_metrics_owner ON owl_quality_metrics(owner_id);
   `)
 
   // Per-channel pin isolation (replaces single active_pin column on user_profiles)
