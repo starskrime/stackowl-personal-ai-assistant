@@ -40,16 +40,28 @@ export const APITesterTool: ToolImplementation = {
     const headersRaw = args.headers as string | undefined;
     const body = args.body as string | undefined;
 
+    // 1. ENTRY
+    log.tool.debug("api_tester.execute: entry", { method, url, hasHeaders: !!headersRaw, hasBody: !!body });
+
     try {
       let parsedHeaders: Record<string, string> = {};
       if (headersRaw) {
         try {
           parsedHeaders = JSON.parse(headersRaw);
         } catch (err) {
-          log.tool.warn('operation failed', err);
+          log.tool.warn("api_tester.execute: headers parse failed", err);
           return "Error: headers must be a valid JSON string.";
         }
       }
+
+      // 2. DECISION — auth scheme used
+      const authHeader = parsedHeaders["Authorization"] ?? parsedHeaders["authorization"];
+      const authScheme = authHeader
+        ? authHeader.toLowerCase().startsWith("bearer ") ? "bearer"
+        : authHeader.toLowerCase().startsWith("basic ") ? "basic"
+        : "custom"
+        : "none";
+      log.tool.debug("api_tester.execute: request prepared", { method, url, authScheme });
 
       const fetchOptions: RequestInit = {
         method,
@@ -61,7 +73,12 @@ export const APITesterTool: ToolImplementation = {
         fetchOptions.body = body;
       }
 
+      // 3. STEP — HTTP request sent
+      const reqStart = Date.now();
       const resp = await fetch(url, fetchOptions);
+      const latencyMs = Date.now() - reqStart;
+
+      log.tool.debug("api_tester.execute: response received", { status: resp.status, latencyMs });
 
       // Collect response headers
       const respHeaders: string[] = [];
@@ -73,7 +90,7 @@ export const APITesterTool: ToolImplementation = {
       try {
         respBody = await resp.text();
       } catch (err) {
-        log.tool.warn('operation failed', err);
+        log.tool.warn("api_tester.execute: response body read failed", err);
         respBody = "(could not read response body)";
       }
 
@@ -83,12 +100,17 @@ export const APITesterTool: ToolImplementation = {
           `\n... (truncated, ${respBody.length} chars total)`;
       }
 
-      return [
+      const result = [
         `Status: ${resp.status} ${resp.statusText}`,
         `\nResponse Headers:\n${respHeaders.join("\n")}`,
         `\nBody:\n${respBody}`,
       ].join("\n");
+
+      // 4. EXIT
+      log.tool.debug("api_tester.execute: exit", { success: true, resultLen: result.length });
+      return result;
     } catch (e) {
+      log.tool.error("api_tester.execute: request failed", e instanceof Error ? e : new Error(String(e)), { method, url });
       return `api_tester error: ${e instanceof Error ? e.message : String(e)}`;
     }
   },

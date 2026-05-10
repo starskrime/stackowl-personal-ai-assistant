@@ -44,9 +44,14 @@ export const CronJobTool: ToolImplementation = {
     const command = args.command as string | undefined;
     const lineNumber = args.line_number as number | undefined;
 
+    // 1. ENTRY
+    log.tool.debug("system_cron.execute: entry", { action, schedule, lineNumber });
+
     try {
       switch (action) {
         case "list": {
+          // 3. STEP
+          log.tool.debug("system_cron.execute: listing crontab");
           try {
             const { stdout } = await execAsync("crontab -l", {
               timeout: TIMEOUT_MS,
@@ -57,11 +62,15 @@ export const CronJobTool: ToolImplementation = {
               .split("\n")
               .map((line, i) => `${i + 1}: ${line}`)
               .join("\n");
-            return `Current crontab:\n${numbered}`;
+            const result = `Current crontab:\n${numbered}`;
+            // 4. EXIT
+            log.tool.debug("system_cron.execute: exit", { success: true, resultLen: result.length });
+            return result;
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             if (msg.includes("no crontab"))
               return "No crontab exists for the current user.";
+            log.tool.error("system_cron.execute: list failed", e instanceof Error ? e : new Error(msg), { action });
             return `Error listing crontab: ${msg}`;
           }
         }
@@ -73,7 +82,7 @@ export const CronJobTool: ToolImplementation = {
 
           const newEntry = `${schedule} ${command}`;
 
-          // Get existing crontab (may be empty)
+          // 2. DECISION — building new vs appending to existing crontab
           let existing = "";
           try {
             const { stdout } = await execAsync("crontab -l", {
@@ -81,13 +90,16 @@ export const CronJobTool: ToolImplementation = {
             });
             existing = stdout.trimEnd();
           } catch (err) {
-            log.tool.warn('operation failed', err);
+            log.tool.warn("system_cron.execute: no existing crontab, creating fresh", err);
             // No existing crontab, that's fine
           }
 
+          const isFirstEntry = !existing;
+          log.tool.debug("system_cron.execute: adding entry", { schedule, isFirstEntry, newEntry });
+
           const updated = existing ? `${existing}\n${newEntry}` : newEntry;
 
-          // Use printf to pipe into crontab
+          // 3. STEP — write updated crontab
           await execAsync(
             `printf '%s\\n' '${updated.replace(/'/g, "'\\''")}' | crontab -`,
             {
@@ -95,13 +107,18 @@ export const CronJobTool: ToolImplementation = {
             },
           );
 
-          return `Added cron job: ${newEntry}`;
+          const result = `Added cron job: ${newEntry}`;
+          // 4. EXIT
+          log.tool.debug("system_cron.execute: exit", { success: true, resultLen: result.length });
+          return result;
         }
 
         case "remove": {
           if (lineNumber === undefined)
             return "Error: line_number is required for the remove action.";
 
+          // 3. STEP — read existing crontab
+          log.tool.debug("system_cron.execute: reading crontab for removal", { lineNumber });
           let existing: string;
           try {
             const { stdout } = await execAsync("crontab -l", {
@@ -109,7 +126,7 @@ export const CronJobTool: ToolImplementation = {
             });
             existing = stdout.trimEnd();
           } catch (err) {
-            log.tool.warn('operation failed', err);
+            log.tool.warn("system_cron.execute: crontab read failed during remove", err);
             return "No crontab exists — nothing to remove.";
           }
 
@@ -123,7 +140,9 @@ export const CronJobTool: ToolImplementation = {
 
           if (lines.length === 0) {
             await execAsync("crontab -r", { timeout: TIMEOUT_MS });
-            return `Removed "${removed}" — crontab is now empty.`;
+            const result = `Removed "${removed}" — crontab is now empty.`;
+            log.tool.debug("system_cron.execute: exit", { success: true, resultLen: result.length });
+            return result;
           }
 
           const updated = lines.join("\n");
@@ -134,13 +153,17 @@ export const CronJobTool: ToolImplementation = {
             },
           );
 
-          return `Removed line ${lineNumber}: "${removed}"`;
+          const result = `Removed line ${lineNumber}: "${removed}"`;
+          // 4. EXIT
+          log.tool.debug("system_cron.execute: exit", { success: true, resultLen: result.length });
+          return result;
         }
 
         default:
           return `Unknown action: ${action}. Use list, add, or remove.`;
       }
     } catch (e) {
+      log.tool.error("system_cron.execute: operation failed", e instanceof Error ? e : new Error(String(e)), { action });
       return `system_cron error: ${e instanceof Error ? e.message : String(e)}`;
     }
   },

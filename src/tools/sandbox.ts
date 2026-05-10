@@ -33,6 +33,9 @@ export const SandboxTool: ToolImplementation = {
     if (!cmd) throw new Error("Command argument missing");
 
     const workspaceDir = resolve(context.cwd);
+
+    // 1. ENTRY
+    log.tool.debug("run_sandbox_command.execute: entry", { cmd, workspaceDir, image: SANDBOX_IMAGE });
     log.tool.info(`[SandboxTool] Executing long-horizon command: ${cmd}`);
 
     return new Promise((resolvePromise) => {
@@ -51,6 +54,11 @@ export const SandboxTool: ToolImplementation = {
         cmd,
       ];
 
+      // 2. DECISION — Docker container execution (not bare host)
+      log.tool.debug("run_sandbox_command.execute: docker args built", { image: SANDBOX_IMAGE, workspaceDir });
+
+      // 3. STEP — Docker subprocess spawned
+      log.tool.debug("run_sandbox_command.execute: spawning docker container", { cmd });
       const proc = spawn("docker", dockerArgs);
 
       let stdout = "";
@@ -73,6 +81,7 @@ export const SandboxTool: ToolImplementation = {
 
       const timer = setTimeout(() => {
         proc.kill("SIGKILL");
+        log.tool.debug("run_sandbox_command.execute: timeout triggered", { timeoutMs: DEFAULT_TIMEOUT_MS });
         resolvePromise(
           `[SYSTEM DIAGNOSTIC HINT]\nCommand timed out after ${DEFAULT_TIMEOUT_MS / 1000}s. ` +
           `Partial STDOUT:\n${stdout.slice(-2000)}\nPartial STDERR:\n${stderr.slice(-2000)}`
@@ -81,9 +90,9 @@ export const SandboxTool: ToolImplementation = {
 
       proc.on("close", (code) => {
         clearTimeout(timer);
-        
+
         let output = `EXIT_CODE: ${code ?? 0}\n\nSTDOUT:\n${stdout.trim() || "(none)"}\n\nSTDERR:\n${stderr.trim() || "(none)"}`;
-        
+
         if (output.length > 15000) {
            output = output.slice(0, 15000) + "\n...[truncated]";
         }
@@ -94,11 +103,14 @@ export const SandboxTool: ToolImplementation = {
            output += `\n\n[SYSTEM DIAGNOSTIC HINT] Success! Verification passed.`;
         }
 
+        // 4. EXIT
+        log.tool.debug("run_sandbox_command.execute: exit", { success: code === 0, exitCode: code ?? 0, stdoutLen: stdout.length, stderrLen: stderr.length, outputLen: output.length });
         resolvePromise(output);
       });
 
       proc.on("error", (err) => {
         clearTimeout(timer);
+        log.tool.error("run_sandbox_command.execute: docker spawn failed", err, { cmd });
         resolvePromise(`[SYSTEM DIAGNOSTIC HINT] Failed to spawn Docker process. Is Docker running? Error: ${err.message}`);
       });
     });

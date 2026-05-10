@@ -51,6 +51,9 @@ export const CodeSandboxTool: ToolImplementation = {
     if (!language) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "language is required" } });
     if (!code)     return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "code is required" } });
 
+    // 1. ENTRY
+    log.tool.debug("sandbox.execute: entry", { language, codeLen: code.length, timeout });
+
     const dir  = await mkdtemp(join(tmpdir(), "stackowl-sandbox-"));
     const ext  = language === "python" ? "py" : "js";
     const file = join(dir, `script.${ext}`);
@@ -59,16 +62,22 @@ export const CodeSandboxTool: ToolImplementation = {
     const cmd     = language === "python" ? "python3" : "node";
     const cmdArgs = [file];
 
+    // 2. DECISION — language runtime selection
+    log.tool.debug("sandbox.execute: runtime selected", { cmd, file });
+
     return new Promise<string>((resolve) => {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
 
+      // 3. STEP — subprocess spawned
+      log.tool.debug("sandbox.execute: spawning subprocess", { cmd, cwd: dir });
       const child = spawn(cmd, cmdArgs, { cwd: dir });
 
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGKILL");
+        log.tool.debug("sandbox.execute: timeout triggered", { timeout });
       }, timeout);
 
       child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -79,13 +88,17 @@ export const CodeSandboxTool: ToolImplementation = {
         rm(dir, { recursive: true }).catch((err) => { log.tool.warn("sandbox temp-dir cleanup failed", err); });
 
         if (timedOut) {
-          resolve(JSON.stringify({
+          const result = JSON.stringify({
             success: false,
             error: { code: "TIMEOUT", message: `Execution exceeded ${timeout}ms` },
-          }));
+          });
+          log.tool.debug("sandbox.execute: exit", { success: false, reason: "TIMEOUT", timeout });
+          resolve(result);
           return;
         }
 
+        // 4. EXIT
+        log.tool.debug("sandbox.execute: exit", { success: true, exitCode: exitCode ?? 0, stdoutLen: stdout.length, stderrLen: stderr.length });
         resolve(JSON.stringify({
           success: true,
           data: { stdout, stderr, exitCode: exitCode ?? 0 },
@@ -95,6 +108,7 @@ export const CodeSandboxTool: ToolImplementation = {
       child.on("error", (err) => {
         clearTimeout(timer);
         rm(dir, { recursive: true }).catch((err) => { log.tool.warn("sandbox temp-dir cleanup failed", err); });
+        log.tool.error("sandbox.execute: spawn failed", err as Error, { cmd, language });
         resolve(JSON.stringify({
           success: false,
           error: { code: "SPAWN_ERROR", message: (err as Error).message },
