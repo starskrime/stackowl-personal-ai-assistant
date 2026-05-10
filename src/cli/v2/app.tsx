@@ -7,12 +7,14 @@
 import { UiStoreProvider, useUiStore } from "./providers/UiStoreProvider.js";
 import { EventBusProvider } from "./providers/EventBusProvider.js";
 import { ThemeProvider } from "./providers/ThemeProvider.js";
+import { CommandDispatcherProvider } from "./providers/CommandDispatcherProvider.js";
 import { ChatScreen } from "./screens/ChatScreen.js";
 import { ParliamentScreen } from "./screens/ParliamentScreen.js";
 import { OnboardingScreen } from "./screens/OnboardingScreen.js";
 import { SkillWizardScreen } from "./screens/SkillWizardScreen.js";
 import { SessionsScreen } from "./screens/SessionsScreen.js";
 import { OwlsScreen } from "./screens/OwlsScreen.js";
+import type { CommandDispatcher } from "./commands/dispatcher.js";
 
 interface ActiveScreenProps {
   onSubmit: (text: string) => void;
@@ -34,14 +36,17 @@ function ActiveScreen({ onSubmit, onResume }: ActiveScreenProps) {
 export interface AppProps {
   onSubmit: (text: string) => void;
   onResume: (sessionId: string, title: string) => void;
+  commandDispatcher: CommandDispatcher;
 }
 
-export function App({ onSubmit, onResume }: AppProps) {
+export function App({ onSubmit, onResume, commandDispatcher }: AppProps) {
   return (
     <ThemeProvider>
       <UiStoreProvider>
         <EventBusProvider>
-          <ActiveScreen onSubmit={onSubmit} onResume={onResume} />
+          <CommandDispatcherProvider dispatcher={commandDispatcher}>
+            <ActiveScreen onSubmit={onSubmit} onResume={onResume} />
+          </CommandDispatcherProvider>
         </EventBusProvider>
       </UiStoreProvider>
     </ThemeProvider>

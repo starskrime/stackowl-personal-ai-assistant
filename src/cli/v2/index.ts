@@ -37,6 +37,7 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
     React.createElement(App, {
       onSubmit: (text: string) => adapter.submitMessage(text),
       onResume: (sessionId: string, title: string) => adapter.resumeSession(sessionId, title),
+      commandDispatcher: adapter.getCommandDispatcher(),
     })
   );
 

@@ -17,6 +17,8 @@ import type { UiEvent } from "../../cli/v2/events/UiEvent.js";
 import { globalBridge, type OwlMeta } from "../../cli/v2/events/bridge.js";
 import { OwlGateway, makeMessage, makeSessionId } from "../core.js";
 import { runWithContext } from "../../infra/observability/context.js";
+import { createCommandDispatcher } from "../../cli/v2/commands/dispatcher.js";
+import type { CommandDispatcher } from "../../cli/v2/commands/dispatcher.js";
 
 export interface CliV2AdapterConfig {
   userId?: string;
@@ -35,6 +37,7 @@ export class CliV2Adapter implements ChannelAdapter {
   /** Resolves when stop() is called — start() awaits this. */
   private _quitResolve: (() => void) | null = null;
   private _quitPromise: Promise<void>;
+  private _commandDispatcher: CommandDispatcher | null = null;
 
   constructor(gateway: OwlGateway, config: CliV2AdapterConfig = {}) {
     this._gateway = gateway;
@@ -103,6 +106,19 @@ export class CliV2Adapter implements ChannelAdapter {
 
   emit(event: UiEvent): void {
     globalBridge.emit(event);
+  }
+
+  getCommandDispatcher(): CommandDispatcher {
+    if (!this._commandDispatcher) {
+      this._commandDispatcher = createCommandDispatcher(() => ({
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        getMemoryRepo: () => this._gateway.getMemoryRepo()!,
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        getMcpManager: () => this._gateway.getMcpManager()!,
+        getOwlGateway: () => this._gateway,
+      }));
+    }
+    return this._commandDispatcher;
   }
 
   capabilities(): ChannelCapabilities {
