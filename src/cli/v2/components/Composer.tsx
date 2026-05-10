@@ -44,9 +44,11 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const { colors } = useTheme();
   const dispatcher = useCommandDispatcher();
 
-  const mode       = useUiStore((s) => s.mode);
-  const generating = useUiStore((s) => s.generating);
-  const panelFocus = useUiStore((s) => s.panelFocus);
+  const mode          = useUiStore((s) => s.mode);
+  const generating    = useUiStore((s) => s.generating);
+  const panelFocus    = useUiStore((s) => s.panelFocus);
+  const activeOwlName = useUiStore((s) => s.activeOwlName);
+  const activeOwlEmoji = useUiStore((s) => s.activeOwlEmoji);
 
   // CommandContext shell for completions (bridge + store only)
   // Stable ref — globalBridge and uiStore are module-level singletons so this never changes
@@ -201,6 +203,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         ) : (
           <>
             <Box paddingLeft={1}>
+              <Text dimColor>{activeOwlEmoji} {activeOwlName} </Text>
               <Text bold color={panelFocus === "panel" ? colors.dim : colors.user}>❯ </Text>
               <Text color={panelFocus === "panel" ? colors.dim : undefined}>{value}</Text>
               {panelFocus !== "panel" && <Text color={colors.accent}>▋</Text>}
