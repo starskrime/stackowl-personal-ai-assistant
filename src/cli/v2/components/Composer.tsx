@@ -35,18 +35,38 @@ export interface ComposerProps {
 export function Composer({ onSubmit, disabled }: ComposerProps) {
   const [value, setValue] = useState("");
   const [genFrame, setGenFrame] = useState(0);
+  const [popupIdx, setPopupIdx] = useState(0);
   const historyRef = useRef<InputHistory>(new InputHistory());
   const { exit } = useApp();
   const { colors } = useTheme();
 
-  // Store values needed for keyboard handling
-  const mode          = useUiStore((s) => s.mode);
+  const mode      = useUiStore((s) => s.mode);
+  const generating = useUiStore((s) => s.generating);
 
   useEffect(() => {
-    if (!disabled) return;
+    if (!generating) return;
     const t = setInterval(() => setGenFrame((f) => (f + 1) % STACKOWL_SPINNER.length), SPINNER_INTERVAL_MS);
     return () => clearInterval(t);
-  }, [disabled]);
+  }, [generating]);
+
+  // Slash popup: visible when value starts with "/" and has no space (not a sentence)
+  const popupCandidates = (() => {
+    if (!value.startsWith("/") || value.includes(" ")) return [];
+    return SLASH_COMMANDS.filter((cmd) => cmd.startsWith(value));
+  })();
+  const showPopup = popupCandidates.length > 0 && value !== popupCandidates[0];
+
+  // Reset popup selection index when candidates change
+  useEffect(() => { setPopupIdx(0); }, [popupCandidates.length]);
+
+  function dispatchSlash(cmd: string): void {
+    if (cmd === "/sessions") { globalBridge.requestSessionsView(); return; }
+    if (cmd === "/help")     { globalBridge.requestHelpView();     return; }
+    if (cmd === "/owls")     { globalBridge.requestOwlsView();     return; }
+    if (cmd === "/skills")   { globalBridge.requestSkillsView();   return; }
+    if (cmd === "/mcp")      { globalBridge.requestMcpView();      return; }
+    if (cmd === "/quit" || cmd === "/exit") { exit(); }
+  }
 
   useInput(
     (input, key) => {
@@ -58,22 +78,35 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         return;
       }
 
+      // Arrow navigation inside slash popup
+      if (showPopup) {
+        if (key.upArrow)   { setPopupIdx((i) => (i - 1 + popupCandidates.length) % popupCandidates.length); return; }
+        if (key.downArrow) { setPopupIdx((i) => (i + 1) % popupCandidates.length); return; }
+        if (key.escape)    { setValue(""); return; }
+        if (key.tab)       { setValue(popupCandidates[popupIdx] ?? value); return; }
+      }
+
       if (key.return && !key.shift) {
         const trimmed = value.trim();
-        if (trimmed === "/sessions") { globalBridge.requestSessionsView(); setValue(""); return; }
-        if (trimmed === "/help")     { globalBridge.requestHelpView();     setValue(""); return; }
-        if (trimmed === "/owls")     { globalBridge.requestOwlsView();     setValue(""); return; }
-        if (trimmed === "/skills")   { globalBridge.requestSkillsView();   setValue(""); return; }
-        if (trimmed === "/mcp")      { globalBridge.requestMcpView();      setValue(""); return; }
-        if (trimmed === "/quit" || trimmed === "/exit") { exit(); return; }
+        // If popup is open and there's an exact or single match, dispatch it
+        if (showPopup && popupCandidates.length > 0) {
+          dispatchSlash(popupCandidates[popupIdx] ?? trimmed);
+          setValue("");
+          return;
+        }
+        if (SLASH_COMMANDS.includes(trimmed)) { dispatchSlash(trimmed); setValue(""); return; }
         if (trimmed) { historyRef.current.push(trimmed); onSubmit(trimmed); }
         setValue("");
         return;
       }
 
       if (key.backspace || key.delete) { setValue((v) => v.slice(0, -1)); return; }
-      if (key.upArrow)   { const p = historyRef.current.prev(value); if (p !== null) setValue(p); return; }
-      if (key.downArrow) { const n = historyRef.current.next(); setValue(n !== null ? n : ""); return; }
+
+      // Up/down arrow = history navigation when popup is NOT open
+      if (!showPopup) {
+        if (key.upArrow)   { const p = historyRef.current.prev(value); if (p !== null) setValue(p); return; }
+        if (key.downArrow) { const n = historyRef.current.next(); setValue(n !== null ? n : ""); return; }
+      }
 
       if (isPasteChunk(input)) { setValue((v) => v + stripPasteMarkers(input)); return; }
       if (!key.ctrl && !key.meta && input.length === 1) { setValue((v) => v + input); return; }
@@ -81,38 +114,43 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     { isActive: !disabled },
   );
 
-  const slashHint = (() => {
-    if (!value.startsWith("/") || value.includes(" ")) return null;
-    const match = SLASH_COMMANDS.find((cmd) => cmd.startsWith(value) && cmd !== value);
-    return match ? match.slice(value.length) : null;
-  })();
-
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.dim}
-    >
-      {disabled ? (
-        <Box paddingLeft={1}>
-          <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[genFrame]} </Text>
-          <Text dimColor>generating...</Text>
-        </Box>
-      ) : (
-        <>
-          <Box paddingLeft={1}>
-            <Text bold color={colors.user}>❯ </Text>
-            <Text>{value}</Text>
-            {slashHint ? <Text dimColor>{slashHint}</Text> : null}
-            <Text color={colors.accent}>▋</Text>
-          </Box>
-          {value === "" && (
-            <Box paddingLeft={1}>
-              <Text dimColor>/help · /owls · /sessions · /skills · /mcp</Text>
+    <Box flexDirection="column">
+      {/* Slash command popup — rendered above the input box */}
+      {showPopup && (
+        <Box flexDirection="column" borderStyle="round" borderColor={colors.accent} paddingX={1} marginBottom={0}>
+          {popupCandidates.map((cmd, i) => (
+            <Box key={cmd}>
+              <Text color={i === popupIdx ? colors.accent : undefined} bold={i === popupIdx}>
+                {i === popupIdx ? "❯ " : "  "}{cmd}
+              </Text>
             </Box>
-          )}
-        </>
+          ))}
+        </Box>
       )}
+
+      {/* Main input box */}
+      <Box flexDirection="column" borderStyle="round" borderColor={colors.dim}>
+        {generating ? (
+          <Box paddingLeft={1}>
+            <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[genFrame]} </Text>
+            <Text dimColor>generating...</Text>
+          </Box>
+        ) : (
+          <>
+            <Box paddingLeft={1}>
+              <Text bold color={colors.user}>❯ </Text>
+              <Text>{value}</Text>
+              <Text color={colors.accent}>▋</Text>
+            </Box>
+            {value === "" && (
+              <Box paddingLeft={1}>
+                <Text dimColor>/help · /owls · /sessions · /skills · /mcp</Text>
+              </Box>
+            )}
+          </>
+        )}
+      </Box>
     </Box>
   );
 }
