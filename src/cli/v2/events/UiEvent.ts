@@ -39,6 +39,12 @@ export interface SessionsViewDismissedEvent {
 
 // ─── Turn lifecycle ───────────────────────────────────────────────────────────
 
+export interface UserMessageEvent {
+  kind: "user.message";
+  turnId: string;
+  text: string;
+}
+
 export interface TurnStartedEvent {
   kind: "turn.started";
   turnId: string;
@@ -255,6 +261,7 @@ export type UiEvent =
   | SessionsLoadedEvent
   | SessionsViewRequestedEvent
   | SessionsViewDismissedEvent
+  | UserMessageEvent
   | TurnStartedEvent
   | TokenDeltaEvent
   | TurnCommittedEvent

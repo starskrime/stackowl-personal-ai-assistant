@@ -30,6 +30,18 @@ const MAX_TURNS = 200;
 
 export function applyTurnsEvent(state: UiState, event: UiEvent): UiState {
   switch (event.kind) {
+    case "user.message": {
+      const userTurn: Turn = {
+        turnId: event.turnId,
+        role: "user",
+        text: event.text,
+        committed: true,
+        timestamp: Date.now(),
+      };
+      const turns = [...state.turns, userTurn].slice(-MAX_TURNS);
+      return { ...state, turns };
+    }
+
     case "turn.started": {
       const live: Turn = {
         turnId: event.turnId,

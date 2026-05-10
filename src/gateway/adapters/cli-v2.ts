@@ -137,6 +137,9 @@ export class CliV2Adapter implements ChannelAdapter {
       model: activeModel,
     };
 
+    // Show user's message in the Transcript immediately.
+    globalBridge.emit({ kind: "user.message", turnId: uuidv4(), text: trimmed });
+
     // Announce turn start (current owl + model).
     globalBridge.translateOwlChange(turnId, owlMeta.owlEmoji, owlMeta.owlName, undefined, owlMeta.model);
 
