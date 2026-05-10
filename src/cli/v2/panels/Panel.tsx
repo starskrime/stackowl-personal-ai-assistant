@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useTheme } from "../providers/ThemeProvider.js";
 
@@ -14,7 +14,6 @@ export interface PanelAction {
   label: string;
   handler: (item: PanelItem) => void | Promise<void>;
   confirm?: string;     // if set, show "Type 'yes' to confirm:" before firing
-  destructive?: boolean;
 }
 
 export interface PanelProps {
@@ -24,9 +23,10 @@ export interface PanelProps {
   actions?: PanelAction[];
   onDismiss: () => void;
   emptyText?: string;
+  isActive?: boolean;
 }
 
-export function Panel({ title, color, items, actions = [], onDismiss, emptyText = "No items." }: PanelProps) {
+export function Panel({ title, color, items, actions = [], onDismiss, emptyText = "No items.", isActive = true }: PanelProps) {
   const { colors } = useTheme();
   const { stdout } = useStdout();
   const [scrollTop, setScrollTop] = useState(0);
@@ -43,6 +43,12 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
   const hasAbove = scrollTop > 0;
   const hasBelow = scrollTop + maxVisible < items.length;
   const borderColor = color ?? colors.accent;
+
+  // Reset selection when items list changes
+  useEffect(() => {
+    setSelectedIdx(0);
+    setScrollTop(0);
+  }, [items.length]);
 
   // Clamp selectedIdx to valid range when items change
   const clampedIdx = items.length > 0 ? Math.min(selectedIdx, items.length - 1) : 0;
@@ -102,10 +108,10 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
         return;
       }
     }
-  });
+  }, { isActive });
 
   const footerActions = confirming
-    ? `Type 'yes' to confirm ${confirming.label} (Enter/Esc):`
+    ? (confirming.confirm ?? `Type 'yes' to confirm ${confirming.label}`) + " (Enter/Esc):"
     : [
         "↑↓ nav",
         ...actions.map((a) => `${a.key === "return" ? "Enter" : a.key} ${a.label}`),
