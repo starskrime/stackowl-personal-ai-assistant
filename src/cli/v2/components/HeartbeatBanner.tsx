@@ -7,12 +7,13 @@
  *   │  Your reminder text here                │
  *   ╰─────────────────────────────────────────╯
  *
- * The magenta border and 🔔 header make proactive messages immediately
- * distinguishable from solicited chat turns.
+ * Purple (#A78BFA) border distinguishes proactive messages from all solicited turns.
  */
 
 import { Box, Text } from "ink";
 import type { HeartbeatMessage } from "../state/slices/heartbeat.js";
+
+const HEARTBEAT_PURPLE = "#A78BFA";
 
 export interface HeartbeatBannerProps {
   msg: HeartbeatMessage;
@@ -23,7 +24,7 @@ export function HeartbeatBanner({ msg }: HeartbeatBannerProps) {
   return (
     <Box
       borderStyle="round"
-      borderColor="magenta"
+      borderColor={HEARTBEAT_PURPLE}
       flexDirection="column"
       paddingX={1}
       paddingY={0}
@@ -32,7 +33,7 @@ export function HeartbeatBanner({ msg }: HeartbeatBannerProps) {
     >
       <Box>
         <Text>{emoji} </Text>
-        <Text bold color="magenta">{msg.owlName}</Text>
+        <Text bold color={HEARTBEAT_PURPLE}>{msg.owlName}</Text>
         <Text dimColor>  unsolicited</Text>
       </Box>
       <Box marginTop={0} paddingLeft={0}>
