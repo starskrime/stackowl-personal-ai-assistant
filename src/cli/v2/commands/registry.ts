@@ -12,6 +12,17 @@ import {
   handleMemoryExport,
   completeMemoryKeys,
 } from "./handlers/memory.js";
+import {
+  handleMcpList,
+  handleMcpStatus,
+  handleMcpAdd,
+  handleMcpRemove,
+  handleMcpEnable,
+  handleMcpDisable,
+  handleMcpTools,
+  handleMcpReconnect,
+  completeMcpServers,
+} from "./handlers/mcp.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -161,25 +172,17 @@ export const REGISTRY: CommandSpec[] = [
     name: "/mcp",
     description: "Manage MCP servers",
     subcommands: [
-      { name: "list",      description: "List all configured MCP servers", handler: notImplemented },
-      { name: "status",    description: "Full status report",              handler: notImplemented },
-      { name: "add",       description: "Install + connect a server",      args: [{ name: "<package>" }], handler: notImplemented },
-      { name: "remove",    description: "Remove a server",                 args: [{ name: "<name>" }],    handler: notImplemented },
-      { name: "enable",    description: "Enable a server",                 args: [{ name: "<name>" }],    handler: notImplemented },
-      { name: "disable",   description: "Disable a server",                args: [{ name: "<name>" }],    handler: notImplemented },
-      { name: "tools",     description: "List tools for a server",         args: [{ name: "<name>" }],    handler: notImplemented },
-      { name: "reconnect", description: "Reconnect a server",              args: [{ name: "<name>" }],    handler: notImplemented },
+      { name: "list",      description: "List all configured MCP servers",                               handler: handleMcpList },
+      { name: "status",    description: "Full status report",                                            handler: handleMcpStatus },
+      { name: "add",       description: "Install + connect a server",      args: [{ name: "<package>" }], handler: handleMcpAdd },
+      { name: "install",   description: "Alias for add",                   args: [{ name: "<package>" }], handler: handleMcpAdd },
+      { name: "remove",    description: "Remove a server",                 args: [{ name: "<name>" }],    handler: handleMcpRemove,    complete: completeMcpServers },
+      { name: "enable",    description: "Enable a server",                 args: [{ name: "<name>" }],    handler: handleMcpEnable,    complete: completeMcpServers },
+      { name: "disable",   description: "Disable a server",                args: [{ name: "<name>" }],    handler: handleMcpDisable,   complete: completeMcpServers },
+      { name: "tools",     description: "List tools for a server",         args: [{ name: "<name>" }],    handler: handleMcpTools,     complete: completeMcpServers },
+      { name: "reconnect", description: "Reconnect a server",              args: [{ name: "<name>" }],    handler: handleMcpReconnect, complete: completeMcpServers },
     ],
-    handler: async (ctx) => {
-      const { mcpServers } = ctx.getStore();
-      const items = mcpServers.map((s) => ({
-        id: s.name,
-        label: s.name,
-        meta: `${s.connected ? "● connected" : "○ disconnected"}  ${s.toolCount} tool${s.toolCount !== 1 ? "s" : ""}`,
-        data: s,
-      }));
-      return { kind: "panel", payload: { title: "/mcp list", items, emptyText: "No MCP servers configured." } };
-    },
+    handler: handleMcpList,
   },
   {
     name: "/memory",
