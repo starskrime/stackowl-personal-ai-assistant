@@ -3,6 +3,12 @@ import type { UiState } from "../state/store.js";
 import { handleStatus } from "./handlers/status.js";
 import { handleClear }  from "./handlers/clear.js";
 import {
+  handleCapabilities,
+  handleLearning,
+  handleOwlStatus,
+  handleHelp,
+} from "./handlers/misc.js";
+import {
   handleMemoryList,
   handleMemorySearch,
   handleMemoryGet,
@@ -115,7 +121,7 @@ export const REGISTRY: CommandSpec[] = [
     name: "/help",
     aliases: ["/?"],
     description: "Show available commands",
-    handler: notImplemented,
+    handler: handleHelp,
   },
   {
     name: "/sessions",
@@ -217,9 +223,9 @@ export const REGISTRY: CommandSpec[] = [
     name: "/owl",
     description: "Show current owl status",
     subcommands: [
-      { name: "status", description: "Show owl state + memory stats", handler: notImplemented },
+      { name: "status", description: "Show owl state + memory stats", handler: handleOwlStatus },
     ],
-    handler: notImplemented,
+    handler: handleOwlStatus,
   },
   {
     name: "/status",
@@ -235,12 +241,12 @@ export const REGISTRY: CommandSpec[] = [
   {
     name: "/capabilities",
     description: "List synthesized capabilities",
-    handler: notImplemented,
+    handler: handleCapabilities,
   },
   {
     name: "/learning",
     description: "Show learning report",
-    handler: notImplemented,
+    handler: handleLearning,
   },
   {
     name: "/onboarding",
