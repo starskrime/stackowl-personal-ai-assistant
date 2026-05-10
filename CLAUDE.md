@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run dev          # Run in watch mode (tsx watch)
+npm run dev          # Run in watch mode (tsx watch) — uses TUI v2 by default
 npm run build        # Compile TypeScript to dist/
 npm run start        # Run compiled output
 npm run test         # Run all tests (vitest)
@@ -13,6 +13,12 @@ npm run test:watch   # Vitest in watch mode
 npm run lint         # ESLint on src/
 npm run format       # Prettier formatting
 ./start.sh           # Interactive setup (provider, API keys, channels)
+```
+
+TUI version control:
+```bash
+npm run dev                    # TUI v2 (default)
+STACKOWL_TUI=v1 npm run dev    # TUI v1 (explicit opt-out / escape hatch)
 ```
 
 Run a single test file:

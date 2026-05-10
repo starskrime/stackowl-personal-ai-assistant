@@ -1275,14 +1275,8 @@ async function buildGateway(
 
 async function chatCommand(owlName?: string) {
   // ── Phase 0: onboarding (first launch) ────────────────────────
-  if (process.env.STACKOWL_TUI === "v2") {
-    // v2: use the @clack/prompts wizard (must run before Ink mounts).
-    const { needsOnboarding, runOnboardingWizard } = await import("./cli/v2/screens/onboarding-wizard.js");
-    if (needsOnboarding(homedir())) {
-      await runOnboardingWizard(homedir());
-    }
-  } else {
-    // v1: legacy terminal wizard.
+  if (process.env.STACKOWL_TUI === "v1") {
+    // v1: legacy terminal wizard (explicit opt-out via STACKOWL_TUI=v1).
     const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
     if (!existsSync(configPath)) {
       const wizard = new OnboardingWizard(configPath);
@@ -1291,6 +1285,12 @@ async function chatCommand(owlName?: string) {
         console.log(chalk.yellow("\nSetup cancelled. Run again to configure StackOwl."));
         process.exit(0);
       }
+    }
+  } else {
+    // v2 (default): use the @clack/prompts wizard (must run before Ink mounts).
+    const { needsOnboarding, runOnboardingWizard } = await import("./cli/v2/screens/onboarding-wizard.js");
+    if (needsOnboarding(homedir())) {
+      await runOnboardingWizard(homedir());
     }
   }
 
@@ -1339,8 +1339,8 @@ async function chatCommand(owlName?: string) {
     model:    b.config.defaultModel,
   }));
 
-  // ── TUI v2 flag — gateway is ready, hand off to v2 stack ─────
-  if (process.env.STACKOWL_TUI === "v2") {
+  // ── TUI v2 (default) — gateway is ready, hand off to v2 stack ─────
+  if (process.env.STACKOWL_TUI !== "v1") {
     const { startV2 } = await import("./cli/v2/index.js");
     await startV2(gateway);
     return;
