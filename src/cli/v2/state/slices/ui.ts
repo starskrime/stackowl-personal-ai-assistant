@@ -1,5 +1,6 @@
 import type { UiState } from "../store.js";
 import type { UiEvent } from "../../events/UiEvent.js";
+import { getContextWindow } from "../model-context.js";
 
 export type UiMode = "chat" | "parliament" | "onboarding" | "skills" | "sessions" | "owls";
 
@@ -15,6 +16,8 @@ export interface UiSliceState {
   /** Cumulative token + cost for the session. */
   totalTokens: number;
   totalCostUsd: number;
+  /** Context window utilisation [0–100]. */
+  contextWindowPct: number;
   /** Inline overlays shown above the Composer in ChatScreen. */
   showHelp: boolean;
   showSkillsOverlay: boolean;
@@ -30,6 +33,7 @@ export const initialUiSliceState: UiSliceState = {
   generating: false,
   totalTokens: 0,
   totalCostUsd: 0,
+  contextWindowPct: 0,
   showHelp: false,
   showSkillsOverlay: false,
   showMcpOverlay: false,
@@ -53,7 +57,11 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
       const cost = event.usage
         ? state.totalCostUsd + event.usage.costUsd
         : state.totalCostUsd;
-      return { ...state, generating: false, totalTokens: tokens, totalCostUsd: cost };
+      const ctxWindow = getContextWindow(state.activeModel);
+      const contextWindowPct = ctxWindow && event.usage
+        ? Math.round((event.usage.promptTokens / ctxWindow) * 100)
+        : state.contextWindowPct;
+      return { ...state, generating: false, totalTokens: tokens, totalCostUsd: cost, contextWindowPct };
     }
 
     case "parliament.round.started":

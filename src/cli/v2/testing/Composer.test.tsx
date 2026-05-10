@@ -41,34 +41,9 @@ describe("Composer", () => {
     expect(lastFrame()).toContain("/help");
   });
 
-  it("idle state: renders footer with owl name and model", () => {
-    const { lastFrame } = render(<ComposerUnderTest disabled={false} />);
-    expect(lastFrame()).toContain("Hoots");
-    expect(lastFrame()).toContain("sonnet-4-6");
-  });
-
   it("generating state: shows generating text instead of ❯", () => {
     const { lastFrame } = render(<ComposerUnderTest disabled={true} />);
     expect(lastFrame()).toContain("generating...");
     expect(lastFrame()).not.toContain("❯");
-  });
-
-  it("generating state: footer shows esc esc to stop when generating=true in store", () => {
-    uiStore.setState({ generating: true });
-    const { lastFrame } = render(<ComposerUnderTest disabled={true} />);
-    expect(lastFrame()).toContain("esc esc to stop");
-  });
-
-  it("footer omits tokens and cost when both are zero", () => {
-    const { lastFrame } = render(<ComposerUnderTest disabled={false} />);
-    expect(lastFrame()).not.toContain("tok");
-    expect(lastFrame()).not.toContain("$");
-  });
-
-  it("footer shows tokens and cost when non-zero", () => {
-    uiStore.setState({ totalTokens: 1234, totalCostUsd: 0.0023 });
-    const { lastFrame } = render(<ComposerUnderTest disabled={false} />);
-    expect(lastFrame()).toContain("1,234 tok");
-    expect(lastFrame()).toContain("$0.0023");
   });
 });

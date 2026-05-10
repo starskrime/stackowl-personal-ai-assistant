@@ -5,14 +5,15 @@
  *   ╭─────────────────────────────────────────────────╮
  *   │  ❯ your message here▋                           │
  *   │  /help · /owls · /sessions · /skills · /mcp    │
- *   │  Hoots · sonnet-4-6 · ? for help               │
  *   ╰─────────────────────────────────────────────────╯
  *
  * Generating layout:
  *   ╭─────────────────────────────────────────────────╮
  *   │  ✳ generating...                               │
- *   │  Hoots · sonnet-4-6 · 1,234 tok · esc esc stop │
  *   ╰─────────────────────────────────────────────────╯
+ *
+ * Footer (owl, model, tokens, cost, status) is rendered by <StatusBar />
+ * outside this component in ChatScreen.
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -38,14 +39,8 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const { exit } = useApp();
   const { colors } = useTheme();
 
-  // Store values for footer
+  // Store values needed for keyboard handling
   const mode          = useUiStore((s) => s.mode);
-  const generating    = useUiStore((s) => s.generating);
-  const owlEmoji      = useUiStore((s) => s.activeOwlEmoji);
-  const owlName       = useUiStore((s) => s.activeOwlName);
-  const model         = useUiStore((s) => s.activeModel);
-  const totalTokens   = useUiStore((s) => s.totalTokens);
-  const totalCostUsd  = useUiStore((s) => s.totalCostUsd);
 
   useEffect(() => {
     if (!disabled) return;
@@ -92,10 +87,6 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     return match ? match.slice(value.length) : null;
   })();
 
-  const footerTokens = totalTokens > 0
-    ? ` · ${totalTokens.toLocaleString()} tok · $${totalCostUsd.toFixed(4)}`
-    : "";
-
   return (
     <Box
       flexDirection="column"
@@ -122,19 +113,6 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
           )}
         </>
       )}
-      <Box paddingLeft={1}>
-        <Text dimColor>
-          {owlEmoji} {owlName}
-          {model ? ` · ${model}` : ""}
-          {footerTokens}
-          {" · "}
-        </Text>
-        {generating ? (
-          <Text color="yellow">esc esc to stop</Text>
-        ) : (
-          <Text dimColor>? for help</Text>
-        )}
-      </Box>
     </Box>
   );
 }

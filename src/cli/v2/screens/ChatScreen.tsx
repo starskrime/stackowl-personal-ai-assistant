@@ -6,7 +6,8 @@
  *   [heartbeat banners]   ← HeartbeatBanner per unread unsolicited message (last 3)
  *   [notice strips]       ← NoticeStrip for instincts/perches/skills (last 3)
  *   <LiveTurn />          ← streaming live region (token.delta)
- *   <Composer />          ← bordered input box with footer inside
+ *   <Composer />          ← bordered input box
+ *   <StatusBar />         ← dim pipe-separated footer line (owl, model, tokens, cost)
  */
 
 import { Box } from "ink";
@@ -19,6 +20,7 @@ import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
 import { NoticeStrip } from "../components/NoticeStrip.js";
 import { LiveTurn } from "../components/LiveTurn.js";
 import { Composer } from "../components/Composer.js";
+import { StatusBar } from "../components/StatusBar.js";
 import { CommandPalette } from "../components/CommandPalette.js";
 import { SkillsOverlay } from "../components/SkillsOverlay.js";
 import { McpOverlay } from "../components/McpOverlay.js";
@@ -62,6 +64,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
           onSubmit={onSubmit}
           disabled={generating || showHelp || showSkillsOverlay || showMcpOverlay}
         />
+        <StatusBar />
       </Frame>
     </Box>
   );
