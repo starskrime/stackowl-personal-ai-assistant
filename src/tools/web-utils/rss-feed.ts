@@ -145,10 +145,15 @@ export const RSSFeedTool: ToolImplementation = {
     const name = args.name as string | undefined;
     const feedsPath = join(context.cwd, "workspace", "feeds.json");
 
+    // 1. ENTRY
+    log.tool.debug("rss_feed.execute: entry", { action, url: url ?? "(none)" });
+
     try {
       if (action === "read") {
         if (!url) return "Error: url is required for the read action.";
 
+        // 3. STEP — HTTP fetch
+        log.tool.debug("rss_feed.execute: http request", { url });
         const resp = await fetch(url, {
           signal: AbortSignal.timeout(15000),
           headers: {
@@ -157,13 +162,21 @@ export const RSSFeedTool: ToolImplementation = {
               "application/rss+xml, application/atom+xml, application/xml, text/xml",
           },
         });
+        // 3. STEP — response
+        log.tool.debug("rss_feed.execute: http response", { status: resp.status, ok: resp.ok });
         if (!resp.ok) return `Error: HTTP ${resp.status} ${resp.statusText}`;
 
         const xml = await resp.text();
         const items = parseItems(xml);
         const feedTitle = extractTag(xml, "title");
 
-        return `Feed: ${feedTitle || url}\nItems (latest 10):\n\n${formatItems(items, 10)}`;
+        // 3. STEP — items parsed
+        log.tool.debug("rss_feed.execute: items parsed", { count: items.length, feedTitle: feedTitle || url });
+
+        const result = `Feed: ${feedTitle || url}\nItems (latest 10):\n\n${formatItems(items, 10)}`;
+        // 4. EXIT
+        log.tool.debug("rss_feed.execute: exit", { action: "read", resultLen: result.length });
+        return result;
       }
 
       if (action === "subscribe") {
@@ -181,7 +194,9 @@ export const RSSFeedTool: ToolImplementation = {
           addedAt: new Date().toISOString(),
         });
         await saveFeeds(feedsPath, data);
-        return `Subscribed to "${feedName}" (${url}).`;
+        const result = `Subscribed to "${feedName}" (${url}).`;
+        log.tool.debug("rss_feed.execute: exit", { action: "subscribe", resultLen: result.length });
+        return result;
       }
 
       if (action === "list") {
@@ -190,11 +205,15 @@ export const RSSFeedTool: ToolImplementation = {
         const lines = data.feeds.map(
           (f) => `- ${f.name} — ${f.url} (added ${f.addedAt})`,
         );
-        return `Subscribed feeds:\n${lines.join("\n")}`;
+        const result = `Subscribed feeds:\n${lines.join("\n")}`;
+        log.tool.debug("rss_feed.execute: exit", { action: "list", resultLen: result.length });
+        return result;
       }
 
       return `Unknown action: ${action}. Use read, subscribe, or list.`;
     } catch (e) {
+      // ERROR
+      log.tool.error("rss_feed.execute: operation failed", e instanceof Error ? e : new Error(String(e)), { action, url: url ?? "(none)" });
       return `rss_feed error: ${e instanceof Error ? e.message : String(e)}`;
     }
   },

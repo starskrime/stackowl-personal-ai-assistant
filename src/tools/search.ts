@@ -8,6 +8,7 @@
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { serializeWebToolResult } from "../browser/envelope.js";
 import { searchEnvelope } from "../browser/smart-search.js";
+import { log } from "../logger.js";
 
 export const WebSearchTool: ToolImplementation = {
   definition: {
@@ -45,14 +46,33 @@ export const WebSearchTool: ToolImplementation = {
 
     const num = Math.min(Number(args["num"] ?? 8), 15);
 
-    const result = await searchEnvelope(query, num, {
-      tavilyApiKey: context.tavilyApiKey,
-      camofox: context.camofox,
-      puppeteer: context.puppeteer,
-      classifier: context.classifier,
-    });
+    // 1. ENTRY
+    log.tool.debug("search.execute: entry", { query, maxResults: num });
 
-    return serializeWebToolResult(result);
+    try {
+      // 3. STEP — HTTP request sent
+      log.tool.debug("search.execute: request sent", { query, num, backend: "smart-search" });
+
+      const result = await searchEnvelope(query, num, {
+        tavilyApiKey: context.tavilyApiKey,
+        camofox: context.camofox,
+        puppeteer: context.puppeteer,
+        classifier: context.classifier,
+      });
+
+      // 3. STEP — results parsed
+      const resultCount = result.success && (result as any).results ? (result as any).results.length : 0;
+      log.tool.debug("search.execute: results parsed", { resultCount, success: result.success });
+
+      const serialized = serializeWebToolResult(result);
+      // 4. EXIT
+      log.tool.debug("search.execute: exit", { success: result.success, resultCount, resultLen: serialized.length });
+      return serialized;
+    } catch (error) {
+      // ERROR
+      log.tool.error("search.execute: request failed", error instanceof Error ? error : new Error(String(error)), { query });
+      throw error;
+    }
   },
 };
 

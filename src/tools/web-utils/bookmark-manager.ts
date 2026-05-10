@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { resolve, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { log } from "../../logger.js";
 
 interface Bookmark {
   url: string;
@@ -75,6 +76,9 @@ export const BookmarkManagerTool: ToolImplementation = {
     const action = String(args.action);
     const cwd = context.cwd || process.cwd();
 
+    // 1. ENTRY
+    log.tool.debug("bookmarks.execute: entry", { action, url: (args.url as string) ?? "(none)", tags: (args.tags as string) ?? "(none)" });
+
     try {
       switch (action) {
         case "save": {
@@ -88,6 +92,9 @@ export const BookmarkManagerTool: ToolImplementation = {
             : [];
           const note = args.note as string | undefined;
 
+          // 2. DECISION — save branch
+          log.tool.debug("bookmarks.execute: operation branch", { chosen: "save", url });
+
           const store = loadStore(cwd);
 
           // Check for duplicate
@@ -100,8 +107,12 @@ export const BookmarkManagerTool: ToolImplementation = {
               tags: [...new Set([...store.bookmarks[existing].tags, ...tags])],
               note: note || store.bookmarks[existing].note,
             };
+            // 3. STEP — storage op
+            log.tool.debug("bookmarks.execute: storage op", { op: "update", url });
             saveStore(cwd, store);
-            return `🔖 Updated bookmark: ${title}\n  URL: ${url}\n  Tags: ${store.bookmarks[existing].tags.join(", ")}`;
+            const updateResult = `🔖 Updated bookmark: ${title}\n  URL: ${url}\n  Tags: ${store.bookmarks[existing].tags.join(", ")}`;
+            log.tool.debug("bookmarks.execute: exit", { action, resultLen: updateResult.length });
+            return updateResult;
           }
 
           store.bookmarks.push({
@@ -111,13 +122,18 @@ export const BookmarkManagerTool: ToolImplementation = {
             note,
             createdAt: new Date().toISOString(),
           });
+          // 3. STEP — storage op
+          log.tool.debug("bookmarks.execute: storage op", { op: "insert", url, tagCount: tags.length });
           saveStore(cwd, store);
-          return (
+          const saveResult = (
             `🔖 Bookmarked: ${title}\n` +
             `  URL: ${url}\n` +
             (tags.length ? `  Tags: ${tags.join(", ")}\n` : "") +
             (note ? `  Note: ${note}` : "")
           );
+          // 4. EXIT
+          log.tool.debug("bookmarks.execute: exit", { action, resultLen: saveResult.length });
+          return saveResult;
         }
 
         case "list": {
@@ -248,6 +264,8 @@ export const BookmarkManagerTool: ToolImplementation = {
           );
       }
     } catch (error) {
+      // ERROR
+      log.tool.error("bookmarks.execute: operation failed", error instanceof Error ? error : new Error(String(error)), { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error (${action}): ${msg}`;
     }

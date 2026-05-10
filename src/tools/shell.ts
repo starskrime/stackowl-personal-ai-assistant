@@ -327,6 +327,9 @@ export const ShellTool: ToolImplementation = {
     };
     const workspaceDir = resolve(context.cwd);
 
+    // 1. ENTRY
+    log.tool.debug("shell.execute: entry", { command: cmd.slice(0, 200), mode, workdir: workspaceDir, timeout: EXEC_TIMEOUT_MS });
+
     if (mode === "local") {
       if (!execConfig.hostMode) {
         return formatResult(
@@ -335,8 +338,13 @@ export const ShellTool: ToolImplementation = {
           `Host execution is disabled in stackowl.config.json. Please adjust 'execution.hostMode' to use local mode, or switch to 'sandbox' mode.`,
         );
       }
+      // 2. DECISION
+      log.tool.debug("shell.execute: decision", { chosen: "local/host", reason: "mode=local, hostMode enabled" });
       log.tool.warn(`[ShellTool] WARNING: Executing on host: ${cmd}`);
-      return executeRawCommand(cmd, workspaceDir);
+      const localResult = await executeRawCommand(cmd, workspaceDir);
+      // 4. EXIT
+      log.tool.debug("shell.execute: exit", { success: true, mode: "local", resultLen: localResult.length });
+      return localResult;
     }
 
     // mode === "sandbox"
@@ -348,12 +356,19 @@ export const ShellTool: ToolImplementation = {
       );
     }
 
+    // 2. DECISION
+    log.tool.debug("shell.execute: decision", { chosen: "sandbox/docker", reason: "mode=sandbox, sandboxMode enabled", image: SANDBOX_IMAGE });
+
     // Full network access is enabled - curl/wget can be used directly
 
     log.tool.info(`[ShellTool] Executing in sandbox: ${cmd}`);
 
     try {
+      // 3. STEP — container spawned
+      log.tool.debug("shell.execute: container spawning", { image: SANDBOX_IMAGE, workdir: workspaceDir });
       const result = await runInDocker(cmd, workspaceDir);
+      // 3. STEP — container exited
+      log.tool.debug("shell.execute: container exited", { exitCode: result.exitCode, stdoutLen: result.stdout.length, stderrLen: result.stderr.length });
 
       const combined = result.stdout + result.stderr;
       if (
@@ -391,7 +406,10 @@ export const ShellTool: ToolImplementation = {
         );
       }
 
-      return formatResult(0, result.stdout, result.stderr);
+      const formatted = formatResult(0, result.stdout, result.stderr);
+      // 4. EXIT
+      log.tool.debug("shell.execute: exit", { success: true, mode: "sandbox", exitCode: 0, resultLen: formatted.length });
+      return formatted;
     } catch (spawnError: any) {
       const msg: string = spawnError.message ?? String(spawnError);
 
@@ -456,6 +474,8 @@ export const ShellTool: ToolImplementation = {
         );
       }
 
+      // ERROR — unexpected spawn failure
+      log.tool.error("shell.execute: container spawn failed", spawnError, { command: cmd.slice(0, 200), msg });
       log.tool.error(`[ShellTool] Unexpected spawn error:`, spawnError);
       return formatResult(
         1,
