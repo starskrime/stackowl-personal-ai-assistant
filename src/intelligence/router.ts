@@ -157,5 +157,15 @@ export class IntelligenceRouter {
     return this.resolve(taskType);
   }
 
-  // resolveFailover() added in Task 7
+  /**
+   * Return the first configured FallbackEntry whose forTiers includes `tier`.
+   * Returns null when no fallback is configured for this tier.
+   * Callers should fall back to config.defaultModel when null is returned.
+   */
+  resolveFailover(tier: Tier): ResolvedModel | null {
+    if (!this.config.fallbacks?.length) return null;
+    const entry = this.config.fallbacks.find((f) => f.forTiers.includes(tier));
+    if (!entry) return null;
+    return { provider: entry.provider, model: entry.model, tier };
+  }
 }
