@@ -60,7 +60,7 @@ function OwlColumn({
       paddingX={1}
     >
       <Box>
-        <Text bold color="cyan">{owlEmoji} {owlName}</Text>
+        <Text bold color={SPINNER_AMBER}>{owlEmoji} {owlName}</Text>
         <Text> </Text>
         {spinning && !ready ? (
           <>
