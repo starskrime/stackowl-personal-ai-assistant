@@ -22,8 +22,7 @@ import { LiveTurn } from "../components/LiveTurn.js";
 import { Composer } from "../components/Composer.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { CommandPalette } from "../components/CommandPalette.js";
-import { SkillsOverlay } from "../components/SkillsOverlay.js";
-import { McpOverlay } from "../components/McpOverlay.js";
+import { PanelHost } from "../panels/PanelHost.js";
 import { globalBridge } from "../events/bridge.js";
 
 export interface ChatScreenProps {
@@ -38,7 +37,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const notices      = useUiStore((s) => s.notices);
   const generating   = useUiStore((s) => s.generating);
   const showHelp          = useUiStore((s) => s.showHelp);
-  const activePanel       = useUiStore((s) => s.activePanel);
+  const panelFocus        = useUiStore((s) => s.panelFocus);
 
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
@@ -57,11 +56,10 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         ))}
         <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
-        {activePanel?.id === "skills" && <SkillsOverlay />}
-        {activePanel?.id === "mcp" && <McpOverlay />}
+        <PanelHost />
         <Composer
           onSubmit={onSubmit}
-          disabled={generating || showHelp || activePanel !== null}
+          disabled={generating || showHelp || panelFocus === "panel"}
         />
         <StatusBar />
       </Frame>
