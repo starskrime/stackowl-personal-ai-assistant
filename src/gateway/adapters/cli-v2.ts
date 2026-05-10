@@ -62,8 +62,22 @@ export class CliV2Adapter implements ChannelAdapter {
     // This pre-seeds the header so the UI shows the owl before the first message.
     globalBridge.translateOwlChange("__init__", owlEmoji, owlName);
 
+    // Load recent sessions asynchronously — must NOT block the UI.
+    // The store is pre-seeded with an empty list; sessions.loaded fills it in.
+    this._loadSessionsAsync();
+
     // Stay alive until stop() is called (Ink owns the event loop via stdin).
     await this._quitPromise;
+  }
+
+  /**
+   * Switch to a previously-used session. New messages will continue that session's thread.
+   * Called by the SessionsScreen when the user selects a session.
+   */
+  resumeSession(sessionId: string, title?: string): void {
+    this._sessionId = sessionId;
+    globalBridge.emit({ kind: "session.changed", sessionId, title });
+    globalBridge.dismissSessionsView();
   }
 
   stop(): void {
@@ -197,6 +211,23 @@ export class CliV2Adapter implements ChannelAdapter {
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────
+
+  /** Load recent sessions from the SessionStore and populate the TUI store. */
+  private _loadSessionsAsync(): void {
+    const sessionStore = this._gateway.getSessionStore();
+    if (!sessionStore) return;
+
+    sessionStore.listSessions().then((sessions) => {
+      const summaries = sessions.slice(0, 20).map((s) => ({
+        sessionId: s.id,
+        title: s.metadata.title ?? s.metadata.owlName ?? s.id,
+        lastActiveAt: s.metadata.lastUpdatedAt,
+      }));
+      globalBridge.loadSessions(summaries);
+    }).catch(() => {
+      // Non-critical — silently ignore failures
+    });
+  }
 
   private _emitCommitted(response: GatewayResponse): void {
     const turnId = uuidv4();

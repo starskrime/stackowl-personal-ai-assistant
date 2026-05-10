@@ -16,6 +16,27 @@ export interface SessionChangedEvent {
   title?: string;
 }
 
+export interface SessionSummaryRecord {
+  sessionId: string;
+  title: string;
+  lastActiveAt: number;
+}
+
+export interface SessionsLoadedEvent {
+  kind: "sessions.loaded";
+  sessions: SessionSummaryRecord[];
+}
+
+/** Emitted when the user types /sessions to open the session picker. */
+export interface SessionsViewRequestedEvent {
+  kind: "sessions.view.requested";
+}
+
+/** Emitted when the user dismisses the session picker (Escape or selects a session). */
+export interface SessionsViewDismissedEvent {
+  kind: "sessions.view.dismissed";
+}
+
 // ─── Turn lifecycle ───────────────────────────────────────────────────────────
 
 export interface TurnStartedEvent {
@@ -146,6 +167,9 @@ export interface NoticeEvent {
 
 export type UiEvent =
   | SessionChangedEvent
+  | SessionsLoadedEvent
+  | SessionsViewRequestedEvent
+  | SessionsViewDismissedEvent
   | TurnStartedEvent
   | TokenDeltaEvent
   | TurnCommittedEvent

@@ -1,7 +1,7 @@
 import type { UiState } from "../store.js";
 import type { UiEvent } from "../../events/UiEvent.js";
 
-export type UiMode = "chat" | "parliament" | "onboarding" | "skills";
+export type UiMode = "chat" | "parliament" | "onboarding" | "skills" | "sessions";
 
 export interface UiSliceState {
   mode: UiMode;
@@ -58,6 +58,12 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, mode: "parliament" };
 
     case "parliament.view.dismissed":
+      return { ...state, mode: "chat" };
+
+    case "sessions.view.requested":
+      return { ...state, mode: "sessions" };
+
+    case "sessions.view.dismissed":
       return { ...state, mode: "chat" };
 
     default:

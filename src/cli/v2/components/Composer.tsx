@@ -49,6 +49,12 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
       // Submit on Enter (not Shift+Enter)
       if (key.return && !key.shift) {
         const trimmed = value.trim();
+        if (trimmed === "/sessions") {
+          // Open the session picker instead of submitting to the engine.
+          globalBridge.requestSessionsView();
+          setValue("");
+          return;
+        }
         if (trimmed) {
           historyRef.current.push(trimmed);
           onSubmit(trimmed);

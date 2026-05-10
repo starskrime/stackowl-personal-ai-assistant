@@ -26,7 +26,10 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
   enableBracketedPaste();
 
   const { unmount, waitUntilExit } = render(
-    React.createElement(App, { onSubmit: (text: string) => adapter.submitMessage(text) })
+    React.createElement(App, {
+      onSubmit: (text: string) => adapter.submitMessage(text),
+      onResume: (sessionId: string, title: string) => adapter.resumeSession(sessionId, title),
+    })
   );
 
   const cleanup = () => {

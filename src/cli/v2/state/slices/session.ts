@@ -21,6 +21,8 @@ export function applySessionEvent(state: UiState, event: UiEvent): UiState {
   switch (event.kind) {
     case "session.changed":
       return { ...state, activeSessionId: event.sessionId };
+    case "sessions.loaded":
+      return { ...state, recentSessions: event.sessions };
     default:
       return state;
   }

@@ -212,6 +212,30 @@ export class UiBridge {
   }
 
   /**
+   * Emit sessions.loaded — populates the recentSessions list in the store.
+   * Called asynchronously from cli-v2.ts after listSessions() resolves.
+   */
+  loadSessions(sessions: import("./UiEvent.js").SessionSummaryRecord[]): void {
+    this.emit({ kind: "sessions.loaded", sessions });
+  }
+
+  /**
+   * Emit sessions.view.requested — switches ui.mode to "sessions".
+   * Called by /sessions slash command in Composer.
+   */
+  requestSessionsView(): void {
+    this.emit({ kind: "sessions.view.requested" });
+  }
+
+  /**
+   * Emit sessions.view.dismissed — switches ui.mode back to "chat".
+   * Called when the user selects a session or presses Escape.
+   */
+  dismissSessionsView(): void {
+    this.emit({ kind: "sessions.view.dismissed" });
+  }
+
+  /**
    * Build a DebateCallbacks object that routes all parliament events through this bridge.
    * Pass these callbacks into ParliamentSession.config.callbacks before runDebate().
    */
