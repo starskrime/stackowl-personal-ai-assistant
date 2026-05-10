@@ -1,3 +1,5 @@
+import { log } from "../logger.js";
+
 export type Tier = "high" | "mid" | "low";
 
 export type TaskType =
@@ -93,5 +95,27 @@ export class IntelligenceRouter {
     };
   }
 
-  // resolveCapable(), resolveWithCostAwareness(), resolveFailover() added in Tasks 5-7
+  /**
+   * Route to the highest-priority tier whose capabilities[] contains all required tags.
+   * Falls back to resolve(taskType) with a warning when no capable tier exists.
+   */
+  resolveCapable(taskType: TaskType, required: string[]): ResolvedModel {
+    if (required.length === 0) return this.resolve(taskType);
+
+    const tierOrder: Tier[] = ["high", "mid", "low"];
+    for (const tier of tierOrder) {
+      const cfg = this.config.tiers[tier];
+      if (!cfg?.provider || !cfg?.model) continue;
+      if (required.every((tag) => cfg.capabilities?.includes(tag))) {
+        return { provider: cfg.provider, model: cfg.model, tier };
+      }
+    }
+
+    log.engine.warn(
+      `[IntelligenceRouter] No tier has capabilities [${required.join(", ")}] — falling back to unconstrained resolve`,
+    );
+    return this.resolve(taskType);
+  }
+
+  // resolveWithCostAwareness(), resolveFailover() added in Tasks 6-7
 }
