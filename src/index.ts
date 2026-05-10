@@ -322,8 +322,10 @@ async function bootstrap() {
       try {
         await fetcher.init();
         puppeteerFetcher = fetcher;
-      } catch {
-        // Chrome binary exists but failed to launch (e.g. ARM Linux) — skip puppeteer tier
+      } catch (err) {
+        // Non-fatal: Chrome binary exists but failed to launch — puppeteer tier unavailable
+        // Use process.stderr.write so this surfaces even when console is suppressed during boot
+        process.stderr.write(`[puppeteer] Chrome launch failed (tier 3 unavailable): ${err instanceof Error ? err.message : String(err)}\n`);
       }
     }
   }
