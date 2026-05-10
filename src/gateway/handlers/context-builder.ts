@@ -145,6 +145,7 @@ export class ContextBuilder {
       camofox: this.ctx.camofox,
       tavilyApiKey: this.ctx.tavilyApiKey,
       relationshipContext: this.ctx.relationshipContext,
+      intelligence: this.ctx.intelligence,
     };
   }
 }

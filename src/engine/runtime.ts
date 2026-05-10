@@ -151,6 +151,8 @@ export interface EngineContext {
   relationshipContext?: import("../routing/relationship-context.js").RelationshipContext;
   /** Wired OpinionInjector output — injected as additional system prompt block (G5) */
   additionalSystemPrompt?: string;
+  /** IntelligenceRouter for per-turn model-tier resolution. Wired from GatewayContext. */
+  intelligence?: import("../intelligence/router.js").IntelligenceRouter;
 }
 
 export interface PendingCapabilityGap {
@@ -770,9 +772,27 @@ export class OwlEngine {
     const toolResultsBuffer: string[] = [];
     let deeperExtended = false;
 
-    // 1. Determine optimal model (IntelligenceRouter — full wiring added in Task 8)
-    let optimalModel = config.defaultModel;
+    // 1. Determine optimal model via IntelligenceRouter
+    const resolved = context.intelligence?.resolveWithCostAwareness("conversation");
+    let optimalModel = resolved?.model ?? config.defaultModel;
+
+    // Dynamic provider resolution based on route
     let currentProvider = provider;
+    if (
+      resolved?.provider &&
+      resolved.provider !== provider.name &&
+      context.providerRegistry
+    ) {
+      // getAvailable() added in Task 9; use get() with try/catch until then
+      let routedProvider: typeof provider | undefined;
+      try { routedProvider = context.providerRegistry.get(resolved.provider); } catch { /* noop */ }
+      if (routedProvider) {
+        log.engine.warn(
+          `[IntelligenceRouter] Cross-provider routing on first turn: ${provider.name} → ${resolved.provider}`,
+        );
+        currentProvider = routedProvider;
+      }
+    }
 
     log.engine.model(optimalModel);
 
@@ -1859,12 +1879,36 @@ ${userMessage}
           }
         }
 
-        // If we've failed multiple tool calls in a row, log the condition.
-        // Full IntelligenceRouter failover wiring added in Task 8.
+        // If we've failed multiple tool calls in a row, try IntelligenceRouter failover.
         if (globalConsecutiveFailures >= 2) {
-          log.engine.warn(
-            `[Runtime] Tool failed ${globalConsecutiveFailures}x — no fallback configured yet.`,
-          );
+          // recordProviderResult() added to ProviderRegistry in Task 9
+          (context.providerRegistry as any)?.recordProviderResult?.(currentProvider.name, false);
+          const currentTier = context.intelligence?.resolve("conversation").tier ?? "mid";
+          const fallback = context.intelligence?.resolveFailover(currentTier);
+
+          if (fallback && fallback.provider !== currentProvider.name && context.providerRegistry) {
+            // getAvailable() added to ProviderRegistry in Task 9
+            const fallbackProvider: typeof provider | undefined =
+              (context.providerRegistry as any)?.getAvailable?.(fallback.provider);
+            if (fallbackProvider) {
+              log.engine.warn(
+                `[IntelligenceRouter] Tool failed ${globalConsecutiveFailures}x. Swapping provider: ${currentProvider.name} → ${fallback.provider}`,
+              );
+              currentProvider = fallbackProvider;
+              if (context.onProgress) {
+                await context.onProgress(
+                  `🔄 **Fallback Triggered:** Swapping to ${fallback.provider} (${fallback.model}) to resolve failure.`,
+                );
+              }
+            }
+          }
+
+          if (fallback?.model && fallback.model !== optimalModel) {
+            log.engine.warn(
+              `Tool failed ${globalConsecutiveFailures}x. Swapping model: ${optimalModel} → ${fallback.model}`,
+            );
+            optimalModel = fallback.model;
+          }
         }
 
         // Continue the loop — use resilient streaming
