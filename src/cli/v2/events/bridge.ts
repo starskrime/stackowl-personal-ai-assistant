@@ -11,6 +11,7 @@
 import type { StreamEvent } from "../../../providers/base.js";
 import type { OwlPosition, OwlChallenge, ParliamentPhase } from "../../../parliament/protocol.js";
 import type { UiEvent } from "./UiEvent.js";
+import { estimateCost } from "../../../costs/pricing.js";
 
 export type UiEventHandler = (event: UiEvent) => void;
 
@@ -18,7 +19,8 @@ export interface OwlMeta {
   owlEmoji: string;
   owlName: string;
   owlRole?: string;
-  estimatedCostUsd?: number;
+  /** Active model name — used to compute per-turn cost from token counts. */
+  model?: string;
 }
 
 export class UiBridge {
@@ -93,7 +95,11 @@ export class UiBridge {
             ? {
                 promptTokens: event.usage.promptTokens,
                 completionTokens: event.usage.completionTokens,
-                costUsd: owlMeta.estimatedCostUsd ?? 0,
+                costUsd: estimateCost(
+                  owlMeta.model ?? "",
+                  event.usage.promptTokens,
+                  event.usage.completionTokens,
+                ),
               }
             : undefined,
         });

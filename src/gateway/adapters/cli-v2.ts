@@ -125,9 +125,11 @@ export class CliV2Adapter implements ChannelAdapter {
 
     // Resolve current owl meta for the bridge.
     const owl = this._gateway.getOwl();
+    const activeModel = this._gateway.getConfig().defaultModel ?? "";
     let owlMeta: OwlMeta = {
       owlEmoji: owl.persona.emoji,
       owlName: owl.persona.name,
+      model: activeModel,
     };
 
     // Announce turn start (current owl).
