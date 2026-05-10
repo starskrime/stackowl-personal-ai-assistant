@@ -25,6 +25,7 @@ export interface CapabilitySnapshot {
   capabilities: CapabilityEntry[];
   degradedCount: number;
   fullCount: number;
+  [key: string]: unknown;
 }
 
 // ─── Module-level singleton store ────────────────────────────────────────────
