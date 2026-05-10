@@ -16,7 +16,8 @@
  */
 
 import { useState, useRef, useEffect } from "react";
-import { Box, Text, useInput, useApp, useStdout } from "ink";
+import { Box, Text, useInput, useApp } from "ink";
+import { useTheme } from "../providers/ThemeProvider.js";
 import { InputHistory } from "../input/history.js";
 import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
 import { globalBridge } from "../events/bridge.js";
@@ -35,8 +36,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const [genFrame, setGenFrame] = useState(0);
   const historyRef = useRef<InputHistory>(new InputHistory());
   const { exit } = useApp();
-  const { stdout } = useStdout();
-  const [cols, setCols] = useState(stdout?.columns ?? 80);
+  const { colors } = useTheme();
 
   // Store values for footer
   const mode          = useUiStore((s) => s.mode);
@@ -46,12 +46,6 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const model         = useUiStore((s) => s.activeModel);
   const totalTokens   = useUiStore((s) => s.totalTokens);
   const totalCostUsd  = useUiStore((s) => s.totalCostUsd);
-
-  useEffect(() => {
-    const handler = () => setCols(stdout?.columns ?? 80);
-    stdout?.on("resize", handler);
-    return () => { stdout?.off("resize", handler); };
-  }, [stdout]);
 
   useEffect(() => {
     if (!disabled) return;
@@ -106,8 +100,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor="gray"
-      width={cols}
+      borderColor={colors.dim}
     >
       {disabled ? (
         <Box paddingLeft={1}>

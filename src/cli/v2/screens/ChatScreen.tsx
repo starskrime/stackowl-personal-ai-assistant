@@ -11,6 +11,9 @@
 
 import { Box } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
+import { Frame } from "../components/Frame.js";
+import { TopBar } from "../components/TopBar.js";
+import { EmptyState } from "../components/EmptyState.js";
 import { Transcript } from "../components/Transcript.js";
 import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
 import { NoticeStrip } from "../components/NoticeStrip.js";
@@ -42,21 +45,24 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
 
   return (
     <Box flexDirection="column">
-      <Transcript turns={turns} />
-      {unreadHeartbeats.map((msg) => (
-        <HeartbeatBanner key={msg.id} msg={msg} />
-      ))}
-      {recentNotices.map((n) => (
-        <NoticeStrip key={n.id} notice={n} />
-      ))}
-      <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
-      {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
-      {showSkillsOverlay && <SkillsOverlay />}
-      {showMcpOverlay && <McpOverlay />}
-      <Composer
-        onSubmit={onSubmit}
-        disabled={generating || showHelp || showSkillsOverlay || showMcpOverlay}
-      />
+      <TopBar />
+      <Frame>
+        {turns.length === 0 && !liveTurn ? <EmptyState /> : <Transcript turns={turns} />}
+        {unreadHeartbeats.map((msg) => (
+          <HeartbeatBanner key={msg.id} msg={msg} />
+        ))}
+        {recentNotices.map((n) => (
+          <NoticeStrip key={n.id} notice={n} />
+        ))}
+        <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
+        {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
+        {showSkillsOverlay && <SkillsOverlay />}
+        {showMcpOverlay && <McpOverlay />}
+        <Composer
+          onSubmit={onSubmit}
+          disabled={generating || showHelp || showSkillsOverlay || showMcpOverlay}
+        />
+      </Frame>
     </Box>
   );
 }

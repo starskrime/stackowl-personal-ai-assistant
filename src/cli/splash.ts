@@ -81,7 +81,7 @@ export interface BootSplashResult {
 }
 
 export class BootSplash {
-  async run(steps: BootStep[], getMeta: () => BootSplashResult): Promise<void> {
+  async run(steps: BootStep[], _getMeta: () => BootSplashResult): Promise<void> {
     const cols = Math.min(process.stdout.columns ?? 80, 80);
 
     // 1. Clear + sleeping owl
@@ -120,15 +120,7 @@ export class BootSplash {
     console.warn  = origWarn;
     console.error = origErr;
 
-    // 4. Ready line
-    const meta = getMeta();
-    process.stdout.write(
-      divider(cols) + "\n\n" +
-      INDENT +
-        chalk.green("[OK]") + " " +
-        chalk.bold(meta.owlEmoji + " " + meta.owlName) + "  " +
-        chalk.dim(meta.provider + " · " + meta.model) +
-      "\n\n",
-    );
+    // 4. Bottom divider
+    process.stdout.write(divider(cols) + "\n\n");
   }
 }

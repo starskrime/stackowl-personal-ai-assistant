@@ -28,6 +28,11 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
   installLoggerRedirect();
   enableBracketedPaste();
 
+  const useAltScreen = process.env.STACKOWL_KEEP_INLINE !== "1";
+  if (useAltScreen) {
+    process.stdout.write("\x1B[?1049h");
+  }
+
   const { unmount, waitUntilExit } = render(
     React.createElement(App, {
       onSubmit: (text: string) => adapter.submitMessage(text),
@@ -36,6 +41,9 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
   );
 
   const cleanup = () => {
+    if (useAltScreen) {
+      process.stdout.write("\x1B[?1049l");
+    }
     disableBracketedPaste();
     uninstallLoggerRedirect();
     adapter.stop();
