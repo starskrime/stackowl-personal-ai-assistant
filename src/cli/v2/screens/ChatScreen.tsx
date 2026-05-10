@@ -17,7 +17,7 @@
  *     <ShortcutsBar />    ← keyboard hints (Shift+Tab = cycle owl)
  */
 
-import { Box } from "ink";
+import { Box, Text } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { Frame } from "../components/Frame.js";
 import { TopBar } from "../components/TopBar.js";
@@ -78,6 +78,9 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
           onSubmit={onSubmit}
           disabled={generating || showHelp || panelFocus === "panel"}
         />
+      </Box>
+      <Box paddingLeft={1}>
+        <Text dimColor>Shift+Tab owl</Text>
       </Box>
     </Box>
   );

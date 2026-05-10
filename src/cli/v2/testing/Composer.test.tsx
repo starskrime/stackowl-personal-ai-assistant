@@ -38,15 +38,15 @@ describe("Composer", () => {
     expect(lastFrame()).toContain("▋");
   });
 
-  it("idle state: renders both input row and hint row", () => {
+  it("idle state: renders input row with caret and cursor", () => {
     const { lastFrame } = render(<ComposerUnderTest disabled={false} />);
     expect(lastFrame()).toContain("❯");
-    expect(lastFrame()).toContain("/help");
+    expect(lastFrame()).toContain("▋");
   });
 
-  it("idle state: renders slash hint row when value is empty", () => {
+  it("idle state: does not render slash hint row", () => {
     const { lastFrame } = render(<ComposerUnderTest disabled={false} />);
-    expect(lastFrame()).toContain("/help");
+    expect(lastFrame()).not.toContain("/help");
   });
 
   it("generating state: shows generating text instead of ❯", () => {

@@ -205,11 +205,6 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
               <Text color={panelFocus === "panel" ? colors.dim : undefined}>{value}</Text>
               {panelFocus !== "panel" && <Text color={colors.accent}>▋</Text>}
             </Box>
-            {value === "" && panelFocus !== "panel" && (
-              <Box paddingLeft={1}>
-                <Text dimColor>/help · /owls · /sessions · /memory · /skills · /mcp</Text>
-              </Box>
-            )}
           </>
         )}
       </Box>
