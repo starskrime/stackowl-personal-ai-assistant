@@ -31,7 +31,7 @@ export class ContextBuilder {
   async build(
     session: Session,
     callbacks: GatewayCallbacks,
-    _dynamicSkillsContext: string = "",
+    skillsContext: string = "",
     isolatedTask: boolean = false,
     attemptLog?: AttemptLog,
     channelId?: string,
@@ -46,7 +46,10 @@ export class ContextBuilder {
       log.engine.warn(
         "[ContextBuilder] contextPipeline not set on GatewayContext — returning base context (Task 20 will wire it)",
       );
-      return this.baseContext(session, callbacks, isolatedTask, attemptLog, channelId, userId);
+      return {
+        ...this.baseContext(session, callbacks, isolatedTask, attemptLog, channelId, userId),
+        skillsContext: skillsContext || undefined,
+      };
     }
 
     const effectiveUserId = resolveUserId(userId, session.id);
@@ -97,6 +100,7 @@ export class ContextBuilder {
     return {
       ...this.baseContext(session, callbacks, isolatedTask, attemptLog, channelId, userId),
       memoryContext: output || undefined,
+      skillsContext: skillsContext || undefined,
     };
   }
 
