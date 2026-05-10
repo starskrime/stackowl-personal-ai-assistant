@@ -9,9 +9,6 @@ export function TopBar() {
   const { colors, glyphs } = useTheme();
   const cols = useTerminalCols();
 
-  const owlEmoji  = useUiStore((s) => s.activeOwlEmoji);
-  const owlName   = useUiStore((s) => s.activeOwlName);
-  const model     = useUiStore((s) => s.activeModel);
   const mode      = useUiStore((s) => s.mode);
   const sessionId = useUiStore((s) => s.activeSessionId ?? "");
 
@@ -37,13 +34,7 @@ export function TopBar() {
 
   return (
     <Box flexDirection="column">
-      {/* Row 1: identity */}
-      <Box paddingX={1}>
-        <Text bold color={colors.brand}>{owlEmoji} {owlName}</Text>
-        {model ? <Text dimColor> · {model}</Text> : null}
-      </Box>
-
-      {/* Row 2: context */}
+      {/* Row 1: context */}
       <Box paddingX={1}>
         <Text dimColor>{cwdText}</Text>
         {showBranch   ? <Text dimColor>{branchText}</Text>  : null}
