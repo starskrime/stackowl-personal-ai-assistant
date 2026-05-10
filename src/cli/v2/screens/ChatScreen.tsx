@@ -1,18 +1,18 @@
 /**
  * ChatScreen — inline-scroll chat surface.
  *
- * Ink rendering order (Static items go into the terminal scroll buffer in order):
+ * The persistent header (green rules + STACKOWL logo) is written to stdout
+ * once in startV2() before Ink starts. Ink renders below it and never touches it.
  *
- *   <Static items={['header']}>   ← logo + green rules, committed ONCE at startup
- *   <Transcript />                ← committed turns, appended below the header
- *   [activity: LiveTurn, panels]  ← dynamic, always visible at current position
- *   <Composer />                  ← dynamic input, always visible
+ * Ink layout:
+ *   <Transcript />   ← Static: committed turns appended below the header
+ *   [activity]       ← dynamic: LiveTurn, panels, heartbeats
+ *   <Composer />     ← dynamic: always visible at current cursor position
  */
 
-import { Box, Static, Text } from "ink";
+import { Box, Text } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { Frame } from "../components/Frame.js";
-import { EmptyState } from "../components/EmptyState.js";
 import { Transcript } from "../components/Transcript.js";
 import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
 import { NoticeStrip } from "../components/NoticeStrip.js";
@@ -26,21 +26,15 @@ export interface ChatScreenProps {
   onSubmit: (text: string) => void;
 }
 
-const GREEN_RULE = (
-  <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
-);
-
-const HEADER_ITEMS = ["header"];
-
 export function ChatScreen({ onSubmit }: ChatScreenProps) {
-  const turns        = useUiStore((s) => s.turns);
-  const liveTurn     = useUiStore((s) => s.liveTurn);
-  const toolCalls    = useUiStore((s) => s.toolCalls);
-  const heartbeats   = useUiStore((s) => s.heartbeats);
-  const notices      = useUiStore((s) => s.notices);
-  const generating   = useUiStore((s) => s.generating);
-  const showHelp     = useUiStore((s) => s.showHelp);
-  const panelFocus   = useUiStore((s) => s.panelFocus);
+  const turns      = useUiStore((s) => s.turns);
+  const liveTurn   = useUiStore((s) => s.liveTurn);
+  const toolCalls  = useUiStore((s) => s.toolCalls);
+  const heartbeats = useUiStore((s) => s.heartbeats);
+  const notices    = useUiStore((s) => s.notices);
+  const generating = useUiStore((s) => s.generating);
+  const showHelp   = useUiStore((s) => s.showHelp);
+  const panelFocus = useUiStore((s) => s.panelFocus);
 
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
@@ -48,25 +42,12 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
 
   return (
     <Box flexDirection="column">
-      {/* Header committed once as static — stays at top of scroll buffer, messages appear below it */}
-      <Static items={HEADER_ITEMS}>
-        {(item: string) => (
-          <Box key={item} flexDirection="column">
-            {GREEN_RULE}
-            <Frame>
-              <EmptyState />
-            </Frame>
-            {GREEN_RULE}
-          </Box>
-        )}
-      </Static>
-
-      {/* Transcript: committed turns appended to scroll buffer below the header */}
+      {/* Committed turns — appended to scroll buffer below the pre-rendered header */}
       <Frame>
         <Transcript turns={turns} />
       </Frame>
 
-      {/* Dynamic section — always visible at the current cursor position */}
+      {/* Dynamic activity area */}
       <Frame>
         {unreadHeartbeats.map((msg) => (
           <HeartbeatBanner key={msg.id} msg={msg} />
@@ -79,7 +60,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         <PanelHost />
       </Frame>
 
-      {/* Input area — full terminal width */}
+      {/* Input — full terminal width, always visible */}
       <Box
         flexDirection="column"
         borderStyle="single"

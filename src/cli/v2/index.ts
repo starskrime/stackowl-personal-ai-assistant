@@ -12,6 +12,7 @@ import { render } from "ink";
 import { App } from "./app.js";
 import { installLoggerRedirect, uninstallLoggerRedirect } from "./io/logger.js";
 import { enableBracketedPaste, disableBracketedPaste } from "./input/paste.js";
+import { writeHeader } from "./io/header.js";
 import { detectCapabilities } from "./io/capabilities.js";
 import { CliV2Adapter } from "../../gateway/adapters/cli-v2.js";
 import type { OwlGateway } from "../../gateway/core.js";
@@ -32,6 +33,10 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
   // surface, but stay in inline mode so native terminal scrollback works.
   // Alt-screen (\x1B[?1049h) would kill scrollback — don't use it.
   process.stdout.write("\x1B[2J\x1B[H");
+
+  // Write the persistent header to stdout before Ink starts.
+  // Ink renders below this content and never touches it.
+  writeHeader(process.stdout);
 
   const { unmount, waitUntilExit } = render(
     React.createElement(App, {
