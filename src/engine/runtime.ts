@@ -30,6 +30,7 @@ import type { OwlInnerLife } from "../owls/inner-life.js";
 import { DNADecisionLayer } from "../owls/decision-layer.js";
 import { DiagnosticEngine } from "./diagnostic-engine.js";
 import type { DiagnosticInput } from "./diagnostic-engine.js";
+import { ToolResultEvaluator } from "./tool-result-evaluator.js";
 import type { ToolMastery } from "../tools/tool-mastery.js";
 import type { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import type { DomainToolMap } from "../delegation/domain-tool-map.js";
@@ -593,6 +594,13 @@ async function consumeStream(
 /** HTTP status codes that should be retried after a backoff delay. */
 const RETRYABLE_STREAM_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+/** Tool names eligible for the quality-gate evaluator (information-retrieval tools only). */
+const QUALITY_GATE_TOOLS = new Set([
+  "web_search", "web_fetch", "smart_search", "smart_fetch",
+  "live_browser", "search_web", "fetch_url", "browser_navigate",
+  "read_file", "search_files",
+]);
+
 /**
  * Determine if an error thrown during a stream call is transient and safe to retry.
  * Uses the HTTP status embedded in the error message ("HTTP 429", "HTTP 503", etc)
@@ -747,6 +755,17 @@ export class OwlEngine {
     const { provider, owl, sessionHistory, config, toolRegistry, cwd } =
       context;
     const toolsUsed: string[] = [];
+
+    // Create tool result evaluator using tool-judge role provider
+    const toolResultEvaluator: ToolResultEvaluator | null = (() => {
+      if (!context.providerRegistry) return null;
+      try {
+        return new ToolResultEvaluator(context.providerRegistry.byRole("tool-judge"));
+      } catch (err) {
+        log.engine.warn("tool.evaluator.init.failed", err);
+        return null;
+      }
+    })();
     const gapDetector = new GapDetector();
     let MAX_TOOL_ITERATIONS =
       context.maxIterations ??
@@ -1754,9 +1773,26 @@ ${userMessage}
                 toolFailStreak[toolCall.name] = 0;
                 globalConsecutiveFailures = 0;
 
+                // Quality gate: evaluate if this successful result actually satisfies intent
+                let qualityContent = toolResult;
+                if (toolResultEvaluator && !isAnyFailure && QUALITY_GATE_TOOLS.has(toolCall.name)) {
+                  const verdict = await toolResultEvaluator.evaluate(
+                    toolCall.name,
+                    toolCall.arguments,
+                    toolResult,
+                    userMessage,
+                  );
+                  if (!verdict.satisfied) {
+                    const hint = verdict.suggestedAlternative
+                      ? ` Suggested alternative: \`${verdict.suggestedAlternative}\`.`
+                      : "";
+                    qualityContent = toolResult + `\n\n[QUALITY GATE: ${toolCall.name}] Result does not fully satisfy intent (confidence ${verdict.confidence.toFixed(2)}): ${verdict.reason}.${hint} Consider using a different approach.`;
+                  }
+                }
+
                 messages.push({
                   role: "tool",
-                  content: toolResult,
+                  content: qualityContent,
                   toolCallId: toolCall.id,
                   name: toolCall.name,
                 });
