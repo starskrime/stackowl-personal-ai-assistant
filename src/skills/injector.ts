@@ -205,10 +205,21 @@ export class SkillContextInjector {
    * Useful for gating structured execution on confidence.
    */
   async getRelevantMatches(userMessage: string): Promise<IntentMatch[]> {
-    const matches = await this.router.route(
+    // Force-include skills with always:true (D4) — prepend before router results
+    const alwaysSkills: IntentMatch[] = this.registry
+      .listEnabled()
+      .filter(s => s.metadata?.openclaw?.always)
+      .map(s => ({ skill: s, score: 1.0, method: "bm25" as const }));
+
+    const routerMatches = await this.router.route(
       userMessage,
       this.options.maxSkills,
     );
+
+    // Merge: always-skills first (deduplicated against router matches)
+    const routerNames = new Set(routerMatches.map(m => m.skill.name));
+    const uniqueAlways = alwaysSkills.filter(m => !routerNames.has(m.skill.name));
+    const matches = [...uniqueAlways, ...routerMatches];
 
     // Track selections
     for (const m of matches) {
