@@ -49,13 +49,14 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const panelFocus = useUiStore((s) => s.panelFocus);
 
   // CommandContext shell for completions (bridge + store only)
-  const completionCtx: CommandContext = {
+  // Stable ref — globalBridge and uiStore are module-level singletons so this never changes
+  const completionCtxRef = useRef<CommandContext>({
     bridge: globalBridge,
     getStore: () => uiStore.getState(),
     getMemoryRepo: () => { throw new Error("not available in Composer"); },
     getMcpManager: () => { throw new Error("not available in Composer"); },
     getOwlGateway: () => { throw new Error("not available in Composer"); },
-  };
+  });
 
   useEffect(() => {
     if (!generating) return;
@@ -67,7 +68,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   useEffect(() => {
     if (!value.startsWith("/")) { setCompletions([]); setCompletionIdx(0); return; }
     let cancelled = false;
-    getCompletions(value, completionCtx).then((results) => {
+    getCompletions(value, completionCtxRef.current).then((results) => {
       if (!cancelled) { setCompletions(results); setCompletionIdx(0); }
     });
     return () => { cancelled = true; };
@@ -80,7 +81,11 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
       if (key.ctrl && input === "c") { exit(); return; }
       if (key.ctrl && input === "d" && value === "") { exit(); return; }
       if (key.ctrl && input === "l") {
-        dispatcher.dispatch("/clear");
+        dispatcher.dispatch("/clear").then((result) => {
+          if (result.kind === "error") {
+            globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
+          }
+        }).catch((e) => process.stderr.write(`[Composer] /clear dispatch error: ${e}\n`));
         return;
       }
 
@@ -99,7 +104,11 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
           const entry = completions[completionIdx];
           if (entry) {
             if (entry.kind === "command") setValue(entry.value);
-            else if (entry.kind === "subcommand") setValue(value.replace(/\S+$/, entry.value).trimEnd() + " ");
+            else if (entry.kind === "subcommand") {
+              // find the command prefix (everything up to and including the first word)
+              const cmdPart = value.trimEnd().split(/\s+/)[0] ?? "";
+              setValue(cmdPart + " " + entry.value + " ");
+            }
             else setValue(value.replace(/\S*$/, entry.value) + " ");
           }
           return;
@@ -126,7 +135,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
               globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
             }
             if (trimmed === "/quit" || trimmed === "/exit" || trimmed === "/bye") exit();
-          });
+          }).catch((e) => process.stderr.write(`[Composer] dispatch error: ${e}\n`));
           historyRef.current.push(trimmed);
           setValue("");
           return;
