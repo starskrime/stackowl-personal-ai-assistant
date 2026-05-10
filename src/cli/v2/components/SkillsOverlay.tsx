@@ -25,7 +25,7 @@ export function SkillsOverlay() {
   const hasBelow = scrollTop + maxVisible < skills.length;
 
   useInput((_input, key) => {
-    if (key.escape) { globalBridge.dismissSkillsView(); return; }
+    if (key.escape) { globalBridge.closePanel(); return; }
     if (key.upArrow)   { setScrollTop((t) => Math.max(0, t - 1)); return; }
     if (key.downArrow) {
       setScrollTop((t) => Math.min(Math.max(0, skills.length - maxVisible), t + 1));
