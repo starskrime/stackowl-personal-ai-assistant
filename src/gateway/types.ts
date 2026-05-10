@@ -58,6 +58,12 @@ export interface GatewayCallbacks {
    * Allows the channel adapter to update its UI to show the active specialist.
    */
   onOwlChange?: (owlEmoji: string, owlName: string) => void;
+  /**
+   * Parliament debate callbacks — injected into ParliamentSession.config.callbacks
+   * before runDebate() so the channel can receive live round/position/synthesis events.
+   * TUI v2 supplies these via globalBridge.makeDebateCallbacks(); other channels omit.
+   */
+  debateCallbacks?: import("../parliament/protocol.js").ParliamentCallbacks;
 }
 
 // ─── Outgoing ────────────────────────────────────────────────────

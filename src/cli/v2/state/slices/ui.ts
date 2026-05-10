@@ -54,6 +54,12 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
     case "parliament.synthesis.ready":
       return { ...state, mode: "chat" };
 
+    case "parliament.view.requested":
+      return { ...state, mode: "parliament" };
+
+    case "parliament.view.dismissed":
+      return { ...state, mode: "chat" };
+
     default:
       return state;
   }

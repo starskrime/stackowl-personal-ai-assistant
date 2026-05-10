@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from "react";
 import { Box, Text, useInput, useApp, useStdout } from "ink";
 import { InputHistory } from "../input/history.js";
 import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
+import { globalBridge } from "../events/bridge.js";
+import { useUiStore } from "../providers/UiStoreProvider.js";
 
 export interface ComposerProps {
   onSubmit: (text: string) => void;
@@ -16,6 +18,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [cols, setCols] = useState(stdout?.columns ?? 80);
+  const mode = useUiStore((s) => s.mode);
 
   useEffect(() => {
     const handler = () => setCols(stdout?.columns ?? 80);
@@ -30,6 +33,16 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
       // Quit
       if (key.ctrl && input === "c") {
         exit();
+        return;
+      }
+
+      // Ctrl+P — toggle Parliament theater view
+      if (key.ctrl && input === "p") {
+        if (mode === "parliament") {
+          globalBridge.dismissParliamentView();
+        } else {
+          globalBridge.requestParliamentView();
+        }
         return;
       }
 

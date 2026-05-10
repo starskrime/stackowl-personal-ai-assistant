@@ -107,6 +107,7 @@ export class CliV2Adapter implements ChannelAdapter {
     if (!msg) return;
 
     const turnId = uuidv4();
+    const debateId = `debate_${Date.now()}`;
 
     // Resolve current owl meta for the bridge.
     const owl = this._gateway.getOwl();
@@ -123,6 +124,13 @@ export class CliV2Adapter implements ChannelAdapter {
     // Track whether the streaming path already emitted turn.committed via the
     // "done" StreamEvent so the fallback below doesn't fire a second time.
     let committedViaStream = false;
+
+    // Build debate callbacks — will be lazily resolved with real participants when
+    // the gateway fires parliament.  We pass a factory here because we don't know
+    // who the participants are until the gateway chooses them.
+    const debateCallbacks = globalBridge.makeDebateCallbacks(debateId, [
+      { owlName: owl.persona.name, owlEmoji: owl.persona.emoji },
+    ]);
 
     try {
       const response = await this._gateway.handle(msg, {
@@ -156,6 +164,8 @@ export class CliV2Adapter implements ChannelAdapter {
           // Phase 1: always approve. Phase 3 will wire a modal.
           return true;
         },
+
+        debateCallbacks,
       });
 
       // Fallback: if the engine did NOT stream a "done" event (non-streaming

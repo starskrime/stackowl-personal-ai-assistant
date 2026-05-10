@@ -9,6 +9,7 @@
  */
 
 import type { StreamEvent } from "../../../providers/base.js";
+import type { OwlPosition, OwlChallenge, ParliamentPhase } from "../../../parliament/protocol.js";
 import type { UiEvent } from "./UiEvent.js";
 
 export type UiEventHandler = (event: UiEvent) => void;
@@ -118,6 +119,123 @@ export class UiBridge {
       owlEmoji,
       owlRole,
     });
+  }
+
+  // ─── Parliament debate event translators ─────────────────────────────────
+
+  /**
+   * Called when a debate round begins.
+   * Emits parliament.round.started — the reducer switches ui.mode to "parliament".
+   */
+  translateDebateRoundStart(
+    debateId: string,
+    round: number,
+    _phase: ParliamentPhase,
+    owls: Array<{ owlName: string; owlEmoji: string }>,
+  ): void {
+    this.emit({
+      kind: "parliament.round.started",
+      debateId,
+      round,
+      totalRounds: 3,
+      owls: owls.map((o) => ({
+        owlId: o.owlName,
+        owlName: o.owlName,
+        owlEmoji: o.owlEmoji,
+      })),
+    });
+  }
+
+  /**
+   * Called when an owl delivers their Round 1 position.
+   * Emits parliament.position.ready.
+   */
+  translateDebatePosition(debateId: string, position: OwlPosition): void {
+    this.emit({
+      kind: "parliament.position.ready",
+      debateId,
+      owlId: position.owlName,
+      owlName: position.owlName,
+      owlEmoji: position.owlEmoji,
+      position: `[${position.position}] ${position.argument}`,
+    });
+  }
+
+  /**
+   * Called when the challenger delivers their cross-examination (Round 2).
+   * Emits parliament.challenge.ready.
+   */
+  translateDebateChallenge(debateId: string, challenge: OwlChallenge): void {
+    this.emit({
+      kind: "parliament.challenge.ready",
+      debateId,
+      owlId: challenge.owlName,
+      owlName: challenge.owlName,
+      owlEmoji: "",
+      challenge: challenge.challengeContent,
+    });
+  }
+
+  /**
+   * Called when the synthesis owl delivers the final verdict (Round 3).
+   * Emits parliament.synthesis.ready — the reducer switches ui.mode back to "chat".
+   */
+  translateDebateSynthesis(
+    debateId: string,
+    synthesis: string,
+    _verdict: string,
+    synthOwlName: string,
+  ): void {
+    this.emit({
+      kind: "parliament.synthesis.ready",
+      debateId,
+      synthesis,
+      owlId: synthOwlName,
+      owlName: synthOwlName,
+    });
+  }
+
+  /**
+   * Emit parliament.view.requested — switches ui.mode to "parliament".
+   * Called by Ctrl+P keyboard handler.
+   */
+  requestParliamentView(): void {
+    this.emit({ kind: "parliament.view.requested" });
+  }
+
+  /**
+   * Emit parliament.view.dismissed — switches ui.mode back to "chat".
+   * Called by Ctrl+P when already in parliament mode (toggle behavior).
+   */
+  dismissParliamentView(): void {
+    this.emit({ kind: "parliament.view.dismissed" });
+  }
+
+  /**
+   * Build a DebateCallbacks object that routes all parliament events through this bridge.
+   * Pass these callbacks into ParliamentSession.config.callbacks before runDebate().
+   */
+  makeDebateCallbacks(
+    debateId: string,
+    participants: Array<{ owlName: string; owlEmoji: string }>,
+  ): import("../../../parliament/protocol.js").ParliamentCallbacks {
+    return {
+      onRoundStart: async (round, phase) => {
+        this.translateDebateRoundStart(debateId, round, phase, participants);
+      },
+      onPositionReady: async (position) => {
+        this.translateDebatePosition(debateId, position);
+      },
+      onChallengeReady: async (challenge) => {
+        this.translateDebateChallenge(debateId, challenge);
+      },
+      onSynthesisReady: async (synthesis, verdict) => {
+        // Pick the first participant as fallback synthesizer name — the real name
+        // is baked into synthesis text. We don't have the owl identity here.
+        const synthName = participants[0]?.owlName ?? "Parliament";
+        this.translateDebateSynthesis(debateId, synthesis, verdict, synthName);
+      },
+    };
   }
 }
 

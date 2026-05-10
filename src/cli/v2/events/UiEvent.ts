@@ -113,6 +113,16 @@ export interface ParliamentSynthesisReadyEvent {
   owlName: string;
 }
 
+/** Emitted when the user presses Ctrl+P to open the Parliament view. */
+export interface ParliamentViewRequestedEvent {
+  kind: "parliament.view.requested";
+}
+
+/** Emitted when the user dismisses the Parliament view (Ctrl+P again or back shortcut). */
+export interface ParliamentViewDismissedEvent {
+  kind: "parliament.view.dismissed";
+}
+
 // ─── Heartbeat / notices ──────────────────────────────────────────────────────
 
 export interface HeartbeatMessageEvent {
@@ -147,6 +157,8 @@ export type UiEvent =
   | ParliamentPositionReadyEvent
   | ParliamentChallengeReadyEvent
   | ParliamentSynthesisReadyEvent
+  | ParliamentViewRequestedEvent
+  | ParliamentViewDismissedEvent
   | HeartbeatMessageEvent
   | NoticeEvent;
 
