@@ -11,6 +11,8 @@ import { ChatScreen } from "./screens/ChatScreen.js";
 import { ParliamentScreen } from "./screens/ParliamentScreen.js";
 import { OnboardingScreen } from "./screens/OnboardingScreen.js";
 import { SkillWizardScreen } from "./screens/SkillWizardScreen.js";
+import { SkillsScreen } from "./screens/SkillsScreen.js";
+import { McpScreen } from "./screens/McpScreen.js";
 import { SessionsScreen } from "./screens/SessionsScreen.js";
 import { OwlsScreen } from "./screens/OwlsScreen.js";
 
@@ -22,12 +24,14 @@ interface ActiveScreenProps {
 function ActiveScreen({ onSubmit, onResume }: ActiveScreenProps) {
   const mode = useUiStore((s) => s.mode);
   switch (mode) {
-    case "parliament":  return <ParliamentScreen />;
-    case "onboarding": return <OnboardingScreen />;
-    case "skills":     return <SkillWizardScreen />;
-    case "sessions":   return <SessionsScreen onResume={onResume} />;
-    case "owls":       return <OwlsScreen />;
-    default:           return <ChatScreen onSubmit={onSubmit} />;
+    case "parliament":   return <ParliamentScreen />;
+    case "onboarding":  return <OnboardingScreen />;
+    case "skill-wizard": return <SkillWizardScreen />;
+    case "skills":      return <SkillsScreen />;
+    case "mcp":         return <McpScreen />;
+    case "sessions":    return <SessionsScreen onResume={onResume} />;
+    case "owls":        return <OwlsScreen />;
+    default:            return <ChatScreen onSubmit={onSubmit} />;
   }
 }
 

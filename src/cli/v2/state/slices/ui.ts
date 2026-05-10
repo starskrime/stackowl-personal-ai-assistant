@@ -2,7 +2,7 @@ import type { UiState } from "../store.js";
 import type { UiEvent } from "../../events/UiEvent.js";
 import { getContextWindow } from "../model-context.js";
 
-export type UiMode = "chat" | "parliament" | "onboarding" | "skills" | "sessions" | "owls";
+export type UiMode = "chat" | "parliament" | "onboarding" | "skill-wizard" | "skills" | "mcp" | "sessions" | "owls";
 
 export interface UiSliceState {
   mode: UiMode;
@@ -18,10 +18,8 @@ export interface UiSliceState {
   totalCostUsd: number;
   /** Context window utilisation [0–100]. */
   contextWindowPct: number;
-  /** Inline overlays shown above the Composer in ChatScreen. */
+  /** Inline overlay shown above the Composer in ChatScreen (help only). */
   showHelp: boolean;
-  showSkillsOverlay: boolean;
-  showMcpOverlay: boolean;
 }
 
 export const initialUiSliceState: UiSliceState = {
@@ -35,8 +33,6 @@ export const initialUiSliceState: UiSliceState = {
   totalCostUsd: 0,
   contextWindowPct: 0,
   showHelp: false,
-  showSkillsOverlay: false,
-  showMcpOverlay: false,
 };
 
 export function applyUiEvent(state: UiState, event: UiEvent): UiState {
@@ -107,21 +103,21 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
     case "help.view.dismissed":
       return { ...state, showHelp: false };
 
-    // ─── Skills overlay ──────────────────────────────────────────
+    // ─── Skills full-screen ──────────────────────────────────────
 
     case "skills.view.requested":
-      return { ...state, showSkillsOverlay: true };
+      return { ...state, mode: "skills" };
 
     case "skills.view.dismissed":
-      return { ...state, showSkillsOverlay: false };
+      return { ...state, mode: "chat" };
 
-    // ─── MCP overlay ─────────────────────────────────────────────
+    // ─── MCP full-screen ─────────────────────────────────────────
 
     case "mcp.view.requested":
-      return { ...state, showMcpOverlay: true };
+      return { ...state, mode: "mcp" };
 
     case "mcp.view.dismissed":
-      return { ...state, showMcpOverlay: false };
+      return { ...state, mode: "chat" };
 
     default:
       return state;

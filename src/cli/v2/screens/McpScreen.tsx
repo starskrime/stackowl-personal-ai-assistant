@@ -1,13 +1,20 @@
-/** Inline overlay showing MCP server status. Phase 3-A. */
+/**
+ * McpScreen — full-screen MCP server status viewer.
+ *
+ * Replaces ChatScreen entirely when the user types /mcp.
+ * Esc returns to chat, restoring terminal scrollback.
+ */
 
 import { Box, Text, useInput } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
 import { useTheme } from "../providers/ThemeProvider.js";
+import { useTerminalCols } from "../input/useTerminalCols.js";
 
-export function McpOverlay() {
+export function McpScreen() {
+  const { colors, glyphs } = useTheme();
   const servers = useUiStore((s) => s.mcpServers);
-  const { colors } = useTheme();
+  const cols = useTerminalCols();
 
   useInput((_input, key) => {
     if (key.escape) {
@@ -15,25 +22,25 @@ export function McpOverlay() {
     }
   });
 
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.heartbeat}
-      paddingX={1}
-      paddingY={0}
-    >
-      <Box marginBottom={1}>
-        <Text bold color={colors.heartbeat}>MCP Servers</Text>
-        <Text dimColor>{"  Esc to close"}</Text>
-      </Box>
+  const connectedCount = servers.filter((s) => s.connected).length;
+  const divider = glyphs.divider.repeat(Math.max(0, cols));
 
+  return (
+    <Box flexDirection="column" width={cols}>
+      {/* Header */}
+      <Box paddingX={1}>
+        <Text bold color={colors.heartbeat}>MCP Servers</Text>
+        <Text dimColor>{"  (Esc to return)"}</Text>
+      </Box>
+      <Text dimColor>{divider}</Text>
+
+      {/* List */}
       {servers.length === 0 ? (
-        <Box paddingX={1}>
+        <Box paddingX={2} paddingY={1}>
           <Text dimColor>No MCP servers configured.</Text>
         </Box>
       ) : (
-        <Box flexDirection="column">
+        <Box flexDirection="column" paddingX={1}>
           {servers.map((server) => (
             <Box key={server.name}>
               <Text color={server.connected ? colors.success : colors.error}>
@@ -49,11 +56,13 @@ export function McpOverlay() {
         </Box>
       )}
 
-      <Box marginTop={1}>
+      {/* Footer */}
+      <Text dimColor>{divider}</Text>
+      <Box paddingX={1}>
         <Text dimColor>
           {servers.length > 0
-            ? `${servers.length} server${servers.length === 1 ? "" : "s"} · ${servers.filter((s) => s.connected).length} connected`
-            : ""}
+            ? `${servers.length} server${servers.length === 1 ? "" : "s"} · ${connectedCount} connected`
+            : "Configure MCP servers in stackowl.config.json"}
         </Text>
       </Box>
     </Box>
