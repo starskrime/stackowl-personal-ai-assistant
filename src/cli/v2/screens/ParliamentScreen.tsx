@@ -14,13 +14,14 @@
  *   Ctrl+P — return to chat  ·  Round 1 in progress...
  */
 
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
 import { useState, useEffect } from "react";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
 import type { ParliamentDebate } from "../state/slices/parliament.js";
 import { STACKOWL_SPINNER, SPINNER_AMBER, SPINNER_INTERVAL_MS } from "../components/spinner.js";
 import { useTheme } from "../providers/ThemeProvider.js";
+import { useTerminalCols } from "../input/useTerminalCols.js";
 
 function roundLabel(round: number): string {
   switch (round) {
@@ -117,15 +118,8 @@ function SynthesisPanel({ debate }: { debate: ParliamentDebate }) {
 export function ParliamentScreen() {
   const { colors } = useTheme();
   const debate = useUiStore((s) => s.activeDebate);
-  const { stdout } = useStdout();
-  const [cols, setCols] = useState(stdout?.columns ?? 80);
+  const cols = useTerminalCols();
   const [spinFrame, setSpinFrame] = useState(0);
-
-  useEffect(() => {
-    const h = () => setCols(stdout?.columns ?? 80);
-    stdout?.on("resize", h);
-    return () => { stdout?.off("resize", h); };
-  }, [stdout]);
 
   useEffect(() => {
     if (!debate?.active) return;

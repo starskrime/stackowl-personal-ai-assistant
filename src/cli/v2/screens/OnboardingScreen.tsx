@@ -6,13 +6,17 @@
  * Wired in Phase 3.
  */
 
-
 import { Box, Text } from "ink";
+import { TopBar } from "../components/TopBar.js";
+import { Frame } from "../components/Frame.js";
 
 export function OnboardingScreen() {
   return (
-    <Box>
-      <Text>Onboarding — Phase 3</Text>
+    <Box flexDirection="column">
+      <TopBar />
+      <Frame>
+        <Text dimColor>Onboarding — coming soon. Run ./start.sh for now.</Text>
+      </Frame>
     </Box>
   );
 }

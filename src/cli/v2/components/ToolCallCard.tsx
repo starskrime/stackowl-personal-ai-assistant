@@ -16,6 +16,7 @@ import {
   SPINNER_INTERVAL_MS,
 } from "./spinner.js";
 import { useTheme } from "../providers/ThemeProvider.js";
+import { glyphs } from "../theme/tokens.js";
 
 function fmtTime(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -42,7 +43,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
   if (tool.status === "running" || tool.status === "pending") {
     return (
       <Box paddingLeft={2}>
-        <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[frame]} </Text>
+        <Text dimColor>{glyphs.leftRule} </Text>
         <Text bold>{tool.toolName}</Text>
         {tool.progressMessage ? (
           <Text dimColor> {tool.progressMessage}</Text>
@@ -50,6 +51,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
         {tool.elapsedMs > 0 ? (
           <Text dimColor> {fmtTime(tool.elapsedMs)}</Text>
         ) : null}
+        <Text color={SPINNER_AMBER}> {STACKOWL_SPINNER[frame]}</Text>
       </Box>
     );
   }
@@ -57,7 +59,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
   if (tool.status === "done") {
     return (
       <Box paddingLeft={2}>
-        <Text dimColor>└ {tool.toolName} </Text>
+        <Text dimColor>{glyphs.leftRuleTerm} {tool.toolName} </Text>
         <Text color={colors.success}>✓</Text>
         <Text dimColor> {fmtTime(tool.elapsedMs)}</Text>
       </Box>
@@ -66,7 +68,8 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
 
   return (
     <Box paddingLeft={2}>
-      <Text dimColor>└ {tool.toolName} </Text>
+      <Text color={colors.error}>{glyphs.leftRuleTerm} </Text>
+      <Text dimColor>{tool.toolName} </Text>
       <Text color={colors.error}>✗ {tool.error ?? "error"}</Text>
     </Box>
   );

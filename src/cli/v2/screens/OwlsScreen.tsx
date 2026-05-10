@@ -10,28 +10,22 @@
  *   - globalBridge.dismissOwlsView() → owls.view.dismissed → mode: "chat"
  */
 
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useState, useEffect } from "react";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
 import { useTheme } from "../providers/ThemeProvider.js";
+import { useTerminalCols } from "../input/useTerminalCols.js";
 
 export function OwlsScreen() {
   const { colors, glyphs } = useTheme();
   const owls = useUiStore((s) => s.availableOwls);
-  const { stdout } = useStdout();
-  const [cols, setCols] = useState(stdout?.columns ?? 80);
+  const cols = useTerminalCols();
   const [cursor, setCursor] = useState(() => {
     // Start cursor on the currently-active owl.
     const activeIdx = owls.findIndex((o) => o.isActive);
     return activeIdx >= 0 ? activeIdx : 0;
   });
-
-  useEffect(() => {
-    const handler = () => setCols(stdout?.columns ?? 80);
-    stdout?.on("resize", handler);
-    return () => { stdout?.off("resize", handler); };
-  }, [stdout]);
 
   // Reset cursor to active owl when owls list changes.
   useEffect(() => {

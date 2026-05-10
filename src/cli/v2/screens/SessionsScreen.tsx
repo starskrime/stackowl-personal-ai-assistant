@@ -10,11 +10,12 @@
  *   3 sessions
  */
 
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useState, useEffect } from "react";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
 import { useTheme } from "../providers/ThemeProvider.js";
+import { useTerminalCols } from "../input/useTerminalCols.js";
 
 interface SessionsScreenProps {
   onResume: (sessionId: string, title: string) => void;
@@ -34,15 +35,8 @@ export function SessionsScreen({ onResume }: SessionsScreenProps) {
   const { colors } = useTheme();
   const sessions       = useUiStore((s) => s.recentSessions);
   const activeSession  = useUiStore((s) => s.activeSessionId);
-  const { stdout }     = useStdout();
-  const [cols, setCols] = useState(stdout?.columns ?? 80);
+  const cols = useTerminalCols();
   const [cursor, setCursor] = useState(0);
-
-  useEffect(() => {
-    const h = () => setCols(stdout?.columns ?? 80);
-    stdout?.on("resize", h);
-    return () => { stdout?.off("resize", h); };
-  }, [stdout]);
 
   useEffect(() => { setCursor(0); }, [sessions.length]);
 
