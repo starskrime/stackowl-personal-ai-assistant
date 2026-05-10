@@ -1,7 +1,7 @@
 /** Multi-line input, history, paste. Phase 1. */
 
-import { useState, useRef } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import { useState, useRef, useEffect } from "react";
+import { Box, Text, useInput, useApp, useStdout } from "ink";
 import { InputHistory } from "../input/history.js";
 import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
 
@@ -14,6 +14,16 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const [value, setValue] = useState("");
   const historyRef = useRef<InputHistory>(new InputHistory());
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const [cols, setCols] = useState(stdout?.columns ?? 80);
+
+  useEffect(() => {
+    const handler = () => setCols(stdout?.columns ?? 80);
+    stdout?.on("resize", handler);
+    return () => {
+      stdout?.off("resize", handler);
+    };
+  }, [stdout]);
 
   useInput(
     (input, key) => {
@@ -69,8 +79,6 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     { isActive: !disabled },
   );
 
-  const cols = process.stdout.columns ?? 80;
-
   return (
     <Box flexDirection="column">
       <Text dimColor>{"─".repeat(Math.max(0, cols))}</Text>
@@ -78,7 +86,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         <Text color="green">{"› "}</Text>
         <Text>
           {value}
-          <Text color="cyan">█</Text>
+          <Text color="cyan">▋</Text>
         </Text>
       </Box>
     </Box>
