@@ -23,24 +23,6 @@ export class ChannelAdapterV1Shim implements ChannelAdapterV2 {
   register(registry: ChannelRegistry): void { registry.register(this) }
 
   async deliver(envelope: DeliveryEnvelope): Promise<void> {
-    // TUI v2 fast path: proactive messages get their own HeartbeatBanner lane
-    // instead of appearing as inline chat replies.
-    if (
-      envelope.urgency === "proactive" &&
-      this.v1.capabilities?.()?.tuiV2 &&
-      this.v1.emit
-    ) {
-      this.v1.emit({
-        kind: "heartbeat.message",
-        owlId: envelope.userId,
-        owlName: "",
-        owlEmoji: "🔔",
-        text: envelope.content.text,
-        timestamp: envelope.createdAt,
-      });
-      return;
-    }
-
     const response: GatewayResponse = {
       content: envelope.content.text,
       owlName: "",
