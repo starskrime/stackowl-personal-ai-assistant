@@ -246,8 +246,8 @@ export class SlackAdapter implements ChannelAdapter {
           timestamp: msg.ts,
           name: "eyes",
         });
-      } catch {
-        // Non-fatal — might not have permission
+      } catch (err) {
+        log.slack.warn("reaction add (eyes) failed, may not have permission", err);
       }
 
       try {
@@ -293,8 +293,8 @@ export class SlackAdapter implements ChannelAdapter {
             timestamp: msg.ts,
             name: "eyes",
           });
-        } catch {
-          /* non-fatal */
+        } catch (err) {
+          log.slack.warn("reaction remove (eyes) failed", err);
         }
 
         log.slack.outgoing(`user:${msg.user}`, response.content);
@@ -330,8 +330,8 @@ export class SlackAdapter implements ChannelAdapter {
             timestamp: msg.ts,
             name: "warning",
           });
-        } catch {
-          /* non-fatal */
+        } catch (err) {
+          log.slack.warn("error reaction add failed", err);
         }
 
         await say({ text: `❌ Error: ${errMsg}`, thread_ts: threadTs });
@@ -438,8 +438,8 @@ export class SlackAdapter implements ChannelAdapter {
           text: displayText,
         });
         lastEditTime = Date.now();
-      } catch {
-        // Edit may fail if message too old or rate limited — non-fatal
+      } catch (err) {
+        log.slack.warn("streaming message edit failed (message too old or rate limited)", err);
       }
     };
 
@@ -465,8 +465,8 @@ export class SlackAdapter implements ChannelAdapter {
               });
               messageTs = sent.ts ?? null;
               lastEditTime = Date.now();
-            } catch {
-              // Fall back to final response
+            } catch (err) {
+              log.slack.warn("initial streaming message send failed, will fall back to final response", err);
             }
             return;
           }
@@ -667,8 +667,8 @@ export class SlackAdapter implements ChannelAdapter {
       );
       for (const id of ids) this.activeChannels.add(id);
       log.slack.info(`Loaded ${ids.length} known channel(s)`);
-    } catch {
-      /* non-fatal */
+    } catch (err) {
+      log.slack.warn("loadChannelIds failed", err);
     }
   }
 

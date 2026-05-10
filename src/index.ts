@@ -1075,6 +1075,8 @@ async function buildGateway(
   // Drives continuous learning from inner desires, capability gaps,
   // pattern mining, skill evolution, and reflexion.
   const { CognitiveLoop } = await import("./cognition/loop.js");
+  const { readLogsArray } = await import("./infra/observability/reader.js");
+  const { summarize: summarizeLogs } = await import("./infra/observability/analyzer.js");
   const skillsDir = b.skillsLoader
     ? resolve(b.workspacePath, "skills")
     : undefined;
@@ -1098,6 +1100,8 @@ async function buildGateway(
       evolutionEngine: b.evolutionEngine,
       providerRegistry: b.providerRegistry,
       skillsLoader: b.skillsLoader,
+      logReader: readLogsArray,
+      logAnalyzer: summarizeLogs,
     },
     b.config.cognition,
   );

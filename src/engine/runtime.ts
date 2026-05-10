@@ -21,6 +21,7 @@ import type { PelletStore } from "../pellets/store.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
 import { ModelRouter } from "./router.js";
+import { withSpan, attachToContext } from "../infra/observability/context.js";
 import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
@@ -323,7 +324,8 @@ export class TrajectoryStore {
     try {
       const embedResp = await provider.embed(`${action}\n${result.slice(0, 500)}`);
       footprint = embedResp.embedding ?? [];
-    } catch {
+    } catch (err) {
+      log.engine.warn("semantic footprint embed failed, falling back gracefully", err);
       return false; // Fallback gracefully if provider lacks embed()
     }
 
@@ -394,7 +396,8 @@ async function runSelfAssessment(
     if (verdict.startsWith("PIVOT")) return "PIVOT";
     if (verdict.startsWith("SYNTHESIZE")) return "SYNTHESIZE";
     return "CONTINUE";
-  } catch {
+  } catch (err) {
+    log.engine.warn("self-check verdict call failed, defaulting to CONTINUE", err);
     return "CONTINUE";
   }
 }
@@ -639,13 +642,17 @@ async function withProviderResilience(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       if (provider.chatWithToolsStream && onStreamEvent) {
-        return await consumeStream(
-          provider.chatWithToolsStream(messages, tools, model, chatOptions),
-          onStreamEvent,
-        );
+        return await withSpan("provider.call", async () => {
+          return consumeStream(
+            provider.chatWithToolsStream!(messages, tools, model, chatOptions),
+            onStreamEvent!,
+          );
+        }, { model, attempt });
       }
       // Provider has no stream: fall through directly to non-stream
-      return await provider.chatWithTools(messages, tools, model, chatOptions);
+      return await withSpan("provider.call", async () => {
+        return provider.chatWithTools(messages, tools, model, chatOptions);
+      }, { model, attempt });
     } catch (err) {
       lastStreamError = err;
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -762,8 +769,8 @@ export class OwlEngine {
           userMessage,
           context.userId,
         );
-      } catch {
-        /* non-fatal */
+      } catch (err) {
+        log.engine.warn("trajectory begin failed", err);
       }
     }
 
@@ -774,6 +781,7 @@ export class OwlEngine {
     // 1. Determine optimal model (heuristic, no LLM call)
     let routeDecision = ModelRouter.route(userMessage, config);
     let optimalModel = routeDecision.modelName;
+    attachToContext({ model: optimalModel });
 
     // Dynamic provider resolution based on route (if cross-provider routing is needed early)
     let currentProvider = provider;
@@ -873,8 +881,8 @@ export class OwlEngine {
               : "") +
             `</task_state>`;
         }
-      } catch {
-        // Non-fatal — TaskState is optional enrichment
+      } catch (err) {
+        log.engine.warn("TaskState enrichment failed", err);
       }
     }
 
@@ -886,7 +894,9 @@ export class OwlEngine {
         if (relBlock) {
           finalSystemPromptWithRelationship += "\n\n" + relBlock.slice(0, 800) + "\n";
         }
-      } catch { /* non-critical */ }
+      } catch (err) {
+        log.engine.warn("relationship context block build failed", err);
+      }
     }
 
     // Opinion injection — pre-built string from OpinionInjector (G5)
@@ -1104,8 +1114,8 @@ ${userMessage}
             `[PLAN] Pre-populated ${avoidList.length} known-failure(s) into TaskState for session ${context.sessionId}`,
           );
         }
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        log.engine.warn("approach library pre-population failed", err);
       }
     }
 
@@ -1358,13 +1368,15 @@ ${userMessage}
             const tc = action.toolCall;
             try {
               const verdictSink: { verdict?: string; reason?: string } = {};
-              const result = await toolRegistry!.execute(
-                tc.name,
-                tc.arguments,
-                toolCtx,
-                0,
-                verdictSink,
-              );
+              const result = await withSpan("tool.exec", async () => {
+                return toolRegistry!.execute(
+                  tc.name,
+                  tc.arguments,
+                  toolCtx,
+                  0,
+                  verdictSink,
+                );
+              }, { tool: tc.name });
               return { id: tc.id, result, isHardFailure: false, verificationResult: verdictSink.verdict, verifierReason: verdictSink.reason };
             } catch (e) {
               return {
@@ -1526,8 +1538,8 @@ ${userMessage}
                     toolsUsed.push(fallbackName);
                     log.engine.info(`[Fallback] ${fallbackName} succeeded`);
                     break;
-                  } catch {
-                    // Try next fallback
+                  } catch (fallbackErr) {
+                    log.engine.warn(`fallback tool attempt failed`, fallbackErr);
                   }
                 }
 
@@ -1587,8 +1599,8 @@ ${userMessage}
                   );
                   if (isAnyFailure) trajectoryToolFailureCount++;
                   else trajectoryToolSuccessCount++;
-                } catch {
-                  /* non-fatal */
+                } catch (err) {
+                  log.engine.warn("tool step recording failed", err);
                 }
               }
 
@@ -1629,8 +1641,8 @@ ${userMessage}
                       );
                     }
                   }
-                } catch {
-                  // Non-fatal
+                } catch (err) {
+                  log.engine.warn("approach library recording failed", err);
                 }
               }
 
@@ -1870,8 +1882,8 @@ ${userMessage}
                 );
               }
             }
-          } catch {
-            // Non-fatal — pellet injection is supplementary
+          } catch (err) {
+            log.engine.warn("pellet injection failed (supplementary, non-fatal)", err);
           }
         }
 
@@ -1969,8 +1981,8 @@ ${userMessage}
               content: stripDoneSignal(synthContent),
             };
           }
-        } catch {
-          // Ignore — fall through to exhaustion check
+        } catch (err) {
+          log.engine.warn("synthesis call failed, falling through to exhaustion check", err);
         }
       }
 
@@ -2045,8 +2057,8 @@ ${userMessage}
           if (!content) {
             log.engine.warn(`[Runtime] Self-correction produced empty response. Escalating.`);
           }
-        } catch {
-          // Self-correction call itself threw — surface the fallback
+        } catch (err) {
+          log.engine.warn("self-correction call failed, surfacing fallback", err);
           response = { ...response, content: fallbackContent };
         }
       }
@@ -2175,8 +2187,8 @@ ${userMessage}
           }
           // If stage 2 is also empty, fall through with whatever we have
         }
-      } catch {
-        // Ignore — fall through to whatever we had
+      } catch (err) {
+        log.engine.warn("empty retry stage 2 failed, falling through with available response", err);
       }
     }
 
@@ -2228,8 +2240,8 @@ ${userMessage}
           toolsUsed,
           trajectoryTurnIndex,
         );
-      } catch {
-        /* non-fatal */
+      } catch (err) {
+        log.engine.warn("trajectory complete recording failed", err);
       }
     }
 
@@ -2342,8 +2354,8 @@ ${userMessage}
       };
 
       return [memoryBlock, ...remaining];
-    } catch {
-      // If compression fails, just trim the oldest messages silently
+    } catch (err) {
+      log.engine.warn("context compression failed, using trimmed messages", err);
       return remaining;
     }
   }
@@ -2606,8 +2618,8 @@ ${skillsContext}
           }
           prompt += "\n*Use `pellet_recall` to search for more specific knowledge.*\n";
         }
-      } catch {
-        /* non-fatal */
+      } catch (err) {
+        log.engine.warn("pellet injection into system prompt failed", err);
       }
     }
 

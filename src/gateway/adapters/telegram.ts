@@ -514,8 +514,8 @@ export class TelegramAdapter implements ChannelAdapter {
           { parse_mode: "HTML" },
         );
         ackMessageId = ackMsg.message_id;
-      } catch {
-        // Non-fatal — proceed without ack
+      } catch (err) {
+        log.telegram.warn("ack message send failed, proceeding without ack", err);
       }
 
       try {
@@ -629,14 +629,15 @@ export class TelegramAdapter implements ChannelAdapter {
                 chunks[0]!,
                 { parse_mode: "HTML" },
               );
-            } catch {
+            } catch (err) {
               // Edit failed — delete streaming message and start fresh
+              log.telegram.warn("streaming message edit failed, retrying with fresh message", err);
               await this.bot.api
                 .deleteMessage(ctx.chat.id, msgId)
-                .catch(() => {});
+                .catch((deleteErr) => { log.telegram.warn("delete streaming message failed", deleteErr); });
               await this.bot.api
                 .sendMessage(ctx.chat.id, chunks[0]!, { parse_mode: "HTML" })
-                .catch(() => {});
+                .catch((sendErr) => { log.telegram.warn("fallback send after edit failure failed", sendErr); });
             }
             // Send remaining chunks
             for (let i = 1; i < Math.min(chunks.length, 5); i++) {
@@ -799,7 +800,9 @@ export class TelegramAdapter implements ChannelAdapter {
               try {
                 await ctx.reply(this.renderContent(stripped), { parse_mode: "HTML" });
                 await ctx.api.sendChatAction(ctx.chat.id, "typing");
-              } catch { /* non-fatal */ }
+              } catch (err) {
+                log.telegram.warn("progress reply failed", err);
+              }
             },
             onStreamEvent: streamCtx.handler,
           },
@@ -849,8 +852,8 @@ export class TelegramAdapter implements ChannelAdapter {
         }
         try {
           await ctx.answerCallbackQuery();
-        } catch {
-          /* query expired */
+        } catch (err) {
+          log.telegram.warn("answerCallbackQuery failed (query likely expired)", err);
         }
         const userId = ctx.from?.id;
         if (!userId) return;
@@ -904,8 +907,8 @@ export class TelegramAdapter implements ChannelAdapter {
       if ((signal !== "like" && signal !== "dislike") || !feedbackId) {
         try {
           await ctx.answerCallbackQuery();
-        } catch {
-          /* query expired — ignore */
+        } catch (err) {
+          log.telegram.warn("answerCallbackQuery (invalid feedback) failed", err);
         }
         return;
       }
@@ -928,8 +931,8 @@ export class TelegramAdapter implements ChannelAdapter {
         await ctx.editMessageText(
           signal === "like" ? "👍 Helpful" : "👎 Not helpful",
         );
-      } catch {
-        // Message too old to edit — ignore
+      } catch (err) {
+        log.telegram.warn("feedback message edit failed (message too old)", err);
       }
 
       // Forward to gateway for learning integration
@@ -1168,8 +1171,8 @@ export class TelegramAdapter implements ChannelAdapter {
               status.streamedContentWithHeader = displayText;
               lastEditTime = Date.now();
               initialMessageDelivered = true;
-            } catch {
-              // If initial send fails, streaming will fall back to final response
+            } catch (err) {
+              log.telegram.warn("initial streaming message send failed, will fall back to final response", err);
             }
             return;
           }
@@ -1407,8 +1410,8 @@ export class TelegramAdapter implements ChannelAdapter {
       );
       for (const id of ids) this.activeChatIds.add(id);
       log.telegram.info(`Loaded ${ids.length} known chat ID(s)`);
-    } catch {
-      /* non-fatal */
+    } catch (err) {
+      log.telegram.warn("loadChatIds failed", err);
     }
   }
 

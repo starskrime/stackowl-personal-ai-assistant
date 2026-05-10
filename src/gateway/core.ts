@@ -131,6 +131,7 @@ import type { SubGoal } from "../engine/types.js";
 import { createInvokeSkillTool } from "../tools/invoke-skill.js"
 import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
+import { withSpan, attachToContext } from "../infra/observability/context.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -159,8 +160,8 @@ async function isSkillInstallIntent(
   try {
     const resolved = ctx.intelligence?.resolve("classification");
     model = resolved?.model;
-  } catch {
-    // fall through — use provider default
+  } catch (err) {
+    log.engine.warn("isSkillInstallIntent: intelligence resolution failed, using provider default", err);
   }
 
   const prompt =
@@ -179,7 +180,8 @@ async function isSkillInstallIntent(
   let raced: any;
   try {
     raced = await Promise.race([call, timeout]);
-  } catch {
+  } catch (err) {
+    log.engine.warn("isSkillInstallIntent: provider call failed", err);
     return false;
   }
 
@@ -353,7 +355,7 @@ export class OwlGateway {
     const saveDNAOnExit = () => {
       if (ctx.owlRegistry) {
         const owl = ctx.owlRegistry.getDefault?.() ?? ctx.owl;
-        ctx.owlRegistry.saveDNA(owl.persona.name).catch(() => {});
+        ctx.owlRegistry.saveDNA(owl.persona.name).catch((err) => { log.engine.warn("saveDNA on exit failed", err); });
       }
     };
     process.once("exit", saveDNAOnExit);
@@ -378,7 +380,7 @@ export class OwlGateway {
     } else {
       const workspacePath = ctx.cwd ?? process.cwd();
       this.microLearner = new MicroLearner(workspacePath);
-      this.microLearner.load().catch(() => {});
+      this.microLearner.load().catch((err) => { log.engine.warn("microLearner load failed", err); });
     }
 
     // SkillCreationWizard — channel-agnostic skill creation via ChannelAdapterV2.ask()
@@ -448,7 +450,7 @@ export class OwlGateway {
     let intelligenceReflexion: IntelligenceReflexionEngine | undefined;
     if (ctx.db && ctx.provider) {
       const embedFn = async (text: string): Promise<number[]> => {
-        try { return (await ctx.provider.embed(text)).embedding; } catch { return []; }
+        try { return (await ctx.provider.embed(text)).embedding; } catch (err) { log.engine.warn("embedding failed", err); return []; }
       };
       intelligenceReflexion = new IntelligenceReflexionEngine(ctx.db, ctx.provider, embedFn);
     }
@@ -495,7 +497,7 @@ export class OwlGateway {
       // Pass ctx.db if already provided; will be upgraded via setDb() after auto-init.
       const skillTracker = new SkillTracker(ctx.cwd ?? process.cwd(), ctx.db);
       if (!ctx.db) {
-        skillTracker.load().catch(() => {}); // Non-blocking JSON load when no DB yet
+        skillTracker.load().catch((err) => { log.engine.warn("skillTracker load failed", err); }); // Non-blocking JSON load when no DB yet
       }
 
       // Use synthesis provider (Anthropic) for skill routing LLM disambiguation
@@ -505,8 +507,8 @@ export class OwlGateway {
       if (ctx.providerRegistry) {
         try {
           skillProvider = ctx.providerRegistry.get(synthesisProviderName);
-        } catch {
-          // Fallback to default provider if synthesis provider not registered
+        } catch (err) {
+          log.engine.warn("synthesis provider not registered, falling back to default provider", err);
         }
       }
 
@@ -629,7 +631,8 @@ export class OwlGateway {
               { temperature: 0, maxTokens: 200 },
             );
             return resp.content;
-          } catch {
+          } catch (err) {
+            log.engine.warn("OwlBrain: routing LLM call failed", err);
             return JSON.stringify({ targeted: null, confidence: 0 });
           }
         });
@@ -676,7 +679,7 @@ export class OwlGateway {
       if (ctx.db) {
         const factInvalidator = new FactInvalidator(ctx.db);
         this.gatewayEventBus.on("fact:extracted", (e) => {
-          factInvalidator.check(e.factText, e.userId).catch(() => {});
+          factInvalidator.check(e.factText, e.userId).catch((err) => { log.engine.warn("factInvalidator check failed", err); });
         });
         log.engine.debug("[FactInvalidator] Subscribed to fact:extracted");
       }
@@ -685,7 +688,7 @@ export class OwlGateway {
       if (ctx.db && ctx.provider && ctx.pelletStore) {
         const sleepConsolidator = new SleepTimeConsolidator(ctx.db, ctx.provider, ctx.pelletStore as any);
         this.gatewayEventBus.on("session:ended", (e) => {
-          sleepConsolidator.onSessionEnded(e.userId, e.sessionId).catch(() => {});
+          sleepConsolidator.onSessionEnded(e.userId, e.sessionId).catch((err) => { log.engine.warn("sleepConsolidator onSessionEnded failed", err); });
         });
         log.engine.debug("[SleepTimeConsolidator] Subscribed to session:ended");
       }
@@ -757,7 +760,7 @@ export class OwlGateway {
           this.instinctRegistry.loadForOwl(owlsDir, spec.name),
         ),
       );
-    }).catch(() => {});
+    }).catch((err) => { log.engine.warn("instinct registry load failed", err); });
 
     // Wire learning orchestrator → cognitive loop gap bridge.
     // When the orchestrator discovers knowledge gaps from conversations,
@@ -786,7 +789,7 @@ export class OwlGateway {
       this.crossSessionStore = ctx.crossSessionStore;
     } else {
       this.crossSessionStore = new CrossSessionStore(workspacePath, ctx.factStore, ctx.sessionStore);
-      this.crossSessionStore.load().catch(() => {});
+      this.crossSessionStore.load().catch((err) => { log.engine.warn("crossSessionStore load failed", err); });
     }
     log.engine.info("[memory] CrossSessionStore initialized");
 
@@ -952,7 +955,7 @@ export class OwlGateway {
     // Store only the tail; GC cleans up resolved promises automatically
     this.lanes.set(
       laneKey,
-      next.catch(() => {}),
+      next.catch((err) => { log.engine.warn("lane execution failed", err); }),
     );
     return next;
   }
@@ -1338,7 +1341,8 @@ export class OwlGateway {
       if (this.ctx.providerRegistry) {
         try {
           fastProvider = this.ctx.providerRegistry.get("anthropic");
-        } catch {
+        } catch (err) {
+          log.engine.warn("continuity: anthropic provider not registered, using default", err);
           fastProvider = this.ctx.provider;
         }
       }
@@ -1428,7 +1432,7 @@ export class OwlGateway {
           // Archive ground state — expire open questions, keep decisions
           if (this.ctx.groundState) {
             const uid = message.sessionId.split(":")[1] || message.sessionId;
-            this.ctx.groundState.archive(uid).catch(() => {});
+            this.ctx.groundState.archive(uid).catch((err) => { log.engine.warn("groundState archive failed", err); });
           }
           break;
 
@@ -1826,8 +1830,8 @@ export class OwlGateway {
           if (brief && callbacks.onProgress) {
             await callbacks.onProgress(`\n${brief.formatted}\n`);
           }
-        } catch {
-          // Non-fatal
+        } catch (err) {
+          log.engine.warn("session brief generation failed", err);
         }
       })());
     }
@@ -2044,7 +2048,9 @@ export class OwlGateway {
                 formattedSynthesis,
                 { priority: 117, ttlTurns: 3 },
               );
-            } catch { /* non-fatal */ }
+            } catch (err) {
+              log.engine.warn("parliament: context pipeline update failed", err);
+            }
             let verifierVerdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
             try {
               if (this.goalVerifier) {
@@ -2067,7 +2073,9 @@ export class OwlGateway {
                   verifierVerdict = vResult.verdict;
                 }
               }
-            } catch { /* non-fatal */ }
+            } catch (err) {
+              log.engine.warn("parliament: goal verification failed", err);
+            }
             try {
               const participants = debateSession.config.participants;
               const topicCategory = worthiness.category ?? "other";
@@ -2080,10 +2088,12 @@ export class OwlGateway {
               await updateParliamentDNA(synthOwl, challOwl, participants, debateSession.verdict ?? "", topicCategory, this.ctx.db!, verifierVerdict);
               if (verifierVerdict === "ADVANCES" && this.ctx.owlRegistry) {
                 for (const p of participants) {
-                  await this.ctx.owlRegistry.saveDNA(p.persona.name).catch(() => {});
+                  await this.ctx.owlRegistry.saveDNA(p.persona.name).catch((err) => { log.engine.warn("saveDNA failed", err); });
                 }
               }
-            } catch { /* non-fatal */ }
+            } catch (err) {
+              log.engine.warn("parliament: DNA update failed", err);
+            }
             // Return the synthesis as the response
             return {
               content: synthesis || "Parliament concluded without synthesis.",
@@ -2123,7 +2133,7 @@ export class OwlGateway {
           (engineCtx.additionalSystemPrompt ?? "") +
           this.opinionInjector.formatForSystemPrompt(match);
       }
-      this.opinionInjector.formOpinionAsync(text, this.ctx.innerLife).catch(() => {});
+      this.opinionInjector.formOpinionAsync(text, this.ctx.innerLife).catch((err) => { log.engine.warn("opinion formation failed", err); });
     }
 
     // ─── Routing — @mention + SecretaryRouter ────────────────────
@@ -2143,6 +2153,7 @@ export class OwlGateway {
       text = brainResult.text;
       activeOwlName = brainResult.activeOwlName;
       routingResult = { text: brainResult.text, activeOwlName: brainResult.activeOwlName, parliamentHandled: brainResult.parliamentHandled };
+      attachToContext({ owl: activeOwlName });
     }
 
     if (routingResult?.parliamentHandled) {
@@ -2190,7 +2201,9 @@ export class OwlGateway {
               formattedSynthesisB,
               { priority: 117, ttlTurns: 3 },
             );
-          } catch { /* non-fatal */ }
+          } catch (err) {
+            log.engine.warn("parliament: context pipeline update failed", err);
+          }
           let verifierVerdictB: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
           try {
             if (this.goalVerifier) {
@@ -2213,7 +2226,9 @@ export class OwlGateway {
                 verifierVerdictB = vResult.verdict;
               }
             }
-          } catch { /* non-fatal */ }
+          } catch (err) {
+            log.engine.warn("parliament: goal verification failed", err);
+          }
           try {
             const participantsB = debateSession.config.participants;
             const topicCategoryB = "other";
@@ -2226,10 +2241,12 @@ export class OwlGateway {
             await updateParliamentDNA(synthOwlB, challOwlB, participantsB, debateSession.verdict ?? "", topicCategoryB, this.ctx.db!, verifierVerdictB);
             if (verifierVerdictB === "ADVANCES" && this.ctx.owlRegistry) {
               for (const p of participantsB) {
-                await this.ctx.owlRegistry.saveDNA(p.persona.name).catch(() => {});
+                await this.ctx.owlRegistry.saveDNA(p.persona.name).catch((saveErr) => { log.engine.warn("saveDNA failed", saveErr); });
               }
             }
-          } catch { /* non-fatal */ }
+          } catch (err) {
+            log.engine.warn("parliament: DNA update failed", err);
+          }
           // Tag response with #Parliament
           return {
             content: `${synthesis || "Parliament concluded without synthesis."}\n\n#Parliament`,
@@ -2244,25 +2261,29 @@ export class OwlGateway {
 
     // ─── Instinct injection ──────────────────────────────────────
     if (this.instinctEngine && activeOwlName !== this.ctx.owl.persona.name) {
-      const matchedInstincts = await this.instinctEngine.evaluate(activeOwlName, text);
-      if (matchedInstincts.length > 0) {
-        const block = InstinctEngine.buildConstraintBlock(matchedInstincts);
-        const base = engineCtx.specialistPrompt ?? "";
-        engineCtx.specialistPrompt = base + block;
-        engineCtx.owl = { ...engineCtx.owl, specialistPrompt: engineCtx.specialistPrompt };
-        log.engine.info(
-          `[Instincts] Injected ${matchedInstincts.length} constraint(s) for owl "${activeOwlName}"`,
-        );
-      }
+      await withSpan("instinct.evaluate", async () => {
+        const matchedInstincts = await this.instinctEngine!.evaluate(activeOwlName, text);
+        if (matchedInstincts.length > 0) {
+          const block = InstinctEngine.buildConstraintBlock(matchedInstincts);
+          const base = engineCtx.specialistPrompt ?? "";
+          engineCtx.specialistPrompt = base + block;
+          engineCtx.owl = { ...engineCtx.owl, specialistPrompt: engineCtx.specialistPrompt };
+          log.engine.info(
+            `[Instincts] Injected ${matchedInstincts.length} constraint(s) for owl "${activeOwlName}"`,
+          );
+        }
+      }, { owl: activeOwlName });
     }
 
     const orchestrator = this.getOrchestrator();
-    const orchResult = await orchestrator.executeWithFallback(
-      strategy,
-      text,
-      engineCtx,
-      callbacks,
-    );
+    const orchResult = await withSpan("orchestrator.execute", async () => {
+      return orchestrator.executeWithFallback(
+        strategy,
+        text,
+        engineCtx,
+        callbacks,
+      );
+    }, { strategy: strategy.strategy });
 
     // Convert OrchestrationResult to EngineResponse for standard post-processing
     const response: EngineResponse = {
@@ -2376,8 +2397,8 @@ export class OwlGateway {
           message.text,
           this.ctx.preferenceModel,
         );
-      } catch {
-        // Non-fatal — use original response
+      } catch (err) {
+        log.engine.warn("preference enforcement failed, using original response", err);
       }
     }
 
@@ -2406,7 +2427,7 @@ export class OwlGateway {
     this.trackIntent(message.sessionId, message.text, response.content);
 
     // Persist intent state (fire-and-forget)
-    this.ctx.intentStateMachine?.save().catch(() => {});
+    this.ctx.intentStateMachine?.save().catch((err) => { log.engine.warn("intentStateMachine save failed", err); });
 
     // Record behavioral signals for preference inference (fire-and-forget)
     this.analyzeBehavior(message.text, message.channelId);
@@ -2524,7 +2545,9 @@ export class OwlGateway {
               userMessage: message.text,
             });
             _pelletVerdict = _vr?.verdict ?? "NEUTRAL";
-          } catch { /* non-fatal */ }
+          } catch (err) {
+            log.engine.warn("pellet goal verification failed", err);
+          }
         }
 
         // Hook 4: feed verdict back into retrieved pellets
@@ -2560,7 +2583,7 @@ export class OwlGateway {
     const messages = cache.session.messages;
 
     // Clear L1 digest — session is ending, next session starts fresh
-    this.ctx.digestManager?.delete(sessionId).catch(() => {});
+    this.ctx.digestManager?.delete(sessionId).catch((err) => { log.engine.warn("digestManager delete failed", err); });
 
     // Episodic memory extraction — extract episode from full session on explicit end
     if (this.ctx.episodicMemory && messages.length >= 4) {
@@ -2654,7 +2677,7 @@ export class OwlGateway {
         this.ctx.owl.persona.name,
         "Session end snapshot",
       );
-      await this.ctx.timelineManager.save().catch(() => {});
+      await this.ctx.timelineManager.save().catch((err) => { log.engine.warn("timelineManager save failed", err); });
     }
 
     // Knowledge extraction — harvest knowledge from full session
@@ -2783,8 +2806,8 @@ export class OwlGateway {
       // Phase B — update trajectory reward with the feedback signal
       try {
         this.ctx.db.trajectories.applyFeedback(sessionId, signal);
-      } catch {
-        /* non-fatal */
+      } catch (err) {
+        log.engine.warn("trajectory feedback update failed", err);
       }
 
       // Phase E2 — delayed Parliament verdict validation
@@ -2806,8 +2829,8 @@ export class OwlGateway {
             rewardDelta,
           );
         }
-      } catch {
-        /* non-fatal */
+      } catch (err) {
+        log.engine.warn("parliament verdict validation failed", err);
       }
     }
 
@@ -2826,7 +2849,7 @@ export class OwlGateway {
               Date.now() + 180 * 24 * 60 * 60 * 1000,
             ).toISOString(), // 180 days
           })
-          .catch(() => {});
+          .catch((err) => { log.engine.warn("factStore add (like) failed", err); });
       }
       log.engine.info(`[Feedback] 👍 confirmed for session ${sessionId}`);
     } else {
@@ -2844,7 +2867,7 @@ export class OwlGateway {
               Date.now() + 90 * 24 * 60 * 60 * 1000,
             ).toISOString(),
           })
-          .catch(() => {});
+          .catch((err) => { log.engine.warn("factStore add (dislike) failed", err); });
       }
 
       // Queue the user's request for background synthesis — find a better approach
@@ -2950,12 +2973,12 @@ export class OwlGateway {
     // Persist new modules on process exit
     const saveOnExit = () => {
       if (this.timerTickInterval) clearInterval(this.timerTickInterval);
-      this.ctx.trustChain?.save?.().catch(() => {});
-      this.ctx.knowledgeGraph?.save?.().catch(() => {});
-      this.ctx.timelineManager?.save?.().catch(() => {});
-      this.ctx.patternAnalyzer?.save?.().catch(() => {});
-      this.ctx.predictiveQueue?.save?.().catch(() => {});
-      this.ctx.skillArena?.save?.().catch(() => {});
+      this.ctx.trustChain?.save?.().catch((err) => { log.engine.warn("trustChain save failed", err); });
+      this.ctx.knowledgeGraph?.save?.().catch((err) => { log.engine.warn("knowledgeGraph save failed", err); });
+      this.ctx.timelineManager?.save?.().catch((err) => { log.engine.warn("timelineManager shutdown save failed", err); });
+      this.ctx.patternAnalyzer?.save?.().catch((err) => { log.engine.warn("patternAnalyzer save failed", err); });
+      this.ctx.predictiveQueue?.save?.().catch((err) => { log.engine.warn("predictiveQueue save failed", err); });
+      this.ctx.skillArena?.save?.().catch((err) => { log.engine.warn("skillArena save failed", err); });
       this.ctx.signalPool?.stop?.();
       this.ctx.backgroundJobRunner?.stop();
     };
@@ -3835,8 +3858,8 @@ export class OwlGateway {
           log.evolution.info(
             `[Skill] Reindexed after synthesis: ${proposal.toolName}`,
           );
-        } catch {
-          // Non-fatal — skill will be picked up on next restart
+        } catch (err) {
+          log.engine.warn("skill reindex after synthesis failed, will retry on next restart", err);
         }
       }
 
@@ -4099,8 +4122,8 @@ export class OwlGateway {
               );
             });
           }
-        } catch {
-          // Non-fatal
+        } catch (err) {
+          log.engine.warn("prompt optimizer setup failed", err);
         }
       });
     }

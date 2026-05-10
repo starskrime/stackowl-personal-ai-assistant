@@ -21,6 +21,7 @@ import { OwlEngine } from "../engine/runtime.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
 import type { TaskStrategy, OrchestrationResult, SubTask } from "./types.js";
 import { log } from "../logger.js";
+import { withSpan } from "../infra/observability/context.js";
 import { SwarmBlackboard } from "../swarm/blackboard.js";
 import type { PlanLedger } from "../tasks/plan-ledger.js";
 import { DelegationDecider } from "../delegation/delegation-decider.js";
@@ -304,12 +305,14 @@ export class TaskOrchestrator {
     userMessage: string,
     baseContext: EngineContext,
   ): Promise<OrchestrationResult> {
-    const ctx: EngineContext = {
-      ...baseContext,
-      skipGapDetection: true,
-    };
-    const response = await this.engine.run(userMessage, ctx);
-    return toOrchResult(response, "DIRECT");
+    return withSpan("orchestrator.direct", async () => {
+      const ctx: EngineContext = {
+        ...baseContext,
+        skipGapDetection: true,
+      };
+      const response = await this.engine.run(userMessage, ctx);
+      return toOrchResult(response, "DIRECT");
+    });
   }
 
   // ─── STANDARD (with goal loop + strategy escalation) ─────────
@@ -328,6 +331,7 @@ export class TaskOrchestrator {
     userMessage: string,
     baseContext: EngineContext,
   ): Promise<OrchestrationResult> {
+    return withSpan("orchestrator.standard", async () => {
     const MAX_GOAL_ATTEMPTS = 3;
     const escalationLadder: Array<"STANDARD" | "PLANNED" | "SWARM"> = [
       "STANDARD",
@@ -446,6 +450,7 @@ export class TaskOrchestrator {
 
     // All attempts exhausted — return whatever we have
     return lastResult!;
+    }); // end withSpan("orchestrator.standard")
   }
 
   // ─── SPECIALIST ──────────────────────────────────────────────

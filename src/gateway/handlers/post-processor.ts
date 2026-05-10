@@ -20,6 +20,8 @@ import type { ReflexionEngine as IntelligenceReflexionEngine } from "../../intel
 import type { SleepTimeConsolidator } from "../../intelligence/sleep-time-consolidator.js";
 import { SentimentProbe } from "../../intelligence/sentiment-probe.js";
 import { log } from "../../logger.js";
+import { currentTrace, runWithContext } from "../../infra/observability/context.js";
+import { w3cTraceparent, parseTraceparent } from "../../infra/observability/ids.js";
 
 const TIER_PRIORITY: Record<"critical" | "standard" | "background", TaskPriority> = {
   critical: "high",
@@ -210,7 +212,9 @@ export class PostProcessor {
               ? REWARD_TOOL_SUCCESS
               : REWARD_NEUTRAL; // no tools used — neutral pass
         this.ctx.db.owlQualityMetrics.update(owlName, userId, reward);
-      } catch { /* non-critical */ }
+      } catch (err) {
+        log.engine.warn("owlQualityMetrics update failed", err);
+      }
     }
 
     // Learning — prefer new orchestrator (TopicFusion + Synthesis), fallback to legacy
@@ -763,10 +767,19 @@ export class PostProcessor {
     fn: () => Promise<void>,
   ): void {
     const priority = TIER_PRIORITY[tier];
+    // Capture the current trace context at enqueue time so it can be restored
+    // when the job runs in the TaskQueue worker (which has no AsyncLocalStorage).
+    const ctx = currentTrace();
+    const traceparent = ctx ? w3cTraceparent(ctx.traceId, ctx.spanId) : undefined;
+
     this.taskQueue.enqueue(name, async () => {
       const start = Date.now();
+      const tp = parseTraceparent(traceparent ?? "");
+      const seed = tp
+        ? { traceId: tp.traceId, parentSpanId: tp.spanId, channelId: "post-processor" }
+        : { channelId: "post-processor" };
       try {
-        await fn();
+        await runWithContext(seed, fn);
         this.recordJobRun(name, tier, true, Date.now() - start);
       } catch (err) {
         const code = err instanceof Error ? err.constructor.name : "unknown";
@@ -800,8 +813,8 @@ export class PostProcessor {
         this._lastProcessUserId || null,
         this._lastSessionId || null,
       );
-    } catch {
-      // telemetry must never crash the caller
+    } catch (err) {
+      log.engine.warn("tool telemetry record failed", err);
     }
   }
 

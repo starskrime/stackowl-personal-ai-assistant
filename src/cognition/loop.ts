@@ -27,6 +27,10 @@
  */
 
 import { log } from "../logger.js";
+import { runWithContext } from "../infra/observability/context.js";
+import type { LogRecord } from "../infra/observability/schema.js";
+import type { LogQuery } from "../infra/observability/reader.js";
+import type { LogSummary } from "../infra/observability/analyzer.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { OwlInnerLife } from "../owls/inner-life.js";
@@ -59,6 +63,7 @@ export type CognitiveAction =
   | "memory_consolidation"       // Consolidate conversation memories
   | "tool_pruning"               // Archive/fix failing synthesized tools
   | "dna_evolution"              // Evolve owl DNA from accumulated interactions
+  | "log_analysis"               // Scan JSONL logs for capability gaps and error hotspots
   | "idle";                      // Nothing to do right now
 
 interface CognitiveDecision {
@@ -106,6 +111,10 @@ export interface CognitiveLoopDeps {
   providerRegistry?: ProviderRegistry;
   skillsLoader?: SkillsLoader;
   jobQueue?: import("../heartbeat/job-queue.js").ProactiveJobQueue;
+  /** Reader function for JSONL log files — used by log-analysis tick */
+  logReader?: (logsDir: string, query: LogQuery) => Promise<LogRecord[]>;
+  /** Summarizer function — used by log-analysis tick */
+  logAnalyzer?: (records: LogRecord[]) => LogSummary;
 }
 
 /**
@@ -177,6 +186,7 @@ export class CognitiveLoop {
   private lastSelfReflectionTime = 0;
   // @ts-expect-error TS6133
   private lastAutonomousSynthesisTime = 0;
+  private lastLogAnalysisTime = 0;
   private studySessionsSinceDnaSync: number = 0;
   private skillsCreatedToday: number = 0;
   private history: CognitiveTickResult[] = [];
@@ -192,7 +202,7 @@ export class CognitiveLoop {
     userRequest: string;
     description: string;
     addedAt: number;
-    source: "conversation" | "self_reflection" | "capability_scan" | "skill_stats";
+    source: "conversation" | "self_reflection" | "capability_scan" | "skill_stats" | "log_analysis";
   }> = [];
 
   constructor(
@@ -279,11 +289,15 @@ export class CognitiveLoop {
     warmupTimeout.unref();
 
     this.timer = setInterval(
-      () => this.tick().catch((err) => {
-        log.engine.error(
-          `[CognitiveLoop] Tick error: ${err instanceof Error ? err.message : err}`,
+      () => {
+        runWithContext({ channelId: "cognition", spanName: "cognition.tick" }, () =>
+          this.tick().catch((err) => {
+            log.engine.error(
+              `[CognitiveLoop] Tick error: ${err instanceof Error ? err.message : err}`,
+            );
+          }),
         );
-      }),
+      },
       this.config.tickIntervalMinutes * 60 * 1000,
     );
     this.timer.unref(); // Don't prevent Node from exiting
@@ -333,7 +347,7 @@ export class CognitiveLoop {
   enqueueSynthesisTarget(
     userRequest: string,
     description: string,
-    source: "conversation" | "self_reflection" | "capability_scan" | "skill_stats" = "conversation",
+    source: "conversation" | "self_reflection" | "capability_scan" | "skill_stats" | "log_analysis" = "conversation",
   ): void {
     // Dedup against existing queue entries (fuzzy match on first 30 chars)
     const key = userRequest.toLowerCase().slice(0, 30);
@@ -530,6 +544,16 @@ export class CognitiveLoop {
       });
     }
 
+    // 6. Log analysis — scan JSONL logs for capability gaps and error hotspots
+    //    Run at most once every 6 hours, only when logReader is wired.
+    if (this.deps.logReader && now - this.lastLogAnalysisTime > 6 * HOUR_MS) {
+      candidates.push({
+        action: "log_analysis",
+        reason: "Periodic log scan for capability gaps and error hotspots",
+        priority: 80,
+      });
+    }
+
     if (candidates.length === 0) {
       return { action: "idle", reason: "Nothing to do", priority: 0 };
     }
@@ -572,6 +596,9 @@ export class CognitiveLoop {
 
       case "dna_evolution":
         return this.executeDnaEvolution();
+
+      case "log_analysis":
+        return this.executeLogAnalysis();
 
       default:
         return "No action taken";
@@ -624,7 +651,9 @@ export class CognitiveLoop {
       const topGap = actionableGaps[0];
       await this.deps.learningOrchestrator
         .learnTopic(topGap.description, false)
-        .catch(() => {});
+        .catch((err) => {
+          log.engine.warn(`[CognitiveLoop] Gap study failed for "${topGap.description}": ${err instanceof Error ? err.message : err}`);
+        });
     }
 
     return `Scanned: ${result.totalToolsRegistered} tools, ${result.totalSkillsEnabled} skills, ${result.gaps.length} gaps (${result.coveragePercent}% coverage)`;
@@ -671,8 +700,8 @@ export class CognitiveLoop {
       try {
         await consolidator.extractAndAppend(session.messages);
         consolidated++;
-      } catch {
-        // Non-fatal — continue with next session
+      } catch (err) {
+        log.engine.warn(`[CognitiveLoop] Memory consolidation failed for session: ${err instanceof Error ? err.message : err}`);
       }
     }
 
@@ -728,6 +757,51 @@ export class CognitiveLoop {
     }
   }
 
+  // ─── Log Analysis ───────────────────────────────────────────
+
+  /**
+   * Scan on-disk JSONL logs for the last 24 hours and extract:
+   *   - Capability gaps (phrases like "no tool for X", "I cannot send")
+   *   - Repeat error patterns by module
+   *   - Slow spans by operation name
+   * Gaps are enqueued for synthesis; summary is logged for dashboards.
+   */
+  private async executeLogAnalysis(): Promise<string> {
+    if (!this.deps.logReader || !this.deps.workspacePath) {
+      return "log analysis skipped: no logReader or workspacePath";
+    }
+    const { readLogsArray } = await import("../infra/observability/reader.js");
+    const { summarize } = await import("../infra/observability/analyzer.js");
+
+    const reader = this.deps.logReader ?? readLogsArray;
+    const analyzer = this.deps.logAnalyzer ?? summarize;
+
+    const logsDir = `${this.deps.workspacePath}/logs`;
+    const records = await reader(logsDir, { since: Date.now() - 24 * 60 * 60 * 1000, limit: 5000 });
+    const summary = analyzer(records);
+
+    // Enqueue capability gaps for self-study
+    for (const gap of summary.capabilityGaps) {
+      this.enqueueSynthesisTarget(
+        gap.phrase,
+        `Inferred from ${gap.supportingTraces.length} log traces`,
+        "log_analysis",
+      );
+    }
+
+    this.lastLogAnalysisTime = Date.now();
+    log.engine.info("log_analysis.summary", {
+      windowMinutes: summary.windowMinutes,
+      totalRecords: summary.totalRecords,
+      errorHotspots: summary.errorsByModule.length,
+      capabilityGaps: summary.capabilityGaps.length,
+      slowSpans: summary.slowSpans.length,
+      repeatFailures: summary.repeatFailures.length,
+    });
+
+    return `Analyzed ${records.length} records over ${summary.windowMinutes}m; ${summary.capabilityGaps.length} gaps queued`;
+  }
+
   // ─── Autonomous Skill Synthesis ──────────────────────────────
 
   /**
@@ -761,8 +835,8 @@ export class CognitiveLoop {
     if (this.deps.providerRegistry) {
       try {
         synthesisProvider = this.deps.providerRegistry.get(providerName);
-      } catch {
-        // Fall back to default provider
+      } catch (err) {
+        log.engine.warn(`[CognitiveLoop] Synthesis provider "${providerName}" not found, falling back to default: ${err instanceof Error ? err.message : err}`);
       }
     }
 
@@ -813,8 +887,8 @@ export class CognitiveLoop {
           description: `Skill "${name}" selected ${stats.selectionCount}x but success rate is ${(stats.successRate * 100).toFixed(0)}% — needs re-synthesis`,
         });
       }
-    } catch {
-      // Non-fatal — skill tracker may not exist yet
+    } catch (err) {
+      log.engine.warn(`[CognitiveLoop] Skill tracker load failed: ${err instanceof Error ? err.message : err}`);
     }
 
     // ── Source 2: Inner life desires that look like capabilities ──
@@ -878,8 +952,8 @@ export class CognitiveLoop {
           }
         }
       }
-    } catch {
-      // Non-fatal — user profile may not exist
+    } catch (err) {
+      log.engine.warn(`[CognitiveLoop] User profile read failed: ${err instanceof Error ? err.message : err}`);
     }
 
     if (gapTargets.length === 0) {
@@ -936,8 +1010,8 @@ export class CognitiveLoop {
         if (this.deps.skillsLoader) {
           try {
             await this.deps.skillsLoader.getRegistry().loadFromDirectory(this.deps.skillsDir);
-          } catch {
-            // Non-fatal — skill exists on disk for next restart
+          } catch (err) {
+            log.engine.warn(`[CognitiveLoop] Skills registry reload failed: ${err instanceof Error ? err.message : err}`);
           }
         }
 
@@ -1037,7 +1111,8 @@ export class CognitiveLoop {
         const end = raw.lastIndexOf("}");
         if (start !== -1 && end !== -1) raw = raw.slice(start, end + 1);
         analysis = JSON.parse(raw);
-      } catch {
+      } catch (err) {
+        log.engine.warn(`[CognitiveLoop] Self-reflection JSON parse failed: ${err instanceof Error ? err.message : err}`);
         this.lastSelfReflectionTime = Date.now();
         return "Self-reflection LLM response wasn't valid JSON";
       }
