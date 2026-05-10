@@ -138,9 +138,31 @@ export const REGISTRY: CommandSpec[] = [
         meta: new Date(s.lastActiveAt).toLocaleDateString(),
         data: s,
       }));
+      const actions = [
+        {
+          key: "return",
+          label: "resume",
+          handler: (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+            ctx.bridge.emit({ kind: "session.changed" as const, sessionId: item.id, title: item.label });
+            ctx.bridge.closePanel();
+          },
+        },
+        {
+          key: "d",
+          label: "delete",
+          confirm: "Type 'yes' to confirm deletion",
+          handler: async (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+            const sessionStore = ctx.getOwlGateway().getSessionStore();
+            if (sessionStore && typeof (sessionStore as unknown as Record<string, unknown>).deleteSession === "function") {
+              await (sessionStore as unknown as { deleteSession: (id: string) => Promise<void> }).deleteSession(item.id);
+            }
+            ctx.bridge.closePanel();
+          },
+        },
+      ];
       return {
         kind: "panel",
-        payload: { title: "/sessions", items, emptyText: "No sessions yet." },
+        payload: { title: "/sessions", items, actions, emptyText: "No sessions yet." },
       };
     },
   },
@@ -155,9 +177,21 @@ export const REGISTRY: CommandSpec[] = [
         meta: o.isActive ? "active" : o.description.slice(0, 40),
         data: o,
       }));
+      const actions = [
+        {
+          key: "return",
+          label: "switch",
+          handler: (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+            const owlData = item.data as { name: string; emoji: string } | undefined;
+            if (owlData) ctx.bridge.changeOwl(owlData.name, owlData.emoji);
+            else ctx.bridge.changeOwl(item.id, "🦉");
+            ctx.bridge.closePanel();
+          },
+        },
+      ];
       return {
         kind: "panel",
-        payload: { title: "/owls", items, emptyText: "No owls loaded." },
+        payload: { title: "/owls", items, actions, emptyText: "No owls loaded." },
       };
     },
   },

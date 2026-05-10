@@ -1,6 +1,7 @@
 import type { CommandHandler, CommandContext } from "../registry.js";
 import { McpCommandRouter } from "../../../../gateway/commands/mcp-router.js";
 import { saveConfig } from "../../../../config/loader.js";
+import { globalBridge } from "../../events/bridge.js";
 
 function getDeps(ctx: CommandContext) {
   const gateway = ctx.getOwlGateway();
@@ -43,9 +44,47 @@ export const handleMcpList: CommandHandler = async (ctx, _args) => {
         }
       : { id: `srv-${i}`, label: line.trim() };
   });
+  const actions = [
+    {
+      key: "t",
+      label: "tools",
+      handler: async (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+        const serverName = item.label;
+        const freshDeps = getDeps(ctx);
+        if (!freshDeps) return;
+        const toolsText = await McpCommandRouter.dispatch("tools", [serverName], freshDeps);
+        globalBridge.openPanel("mcp-tools", {
+          title: `/mcp tools ${serverName}`,
+          items: textToItems(toolsText),
+        });
+      },
+    },
+    {
+      key: "r",
+      label: "reconnect",
+      handler: async (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+        const serverName = item.label;
+        const freshDeps = getDeps(ctx);
+        if (!freshDeps) return;
+        await McpCommandRouter.dispatch("reconnect", [serverName], freshDeps);
+      },
+    },
+    {
+      key: "d",
+      label: "remove",
+      confirm: "Type 'yes' to confirm removal",
+      handler: async (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+        const serverName = item.label;
+        const freshDeps = getDeps(ctx);
+        if (!freshDeps) return;
+        await McpCommandRouter.dispatch("remove", [serverName], freshDeps);
+        ctx.bridge.closePanel();
+      },
+    },
+  ];
   return {
     kind: "panel",
-    payload: { title: "/mcp list", items, emptyText: "No MCP servers configured." },
+    payload: { title: "/mcp list", items, actions, emptyText: "No MCP servers configured." },
   };
 };
 
