@@ -437,8 +437,11 @@ export class OwlGateway {
       const registry = ctx.skillsLoader.getRegistry();
 
       // Initialize skill tracker for usage analytics
-      const skillTracker = new SkillTracker(ctx.cwd ?? process.cwd());
-      skillTracker.load().catch(() => {}); // Non-blocking load
+      // Pass ctx.db if already provided; will be upgraded via setDb() after auto-init.
+      const skillTracker = new SkillTracker(ctx.cwd ?? process.cwd(), ctx.db);
+      if (!ctx.db) {
+        skillTracker.load().catch(() => {}); // Non-blocking JSON load when no DB yet
+      }
 
       // Use synthesis provider (Anthropic) for skill routing LLM disambiguation
       const synthesisProviderName =
@@ -499,6 +502,11 @@ export class OwlGateway {
       log.engine.info("[memory] MemoryDatabase (SQLite) initialized");
     }
     this.deliveryRouter.setDb(ctx.db.rawDb);
+
+    // Wire DB into SkillTracker now that ctx.db is guaranteed (upgrades from JSON fallback)
+    if (this.skillInjector) {
+      this.skillInjector.getTracker().setDb(ctx.db);
+    }
 
     // FallbackSequencer needs MemoryDatabase — construct now that ctx.db exists
     this.fallbackSequencer = new FallbackSequencer(ctx.db);

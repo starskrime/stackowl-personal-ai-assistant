@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -494,6 +494,59 @@ export class OwlRecurringJobsRepo {
   }
 }
 
+// ─── Skill Usage Repo ────────────────────────────────────────────
+
+export interface SkillUsageRow {
+  skill_name: string;
+  selection_count: number;
+  success_count: number;
+  failure_count: number;
+  avg_duration_ms: number;
+  last_used_at: string | null;
+}
+
+export class SkillUsageRepo {
+  constructor(private db: Database.Database) {}
+
+  upsertSelection(name: string): void {
+    this.db.prepare(`
+      INSERT INTO skill_usage (skill_name, selection_count, last_used_at)
+      VALUES (?, 1, datetime('now'))
+      ON CONFLICT(skill_name) DO UPDATE SET
+        selection_count = selection_count + 1,
+        last_used_at = datetime('now')
+    `).run(name);
+  }
+
+  recordSuccess(name: string, durationMs: number): void {
+    // Ensure the row exists first (selection may not have been called in DB mode).
+    // In the ON CONFLICT branch, expressions use pre-update column values, so the
+    // running-average denominator is (success_count + 1) — the value *after* increment.
+    this.db.prepare(`
+      INSERT INTO skill_usage (skill_name, success_count, avg_duration_ms)
+      VALUES (?, 1, ?)
+      ON CONFLICT(skill_name) DO UPDATE SET
+        success_count   = success_count + 1,
+        avg_duration_ms = (avg_duration_ms * success_count + ?) / (success_count + 1)
+    `).run(name, durationMs, durationMs);
+  }
+
+  recordFailure(name: string): void {
+    this.db.prepare(`
+      INSERT INTO skill_usage (skill_name, failure_count)
+      VALUES (?, 1)
+      ON CONFLICT(skill_name) DO UPDATE SET
+        failure_count = failure_count + 1
+    `).run(name);
+  }
+
+  getStats(name: string): SkillUsageRow | null {
+    return this.db.prepare(
+      `SELECT * FROM skill_usage WHERE skill_name = ?`
+    ).get(name) as SkillUsageRow | null;
+  }
+}
+
 // ─── MemoryDatabase ───────────────────────────────────────────────
 
 export class MemoryDatabase {
@@ -524,6 +577,7 @@ export class MemoryDatabase {
   readonly owlQualityMetrics: OwlQualityRepo;
   readonly owlPins: OwlPinsRepo;
   readonly owlRecurringJobs: OwlRecurringJobsRepo;
+  readonly skillUsage: SkillUsageRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -571,6 +625,7 @@ export class MemoryDatabase {
     this.owlQualityMetrics = new OwlQualityRepo(this.db);
     this.owlPins           = new OwlPinsRepo(this.db);
     this.owlRecurringJobs  = new OwlRecurringJobsRepo(this.db);
+    this.skillUsage        = new SkillUsageRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
@@ -1337,6 +1392,10 @@ export class MemoryDatabase {
     if (current < 28) {
       applyV28Element17Migration(this.db);
       this.db.pragma(`user_version = 28`);
+    }
+    if (current < 29) {
+      applyV29SkillUsageMigration(this.db);
+      this.db.pragma(`user_version = 29`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -4192,6 +4251,19 @@ export function applyV27HostRootMigration(db: Database.Database): void {
     CREATE INDEX idx_tool_edges_host_capability ON tool_edges(host_root, capability_tag, from_tool);
     COMMIT;
   `);
+}
+
+function applyV29SkillUsageMigration(db: Database.Database): void {
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS skill_usage (
+      skill_name       TEXT    PRIMARY KEY,
+      selection_count  INTEGER NOT NULL DEFAULT 0,
+      success_count    INTEGER NOT NULL DEFAULT 0,
+      failure_count    INTEGER NOT NULL DEFAULT 0,
+      avg_duration_ms  REAL    NOT NULL DEFAULT 0,
+      last_used_at     TEXT
+    )
+  `).run();
 }
 
 export function applyV28Element17Migration(db: Database.Database): void {
