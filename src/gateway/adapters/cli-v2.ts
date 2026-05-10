@@ -110,7 +110,7 @@ export class CliV2Adapter implements ChannelAdapter {
 
     // Resolve current owl meta for the bridge.
     const owl = this._gateway.getOwl();
-    const owlMeta: OwlMeta = {
+    let owlMeta: OwlMeta = {
       owlEmoji: owl.persona.emoji,
       owlName: owl.persona.name,
     };
@@ -142,8 +142,9 @@ export class CliV2Adapter implements ChannelAdapter {
 
         onOwlChange: (owlEmoji: string, owlName: string) => {
           // Re-emit turn.started with the new specialist owl.
-          owlMeta.owlEmoji = owlEmoji;
-          owlMeta.owlName = owlName;
+          // Reassign to a new object instead of mutating, to avoid a race where
+          // onStreamEvent reads owlMeta concurrently and sees a half-updated value.
+          owlMeta = { ...owlMeta, owlEmoji, owlName };
           globalBridge.translateOwlChange(turnId, owlEmoji, owlName);
         },
 

@@ -22,6 +22,7 @@ export interface OwlMeta {
 
 export class UiBridge {
   private _handlers: UiEventHandler[] = [];
+  private _toolStartTimes = new Map<string, number>();
 
   subscribe(handler: UiEventHandler): () => void {
     this._handlers.push(handler);
@@ -57,6 +58,7 @@ export class UiBridge {
         break;
 
       case "tool_start":
+        this._toolStartTimes.set(event.toolCallId, Date.now());
         this.emit({
           kind: "tool.requested",
           toolCallId: event.toolCallId,
@@ -69,13 +71,17 @@ export class UiBridge {
         // Intentionally ignored — arg streaming is not surfaced in the TUI.
         break;
 
-      case "tool_end":
+      case "tool_end": {
+        const startTime = this._toolStartTimes.get(event.toolCallId) ?? Date.now();
+        this._toolStartTimes.delete(event.toolCallId);
+        const elapsedMs = Date.now() - startTime;
         this.emit({
           kind: "tool.completed",
           toolCallId: event.toolCallId,
-          elapsedMs: 0,
+          elapsedMs,
         });
         break;
+      }
 
       case "done":
         this.emit({
