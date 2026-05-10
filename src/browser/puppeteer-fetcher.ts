@@ -47,6 +47,7 @@ export class PuppeteerFetcher {
     try {
       this.browser = await (puppeteer as any).launch({
         headless: true,
+        timeout: 8_000,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",

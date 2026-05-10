@@ -319,8 +319,12 @@ async function bootstrap() {
     const fetcher = new PuppeteerFetcher();
     const ready = await fetcher.probe();
     if (ready) {
-      await fetcher.init();
-      puppeteerFetcher = fetcher;
+      try {
+        await fetcher.init();
+        puppeteerFetcher = fetcher;
+      } catch {
+        // Chrome binary exists but failed to launch (e.g. ARM Linux) — skip puppeteer tier
+      }
     }
   }
 
