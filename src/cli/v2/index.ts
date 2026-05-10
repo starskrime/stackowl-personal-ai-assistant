@@ -28,10 +28,10 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
   installLoggerRedirect();
   enableBracketedPaste();
 
-  const useAltScreen = process.env.STACKOWL_KEEP_INLINE !== "1";
-  if (useAltScreen) {
-    process.stdout.write("\x1B[?1049h");
-  }
+  // Clear the terminal once so the splash banner doesn't bleed into the chat
+  // surface, but stay in inline mode so native terminal scrollback works.
+  // Alt-screen (\x1B[?1049h) would kill scrollback — don't use it.
+  process.stdout.write("\x1B[2J\x1B[H");
 
   const { unmount, waitUntilExit } = render(
     React.createElement(App, {
@@ -41,9 +41,6 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
   );
 
   const cleanup = () => {
-    if (useAltScreen) {
-      process.stdout.write("\x1B[?1049l");
-    }
     disableBracketedPaste();
     uninstallLoggerRedirect();
     adapter.stop();
