@@ -9,7 +9,6 @@ export function useGitBranch(): string | null {
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
     } catch {
-      process.stderr.write("[useGitBranch] failed to read git branch\n");
       return null;
     }
   });

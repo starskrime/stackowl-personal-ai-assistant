@@ -45,6 +45,7 @@ export class GitStatusCollector implements SignalCollector {
       cwd: this.workspacePath,
       encoding: "utf-8",
       timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
     };
     try {
       const status = (

@@ -51,8 +51,6 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
 
   return (
     <Box flexDirection="column">
-      {/* Top green line — mirrors the bottom input border */}
-      <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
       <TopBar />
       <Frame>
         {turns.length === 0 && !liveTurn ? <EmptyState /> : <Transcript turns={turns} />}
