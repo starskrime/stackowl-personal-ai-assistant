@@ -1,5 +1,6 @@
 import type { CommandHandler, CommandContext } from "../registry.js";
 import { dispatchMemoryCommand } from "../../../../gateway/commands/memory-router.js";
+import { globalBridge } from "../../events/bridge.js";
 
 function getDeps(ctx: CommandContext) {
   return { repo: ctx.getMemoryRepo() };
@@ -39,11 +40,41 @@ export const handleMemoryList: CommandHandler = async (ctx, _args) => {
       : { id: `mem-${i}`, label: line.trim() };
   });
 
+  const actions = [
+    {
+      key: "g",
+      label: "get",
+      handler: async (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+        const memId = (item.data as { rawId: string } | undefined)?.rawId ?? item.label;
+        const getText = await dispatchMemoryCommand("get", [memId], getDeps(ctx));
+        globalBridge.openPanel("memory-detail", {
+          title: `/memory get ${memId}`,
+          items: textToItems(getText),
+        });
+      },
+    },
+    {
+      key: "d",
+      label: "invalidate",
+      confirm: "Type 'yes' to confirm deletion",
+      handler: async (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+        const memId = (item.data as { rawId: string } | undefined)?.rawId ?? item.label;
+        await dispatchMemoryCommand("invalidate", [memId], getDeps(ctx));
+        // Refresh the list panel after deletion
+        const refreshed = await handleMemoryList(ctx, []);
+        if (refreshed.kind === "panel") {
+          globalBridge.openPanel("list", refreshed.payload);
+        }
+      },
+    },
+  ];
+
   return {
     kind: "panel",
     payload: {
       title: `/memory list — ${headerLine.trim()}`,
       items,
+      actions,
       emptyText: "No memories stored yet.",
     },
   };
