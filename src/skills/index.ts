@@ -11,7 +11,6 @@ export { SkillParser, meetsRequirements } from "./parser.js";
 export { ClawHubClient, SkillSelector } from "./clawhub.js";
 export { IntentRouter, type IntentMatch } from "./intent-router.js";
 export { SkillTracker } from "./tracker.js";
-export { SkillComposer } from "./composer.js";
 
 export type {
   Skill,

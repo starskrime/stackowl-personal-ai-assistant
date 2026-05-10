@@ -2,11 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SkillsRegistry } from "../src/skills/registry.js";
 import { SkillParser, meetsRequirements } from "../src/skills/parser.js";
 import { IntentRouter } from "../src/skills/intent-router.js";
-import { SkillComposer } from "../src/skills/composer.js";
 import { ConfigContextBuilder } from "../src/skills/config-context.js";
 import { SkillTracker } from "../src/skills/tracker.js";
 import { ClawHubClient, SkillSelector } from "../src/skills/clawhub.js";
-import type { Skill, SkillMetadata } from "../src/skills/types.js";
+import type { Skill } from "../src/skills/types.js";
 import type { ModelProvider } from "../src/providers/base.js";
 import type { StackOwlConfig } from "../src/config/loader.js";
 
@@ -59,11 +58,6 @@ function makeSkill(overrides: Partial<Skill> = {}): Skill {
     ...overrides,
   };
 }
-
-type ExtendedOpenClaw = SkillMetadata["openclaw"] & {
-  depends?: string[];
-  chains?: string[];
-};
 
 // ─── SkillsRegistry Tests ───────────────────────────────────────────────
 
@@ -705,198 +699,6 @@ describe("SkillTracker", () => {
   });
 });
 
-// ─── SkillComposer Tests ────────────────────────────────────────────────
-
-describe("SkillComposer", () => {
-  let registry: SkillsRegistry;
-  let composer: SkillComposer;
-
-  beforeEach(() => {
-    registry = new SkillsRegistry();
-    composer = new SkillComposer(registry);
-  });
-
-  describe("resolve — single skill (no dependencies)", () => {
-    it("should return single-stage plan for skill with no composition", () => {
-      const skill = makeSkill({ name: "fetch_data" });
-      const plan = composer.resolve(skill);
-      expect(plan.stages).toHaveLength(1);
-      expect(plan.stages[0].label).toBe("primary");
-      expect(plan.totalSkills).toBe(1);
-      expect(plan.primarySkill).toBe("fetch_data");
-    });
-  });
-
-  describe("resolve — skill with before dependencies", () => {
-    it("should create dependency stage before primary stage", () => {
-      const depSkill = makeSkill({ name: "fetch_data", enabled: true });
-      registry.register(depSkill);
-
-      const primarySkill = makeSkill({
-        name: "generate_report",
-        metadata: {
-          name: "generate_report",
-          description: "Generate report",
-          openclaw: { depends: ["fetch_data"] } as ExtendedOpenClaw,
-        },
-      });
-
-      const plan = composer.resolve(primarySkill);
-      expect(plan.stages.length).toBeGreaterThanOrEqual(2);
-      const depStage = plan.stages.find((s) => s.label === "dependencies");
-      expect(depStage).toBeDefined();
-      expect(depStage!.skills.some((s) => s.name === "fetch_data")).toBe(true);
-    });
-
-    it("should skip missing dependencies with warning", () => {
-      const primarySkill = makeSkill({
-        name: "generate_report",
-        metadata: {
-          name: "generate_report",
-          description: "Generate report",
-          openclaw: { depends: ["nonexistent_skill"] } as ExtendedOpenClaw,
-        },
-      });
-
-      const plan = composer.resolve(primarySkill);
-      // Should still return a plan (missing deps are skipped, warning is logged)
-      expect(plan.primarySkill).toBe("generate_report");
-      // Verify the plan was returned without throwing
-      expect(plan.stages.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it("should skip disabled dependencies", () => {
-      const depSkill = makeSkill({ name: "fetch_data", enabled: false });
-      registry.register(depSkill);
-
-      const primarySkill = makeSkill({
-        name: "generate_report",
-        metadata: {
-          name: "generate_report",
-          description: "Generate report",
-          openclaw: { depends: ["fetch_data"] } as ExtendedOpenClaw,
-        },
-      });
-
-      // The resolve should handle disabled deps gracefully without throwing
-      const plan = composer.resolve(primarySkill);
-      // Deps stage may exist but the disabled skill should not be in it
-      const depStage = plan.stages.find((s) => s.label === "dependencies");
-      if (depStage) {
-        expect(depStage.skills.some((s) => s.name === "fetch_data")).toBe(
-          false,
-        );
-      }
-    });
-  });
-
-  describe("resolve — skill with chains", () => {
-    it("should create chains stage after primary stage", () => {
-      const chainSkill = makeSkill({ name: "send_email", enabled: true });
-      registry.register(chainSkill);
-
-      const primarySkill = makeSkill({
-        name: "generate_report",
-        metadata: {
-          name: "generate_report",
-          description: "Generate report",
-          openclaw: { chains: ["send_email"] } as ExtendedOpenClaw,
-        },
-      });
-
-      const plan = composer.resolve(primarySkill);
-      const chainStage = plan.stages.find((s) => s.label === "chains");
-      expect(chainStage).toBeDefined();
-      expect(chainStage!.skills.some((s) => s.name === "send_email")).toBe(
-        true,
-      );
-    });
-
-    it("should skip disabled chained skills", () => {
-      const chainSkill = makeSkill({ name: "send_email", enabled: false });
-      registry.register(chainSkill);
-
-      const primarySkill = makeSkill({
-        name: "generate_report",
-        metadata: {
-          name: "generate_report",
-          description: "Generate report",
-          openclaw: { chains: ["send_email"] } as ExtendedOpenClaw,
-        },
-      });
-
-      const plan = composer.resolve(primarySkill);
-      // Chains stage should not include disabled skill
-      const chainStage = plan.stages.find((s) => s.label === "chains");
-      if (chainStage) {
-        expect(chainStage.skills.some((s) => s.name === "send_email")).toBe(
-          false,
-        );
-      }
-    });
-  });
-
-  describe("resolve — cycle detection", () => {
-    it("should detect circular dependency and fallback to single-stage", () => {
-      const skillA = makeSkill({
-        name: "skill_a",
-        metadata: {
-          name: "skill_a",
-          description: "Skill A",
-          openclaw: { chains: ["skill_b"] } as ExtendedOpenClaw,
-        },
-      });
-
-      const skillB = makeSkill({
-        name: "skill_b",
-        metadata: {
-          name: "skill_b",
-          description: "Skill B",
-          openclaw: { chains: ["skill_a"] } as ExtendedOpenClaw,
-        },
-      });
-
-      registry.register(skillA);
-      registry.register(skillB);
-
-      // This should not throw - it should detect cycle and fallback
-      const plan = composer.resolve(skillA);
-      expect(plan.stages).toHaveLength(1);
-    });
-  });
-
-  describe("formatForContext", () => {
-    it("should format single-stage plan as <skill> tag", () => {
-      const skill = makeSkill({ name: "fetch_data" });
-      const plan = composer.resolve(skill);
-      const ctx = composer.formatForContext(plan);
-      expect(ctx).toContain("<skill>");
-      expect(ctx).toContain("</skill>");
-      expect(ctx).not.toContain("<skill-chain>");
-    });
-
-    it("should format multi-stage plan as <skill-chain> tag", () => {
-      const depSkill = makeSkill({ name: "fetch_data", enabled: true });
-      registry.register(depSkill);
-
-      const primarySkill = makeSkill({
-        name: "generate_report",
-        metadata: {
-          name: "generate_report",
-          description: "Generate report",
-          openclaw: { depends: ["fetch_data"] } as ExtendedOpenClaw,
-        },
-      });
-
-      const plan = composer.resolve(primarySkill);
-      const ctx = composer.formatForContext(plan);
-      expect(ctx).toContain("<skill-chain");
-      expect(ctx).toContain('primary="generate_report"');
-      expect(ctx).toContain("<stage");
-    });
-  });
-});
-
 // ─── ConfigContextBuilder Tests ────────────────────────────────────────
 
 describe("ConfigContextBuilder", () => {
@@ -1103,11 +905,6 @@ describe("Skills module exports", () => {
     expect(SkillTracker).toBeDefined();
   });
 
-  it("should export SkillComposer", async () => {
-    const { SkillComposer } = await import("../src/skills/index.js");
-    expect(SkillComposer).toBeDefined();
-  });
-
   it("should export SkillSelector", async () => {
     const { SkillSelector } = await import("../src/skills/index.js");
     expect(SkillSelector).toBeDefined();
@@ -1119,7 +916,6 @@ describe("Skills module exports", () => {
     expect(mod.SkillsRegistry).toBeDefined();
     expect(mod.IntentRouter).toBeDefined();
     expect(mod.SkillTracker).toBeDefined();
-    expect(mod.SkillComposer).toBeDefined();
     expect(mod.SkillParser).toBeDefined();
     expect(mod.SkillSelector).toBeDefined();
     expect(mod.ClawHubClient).toBeDefined();

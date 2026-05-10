@@ -6,7 +6,6 @@
  * instead of primitive keyword matching.
  *
  * Also handles:
- *   - Skill composition (dependency resolution via SkillComposer)
  *   - Usage tracking (selection events via SkillTracker)
  *   - ClawHub remote skill search (when no local skills match)
  */
@@ -18,7 +17,6 @@ import { SkillsRegistry } from "./registry.js";
 import { ClawHubClient } from "./clawhub.js";
 import { IntentRouter, type IntentMatch } from "./intent-router.js";
 import { SkillTracker } from "./tracker.js";
-import { SkillComposer } from "./composer.js";
 import { SkillExecutor } from "./executor.js";
 import { SkillParamExtractor } from "./param-extractor.js";
 import { isStructuredSkill } from "./types.js";
@@ -38,7 +36,6 @@ export class SkillContextInjector {
   private registry: SkillsRegistry;
   private router: IntentRouter;
   private tracker: SkillTracker;
-  private composer: SkillComposer;
   private executor: SkillExecutor | null = null;
   private paramExtractor: SkillParamExtractor | null = null;
   private clawHub: ClawHubClient | null;
@@ -66,9 +63,6 @@ export class SkillContextInjector {
 
     // Initialize the semantic router (BM25 + usage weighting + LLM disambiguation)
     this.router = new IntentRouter(registry, provider, this.tracker);
-
-    // Initialize the composer for skill chaining
-    this.composer = new SkillComposer(registry);
 
     // Initialize the structured skill executor (requires tool registry)
     if (provider && toolRegistry && cwd) {
@@ -266,18 +260,9 @@ export class SkillContextInjector {
     const lines: string[] = ["\n<context_skills>"];
 
     for (const skill of skills) {
-      // Resolve composition — check if this skill has dependencies/chains
-      const plan = this.composer.resolve(skill);
-
-      if (plan.totalSkills > 1) {
-        // Multi-skill composition — format as skill chain
-        lines.push(this.composer.formatForContext(plan));
-      } else {
-        // Single skill — standard format
-        lines.push(`<skill name="${skill.name}">`);
-        lines.push(skill.instructions);
-        lines.push(`</skill>`);
-      }
+      lines.push(`<skill name="${skill.name}">`);
+      lines.push(skill.instructions);
+      lines.push(`</skill>`);
     }
 
     lines.push("</context_skills>\n");
