@@ -104,11 +104,11 @@ export class TelegramAdapter implements ChannelAdapter {
       {
         get: (name: string) => {
           try { return (gateway as any).ctx?.providerRegistry?.get(name) ?? gateway.getProvider(); }
-          catch { return gateway.getProvider(); }
+          catch (err) { log.telegram.warn("providerRegistry.get failed, using default provider", err, { name }); return gateway.getProvider(); }
         },
         listProviders: () => {
           try { return (gateway as any).ctx?.providerRegistry?.listProviders() ?? [gwConfig.defaultProvider]; }
-          catch { return [gwConfig.defaultProvider]; }
+          catch (err) { log.telegram.warn("providerRegistry.listProviders failed, using default", err); return [gwConfig.defaultProvider]; }
         },
       },
     );

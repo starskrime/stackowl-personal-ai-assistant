@@ -220,9 +220,13 @@ export class ActiveFileCollector implements SignalCollector {
           } else if (entry.isDirectory()) {
             out.push(...this.findRecent(full, since, maxDepth, depth + 1));
           }
-        } catch {}
+        } catch (err) {
+          log.engine.warn("ActiveFileCollector: stat/readdir entry failed", err);
+        }
       }
-    } catch {}
+    } catch (err) {
+      log.engine.warn("ActiveFileCollector: readdirSync failed", err);
+    }
     return out.sort((a, b) => b.mtime - a.mtime).slice(0, 20);
   }
 }
@@ -385,7 +389,8 @@ export class FileSystemCollector implements SignalCollector {
           });
         }
         this.snapshots.set(filename, { hash, size, lineCount });
-      } catch {
+      } catch (err) {
+        log.engine.warn("FileSystemCollector: file read/hash failed", err);
         return;
       }
     }

@@ -201,8 +201,9 @@ export class SelfHealer {
     try {
       this.anthropicProvider = this.providerRegistry.get("anthropic");
       return this.anthropicProvider;
-    } catch {
+    } catch (err) {
       // Anthropic not registered — try to find any provider with "anthropic" or "claude" in name
+      log.engine.warn("SelfHealer: anthropic provider lookup failed, searching alternatives", err);
       const providers = this.providerRegistry.listProviders();
       for (const name of providers) {
         if (
@@ -212,8 +213,8 @@ export class SelfHealer {
           try {
             this.anthropicProvider = this.providerRegistry.get(name);
             return this.anthropicProvider;
-          } catch {
-            /* continue */
+          } catch (err2) {
+            log.engine.warn(`SelfHealer: fallback provider "${name}" lookup failed`, err2);
           }
         }
       }
@@ -277,8 +278,8 @@ export class SelfHealer {
             ? content.slice(0, 3000) + "\n... [truncated]"
             : content;
         parts.push(`=== FILE: src/${file} ===\n${trimmed}\n`);
-      } catch {
-        // Skip unreadable files
+      } catch (err) {
+        log.engine.warn(`SelfHealer: could not read source file src/${file}`, err);
       }
     }
 
@@ -298,8 +299,8 @@ export class SelfHealer {
                 : content;
             parts.push(`=== FILE: src/${subsystem}/${f} ===\n${trimmed}\n`);
           }
-        } catch {
-          /* directory unreadable */
+        } catch (err) {
+          log.engine.warn(`SelfHealer: subsystem directory src/${subsystem} unreadable`, err);
         }
       }
     }
@@ -338,8 +339,8 @@ export class SelfHealer {
         parts.push(
           `=== CONFIG (keys redacted) ===\n${redacted.slice(0, 2000)}\n`,
         );
-      } catch {
-        /* skip */
+      } catch (err) {
+        log.engine.warn("SelfHealer: could not read/parse stackowl.config.json for runtime context", err);
       }
     }
 
@@ -354,8 +355,8 @@ export class SelfHealer {
         parts.push(
           `=== KNOWLEDGE GRAPH STATE ===\nDomains: ${domainCount}, Study queue: ${queueLen}\n`,
         );
-      } catch {
-        /* skip */
+      } catch (err) {
+        log.engine.warn("SelfHealer: could not read/parse knowledge_graph.json", err);
       }
     }
 
@@ -366,8 +367,8 @@ export class SelfHealer {
         const files = await readdir(pelletsDir);
         const mdFiles = files.filter((f) => f.endsWith(".md"));
         parts.push(`=== PELLETS ===\n${mdFiles.length} pellet files on disk\n`);
-      } catch {
-        /* skip */
+      } catch (err) {
+        log.engine.warn("SelfHealer: could not enumerate pellets directory", err);
       }
     }
 
@@ -381,8 +382,8 @@ export class SelfHealer {
         parts.push(
           `=== RECENT SESSION LOG (last 50 lines) ===\n${recentLines}\n`,
         );
-      } catch {
-        /* skip */
+      } catch (err) {
+        log.engine.warn("SelfHealer: could not read session.log", err);
       }
     }
 

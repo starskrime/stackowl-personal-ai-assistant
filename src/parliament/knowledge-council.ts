@@ -272,8 +272,8 @@ export class KnowledgeCouncil {
             .filter((d: { intensity: number }) => d.intensity > 0.4)
             .map((d: { description: string }) => d.description);
         }
-      } catch {
-        /* no inner state yet */
+      } catch (err) {
+        log.parliament.warn("council inner state load failed", err);
       }
 
       const prompt = `You are ${owl.persona.name} (${owl.persona.type}).
@@ -305,7 +305,8 @@ Respond with ONLY the topic — no explanation, no quotes. Just the topic in one
           .split("\n")[0]
           .replace(/^["']|["']$/g, "")
           .trim();
-      } catch {
+      } catch (err) {
+        log.parliament.warn("council topic assignment failed, using specialty fallback", err);
         return `${owl.persona.specialties[0]} — latest developments`;
       }
     });
@@ -694,8 +695,8 @@ Respond as JSON:
         if (!pellet) continue;
         await this.pelletStore.save(pellet);
         session.pelletsCreated++;
-      } catch {
-        // Non-critical
+      } catch (err) {
+        log.parliament.warn("council cross-pollination pellet creation failed", err);
       }
     }
 
@@ -816,7 +817,8 @@ Respond as JSON:
     try {
       const raw = await readFile(this.historyPath, "utf-8");
       this.history = JSON.parse(raw);
-    } catch {
+    } catch (err) {
+      log.parliament.warn("council history load failed, starting fresh", err);
       this.history = {
         sessions: [],
         studiedTopics: [],

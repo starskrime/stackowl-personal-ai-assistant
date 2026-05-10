@@ -20,6 +20,7 @@
 
 import type { Context } from "grammy";
 import type { StackOwlConfig } from "../../../config/loader.js";
+import { log } from "../../../logger.js";
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -452,8 +453,9 @@ export class TelegramVoiceMenu {
         content.text,
         { parse_mode: "HTML", reply_markup: content.keyboard as any },
       );
-    } catch {
+    } catch (err) {
       // Message unchanged — ignore Telegram "message is not modified" error
+      log.telegram.warn("editMessageText failed (message not modified or expired)", err);
     }
   }
 

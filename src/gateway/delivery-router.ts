@@ -91,8 +91,9 @@ export class DeliveryRouter {
         error ?? null,
         status === "delivered" ? Date.now() : null
       )
-    } catch {
-      // non-fatal — never break delivery because of a logging error
+    } catch (err) {
+      // non-fatal — never break delivery because of a telemetry write error
+      log.engine.warn("delivery telemetry record failed", err);
     }
   }
 }

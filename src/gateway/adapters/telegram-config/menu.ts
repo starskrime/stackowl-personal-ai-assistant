@@ -120,7 +120,7 @@ export class TelegramConfigMenu {
     this.stateManager.touch(userId);
 
     // Silence Telegram loading spinner immediately
-    try { await ctx.answerCallbackQuery(); } catch { /* expired — harmless */ }
+    try { await ctx.answerCallbackQuery(); } catch (err) { log.telegram.warn("answerCallbackQuery failed (expired callback)", err); }
 
     const cmd = data.slice("cfg:".length); // everything after "cfg:"
 
@@ -583,7 +583,8 @@ export class TelegramConfigMenu {
     try {
       const provider = this.providerRegistry.get(providerKey);
       ok = await provider.healthCheck();
-    } catch {
+    } catch (err) {
+      log.telegram.warn("provider healthCheck failed", err, { providerKey });
       ok = false;
     }
     const latencyMs = Date.now() - start;
@@ -669,8 +670,9 @@ export class TelegramConfigMenu {
       // Use provider-agnostic model list via the registry
       const provider = this.providerRegistry.get(providerType);
       models = await provider.listModels();
-    } catch {
-      // Provider not yet registered (being added for first time)
+    } catch (err) {
+      // Provider not yet registered (being added for first time) — try fetching directly
+      log.telegram.warn("provider.listModels failed, falling back to direct fetch", err, { providerType });
       // Try fetching directly based on type
       try {
         models = await this.fetchModelsDirectly(providerType, baseUrl);
@@ -975,7 +977,7 @@ export class TelegramConfigMenu {
             provider.healthCheck(),
             new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
           ]);
-        } catch { ok = false; }
+        } catch (err) { log.telegram.warn("provider healthCheck failed during bulk check", err, { key }); ok = false; }
         return { key, ok, latencyMs: Date.now() - start };
       }),
     );

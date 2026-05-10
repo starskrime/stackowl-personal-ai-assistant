@@ -1,3 +1,5 @@
+import { log } from "../logger.js";
+
 export interface StreamSessionOptions {
   throttleMs: number
   maxLength: number
@@ -34,7 +36,7 @@ export class StreamSession {
       if (this.completed) return
       this.flushTimer = null
       this.lastFlush = Date.now()
-      try { await this.opts.onFlush(this.buffer) } catch { /* swallow */ }
+      try { await this.opts.onFlush(this.buffer) } catch (err) { log.engine.warn("StreamSession onFlush failed", err); }
     }, delayMs)
   }
 
@@ -43,8 +45,8 @@ export class StreamSession {
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null }
     try {
       await this.opts.onComplete(this.buffer)
-    } catch (e) {
-      console.error("[StreamSession] onComplete failed:", e)
+    } catch (err) {
+      log.engine.warn("StreamSession onComplete failed", err);
     }
   }
 
@@ -53,7 +55,7 @@ export class StreamSession {
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null }
     console.error("[StreamSession] stream aborted:", err.message)
     if (this.buffer) {
-      try { await this.opts.onComplete(this.buffer) } catch { /* best effort */ }
+      try { await this.opts.onComplete(this.buffer) } catch (err) { log.engine.warn("StreamSession abort onComplete failed", err); }
     }
   }
 
