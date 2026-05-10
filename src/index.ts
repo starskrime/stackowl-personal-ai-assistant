@@ -1329,18 +1329,8 @@ async function chatCommand(owlName?: string) {
     model:    b.config.defaultModel,
   }));
 
-  // ── TUI v2 (default) — gateway is ready, hand off to v2 stack ─────
-  if (process.env.STACKOWL_TUI !== "v1") {
-    const { startV2 } = await import("./cli/v2/index.js");
-    await startV2(gateway);
-    return;
-  }
-
-  // ── Phase 2: interactive session ──────────────────────────────
-  const adapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
-  gateway.register(adapter);
-
-  // Auto-start Telegram if it was enabled during onboarding
+  // ── Auto-start Telegram regardless of TUI version ────────────────
+  let telegramPinger: ReturnType<TelegramAdapter["getPinger"]> | undefined;
   if (b.config.telegram?.botToken) {
     const telegramAdapter = new TelegramAdapter(gateway, {
       botToken: b.config.telegram.botToken,
@@ -1351,17 +1341,27 @@ async function chatCommand(owlName?: string) {
     telegramAdapter
       .start()
       .then(() => {
-        // Share the proactive pinger with CLI so user replies get
-        // recorded as engagement signals (Element 12 — Task 6.5).
-        const pinger = telegramAdapter.getPinger();
-        if (pinger) adapter.setPinger(pinger);
+        telegramPinger = telegramAdapter.getPinger() ?? undefined;
       })
       .catch((err) => {
-        console.error(
-          chalk.red(`✗ Telegram failed: ${err instanceof Error ? err.message : err}`),
-        );
+        process.stderr.write(`✗ Telegram failed: ${err instanceof Error ? err.message : err}\n`);
       });
   }
+
+  // ── TUI v2 (default) — gateway is ready, hand off to v2 stack ─────
+  if (process.env.STACKOWL_TUI !== "v1") {
+    const { startV2 } = await import("./cli/v2/index.js");
+    await startV2(gateway);
+    return;
+  }
+
+  // ── Phase 2: v1 interactive session ───────────────────────────
+  const adapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
+  gateway.register(adapter);
+
+  // Share the proactive pinger with CLI so user replies get
+  // recorded as engagement signals (Element 12 — Task 6.5).
+  if (telegramPinger) adapter.setPinger(telegramPinger);
 
   process.on("SIGINT", async () => {
     adapter.stop();
