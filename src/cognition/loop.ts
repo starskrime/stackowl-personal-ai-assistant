@@ -47,6 +47,7 @@ import type { OwlRegistry } from "../owls/registry.js";
 import type { OwlEvolutionEngine } from "../owls/evolution.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SkillsLoader } from "../skills/loader.js";
+import type { RoutingRuleStore } from "./routing-rule-store.js";
 import { CapabilityScanner } from "../heartbeat/capability-scanner.js";
 import { KnowledgeGraphManager } from "../learning/knowledge-graph.js";
 
@@ -115,6 +116,8 @@ export interface CognitiveLoopDeps {
   logReader?: (logsDir: string, query: LogQuery) => Promise<LogRecord[]>;
   /** Summarizer function — used by log-analysis tick */
   logAnalyzer?: (records: LogRecord[]) => LogSummary;
+  /** Store for learned routing rules materialized from repeat failures */
+  routingRuleStore?: RoutingRuleStore;
 }
 
 /**
@@ -789,6 +792,11 @@ export class CognitiveLoop {
       );
     }
 
+    // Materialize routing rules from repeat failure patterns
+    if (this.deps.routingRuleStore && summary.repeatFailures.length > 0) {
+      this.materializeRoutingRules(summary.repeatFailures, summary.capabilityGaps);
+    }
+
     this.lastLogAnalysisTime = Date.now();
     log.engine.info("log_analysis.summary", {
       windowMinutes: summary.windowMinutes,
@@ -800,6 +808,58 @@ export class CognitiveLoop {
     });
 
     return `Analyzed ${records.length} records over ${summary.windowMinutes}m; ${summary.capabilityGaps.length} gaps queued`;
+  }
+
+  // ─── Routing Rule Materialization ────────────────────────────
+
+  /**
+   * Convert repeat failure patterns from log analysis into actionable routing
+   * rules that the RoutingRuleStore can serve on the very next turn.
+   */
+  private materializeRoutingRules(
+    repeatFailures: Array<{ tool?: string; pattern?: string; count?: number; phrase?: string; normalizedMsg?: string; module?: string; spanName?: string }>,
+    _capabilityGaps: Array<{ phrase: string; supportingTraces: unknown[] }>,
+  ): void {
+    const store = this.deps.routingRuleStore!;
+    const TOOL_FALLBACKS_STATIC: Record<string, string[]> = {
+      web_search: ["web_fetch", "live_browser"],
+      web_fetch: ["live_browser", "web_search"],
+      smart_search: ["smart_fetch", "live_browser"],
+    };
+
+    for (const failure of repeatFailures) {
+      const toolName = (failure as any).tool ?? (failure as any).spanName ?? (failure as any).phrase ?? "";
+      if (!toolName) continue;
+
+      const alternatives = TOOL_FALLBACKS_STATIC[toolName] ?? [];
+      if (alternatives.length === 0) continue;
+
+      const intentPattern = (failure as any).pattern ?? toolName;
+      const ruleId = `${toolName}:${intentPattern}`.slice(0, 64).replace(/\s+/g, "_");
+
+      const existing = store.getById(ruleId);
+      if (existing && !existing.disabled) continue; // already active
+
+      const rule = {
+        id: ruleId,
+        failingTool: toolName,
+        intentPattern,
+        suggestedAlternatives: alternatives,
+        appliedAt: Date.now(),
+        version: (existing?.version ?? 0) + 1,
+        disabled: false,
+        observationCount: 0,
+        successCount: 0,
+      };
+
+      store.upsert(rule);
+      log.engine.info("routing-rule.materialized", {
+        id: ruleId,
+        failingTool: toolName,
+        alternatives,
+        intentPattern,
+      });
+    }
   }
 
   // ─── Autonomous Skill Synthesis ──────────────────────────────
