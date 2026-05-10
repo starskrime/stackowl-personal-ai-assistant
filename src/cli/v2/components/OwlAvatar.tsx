@@ -1,7 +1,7 @@
 /** Signed message author chip: emoji + bold name + dim role. */
 
 import { Box, Text } from "ink";
-import { SPINNER_AMBER } from "./spinner.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export interface OwlAvatarProps {
   emoji: string;
@@ -11,11 +11,13 @@ export interface OwlAvatarProps {
   color?: string;
 }
 
-export function OwlAvatar({ emoji, name, role, color = SPINNER_AMBER }: OwlAvatarProps) {
+export function OwlAvatar({ emoji, name, role, color }: OwlAvatarProps) {
+  const { colors } = useTheme();
+  const nameColor = color ?? colors.brand;
   return (
     <Box>
       <Text>{emoji} </Text>
-      <Text bold color={color}>{name}</Text>
+      <Text bold color={nameColor}>{name}</Text>
       {role ? <Text dimColor>  {role}</Text> : null}
     </Box>
   );
