@@ -80,7 +80,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         />
       </Box>
       <Box paddingLeft={1}>
-        <Text dimColor>Shift+Tab owl</Text>
+        <Text dimColor>use Shift+Tab to change current owl</Text>
       </Box>
     </Box>
   );
