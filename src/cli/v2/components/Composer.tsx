@@ -186,10 +186,10 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
       <Box
         flexDirection="column"
         borderStyle="single"
-        borderTop={false}
-        borderBottom={false}
-        borderLeft={true}
-        borderRight={true}
+        borderTop={true}
+        borderBottom={true}
+        borderLeft={false}
+        borderRight={false}
         borderColor="red"
         width={cols}
       >
