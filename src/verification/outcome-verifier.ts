@@ -1,5 +1,8 @@
 import type { ModelProvider } from '../providers/base.js';
 import type { VerificationStatus, VerificationResult, IntentMatchResult } from './types.js';
+import { getLogger } from '../infra/observability/logger.js';
+
+const log = getLogger('OutcomeVerifier');
 
 export interface OutcomeVerifierConfig {
   confidenceThreshold: number;
@@ -151,24 +154,7 @@ export class OutcomeVerifier {
   }
 
   private logBehavioral(event: 'started' | 'completed' | 'failed', taskId: string): void {
-    const timestamp = new Date().toISOString();
-    switch (event) {
-      case 'started':
-        console.log(
-          `${timestamp} INFO [OutcomeVerifier] behavioral.verification.started taskId=${taskId}`,
-        );
-        break;
-      case 'completed':
-        console.log(
-          `${timestamp} INFO [OutcomeVerifier] behavioral.verification.completed taskId=${taskId}`,
-        );
-        break;
-      case 'failed':
-        console.log(
-          `${timestamp} INFO [OutcomeVerifier] behavioral.verification.failed taskId=${taskId}`,
-        );
-        break;
-    }
+    log.behavioral(`verification.${event}`, { taskId });
   }
 
   getStatus(taskId: string): VerificationStatus | undefined {

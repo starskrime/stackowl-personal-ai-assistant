@@ -1,3 +1,7 @@
+import { getLogger } from '../infra/observability/logger.js';
+
+const log = getLogger('CompletionTracker');
+
 export type TimeWindow = 'daily' | 'weekly' | 'monthly';
 
 export interface CompletionStats {
@@ -122,19 +126,10 @@ export class CompletionTracker {
   }
 
   private logBehavioral(event: 'recorded' | 'rate_updated', taskId: string): void {
-    const timestamp = new Date().toISOString();
-    switch (event) {
-      case 'recorded':
-        console.log(
-          `${timestamp} INFO [CompletionTracker] behavioral.completion.recorded taskId=${taskId}`,
-        );
-        break;
-      case 'rate_updated':
-        const rate = this.getCompletionRate();
-        console.log(
-          `${timestamp} INFO [CompletionTracker] behavioral.completion.rate_updated rate=${rate.toFixed(3)}`,
-        );
-        break;
+    if (event === 'rate_updated') {
+      log.behavioral('completion.rate_updated', { rate: this.getCompletionRate() });
+    } else {
+      log.behavioral(`completion.${event}`, { taskId });
     }
   }
 

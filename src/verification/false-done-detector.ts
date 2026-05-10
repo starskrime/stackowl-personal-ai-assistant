@@ -1,4 +1,7 @@
 import type { ModelProvider } from '../providers/base.js';
+import { getLogger } from '../infra/observability/logger.js';
+
+const log = getLogger('FalseDoneDetector');
 
 export interface FalseDoneResult {
   isFalseDone: boolean;
@@ -163,19 +166,7 @@ export class FalseDoneDetector {
   }
 
   private logBehavioral(event: 'false_done_detected' | 'self_correct_triggered', taskId: string): void {
-    const timestamp = new Date().toISOString();
-    switch (event) {
-      case 'false_done_detected':
-        console.log(
-          `${timestamp} INFO [FalseDoneDetector] behavioral.detection.false_done_detected taskId=${taskId}`,
-        );
-        break;
-      case 'self_correct_triggered':
-        console.log(
-          `${timestamp} INFO [FalseDoneDetector] behavioral.detection.self_correct_triggered taskId=${taskId}`,
-        );
-        break;
-    }
+    log.behavioral(`detection.${event}`, { taskId });
   }
 }
 

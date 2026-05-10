@@ -1,26 +1,24 @@
 /**
  * ChatScreen — the default inline-scroll chat surface.
  *
- * Layout:
- *   <TopBar />            ← brand bar + git branch
- *   <Frame>               ← max-width container with gutters
- *     <Transcript />      ← committed turns (native scrollback)
- *     [heartbeat banners]
- *     [notice strips]
- *     <LiveTurn />
- *     <CommandPalette />  ← /help overlay
- *     <PanelHost />       ← inline panels (/memory, /mcp, …)
- *   </Frame>
- *   <InputArea />         ← full-width green top/bottom lines, outside Frame gutters
- *     <Composer />        ← input + hint row
- *     <StatusBar />       ← owl · model · tokens · cost
- *     <ShortcutsBar />    ← keyboard hints (Shift+Tab = cycle owl)
+ * Layout (Ink rendering model):
+ *   <Transcript />      ← Static: committed turns scroll into terminal buffer above
+ *   ── green ──────     ← always visible: top of the persistent header block
+ *   <EmptyState />      ← always visible: logo + subtitle
+ *   ── green ──────     ← always visible: closes the header block
+ *   [heartbeat banners]
+ *   [notice strips]
+ *   <LiveTurn />
+ *   <CommandPalette />  ← /help overlay
+ *   <PanelHost />       ← inline panels (/memory, /mcp, …)
+ *   ── green ──────     ← top of input border (full terminal width)
+ *   <Composer />
+ *   ── green ──────     ← bottom of input border
  */
 
 import { Box, Text } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { Frame } from "../components/Frame.js";
-import { TopBar } from "../components/TopBar.js";
 import { EmptyState } from "../components/EmptyState.js";
 import { Transcript } from "../components/Transcript.js";
 import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
@@ -34,6 +32,10 @@ import { globalBridge } from "../events/bridge.js";
 export interface ChatScreenProps {
   onSubmit: (text: string) => void;
 }
+
+const GREEN_RULE = (
+  <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
+);
 
 export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const turns        = useUiStore((s) => s.turns);
@@ -51,10 +53,20 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
 
   return (
     <Box flexDirection="column">
-      {/* Top green line — mirrors the bottom input border */}
-      <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
+      {/* Transcript: Static — committed turns scroll into the terminal buffer above the header */}
       <Frame>
-        {turns.length === 0 && !liveTurn ? <EmptyState /> : <Transcript turns={turns} />}
+        <Transcript turns={turns} />
+      </Frame>
+
+      {/* Persistent header — always visible at the top of the current viewport */}
+      {GREEN_RULE}
+      <Frame>
+        <EmptyState />
+      </Frame>
+      {GREEN_RULE}
+
+      {/* Activity area */}
+      <Frame>
         {unreadHeartbeats.map((msg) => (
           <HeartbeatBanner key={msg.id} msg={msg} />
         ))}
@@ -65,9 +77,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
         <PanelHost />
       </Frame>
-      {turns.length === 0 && !liveTurn && (
-        <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
-      )}
+
       {/* Input area — outside Frame so green lines span full terminal width */}
       <Box
         flexDirection="column"
