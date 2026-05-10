@@ -144,7 +144,6 @@ import {
   defaultWaitForPort,
 } from "./tools/live-browser/bootstrap.js";
 import { BrowserBridge } from "./tools/computer-use/browser/cdp.js";
-import { createInvokeSkillTool } from "./tools/invoke-skill.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -156,8 +155,6 @@ import { ToolSynthesizer } from "./evolution/synthesizer.js";
 import { CapabilityLedger } from "./evolution/ledger.js";
 import { DynamicToolLoader } from "./evolution/loader.js";
 import { EvolutionHandler } from "./evolution/handler.js";
-import { SkillsEngine } from "./skills/engine.js";
-import { SkillsMigrator } from "./skills/migrator.js";
 import { SkillInstaller, parseInstallSource } from "./skills/installer.js";
 import { StackOwlServer } from "./server/index.js";
 import { OwlGateway } from "./gateway/core.js";
@@ -620,14 +617,6 @@ async function bootstrap() {
     );
   }
 
-  // Instincts
-  const migrator = new SkillsMigrator(workspacePath);
-  const migratedCount = await migrator.migrate();
-  if (migratedCount > 0) {
-    console.log(chalk.dim(`  [Migrated ${migratedCount} instinct(s) to skills]`));
-  }
-  const skillsEngine = new SkillsEngine();
-
   // Skills (OpenCLAW-compatible)
   // Always include built-in defaults + any user-configured directories
   const skillsLoader = new SkillsLoader();
@@ -770,9 +759,6 @@ async function bootstrap() {
     }),
   );
 
-  // invoke_skill — LLM can explicitly invoke a named skill
-  toolRegistry.register(createInvokeSkillTool());
-
   // Self-seed foundational pellets on first startup (empty store)
   // This gives the model self-knowledge (identity, tools, skills) immediately
   // after a reset — prevents "acts like generic LLM" regression.
@@ -827,7 +813,6 @@ async function bootstrap() {
     sessionStore,
     pelletStore,
     evolutionEngine,
-    skillsEngine,
     workspacePath,
     evolution,
     synthesizer,
@@ -1129,7 +1114,6 @@ async function buildGateway(
     evolutionEngine: b.evolutionEngine,
     learningOrchestrator: b.learningOrchestratorFactory(owl),
     innerLife,
-    skillsEngine: b.skillsEngine,
     preferenceStore: b.preferenceStore,
     reflexionEngine: b.reflexionEngine,
     skillsLoader: b.skillsLoader,

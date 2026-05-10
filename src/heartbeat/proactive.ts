@@ -16,7 +16,6 @@ import type { CapabilityLedger } from "../evolution/ledger.js";
 import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
-// SkillEvolver and PatternMiner imports removed — proactive learning disabled
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { SessionStore } from "../memory/store.js";
 import type { AutonomousPlanner } from "./planner.js";
@@ -59,9 +58,9 @@ export interface PingContext {
   reflexionEngine?: ReflexionEngine;
   /** Skills registry for evolution pass */
   skillsRegistry?: SkillsRegistry;
-  /** Absolute path to skills directory (for PatternMiner crystallization) */
+  /** Absolute path to skills directory */
   skillsDir?: string;
-  /** Session store used by PatternMiner to read conversation history */
+  /** Session store used to read conversation history */
   sessionStore?: SessionStore;
   /** Episodic memory — used to give proactive messages cross-session context */
   episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
@@ -226,10 +225,6 @@ export class ProactivePinger {
     const selfStudyTime = new Date(Date.now() + 6 * 3_600_000);
     queue.schedule({ type: "self_study", userId, scheduledAt: selfStudyTime, priority: 4, deduplicate: true });
 
-    // Skill evolution — daily at 5 AM
-    const skillEvoTime = this.nextDailyAt(5, 0);
-    queue.schedule({ type: "skill_evolution", userId, scheduledAt: skillEvoTime, priority: 3, deduplicate: true });
-
     log.engine.info("[ProactivePinger] Seeded recurring jobs into queue");
   }
 
@@ -358,9 +353,6 @@ export class ProactivePinger {
       case "dream_reflexion":
         log.engine.debug("[ProactivePinger] dream_reflexion handled by CognitiveLoop — skipping");
         break;
-      case "skill_evolution":
-        log.engine.debug("[ProactivePinger] skill_evolution handled by CognitiveLoop — skipping");
-        break;
       case "goal_check":
         await this.maybeCheckGoals();
         break;
@@ -415,7 +407,6 @@ export class ProactivePinger {
       morning_brief: [this.config.morningBriefHour, 0],
       memory_consolidation: [2, 0],
       tool_pruning: [3, 0],
-      skill_evolution: [5, 0],
     };
 
     if (intervals[job.type]) {

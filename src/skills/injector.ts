@@ -6,7 +6,6 @@
  * instead of primitive keyword matching.
  *
  * Also handles:
- *   - Skill composition (dependency resolution via SkillComposer)
  *   - Usage tracking (selection events via SkillTracker)
  *   - ClawHub remote skill search (when no local skills match)
  */
@@ -18,7 +17,6 @@ import { SkillsRegistry } from "./registry.js";
 import { ClawHubClient } from "./clawhub.js";
 import { IntentRouter, type IntentMatch } from "./intent-router.js";
 import { SkillTracker } from "./tracker.js";
-import { SkillComposer } from "./composer.js";
 import { SkillExecutor } from "./executor.js";
 import { SkillParamExtractor } from "./param-extractor.js";
 import { isStructuredSkill } from "./types.js";
@@ -38,7 +36,6 @@ export class SkillContextInjector {
   private registry: SkillsRegistry;
   private router: IntentRouter;
   private tracker: SkillTracker;
-  private composer: SkillComposer;
   private executor: SkillExecutor | null = null;
   private paramExtractor: SkillParamExtractor | null = null;
   private clawHub: ClawHubClient | null;
@@ -66,9 +63,6 @@ export class SkillContextInjector {
 
     // Initialize the semantic router (BM25 + usage weighting + LLM disambiguation)
     this.router = new IntentRouter(registry, provider, this.tracker);
-
-    // Initialize the composer for skill chaining
-    this.composer = new SkillComposer(registry);
 
     // Initialize the structured skill executor (requires tool registry)
     if (provider && toolRegistry && cwd) {
@@ -183,6 +177,29 @@ export class SkillContextInjector {
   }
 
   /**
+   * Execute a skill by name — entry point for the invoke_skill tool (D5).
+   * For structured skills (with steps + executor): runs the executor pipeline.
+   * For unstructured skills (instructions-only): returns instructions for the LLM.
+   */
+  async executeByName(name: string, params: Record<string, unknown>): Promise<string> {
+    const skill = this.registry.get(name);
+    if (!skill) {
+      throw new Error(`Skill "${name}" not found in registry.`);
+    }
+
+    if (this.canExecuteStructured(skill) && this.executor) {
+      const result = await this.executeStructuredSkill(
+        skill,
+        JSON.stringify(params),
+      );
+      return result.finalOutput;
+    }
+
+    // Unstructured skill — return instructions for LLM to follow
+    return `Skill "${name}" instructions:\n\n${skill.instructions}`;
+  }
+
+  /**
    * Rebuild the BM25 index after skills change.
    * Call this after loading/unloading skills.
    */
@@ -205,10 +222,21 @@ export class SkillContextInjector {
    * Useful for gating structured execution on confidence.
    */
   async getRelevantMatches(userMessage: string): Promise<IntentMatch[]> {
-    const matches = await this.router.route(
+    // Force-include skills with always:true (D4) — prepend before router results
+    const alwaysSkills: IntentMatch[] = this.registry
+      .listEnabled()
+      .filter(s => s.metadata?.openclaw?.always)
+      .map(s => ({ skill: s, score: 1.0, method: "bm25" as const }));
+
+    const routerMatches = await this.router.route(
       userMessage,
       this.options.maxSkills,
     );
+
+    // Merge: always-skills first (deduplicated against router matches)
+    const routerNames = new Set(routerMatches.map(m => m.skill.name));
+    const uniqueAlways = alwaysSkills.filter(m => !routerNames.has(m.skill.name));
+    const matches = [...uniqueAlways, ...routerMatches];
 
     // Track selections
     for (const m of matches) {
@@ -232,18 +260,9 @@ export class SkillContextInjector {
     const lines: string[] = ["\n<context_skills>"];
 
     for (const skill of skills) {
-      // Resolve composition — check if this skill has dependencies/chains
-      const plan = this.composer.resolve(skill);
-
-      if (plan.totalSkills > 1) {
-        // Multi-skill composition — format as skill chain
-        lines.push(this.composer.formatForContext(plan));
-      } else {
-        // Single skill — standard format
-        lines.push(`<skill name="${skill.name}">`);
-        lines.push(skill.instructions);
-        lines.push(`</skill>`);
-      }
+      lines.push(`<skill name="${skill.name}">`);
+      lines.push(skill.instructions);
+      lines.push(`</skill>`);
     }
 
     lines.push("</context_skills>\n");
@@ -332,38 +351,4 @@ export class SkillContextInjector {
     }
   }
 
-  /**
-   * Format skills for system prompt inclusion.
-   * (Synchronous — lists all skills, not per-message matching)
-   */
-  formatForSystemPrompt(): string {
-    const skills = this.registry.listEnabled();
-
-    if (skills.length === 0) {
-      return "";
-    }
-
-    const lines: string[] = [
-      "\n## Available Skills\n",
-      "You have access to the following skills that can help with user requests:\n",
-    ];
-
-    for (const skill of skills) {
-      const emoji = skill.metadata.openclaw?.emoji || "•";
-      const usage = skill.usage;
-      const usageHint =
-        usage && usage.selectionCount > 0
-          ? ` (used ${usage.selectionCount}x, ${(usage.successRate * 100).toFixed(0)}% success)`
-          : "";
-      lines.push(
-        `- ${emoji} **${skill.name}**: ${skill.description}${usageHint}`,
-      );
-    }
-
-    lines.push(
-      "\nUse relevant skills when the user request matches their description.\n",
-    );
-
-    return lines.join("\n");
-  }
 }

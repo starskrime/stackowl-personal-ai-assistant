@@ -128,6 +128,9 @@ import { GoalVerifier } from "../tools/goal-verifier.js";
 import { formatSignalPromoted } from "./narration-formatter.js";
 import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
+import { createInvokeSkillTool } from "../tools/invoke-skill.js"
+import { dispatchSkillCommand } from "./commands/skill-router.js";
+import { SkillCreationWizard } from "./wizards/skill-creation.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -138,6 +141,52 @@ export function shuffleArray<T>(arr: T[]): T[] {
     ;[a[i], a[j]] = [a[j], a[i]]
   }
   return a
+}
+
+/**
+ * CI-3: NL skill install intent detection.
+ * Uses IntelligenceRouter (classification tier) + cheap provider with a 200ms
+ * timeout.  Returns false on timeout or any error (fail-open).
+ */
+async function isSkillInstallIntent(
+  text: string,
+  ctx: GatewayContext,
+): Promise<boolean> {
+  const provider = ctx.provider;
+  if (!provider) return false;
+
+  let model: string | undefined;
+  try {
+    const resolved = ctx.intelligence?.resolve("classification");
+    model = resolved?.model;
+  } catch {
+    // fall through — use provider default
+  }
+
+  const prompt =
+    `Does this message ask to create, make, add, or build a new skill or automation? ` +
+    `Reply YES or NO only. Message: ${text}`;
+
+  const timeout = new Promise<{ timedOut: true }>((resolve) =>
+    setTimeout(() => resolve({ timedOut: true }), 200),
+  );
+  const call = provider.chat(
+    [{ role: "user", content: prompt }],
+    model,
+    { temperature: 0 },
+  );
+
+  let raced: any;
+  try {
+    raced = await Promise.race([call, timeout]);
+  } catch {
+    return false;
+  }
+
+  if (raced && (raced as any).timedOut) return false;
+
+  const answer: string = (raced as { content: string }).content ?? "";
+  return answer.trimStart().toUpperCase().startsWith("YES");
 }
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -233,6 +282,7 @@ export class OwlGateway {
    */
   private attemptLogs = new AttemptLogRegistry();
   private wizardSessions = new Map<string, WizardSession>();
+  private skillCreationWizard: SkillCreationWizard | null = null;
 
   /** User mental model — infers user state from behavioral signals */
   private userMentalModel: UserMentalModel | null = null;
@@ -330,6 +380,12 @@ export class OwlGateway {
       this.microLearner = new MicroLearner(workspacePath);
       this.microLearner.load().catch(() => {});
     }
+
+    // SkillCreationWizard — channel-agnostic skill creation via ChannelAdapterV2.ask()
+    this.skillCreationWizard = new SkillCreationWizard(
+      ctx.cwd ?? process.cwd(),
+      ctx.db,
+    );
 
     // Proactive anticipator — cross-system prediction engine
     if (ctx.anticipator) {
@@ -436,8 +492,11 @@ export class OwlGateway {
       const registry = ctx.skillsLoader.getRegistry();
 
       // Initialize skill tracker for usage analytics
-      const skillTracker = new SkillTracker(ctx.cwd ?? process.cwd());
-      skillTracker.load().catch(() => {}); // Non-blocking load
+      // Pass ctx.db if already provided; will be upgraded via setDb() after auto-init.
+      const skillTracker = new SkillTracker(ctx.cwd ?? process.cwd(), ctx.db);
+      if (!ctx.db) {
+        skillTracker.load().catch(() => {}); // Non-blocking JSON load when no DB yet
+      }
 
       // Use synthesis provider (Anthropic) for skill routing LLM disambiguation
       const synthesisProviderName =
@@ -474,6 +533,11 @@ export class OwlGateway {
         );
       }
 
+      // Wire invoke_skill executor now that skillInjector is available (D5)
+      if (ctx.toolRegistry && this.skillInjector) {
+        ctx.toolRegistry.register(createInvokeSkillTool(this.skillInjector));
+      }
+
       log.engine.info(
         `Skill injector initialized with ${registry.listEnabled().length} skills (BM25 + usage tracking)`,
       );
@@ -493,6 +557,11 @@ export class OwlGateway {
       log.engine.info("[memory] MemoryDatabase (SQLite) initialized");
     }
     this.deliveryRouter.setDb(ctx.db.rawDb);
+
+    // Wire DB into SkillTracker now that ctx.db is guaranteed (upgrades from JSON fallback)
+    if (this.skillInjector) {
+      this.skillInjector.getTracker().setDb(ctx.db);
+    }
 
     // FallbackSequencer needs MemoryDatabase — construct now that ctx.db exists
     this.fallbackSequencer = new FallbackSequencer(ctx.db);
@@ -1115,6 +1184,33 @@ export class OwlGateway {
       };
     }
 
+    // ─── /skill management commands (channel-parity router) ──────
+    // Intercept management verbs before falling through to skill execution.
+    const skillCmdMatch = message.text
+      .trim()
+      .match(/^\/skill\s+(\S+)(?:\s+(.+))?$/i);
+    const SKILL_MGMT_VERBS = new Set(["list", "show", "install", "create", "enable", "disable", "remove", "run", "metrics"])
+    if (skillCmdMatch && SKILL_MGMT_VERBS.has(skillCmdMatch[1].toLowerCase())) {
+      const [, verb, rest] = skillCmdMatch
+      const args = rest ? rest.trim().split(/\s+/) : []
+      const registry = this.ctx.skillsLoader?.getRegistry()
+      const content = await dispatchSkillCommand(verb, args, {
+        registry: registry as any,
+        wizard: this.skillCreationWizard!,
+        installer: (this.ctx as any).skillInstaller,
+        userId: message.userId,
+        channelAdapter: undefined,
+        workspacePath: this.ctx.cwd ?? process.cwd(),
+        db: this.ctx.db,
+      })
+      return {
+        content,
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+      }
+    }
+
     // Check for explicit skill invocation: /skill <name> [args...]
     const skillMatch = message.text
       .trim()
@@ -1523,26 +1619,7 @@ export class OwlGateway {
       wc.setLastUserMessage(message.text);
     }
 
-    // Evaluate behavioral skills — may inject reactive constraints
     let text = message.text;
-    if (this.ctx.skillsEngine && this.ctx.skillsRegistry) {
-      const behavioralSkills = this.ctx.skillsRegistry.getBehavioral(
-        this.ctx.owl.persona.name,
-      );
-      const triggered = await this.ctx.skillsEngine.evaluate(
-        text,
-        behavioralSkills,
-        {
-          provider: this.ctx.provider,
-          owl: this.ctx.owl,
-          config: this.ctx.config,
-        },
-      );
-      if (triggered) {
-        log.engine.info(`Skill triggered: ${triggered.name}`);
-        text = `User Input: ${text}\n\n[SYSTEM OVERRIDE - SKILL TRIGGERED]\n${triggered.instructions}`;
-      }
-    }
 
     // Track last active channel/user for scheduled message delivery
     this.lastActiveChannel = message.channelId;
@@ -1552,6 +1629,7 @@ export class OwlGateway {
     log.engine.incoming(message.channelId, message.text);
 
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
+    let memoryContextPrefix = "";
     let dynamicSkillsContext = "";
     let injectedSkillNames: string[] = [];
 
@@ -1609,24 +1687,42 @@ export class OwlGateway {
       }
 
       if (memoryContextParts.length > 0) {
-        dynamicSkillsContext = memoryContextParts.join("\n") + "\n" + dynamicSkillsContext;
+        memoryContextPrefix = memoryContextParts.join("\n") + "\n";
       }
     }
 
-    // Skip skill routing unless the message looks like an action request.
+    // Skip skill routing on short or conversational messages.
     // The IntentRouter's 5-tier pipeline (BM25 + semantic re-rank + LLM call)
     // adds 1–3 seconds of latency and is wasted on conversational messages.
-    //
-    // Pre-filter: require at least one action verb keyword AND a non-trivial message.
-    // Conversational messages ("hi", "thanks", "what do you think?") skip entirely.
-    const SKILL_ACTION_KEYWORDS =
-      /\b(find|search|create|write|generate|check|analyze|run|scan|fix|build|compare|convert|code|script|calculate|translate|download|fetch|get|show|list|send|open|launch|install|deploy|test|debug|monitor|schedule|remind|automate|summarize|extract|format|parse|execute|compile|scan|audit|review|design)\b/i;
+    // IntentRouter's Tier-5 LLM naturally filters further based on intent.
     const isConversational =
       text.trim().length < 15 ||
       /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|gm|gn)\b/i.test(
         text.trim(),
-      ) ||
-      !SKILL_ACTION_KEYWORDS.test(text);
+      );
+
+    // CI-3: NL skill install intent detection
+    if (!isConversational && !text.trim().startsWith('/')) {
+      const installIntent = await isSkillInstallIntent(text, this.ctx)
+      if (installIntent) {
+        const registry = this.ctx.skillsLoader?.getRegistry()
+        const content = await dispatchSkillCommand('create', [], {
+          registry: registry as any,
+          wizard: this.skillCreationWizard!,
+          userId: message.userId,
+          channelAdapter: undefined,
+          workspacePath: this.ctx.cwd ?? process.cwd(),
+          db: this.ctx.db,
+        })
+        return {
+          content,
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        }
+      }
+    }
+
     if (this.skillInjector && !isConversational) {
       const relevantMatches = await this.skillInjector.getRelevantMatches(text);
       const relevantSkills = relevantMatches.map((m) => m.skill);
@@ -1638,7 +1734,7 @@ export class OwlGateway {
         // Explicit invocation via /skill_name still triggers direct execution (above).
         const topMatch = relevantMatches[0];
         const topSkill = topMatch.skill;
-        if (false && this.skillInjector!.canExecuteStructured(topSkill)) {
+        if (topMatch.method === "llm" && this.skillInjector!.canExecuteStructured(topSkill)) {
           log.engine.info(`Structured skill execution: ${topSkill.name}`);
           const emoji = topSkill.metadata.openclaw?.emoji || "⚡";
           if (callbacks.onProgress) {
@@ -2005,7 +2101,7 @@ export class OwlGateway {
     const engineCtx = await this.buildEngineContext(
       session,
       callbacks,
-      dynamicSkillsContext,
+      memoryContextPrefix + dynamicSkillsContext,
       isIsolatedTask,
       this.attemptLogs.get(message.sessionId),
       message.channelId,

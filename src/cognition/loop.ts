@@ -44,8 +44,6 @@ import type { OwlEvolutionEngine } from "../owls/evolution.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SkillsLoader } from "../skills/loader.js";
 import { CapabilityScanner } from "../heartbeat/capability-scanner.js";
-import { SkillEvolver } from "../skills/evolver.js";
-import { PatternMiner } from "../skills/pattern-miner.js";
 import { KnowledgeGraphManager } from "../learning/knowledge-graph.js";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -55,8 +53,6 @@ export type CognitiveAction =
   | "gap_driven_study"           // Study a topic from capability gaps
   | "autonomous_skill_synthesis" // Proactively create skills for anticipated needs
   | "self_reflection"            // Review failures & generate new desires/goals
-  | "pattern_mining"             // Crystallize skills from conversation patterns
-  | "skill_evolution"            // Improve existing skills
   | "reflexion_dream"            // Learn from past mistakes
   | "capability_scan"            // Discover unused platform features
   | "frontier_exploration"       // Explore adjacent domains to deepen knowledge
@@ -177,10 +173,6 @@ export class CognitiveLoop {
   // proactive actions are re-enabled. Kept to avoid losing state tracking.
   // @ts-expect-error TS6133 — assigned in execute, read when proactive actions enabled
   private lastCapScanTime = 0;
-  // @ts-expect-error TS6133
-  private lastPatternMineTime = 0;
-  // @ts-expect-error TS6133
-  private lastSkillEvolveTime = 0;
   // @ts-expect-error TS6133
   private lastSelfReflectionTime = 0;
   // @ts-expect-error TS6133
@@ -538,15 +530,6 @@ export class CognitiveLoop {
       });
     }
 
-    // ─── REMOVED (proactive token burners) ──────────────────────
-    // desire_driven_study    — studied random desires
-    // gap_driven_study       — proactive capability gap exploration
-    // self_reflection        — generated new desires (fed more random study)
-    // pattern_mining         — mined patterns into skills proactively
-    // skill_evolution        — critiqued/rewrote skills proactively
-    // capability_scan        — discovered unused features proactively
-    // frontier_exploration   — deep-researched random knowledge graph topics
-
     if (candidates.length === 0) {
       return { action: "idle", reason: "Nothing to do", priority: 0 };
     }
@@ -574,12 +557,6 @@ export class CognitiveLoop {
 
       case "reflexion_dream":
         return this.executeReflexion();
-
-      case "pattern_mining":
-        return this.executePatternMining();
-
-      case "skill_evolution":
-        return this.executeSkillEvolution();
 
       case "capability_scan":
         return this.executeCapabilityScan();
@@ -633,38 +610,6 @@ export class CognitiveLoop {
     await this.deps.reflexionEngine.dream();
     this.lastReflexionTime = Date.now();
     return "Reflexion dream completed — behavioral patches extracted";
-  }
-
-  private async executePatternMining(): Promise<string> {
-    if (!this.deps.sessionStore || !this.deps.skillsRegistry || !this.deps.skillsDir) {
-      return "Missing deps for pattern mining";
-    }
-
-    const miner = new PatternMiner(
-      this.deps.provider,
-      this.deps.sessionStore,
-      this.deps.config,
-    );
-    const newSkills = await miner.mine(
-      this.deps.skillsRegistry,
-      this.deps.skillsDir,
-    );
-    this.lastPatternMineTime = Date.now();
-
-    if (newSkills.length > 0) {
-      return `Mined ${newSkills.length} new skill(s): [${newSkills.join(", ")}]`;
-    }
-    return "No new patterns found";
-  }
-
-  private async executeSkillEvolution(): Promise<string> {
-    if (!this.deps.skillsRegistry) return "No skills registry";
-
-    const evolver = new SkillEvolver(this.deps.provider, this.deps.config);
-    const report = await evolver.evolveAll(this.deps.skillsRegistry);
-    this.lastSkillEvolveTime = Date.now();
-
-    return `Skills evolved: ${report.improved}/${report.evaluated} improved, ${report.failed} failed`;
   }
 
   private async executeCapabilityScan(): Promise<string> {

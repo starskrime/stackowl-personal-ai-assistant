@@ -1,5 +1,4 @@
 import type { StackOwlConfig } from "../config/loader.js";
-import type { PatternMiner } from "../skills/pattern-miner.js";
 import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { ToolOutcomeStore } from "../tools/outcome-store.js";
@@ -14,7 +13,6 @@ export interface IdleEngineConfig {
   cycleLengthMinutes: number;
   /** Which activity types are enabled */
   enabled: {
-    patternMining: boolean;
     capabilityExploration: boolean;
     anticipatoryResearch: boolean;
     toolOutcomeReview: boolean;
@@ -26,7 +24,6 @@ const DEFAULT_CONFIG: IdleEngineConfig = {
   idleThresholdMinutes: 15,
   cycleLengthMinutes: 5,
   enabled: {
-    patternMining: true,
     capabilityExploration: true,
     anticipatoryResearch: true,
     toolOutcomeReview: true,
@@ -43,7 +40,6 @@ export interface IdleActivityResult {
 
 export interface IdleEngineCallbacks {
   onResult: (result: IdleActivityResult) => void;
-  patternMiner?: PatternMiner;
   capabilityScanner?: CapabilityScanner;
   learningOrchestrator?: LearningOrchestrator;
   db?: MemoryDatabase;
@@ -116,10 +112,9 @@ export class IdleActivityEngine {
     if (!this.isIdle()) return null;
 
     const { enabled } = this.config;
-    const { patternMiner, capabilityScanner, learningOrchestrator, toolOutcomeStore } =
+    const { capabilityScanner, learningOrchestrator, toolOutcomeStore } =
       this.callbacks;
 
-    if (enabled.patternMining && patternMiner) return "pattern_mining";
     if (enabled.capabilityExploration && capabilityScanner) return "capability_exploration";
     if (enabled.anticipatoryResearch && learningOrchestrator) return "anticipatory_research";
     if (enabled.toolOutcomeReview && toolOutcomeStore) return "tool_outcome_review";
@@ -132,8 +127,6 @@ export class IdleActivityEngine {
     const start = Date.now();
     try {
       switch (activity) {
-        case "pattern_mining":
-          return await this.runPatternMining();
         case "capability_exploration":
           return await this.runCapabilityExploration();
         case "anticipatory_research":
@@ -148,18 +141,6 @@ export class IdleActivityEngine {
     } catch {
       return { activity, success: false, durationMs: Date.now() - start };
     }
-  }
-
-  private async runPatternMining(): Promise<IdleActivityResult> {
-    if (!this.callbacks.patternMiner) {
-      return { activity: "pattern_mining", success: false };
-    }
-    const patterns = await this.callbacks.patternMiner.mine();
-    return {
-      activity: "pattern_mining",
-      success: true,
-      artifacts: patterns.map((p: any) => (typeof p === "string" ? p : p.name ?? p.id ?? String(p))),
-    };
   }
 
   private async runCapabilityExploration(): Promise<IdleActivityResult> {

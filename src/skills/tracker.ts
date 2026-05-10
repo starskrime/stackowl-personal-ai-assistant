@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../logger.js";
 import type { SkillUsageStats } from "./types.js";
+import type { MemoryDatabase } from "../memory/db.js";
 
 export class SkillTracker {
   private stats: Map<string, SkillUsageStats> = new Map();
@@ -23,9 +24,19 @@ export class SkillTracker {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly SAVE_DEBOUNCE_MS = 5000;
 
-  constructor(workspacePath: string) {
+  constructor(
+    workspacePath: string,
+    private db?: MemoryDatabase,
+  ) {
     this.filePath = join(workspacePath, "skills-stats.json");
-    this.load();
+    if (!this.db) {
+      this.load();
+    }
+  }
+
+  /** Wire a MemoryDatabase after construction (for auto-init paths). */
+  setDb(db: MemoryDatabase): void {
+    this.db = db;
   }
 
   async load(): Promise<void> {
@@ -53,6 +64,10 @@ export class SkillTracker {
   }
 
   recordSelection(skillName: string): void {
+    if (this.db) {
+      this.db.skillUsage.upsertSelection(skillName);
+      return;
+    }
     const s = this.ensureStats(skillName);
     s.selectionCount += 1;
     s.lastUsedAt = new Date().toISOString();
@@ -60,8 +75,14 @@ export class SkillTracker {
     this.scheduleSave();
   }
 
-  /** Days since last use (0 if never used) */
+  /** Days since last use (Infinity if never used) */
   getDaysSinceLastUse(skillName: string): number {
+    if (this.db) {
+      const row = this.db.skillUsage.getStats(skillName);
+      if (!row || !row.last_used_at) return Infinity;
+      const msPerDay = 24 * 60 * 60 * 1000;
+      return (Date.now() - new Date(row.last_used_at).getTime()) / msPerDay;
+    }
     const s = this.stats.get(skillName);
     if (!s || !s.lastUsedAt) return Infinity;
     const msPerDay = 24 * 60 * 60 * 1000;
@@ -69,6 +90,10 @@ export class SkillTracker {
   }
 
   recordSuccess(skillName: string, durationMs: number): void {
+    if (this.db) {
+      this.db.skillUsage.recordSuccess(skillName, durationMs);
+      return;
+    }
     const s = this.ensureStats(skillName);
     s.successCount += 1;
     const totalCompleted = s.successCount + s.failureCount;
@@ -80,6 +105,10 @@ export class SkillTracker {
   }
 
   recordFailure(skillName: string, durationMs: number): void {
+    if (this.db) {
+      this.db.skillUsage.recordFailure(skillName);
+      return;
+    }
     const s = this.ensureStats(skillName);
     s.failureCount += 1;
     const totalCompleted = s.successCount + s.failureCount;
@@ -128,6 +157,11 @@ export class SkillTracker {
 
   /** Get success rate for a skill (0-1), or undefined if no data */
   getSuccessRate(skillName: string): number | undefined {
+    if (this.db) {
+      const row = this.db.skillUsage.getStats(skillName);
+      if (!row || row.success_count + row.failure_count === 0) return undefined;
+      return row.success_count / (row.success_count + row.failure_count);
+    }
     const s = this.stats.get(skillName);
     if (!s || s.successCount + s.failureCount === 0) return undefined;
     return s.successRate;
