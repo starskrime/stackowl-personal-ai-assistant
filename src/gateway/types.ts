@@ -127,6 +127,32 @@ export interface ChannelAdapter {
     filePath: string,
     caption?: string,
   ): Promise<void>;
+
+  // ─── TUI v2 extensions (additive, non-breaking) ──────────────────────────
+
+  /**
+   * Emit a typed UiEvent into the TUI v2 render pipeline.
+   * Only the CLI v2 adapter implements this; all other adapters omit it.
+   * Heartbeat, parliament callbacks, and engine signals route through here
+   * so proactive messages get their own lane instead of being indistinguishable
+   * from solicited replies.
+   */
+  emit?(event: import("../cli/v2/events/UiEvent.js").UiEvent): void;
+
+  /**
+   * Declare which rendering capabilities this channel supports.
+   * Used by heartbeat and parliament to choose delivery path.
+   */
+  capabilities?(): ChannelCapabilities;
+}
+
+export interface ChannelCapabilities {
+  /** True if the channel renders a TUI v2 surface (CLI only for now). */
+  tuiV2: boolean;
+  /** True if the channel can render rich markdown. */
+  richText: boolean;
+  /** True if the channel supports file attachments. */
+  fileAttachments: boolean;
 }
 
 // ─── Gateway Context ─────────────────────────────────────────────

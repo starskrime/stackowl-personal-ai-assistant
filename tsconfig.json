@@ -20,7 +20,8 @@
         "noUnusedParameters": true,
         "noImplicitReturns": true,
         "noFallthroughCasesInSwitch": true,
-        "isolatedModules": true
+        "isolatedModules": true,
+        "jsx": "react-jsx"
     },
     "include": [
         "src/**/*"

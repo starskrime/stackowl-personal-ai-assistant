@@ -1274,6 +1274,13 @@ async function buildGateway(
 // ─── Chat Command ────────────────────────────────────────────────
 
 async function chatCommand(owlName?: string) {
+  // ── TUI v2 flag ───────────────────────────────────────────────
+  if (process.env.STACKOWL_TUI === "v2") {
+    const { startV2 } = await import("./cli/v2/index.js");
+    await startV2();
+    return;
+  }
+
   // ── Phase 0: onboarding (first launch) ────────────────────────
   const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
   if (!existsSync(configPath)) {
