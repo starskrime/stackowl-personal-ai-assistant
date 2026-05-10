@@ -32,7 +32,7 @@
 | 16e | **Web Search Escalation** (Phase B — search path) | ✅ shipped — 4-tier search escalation chain: DDG-HTML (T1, always) → Tavily API (T2, `TAVILY_API_KEY`) → Google-via-CamoFox (T3) → Google-via-Puppeteer (T4, `waitForSelector:"div.g"`). 2 new files: `google-parser.ts` (3-strategy SERP parser: JSON-LD → div.g → data-hveid) + `smart-search.ts` (TierRunner factories + `searchEnvelope()`). `search.ts` sheds ~148 LOC inline DDG scraper. `BlockingClassifier` consulted for zero-results-vs-blocked disambiguation. `TAVILY_API_KEY` wired from env. 4956 tests passing. Head: `99f8fee`. | 2026-05-07 |
 | 17 | Owl system (DNA, inner life, specialization) | ✅ All 18 tasks shipped. Task 18: config drift fixed (`evolutionBatchSize ?? 5`), 4 dead files deleted (`routing-coordinator.ts`, `specialization-wizard.ts`, `owls-repo.test.ts`, `specialization-wizard.test.ts`), `RoutingResult` type migrated to `OwlBrainResult`. 4981 tests passing. Head: `75c507b`. | 2026-05-09 |
 | 18 | Providers (model routing, health, cost) | ⬜ pending | — |
-| 19 | Skills engine (match, inject, synthesize) | ⬜ pending | — |
+| 19 | Skills engine (match, inject, synthesize) | 🔄 Phase 2 (Mary research) complete 2026-05-09. 15-gap Phase 1 audit committed (`2bc9a00`). Research document at `_bmad-output/planning-artifacts/research/market-element19-skills-engine-research-2026-05-09.md` (11 sections + R1–R11 risk register). Phase 3 (Winston architecture) pending Boss approval. | 2026-05-09 |
 
 ---
 
