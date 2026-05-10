@@ -1594,20 +1594,15 @@ export class OwlGateway {
       }
     }
 
-    // Skip skill routing unless the message looks like an action request.
+    // Skip skill routing on short or conversational messages.
     // The IntentRouter's 5-tier pipeline (BM25 + semantic re-rank + LLM call)
     // adds 1–3 seconds of latency and is wasted on conversational messages.
-    //
-    // Pre-filter: require at least one action verb keyword AND a non-trivial message.
-    // Conversational messages ("hi", "thanks", "what do you think?") skip entirely.
-    const SKILL_ACTION_KEYWORDS =
-      /\b(find|search|create|write|generate|check|analyze|run|scan|fix|build|compare|convert|code|script|calculate|translate|download|fetch|get|show|list|send|open|launch|install|deploy|test|debug|monitor|schedule|remind|automate|summarize|extract|format|parse|execute|compile|scan|audit|review|design)\b/i;
+    // IntentRouter's Tier-5 LLM naturally filters further based on intent.
     const isConversational =
       text.trim().length < 15 ||
       /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|gm|gn)\b/i.test(
         text.trim(),
-      ) ||
-      !SKILL_ACTION_KEYWORDS.test(text);
+      );
     if (this.skillInjector && !isConversational) {
       const relevantMatches = await this.skillInjector.getRelevantMatches(text);
       const relevantSkills = relevantMatches.map((m) => m.skill);
