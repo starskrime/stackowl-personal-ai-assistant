@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 type ConversionMap = Record<string, Record<string, number>>;
 
@@ -166,6 +167,7 @@ export const UnitConverterTool: ToolImplementation = {
     const value = Number(args.value);
     const from = String(args.from).toLowerCase();
     const to = String(args.to).toLowerCase();
+    log.tool.debug("unit-converter.execute: entry", { value, from, to });
 
     if (isNaN(value)) return "Error: Invalid numeric value.";
     if (from === to) return `${value} ${from} = ${value} ${to}`;
@@ -175,6 +177,7 @@ export const UnitConverterTool: ToolImplementation = {
     if (tempUnits.includes(from) && tempUnits.includes(to)) {
       const result = convertTemperature(value, from, to);
       if (result !== null) {
+        log.tool.debug("unit-converter.execute: exit", { success: true, from, to, category: "temperature" });
         return `${value} °${from.toUpperCase()} = ${Number(result.toFixed(4))} °${to.toUpperCase()}`;
       }
     }
@@ -183,6 +186,7 @@ export const UnitConverterTool: ToolImplementation = {
     for (const [category, units] of Object.entries(CONVERSIONS)) {
       if (units[from]?.[to] !== undefined) {
         const result = value * units[from][to];
+        log.tool.debug("unit-converter.execute: exit", { success: true, from, to, category });
         return `${value} ${from} = ${Number(result.toFixed(6))} ${to} (${category})`;
       }
     }
@@ -191,10 +195,12 @@ export const UnitConverterTool: ToolImplementation = {
     for (const [category, units] of Object.entries(CONVERSIONS)) {
       if (units[to]?.[from] !== undefined) {
         const result = value / units[to][from];
+        log.tool.debug("unit-converter.execute: exit", { success: true, from, to, category });
         return `${value} ${from} = ${Number(result.toFixed(6))} ${to} (${category})`;
       }
     }
 
+    log.tool.debug("unit-converter.execute: exit", { success: false, from, to, reason: "unsupported" });
     return (
       `Error: Cannot convert from "${from}" to "${to}".\n` +
       `Supported categories: length, weight, volume, temperature, speed, area, data, time.\n` +

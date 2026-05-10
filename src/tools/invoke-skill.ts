@@ -49,6 +49,7 @@ export function createInvokeSkillTool(
       _ctx: ToolContext,
     ): Promise<string> {
       const name = (args["name"] as string | undefined)?.trim();
+      log.tool.debug("invoke-skill.execute: entry", { name });
       if (!name) {
         return toolError("MISSING_ARG", "The `name` argument is required.");
       }
@@ -72,9 +73,12 @@ export function createInvokeSkillTool(
       }
 
       try {
+        log.tool.debug("invoke-skill.execute: calling skill", { name, paramKeys: Object.keys(params) });
         const result = await skillExecutor.executeByName(name, params);
+        log.tool.debug("invoke-skill.execute: exit", { success: true, name, resultLen: result.length });
         return toolSuccess({ skillName: name, result });
       } catch (err) {
+        log.tool.error("invoke-skill.execute: failed", err, { name });
         return toolError(
           "SKILL_FAILED",
           String(err),

@@ -30,6 +30,7 @@ export const DailyBriefingTool: ToolImplementation = {
     _args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    log.tool.debug("daily-briefing.execute: entry");
     try {
       const sections: string[] = [];
 
@@ -140,8 +141,11 @@ export const DailyBriefingTool: ToolImplementation = {
       }
       sections.push(sysInfo);
 
-      return sections.join("\n");
+      const result = sections.join("\n");
+      log.tool.debug("daily-briefing.execute: exit", { success: true, sections: sections.length });
+      return result;
     } catch (error) {
+      log.tool.error("daily-briefing.execute: failed", error);
       const msg = error instanceof Error ? error.message : String(error);
       return `Error generating briefing: ${msg}`;
     }

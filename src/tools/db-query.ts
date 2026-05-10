@@ -37,6 +37,7 @@ export const DbQueryTool: ToolImplementation = {
     const dbPath    = args["dbPath"]  as string;
     const sql       = args["sql"]     as string;
     const paramsRaw = args["params"]  as string | undefined;
+    log.tool.debug("db-query.execute: entry", { dbPath, sqlLen: sql?.length ?? 0 });
 
     if (!dbPath) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "dbPath is required" } });
     if (!sql)    return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "sql is required" } });
@@ -65,12 +66,16 @@ export const DbQueryTool: ToolImplementation = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let db: any = null;
     try {
+      log.tool.debug("db-query.execute: opening database", { dbPath });
       db = new DatabaseCtor(dbPath, { readonly: true, fileMustExist: true });
+      log.tool.debug("db-query.execute: executing query", { sql: sql.slice(0, 200) });
       const stmt = db.prepare(sql);
       const rows = stmt.all(...params) as Record<string, unknown>[];
       const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
+      log.tool.debug("db-query.execute: exit", { success: true, rowCount: rows.length, columns });
       return JSON.stringify({ success: true, data: { rows, rowCount: rows.length, columns } });
     } catch (err) {
+      log.tool.error("db-query.execute: failed", err, { dbPath, sql: sql.slice(0, 200) });
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("ENOENT") || msg.includes("no such file")) {
         return JSON.stringify({ success: false, error: { code: "FILE_NOT_FOUND", message: msg } });

@@ -121,6 +121,7 @@ export const SendFileTool: ToolImplementation = {
   ): Promise<string> {
     const rawPath = args["path"] as string;
     const caption = (args["caption"] as string | undefined) ?? "";
+    log.tool.debug("send_file.execute: entry", { rawPath: rawPath?.slice(0, 200), hasCaption: !!caption });
 
     if (!rawPath) throw new Error("path argument missing");
 
@@ -128,9 +129,12 @@ export const SendFileTool: ToolImplementation = {
 
     // ─── Handle URL downloads ────────────────────────────────
     if (isWebUrl(rawPath)) {
+      log.tool.debug("send_file.execute: downloading from URL", { url: rawPath.slice(0, 200) });
       try {
         resolved = await downloadToLocal(rawPath, context.cwd || process.cwd());
+        log.tool.debug("send_file.execute: download complete", { resolved });
       } catch (err) {
+        log.tool.error("send_file.execute: URL download failed", err, { url: rawPath.slice(0, 200) });
         return `Error downloading file from URL: ${err instanceof Error ? err.message : String(err)}`;
       }
     } else {
@@ -155,10 +159,12 @@ export const SendFileTool: ToolImplementation = {
     // Queue file for delivery via pendingFiles
     const pendingFiles = context.engineContext?.pendingFiles;
     if (!Array.isArray(pendingFiles)) {
+      log.tool.debug("send_file.execute: exit", { success: true, resolved, sizeKb, channel: "none" });
       return `File ready at: ${resolved} (${sizeKb} KB). No active delivery channel — file is saved locally.`;
     }
     pendingFiles.push({ path: resolved, caption: caption || undefined });
     const kind = IMAGE_EXTS.has(ext) ? "image" : DOC_EXTS.has(ext) ? "document" : "file";
+    log.tool.debug("send_file.execute: exit", { success: true, resolved, sizeKb, kind, queued: true });
     return `${kind} "${name}" (${sizeKb} KB) queued for delivery to the user.`;
   },
 };

@@ -33,9 +33,10 @@ export const JSONTransformTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const operation = String(args.operation);
+    log.tool.debug("json-transform.execute: entry", { operation, dataLen: String(args.data).length });
     try {
       const dataStr = String(args.data);
-      const operation = String(args.operation);
 
       let parsed: unknown;
       try {
@@ -109,6 +110,7 @@ export const JSONTransformTool: ToolImplementation = {
           return `Error: Unknown operation "${operation}". Use: format, minify, extract, keys, or csv.`;
       }
     } catch (error) {
+      log.tool.error("json-transform.execute: failed", error, { operation });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error transforming JSON: ${msg}`;
     }

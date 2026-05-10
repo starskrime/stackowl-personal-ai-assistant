@@ -161,6 +161,7 @@ export const CamoFoxTool: ToolImplementation = {
 
     const action = args["action"] as string;
     const userId = ((args["userId"] as string) || "stackowl").trim();
+    log.tool.debug("camofox.execute: entry", { action, userId, url: (args["url"] as string | undefined)?.slice(0, 200) });
     const url = args["url"] as string | undefined;
     const ref = args["ref"] as string | undefined;
     const text = args["text"] as string | undefined;

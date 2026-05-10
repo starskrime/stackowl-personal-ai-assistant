@@ -68,8 +68,9 @@ export const HabitTrackerTool: ToolImplementation = {
     args: Record<string, unknown>,
     context: ToolContext,
   ): Promise<string> {
+    const action = String(args.action);
+    log.tool.debug("habit-tracker.execute: entry", { action });
     try {
-      const action = String(args.action);
       const dataPath = getDataPath(context);
 
       switch (action) {
@@ -95,6 +96,7 @@ export const HabitTrackerTool: ToolImplementation = {
             timestamp: new Date().toISOString(),
           });
           saveData(dataPath, data);
+          log.tool.debug("habit-tracker.execute: exit", { success: true, action, habit, date: today });
           return `Logged "${habit}" for ${today}.`;
         }
 
@@ -155,6 +157,7 @@ export const HabitTrackerTool: ToolImplementation = {
           return `Error: Unknown action "${action}". Use: log, status, or history.`;
       }
     } catch (error) {
+      log.tool.error("habit-tracker.execute: failed", error, { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error with habit tracker: ${msg}`;
     }

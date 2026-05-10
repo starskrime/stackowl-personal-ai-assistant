@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 function getCapturePath(context: ToolContext): string {
   return join(context.cwd, "workspace", "captures.md");
@@ -31,9 +32,10 @@ export const QuickCaptureTool: ToolImplementation = {
     args: Record<string, unknown>,
     context: ToolContext,
   ): Promise<string> {
+    const tag = args.tag ? String(args.tag) : "";
+    log.tool.debug("quick-capture.execute: entry", { tag, contentLen: String(args.content).length });
     try {
       const content = String(args.content);
-      const tag = args.tag ? String(args.tag) : "";
 
       if (!content.trim()) {
         return "Error: Content cannot be empty.";
@@ -58,8 +60,10 @@ export const QuickCaptureTool: ToolImplementation = {
       const entry = `${prefix}- **${timestamp}**${tagStr}: ${content}\n`;
       appendFileSync(capturePath, entry, "utf-8");
 
+      log.tool.debug("quick-capture.execute: exit", { success: true, tag, timestamp });
       return `Captured${tagStr}: "${content.slice(0, 60)}${content.length > 60 ? "..." : ""}" at ${timestamp}`;
     } catch (error) {
+      log.tool.error("quick-capture.execute: failed", error, { tag });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error capturing note: ${msg}`;
     }

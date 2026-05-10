@@ -49,6 +49,7 @@ export const VisionTool: ToolImplementation = {
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
     const imagePath = args["imagePath"] as string;
     const question  = args["question"]  as string;
+    log.tool.debug("vision.execute: entry", { imagePath, questionLen: question?.length ?? 0 });
 
     if (!imagePath) {
       return JSON.stringify({
@@ -127,6 +128,7 @@ export const VisionTool: ToolImplementation = {
       "You are a vision analysis assistant. Respond ONLY with valid JSON: " +
       '{ "description": "string", "objects": ["string"], "text": "string or null" }';
 
+    log.tool.debug("vision.execute: calling provider API", { provider: resolved.provider, model: resolved.model, mediaType });
     const response = await provider.chat(
       [
         {
@@ -152,6 +154,7 @@ export const VisionTool: ToolImplementation = {
       result = { description: response.content, objects: [], text: null };
     }
 
+    log.tool.debug("vision.execute: exit", { success: true, descLen: result.description?.length ?? 0, objectCount: result.objects?.length ?? 0 });
     return JSON.stringify({ success: true, data: result });
   },
 };

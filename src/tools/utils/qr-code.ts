@@ -39,6 +39,7 @@ export const QRCodeTool: ToolImplementation = {
     const data = String(args.data);
     const size = (args.size as number) || 400;
     const filename = (args.filename as string) || `qr_${Date.now()}.png`;
+    log.tool.debug("qr-code.execute: entry", { dataLen: data.length, size, filename });
     const cwd = context.cwd || process.cwd();
 
     if (!data.trim()) return "Error: No data provided for QR code.";
@@ -80,6 +81,7 @@ except ImportError:
       });
 
       if (stdout.trim().startsWith("ok:")) {
+        log.tool.debug("qr-code.execute: exit", { success: true, method: "python", outPath, size });
         return (
           `QR code generated: ${outPath}\n` +
           `Data: ${data.length > 100 ? data.slice(0, 100) + "..." : data}\n` +
@@ -120,6 +122,7 @@ app.doShellScript("echo '" + script.replace(/'/g, "'\\\\''") + "' | swift -");
       });
 
       if (existsSync(outPath)) {
+        log.tool.debug("qr-code.execute: exit", { success: true, method: "swift", outPath });
         return (
           `QR code generated: ${outPath}\n` +
           `Data: ${data.length > 100 ? data.slice(0, 100) + "..." : data}\n` +

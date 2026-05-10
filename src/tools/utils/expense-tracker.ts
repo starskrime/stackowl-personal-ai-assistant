@@ -75,8 +75,9 @@ export const ExpenseTrackerTool: ToolImplementation = {
     args: Record<string, unknown>,
     context: ToolContext,
   ): Promise<string> {
+    const action = String(args.action);
+    log.tool.debug("expense-tracker.execute: entry", { action });
     try {
-      const action = String(args.action);
       const dataPath = getDataPath(context);
 
       switch (action) {
@@ -102,6 +103,7 @@ export const ExpenseTrackerTool: ToolImplementation = {
             timestamp: now.toISOString(),
           });
           saveData(dataPath, data);
+          log.tool.debug("expense-tracker.execute: exit", { success: true, action, amount, category });
           return `Expense added: $${amount.toFixed(2)} in "${category}"${description ? ` — ${description}` : ""}`;
         }
 
@@ -172,6 +174,7 @@ export const ExpenseTrackerTool: ToolImplementation = {
           return `Error: Unknown action "${action}". Use: add, summary, list, or export.`;
       }
     } catch (error) {
+      log.tool.error("expense-tracker.execute: failed", error, { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error with expense tracker: ${msg}`;
     }

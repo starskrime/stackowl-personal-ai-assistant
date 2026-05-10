@@ -10,6 +10,7 @@ import { readLogsArray } from "../infra/observability/reader.js";
 import type { LogQuery } from "../infra/observability/reader.js";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import type { ToolDefinition } from "../providers/base.js";
+import { log } from "../logger.js";
 
 const HARD_CAP = 1000;
 const DEFAULT_SINCE_MINUTES = 60;
@@ -87,6 +88,16 @@ export class ReadLogsTool implements ToolImplementation {
     _ctx: ToolContext,
   ): Promise<string> {
     const logsDir = join(this.workspacePath, "logs");
+    log.tool.debug("read-logs.execute: entry", {
+      traceId: args["traceId"],
+      sessionId: args["sessionId"],
+      module: args["module"],
+      level: args["level"],
+      sinceMinutes: args["sinceMinutes"],
+      errorOnly: args["errorOnly"],
+      contains: args["contains"],
+      limit: args["limit"],
+    });
 
     // Build the time window — default to last sinceMinutes unless explicit bounds given
     const sinceMinutes =
@@ -126,8 +137,11 @@ export class ReadLogsTool implements ToolImplementation {
 
     let records;
     try {
+      log.tool.debug("read-logs.execute: reading log files", { logsDir });
       records = await readLogsArray(logsDir, query);
+      log.tool.debug("read-logs.execute: step files read", { recordCount: records.length, limit });
     } catch (err) {
+      log.tool.error("read-logs.execute: failed", err, { logsDir });
       const msg = err instanceof Error ? err.message : String(err);
       return JSON.stringify({
         success: false,
@@ -135,6 +149,7 @@ export class ReadLogsTool implements ToolImplementation {
       });
     }
 
+    log.tool.debug("read-logs.execute: exit", { success: true, recordsReturned: records.length });
     return JSON.stringify({
       success: true,
       count: records.length,

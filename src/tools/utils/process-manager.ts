@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 function execPromise(cmd: string, timeout = 15000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -43,13 +44,15 @@ export const ProcessManagerTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const action = String(args.action);
+    log.tool.debug("process-manager.execute: entry", { action });
     try {
-      const action = String(args.action);
-
       switch (action) {
         case "list": {
-          // macOS uses -r for sort by CPU
-          const output = await execPromise("ps aux -r | head -20");
+          const cmd = "ps aux -r | head -20";
+          log.tool.debug("process-manager.execute: running list", { cmd });
+          const output = await execPromise(cmd);
+          log.tool.debug("process-manager.execute: exit", { success: true, action, lines: output.split("\n").length });
           return `Top processes by CPU:\n${output}`;
         }
 
@@ -58,12 +61,14 @@ export const ProcessManagerTool: ToolImplementation = {
           if (!name) {
             return 'Error: "name" parameter is required for find action.';
           }
-          const output = await execPromise(
-            `ps aux | grep -i "${name.replace(/"/g, '\\"')}" | grep -v grep`,
-          );
+          const cmd = `ps aux | grep -i "${name.replace(/"/g, '\\"')}" | grep -v grep`;
+          log.tool.debug("process-manager.execute: running find", { cmd });
+          const output = await execPromise(cmd);
           if (!output.trim()) {
+            log.tool.debug("process-manager.execute: exit", { success: true, action, found: 0 });
             return `No processes found matching "${name}"`;
           }
+          log.tool.debug("process-manager.execute: exit", { success: true, action, found: output.trim().split("\n").length });
           return `Processes matching "${name}":\n${output}`;
         }
 
@@ -72,7 +77,10 @@ export const ProcessManagerTool: ToolImplementation = {
           if (!isFinite(pid) || pid <= 0) {
             return 'Error: Valid "pid" parameter is required for kill action.';
           }
-          await execPromise(`kill -15 ${Math.floor(pid)}`);
+          const cmd = `kill -15 ${Math.floor(pid)}`;
+          log.tool.debug("process-manager.execute: sending SIGTERM", { cmd, pid: Math.floor(pid) });
+          await execPromise(cmd);
+          log.tool.debug("process-manager.execute: exit", { success: true, action, pid: Math.floor(pid) });
           return `Sent SIGTERM to process ${Math.floor(pid)}`;
         }
 
@@ -80,6 +88,7 @@ export const ProcessManagerTool: ToolImplementation = {
           return `Error: Unknown action "${action}". Use: list, find, or kill.`;
       }
     } catch (error) {
+      log.tool.error("process-manager.execute: failed", error, { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error managing processes: ${msg}`;
     }

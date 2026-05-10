@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const TranslatorTool: ToolImplementation = {
   definition: {
@@ -35,6 +36,7 @@ export const TranslatorTool: ToolImplementation = {
     const text = String(args.text);
     const to = String(args.to).toLowerCase();
     const from = args.from ? String(args.from).toLowerCase() : "auto";
+    log.tool.debug("translator.execute: entry", { from, to, textLen: text.length });
 
     if (!text.trim()) return "Error: No text provided to translate.";
 
@@ -44,6 +46,7 @@ export const TranslatorTool: ToolImplementation = {
 
     // Use Python's deep_translator or fallback to a JXA-based approach
     // First try: use Python translate library if available
+    log.tool.debug("translator.execute: invoking python translation", { from, to });
     try {
       const escapedText = text.replace(/'/g, "\\'").replace(/"/g, '\\"');
       const pyScript = `
@@ -79,10 +82,19 @@ except ImportError:
           ? ` (detected: ${result.detected_lang})`
           : "";
 
+      log.tool.debug("translator.execute: exit", {
+        success: true,
+        engine: result.engine,
+        from,
+        to,
+        detectedLang: result.detected_lang ?? null,
+        resultLen: result.translation?.length ?? 0,
+      });
       return (
         `**Translation** (${from}${langInfo} → ${to}):\n\n` + result.translation
       );
     } catch (error) {
+      log.tool.error("translator.execute: failed", error, { from, to, textLen: text.length });
       const msg = error instanceof Error ? error.message : String(error);
       return `Translation failed: ${msg}\n\nTip: Install deep_translator for best results: pip3 install deep_translator`;
     }
