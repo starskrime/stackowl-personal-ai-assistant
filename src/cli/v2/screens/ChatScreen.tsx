@@ -61,7 +61,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
       {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
       {showSkillsOverlay && <SkillsOverlay />}
       {showMcpOverlay && <McpOverlay />}
-      <Composer onSubmit={onSubmit} disabled={generating} />
+      <Composer onSubmit={onSubmit} disabled={generating || showHelp || showSkillsOverlay || showMcpOverlay} />
       <ShortcutsBar
         owlEmoji={activeOwlEmoji}
         owlName={activeOwlName}
