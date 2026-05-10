@@ -33,4 +33,5 @@ export const log = {
   heartbeat: getLogger("heartbeat"),
   pellet:    getLogger("pellet"),
   parliament: getLogger("parliament"),
+  gateway:   getLogger("gateway"),
 };

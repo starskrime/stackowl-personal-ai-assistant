@@ -138,6 +138,7 @@ import {
   snapshotLog,
   getDegradedCapabilities,
 } from "../infra/capability-registry.js";
+import { runPreDeliveryGate } from "./pre-delivery-gate.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -2604,7 +2605,35 @@ export class OwlGateway {
       })());
     }
 
-    return toGatewayResponse(response);
+    // ─── Pre-delivery gate (Defect 2 fix) ──────────────────────────────
+    const gatedResponse = await runPreDeliveryGate(response, {
+      provider: this.ctx.provider,
+      userIntent: message.text,
+      owlName: activeOwlName,
+      owlEmoji: (this.ctx.owl.persona as any).emoji ?? "🦉",
+      sessionId: message.sessionId,
+      correctionRun: async (correctionPrompt) => {
+        const corrResult = await this.getOrchestrator().executeWithFallback(
+          strategy,
+          correctionPrompt,
+          { ...engineCtx },
+          callbacks,
+        );
+        return {
+          content: corrResult.content,
+          owlName: corrResult.owlName,
+          owlEmoji: corrResult.owlEmoji,
+          challenged: false,
+          toolsUsed: corrResult.toolsUsed,
+          modelUsed: "",
+          newMessages: [],
+          usage: corrResult.usage,
+          pendingFiles: [],
+        };
+      },
+    });
+
+    return toGatewayResponse(gatedResponse);
   }
 
   // ─── Session Lifecycle ───────────────────────────────────────
