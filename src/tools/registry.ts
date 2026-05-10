@@ -352,7 +352,8 @@ export class ToolRegistry {
     const sanitizedArgs: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(args)) {
       const lk = k.toLowerCase();
-      sanitizedArgs[k] = (lk.includes("token") || lk.includes("key") || lk.includes("password") || lk.includes("secret") || lk.includes("apikey"))
+      sanitizedArgs[k] = (lk === "apikey" || lk === "token" || lk === "password" || lk === "secret" ||
+        lk.endsWith("_key") || lk.startsWith("key_") || lk.endsWith("token") || lk.endsWith("secret"))
         ? "[REDACTED]"
         : v;
     }
@@ -380,7 +381,6 @@ export class ToolRegistry {
         }
 
         this._eventBus?.emit({ type: "tool:result", toolName: name, success: true, durationMs, truncated });
-        log.tool.toolResult(name, result.slice(0, 500), true);
 
         // Envelope passthrough — emit <tool_attempt_summary> regardless of GAV
         try {
@@ -484,6 +484,7 @@ export class ToolRegistry {
           }
         }
 
+        log.tool.toolResult(name, result, true);
         return result;
       } catch (error) {
         const durationMs = Date.now() - startTime;
