@@ -155,7 +155,6 @@ import { ToolSynthesizer } from "./evolution/synthesizer.js";
 import { CapabilityLedger } from "./evolution/ledger.js";
 import { DynamicToolLoader } from "./evolution/loader.js";
 import { EvolutionHandler } from "./evolution/handler.js";
-import { SkillsMigrator } from "./skills/migrator.js";
 import { SkillInstaller, parseInstallSource } from "./skills/installer.js";
 import { StackOwlServer } from "./server/index.js";
 import { OwlGateway } from "./gateway/core.js";
@@ -612,12 +611,6 @@ async function bootstrap() {
     );
   }
 
-  // Instincts
-  const migrator = new SkillsMigrator(workspacePath);
-  const migratedCount = await migrator.migrate();
-  if (migratedCount > 0) {
-    console.log(chalk.dim(`  [Migrated ${migratedCount} instinct(s) to skills]`));
-  }
   // Skills (OpenCLAW-compatible)
   // Always include built-in defaults + any user-configured directories
   const skillsLoader = new SkillsLoader();

@@ -4,7 +4,7 @@ import { SkillParser, meetsRequirements } from "../src/skills/parser.js";
 import { IntentRouter } from "../src/skills/intent-router.js";
 import { ConfigContextBuilder } from "../src/skills/config-context.js";
 import { SkillTracker } from "../src/skills/tracker.js";
-import { ClawHubClient, SkillSelector } from "../src/skills/clawhub.js";
+import { ClawHubClient } from "../src/skills/clawhub.js";
 import type { Skill } from "../src/skills/types.js";
 import type { ModelProvider } from "../src/providers/base.js";
 import type { StackOwlConfig } from "../src/config/loader.js";
@@ -804,60 +804,6 @@ describe("ConfigContextBuilder", () => {
   });
 });
 
-// ─── SkillSelector Tests ─────────────────────────────────────────────
-
-describe("SkillSelector", () => {
-  it("should register skills for matching", () => {
-    const selector = new SkillSelector();
-    selector.register({
-      name: "fetch_data",
-      description: "Fetch data from API",
-      instructions: "Use http_get tool",
-    });
-    const results = selector.findRelevant("I need to fetch some data");
-    expect(results).toContain("fetch_data");
-  });
-
-  it("should return top N results", () => {
-    const selector = new SkillSelector();
-    selector.register({
-      name: "skill1",
-      description: "Test skill 1",
-      instructions: "",
-    });
-    selector.register({
-      name: "skill2",
-      description: "Test skill 2",
-      instructions: "",
-    });
-    const results = selector.findRelevant("test", 1);
-    expect(results).toHaveLength(1);
-  });
-
-  it("should give bonus to name matches", () => {
-    const selector = new SkillSelector();
-    selector.register({
-      name: "fetch_data",
-      description: "Something else",
-      instructions: "",
-    });
-    const results = selector.findRelevant("fetch_data");
-    expect(results[0]).toBe("fetch_data");
-  });
-
-  it("should clear all registered skills", () => {
-    const selector = new SkillSelector();
-    selector.register({
-      name: "skill1",
-      description: "Test",
-      instructions: "",
-    });
-    selector.clear();
-    const results = selector.findRelevant("test");
-    expect(results).toHaveLength(0);
-  });
-});
-
 // ─── ClawHubClient Tests ─────────────────────────────────────────────
 
 describe("ClawHubClient", () => {
@@ -905,11 +851,6 @@ describe("Skills module exports", () => {
     expect(SkillTracker).toBeDefined();
   });
 
-  it("should export SkillSelector", async () => {
-    const { SkillSelector } = await import("../src/skills/index.js");
-    expect(SkillSelector).toBeDefined();
-  });
-
   it("should export skill classes and functions from index", async () => {
     const mod = (await import("../src/skills/index.js")) as any;
     expect(mod.SkillsLoader).toBeDefined();
@@ -917,7 +858,6 @@ describe("Skills module exports", () => {
     expect(mod.IntentRouter).toBeDefined();
     expect(mod.SkillTracker).toBeDefined();
     expect(mod.SkillParser).toBeDefined();
-    expect(mod.SkillSelector).toBeDefined();
     expect(mod.ClawHubClient).toBeDefined();
   });
 });
