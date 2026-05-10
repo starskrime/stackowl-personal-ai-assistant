@@ -19,7 +19,7 @@ export function ShortcutsBar() {
       "Esc close",
     ].join("  ·  ");
   } else {
-    hint = "^P parliament  ·  ^L clear  ·  ^C quit";
+    hint = "Shift+Tab owl  ·  ^P parliament  ·  ^L clear  ·  ^C quit";
   }
 
   return (

@@ -2,12 +2,19 @@
  * ChatScreen — the default inline-scroll chat surface.
  *
  * Layout:
- *   <Transcript />        ← <Static> committed turns, native scrollback
- *   [heartbeat banners]   ← HeartbeatBanner per unread unsolicited message (last 3)
- *   [notice strips]       ← NoticeStrip for instincts/perches/skills (last 3)
- *   <LiveTurn />          ← streaming live region (token.delta)
- *   <Composer />          ← bordered input box
- *   <StatusBar />         ← dim pipe-separated footer line (owl, model, tokens, cost)
+ *   <TopBar />            ← brand bar + git branch
+ *   <Frame>               ← max-width container with gutters
+ *     <Transcript />      ← committed turns (native scrollback)
+ *     [heartbeat banners]
+ *     [notice strips]
+ *     <LiveTurn />
+ *     <CommandPalette />  ← /help overlay
+ *     <PanelHost />       ← inline panels (/memory, /mcp, …)
+ *   </Frame>
+ *   <InputArea />         ← full-width green top/bottom lines, outside Frame gutters
+ *     <Composer />        ← input + hint row
+ *     <StatusBar />       ← owl · model · tokens · cost
+ *     <ShortcutsBar />    ← keyboard hints (Shift+Tab = cycle owl)
  */
 
 import { Box } from "ink";
@@ -58,23 +65,24 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
         <PanelHost />
-        <Box
-          flexDirection="column"
-          borderStyle="single"
-          borderTop={true}
-          borderBottom={true}
-          borderLeft={false}
-          borderRight={false}
-          borderColor="red"
-        >
-          <Composer
-            onSubmit={onSubmit}
-            disabled={generating || showHelp || panelFocus === "panel"}
-          />
-          <StatusBar />
-          <ShortcutsBar />
-        </Box>
       </Frame>
+      {/* Input area — outside Frame so green lines span full terminal width */}
+      <Box
+        flexDirection="column"
+        borderStyle="single"
+        borderTop={true}
+        borderBottom={true}
+        borderLeft={false}
+        borderRight={false}
+        borderColor="green"
+      >
+        <Composer
+          onSubmit={onSubmit}
+          disabled={generating || showHelp || panelFocus === "panel"}
+        />
+        <StatusBar />
+        <ShortcutsBar />
+      </Box>
     </Box>
   );
 }

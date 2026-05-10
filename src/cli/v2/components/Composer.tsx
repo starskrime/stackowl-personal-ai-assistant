@@ -95,6 +95,17 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         return;
       }
 
+      // Shift+Tab: cycle through available owl personas
+      if (key.shift && key.tab) {
+        const { availableOwls, activeOwlName } = uiStore.getState();
+        if (availableOwls.length > 1) {
+          const cur = availableOwls.findIndex((o) => o.name.toLowerCase() === activeOwlName.toLowerCase());
+          const next = availableOwls[(cur + 1) % availableOwls.length]!;
+          globalBridge.changeOwl(next.name, next.emoji);
+        }
+        return;
+      }
+
       // Arrow navigation inside completions popup
       if (showPopup) {
         if (key.upArrow)   { setCompletionIdx((i) => (i - 1 + completions.length) % completions.length); return; }
