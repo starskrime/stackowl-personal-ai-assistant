@@ -65,6 +65,9 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
         <PanelHost />
       </Frame>
+      {turns.length === 0 && !liveTurn && (
+        <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
+      )}
       {/* Input area — outside Frame so green lines span full terminal width */}
       <Box
         flexDirection="column"

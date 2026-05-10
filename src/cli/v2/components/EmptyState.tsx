@@ -22,8 +22,6 @@ export function EmptyState() {
         </Text>
       ))}
 
-      <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor={colors.brandDim} />
-
       <Box paddingLeft={1}>
         <Text bold>Personal AI Assistant</Text>
         <Text dimColor> • Challenge Everything</Text>
