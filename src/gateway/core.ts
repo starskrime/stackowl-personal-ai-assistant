@@ -1911,12 +1911,14 @@ export class OwlGateway {
               await callbacks.onProgress(`🦉 **Parliament** — convening debate on: ${message.text.slice(0, 80)}`);
             }
             // Create a minimal ParliamentSession for the debate
+            const _debateParticipants = shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3);
             const debateSession: ParliamentSession = {
               id: `debate_${Date.now()}`,
               config: {
                 topic: message.text.slice(0, 200),
-                participants: shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3),
+                participants: _debateParticipants,
                 contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
+                callbacks: callbacks.debateCallbacks,
               },
               phase: "setup",
               positions: [],
@@ -2056,12 +2058,14 @@ export class OwlGateway {
           if (callbacks.onProgress) {
             await callbacks.onProgress(`🦉 **Parliament** — convening debate on: ${text.slice(0, 80)}`);
           }
+          const _debateParticipantsB = shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3);
           const debateSession: ParliamentSession = {
             id: `debate_${Date.now()}`,
             config: {
               topic: text.slice(0, 200),
-              participants: shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3),
+              participants: _debateParticipantsB,
               contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
+              callbacks: callbacks.debateCallbacks,
             },
             phase: "setup",
             positions: [],

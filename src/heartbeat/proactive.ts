@@ -80,6 +80,12 @@ export interface PingContext {
   eventBus?: import("../events/bus.js").EventBus;
   /** GatewayEventBus — when set, proactive messages are routed through the delivery bus */
   gatewayEventBus?: import("../gateway/event-bus.js").GatewayEventBus;
+  /**
+   * Channel adapter reference — when set and `capabilities().tuiV2` is true,
+   * proactive messages are emitted as `heartbeat.message` UiEvents so the
+   * TUI v2 HeartbeatBanner card lane renders them distinctly.
+   */
+  channelAdapter?: import("../gateway/types.js").ChannelAdapter;
   /** MemoryDatabase — used to record delivery outcomes */
   db?: import("../memory/db.js").MemoryDatabase;
   /** Stable user identifier for delivery/engagement rows */
@@ -824,9 +830,35 @@ export class ProactivePinger {
     jobId: string = "",
     verdict: string = "skipped_check",
   ): Promise<void> {
-    const { gatewayEventBus, userId, db } = this.context;
+    const { gatewayEventBus, channelAdapter, userId, db } = this.context;
     const deliveryId = `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const channel = gatewayEventBus ? "gateway" : "direct";
+
+    // TUI v2 fast path: emit a heartbeat.message UiEvent so the HeartbeatBanner
+    // card lane renders it distinctly from solicited replies.
+    if (channelAdapter?.capabilities?.()?.tuiV2 && channelAdapter.emit) {
+      channelAdapter.emit({
+        kind: "heartbeat.message",
+        owlId: this.context.owl.persona.name,
+        owlName: this.context.owl.persona.name,
+        owlEmoji: this.context.owl.persona.emoji ?? "🔔",
+        text: message,
+        timestamp: Date.now(),
+      });
+      db?.writeProactiveDelivery({
+        id: deliveryId,
+        jobId,
+        channel: "tui-v2",
+        userId: userId ?? "local",
+        messagePreview: message.slice(0, 100),
+        verdict,
+        deliveredAt: new Date().toISOString(),
+        status: "delivered",
+      });
+      this.lastDeliveryId = deliveryId;
+      this.lastPingTime = Date.now();
+      return;
+    }
 
     if (gatewayEventBus && userId) {
       gatewayEventBus.publish(makeEnvelope({
