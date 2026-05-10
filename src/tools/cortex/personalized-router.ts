@@ -17,6 +17,7 @@
  */
 import type { MemoryDatabase } from "../../memory/db.js";
 import { embed as defaultEmbed } from "../../pellets/embedder.js";
+import { log } from "../../logger.js";
 
 export type EmbedFn = (text: string) => Promise<number[] | null>;
 
@@ -42,6 +43,12 @@ export class PersonalizedRouter {
     const topK = opts.topK ?? 3;
     const windowDays = opts.windowDays ?? 30;
 
+    log.tool.debug("personalized-router.suggestTools: entry", {
+      messageLen: userMessage.length,
+      topK,
+      windowDays,
+    });
+
     const trajectories = this.db.rawDb
       .prepare(
         `SELECT id, user_message FROM trajectories
@@ -50,10 +57,27 @@ export class PersonalizedRouter {
       )
       .all(windowDays) as Array<{ id: string; user_message: string }>;
 
-    if (trajectories.length < COLD_START_THRESHOLD) return [];
+    if (trajectories.length < COLD_START_THRESHOLD) {
+      log.tool.debug("personalized-router.suggestTools: cold-start — insufficient history", {
+        reason: "below COLD_START_THRESHOLD",
+        trajectoryCount: trajectories.length,
+        threshold: COLD_START_THRESHOLD,
+      });
+      return [];
+    }
+
+    log.tool.debug("personalized-router.suggestTools: trajectories loaded", {
+      trajectoryCount: trajectories.length,
+      windowDays,
+    });
 
     const queryEmb = await this.embedFn(userMessage);
-    if (!queryEmb) return [];
+    if (!queryEmb) {
+      log.tool.debug("personalized-router.suggestTools: embedding failed — returning empty", {
+        reason: "embedFn returned null",
+      });
+      return [];
+    }
 
     const scored: Array<{ id: string; score: number }> = [];
     for (const t of trajectories) {
@@ -66,10 +90,21 @@ export class PersonalizedRouter {
       }
       scored.push({ id: t.id, score: cosine(queryEmb, emb) });
     }
-    if (scored.length === 0) return [];
+    if (scored.length === 0) {
+      log.tool.debug("personalized-router.suggestTools: no scoreable trajectories", {
+        reason: "all embeddings null",
+      });
+      return [];
+    }
     scored.sort((a, b) => b.score - a.score);
 
     const top = scored.slice(0, topK);
+    log.tool.debug("personalized-router.suggestTools: top trajectories selected", {
+      topK,
+      topIds: top.map((t) => t.id),
+      topScores: top.map((t) => t.score),
+    });
+
     const placeholders = top.map(() => "?").join(",");
     const turns = this.db.rawDb
       .prepare(
@@ -81,7 +116,15 @@ export class PersonalizedRouter {
 
     const tools = new Set<string>();
     for (const turn of turns) tools.add(turn.tool_name);
-    return [...tools];
+    const result = [...tools];
+
+    log.tool.debug("personalized-router.suggestTools: exit", {
+      suggestedTools: result,
+      success: true,
+      resultLen: result.length,
+    });
+
+    return result;
   }
 }
 
