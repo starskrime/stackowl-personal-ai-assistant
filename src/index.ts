@@ -955,6 +955,15 @@ async function buildGateway(
     await costTracker.load();
   }
 
+  // Warn if model pricing table is stale (> 90 days old)
+  const { PRICING_UPDATED_AT } = await import("./costs/pricing.js");
+  const pricingAge = Date.now() - new Date(PRICING_UPDATED_AT).getTime();
+  if (pricingAge > 90 * 86_400_000) {
+    log.engine.warn(
+      `[CostTracker] MODEL_PRICING may be stale (last updated ${PRICING_UPDATED_AT}). Cost routing estimates may be inaccurate. Update src/costs/pricing.ts.`,
+    );
+  }
+
   // Agent registry (empty — agents register themselves later)
   const agentRegistry = new DefaultAgentRegistry();
 

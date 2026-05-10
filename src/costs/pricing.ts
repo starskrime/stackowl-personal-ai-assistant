@@ -5,6 +5,9 @@
  * Prices in USD per 1 million tokens.
  */
 
+/** Date when MODEL_PRICING was last updated. Used for staleness detection. */
+export const PRICING_UPDATED_AT = "2026-03-01";
+
 export interface ModelPrice {
   inputPer1M: number;
   outputPer1M: number;
