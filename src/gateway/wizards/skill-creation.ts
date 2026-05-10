@@ -17,7 +17,7 @@ export class SkillCreationWizard {
 
   constructor(
     private workspacePath: string,
-    private db?: unknown,
+    _db?: unknown,
     private writeFn: WriteFn = (p, c) => {
       fs.mkdirSync(path.dirname(p), { recursive: true })
       fs.writeFileSync(p, c, "utf-8")

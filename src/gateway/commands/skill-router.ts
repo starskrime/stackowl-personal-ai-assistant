@@ -67,7 +67,7 @@ export async function dispatchSkillCommand(
       if (!skill) {
         return `Skill "${name}" not found. Use \`/skill list\` to see available skills.`
       }
-      const steps = skill.steps?.length > 0 ? `${skill.steps.length} steps` : "LLM-guided"
+      const steps = (skill.steps?.length ?? 0) > 0 ? `${skill.steps!.length} steps` : "LLM-guided"
       const params = Object.keys(skill.parameters ?? {})
       return [
         `**${skill.name}**`,
@@ -126,7 +126,7 @@ export async function dispatchSkillCommand(
         return `To confirm removal, run: \`/skill remove ${name} yes\`\nThis cannot be undone.`
       }
       if (!deps.workspacePath) return "Workspace path required for removal."
-      const skillDir = path.dirname(skill.filePath)
+      const skillDir = path.dirname(skill.sourcePath)
       if (fs.existsSync(skillDir)) fs.rmSync(skillDir, { recursive: true })
       await (registry as any).loadAll?.(deps.workspacePath)
       return `✓ Skill "${name}" removed.`
