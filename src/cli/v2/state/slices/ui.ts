@@ -43,6 +43,7 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
         generating: true,
         activeOwlName: event.owlName,
         activeOwlEmoji: event.owlEmoji,
+        ...(event.model !== undefined ? { activeModel: event.model } : {}),
       };
 
     case "turn.committed": {

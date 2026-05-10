@@ -10,7 +10,11 @@
 import { useState, useEffect } from "react";
 import { Box, Text } from "ink";
 import type { ToolCall } from "../state/slices/tools.js";
-import { STACKOWL_SPINNER, SPINNER_AMBER, SPINNER_INTERVAL_MS } from "./spinner.js";
+import {
+  STACKOWL_SPINNER,
+  SPINNER_AMBER,
+  SPINNER_INTERVAL_MS,
+} from "./spinner.js";
 
 function fmtTime(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -26,7 +30,10 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
 
   useEffect(() => {
     if (tool.status !== "running" && tool.status !== "pending") return;
-    const t = setInterval(() => setFrame((f) => (f + 1) % STACKOWL_SPINNER.length), SPINNER_INTERVAL_MS);
+    const t = setInterval(
+      () => setFrame((f) => (f + 1) % STACKOWL_SPINNER.length),
+      SPINNER_INTERVAL_MS,
+    );
     return () => clearInterval(t);
   }, [tool.status]);
 
@@ -36,10 +43,10 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
         <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[frame]} </Text>
         <Text bold>{tool.toolName}</Text>
         {tool.progressMessage ? (
-          <Text dimColor>  {tool.progressMessage}</Text>
+          <Text dimColor> {tool.progressMessage}</Text>
         ) : null}
         {tool.elapsedMs > 0 ? (
-          <Text dimColor>  {fmtTime(tool.elapsedMs)}</Text>
+          <Text dimColor> {fmtTime(tool.elapsedMs)}</Text>
         ) : null}
       </Box>
     );
@@ -48,17 +55,17 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
   if (tool.status === "done") {
     return (
       <Box paddingLeft={2}>
-        <Text dimColor>└ {tool.toolName}  </Text>
+        <Text dimColor>└ {tool.toolName} </Text>
         <Text color="green">✓</Text>
-        <Text dimColor>  {fmtTime(tool.elapsedMs)}</Text>
+        <Text dimColor> {fmtTime(tool.elapsedMs)}</Text>
       </Box>
     );
   }
 
   return (
     <Box paddingLeft={2}>
-      <Text dimColor>└ {tool.toolName}  </Text>
-      <Text color="red">✗  {tool.error ?? "error"}</Text>
+      <Text dimColor>└ {tool.toolName} </Text>
+      <Text color="red">✗ {tool.error ?? "error"}</Text>
     </Box>
   );
 }

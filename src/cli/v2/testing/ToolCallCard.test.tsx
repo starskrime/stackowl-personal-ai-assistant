@@ -15,7 +15,9 @@ const baseCall: ToolCall = {
 describe("ToolCallCard", () => {
   it("running state: shows tool name and elapsed time", () => {
     const { lastFrame } = render(
-      <ToolCallCard tool={{ ...baseCall, status: "running", elapsedMs: 1200 }} />
+      <ToolCallCard
+        tool={{ ...baseCall, status: "running", elapsedMs: 1200 }}
+      />,
     );
     expect(lastFrame()).toContain("bash");
     expect(lastFrame()).toContain("1.2s");
@@ -24,15 +26,20 @@ describe("ToolCallCard", () => {
   it("running state: shows progress message when present", () => {
     const { lastFrame } = render(
       <ToolCallCard
-        tool={{ ...baseCall, status: "running", elapsedMs: 0, progressMessage: "reading file" }}
-      />
+        tool={{
+          ...baseCall,
+          status: "running",
+          elapsedMs: 0,
+          progressMessage: "reading file",
+        }}
+      />,
     );
     expect(lastFrame()).toContain("reading file");
   });
 
   it("done state: shows └ connector and ✓ checkmark with time", () => {
     const { lastFrame } = render(
-      <ToolCallCard tool={{ ...baseCall, status: "done", elapsedMs: 4100 }} />
+      <ToolCallCard tool={{ ...baseCall, status: "done", elapsedMs: 4100 }} />,
     );
     expect(lastFrame()).toContain("└");
     expect(lastFrame()).toContain("✓");
@@ -42,8 +49,13 @@ describe("ToolCallCard", () => {
   it("failed state: shows └ connector, ✗ mark, and error text", () => {
     const { lastFrame } = render(
       <ToolCallCard
-        tool={{ ...baseCall, status: "failed", elapsedMs: 0, error: "permission denied" }}
-      />
+        tool={{
+          ...baseCall,
+          status: "failed",
+          elapsedMs: 0,
+          error: "permission denied",
+        }}
+      />,
     );
     expect(lastFrame()).toContain("└");
     expect(lastFrame()).toContain("✗");

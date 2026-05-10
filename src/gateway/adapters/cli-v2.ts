@@ -60,7 +60,8 @@ export class CliV2Adapter implements ChannelAdapter {
     // Announce the initial owl (no turn yet — use a placeholder turnId).
     // The Composer will call submitMessage(), which generates a real turnId per turn.
     // This pre-seeds the header so the UI shows the owl before the first message.
-    globalBridge.translateOwlChange("__init__", owlEmoji, owlName);
+    const initModel = this._gateway.getConfig().defaultModel ?? "";
+    globalBridge.translateOwlChange("__init__", owlEmoji, owlName, undefined, initModel);
 
     // Load recent sessions asynchronously — must NOT block the UI.
     // The store is pre-seeded with an empty list; sessions.loaded fills it in.
@@ -137,8 +138,8 @@ export class CliV2Adapter implements ChannelAdapter {
       model: activeModel,
     };
 
-    // Announce turn start (current owl).
-    globalBridge.translateOwlChange(turnId, owlMeta.owlEmoji, owlMeta.owlName);
+    // Announce turn start (current owl + model).
+    globalBridge.translateOwlChange(turnId, owlMeta.owlEmoji, owlMeta.owlName, undefined, owlMeta.model);
 
     // Accumulate streamed text so we can supply fullText on "done".
     let accumulated = "";
@@ -174,7 +175,7 @@ export class CliV2Adapter implements ChannelAdapter {
           // Reassign to a new object instead of mutating, to avoid a race where
           // onStreamEvent reads owlMeta concurrently and sees a half-updated value.
           owlMeta = { ...owlMeta, owlEmoji, owlName };
-          globalBridge.translateOwlChange(turnId, owlEmoji, owlName);
+          globalBridge.translateOwlChange(turnId, owlEmoji, owlName, undefined, owlMeta.model);
         },
 
         onProgress: async (_text: string) => {

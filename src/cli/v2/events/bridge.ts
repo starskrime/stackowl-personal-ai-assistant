@@ -116,6 +116,7 @@ export class UiBridge {
     owlEmoji: string,
     owlName: string,
     owlRole?: string,
+    model?: string,
   ): void {
     this.emit({
       kind: "turn.started",
@@ -124,6 +125,7 @@ export class UiBridge {
       owlName,
       owlEmoji,
       owlRole,
+      model,
     });
   }
 

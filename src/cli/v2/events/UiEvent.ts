@@ -46,6 +46,7 @@ export interface TurnStartedEvent {
   owlName: string;
   owlEmoji: string;
   owlRole?: string;
+  model?: string;
 }
 
 export interface TokenDeltaEvent {
