@@ -15,7 +15,7 @@ export function EmptyState() {
   const { colors } = useTheme();
 
   return (
-    <Box flexDirection="column" paddingY={1}>
+    <Box flexDirection="column" paddingBottom={1}>
       {LOGO.map(({ line, bright }, i) => (
         <Text key={i} bold={bright} color={bright ? colors.brand : colors.brandDim}>
           {line}
