@@ -1,6 +1,7 @@
 import globals from "globals";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
+import observabilityPlugin from "./src/infra/observability/eslint-plugin/index.js";
 
 export default [
   {
@@ -53,6 +54,16 @@ export default [
     files: ["src/cli/renderer.ts", "src/gateway/adapters/cli.ts", "src/cli/**/*.ts"],
     rules: {
       "no-restricted-syntax": "off",
+    },
+  },
+  // ─── Observability: catch-block hygiene rules ─────────────────────────
+  {
+    plugins: {
+      "observability": observabilityPlugin,
+    },
+    rules: {
+      "observability/no-empty-catch": "warn",
+      "observability/catch-must-log": "warn",
     },
   },
 ];

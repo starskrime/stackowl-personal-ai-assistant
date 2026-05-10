@@ -1,9 +1,7 @@
-"use strict";
+import noEmptyCatch from "./rules/no-empty-catch.js";
+import catchMustLog from "./rules/catch-must-log.js";
 
-const noEmptyCatch = require("./rules/no-empty-catch.js");
-const catchMustLog = require("./rules/catch-must-log.js");
-
-module.exports = {
+export default {
   rules: {
     "no-empty-catch": noEmptyCatch,
     "catch-must-log":  catchMustLog,

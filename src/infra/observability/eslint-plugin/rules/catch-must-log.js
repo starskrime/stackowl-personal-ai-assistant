@@ -1,5 +1,3 @@
-"use strict";
-
 /**
  * Requires every catch block to either:
  *   (a) contain a call to log.<x>.error/warn/fatal(msg, err, …) or
@@ -82,7 +80,7 @@ function hasThrowStatement(body) {
   });
 }
 
-module.exports = {
+export default {
   meta: {
     type: "suggestion",
     docs: {

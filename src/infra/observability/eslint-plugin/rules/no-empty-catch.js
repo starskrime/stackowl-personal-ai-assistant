@@ -1,7 +1,5 @@
-"use strict";
-
 /** Flags catch clauses whose body is empty (no statements at all). */
-module.exports = {
+export default {
   meta: {
     type: "problem",
     docs: {
