@@ -144,7 +144,6 @@ import {
   defaultWaitForPort,
 } from "./tools/live-browser/bootstrap.js";
 import { BrowserBridge } from "./tools/computer-use/browser/cdp.js";
-import { createInvokeSkillTool } from "./tools/invoke-skill.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
 import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
@@ -760,9 +759,6 @@ async function bootstrap() {
         }),
     }),
   );
-
-  // invoke_skill — LLM can explicitly invoke a named skill
-  toolRegistry.register(createInvokeSkillTool());
 
   // Self-seed foundational pellets on first startup (empty store)
   // This gives the model self-knowledge (identity, tools, skills) immediately

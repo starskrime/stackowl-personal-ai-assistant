@@ -183,6 +183,29 @@ export class SkillContextInjector {
   }
 
   /**
+   * Execute a skill by name — entry point for the invoke_skill tool (D5).
+   * For structured skills (with steps + executor): runs the executor pipeline.
+   * For unstructured skills (instructions-only): returns instructions for the LLM.
+   */
+  async executeByName(name: string, params: Record<string, unknown>): Promise<string> {
+    const skill = this.registry.get(name);
+    if (!skill) {
+      throw new Error(`Skill "${name}" not found in registry.`);
+    }
+
+    if (this.canExecuteStructured(skill) && this.executor) {
+      const result = await this.executeStructuredSkill(
+        skill,
+        JSON.stringify(params),
+      );
+      return result.finalOutput;
+    }
+
+    // Unstructured skill — return instructions for LLM to follow
+    return `Skill "${name}" instructions:\n\n${skill.instructions}`;
+  }
+
+  /**
    * Rebuild the BM25 index after skills change.
    * Call this after loading/unloading skills.
    */

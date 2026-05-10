@@ -128,6 +128,7 @@ import { GoalVerifier } from "../tools/goal-verifier.js";
 import { formatSignalPromoted } from "./narration-formatter.js";
 import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
+import { createInvokeSkillTool } from "../tools/invoke-skill.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -472,6 +473,11 @@ export class OwlGateway {
             registryUrl: process.env.CLAWHUB_API_URL,
           }),
         );
+      }
+
+      // Wire invoke_skill executor now that skillInjector is available (D5)
+      if (ctx.toolRegistry && this.skillInjector) {
+        ctx.toolRegistry.register(createInvokeSkillTool(this.skillInjector));
       }
 
       log.engine.info(
