@@ -20,8 +20,6 @@ export interface UiSliceState {
   contextWindowPct: number;
   /** Inline overlays shown above the Composer in ChatScreen. */
   showHelp: boolean;
-  showSkillsOverlay: boolean;
-  showMcpOverlay: boolean;
 }
 
 export const initialUiSliceState: UiSliceState = {
@@ -35,8 +33,6 @@ export const initialUiSliceState: UiSliceState = {
   totalCostUsd: 0,
   contextWindowPct: 0,
   showHelp: false,
-  showSkillsOverlay: false,
-  showMcpOverlay: false,
 };
 
 export function applyUiEvent(state: UiState, event: UiEvent): UiState {
@@ -106,22 +102,6 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
 
     case "help.view.dismissed":
       return { ...state, showHelp: false };
-
-    // ─── Skills overlay ──────────────────────────────────────────
-
-    case "skills.view.requested":
-      return { ...state, showSkillsOverlay: true };
-
-    case "skills.view.dismissed":
-      return { ...state, showSkillsOverlay: false };
-
-    // ─── MCP overlay ─────────────────────────────────────────────
-
-    case "mcp.view.requested":
-      return { ...state, showMcpOverlay: true };
-
-    case "mcp.view.dismissed":
-      return { ...state, showMcpOverlay: false };
 
     default:
       return state;

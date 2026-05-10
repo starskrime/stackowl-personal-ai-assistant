@@ -40,10 +40,9 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const { exit } = useApp();
   const { colors } = useTheme();
 
-  const mode              = useUiStore((s) => s.mode);
-  const generating        = useUiStore((s) => s.generating);
-  const showSkillsOverlay = useUiStore((s) => s.showSkillsOverlay);
-  const showMcpOverlay    = useUiStore((s) => s.showMcpOverlay);
+  const mode        = useUiStore((s) => s.mode);
+  const generating  = useUiStore((s) => s.generating);
+  const activePanel = useUiStore((s) => s.activePanel);
 
   useEffect(() => {
     if (!generating) return;
@@ -65,15 +64,15 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     if (cmd === "/sessions") { globalBridge.requestSessionsView(); return; }
     if (cmd === "/help")     { globalBridge.requestHelpView();     return; }
     if (cmd === "/owls")     { globalBridge.requestOwlsView();     return; }
-    // Toggle: second /skills press closes the overlay
+    // Toggle: second /skills press closes the panel
     if (cmd === "/skills")   {
-      if (showSkillsOverlay) globalBridge.dismissSkillsView();
-      else                   globalBridge.requestSkillsView();
+      if (activePanel?.id === "skills") globalBridge.closePanel();
+      else                              globalBridge.openPanel("skills", {});
       return;
     }
     if (cmd === "/mcp") {
-      if (showMcpOverlay) globalBridge.dismissMcpView();
-      else                globalBridge.requestMcpView();
+      if (activePanel?.id === "mcp") globalBridge.closePanel();
+      else                           globalBridge.openPanel("mcp", {});
       return;
     }
     if (cmd === "/quit" || cmd === "/exit") { exit(); }

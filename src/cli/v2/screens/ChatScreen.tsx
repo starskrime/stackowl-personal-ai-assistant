@@ -38,8 +38,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const notices      = useUiStore((s) => s.notices);
   const generating   = useUiStore((s) => s.generating);
   const showHelp          = useUiStore((s) => s.showHelp);
-  const showSkillsOverlay = useUiStore((s) => s.showSkillsOverlay);
-  const showMcpOverlay    = useUiStore((s) => s.showMcpOverlay);
+  const activePanel       = useUiStore((s) => s.activePanel);
 
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
@@ -58,11 +57,11 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         ))}
         <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
-        {showSkillsOverlay && <SkillsOverlay />}
-        {showMcpOverlay && <McpOverlay />}
+        {activePanel?.id === "skills" && <SkillsOverlay />}
+        {activePanel?.id === "mcp" && <McpOverlay />}
         <Composer
           onSubmit={onSubmit}
-          disabled={generating || showHelp || showSkillsOverlay || showMcpOverlay}
+          disabled={generating || showHelp || activePanel !== null}
         />
         <StatusBar />
       </Frame>

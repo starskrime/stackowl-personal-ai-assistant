@@ -14,6 +14,7 @@ import { applyHeartbeatEvent } from "../state/slices/heartbeat.js";
 import { applySessionEvent } from "../state/slices/session.js";
 import { applyUiEvent } from "../state/slices/ui.js";
 import { applyPaletteEvent } from "../state/slices/palette.js";
+import { applyPanelEvent } from "../state/slices/panel.js";
 
 export function reduce(state: UiState, event: UiEvent): UiState {
   let next = state;
@@ -24,5 +25,6 @@ export function reduce(state: UiState, event: UiEvent): UiState {
   next = applySessionEvent(next, event);
   next = applyUiEvent(next, event);
   next = applyPaletteEvent(next, event);
+  next = applyPanelEvent(next, event);
   return next;
 }

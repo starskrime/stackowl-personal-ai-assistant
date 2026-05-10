@@ -299,6 +299,26 @@ export class UiBridge {
     this.emit({ kind: "help.view.dismissed" });
   }
 
+  // ─── Panel ────────────────────────────────────────────────────────────────────
+
+  openPanel(id: string, props: unknown): void {
+    this.emit({ kind: "panel.opened", id, props });
+  }
+
+  closePanel(): void {
+    this.emit({ kind: "panel.closed" });
+  }
+
+  // ─── Onboarding ───────────────────────────────────────────────────────────────
+
+  requestOnboardingView(): void {
+    this.emit({ kind: "onboarding.view.requested" });
+  }
+
+  dismissOnboardingView(): void {
+    this.emit({ kind: "onboarding.view.dismissed" });
+  }
+
   /**
    * Build a DebateCallbacks object that routes all parliament events through this bridge.
    * Pass these callbacks into ParliamentSession.config.callbacks before runDebate().

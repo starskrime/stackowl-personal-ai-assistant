@@ -254,6 +254,28 @@ export interface HelpViewDismissedEvent {
   kind: "help.view.dismissed";
 }
 
+// ─── Panel ────────────────────────────────────────────────────────────────────
+
+export interface PanelOpenedEvent {
+  kind: "panel.opened";
+  id: string;
+  props: unknown;
+}
+
+export interface PanelClosedEvent {
+  kind: "panel.closed";
+}
+
+// ─── Onboarding ───────────────────────────────────────────────────────────────
+
+export interface OnboardingViewRequestedEvent {
+  kind: "onboarding.view.requested";
+}
+
+export interface OnboardingViewDismissedEvent {
+  kind: "onboarding.view.dismissed";
+}
+
 // ─── Union ────────────────────────────────────────────────────────────────────
 
 export type UiEvent =
@@ -288,6 +310,10 @@ export type UiEvent =
   | McpViewRequestedEvent
   | McpViewDismissedEvent
   | HelpViewRequestedEvent
-  | HelpViewDismissedEvent;
+  | HelpViewDismissedEvent
+  | PanelOpenedEvent
+  | PanelClosedEvent
+  | OnboardingViewRequestedEvent
+  | OnboardingViewDismissedEvent;
 
 export type UiEventKind = UiEvent["kind"];
