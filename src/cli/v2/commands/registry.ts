@@ -2,6 +2,16 @@ import type { UiBridge } from "../events/bridge.js";
 import type { UiState } from "../state/store.js";
 import { handleStatus } from "./handlers/status.js";
 import { handleClear }  from "./handlers/clear.js";
+import {
+  handleMemoryList,
+  handleMemorySearch,
+  handleMemoryGet,
+  handleMemoryInvalidate,
+  handleMemoryStats,
+  handleMemoryHistory,
+  handleMemoryExport,
+  completeMemoryKeys,
+} from "./handlers/memory.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -176,17 +186,15 @@ export const REGISTRY: CommandSpec[] = [
     aliases: ["/mem"],
     description: "View and manage memory",
     subcommands: [
-      { name: "list",       description: "List all memory entries",              handler: notImplemented },
-      { name: "search",     description: "Search memory",  args: [{ name: "<query>" }], handler: notImplemented },
-      { name: "get",        description: "Show one entry", args: [{ name: "<key>" }],   handler: notImplemented },
-      { name: "invalidate", description: "Delete an entry",args: [{ name: "<key>" }],   handler: notImplemented },
-      { name: "stats",      description: "Memory statistics",                    handler: notImplemented },
-      { name: "history",    description: "View invalidations", args: [{ name: "<id>" }], handler: notImplemented },
-      { name: "export",     description: "JSON dump of all valid memories",      handler: notImplemented },
+      { name: "list",       description: "List all memory entries",              handler: handleMemoryList },
+      { name: "search",     description: "Search memory",  args: [{ name: "<query>" }], handler: handleMemorySearch },
+      { name: "get",        description: "Show one entry", args: [{ name: "<key>" }],   handler: handleMemoryGet,        complete: completeMemoryKeys },
+      { name: "invalidate", description: "Delete an entry",args: [{ name: "<key>" }],   handler: handleMemoryInvalidate, complete: completeMemoryKeys },
+      { name: "stats",      description: "Memory statistics",                    handler: handleMemoryStats },
+      { name: "history",    description: "View invalidation history", args: [{ name: "<id>" }], handler: handleMemoryHistory, complete: completeMemoryKeys },
+      { name: "export",     description: "JSON dump of all valid memories",      handler: handleMemoryExport },
     ],
-    handler: async (ctx) => {
-      return notImplemented(ctx, []);
-    },
+    handler: handleMemoryList,
   },
   {
     name: "/helper",
