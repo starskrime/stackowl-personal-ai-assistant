@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -47,6 +48,7 @@ export const AppleMailTool: ToolImplementation = {
     _context: ToolContext,
   ): Promise<string> {
     const action = args.action as string;
+    log.tool.debug("apple_mail.execute: entry", { action });
 
     try {
       switch (action) {
@@ -59,6 +61,7 @@ export const AppleMailTool: ToolImplementation = {
             return "Error: 'send' action requires to, subject, and body parameters.";
           }
 
+          log.tool.debug("apple_mail.execute: composing and sending email via Mail.app AppleScript", { to, subjectLen: subject.length });
           const script = `
 tell application "Mail"
     set newMessage to make new outgoing message with properties {subject:"${escapeForShell(subject)}", content:"${escapeForShell(body)}", visible:true}
@@ -72,10 +75,13 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || `Email sent to ${to}.`;
+          const result = stdout.trim() || `Email sent to ${to}.`;
+          log.tool.debug("apple_mail.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "check": {
+          log.tool.debug("apple_mail.execute: checking unread count via Mail.app AppleScript");
           const script = `
 tell application "Mail"
     set unreadCount to 0
@@ -90,10 +96,13 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || "Unable to check unread count.";
+          const result = stdout.trim() || "Unable to check unread count.";
+          log.tool.debug("apple_mail.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "read": {
+          log.tool.debug("apple_mail.execute: reading unread messages via Mail.app AppleScript");
           const script = `
 tell application "Mail"
     set output to ""
@@ -122,13 +131,16 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || "No unread emails found.";
+          const result = stdout.trim() || "No unread emails found.";
+          log.tool.debug("apple_mail.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         default:
           return `Error: Unknown action "${action}". Use "send", "check", or "read".`;
       }
     } catch (error) {
+      log.tool.error("apple_mail.execute: failed", error instanceof Error ? error : new Error(String(error)), { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error interacting with Mail: ${msg}`;
     }

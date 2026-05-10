@@ -22,6 +22,7 @@ export const SystemInfoTool: ToolImplementation = {
     _args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    log.tool.debug("system_info.execute: entry");
     const commands = [
       { label: "macOS Version", cmd: "sw_vers" },
       { label: "Memory (bytes)", cmd: "sysctl -n hw.memsize" },
@@ -35,6 +36,7 @@ export const SystemInfoTool: ToolImplementation = {
 
     for (const { label, cmd } of commands) {
       try {
+        log.tool.debug("system_info.execute: running system command", { label });
         const { stdout } = await execAsync(cmd, { timeout: 15000 });
         results.push(`=== ${label} ===\n${stdout.trim()}`);
       } catch (err) {
@@ -59,6 +61,8 @@ export const SystemInfoTool: ToolImplementation = {
       log.tool.warn("system-info: memory GB conversion failed", err);
     }
 
-    return results.join("\n\n");
+    const result = results.join("\n\n");
+    log.tool.debug("system_info.execute: exit", { success: true, sectionsCount: results.length, resultLen: result.length });
+    return result;
   },
 };

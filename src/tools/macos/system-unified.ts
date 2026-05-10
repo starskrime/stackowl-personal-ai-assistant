@@ -12,6 +12,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export interface MacosSystemDeps {
   spotlight?: (args: Record<string, unknown>, ctx: ToolContext) => Promise<string>;
@@ -66,9 +67,12 @@ export function createMacosSystemTool(deps: MacosSystemDeps): ToolImplementation
     execute: async (args, context) => {
       const action = args["action"] as string;
       const key = action as keyof MacosSystemDeps;
+      log.tool.debug("macos_system.execute: entry", { action });
+
       const impl = deps[key];
 
       if (!impl) {
+        log.tool.debug("macos_system.execute: action not configured", { action, available: Object.keys(deps) });
         return JSON.stringify({
           success: false,
           data: null,
@@ -80,7 +84,10 @@ export function createMacosSystemTool(deps: MacosSystemDeps): ToolImplementation
         });
       }
 
-      return impl(args, context);
+      log.tool.debug("macos_system.execute: dispatching to impl", { action });
+      const result = await impl(args, context);
+      log.tool.debug("macos_system.execute: exit", { success: true, action, resultLen: result.length });
+      return result;
     },
   };
 }

@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -43,10 +44,12 @@ export const AppleNotesTool: ToolImplementation = {
     _context: ToolContext,
   ): Promise<string> {
     const action = args.action as string;
+    log.tool.debug("apple_notes.execute: entry", { action });
 
     try {
       switch (action) {
         case "list": {
+          log.tool.debug("apple_notes.execute: listing recent notes via AppleScript");
           const script = `
 tell application "Notes"
     set output to ""
@@ -68,7 +71,9 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || "No notes found.";
+          const result = stdout.trim() || "No notes found.";
+          log.tool.debug("apple_notes.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "search": {
@@ -77,6 +82,7 @@ end tell`;
             return "Error: 'search' action requires a keyword parameter.";
           }
 
+          log.tool.debug("apple_notes.execute: searching notes via AppleScript", { keyword });
           const script = `
 tell application "Notes"
     set output to ""
@@ -100,7 +106,9 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || `No notes found matching "${keyword}".`;
+          const result = stdout.trim() || `No notes found matching "${keyword}".`;
+          log.tool.debug("apple_notes.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "create": {
@@ -110,6 +118,7 @@ end tell`;
             return "Error: 'create' action requires title and body parameters.";
           }
 
+          log.tool.debug("apple_notes.execute: creating note via AppleScript", { title, bodyLen: body.length });
           const script = `
 tell application "Notes"
     set noteBody to "<h1>${escapeForShell(title)}</h1><br>" & "${escapeForShell(body)}"
@@ -120,13 +129,16 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || `Note "${title}" created successfully.`;
+          const result = stdout.trim() || `Note "${title}" created successfully.`;
+          log.tool.debug("apple_notes.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         default:
           return `Error: Unknown action "${action}". Use "list", "search", or "create".`;
       }
     } catch (error) {
+      log.tool.error("apple_notes.execute: failed", error instanceof Error ? error : new Error(String(error)), { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error interacting with Notes: ${msg}`;
     }

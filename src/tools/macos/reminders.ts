@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -47,10 +48,12 @@ export const AppleRemindersTool: ToolImplementation = {
     _context: ToolContext,
   ): Promise<string> {
     const action = args.action as string;
+    log.tool.debug("apple_reminders.execute: entry", { action });
 
     try {
       switch (action) {
         case "list": {
+          log.tool.debug("apple_reminders.execute: listing incomplete reminders via AppleScript");
           const script = `
 tell application "Reminders"
     set output to ""
@@ -73,7 +76,9 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || "No incomplete reminders found.";
+          const result = stdout.trim() || "No incomplete reminders found.";
+          log.tool.debug("apple_reminders.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "add": {
@@ -84,6 +89,8 @@ end tell`;
 
           const listName = args.list_name as string | undefined;
           const dueDate = args.due_date as string | undefined;
+
+          log.tool.debug("apple_reminders.execute: creating reminder via AppleScript", { title, dueDate, listName });
 
           let dueDatePart = "";
           if (dueDate) {
@@ -112,7 +119,9 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || `Reminder "${title}" created successfully.`;
+          const result = stdout.trim() || `Reminder "${title}" created successfully.`;
+          log.tool.debug("apple_reminders.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "complete": {
@@ -121,6 +130,7 @@ end tell`;
             return "Error: 'complete' action requires a title parameter.";
           }
 
+          log.tool.debug("apple_reminders.execute: marking reminder complete via AppleScript", { title });
           const script = `
 tell application "Reminders"
     set matchedReminders to (every reminder whose name is "${escapeForShell(title)}" and completed is false)
@@ -134,13 +144,16 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || `Reminder "${title}" marked as complete.`;
+          const result = stdout.trim() || `Reminder "${title}" marked as complete.`;
+          log.tool.debug("apple_reminders.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         default:
           return `Error: Unknown action "${action}". Use "list", "add", or "complete".`;
       }
     } catch (error) {
+      log.tool.error("apple_reminders.execute: failed", error instanceof Error ? error : new Error(String(error)), { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error interacting with Reminders: ${msg}`;
     }

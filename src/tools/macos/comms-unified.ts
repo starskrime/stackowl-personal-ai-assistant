@@ -11,6 +11,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export interface MacosCommsDeps {
   mail?: (args: Record<string, unknown>, ctx: ToolContext) => Promise<string>;
@@ -63,9 +64,13 @@ export function createMacosCommsTool(deps: MacosCommsDeps): ToolImplementation {
     category: "macos" as any,
     execute: async (args, context) => {
       const action = args["action"] as string;
+      const operation = args["operation"] as string | undefined;
+      log.tool.debug("macos_comms.execute: entry", { action, operation });
+
       const impl = deps[action as keyof MacosCommsDeps];
 
       if (!impl) {
+        log.tool.debug("macos_comms.execute: action not configured", { action, available: Object.keys(deps) });
         return JSON.stringify({
           success: false,
           data: null,
@@ -77,7 +82,10 @@ export function createMacosCommsTool(deps: MacosCommsDeps): ToolImplementation {
         });
       }
 
-      return impl(args, context);
+      log.tool.debug("macos_comms.execute: dispatching to channel impl", { action, operation });
+      const result = await impl(args, context);
+      log.tool.debug("macos_comms.execute: exit", { success: true, action, resultLen: result.length });
+      return result;
     },
   };
 }

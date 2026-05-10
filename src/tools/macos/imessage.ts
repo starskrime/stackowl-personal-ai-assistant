@@ -19,6 +19,7 @@ import { resolve, isAbsolute } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -94,6 +95,8 @@ export const IMessageTool: ToolImplementation = {
     const query = args.query as string | undefined;
     const limit = (args.limit as number) || 10;
 
+    log.tool.debug("imessage.execute: entry", { action, to, limit });
+
     try {
       switch (action) {
 
@@ -106,6 +109,7 @@ export const IMessageTool: ToolImplementation = {
           const escapedTo = to.replace(/"/g, '\\"');
 
           // Try iMessage account first, fall back to SMS
+          log.tool.debug("imessage.execute: sending text via Messages AppleScript", { to, msgLen: message.length });
           await osa(`
 tell application "Messages"
   set targetSvc to missing value
@@ -131,7 +135,9 @@ tell application "Messages"
   send "${escapedMsg}" to buddy "${escapedTo}" of targetSvc
 end tell`);
 
-          return `Message sent to ${to}: "${message.length > 80 ? message.slice(0, 80) + "..." : message}"`;
+          const result = `Message sent to ${to}: "${message.length > 80 ? message.slice(0, 80) + "..." : message}"`;
+          log.tool.debug("imessage.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         // ── Send file attachment ────────────────────────────────────────
@@ -155,6 +161,7 @@ end tell`);
             ? message.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
             : "";
 
+          log.tool.debug("imessage.execute: sending file attachment via Messages AppleScript", { to, absPath });
           await osa(`
 tell application "Messages"
   set targetSvc to missing value
@@ -173,14 +180,16 @@ tell application "Messages"
 end tell`);
 
           const fileName = absPath.split("/").pop() ?? absPath;
-          return (
+          const result =
             `Attachment sent to ${to}: ${fileName}` +
-            (message ? `\nWith message: "${message}"` : "")
-          );
+            (message ? `\nWith message: "${message}"` : "");
+          log.tool.debug("imessage.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         // ── Read recent messages ────────────────────────────────────────
         case "read_recent": {
+          log.tool.debug("imessage.execute: querying Messages SQLite db for recent messages", { limit });
           const result = await shell(
             `sqlite3 ~/Library/Messages/chat.db "
 SELECT
@@ -193,13 +202,16 @@ WHERE m.text IS NOT NULL OR m.cache_has_attachments = 1
 ORDER BY m.date DESC
 LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database. Grant Full Disk Access to your terminal in System Settings → Privacy & Security."`,
           );
-          return `Recent messages:\n${result}`;
+          const out = `Recent messages:\n${result}`;
+          log.tool.debug("imessage.execute: exit", { success: true, action, resultLen: out.length });
+          return out;
         }
 
         // ── Read messages from specific contact ─────────────────────────
         case "read_chat": {
           if (!to) return "Error: read_chat requires 'to' (phone number or email).";
           const escapedTo = to.replace(/'/g, "''");
+          log.tool.debug("imessage.execute: querying Messages SQLite db for chat", { to, limit });
           const result = await shell(
             `sqlite3 ~/Library/Messages/chat.db "
 SELECT
@@ -212,13 +224,16 @@ WHERE h.id LIKE '%${escapedTo}%'
 ORDER BY m.date DESC
 LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database."`,
           );
-          return `Chat with ${to}:\n${result}`;
+          const out = `Chat with ${to}:\n${result}`;
+          log.tool.debug("imessage.execute: exit", { success: true, action, resultLen: out.length });
+          return out;
         }
 
         // ── Search messages ─────────────────────────────────────────────
         case "search": {
           if (!query) return "Error: search requires 'query'.";
           const escapedQuery = query.replace(/'/g, "''");
+          log.tool.debug("imessage.execute: searching Messages SQLite db", { query, limit });
           const result = await shell(
             `sqlite3 ~/Library/Messages/chat.db "
 SELECT
@@ -231,11 +246,14 @@ WHERE m.text LIKE '%${escapedQuery}%'
 ORDER BY m.date DESC
 LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database."`,
           );
-          return `Messages matching "${query}":\n${result}`;
+          const out = `Messages matching "${query}":\n${result}`;
+          log.tool.debug("imessage.execute: exit", { success: true, action, resultLen: out.length });
+          return out;
         }
 
         // ── List recent chats ───────────────────────────────────────────
         case "list_chats": {
+          log.tool.debug("imessage.execute: listing recent chats from Messages SQLite db", { limit });
           const result = await shell(
             `sqlite3 ~/Library/Messages/chat.db "
 SELECT DISTINCT
@@ -247,7 +265,9 @@ GROUP BY h.id
 ORDER BY MAX(m.date) DESC
 LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database."`,
           );
-          return `Recent chats:\n${result}`;
+          const out = `Recent chats:\n${result}`;
+          log.tool.debug("imessage.execute: exit", { success: true, action, resultLen: out.length });
+          return out;
         }
 
         default:
@@ -265,6 +285,7 @@ LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database."`,
       const msg = error instanceof Error ? error.message : String(error);
 
       if (msg.includes("not allowed") || msg.includes("assistive access")) {
+        log.tool.error("imessage.execute: failed — automation permission denied", error instanceof Error ? error : new Error(msg), { action });
         return (
           "Permission denied: macOS Automation access required.\n" +
           "Go to: System Settings → Privacy & Security → Automation\n" +
@@ -272,6 +293,7 @@ LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database."`,
         );
       }
       if (msg.includes("Full Disk") || msg.includes("database")) {
+        log.tool.error("imessage.execute: failed — Full Disk Access required", error instanceof Error ? error : new Error(msg), { action });
         return (
           "Cannot read Messages database.\n" +
           "Go to: System Settings → Privacy & Security → Full Disk Access\n" +
@@ -279,12 +301,14 @@ LIMIT ${limit};" 2>/dev/null || echo "Cannot access Messages database."`,
         );
       }
       if (msg.includes("No iMessage account") || msg.includes("No account")) {
+        log.tool.error("imessage.execute: failed — no iMessage account", error instanceof Error ? error : new Error(msg), { action });
         return (
           `iMessage account not found or not signed in.\n` +
           `Open Messages.app and sign in to your Apple ID, then try again.\n` +
           `Error: ${msg}`
         );
       }
+      log.tool.error("imessage.execute: failed", error instanceof Error ? error : new Error(msg), { action });
       return `Error (${action}): ${msg}`;
     }
   },

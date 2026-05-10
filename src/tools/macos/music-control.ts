@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const MusicControlTool: ToolImplementation = {
   definition: {
@@ -45,11 +46,14 @@ export const MusicControlTool: ToolImplementation = {
     const appChoice = ((args.app as string) || "music").toLowerCase();
     const value = args.value as number | undefined;
 
+    log.tool.debug("music_control.execute: entry", { action, appChoice, query });
+
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const exec = promisify(execFile);
 
     const appName = appChoice === "spotify" ? "Spotify" : "Music";
+    log.tool.debug("music_control.execute: app selected", { appName });
 
     const osa = async (script: string): Promise<string> => {
       const { stdout } = await exec("osascript", ["-e", script], {
@@ -60,27 +64,48 @@ export const MusicControlTool: ToolImplementation = {
 
     try {
       switch (action) {
-        case "play":
+        case "play": {
+          log.tool.debug("music_control.execute: sending play command via AppleScript", { appName });
           await osa(`tell application "${appName}" to play`);
-          return `▶️ Playing (${appName})`;
+          const result = `▶️ Playing (${appName})`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
+        }
 
-        case "pause":
+        case "pause": {
+          log.tool.debug("music_control.execute: sending pause command via AppleScript", { appName });
           await osa(`tell application "${appName}" to pause`);
-          return `⏸ Paused (${appName})`;
+          const result = `⏸ Paused (${appName})`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
+        }
 
-        case "toggle":
+        case "toggle": {
+          log.tool.debug("music_control.execute: sending playpause toggle via AppleScript", { appName });
           await osa(`tell application "${appName}" to playpause`);
-          return `⏯ Toggled play/pause (${appName})`;
+          const result = `⏯ Toggled play/pause (${appName})`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
+        }
 
-        case "next":
+        case "next": {
+          log.tool.debug("music_control.execute: skipping to next track via AppleScript", { appName });
           await osa(`tell application "${appName}" to next track`);
-          return `⏭ Skipped to next track (${appName})`;
+          const result = `⏭ Skipped to next track (${appName})`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
+        }
 
-        case "previous":
+        case "previous": {
+          log.tool.debug("music_control.execute: going to previous track via AppleScript", { appName });
           await osa(`tell application "${appName}" to previous track`);
-          return `⏮ Previous track (${appName})`;
+          const result = `⏮ Previous track (${appName})`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
+        }
 
         case "now_playing": {
+          log.tool.debug("music_control.execute: querying now playing via AppleScript", { appName });
           if (appChoice === "spotify") {
             const name = await osa(
               'tell application "Spotify" to name of current track',
@@ -100,14 +125,15 @@ export const MusicControlTool: ToolImplementation = {
             const state = await osa(
               'tell application "Spotify" to player state as string',
             );
-            return (
+            const result =
               `🎵 Now Playing (Spotify):\n` +
               `  Track: ${name}\n` +
               `  Artist: ${artist}\n` +
               `  Album: ${album}\n` +
               `  Position: ${Math.round(Number(pos))}s / ${Math.round(Number(dur))}s\n` +
-              `  State: ${state}`
-            );
+              `  State: ${state}`;
+            log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+            return result;
           }
           const name = await osa(
             'tell application "Music" to name of current track',
@@ -125,24 +151,28 @@ export const MusicControlTool: ToolImplementation = {
           const state = await osa(
             'tell application "Music" to player state as string',
           );
-          return (
+          const result =
             `🎵 Now Playing (Apple Music):\n` +
             `  Track: ${name}\n` +
             `  Artist: ${artist}\n` +
             `  Album: ${album}\n` +
             `  Position: ${Math.round(Number(pos))}s / ${Math.round(Number(dur))}s\n` +
-            `  State: ${state}`
-          );
+            `  State: ${state}`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "search_play": {
           if (!query) return "Error: search_play requires a 'query' parameter.";
           const escaped = query.replace(/"/g, '\\"');
+          log.tool.debug("music_control.execute: searching and playing via AppleScript", { appName, query });
           if (appChoice === "spotify") {
             // Spotify doesn't support AppleScript search well — open search URI
             const uri = `spotify:search:${encodeURIComponent(query)}`;
             await osa(`open location "${uri}"`);
-            return `🔍 Opened Spotify search for: "${query}". Use now_playing after a moment to see what's playing.`;
+            const result = `🔍 Opened Spotify search for: "${query}". Use now_playing after a moment to see what's playing.`;
+            log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+            return result;
           }
           // Apple Music search and play
           const script = `
@@ -155,20 +185,26 @@ tell application "Music"
     return "No results found for: ${escaped}"
   end if
 end tell`;
-          const result = await osa(script);
-          return `🔍 ${result}`;
+          const searchResult = await osa(script);
+          const result = `🔍 ${searchResult}`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "set_volume": {
           if (value === undefined || value < 0 || value > 100)
             return "Error: set_volume requires value 0-100.";
+          log.tool.debug("music_control.execute: setting volume via AppleScript", { appName, value });
           await osa(
             `tell application "${appName}" to set sound volume to ${value}`,
           );
-          return `🔊 ${appName} volume set to ${value}%`;
+          const result = `🔊 ${appName} volume set to ${value}%`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "shuffle": {
+          log.tool.debug("music_control.execute: toggling shuffle via AppleScript", { appName });
           if (appChoice === "spotify") {
             const current = await osa(
               'tell application "Spotify" to shuffling',
@@ -177,7 +213,9 @@ end tell`;
             await osa(
               `tell application "Spotify" to set shuffling to ${newVal}`,
             );
-            return `🔀 Shuffle ${newVal === "true" ? "ON" : "OFF"} (Spotify)`;
+            const result = `🔀 Shuffle ${newVal === "true" ? "ON" : "OFF"} (Spotify)`;
+            log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+            return result;
           }
           const current = await osa(
             'tell application "Music" to shuffle enabled',
@@ -186,10 +224,13 @@ end tell`;
           await osa(
             `tell application "Music" to set shuffle enabled to ${newVal}`,
           );
-          return `🔀 Shuffle ${newVal === "true" ? "ON" : "OFF"} (Apple Music)`;
+          const result = `🔀 Shuffle ${newVal === "true" ? "ON" : "OFF"} (Apple Music)`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "repeat": {
+          log.tool.debug("music_control.execute: toggling repeat via AppleScript", { appName });
           if (appChoice === "spotify") {
             const current = await osa(
               'tell application "Spotify" to repeating',
@@ -198,7 +239,9 @@ end tell`;
             await osa(
               `tell application "Spotify" to set repeating to ${newVal}`,
             );
-            return `🔁 Repeat ${newVal === "true" ? "ON" : "OFF"} (Spotify)`;
+            const result = `🔁 Repeat ${newVal === "true" ? "ON" : "OFF"} (Spotify)`;
+            log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+            return result;
           }
           // Apple Music cycles: off → all → one
           const current = await osa(
@@ -210,15 +253,20 @@ end tell`;
           await osa(
             `tell application "Music" to set song repeat to ${newMode}`,
           );
-          return `🔁 Repeat: ${newMode} (Apple Music)`;
+          const result = `🔁 Repeat: ${newMode} (Apple Music)`;
+          log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+          return result;
         }
 
         case "love": {
+          log.tool.debug("music_control.execute: loving current track via AppleScript", { appName });
           if (appChoice !== "spotify") {
             await osa(
               'tell application "Music" to set loved of current track to true',
             );
-            return `❤️ Loved current track (Apple Music)`;
+            const result = `❤️ Loved current track (Apple Music)`;
+            log.tool.debug("music_control.execute: exit", { success: true, action, resultLen: result.length });
+            return result;
           }
           return "Love/save is not available via Spotify AppleScript.";
         }
@@ -234,6 +282,7 @@ end tell`;
           );
       }
     } catch (error) {
+      log.tool.error("music_control.execute: failed", error instanceof Error ? error : new Error(String(error)), { action, appName });
       const msg = error instanceof Error ? error.message : String(error);
       if (
         msg.includes("not running") ||
