@@ -13,8 +13,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import {
   intro,
   outro,
@@ -33,17 +34,20 @@ import type { StackOwlConfig } from "../../../config/loader.js";
 
 const CONFIG_FILENAME = "stackowl.config.json";
 
-function configPath(): string {
-  return join(process.cwd(), CONFIG_FILENAME);
+function configPath(baseDir?: string): string {
+  return join(baseDir ?? homedir(), ".stackowl", CONFIG_FILENAME);
 }
 
 /**
  * Returns true when the wizard should run: config file doesn't exist, or the
  * default provider has no real model/key configured (i.e. it's only the
  * auto-generated Ollama stub that loadConfig() writes on first boot).
+ *
+ * @param baseDir  Directory that contains the `.stackowl/` folder.
+ *                 Defaults to `homedir()` (i.e. `~/.stackowl/`).
  */
-export function needsOnboarding(): boolean {
-  const p = configPath();
+export function needsOnboarding(baseDir?: string): boolean {
+  const p = configPath(baseDir);
   if (!existsSync(p)) return true;
 
   // Config exists — check if it looks like the auto-generated stub
@@ -113,37 +117,6 @@ const PROVIDERS: ProviderDef[] = [
   },
 ];
 
-// ─── Persona definitions ──────────────────────────────────────────────────────
-
-interface PersonaDef {
-  value: string;
-  label: string;
-  hint: string;
-}
-
-const PERSONAS: PersonaDef[] = [
-  {
-    value: "balanced",
-    label: "Balanced Owl",
-    hint: "Helpful, thorough, adapts to context — great all-rounder",
-  },
-  {
-    value: "concise",
-    label: "Terse Owl",
-    hint: "Short answers, no fluff, direct — best for quick tasks",
-  },
-  {
-    value: "socratic",
-    label: "Socratic Owl",
-    hint: "Challenges assumptions, asks clarifying questions — best for deep work",
-  },
-  {
-    value: "detailed",
-    label: "Verbose Owl",
-    hint: "Full context, examples, step-by-step — best for learning",
-  },
-];
-
 // ─── Config builder ───────────────────────────────────────────────────────────
 
 interface WizardResult {
@@ -152,7 +125,6 @@ interface WizardResult {
   apiKey: string;
   baseUrl: string;
   model: string;
-  persona: string;
   enableTelegram: boolean;
   telegramToken: string;
 }
@@ -252,16 +224,21 @@ function buildConfig(answers: WizardResult): StackOwlConfig {
 /**
  * Run the full @clack/prompts onboarding wizard.
  *
- * Writes stackowl.config.json on success. Exits the process on cancellation
- * (Ctrl+C or explicit cancel) — the caller can rely on the config existing
- * after this returns without error.
+ * Writes `~/.stackowl/stackowl.config.json` on success. Exits the process on
+ * cancellation (Ctrl+C or explicit cancel) — the caller can rely on the config
+ * existing after this returns without error.
+ *
+ * @param baseDir  Directory that contains the `.stackowl/` folder.
+ *                 Defaults to `homedir()` (i.e. `~/.stackowl/`).
  */
-export async function runOnboardingWizard(): Promise<void> {
+export async function runOnboardingWizard(baseDir?: string): Promise<void> {
+  const destPath = configPath(baseDir);
+
   intro(" StackOwl — First-run setup ");
 
   note(
     "This wizard will configure your AI provider and preferences.\n" +
-    "Config is saved to stackowl.config.json in the current directory.\n" +
+    `Config is saved to ${destPath}\n` +
     "You can re-run this wizard any time with: stackowl config --wizard",
     "Welcome",
   );
@@ -411,23 +388,7 @@ export async function runOnboardingWizard(): Promise<void> {
     model = String(modelText).trim() || providerDef.defaultModel;
   }
 
-  // ── Step 3: Persona ────────────────────────────────────────────────────────
-
-  const personaValue = await select({
-    message: "Choose your default owl persona",
-    options: PERSONAS.map((p) => ({
-      value: p.value,
-      label: p.label,
-      hint: p.hint,
-    })),
-  });
-
-  if (isCancel(personaValue)) {
-    cancel("Setup cancelled.");
-    process.exit(0);
-  }
-
-  // ── Step 4: Telegram (optional) ────────────────────────────────────────────
+  // ── Step 3: Telegram (optional) ────────────────────────────────────────────
 
   const wantTelegram = await confirm({
     message: "Enable Telegram integration? (optional — you can set this up later)",
@@ -467,7 +428,6 @@ export async function runOnboardingWizard(): Promise<void> {
     apiKey,
     baseUrl,
     model,
-    persona: String(personaValue),
     enableTelegram: Boolean(wantTelegram),
     telegramToken,
   };
@@ -477,8 +437,9 @@ export async function runOnboardingWizard(): Promise<void> {
   s.start("Writing configuration…");
 
   try {
+    await mkdir(join(baseDir ?? homedir(), ".stackowl"), { recursive: true });
     await writeFile(
-      configPath(),
+      destPath,
       JSON.stringify(config, null, 2),
       "utf-8",
     );
@@ -489,7 +450,7 @@ export async function runOnboardingWizard(): Promise<void> {
   }
 
   outro(
-    `Setup complete! Your config is at ${CONFIG_FILENAME}\n` +
+    `Setup complete! Your config is at ${destPath}\n` +
     "Run `stackowl` to start chatting.",
   );
 }

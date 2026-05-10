@@ -1275,13 +1275,22 @@ async function buildGateway(
 
 async function chatCommand(owlName?: string) {
   // ── Phase 0: onboarding (first launch) ────────────────────────
-  const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
-  if (!existsSync(configPath)) {
-    const wizard = new OnboardingWizard(configPath);
-    const completed = await wizard.run();
-    if (!completed) {
-      console.log(chalk.yellow("\nSetup cancelled. Run again to configure StackOwl."));
-      process.exit(0);
+  if (process.env.STACKOWL_TUI === "v2") {
+    // v2: use the @clack/prompts wizard (must run before Ink mounts).
+    const { needsOnboarding, runOnboardingWizard } = await import("./cli/v2/screens/onboarding-wizard.js");
+    if (needsOnboarding(homedir())) {
+      await runOnboardingWizard(homedir());
+    }
+  } else {
+    // v1: legacy terminal wizard.
+    const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
+    if (!existsSync(configPath)) {
+      const wizard = new OnboardingWizard(configPath);
+      const completed = await wizard.run();
+      if (!completed) {
+        console.log(chalk.yellow("\nSetup cancelled. Run again to configure StackOwl."));
+        process.exit(0);
+      }
     }
   }
 
