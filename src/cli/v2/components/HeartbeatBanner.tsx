@@ -23,7 +23,11 @@ export function HeartbeatBanner({ msg }: HeartbeatBannerProps) {
   const emoji = msg.owlEmoji ?? "🔔";
   return (
     <Box
-      borderStyle="round"
+      borderStyle="single"
+      borderTop={true}
+      borderBottom={true}
+      borderLeft={false}
+      borderRight={false}
       borderColor={colors.heartbeat}
       flexDirection="column"
       paddingX={1}

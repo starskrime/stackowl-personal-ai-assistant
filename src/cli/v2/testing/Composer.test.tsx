@@ -38,10 +38,10 @@ describe("Composer", () => {
     expect(lastFrame()).toContain("▋");
   });
 
-  it("idle state: renders bordered box (╭ and ╰)", () => {
+  it("idle state: renders both input row and hint row", () => {
     const { lastFrame } = render(<ComposerUnderTest disabled={false} />);
-    expect(lastFrame()).toContain("╭");
-    expect(lastFrame()).toContain("╰");
+    expect(lastFrame()).toContain("❯");
+    expect(lastFrame()).toContain("/help");
   });
 
   it("idle state: renders slash hint row when value is empty", () => {

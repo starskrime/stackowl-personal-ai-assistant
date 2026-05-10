@@ -119,7 +119,7 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
       ].join("  ·  ");
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1}>
+    <Box flexDirection="column" borderStyle="single" borderTop borderBottom borderLeft={false} borderRight={false} borderColor={borderColor} paddingX={1}>
       <Box>
         <Text bold color={borderColor}>{title}</Text>
       </Box>

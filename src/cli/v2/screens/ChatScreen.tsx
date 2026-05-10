@@ -58,12 +58,22 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
         <PanelHost />
-        <Composer
-          onSubmit={onSubmit}
-          disabled={generating || showHelp || panelFocus === "panel"}
-        />
-        <StatusBar />
-        <ShortcutsBar />
+        <Box
+          flexDirection="column"
+          borderStyle="single"
+          borderTop={true}
+          borderBottom={true}
+          borderLeft={false}
+          borderRight={false}
+          borderColor="red"
+        >
+          <Composer
+            onSubmit={onSubmit}
+            disabled={generating || showHelp || panelFocus === "panel"}
+          />
+          <StatusBar />
+          <ShortcutsBar />
+        </Box>
       </Frame>
     </Box>
   );

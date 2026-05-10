@@ -18,7 +18,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Box, Text, useInput, useApp } from "ink";
 import { useTheme } from "../providers/ThemeProvider.js";
-import { useTerminalCols } from "../input/useTerminalCols.js";
 import { InputHistory } from "../input/history.js";
 import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
 import { globalBridge } from "../events/bridge.js";
@@ -48,7 +47,6 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const mode       = useUiStore((s) => s.mode);
   const generating = useUiStore((s) => s.generating);
   const panelFocus = useUiStore((s) => s.panelFocus);
-  const cols       = useTerminalCols();
 
   // CommandContext shell for completions (bridge + store only)
   // Stable ref — globalBridge and uiStore are module-level singletons so this never changes
@@ -167,7 +165,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     <Box flexDirection="column">
       {/* Completions popup */}
       {showPopup && (
-        <Box flexDirection="column" borderStyle="round" borderColor={colors.accent} paddingX={1} marginBottom={0}>
+        <Box flexDirection="column" borderStyle="single" borderTop borderBottom borderLeft={false} borderRight={false} borderColor={colors.accent}>
           {completions.map((entry, i) => (
             <Box key={entry.value}>
               <Text color={i === completionIdx ? colors.accent : undefined} bold={i === completionIdx}>
@@ -182,17 +180,8 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         </Box>
       )}
 
-      {/* Main input box */}
-      <Box
-        flexDirection="column"
-        borderStyle="single"
-        borderTop={true}
-        borderBottom={true}
-        borderLeft={false}
-        borderRight={false}
-        borderColor="red"
-        width={cols}
-      >
+      {/* Main input box — border owned by ChatScreen wrapper */}
+      <Box flexDirection="column">
         {generating ? (
           <Box paddingLeft={1}>
             <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[genFrame]} </Text>

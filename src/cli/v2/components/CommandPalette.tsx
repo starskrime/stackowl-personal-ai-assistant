@@ -61,7 +61,11 @@ export function CommandPalette({ onClose: _onClose }: { onClose: () => void }) {
   return (
     <Box
       flexDirection="column"
-      borderStyle="round"
+      borderStyle="single"
+      borderTop={true}
+      borderBottom={true}
+      borderLeft={false}
+      borderRight={false}
       borderColor={colors.accent}
       paddingX={1}
       paddingY={0}
