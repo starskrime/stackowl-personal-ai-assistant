@@ -23,7 +23,6 @@ export function EmptyState() {
       ))}
 
       <Box paddingLeft={1} marginTop={1}>
-        <Text color={colors.brand}>🦉 </Text>
         <Text bold>Personal AI Assistant</Text>
         <Text dimColor> • Challenge Everything</Text>
       </Box>
