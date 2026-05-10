@@ -241,6 +241,62 @@ export class UiBridge {
     this.emit({ kind: "sessions.view.dismissed" });
   }
 
+  // ─── Owls picker ─────────────────────────────────────────────────────────
+
+  loadOwls(owls: import("./UiEvent.js").OwlSummaryRecord[]): void {
+    this.emit({ kind: "owls.loaded", owls });
+  }
+
+  requestOwlsView(): void {
+    this.emit({ kind: "owls.view.requested" });
+  }
+
+  dismissOwlsView(): void {
+    this.emit({ kind: "owls.view.dismissed" });
+  }
+
+  changeOwl(owlName: string, owlEmoji: string): void {
+    this.emit({ kind: "owl.changed", owlName, owlEmoji });
+  }
+
+  // ─── Skills overlay ──────────────────────────────────────────────────────
+
+  loadSkills(skills: import("./UiEvent.js").SkillSummaryRecord[]): void {
+    this.emit({ kind: "skills.loaded", skills });
+  }
+
+  requestSkillsView(): void {
+    this.emit({ kind: "skills.view.requested" });
+  }
+
+  dismissSkillsView(): void {
+    this.emit({ kind: "skills.view.dismissed" });
+  }
+
+  // ─── MCP overlay ─────────────────────────────────────────────────────────
+
+  loadMcpServers(servers: import("./UiEvent.js").McpServerRecord[]): void {
+    this.emit({ kind: "mcp.loaded", servers });
+  }
+
+  requestMcpView(): void {
+    this.emit({ kind: "mcp.view.requested" });
+  }
+
+  dismissMcpView(): void {
+    this.emit({ kind: "mcp.view.dismissed" });
+  }
+
+  // ─── Help overlay ─────────────────────────────────────────────────────────
+
+  requestHelpView(): void {
+    this.emit({ kind: "help.view.requested" });
+  }
+
+  dismissHelpView(): void {
+    this.emit({ kind: "help.view.dismissed" });
+  }
+
   /**
    * Build a DebateCallbacks object that routes all parliament events through this bridge.
    * Pass these callbacks into ParliamentSession.config.callbacks before runDebate().

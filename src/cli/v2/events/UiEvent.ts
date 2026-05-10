@@ -163,6 +163,88 @@ export interface NoticeEvent {
   severity?: "info" | "warn" | "error";
 }
 
+// ─── Owls ─────────────────────────────────────────────────────────────────────
+
+export interface OwlSummaryRecord {
+  name: string;
+  emoji: string;
+  /** Short description / specialties joined, used in the picker */
+  description: string;
+  isActive: boolean;
+}
+
+export interface OwlsLoadedEvent {
+  kind: "owls.loaded";
+  owls: OwlSummaryRecord[];
+}
+
+export interface OwlsViewRequestedEvent {
+  kind: "owls.view.requested";
+}
+
+export interface OwlsViewDismissedEvent {
+  kind: "owls.view.dismissed";
+}
+
+export interface OwlChangedEvent {
+  kind: "owl.changed";
+  owlName: string;
+  owlEmoji: string;
+}
+
+// ─── Skills ───────────────────────────────────────────────────────────────────
+
+export interface SkillSummaryRecord {
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
+export interface SkillsLoadedEvent {
+  kind: "skills.loaded";
+  skills: SkillSummaryRecord[];
+}
+
+export interface SkillsViewRequestedEvent {
+  kind: "skills.view.requested";
+}
+
+export interface SkillsViewDismissedEvent {
+  kind: "skills.view.dismissed";
+}
+
+// ─── MCP ──────────────────────────────────────────────────────────────────────
+
+export interface McpServerRecord {
+  name: string;
+  transport: string;
+  connected: boolean;
+  toolCount: number;
+}
+
+export interface McpStatusLoadedEvent {
+  kind: "mcp.loaded";
+  servers: McpServerRecord[];
+}
+
+export interface McpViewRequestedEvent {
+  kind: "mcp.view.requested";
+}
+
+export interface McpViewDismissedEvent {
+  kind: "mcp.view.dismissed";
+}
+
+// ─── Help overlay ─────────────────────────────────────────────────────────────
+
+export interface HelpViewRequestedEvent {
+  kind: "help.view.requested";
+}
+
+export interface HelpViewDismissedEvent {
+  kind: "help.view.dismissed";
+}
+
 // ─── Union ────────────────────────────────────────────────────────────────────
 
 export type UiEvent =
@@ -184,6 +266,18 @@ export type UiEvent =
   | ParliamentViewRequestedEvent
   | ParliamentViewDismissedEvent
   | HeartbeatMessageEvent
-  | NoticeEvent;
+  | NoticeEvent
+  | OwlsLoadedEvent
+  | OwlsViewRequestedEvent
+  | OwlsViewDismissedEvent
+  | OwlChangedEvent
+  | SkillsLoadedEvent
+  | SkillsViewRequestedEvent
+  | SkillsViewDismissedEvent
+  | McpStatusLoadedEvent
+  | McpViewRequestedEvent
+  | McpViewDismissedEvent
+  | HelpViewRequestedEvent
+  | HelpViewDismissedEvent;
 
 export type UiEventKind = UiEvent["kind"];

@@ -18,6 +18,10 @@ import { NoticeStrip } from "../components/NoticeStrip.js";
 import { LiveTurn } from "../components/LiveTurn.js";
 import { Composer } from "../components/Composer.js";
 import { ShortcutsBar } from "../components/ShortcutsBar.js";
+import { CommandPalette } from "../components/CommandPalette.js";
+import { SkillsOverlay } from "../components/SkillsOverlay.js";
+import { McpOverlay } from "../components/McpOverlay.js";
+import { globalBridge } from "../events/bridge.js";
 
 export interface ChatScreenProps {
   onSubmit: (text: string) => void;
@@ -35,6 +39,9 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const activeModel = useUiStore((s) => s.activeModel);
   const totalTokens = useUiStore((s) => s.totalTokens);
   const totalCostUsd = useUiStore((s) => s.totalCostUsd);
+  const showHelp = useUiStore((s) => s.showHelp);
+  const showSkillsOverlay = useUiStore((s) => s.showSkillsOverlay);
+  const showMcpOverlay = useUiStore((s) => s.showMcpOverlay);
 
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices = notices.slice(-3);
@@ -50,6 +57,10 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         <NoticeStrip key={n.id} notice={n} />
       ))}
       <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
+      {/* Inline overlays — rendered above the Composer, dismissed by Escape */}
+      {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
+      {showSkillsOverlay && <SkillsOverlay />}
+      {showMcpOverlay && <McpOverlay />}
       <Composer onSubmit={onSubmit} disabled={generating} />
       <ShortcutsBar
         owlEmoji={activeOwlEmoji}

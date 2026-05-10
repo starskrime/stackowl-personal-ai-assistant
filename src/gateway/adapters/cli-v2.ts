@@ -66,6 +66,11 @@ export class CliV2Adapter implements ChannelAdapter {
     // The store is pre-seeded with an empty list; sessions.loaded fills it in.
     this._loadSessionsAsync();
 
+    // Load palette data (owls, skills, MCP) asynchronously — non-blocking.
+    this._loadOwlsAsync();
+    this._loadSkillsAsync();
+    this._loadMcpAsync();
+
     // Stay alive until stop() is called (Ink owns the event loop via stdin).
     await this._quitPromise;
   }
@@ -229,6 +234,46 @@ export class CliV2Adapter implements ChannelAdapter {
     }).catch(() => {
       // Non-critical — silently ignore failures
     });
+  }
+
+  /** Load available owls from the registry and populate the TUI store. */
+  private _loadOwlsAsync(): void {
+    const owlRegistry = this._gateway.getOwlRegistry();
+    if (!owlRegistry) return;
+    const activeOwlName = this._gateway.getOwl().persona.name.toLowerCase();
+    const owls = owlRegistry.listOwls().map((instance) => ({
+      name: instance.persona.name,
+      emoji: instance.persona.emoji,
+      description: instance.persona.specialties.slice(0, 3).join(", ") || instance.persona.type,
+      isActive: instance.persona.name.toLowerCase() === activeOwlName,
+    }));
+    globalBridge.loadOwls(owls);
+  }
+
+  /** Load installed skills and populate the TUI store. */
+  private _loadSkillsAsync(): void {
+    const skillsLoader = this._gateway.getSkillsLoader();
+    if (!skillsLoader) return;
+    const registry = skillsLoader.getRegistry();
+    const skills = registry.listAll().map((s) => ({
+      name: s.name,
+      description: s.description ?? "",
+      enabled: s.enabled !== false,
+    }));
+    globalBridge.loadSkills(skills);
+  }
+
+  /** Load MCP server status and populate the TUI store. */
+  private _loadMcpAsync(): void {
+    const mcpManager = this._gateway.getMcpManager();
+    if (!mcpManager) return;
+    const servers = mcpManager.listServers().map((s) => ({
+      name: s.name,
+      transport: s.transport,
+      connected: s.connected,
+      toolCount: s.toolCount,
+    }));
+    globalBridge.loadMcpServers(servers);
   }
 
   private _emitCommitted(response: GatewayResponse): void {

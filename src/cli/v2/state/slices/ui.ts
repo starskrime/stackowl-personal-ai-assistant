@@ -1,7 +1,7 @@
 import type { UiState } from "../store.js";
 import type { UiEvent } from "../../events/UiEvent.js";
 
-export type UiMode = "chat" | "parliament" | "onboarding" | "skills" | "sessions";
+export type UiMode = "chat" | "parliament" | "onboarding" | "skills" | "sessions" | "owls";
 
 export interface UiSliceState {
   mode: UiMode;
@@ -15,6 +15,10 @@ export interface UiSliceState {
   /** Cumulative token + cost for the session. */
   totalTokens: number;
   totalCostUsd: number;
+  /** Inline overlays shown above the Composer in ChatScreen. */
+  showHelp: boolean;
+  showSkillsOverlay: boolean;
+  showMcpOverlay: boolean;
 }
 
 export const initialUiSliceState: UiSliceState = {
@@ -26,6 +30,9 @@ export const initialUiSliceState: UiSliceState = {
   generating: false,
   totalTokens: 0,
   totalCostUsd: 0,
+  showHelp: false,
+  showSkillsOverlay: false,
+  showMcpOverlay: false,
 };
 
 export function applyUiEvent(state: UiState, event: UiEvent): UiState {
@@ -65,6 +72,46 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
 
     case "sessions.view.dismissed":
       return { ...state, mode: "chat" };
+
+    // ─── Owls picker ─────────────────────────────────────────────
+
+    case "owls.view.requested":
+      return { ...state, mode: "owls" };
+
+    case "owls.view.dismissed":
+      return { ...state, mode: "chat" };
+
+    case "owl.changed":
+      return {
+        ...state,
+        mode: "chat",
+        activeOwlName: event.owlName,
+        activeOwlEmoji: event.owlEmoji,
+      };
+
+    // ─── Help overlay ─────────────────────────────────────────────
+
+    case "help.view.requested":
+      return { ...state, showHelp: true };
+
+    case "help.view.dismissed":
+      return { ...state, showHelp: false };
+
+    // ─── Skills overlay ──────────────────────────────────────────
+
+    case "skills.view.requested":
+      return { ...state, showSkillsOverlay: true };
+
+    case "skills.view.dismissed":
+      return { ...state, showSkillsOverlay: false };
+
+    // ─── MCP overlay ─────────────────────────────────────────────
+
+    case "mcp.view.requested":
+      return { ...state, showMcpOverlay: true };
+
+    case "mcp.view.dismissed":
+      return { ...state, showMcpOverlay: false };
 
     default:
       return state;

@@ -49,12 +49,39 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
       // Submit on Enter (not Shift+Enter)
       if (key.return && !key.shift) {
         const trimmed = value.trim();
+
+        // ─── Slash command interceptions ─────────────────────────────────
         if (trimmed === "/sessions") {
-          // Open the session picker instead of submitting to the engine.
           globalBridge.requestSessionsView();
           setValue("");
           return;
         }
+        if (trimmed === "/help") {
+          globalBridge.requestHelpView();
+          setValue("");
+          return;
+        }
+        if (trimmed === "/owls") {
+          globalBridge.requestOwlsView();
+          setValue("");
+          return;
+        }
+        if (trimmed === "/skills") {
+          globalBridge.requestSkillsView();
+          setValue("");
+          return;
+        }
+        if (trimmed === "/mcp") {
+          globalBridge.requestMcpView();
+          setValue("");
+          return;
+        }
+        if (trimmed === "/quit" || trimmed === "/exit") {
+          exit();
+          return;
+        }
+        // ─────────────────────────────────────────────────────────────────
+
         if (trimmed) {
           historyRef.current.push(trimmed);
           onSubmit(trimmed);
@@ -98,6 +125,14 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     { isActive: !disabled },
   );
 
+  // Autocomplete hint: show matching slash commands when input starts with "/"
+  const SLASH_COMMANDS = ["/help", "/owls", "/skills", "/mcp", "/sessions", "/quit", "/exit"];
+  const slashHint = (() => {
+    if (!value.startsWith("/") || value.includes(" ")) return null;
+    const matches = SLASH_COMMANDS.filter((cmd) => cmd.startsWith(value) && cmd !== value);
+    return matches.length > 0 ? matches[0]!.slice(value.length) : null;
+  })();
+
   return (
     <Box flexDirection="column">
       <Text dimColor>{"─".repeat(Math.max(0, cols))}</Text>
@@ -105,6 +140,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         <Text color="green">{"› "}</Text>
         <Text>
           {value}
+          {slashHint && <Text dimColor>{slashHint}</Text>}
           <Text color="cyan">▋</Text>
         </Text>
       </Box>

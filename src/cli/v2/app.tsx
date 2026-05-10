@@ -12,6 +12,7 @@ import { ParliamentScreen } from "./screens/ParliamentScreen.js";
 import { OnboardingScreen } from "./screens/OnboardingScreen.js";
 import { SkillWizardScreen } from "./screens/SkillWizardScreen.js";
 import { SessionsScreen } from "./screens/SessionsScreen.js";
+import { OwlsScreen } from "./screens/OwlsScreen.js";
 
 interface ActiveScreenProps {
   onSubmit: (text: string) => void;
@@ -25,6 +26,7 @@ function ActiveScreen({ onSubmit, onResume }: ActiveScreenProps) {
     case "onboarding": return <OnboardingScreen />;
     case "skills":     return <SkillWizardScreen />;
     case "sessions":   return <SessionsScreen onResume={onResume} />;
+    case "owls":       return <OwlsScreen />;
     default:           return <ChatScreen onSubmit={onSubmit} />;
   }
 }
