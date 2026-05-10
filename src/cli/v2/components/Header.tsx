@@ -2,6 +2,17 @@
 
 import { Box } from "ink";
 import { OwlAvatar } from "./OwlAvatar.js";
-export function Header({ emoji, name, role }: { emoji: string; name: string; role?: string }) {
-  return <Box><OwlAvatar emoji={emoji} name={name} role={role} /></Box>;
+
+export interface HeaderProps {
+  emoji: string;
+  name: string;
+  role?: string;
+}
+
+export function Header({ emoji, name, role }: HeaderProps) {
+  return (
+    <Box>
+      <OwlAvatar emoji={emoji} name={name} role={role} />
+    </Box>
+  );
 }
