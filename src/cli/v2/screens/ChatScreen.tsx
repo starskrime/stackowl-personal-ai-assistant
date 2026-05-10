@@ -27,8 +27,6 @@ import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
 import { NoticeStrip } from "../components/NoticeStrip.js";
 import { LiveTurn } from "../components/LiveTurn.js";
 import { Composer } from "../components/Composer.js";
-import { StatusBar } from "../components/StatusBar.js";
-import { ShortcutsBar } from "../components/ShortcutsBar.js";
 import { CommandPalette } from "../components/CommandPalette.js";
 import { PanelHost } from "../panels/PanelHost.js";
 import { globalBridge } from "../events/bridge.js";
@@ -80,8 +78,6 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
           onSubmit={onSubmit}
           disabled={generating || showHelp || panelFocus === "panel"}
         />
-        <StatusBar />
-        <ShortcutsBar />
       </Box>
     </Box>
   );
