@@ -29,6 +29,16 @@ import {
   handleMcpReconnect,
   completeMcpServers,
 } from "./handlers/mcp.js";
+import {
+  handleHelperList,
+  handleHelperShow,
+  handleHelperCreate,
+  handleHelperRename,
+  handleHelperDelete,
+  handleHelperDesign,
+  handleHelperCapabilities,
+  completeHelperNames,
+} from "./handlers/helper.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -106,12 +116,6 @@ export function resolveCommand(input: string): ResolvedCommand | null {
   }
 
   return { spec, args: parts.slice(1) };
-}
-
-// ─── Placeholder handlers ─────────────────────────────────────────────────────
-
-async function notImplemented(_ctx: CommandContext, _args: string[]): Promise<CommandResult> {
-  return { kind: "error", text: "Command not yet implemented in v2." };
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
@@ -209,15 +213,15 @@ export const REGISTRY: CommandSpec[] = [
     name: "/helper",
     description: "Manage helper owl personas",
     subcommands: [
-      { name: "list",         description: "List all helpers",             handler: notImplemented },
-      { name: "show",         description: "Show helper details", args: [{ name: "<name>" }], handler: notImplemented },
-      { name: "create",       description: "Create a new helper",          handler: notImplemented },
-      { name: "rename",       description: "Rename a helper",  args: [{ name: "<old>" }, { name: "<new>" }], handler: notImplemented },
-      { name: "delete",       description: "Delete a helper",  args: [{ name: "<name>" }], handler: notImplemented },
-      { name: "design",       description: "Redesign a helper",args: [{ name: "<name>" }], handler: notImplemented },
-      { name: "capabilities", description: "List helper capabilities",     handler: notImplemented },
+      { name: "list",         description: "List all helpers",             handler: handleHelperList },
+      { name: "show",         description: "Show helper details",          args: [{ name: "<name>" }], handler: handleHelperShow, complete: completeHelperNames },
+      { name: "create",       description: "Create a new helper",          handler: handleHelperCreate },
+      { name: "rename",       description: "Rename a helper",              args: [{ name: "<old>" }, { name: "<new>" }], handler: handleHelperRename, complete: completeHelperNames },
+      { name: "delete",       description: "Delete a helper",              args: [{ name: "<name>" }], handler: handleHelperDelete, complete: completeHelperNames },
+      { name: "design",       description: "Redesign a helper",            args: [{ name: "<name>" }], handler: handleHelperDesign, complete: completeHelperNames },
+      { name: "capabilities", description: "Show helper capabilities",     args: [{ name: "<name>" }], handler: handleHelperCapabilities, complete: completeHelperNames },
     ],
-    handler: notImplemented,
+    handler: handleHelperList,
   },
   {
     name: "/owl",
