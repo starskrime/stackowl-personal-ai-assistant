@@ -100,21 +100,6 @@ export interface StackOwlConfig {
     /** Max tools to pass to the model per turn when intent routing is enabled. Default: 8 */
     maxToolsRouting?: number;
   };
-  /**
-   * @deprecated Use `intelligence` block instead.
-   * Kept in type so existing ModelRouter references compile.
-   * At runtime, a config JSON containing smartRouting throws.
-   */
-  smartRouting?: {
-    enabled: boolean;
-    fallbackProvider?: string;
-    fallbackModel?: string;
-    availableModels: {
-      modelName: string;
-      providerName: string;
-      description?: string;
-    }[];
-  };
   /** Tiered model routing for all platform components. */
   intelligence?: IntelligenceConfig;
   skills?: {
@@ -404,12 +389,6 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
   try {
     const raw = await readFile(configPath, "utf-8");
     const userConfig = JSON.parse(raw) as Partial<StackOwlConfig>;
-
-    if ("smartRouting" in userConfig) {
-      throw new Error(
-        "[Config] smartRouting is no longer supported. Replace it with the intelligence block. See docs/platform-audit/progress.md.",
-      );
-    }
 
     // Deep merge with defaults
     const config: StackOwlConfig = {

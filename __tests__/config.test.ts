@@ -263,19 +263,6 @@ describe("loadConfig", () => {
       expect(warnSpy.mock.calls[0][0]).toContain("skills");
     });
 
-    it("should throw when smartRouting key is present in config", async () => {
-      vi.mocked(readFile).mockResolvedValue(
-        JSON.stringify({
-          defaultProvider: "ollama",
-          defaultModel: "llama3.2",
-          providers: { ollama: { baseUrl: "http://127.0.0.1:11434" } },
-          smartRouting: { enabled: true, availableModels: [] },
-        }),
-      );
-
-      await expect(loadConfig(testDir)).rejects.toThrow("smartRouting is no longer supported");
-    });
-
     it("should warn on invalid rateLimit maxPerMinute", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       vi.mocked(readFile).mockResolvedValue(
@@ -499,22 +486,6 @@ describe("loadConfig", () => {
       expect(config.heartbeat.intervalMinutes).toBe(60);
     });
 
-    it("should throw when smartRouting is present in merged config", async () => {
-      vi.mocked(readFile).mockResolvedValue(
-        JSON.stringify({
-          defaultProvider: "ollama",
-          defaultModel: "llama3.2",
-          providers: { ollama: { baseUrl: "http://127.0.0.1:11434" } },
-          smartRouting: {
-            enabled: true,
-            availableModels: [{ modelName: "gpt-4", providerName: "openai", description: "test" }],
-          },
-        }),
-      );
-
-      await expect(loadConfig(testDir)).rejects.toThrow("smartRouting is no longer supported");
-    });
-
     it("should merge synthesis config correctly", async () => {
       vi.mocked(readFile).mockResolvedValue(
         JSON.stringify({
@@ -580,21 +551,6 @@ describe("loadConfig", () => {
       expect(config.skills?.watch).toBe(false);
     });
 
-    it("availableModels entries have modelName and providerName fields", async () => {
-      vi.mocked(existsSync).mockReturnValue(false);
-      vi.mocked(writeFile).mockResolvedValue(undefined);
-      vi.mocked(readFile).mockRejectedValue(new Error("not found"));
-      const config = await loadConfig(testDir);
-      // default is empty array — verify the type compiles by constructing a valid entry
-      const entry: NonNullable<typeof config.smartRouting>["availableModels"][number] = {
-        modelName: "claude-sonnet-4-6",
-        providerName: "anthropic",
-      };
-      expect(entry.modelName).toBe("claude-sonnet-4-6");
-      expect(entry.providerName).toBe("anthropic");
-      // old field `name` must not exist on the type
-      expect((entry as any).name).toBeUndefined();
-    });
   });
 
   describe("default config structure", () => {
@@ -616,7 +572,6 @@ describe("loadConfig", () => {
       expect(config.parliament.maxOwls).toBe(6);
       expect(config.owlDna.evolutionBatchSize).toBe(5);
       expect(config.owlDna.decayRatePerWeek).toBe(0.1);
-      expect(config.smartRouting).toBeUndefined();
       expect(config.synthesis!.provider).toBe("anthropic");
       expect(config.synthesis!.model).toBe("claude-sonnet-4-5-20241022");
     });

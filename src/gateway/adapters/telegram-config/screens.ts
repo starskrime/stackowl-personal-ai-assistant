@@ -89,7 +89,7 @@ export function renderMain(config: StackOwlConfig): ScreenContent {
 
   const keyboard = new InlineKeyboard()
     .text("📡 Providers",      "cfg:pr").text("🎯 Model Roles",   "cfg:rl").row()
-    .text("⚡ Smart Routing",  "cfg:sr").text("🏥 Health Check",  "cfg:hc").row()
+    .text("🏥 Health Check",   "cfg:hc").row()
     .text("❌ Close",          "cfg:cl");
 
   return { text, keyboard };
@@ -351,80 +351,6 @@ export function renderRoleProviderPicker(
   });
   keyboard.text("← Back", "cfg:bc");
 
-  return { text, keyboard };
-}
-
-// ─── Screen: Smart Routing ────────────────────────────────────────
-
-export function renderSmartRouting(config: StackOwlConfig): ScreenContent {
-  const sr      = config.smartRouting;
-  const enabled = sr?.enabled ?? false;
-  const roster  = sr?.availableModels ?? [];
-
-  const toggleLabel = enabled ? "🔴 Disable Smart Routing" : "🟢 Enable Smart Routing";
-
-  const rosterLines = roster.length > 0
-    ? roster.map((e, i) => {
-        const tier = i === 0 ? "light" : i === roster.length - 1 ? "heavy" : "mid";
-        return `${i + 1}. <code>${e.providerName}</code> · <b>${e.modelName}</b>  <i>${tier}</i>`;
-      }).join("\n")
-    : "<i>No models in roster. Add at least 2 to enable routing.</i>";
-
-  const fallbackLine = sr?.fallbackProvider
-    ? `\nFallback: <code>${sr.fallbackProvider}</code> · <b>${sr.fallbackModel ?? "—"}</b>`
-    : "";
-
-  const text =
-    `⚡ <b>Smart Routing</b>\n\n` +
-    `Status: ${enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
-    rosterLines +
-    fallbackLine;
-
-  const keyboard = new InlineKeyboard()
-    .text(toggleLabel, "cfg:sr_tog").row();
-
-  roster.forEach((_, i) => {
-    const upCb   = i === 0                 ? "cfg:noop" : `cfg:sr_up:${i}`;
-    const downCb = i === roster.length - 1 ? "cfg:noop" : `cfg:sr_dn:${i}`;
-    const upTxt  = i === 0                 ? "·" : "↑";
-    const downTxt = i === roster.length - 1 ? "·" : "↓";
-    keyboard
-      .text(upTxt,                          upCb)
-      .text(downTxt,                        downCb)
-      .text(`✕ ${roster[i].modelName}`,     `cfg:sr_rm:${i}`)
-      .row();
-  });
-
-  keyboard.text("➕ Add Model", "cfg:sr_add").row();
-  keyboard.text("← Back", "cfg:bc");
-
-  return { text, keyboard };
-}
-
-// ─── Screen: Smart Routing — Provider Picker ─────────────────────
-
-export function renderSmartRoutingProviderPicker(providers: string[]): ScreenContent {
-  const text = `⚡ <b>Add to Roster</b>\n\nChoose provider:`;
-  const keyboard = new InlineKeyboard();
-  providers.forEach((p) => {
-    keyboard.text(p, `cfg:sr_ap:${p}`).row();
-  });
-  keyboard.text("← Back", "cfg:bc");
-  return { text, keyboard };
-}
-
-// ─── Screen: Smart Routing — Model Picker ────────────────────────
-
-export function renderSmartRoutingModelPicker(
-  providerName: string,
-  models: string[],
-): ScreenContent {
-  const text = `⚡ <b>Add to Roster</b>\n\nProvider: <code>${providerName}</code>\nChoose model:`;
-  const keyboard = new InlineKeyboard();
-  models.forEach((m) => {
-    keyboard.text(m, `cfg:sr_am:${providerName}:${m}`).row();
-  });
-  keyboard.text("← Back", "cfg:bc");
   return { text, keyboard };
 }
 

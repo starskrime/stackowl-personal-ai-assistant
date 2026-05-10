@@ -32,9 +32,6 @@ import {
   renderModelPicker,
   renderModelRoles,
   renderRoleProviderPicker,
-  renderSmartRouting,
-  renderSmartRoutingProviderPicker,
-  renderSmartRoutingModelPicker,
   renderHealthCheck,
   renderWebFormLink,
   renderError,
@@ -43,7 +40,6 @@ import {
   PROVIDER_TYPE_META,
 } from "./screens.js";
 import type { ProviderConfigEntry } from "../../../config/loader.js";
-import { getModelLoader } from "../../../models/loader.js";
 
 // ─── One-time secure web form tokens ──────────────────────────────
 
@@ -384,61 +380,6 @@ export class TelegramConfigMenu {
       return;
     }
 
-    // ── Smart Routing ────────────────────────────────────────────
-    if (cmd === "sr") {
-      this.stateManager.navigate(state.userId, "smart_routing");
-      await this.editScreen(ctx, state, renderSmartRouting(this.getConfig()));
-      return;
-    }
-
-    if (cmd === "sr_tog") {
-      await this.toggleSmartRouting(ctx, state);
-      return;
-    }
-
-    if (cmd === "sr_add") {
-      const providers = getModelLoader().getAll().map(d => d.name);
-      this.stateManager.navigate(state.userId, "sr_prov_pick");
-      await this.editScreen(ctx, state, renderSmartRoutingProviderPicker(providers));
-      return;
-    }
-
-    if (cmd.startsWith("sr_ap:")) {
-      const providerName = cmd.slice(6);
-      state.pendingSrProvider = providerName;
-      const def = getModelLoader().get(providerName);
-      const models = def?.availableModels ?? [];
-      this.stateManager.navigate(state.userId, "sr_model_pick");
-      await this.editScreen(ctx, state, renderSmartRoutingModelPicker(providerName, models));
-      return;
-    }
-
-    if (cmd.startsWith("sr_am:")) {
-      const parts = cmd.slice(6).split(":");
-      const providerName = parts[0];
-      const modelName    = parts.slice(1).join(":");
-      await this.addRosterEntry(ctx, state, providerName, modelName);
-      return;
-    }
-
-    if (cmd.startsWith("sr_rm:")) {
-      const idx = parseInt(cmd.slice(6), 10);
-      await this.removeRosterEntry(ctx, state, idx);
-      return;
-    }
-
-    if (cmd.startsWith("sr_up:")) {
-      const idx = parseInt(cmd.slice(6), 10);
-      await this.moveRosterEntry(ctx, state, idx, -1);
-      return;
-    }
-
-    if (cmd.startsWith("sr_dn:")) {
-      const idx = parseInt(cmd.slice(6), 10);
-      await this.moveRosterEntry(ctx, state, idx, 1);
-      return;
-    }
-
     // ── Health Check ─────────────────────────────────────────
     if (cmd === "hc" || cmd === "hc_r") {
       this.stateManager.navigate(state.userId, "health_check");
@@ -494,21 +435,6 @@ export class TelegramConfigMenu {
       case "model_roles":
         await this.editScreen(ctx, state, renderModelRoles(config));
         break;
-      case "smart_routing":
-        await this.editScreen(ctx, state, renderSmartRouting(config));
-        break;
-      case "sr_prov_pick": {
-        const providers = getModelLoader().getAll().map(d => d.name);
-        await this.editScreen(ctx, state, renderSmartRoutingProviderPicker(providers));
-        break;
-      }
-      case "sr_model_pick": {
-        const provName = state.pendingSrProvider ?? "";
-        const def      = getModelLoader().get(provName);
-        const models   = def?.availableModels ?? [];
-        await this.editScreen(ctx, state, renderSmartRoutingModelPicker(provName, models));
-        break;
-      }
       case "health_check":
         await this.editScreen(ctx, state, renderHealthCheck(this.lastHealth, config, false));
         break;
@@ -885,78 +811,6 @@ export class TelegramConfigMenu {
       `Role <b>${role}</b> assigned to:\n` +
       `<code>${provider}</code> · <code>${model}</code>`,
     ));
-  }
-
-  // ─── Smart Routing ────────────────────────────────────────────
-
-  private async toggleSmartRouting(ctx: Context, state: MenuState): Promise<void> {
-    const config  = this.getConfig();
-    const enabled = !(config.smartRouting?.enabled ?? false);
-    config.smartRouting = {
-      ...config.smartRouting,
-      enabled,
-      availableModels: config.smartRouting?.availableModels ?? [],
-    };
-    await this.saveConfigFn(config);
-    this.stateManager.navigate(state.userId, "smart_routing");
-    await this.editScreen(ctx, state, renderSmartRouting(config));
-  }
-
-  private async addRosterEntry(
-    ctx: Context,
-    state: MenuState,
-    providerName: string,
-    modelName: string,
-  ): Promise<void> {
-    const config  = this.getConfig();
-    const roster  = config.smartRouting?.availableModels ?? [];
-    roster.push({ modelName, providerName });
-    config.smartRouting = {
-      ...config.smartRouting,
-      enabled: config.smartRouting?.enabled ?? false,
-      availableModels: roster,
-    };
-    await this.saveConfigFn(config);
-    this.stateManager.back(state.userId);
-    this.stateManager.back(state.userId);
-    await this.editScreen(ctx, state, renderSmartRouting(config));
-  }
-
-  private async removeRosterEntry(
-    ctx: Context,
-    state: MenuState,
-    idx: number,
-  ): Promise<void> {
-    const config = this.getConfig();
-    const roster = config.smartRouting?.availableModels ?? [];
-    roster.splice(idx, 1);
-    config.smartRouting = {
-      ...config.smartRouting,
-      enabled: config.smartRouting?.enabled ?? false,
-      availableModels: roster,
-    };
-    await this.saveConfigFn(config);
-    await this.editScreen(ctx, state, renderSmartRouting(config));
-  }
-
-  private async moveRosterEntry(
-    ctx: Context,
-    state: MenuState,
-    idx: number,
-    direction: -1 | 1,
-  ): Promise<void> {
-    const config  = this.getConfig();
-    const roster  = config.smartRouting?.availableModels ?? [];
-    const swapIdx = idx + direction;
-    if (swapIdx < 0 || swapIdx >= roster.length) return;
-    [roster[idx], roster[swapIdx]] = [roster[swapIdx], roster[idx]];
-    config.smartRouting = {
-      ...config.smartRouting,
-      enabled: config.smartRouting?.enabled ?? false,
-      availableModels: roster,
-    };
-    await this.saveConfigFn(config);
-    await this.editScreen(ctx, state, renderSmartRouting(config));
   }
 
   // ─── Health Check ─────────────────────────────────────────────
