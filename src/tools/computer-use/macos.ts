@@ -104,6 +104,7 @@ const MODIFIER_MAP: Record<string, string> = {
  * Using stdin avoids all shell quoting/escaping issues.
  */
 async function jxa(script: string): Promise<string> {
+  log.tool.debug("macos.jxa: AppleScript sent", { scriptLen: script.length });
   return new Promise((resolve, reject) => {
     const proc = spawn("osascript", ["-l", "JavaScript"], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -122,7 +123,10 @@ async function jxa(script: string): Promise<string> {
         reject(
           new Error(stderr.trim() || `osascript exited with code ${code}`),
         );
-      else resolve(stdout.trim());
+      else {
+        log.tool.debug("macos.jxa: output received", { outputLen: stdout.trim().length });
+        resolve(stdout.trim());
+      }
     });
     proc.on("error", reject);
     proc.stdin.write(script);
@@ -134,6 +138,7 @@ async function jxa(script: string): Promise<string> {
  * Execute AppleScript via stdin pipe.
  */
 async function applescript(script: string): Promise<string> {
+  log.tool.debug("macos.applescript: sent", { scriptLen: script.length });
   return new Promise((resolve, reject) => {
     const proc = spawn("osascript", [], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -152,7 +157,10 @@ async function applescript(script: string): Promise<string> {
         reject(
           new Error(stderr.trim() || `osascript exited with code ${code}`),
         );
-      else resolve(stdout.trim());
+      else {
+        log.tool.debug("macos.applescript: output received", { outputLen: stdout.trim().length });
+        resolve(stdout.trim());
+      }
     });
     proc.on("error", reject);
     proc.stdin.write(script);
@@ -224,6 +232,7 @@ function getMouseEventTypes(button: MouseButton) {
 }
 
 export async function mouseMove(x: number, y: number): Promise<void> {
+  log.tool.debug("macos.mouseMove: entry", { x, y });
   await jxa(`
     ObjC.import('CoreGraphics');
     var e = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, {x:${x},y:${y}}, 0);
@@ -272,6 +281,7 @@ export async function mouseClick(
   button: MouseButton = "left",
   clickCount = 1,
 ): Promise<void> {
+  log.tool.debug("macos.mouseClick: entry", { x, y, button, clickCount });
   const ev = getMouseEventTypes(button);
 
   // Build click sequence (supports single, double, triple click)
@@ -369,6 +379,7 @@ export async function scroll(
 // ─── Keyboard ────────────────────────────────────────────────────────────────
 
 export async function typeText(text: string, delayMs = 0): Promise<void> {
+  log.tool.debug("macos.typeText: entry", { textLen: text.length, delayMs });
   // Escape text for JXA string
   const escaped = text
     .replace(/\\/g, "\\\\")
@@ -416,6 +427,7 @@ export async function pressKey(
   key: string,
   modifiers: string[] = [],
 ): Promise<void> {
+  log.tool.debug("macos.pressKey: entry", { key, modifiers });
   // Resolve key name to keycode
   const keyLower = key.toLowerCase();
   const keyCode = KEY_CODES[keyLower];
@@ -488,21 +500,27 @@ export async function hotkey(combo: string): Promise<void> {
 // ─── Application Control ────────────────────────────────────────────────────
 
 export async function openApp(appName: string): Promise<void> {
+  log.tool.debug("macos.openApp: entry", { appName });
   const escaped = appName.replace(/"/g, '\\"');
   await applescript(`tell application "${escaped}" to activate`);
+  log.tool.debug("macos.openApp: exit", { appName });
 }
 
 export async function openUrl(url: string): Promise<void> {
+  log.tool.debug("macos.openUrl: entry", { url });
   const escaped = url.replace(/"/g, '\\"');
   await applescript(`open location "${escaped}"`);
+  log.tool.debug("macos.openUrl: exit", { url });
 }
 
 export async function getFrontApp(): Promise<string> {
+  log.tool.debug("macos.getFrontApp: entry");
   const result = await jxa(`
     var app = Application('System Events');
     var front = app.processes.whose({frontmost: true})[0];
     front.name();
   `);
+  log.tool.debug("macos.getFrontApp: exit", { result });
   return result;
 }
 
@@ -512,12 +530,14 @@ export async function screenshot(
   outputPath: string,
   region?: { x: number; y: number; width: number; height: number },
 ): Promise<void> {
+  log.tool.debug("macos.screenshot: entry", { outputPath, region });
   const regionFlag = region
     ? `-R ${region.x},${region.y},${region.width},${region.height}`
     : "";
   await execAsync(`screencapture -x ${regionFlag} "${outputPath}"`, {
     timeout: TIMEOUT,
   });
+  log.tool.debug("macos.screenshot: exit", { outputPath });
 }
 
 // ─── UI Element Discovery (Accessibility API) ───────────────────────────────
@@ -536,6 +556,7 @@ export async function findUIElements(
   role?: string,
   maxDepth = 5,
 ): Promise<UIElement[]> {
+  log.tool.debug("macos.findUIElements: entry", { appName, searchText, role, maxDepth });
   const escaped = appName.replace(/"/g, '\\"');
 
   const result = await jxa(`
@@ -582,7 +603,9 @@ export async function findUIElements(
   `);
 
   try {
-    return JSON.parse(result);
+    const parsed = JSON.parse(result) as UIElement[];
+    log.tool.debug("macos.findUIElements: exit", { appName, found: parsed.length });
+    return parsed;
   } catch (err) {
     log.tool.warn("findUIElements JSON parse failed", err);
     return [];

@@ -85,6 +85,7 @@ async function jxa(script: string): Promise<string> {
  * content, positions, and numbered references for interactive elements.
  */
 export async function readScreen(appName?: string): Promise<ScreenState> {
+  log.tool.debug("screen-reader.readScreen: entry", { appName });
   // Single JXA call that does the entire deep walk — much faster than
   // multiple roundtrips. Returns JSON with the full element tree.
   const result = await jxa(`
@@ -238,7 +239,15 @@ export async function readScreen(appName?: string): Promise<ScreenState> {
     });
   `);
 
-  return JSON.parse(result);
+  const state = JSON.parse(result) as ScreenState;
+  log.tool.debug("screen-reader.readScreen: exit", {
+    app: state.app,
+    windowTitle: state.windowTitle,
+    screenW: state.screen.width,
+    screenH: state.screen.height,
+    interactiveCount: state.interactiveCount,
+  });
+  return state;
 }
 
 // ─── Compact Text Formatter ─────────────────────────────────────────────────
@@ -436,6 +445,7 @@ export async function waitForElement(
   criteria: { text?: string; role?: string; app?: string },
   timeoutMs = 10_000,
 ): Promise<ScreenElement | null> {
+  log.tool.debug("screen-reader.waitForElement: entry", { criteria, timeoutMs });
   const deadline = Date.now() + timeoutMs;
   let interval = 50; // Start fast — most UI transitions are < 200ms
 
@@ -443,7 +453,10 @@ export async function waitForElement(
     try {
       const state = await readScreen(criteria.app);
       const found = findElement(state.elements, criteria);
-      if (found) return found;
+      if (found) {
+        log.tool.debug("screen-reader.waitForElement: element found", { criteria });
+        return found;
+      }
     } catch (err) {
       log.tool.warn('operation failed', err);
       // AX read failed — retry
@@ -455,6 +468,7 @@ export async function waitForElement(
     );
     interval = Math.min(interval * 2, 1_000); // Double each poll, cap at 1s
   }
+  log.tool.debug("screen-reader.waitForElement: timed out", { criteria, timeoutMs });
   return null;
 }
 

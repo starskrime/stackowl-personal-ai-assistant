@@ -13,6 +13,7 @@
 import type { Page } from "puppeteer";
 import { BrowserBridge } from "../computer-use/browser/cdp.js";
 import type { ChromeBackend, PageLike } from "./chrome-driver.js";
+import { log } from "../../logger.js";
 
 /**
  * Adapt a puppeteer `Page` to the structural `PageLike` interface
@@ -68,21 +69,29 @@ export class PuppeteerChromeBackend implements ChromeBackend {
   }
 
   async pages(): Promise<PageLike[]> {
+    log.tool.debug("chrome-backend.pages: entry");
     const ps = await this.allPages();
+    log.tool.debug("chrome-backend.pages: exit", { pageCount: ps.length });
     return ps.map(asPageLike);
   }
 
   async activePage(): Promise<PageLike> {
+    log.tool.debug("chrome-backend.activePage: entry");
     this.requireBrowser();
     const ps = await this.allPages();
-    if (this.active && ps.includes(this.active)) return asPageLike(this.active);
+    if (this.active && ps.includes(this.active)) {
+      log.tool.debug("chrome-backend.activePage: returning tracked active page");
+      return asPageLike(this.active);
+    }
     const fallback = ps[0];
     if (!fallback) throw new Error("No open pages in Chrome.");
     this.active = fallback;
+    log.tool.debug("chrome-backend.activePage: returning fallback page", { url: fallback.url() });
     return asPageLike(fallback);
   }
 
   async newPage(url?: string): Promise<PageLike> {
+    log.tool.debug("chrome-backend.newPage: entry", { url });
     this.requireBrowser();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const browser = (this.bridge as any).browser as {
@@ -94,14 +103,20 @@ export class PuppeteerChromeBackend implements ChromeBackend {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     }
     this.active = page;
+    log.tool.debug("chrome-backend.newPage: exit", { url });
     return asPageLike(page);
   }
 
   async activateTab(index: number): Promise<void> {
+    log.tool.debug("chrome-backend.activateTab: entry", { index });
     const ps = await this.allPages();
     const target = ps[index];
-    if (!target) return;
+    if (!target) {
+      log.tool.debug("chrome-backend.activateTab: index out of range", { index, pageCount: ps.length });
+      return;
+    }
     await target.bringToFront();
     this.active = target;
+    log.tool.debug("chrome-backend.activateTab: exit", { index });
   }
 }

@@ -63,6 +63,7 @@ export class BrowserBridge {
    * or: open -a "Google Chrome" --args --remote-debugging-port=9222
    */
   async connect(port = 9222): Promise<void> {
+    log.tool.debug("BrowserBridge.connect: entry", { port });
     await this.teardown();
     this.browser = await puppeteer.connect({
       browserURL: `http://localhost:${port}`,
@@ -70,6 +71,7 @@ export class BrowserBridge {
     });
     const pages = await this.browser.pages();
     this.page = pages[0] ?? (await this.browser.newPage());
+    log.tool.debug("BrowserBridge.connect: exit", { port, pageCount: pages.length });
   }
 
   /**
@@ -77,6 +79,7 @@ export class BrowserBridge {
    * headless=false opens a visible window (default — user can see what's happening).
    */
   async launch(url?: string, headless = false): Promise<void> {
+    log.tool.debug("BrowserBridge.launch: entry", { url, headless });
     await this.teardown();
     this.browser = await puppeteer.launch({
       headless,
@@ -92,10 +95,13 @@ export class BrowserBridge {
 
     const pages = await this.browser.pages();
     this.page = pages[0] ?? (await this.browser.newPage());
+    log.tool.debug("BrowserBridge.launch: browser ready", { url, headless });
 
     if (url) {
       await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      log.tool.debug("BrowserBridge.launch: navigated", { url });
     }
+    log.tool.debug("BrowserBridge.launch: exit", { url, headless });
   }
 
   async disconnect(): Promise<void> {
@@ -136,9 +142,12 @@ export class BrowserBridge {
   // ─── Navigation ───────────────────────────────────────────────
 
   async navigate(url: string): Promise<{ title: string; url: string }> {
+    log.tool.debug("BrowserBridge.navigate: entry", { url });
     const page = await this.getPage();
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    return { title: await page.title(), url: page.url() };
+    const result = { title: await page.title(), url: page.url() };
+    log.tool.debug("BrowserBridge.navigate: exit", { title: result.title, finalUrl: result.url });
+    return result;
   }
 
   // ─── DOM snapshot ─────────────────────────────────────────────
@@ -157,6 +166,7 @@ export class BrowserBridge {
    * Use the sel: value with browser_click/browser_type for reliable element targeting.
    */
   async getPageText(): Promise<string> {
+    log.tool.debug("BrowserBridge.getPageText: entry");
     const page = await this.getPage();
 
     const snapshot = await page.evaluate((): string => {
@@ -254,6 +264,7 @@ export class BrowserBridge {
       return lines.join("\n");
     });
 
+    log.tool.debug("BrowserBridge.getPageText: exit", { snapshotLen: snapshot.length });
     return snapshot;
   }
 
@@ -264,15 +275,18 @@ export class BrowserBridge {
    * Tries CSS selector first, then falls back to visible text matching.
    */
   async click(selector?: string, text?: string): Promise<void> {
+    log.tool.debug("BrowserBridge.click: entry", { selector, text });
     const page = await this.getPage();
 
     if (selector) {
       try {
         await page.waitForSelector(selector, { timeout: 5_000 });
         await page.click(selector);
+        log.tool.debug("BrowserBridge.click: exit via selector", { selector });
         return;
       } catch (err) {
         log.tool.warn('operation failed', err);
+        log.tool.debug("BrowserBridge.click: selector failed, falling back to text", { selector });
         // Fall through to text-based match
       }
     }
@@ -302,6 +316,7 @@ export class BrowserBridge {
       }, text);
 
       if (!clicked) throw new Error(`No element found with text: "${text}"`);
+      log.tool.debug("BrowserBridge.click: exit via text match", { text });
       return;
     }
 
@@ -313,11 +328,13 @@ export class BrowserBridge {
    * Clears existing value, then types the new text.
    */
   async fill(selector: string, text: string): Promise<void> {
+    log.tool.debug("BrowserBridge.fill: entry", { selector, textLen: text.length });
     const page = await this.getPage();
     await page.waitForSelector(selector, { timeout: 5_000 });
     // Triple-click to select all existing text before typing
     await page.click(selector, { clickCount: 3 });
     await page.type(selector, text, { delay: 0 });
+    log.tool.debug("BrowserBridge.fill: exit", { selector, textLen: text.length });
   }
 
   /**
@@ -325,30 +342,38 @@ export class BrowserBridge {
    * Returns the result as a JSON-serializable value.
    */
   async evaluate(script: string): Promise<unknown> {
+    log.tool.debug("BrowserBridge.evaluate: entry", { scriptLen: script.length });
     const page = await this.getPage();
-    return await page.evaluate(script);
+    const result = await page.evaluate(script);
+    log.tool.debug("BrowserBridge.evaluate: exit", { resultType: typeof result });
+    return result;
   }
 
   /**
    * Save a screenshot of the browser viewport.
    */
   async screenshot(outputPath: string): Promise<void> {
+    log.tool.debug("BrowserBridge.screenshot: entry", { outputPath });
     const dir = dirname(outputPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const page = await this.getPage();
     await page.screenshot({ path: outputPath });
+    log.tool.debug("BrowserBridge.screenshot: exit", { outputPath });
   }
 
   /**
    * Wait for an element matching selector to appear in the DOM.
    */
   async waitForSelector(selector: string, timeoutMs = 10_000): Promise<boolean> {
+    log.tool.debug("BrowserBridge.waitForSelector: entry", { selector, timeoutMs });
     const page = await this.getPage();
     try {
       await page.waitForSelector(selector, { timeout: timeoutMs });
+      log.tool.debug("BrowserBridge.waitForSelector: exit", { selector, found: true });
       return true;
     } catch (err) {
       log.tool.warn('operation failed', err);
+      log.tool.debug("BrowserBridge.waitForSelector: exit", { selector, found: false });
       return false;
     }
   }
