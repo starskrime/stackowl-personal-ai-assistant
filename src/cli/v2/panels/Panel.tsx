@@ -139,7 +139,7 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
                 <Text color={isSelected ? borderColor : undefined} bold={isSelected}>
                   {isSelected ? "❯ " : "  "}
                 </Text>
-                <Text bold={isSelected}>{isWorking ? "⟳ " : ""}{item.label}</Text>
+                <Text bold={isSelected} color={isSelected ? borderColor : undefined}>{isWorking ? "⟳ " : ""}{item.label}</Text>
                 {item.meta && <Text dimColor>{"  " + item.meta}</Text>}
               </Box>
             );
