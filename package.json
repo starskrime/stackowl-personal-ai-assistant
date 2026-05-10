@@ -16,7 +16,8 @@
     "lint": "eslint src/",
     "format": "prettier --write src/",
     "stackowl": "tsx src/index.ts",
-    "tool:create": "tsx scripts/create-tool.ts"
+    "tool:create": "tsx scripts/create-tool.ts",
+    "test:heap": "node --expose-gc ./node_modules/.bin/vitest run __tests__/tui-v2/heap-canary.test.ts"
   },
   "keywords": [
     "ai-assistant",

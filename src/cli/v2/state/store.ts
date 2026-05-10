@@ -44,3 +44,13 @@ export const uiStore = createStore<UiState>(() => initialState);
 export function applyToStore(updater: (state: UiState) => UiState): void {
   uiStore.setState(updater(uiStore.getState()));
 }
+
+/** Returns the current state snapshot (for tests and selectors). */
+export function getStore(): UiState {
+  return uiStore.getState();
+}
+
+/** Resets the store to initial state (for test isolation). */
+export function resetStore(): void {
+  uiStore.setState(initialState, true);
+}
