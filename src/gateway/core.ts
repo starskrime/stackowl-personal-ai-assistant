@@ -1620,7 +1620,7 @@ export class OwlGateway {
         // Explicit invocation via /skill_name still triggers direct execution (above).
         const topMatch = relevantMatches[0];
         const topSkill = topMatch.skill;
-        if (false && this.skillInjector!.canExecuteStructured(topSkill)) {
+        if (topMatch.method === "llm" && this.skillInjector!.canExecuteStructured(topSkill)) {
           log.engine.info(`Structured skill execution: ${topSkill.name}`);
           const emoji = topSkill.metadata.openclaw?.emoji || "⚡";
           if (callbacks.onProgress) {
