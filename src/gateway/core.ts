@@ -128,7 +128,8 @@ import { GoalVerifier } from "../tools/goal-verifier.js";
 import { formatSignalPromoted } from "./narration-formatter.js";
 import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
-import { createInvokeSkillTool } from "../tools/invoke-skill.js";
+import { createInvokeSkillTool } from "../tools/invoke-skill.js"
+import { dispatchSkillCommand } from "./commands/skill-router.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -1127,6 +1128,34 @@ export class OwlGateway {
         owlEmoji: this.ctx.owl.persona.emoji,
         toolsUsed: [],
       };
+    }
+
+    // ─── /skill management commands (channel-parity router) ──────
+    // Intercept management verbs before falling through to skill execution.
+    const skillCmdMatch = message.text
+      .trim()
+      .match(/^\/skill\s+(\S+)(?:\s+(.+))?$/i);
+    const SKILL_MGMT_VERBS = new Set(["list", "show", "install", "create", "enable", "disable", "remove", "run"])
+    if (skillCmdMatch && SKILL_MGMT_VERBS.has(skillCmdMatch[1].toLowerCase())) {
+      const [, verb, rest] = skillCmdMatch
+      const args = rest ? rest.trim().split(/\s+/) : []
+      const registry = this.ctx.skillsLoader?.getRegistry()
+      const stubWizard = { start: async () => "Skill creation wizard coming soon.", isActive: () => false, cancel: () => {} }
+      const content = await dispatchSkillCommand(verb, args, {
+        registry: registry as any,
+        wizard: (this.ctx as any).skillWizard ?? stubWizard,
+        installer: (this.ctx as any).skillInstaller,
+        userId: message.userId,
+        channelAdapter: undefined,
+        workspacePath: this.ctx.cwd ?? process.cwd(),
+        db: this.ctx.db,
+      })
+      return {
+        content,
+        owlName: this.ctx.owl.persona.name,
+        owlEmoji: this.ctx.owl.persona.emoji,
+        toolsUsed: [],
+      }
     }
 
     // Check for explicit skill invocation: /skill <name> [args...]
