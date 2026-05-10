@@ -80,7 +80,7 @@ read_log_level() {
     try {
       const c = JSON.parse(require('fs').readFileSync('$CONFIG_FILE', 'utf8'));
       console.log((c.logging && c.logging.level) || 'debug');
-    } catch { console.log('debug'); }
+    } catch (e) { console.log('debug'); }
   " 2>/dev/null
 }
 
@@ -89,12 +89,12 @@ ensure_log_level() {
   node -e "
     const fs = require('fs');
     let c = {};
-    try { c = JSON.parse(fs.readFileSync('$CONFIG_FILE', 'utf8')); } catch { return; }
+    try { c = JSON.parse(fs.readFileSync('$CONFIG_FILE', 'utf8')); } catch (e) { process.exit(0); }
     if (!c.logging || !c.logging.level) {
       c.logging = Object.assign({}, c.logging || {}, { level: 'debug' });
       fs.writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2));
     }
-  " 2>/dev/null
+  " 2>/dev/null || true
 }
 
 has_slack() {
