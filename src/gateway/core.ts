@@ -450,6 +450,11 @@ export class OwlGateway {
           ? "[IntelligenceRouter] Tiered model routing active"
           : "[IntelligenceRouter] Using default pass-through config (no intelligence block in config)",
       );
+
+      // Wire health policy into ProviderRegistry circuit breakers
+      if (ctx.providerRegistry && ctx.config.intelligence?.healthPolicy) {
+        ctx.providerRegistry.setHealthPolicy(ctx.config.intelligence.healthPolicy);
+      }
     }
 
     // Initialize extracted handlers (Improvement #4)

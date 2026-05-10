@@ -783,9 +783,7 @@ export class OwlEngine {
       resolved.provider !== provider.name &&
       context.providerRegistry
     ) {
-      // getAvailable() added in Task 9; use get() with try/catch until then
-      let routedProvider: typeof provider | undefined;
-      try { routedProvider = context.providerRegistry.get(resolved.provider); } catch { /* noop */ }
+      const routedProvider = context.providerRegistry.getAvailable(resolved.provider);
       if (routedProvider) {
         log.engine.warn(
           `[IntelligenceRouter] Cross-provider routing on first turn: ${provider.name} → ${resolved.provider}`,
@@ -1881,15 +1879,12 @@ ${userMessage}
 
         // If we've failed multiple tool calls in a row, try IntelligenceRouter failover.
         if (globalConsecutiveFailures >= 2) {
-          // recordProviderResult() added to ProviderRegistry in Task 9
-          (context.providerRegistry as any)?.recordProviderResult?.(currentProvider.name, false);
+          context.providerRegistry?.recordProviderResult(currentProvider.name, false);
           const currentTier = context.intelligence?.resolve("conversation").tier ?? "mid";
           const fallback = context.intelligence?.resolveFailover(currentTier);
 
           if (fallback && fallback.provider !== currentProvider.name && context.providerRegistry) {
-            // getAvailable() added to ProviderRegistry in Task 9
-            const fallbackProvider: typeof provider | undefined =
-              (context.providerRegistry as any)?.getAvailable?.(fallback.provider);
+            const fallbackProvider = context.providerRegistry.getAvailable(fallback.provider);
             if (fallbackProvider) {
               log.engine.warn(
                 `[IntelligenceRouter] Tool failed ${globalConsecutiveFailures}x. Swapping provider: ${currentProvider.name} → ${fallback.provider}`,
