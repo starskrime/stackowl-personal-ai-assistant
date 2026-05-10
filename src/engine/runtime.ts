@@ -20,7 +20,6 @@ import type { OwlRegistry } from "../owls/registry.js";
 import type { PelletStore } from "../pellets/store.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
-import { ModelRouter } from "./router.js";
 import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
@@ -771,24 +770,9 @@ export class OwlEngine {
     const toolResultsBuffer: string[] = [];
     let deeperExtended = false;
 
-    // 1. Determine optimal model (heuristic, no LLM call)
-    let routeDecision = ModelRouter.route(userMessage, config);
-    let optimalModel = routeDecision.modelName;
-
-    // Dynamic provider resolution based on route (if cross-provider routing is needed early)
+    // 1. Determine optimal model (IntelligenceRouter — full wiring added in Task 8)
+    let optimalModel = config.defaultModel;
     let currentProvider = provider;
-    if (
-      routeDecision.providerName &&
-      routeDecision.providerName !== provider.name &&
-      context.providerRegistry
-    ) {
-      log.engine.warn(
-        `Cross-provider routing on first turn: Swapping ${provider.name} for ${routeDecision.providerName}`,
-      );
-      currentProvider = context.providerRegistry.get(
-        routeDecision.providerName,
-      );
-    }
 
     log.engine.model(optimalModel);
 
@@ -1875,46 +1859,12 @@ ${userMessage}
           }
         }
 
-        // If we've failed multiple tool calls in a row across the whole loop,
-        // it's highly likely the local model is hallucinating or stuck.
-        // Try to trigger a fallback router switch to a heavier cloud model.
+        // If we've failed multiple tool calls in a row, log the condition.
+        // Full IntelligenceRouter failover wiring added in Task 8.
         if (globalConsecutiveFailures >= 2) {
-          const newRoute = ModelRouter.route(
-            userMessage,
-            config,
-            globalConsecutiveFailures,
+          log.engine.warn(
+            `[Runtime] Tool failed ${globalConsecutiveFailures}x — no fallback configured yet.`,
           );
-
-          if (
-            newRoute.providerName &&
-            newRoute.providerName !== currentProvider.name &&
-            context.providerRegistry
-          ) {
-            try {
-              const fallbackProvider = context.providerRegistry.get(
-                newRoute.providerName,
-              );
-              log.engine.warn(
-                `[Cross-Provider Hot Swap] Tool failed ${globalConsecutiveFailures}x. Swapping provider: ${currentProvider.name} → ${newRoute.providerName}`,
-              );
-              currentProvider = fallbackProvider;
-              if (context.onProgress)
-                await context.onProgress(
-                  `🔄 **Cross-Provider Triggered:** Swapping to ${newRoute.providerName} (${newRoute.modelName}) to resolve failure.`,
-                );
-            } catch (err) {
-              log.engine.warn(
-                `Could not swap to fallback provider "${newRoute.providerName}" - staying on current provider. Reason: ${(err as Error).message}`,
-              );
-            }
-          }
-
-          if (newRoute.modelName && newRoute.modelName !== optimalModel) {
-            log.engine.warn(
-              `Tool failed ${globalConsecutiveFailures}x. Swapping model: ${optimalModel} → ${newRoute.modelName}`,
-            );
-            optimalModel = newRoute.modelName;
-          }
         }
 
         // Continue the loop — use resilient streaming
