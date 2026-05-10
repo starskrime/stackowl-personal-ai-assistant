@@ -31,6 +31,7 @@ import { DNADecisionLayer } from "../owls/decision-layer.js";
 import { DiagnosticEngine } from "./diagnostic-engine.js";
 import type { DiagnosticInput } from "./diagnostic-engine.js";
 import { ToolResultEvaluator } from "./tool-result-evaluator.js";
+import { toolAdvisor } from "./tool-advisor.js";
 import type { ToolMastery } from "../tools/tool-mastery.js";
 import type { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import type { DomainToolMap } from "../delegation/domain-tool-map.js";
@@ -1157,7 +1158,6 @@ ${userMessage}
       // room to breathe.
       const recentToolNames: string[] = [];
       const TOOL_WINDOW_SIZE = 12;
-      const TOOL_WINDOW_MAX_REPEATS = 6;
 
       // Tools that are legitimately called many times in sequence — exempt from
       // the sliding-window check. computer_use is inherently sequential:
@@ -1260,7 +1260,7 @@ ${userMessage}
         // Phase 1: Pre-filter through guards sequentially (cheap, no I/O)
         type ToolAction =
           | { kind: "duplicate"; toolCall: ToolCall }
-          | { kind: "loop-detected"; toolCall: ToolCall }
+          | { kind: "loop-detected"; toolCall: ToolCall; repeatCount: number }
           | { kind: "missing"; toolCall: ToolCall }
           | { kind: "no-registry"; toolCall: ToolCall }
           | { kind: "execute"; toolCall: ToolCall };
@@ -1287,8 +1287,9 @@ ${userMessage}
           const repeatCount = recentToolNames.filter(
             (n) => n === toolCall.name,
           ).length;
+          const toolLoopThreshold = toolAdvisor.getThreshold(toolCall.name);
           if (
-            repeatCount > TOOL_WINDOW_MAX_REPEATS &&
+            repeatCount > toolLoopThreshold &&
             !SEQUENTIAL_USE_TOOLS.has(toolCall.name)
           ) {
             log.engine.warn(
@@ -1301,7 +1302,7 @@ ${userMessage}
               (response.toolCalls ?? []).indexOf(toolCall),
             );
             for (const remaining of remainingToolCalls) {
-              actions.push({ kind: "loop-detected", toolCall: remaining });
+              actions.push({ kind: "loop-detected", toolCall: remaining, repeatCount });
             }
             break; // Stop processing further tool calls
           }
@@ -1455,12 +1456,15 @@ ${userMessage}
             case "loop-detected": {
               // Push a tool result (required by providers) AND a system hint.
               // Using role:"system" alone orphans the tool_use in the assistant message.
+              const advisoryMsg = toolAdvisor.buildAdvisoryMessage(
+                toolCall.name,
+                action.repeatCount,
+                userMessage,
+                TOOL_FALLBACKS[toolCall.name],
+              );
               messages.push({
                 role: "tool",
-                content:
-                  `[LOOP GUARD] Call blocked — "${toolCall.name}" has been called ${recentToolNames.filter((n) => n === toolCall.name).length} times in the last ${recentToolNames.length} tool calls. ` +
-                  `You are stuck in a loop. DO NOT call this tool again with similar arguments. ` +
-                  `Pivot to a completely different approach or tool.`,
+                content: advisoryMsg,
                 toolCallId: toolCall.id,
                 name: toolCall.name,
               });
