@@ -1,6 +1,5 @@
 import { Box, Text } from "ink";
 import { useTheme } from "../providers/ThemeProvider.js";
-import { useTerminalCols } from "../input/useTerminalCols.js";
 
 // "STACKOWL" in ANSI Shadow figlet font — block chars for 3D depth
 const LOGO: Array<{ line: string; bright: boolean }> = [
@@ -14,7 +13,6 @@ const LOGO: Array<{ line: string; bright: boolean }> = [
 
 export function EmptyState() {
   const { colors } = useTheme();
-  const cols = useTerminalCols();
 
   return (
     <Box flexDirection="column" paddingBottom={1}>
@@ -24,7 +22,7 @@ export function EmptyState() {
         </Text>
       ))}
 
-      <Text dimColor>{"─".repeat(cols)}</Text>
+      <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} borderColor={colors.brandDim} />
 
       <Box paddingLeft={1}>
         <Text bold>Personal AI Assistant</Text>
