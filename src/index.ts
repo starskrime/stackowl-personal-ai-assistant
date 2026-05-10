@@ -156,7 +156,6 @@ import { ToolSynthesizer } from "./evolution/synthesizer.js";
 import { CapabilityLedger } from "./evolution/ledger.js";
 import { DynamicToolLoader } from "./evolution/loader.js";
 import { EvolutionHandler } from "./evolution/handler.js";
-import { SkillsEngine } from "./skills/engine.js";
 import { SkillsMigrator } from "./skills/migrator.js";
 import { SkillInstaller, parseInstallSource } from "./skills/installer.js";
 import { StackOwlServer } from "./server/index.js";
@@ -620,8 +619,6 @@ async function bootstrap() {
   if (migratedCount > 0) {
     console.log(chalk.dim(`  [Migrated ${migratedCount} instinct(s) to skills]`));
   }
-  const skillsEngine = new SkillsEngine();
-
   // Skills (OpenCLAW-compatible)
   // Always include built-in defaults + any user-configured directories
   const skillsLoader = new SkillsLoader();
@@ -821,7 +818,6 @@ async function bootstrap() {
     sessionStore,
     pelletStore,
     evolutionEngine,
-    skillsEngine,
     workspacePath,
     evolution,
     synthesizer,
@@ -1123,7 +1119,6 @@ async function buildGateway(
     evolutionEngine: b.evolutionEngine,
     learningOrchestrator: b.learningOrchestratorFactory(owl),
     innerLife,
-    skillsEngine: b.skillsEngine,
     preferenceStore: b.preferenceStore,
     reflexionEngine: b.reflexionEngine,
     skillsLoader: b.skillsLoader,
