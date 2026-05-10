@@ -37,7 +37,6 @@ export type JobType =
   | "self_study"             // Research a topic gap
   | "knowledge_council"      // Cross-owl knowledge session
   | "dream_reflexion"        // Reflexion/self-improvement pass
-  | "skill_evolution"        // Evolve owl skills
   | "background_task"        // Arbitrary background work
   | "goal_check"             // Review active goals
   | "goal_progress_update";  // Notify user about progress on a tracked goal

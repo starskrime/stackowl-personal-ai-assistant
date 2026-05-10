@@ -53,8 +53,6 @@ export type CognitiveAction =
   | "gap_driven_study"           // Study a topic from capability gaps
   | "autonomous_skill_synthesis" // Proactively create skills for anticipated needs
   | "self_reflection"            // Review failures & generate new desires/goals
-  | "pattern_mining"             // Crystallize skills from conversation patterns
-  | "skill_evolution"            // Improve existing skills
   | "reflexion_dream"            // Learn from past mistakes
   | "capability_scan"            // Discover unused platform features
   | "frontier_exploration"       // Explore adjacent domains to deepen knowledge
@@ -531,15 +529,6 @@ export class CognitiveLoop {
         priority: 35,
       });
     }
-
-    // ─── REMOVED (proactive token burners) ──────────────────────
-    // desire_driven_study    — studied random desires
-    // gap_driven_study       — proactive capability gap exploration
-    // self_reflection        — generated new desires (fed more random study)
-    // pattern_mining         — mined patterns into skills proactively
-    // skill_evolution        — critiqued/rewrote skills proactively
-    // capability_scan        — discovered unused features proactively
-    // frontier_exploration   — deep-researched random knowledge graph topics
 
     if (candidates.length === 0) {
       return { action: "idle", reason: "Nothing to do", priority: 0 };

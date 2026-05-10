@@ -401,7 +401,6 @@ export class ProactivePinger {
       morning_brief: [this.config.morningBriefHour, 0],
       memory_consolidation: [2, 0],
       tool_pruning: [3, 0],
-      skill_evolution: [5, 0],
     };
 
     if (intervals[job.type]) {
