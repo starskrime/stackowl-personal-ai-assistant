@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ModelRouter } from "../src/engine/router.js";
 import { TaskPlanner, shouldUsePlanner } from "../src/engine/planner.js";
 import { DiagnosticEngine } from "../src/engine/diagnostic-engine.js";
-import type { StackOwlConfig } from "../src/config/loader.js";
 import type {
   ModelProvider,
   ChatMessage,
@@ -43,40 +41,6 @@ function makeMockProvider(responseContent: string): ModelProvider {
     listModels: vi.fn().mockResolvedValue([]),
     healthCheck: vi.fn().mockResolvedValue(true),
   } as unknown as ModelProvider;
-}
-
-// ─── Mock Config Factory ─────────────────────────────────────────────────
-
-function makeConfig(
-  overrides: Partial<StackOwlConfig["smartRouting"]> = {},
-): StackOwlConfig {
-  return {
-    providers: {
-      ollama: { baseUrl: "http://localhost:11434", defaultModel: "llama3" },
-      anthropic: {
-        apiKey: "test-key",
-        defaultModel: "claude-3-5-sonnet-latest",
-      },
-    },
-    defaultProvider: "ollama",
-    defaultModel: "llama3",
-    workspace: "/tmp/test",
-    gateway: { port: 3000, host: "localhost" },
-    parliament: { maxRounds: 3, maxOwls: 3 },
-    heartbeat: { enabled: false, intervalMinutes: 60 },
-    owlDna: { enabled: true, evolutionBatchSize: 10, decayRatePerWeek: 0.1 },
-    smartRouting: {
-      enabled: true,
-      fallbackProvider: "anthropic",
-      fallbackModel: "claude-3-5-sonnet-latest",
-      availableModels: [
-        { modelName: "llama3:8b", providerName: "ollama", description: "Fast, lightweight" },
-        { modelName: "llama3:70b", providerName: "ollama", description: "Balanced" },
-        { modelName: "claude-3-5-sonnet-latest", providerName: "anthropic", description: "Most capable" },
-      ],
-      ...overrides,
-    },
-  };
 }
 
 // ─── Tool Definitions ────────────────────────────────────────────────────
@@ -124,141 +88,6 @@ const MOCK_TOOLS: ToolDefinition[] = [
     },
   },
 ];
-
-// ══════════════════════════════════════════════════════════════════════════
-// MODEL ROUTER TESTS
-// ══════════════════════════════════════════════════════════════════════════
-
-describe("ModelRouter", () => {
-  describe("route()", () => {
-    it("returns default model when smart routing is disabled", () => {
-      const config = makeConfig({ enabled: false });
-      const result = ModelRouter.route("hello", config);
-      expect(result.modelName).toBe("llama3");
-    });
-
-    it("returns default model when availableModels is empty", () => {
-      const config = makeConfig({ availableModels: [] });
-      const result = ModelRouter.route("hello", config);
-      expect(result.modelName).toBe("llama3");
-    });
-
-    it("returns single model when only one is available", () => {
-      const config = makeConfig({
-        availableModels: [{ modelName: "llama3:8b", providerName: "ollama", description: "Fast" }],
-      });
-      const result = ModelRouter.route("hello", config);
-      expect(result.modelName).toBe("llama3:8b");
-    });
-
-    it("returns first model for simple conversational messages", () => {
-      const config = makeConfig();
-      const simpleMessages = [
-        "hi",
-        "hello",
-        "thanks",
-        "ok",
-        "sure",
-        "yes",
-        "no",
-        "yep",
-        "nope",
-        "cool",
-      ];
-      for (const msg of simpleMessages) {
-        const result = ModelRouter.route(msg, config);
-        expect(result.modelName).toBe("llama3:8b");
-      }
-    });
-
-    it("returns last (most capable) model for heavy tasks", () => {
-      const config = makeConfig();
-      const heavyPrompts = [
-        "implement a binary search algorithm in typescript with full test coverage",
-        "design a complete microservices architecture for a large scale application",
-        "debug this persistent memory leak in the node.js application",
-        "optimize the slow database query performance across all tables",
-        "compare and analyze react vs vue for building a large enterprise application",
-        "explain in detail how kubernetes container scheduling works under the hood",
-        "analyze the performance bottlenecks in this distributed system",
-        "write code to implement a red-black tree data structure from scratch",
-      ];
-      for (const prompt of heavyPrompts) {
-        const result = ModelRouter.route(prompt, config);
-        expect(result.modelName).toBe("claude-3-5-sonnet-latest");
-      }
-    });
-
-    it("returns middle model for standard complexity tasks", () => {
-      const config = makeConfig();
-      const prompt =
-        "I need to build a feature that handles user authentication with JWT tokens and session management for a web application";
-      const result = ModelRouter.route(prompt, config);
-      expect(result.modelName).toBe("llama3:70b");
-    });
-
-    it("returns first model for very short messages (<40 chars)", () => {
-      const config = makeConfig();
-      const result = ModelRouter.route("Hello there!", config);
-      expect(result.modelName).toBe("llama3:8b");
-    });
-
-    it("returns last model for long prompts (>60 words)", () => {
-      const config = makeConfig();
-      const longPrompt =
-        "describe " +
-        "the various different important key essential critical main significant notable features of this particular system ".repeat(
-          4,
-        );
-      expect(longPrompt.split(/\s+/).length).toBeGreaterThan(60);
-      const result = ModelRouter.route(longPrompt, config);
-      expect(result.modelName).toBe("claude-3-5-sonnet-latest");
-    });
-
-    it("returns first model for short prompts (<12 words)", () => {
-      const config = makeConfig();
-      const result = ModelRouter.route("Explain recursion briefly", config);
-      expect(result.modelName).toBe("llama3:8b");
-    });
-
-    it("escalates to fallback after 2 failures", () => {
-      const config = makeConfig();
-      const result = ModelRouter.route("hello", config, 2);
-      expect(result.modelName).toBe("claude-3-5-sonnet-latest");
-      expect(result.providerName).toBe("anthropic");
-    });
-
-    it("escalates to fallback after 3 failures", () => {
-      const config = makeConfig();
-      const result = ModelRouter.route("hello", config, 3);
-      expect(result.modelName).toBe("claude-3-5-sonnet-latest");
-      expect(result.providerName).toBe("anthropic");
-    });
-
-    it("does not escalate for failureCount < 2", () => {
-      const config = makeConfig();
-      const result = ModelRouter.route("hello", config, 1);
-      expect(result.modelName).toBe("llama3:8b");
-      expect(result.providerName).toBe("ollama");
-    });
-
-    it("handles missing fallbackProvider gracefully", () => {
-      const config = makeConfig({
-        fallbackProvider: undefined,
-        fallbackModel: "claude-3-5-sonnet-latest",
-      });
-      const result = ModelRouter.route("hello", config, 2);
-      expect(result.modelName).toBe("claude-3-5-sonnet-latest");
-      expect(result.providerName).toBeUndefined();
-    });
-
-    it("handles missing smartRouting entirely", () => {
-      const config = { ...makeConfig(), smartRouting: undefined };
-      const result = ModelRouter.route("hello", config as StackOwlConfig);
-      expect(result.modelName).toBe("llama3");
-    });
-  });
-});
 
 // ══════════════════════════════════════════════════════════════════════════
 // PLANNER TESTS

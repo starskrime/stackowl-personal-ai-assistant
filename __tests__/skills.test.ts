@@ -726,7 +726,6 @@ describe("ConfigContextBuilder", () => {
       execution: { hostMode: true },
       browser: { enabled: true },
       skills: { enabled: true },
-      smartRouting: { enabled: true },
       costs: { enabled: true },
       storage: { backend: "sqlite" },
     } as unknown as StackOwlConfig;
@@ -764,7 +763,6 @@ describe("ConfigContextBuilder", () => {
       const snapshot = builder.build();
       expect(snapshot.capabilities).toContain("host_shell_access");
       expect(snapshot.capabilities).toContain("skill_system");
-      expect(snapshot.capabilities).toContain("smart_routing");
       expect(snapshot.capabilities).toContain("sqlite_storage");
     });
   });

@@ -100,21 +100,6 @@ export interface StackOwlConfig {
     /** Max tools to pass to the model per turn when intent routing is enabled. Default: 8 */
     maxToolsRouting?: number;
   };
-  /**
-   * @deprecated Use `intelligence` block instead.
-   * Kept in type so existing ModelRouter references compile.
-   * At runtime, a config JSON containing smartRouting throws.
-   */
-  smartRouting?: {
-    enabled: boolean;
-    fallbackProvider?: string;
-    fallbackModel?: string;
-    availableModels: {
-      modelName: string;
-      providerName: string;
-      description?: string;
-    }[];
-  };
   /** Tiered model routing for all platform components. */
   intelligence?: IntelligenceConfig;
   skills?: {
@@ -423,6 +408,35 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   },
 };
 
+// ─── Default Intelligence Config ─────────────────────────────────
+
+/**
+ * Build a pass-through IntelligenceConfig from bare provider/model defaults.
+ * Used when the user config omits the `intelligence` block entirely.
+ * Every task type resolves to the same provider and model — identical to
+ * the pre-IntelligenceRouter default behavior.
+ */
+export function buildDefaultIntelligenceConfig(
+  defaultProvider: string,
+  defaultModel: string,
+): IntelligenceConfig {
+  const tier = { provider: defaultProvider, model: defaultModel };
+  return {
+    tiers: { high: tier, mid: tier, low: tier },
+    defaults: {
+      conversation:   "mid",
+      parliament:     "high",
+      evolution:      "mid",
+      extraction:     "low",
+      episodic:       "low",
+      classification: "low",
+      synthesis:      "high",
+      summarization:  "low",
+      clarification:  "mid",
+    },
+  };
+}
+
 // ─── Loader ──────────────────────────────────────────────────────
 
 export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
@@ -444,12 +458,6 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
   try {
     const raw = await readFile(configPath, "utf-8");
     const userConfig = JSON.parse(raw) as Partial<StackOwlConfig>;
-
-    if ("smartRouting" in userConfig) {
-      throw new Error(
-        "[Config] smartRouting is no longer supported. Replace it with the intelligence block. See docs/platform-audit/progress.md.",
-      );
-    }
 
     // Deep merge with defaults
     const config: StackOwlConfig = {

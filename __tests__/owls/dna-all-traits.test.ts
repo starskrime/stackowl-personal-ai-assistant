@@ -45,7 +45,7 @@ describe("DNA all-8-traits directives", () => {
       provider,
       owl: { persona: makePersona(), dna },
       sessionHistory: [],
-      config: { defaultProvider: "mock", providers: {}, owlDna: {}, parliament: {}, heartbeat: {}, smartRouting: { enabled: false }, web: {} } as any,
+      config: { defaultProvider: "mock", providers: {}, owlDna: {}, parliament: {}, heartbeat: {}, web: {} } as any,
     })
 
     const chatCall = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0]

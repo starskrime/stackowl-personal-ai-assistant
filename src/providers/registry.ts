@@ -26,6 +26,8 @@ import { createAnthropicProvider } from "./protocols/anthropic.js";
 import { GeminiProtocolProvider } from "./protocols/gemini.js";
 import { GrokProtocolProvider } from "./protocols/grok.js";
 import type { ModelDefinition } from "../models/loader.js";
+import { ProviderCircuitBreaker } from "./circuit-breaker.js";
+import type { HealthPolicy } from "../intelligence/router.js";
 
 // ─── Protocol Factories ───────────────────────────────────────────
 
@@ -67,6 +69,8 @@ const PROTOCOL_FACTORIES: Record<string, ProtocolFactory> = {
 export class ProviderRegistry {
   private providers: Map<string, ModelProvider> = new Map();
   private defaultProviderName: string | null = null;
+  private breakers: Map<string, ProviderCircuitBreaker> = new Map();
+  private healthPolicy: HealthPolicy = { failureThreshold: 5, recoveryTimeoutMs: 30_000 };
 
   /**
    * Register a provider from config.
@@ -108,6 +112,13 @@ export class ProviderRegistry {
       try {
         const provider = factory(config, syntheticDef);
         this.providers.set(config.name, provider);
+        this.breakers.set(
+          config.name,
+          new ProviderCircuitBreaker(
+            this.healthPolicy.failureThreshold,
+            this.healthPolicy.recoveryTimeoutMs,
+          ),
+        );
       } catch (error) {
         log.engine.warn(
           `[ProviderRegistry] Failed to initialize "${config.name}": ${(error as Error).message}`,
@@ -125,6 +136,13 @@ export class ProviderRegistry {
     try {
       const provider = factory(config, modelDef!);
       this.providers.set(config.name, provider);
+      this.breakers.set(
+        config.name,
+        new ProviderCircuitBreaker(
+          this.healthPolicy.failureThreshold,
+          this.healthPolicy.recoveryTimeoutMs,
+        ),
+      );
     } catch (error) {
       log.engine.warn(
         `[ProviderRegistry] Failed to initialize "${config.name}": ${(error as Error).message}`,
@@ -180,6 +198,47 @@ export class ProviderRegistry {
 
   getDefault(): ModelProvider {
     return this.get();
+  }
+
+  /** Configure circuit breaker parameters from IntelligenceConfig.healthPolicy. */
+  setHealthPolicy(policy: HealthPolicy): void {
+    this.healthPolicy = policy;
+  }
+
+  /**
+   * Get a provider if its circuit breaker is not OPEN.
+   * Returns null if the provider is OPEN (caller should try a fallback).
+   * Returns the provider instance if CLOSED or HALF_OPEN.
+   */
+  getAvailable(name?: string): ModelProvider | null {
+    const targetName = name ?? this.defaultProviderName;
+    if (!targetName) return null;
+
+    const breaker = this.breakers.get(targetName);
+    if (breaker?.isOpen()) {
+      log.engine.warn(
+        `[ProviderRegistry] Provider "${targetName}" circuit is OPEN — skipping`,
+      );
+      return null;
+    }
+
+    const provider = this.providers.get(targetName);
+    return provider ?? null;
+  }
+
+  /**
+   * Record the outcome of a provider API call.
+   * Updates the circuit breaker state for the named provider.
+   */
+  recordProviderResult(name: string, success: boolean): void {
+    this.breakers.get(name)?.recordResult(success);
+  }
+
+  /**
+   * Check whether a provider's circuit is currently open (failing).
+   */
+  isProviderOpen(name: string): boolean {
+    return this.breakers.get(name)?.isOpen() ?? false;
   }
 
   listProviders(): string[] {

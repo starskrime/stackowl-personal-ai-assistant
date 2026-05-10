@@ -200,7 +200,6 @@ export class ConfigContextBuilder {
     if (this.config.browser?.enabled !== false) caps.push("browser_pool");
     if (this.config.skills?.enabled) caps.push("skill_system");
     if (this.config.owlDna?.enabled) caps.push("dna_evolution");
-    if (this.config.smartRouting?.enabled) caps.push("smart_routing");
     if (this.config.costs?.enabled) caps.push("cost_tracking");
     if (this.config.storage?.backend === "sqlite") caps.push("sqlite_storage");
 

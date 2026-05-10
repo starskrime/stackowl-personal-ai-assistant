@@ -81,8 +81,13 @@ export class OpenAIProtocolProvider implements ModelProvider {
 
   constructor(config: ProviderConfig, baseUrl: string) {
     this.name = config.name;
-    this.activeModel =
-      (config as any).activeModel ?? config.defaultModel ?? "gpt-4o";
+    const resolvedModel = (config as any).activeModel ?? config.defaultModel;
+    if (!resolvedModel) {
+      throw new Error(
+        "[OpenAI] No model configured. Set defaultModel in your provider config (e.g. \"gpt-4o\").",
+      );
+    }
+    this.activeModel = resolvedModel;
     this.embeddingModel =
       config.defaultEmbeddingModel ?? "text-embedding-3-small";
 

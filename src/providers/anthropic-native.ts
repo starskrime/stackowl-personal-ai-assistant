@@ -138,7 +138,12 @@ export class AnthropicNativeProvider implements ModelProvider {
   private defaultModel: string;
 
   constructor(config: ProviderConfig) {
-    this.defaultModel = config.defaultModel ?? "claude-sonnet-4-20250514";
+    if (!config.defaultModel) {
+      throw new Error(
+        "[Anthropic] No model configured. Set defaultModel in your provider config (e.g. \"claude-sonnet-4-6\").",
+      );
+    }
+    this.defaultModel = config.defaultModel;
     this.client = new Anthropic({
       apiKey: config.apiKey ?? process.env.ANTHROPIC_API_KEY,
       baseURL: config.baseUrl,
@@ -379,11 +384,13 @@ export class AnthropicNativeProvider implements ModelProvider {
   }
 
   async listModels(): Promise<string[]> {
-    return [
-      "claude-opus-4-20250514",
-      "claude-sonnet-4-20250514",
-      "claude-haiku-4-20250414",
-    ];
+    try {
+      const response = await this.client.models.list();
+      return response.data.map((m: { id: string }) => m.id);
+    } catch {
+      // Fall back to known models if API is unreachable
+      return ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-20250414"];
+    }
   }
 
   async healthCheck(): Promise<boolean> {

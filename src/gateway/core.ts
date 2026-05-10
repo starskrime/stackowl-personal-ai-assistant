@@ -131,6 +131,7 @@ import type { SubGoal } from "../engine/types.js";
 import { createInvokeSkillTool } from "../tools/invoke-skill.js"
 import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
+import { buildDefaultIntelligenceConfig } from "../config/loader.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
 
 // ─── Utility functions ───────────────────────────────────────────
@@ -431,13 +432,31 @@ export class OwlGateway {
     log.engine.info("[Epic 3&4] Clarification and Tool Mastery modules initialized");
 
     // ─── Intelligence Router (tiered model routing) ────────────
-    if (ctx.config.intelligence) {
+    {
+      const intelligenceConfig = ctx.config.intelligence
+        ?? buildDefaultIntelligenceConfig(ctx.config.defaultProvider, ctx.config.defaultModel);
       ctx.intelligence = new IntelligenceRouter(
-        ctx.config.intelligence,
+        intelligenceConfig,
         ctx.config.defaultProvider,
         ctx.config.defaultModel,
+        () => {
+          const check = ctx.costTracker?.checkBudget();
+          return {
+            dailyRemainingUsd: check?.dailyRemainingUsd ?? Infinity,
+            maxDailyUsd: (ctx.config.costs?.budget as any)?.maxDailyUsd ?? 0,
+          };
+        },
       );
-      log.engine.info("[IntelligenceRouter] Tiered model routing active");
+      log.engine.info(
+        ctx.config.intelligence
+          ? "[IntelligenceRouter] Tiered model routing active"
+          : "[IntelligenceRouter] Using default pass-through config (no intelligence block in config)",
+      );
+
+      // Wire health policy into ProviderRegistry circuit breakers
+      if (ctx.providerRegistry && ctx.config.intelligence?.healthPolicy) {
+        ctx.providerRegistry.setHealthPolicy(ctx.config.intelligence.healthPolicy);
+      }
     }
 
     // Initialize extracted handlers (Improvement #4)

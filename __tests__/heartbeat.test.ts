@@ -39,7 +39,6 @@ function makeMockConfig() {
     parliament: { maxRounds: 3, maxOwls: 3 },
     heartbeat: { intervalMinutes: 30, quietHours: { start: 22, end: 7 } },
     owlDna: { evolutionBatchSize: 10, decayRatePerWeek: 0.01 },
-    smartRouting: { enable: false, availableModels: [] },
   } as any;
 }
 

@@ -16,20 +16,6 @@ describe("Config Validation", () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  it('throws on smartRouting key in user config', async () => {
-    await writeFile(
-      join(testDir, 'stackowl.config.json'),
-      JSON.stringify({
-        defaultProvider: 'ollama',
-        defaultModel: 'llama3.2',
-        providers: { ollama: { baseUrl: 'http://localhost:11434' } },
-        smartRouting: { enabled: false, availableModels: [] },
-      }),
-      'utf-8',
-    );
-    await expect(loadConfig(testDir)).rejects.toThrow('smartRouting is no longer supported');
-  });
-
   it('throws when intelligence tiers are empty', async () => {
     await writeFile(
       join(testDir, 'stackowl.config.json'),

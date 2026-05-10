@@ -20,7 +20,6 @@ import type { OwlRegistry } from "../owls/registry.js";
 import type { PelletStore } from "../pellets/store.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
-import { ModelRouter } from "./router.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
 import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
@@ -153,6 +152,8 @@ export interface EngineContext {
   relationshipContext?: import("../routing/relationship-context.js").RelationshipContext;
   /** Wired OpinionInjector output — injected as additional system prompt block (G5) */
   additionalSystemPrompt?: string;
+  /** IntelligenceRouter for per-turn model-tier resolution. Wired from GatewayContext. */
+  intelligence?: import("../intelligence/router.js").IntelligenceRouter;
 }
 
 export interface PendingCapabilityGap {
@@ -778,24 +779,25 @@ export class OwlEngine {
     const toolResultsBuffer: string[] = [];
     let deeperExtended = false;
 
-    // 1. Determine optimal model (heuristic, no LLM call)
-    let routeDecision = ModelRouter.route(userMessage, config);
-    let optimalModel = routeDecision.modelName;
+    // 1. Determine optimal model via IntelligenceRouter
+    const resolved = context.intelligence?.resolveWithCostAwareness("conversation");
+    let optimalModel = resolved?.model ?? config.defaultModel;
     attachToContext({ model: optimalModel });
 
-    // Dynamic provider resolution based on route (if cross-provider routing is needed early)
+    // Dynamic provider resolution based on route
     let currentProvider = provider;
     if (
-      routeDecision.providerName &&
-      routeDecision.providerName !== provider.name &&
+      resolved?.provider &&
+      resolved.provider !== provider.name &&
       context.providerRegistry
     ) {
-      log.engine.warn(
-        `Cross-provider routing on first turn: Swapping ${provider.name} for ${routeDecision.providerName}`,
-      );
-      currentProvider = context.providerRegistry.get(
-        routeDecision.providerName,
-      );
+      const routedProvider = context.providerRegistry.getAvailable(resolved.provider);
+      if (routedProvider) {
+        log.engine.warn(
+          `[IntelligenceRouter] Cross-provider routing on first turn: ${provider.name} → ${resolved.provider}`,
+        );
+        currentProvider = routedProvider;
+      }
     }
 
     log.engine.model(optimalModel);
@@ -1889,45 +1891,32 @@ ${userMessage}
           }
         }
 
-        // If we've failed multiple tool calls in a row across the whole loop,
-        // it's highly likely the local model is hallucinating or stuck.
-        // Try to trigger a fallback router switch to a heavier cloud model.
+        // If we've failed multiple tool calls in a row, try IntelligenceRouter failover.
         if (globalConsecutiveFailures >= 2) {
-          const newRoute = ModelRouter.route(
-            userMessage,
-            config,
-            globalConsecutiveFailures,
-          );
+          context.providerRegistry?.recordProviderResult(currentProvider.name, false);
+          const currentTier = context.intelligence?.resolve("conversation").tier ?? "mid";
+          const fallback = context.intelligence?.resolveFailover(currentTier);
 
-          if (
-            newRoute.providerName &&
-            newRoute.providerName !== currentProvider.name &&
-            context.providerRegistry
-          ) {
-            try {
-              const fallbackProvider = context.providerRegistry.get(
-                newRoute.providerName,
-              );
+          if (fallback && fallback.provider !== currentProvider.name && context.providerRegistry) {
+            const fallbackProvider = context.providerRegistry.getAvailable(fallback.provider);
+            if (fallbackProvider) {
               log.engine.warn(
-                `[Cross-Provider Hot Swap] Tool failed ${globalConsecutiveFailures}x. Swapping provider: ${currentProvider.name} → ${newRoute.providerName}`,
+                `[IntelligenceRouter] Tool failed ${globalConsecutiveFailures}x. Swapping provider: ${currentProvider.name} → ${fallback.provider}`,
               );
               currentProvider = fallbackProvider;
-              if (context.onProgress)
+              if (context.onProgress) {
                 await context.onProgress(
-                  `🔄 **Cross-Provider Triggered:** Swapping to ${newRoute.providerName} (${newRoute.modelName}) to resolve failure.`,
+                  `🔄 **Fallback Triggered:** Swapping to ${fallback.provider} (${fallback.model}) to resolve failure.`,
                 );
-            } catch (err) {
-              log.engine.warn(
-                `Could not swap to fallback provider "${newRoute.providerName}" - staying on current provider. Reason: ${(err as Error).message}`,
-              );
+              }
             }
           }
 
-          if (newRoute.modelName && newRoute.modelName !== optimalModel) {
+          if (fallback?.model && fallback.model !== optimalModel) {
             log.engine.warn(
-              `Tool failed ${globalConsecutiveFailures}x. Swapping model: ${optimalModel} → ${newRoute.modelName}`,
+              `Tool failed ${globalConsecutiveFailures}x. Swapping model: ${optimalModel} → ${fallback.model}`,
             );
-            optimalModel = newRoute.modelName;
+            optimalModel = fallback.model;
           }
         }
 
