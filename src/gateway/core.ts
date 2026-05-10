@@ -437,6 +437,13 @@ export class OwlGateway {
         intelligenceConfig,
         ctx.config.defaultProvider,
         ctx.config.defaultModel,
+        () => {
+          const check = ctx.costTracker?.checkBudget();
+          return {
+            dailyRemainingUsd: check?.dailyRemainingUsd ?? Infinity,
+            maxDailyUsd: (ctx.config.costs?.budget as any)?.maxDailyUsd ?? 0,
+          };
+        },
       );
       log.engine.info(
         ctx.config.intelligence

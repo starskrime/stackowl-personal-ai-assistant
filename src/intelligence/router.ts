@@ -1,4 +1,5 @@
 import { log } from "../logger.js";
+import { estimateCost } from "../costs/pricing.js";
 
 export type Tier = "high" | "mid" | "low";
 
@@ -117,5 +118,44 @@ export class IntelligenceRouter {
     return this.resolve(taskType);
   }
 
-  // resolveWithCostAwareness(), resolveFailover() added in Tasks 6-7
+  /**
+   * Resolve model for taskType with cost awareness.
+   * If getBudgetState is set and maxDailyUsd > 0, downgrades tier when
+   * the estimated per-request cost would exceed remaining daily budget.
+   * Never hard-blocks — routes with a warning when all tiers are over budget.
+   */
+  resolveWithCostAwareness(taskType: TaskType): ResolvedModel {
+    const budget = this.getBudgetState?.();
+    if (!budget || budget.maxDailyUsd <= 0) return this.resolve(taskType);
+
+    // Estimate cost as 1000 input + 2000 output tokens (conservative ceiling per request)
+    const tierOrder: Tier[] = ["high", "mid", "low"];
+    for (const tier of tierOrder) {
+      const cfg = this.config.tiers[tier];
+      if (!cfg?.model) continue;
+      const estimated = estimateCost(cfg.model, 1000, 2000);
+      if (estimated <= budget.dailyRemainingUsd) {
+        const preferred = this.config.defaults[taskType] ?? TASK_TYPE_DEFAULTS[taskType];
+        // Only downgrade — never upgrade beyond what resolve() would give
+        const preferredIdx = tierOrder.indexOf(preferred);
+        const thisIdx = tierOrder.indexOf(tier);
+        if (thisIdx >= preferredIdx) {
+          if (thisIdx > preferredIdx) {
+            log.engine.warn(
+              `[IntelligenceRouter] Budget low ($${budget.dailyRemainingUsd.toFixed(4)} remaining) — downgrading tier ${preferred} → ${tier}`,
+            );
+          }
+          return { provider: cfg.provider, model: cfg.model, tier };
+        }
+      }
+    }
+
+    // All tiers over budget — route to low with warning (never hard-block)
+    log.engine.warn(
+      `[IntelligenceRouter] All tiers over daily budget ($${budget.dailyRemainingUsd.toFixed(4)} remaining) — routing to low tier anyway`,
+    );
+    return this.resolve(taskType);
+  }
+
+  // resolveFailover() added in Task 7
 }
