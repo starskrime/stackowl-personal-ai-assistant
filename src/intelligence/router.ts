@@ -14,12 +14,41 @@ export type TaskType =
 export interface TierConfig {
   provider: string;
   model: string;
+  /** Optional capability tags. Vocabulary: vision, code, reasoning, long-context, tool-use, fast, structured-output */
+  capabilities?: string[];
+}
+
+export interface FallbackEntry {
+  provider: string;
+  model: string;
+  /** Which failure tiers this fallback entry covers. */
+  forTiers: Tier[];
+}
+
+export interface HealthPolicy {
+  /** Number of consecutive failures before opening the circuit. Default: 5 */
+  failureThreshold: number;
+  /** Milliseconds to wait in OPEN state before trying HALF_OPEN. Default: 30000 */
+  recoveryTimeoutMs: number;
+}
+
+export interface CostPolicy {
+  /** Max daily spend in USD. 0 = unlimited. Default: 0 */
+  maxDailyUsd: number;
+  /** Downgrade to a cheaper tier when budget is exhausted. Default: true */
+  downgradeTierOnBudgetExhausted: boolean;
 }
 
 export interface IntelligenceConfig {
   tiers: Record<Tier, TierConfig>;
   defaults: Partial<Record<TaskType, Tier>>;
   overrides?: Partial<Record<TaskType, Partial<TierConfig>>>;
+  /** Ordered list of fallback providers/models when primary tier is unavailable. */
+  fallbacks?: FallbackEntry[];
+  /** Circuit breaker parameters for provider health monitoring. */
+  healthPolicy?: HealthPolicy;
+  /** Cost-based routing policy. */
+  costPolicy?: CostPolicy;
 }
 
 export interface ResolvedModel {
@@ -45,6 +74,7 @@ export class IntelligenceRouter {
     private config: IntelligenceConfig,
     private fallbackProvider: string,
     private fallbackModel: string,
+    private getBudgetState?: () => { dailyRemainingUsd: number; maxDailyUsd: number },
   ) {}
 
   resolve(taskType: TaskType): ResolvedModel {
@@ -62,4 +92,6 @@ export class IntelligenceRouter {
       tier,
     };
   }
+
+  // resolveCapable(), resolveWithCostAwareness(), resolveFailover() added in Tasks 5-7
 }
