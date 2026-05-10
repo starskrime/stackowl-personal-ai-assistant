@@ -21,6 +21,7 @@ import type { PelletStore } from "../pellets/store.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
+import { buildDegradationPrompt } from "../infra/capability-registry.js";
 import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
@@ -28,6 +29,8 @@ import type { OwlInnerLife } from "../owls/inner-life.js";
 import { DNADecisionLayer } from "../owls/decision-layer.js";
 import { DiagnosticEngine } from "./diagnostic-engine.js";
 import type { DiagnosticInput } from "./diagnostic-engine.js";
+import { ToolResultEvaluator } from "./tool-result-evaluator.js";
+import { toolAdvisor } from "./tool-advisor.js";
 import type { ToolMastery } from "../tools/tool-mastery.js";
 import type { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import type { DomainToolMap } from "../delegation/domain-tool-map.js";
@@ -593,6 +596,13 @@ async function consumeStream(
 /** HTTP status codes that should be retried after a backoff delay. */
 const RETRYABLE_STREAM_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+/** Tool names eligible for the quality-gate evaluator (information-retrieval tools only). */
+const QUALITY_GATE_TOOLS = new Set([
+  "web_search", "web_fetch", "smart_search", "smart_fetch",
+  "live_browser", "search_web", "fetch_url", "browser_navigate",
+  "read_file", "search_files",
+]);
+
 /**
  * Determine if an error thrown during a stream call is transient and safe to retry.
  * Uses the HTTP status embedded in the error message ("HTTP 429", "HTTP 503", etc)
@@ -747,6 +757,17 @@ export class OwlEngine {
     const { provider, owl, sessionHistory, config, toolRegistry, cwd } =
       context;
     const toolsUsed: string[] = [];
+
+    // Create tool result evaluator using tool-judge role provider
+    const toolResultEvaluator: ToolResultEvaluator | null = (() => {
+      if (!context.providerRegistry) return null;
+      try {
+        return new ToolResultEvaluator(context.providerRegistry.byRole("tool-judge"));
+      } catch (err) {
+        log.engine.warn("tool.evaluator.init.failed", err);
+        return null;
+      }
+    })();
     const gapDetector = new GapDetector();
     let MAX_TOOL_ITERATIONS =
       context.maxIterations ??
@@ -1139,7 +1160,6 @@ ${userMessage}
       // room to breathe.
       const recentToolNames: string[] = [];
       const TOOL_WINDOW_SIZE = 12;
-      const TOOL_WINDOW_MAX_REPEATS = 6;
 
       // Tools that are legitimately called many times in sequence — exempt from
       // the sliding-window check. computer_use is inherently sequential:
@@ -1242,7 +1262,7 @@ ${userMessage}
         // Phase 1: Pre-filter through guards sequentially (cheap, no I/O)
         type ToolAction =
           | { kind: "duplicate"; toolCall: ToolCall }
-          | { kind: "loop-detected"; toolCall: ToolCall }
+          | { kind: "loop-detected"; toolCall: ToolCall; repeatCount: number }
           | { kind: "missing"; toolCall: ToolCall }
           | { kind: "no-registry"; toolCall: ToolCall }
           | { kind: "execute"; toolCall: ToolCall };
@@ -1269,8 +1289,9 @@ ${userMessage}
           const repeatCount = recentToolNames.filter(
             (n) => n === toolCall.name,
           ).length;
+          const toolLoopThreshold = toolAdvisor.getThreshold(toolCall.name);
           if (
-            repeatCount > TOOL_WINDOW_MAX_REPEATS &&
+            repeatCount > toolLoopThreshold &&
             !SEQUENTIAL_USE_TOOLS.has(toolCall.name)
           ) {
             log.engine.warn(
@@ -1283,7 +1304,7 @@ ${userMessage}
               (response.toolCalls ?? []).indexOf(toolCall),
             );
             for (const remaining of remainingToolCalls) {
-              actions.push({ kind: "loop-detected", toolCall: remaining });
+              actions.push({ kind: "loop-detected", toolCall: remaining, repeatCount });
             }
             break; // Stop processing further tool calls
           }
@@ -1437,12 +1458,15 @@ ${userMessage}
             case "loop-detected": {
               // Push a tool result (required by providers) AND a system hint.
               // Using role:"system" alone orphans the tool_use in the assistant message.
+              const advisoryMsg = toolAdvisor.buildAdvisoryMessage(
+                toolCall.name,
+                action.repeatCount,
+                userMessage,
+                TOOL_FALLBACKS[toolCall.name],
+              );
               messages.push({
                 role: "tool",
-                content:
-                  `[LOOP GUARD] Call blocked — "${toolCall.name}" has been called ${recentToolNames.filter((n) => n === toolCall.name).length} times in the last ${recentToolNames.length} tool calls. ` +
-                  `You are stuck in a loop. DO NOT call this tool again with similar arguments. ` +
-                  `Pivot to a completely different approach or tool.`,
+                content: advisoryMsg,
                 toolCallId: toolCall.id,
                 name: toolCall.name,
               });
@@ -1755,9 +1779,26 @@ ${userMessage}
                 toolFailStreak[toolCall.name] = 0;
                 globalConsecutiveFailures = 0;
 
+                // Quality gate: evaluate if this successful result actually satisfies intent
+                let qualityContent = toolResult;
+                if (toolResultEvaluator && !isAnyFailure && QUALITY_GATE_TOOLS.has(toolCall.name)) {
+                  const verdict = await toolResultEvaluator.evaluate(
+                    toolCall.name,
+                    toolCall.arguments,
+                    toolResult,
+                    userMessage,
+                  );
+                  if (!verdict.satisfied) {
+                    const hint = verdict.suggestedAlternative
+                      ? ` Suggested alternative: \`${verdict.suggestedAlternative}\`.`
+                      : "";
+                    qualityContent = toolResult + `\n\n[QUALITY GATE: ${toolCall.name}] Result does not fully satisfy intent (confidence ${verdict.confidence.toFixed(2)}): ${verdict.reason}.${hint} Consider using a different approach.`;
+                  }
+                }
+
                 messages.push({
                   role: "tool",
-                  content: toolResult,
+                  content: qualityContent,
                   toolCallId: toolCall.id,
                   name: toolCall.name,
                 });
@@ -2742,6 +2783,12 @@ ${skillsContext}
 
     // DNA reminder — last line so it's freshest in context window
     prompt += `\nApply challenge mode (${dna.evolvedTraits.challengeLevel}) and verbosity (${dna.evolvedTraits.verbosity}) at all times.\n`;
+
+    // Degraded-subsystem notice — injected last so it's not buried
+    const degradationHint = buildDegradationPrompt();
+    if (degradationHint) {
+      prompt = prompt + "\n\n" + degradationHint;
+    }
 
     return prompt;
   }

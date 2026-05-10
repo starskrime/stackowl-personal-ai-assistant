@@ -25,6 +25,7 @@ import { program } from "commander";
 import { initFileLog, log } from "./logger.js";
 import { loadConfig } from "./config/loader.js";
 import { ProviderRegistry } from "./providers/registry.js";
+import type { ProviderRole } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { ToolTracker } from "./tools/tracker.js";
@@ -336,6 +337,20 @@ async function bootstrap() {
     });
   }
   providerRegistry.setDefault(config.defaultProvider);
+
+  // Auto-assign roles based on provider type
+  providerRegistry.autoAssignRoles(
+    Object.entries(config.providers).map(([name, conf]) => ({ name, type: conf.type }))
+  );
+
+  // Apply explicit role overrides from config
+  if (config.roles) {
+    for (const [role, providerName] of Object.entries(config.roles)) {
+      if (providerName) {
+        providerRegistry.assignRole(role as ProviderRole, providerName);
+      }
+    }
+  }
 
   // Initialize owl registry
   const owlRegistry = new OwlRegistry(workspacePath);

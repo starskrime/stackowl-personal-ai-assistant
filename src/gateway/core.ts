@@ -133,6 +133,11 @@ import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
 import { buildDefaultIntelligenceConfig } from "../config/loader.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
+import {
+  registerCapability,
+  snapshotLog,
+  getDegradedCapabilities,
+} from "../infra/capability-registry.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -519,15 +524,14 @@ export class OwlGateway {
         skillTracker.load().catch((err) => { log.engine.warn("skillTracker load failed", err); }); // Non-blocking JSON load when no DB yet
       }
 
-      // Use synthesis provider (Anthropic) for skill routing LLM disambiguation
-      const synthesisProviderName =
-        ctx.config.synthesis?.provider ?? "anthropic";
+      // Use synthesis provider for skill routing LLM disambiguation
       let skillProvider = ctx.provider;
       if (ctx.providerRegistry) {
         try {
-          skillProvider = ctx.providerRegistry.get(synthesisProviderName);
+          skillProvider = ctx.providerRegistry.byRole("synthesizer");
         } catch (err) {
-          log.engine.warn("synthesis provider not registered, falling back to default provider", err);
+          log.engine.warn("synthesis: no synthesizer role assigned, falling back to default provider", err);
+          registerCapability("synthesisProvider", "DEGRADED", "no synthesizer role assigned — explicit config.roles.synthesizer needed");
         }
       }
 
@@ -713,6 +717,9 @@ export class OwlGateway {
       }
 
       log.engine.info("[ContextPipeline] Element 5 pipeline initialized");
+      registerCapability("contextPipeline", "FULL");
+    } else if (!ctx.contextPipeline) {
+      registerCapability("contextPipeline", "OFFLINE", "missing db/memoryBus/factStore/episodicMemory");
     }
 
     // ─── OwlEngine v2 (Element 6a): OwlOrchestrator + ImprovementScheduler ─
@@ -889,6 +896,17 @@ export class OwlGateway {
 
     // Initialize new feature modules (all optional, fire-and-forget load)
     this.initFeatureModules();
+
+    // ─── Capability snapshot at end of boot ──────────────────────
+    const snap = snapshotLog();
+    log.engine.info("capability.snapshot", snap);
+    if (snap.degradedCount > 0) {
+      log.engine.warn(
+        `[CapabilityRegistry] ${snap.degradedCount} degraded subsystem(s) at boot`,
+        { capabilities: getDegradedCapabilities() },
+      );
+    }
+
     this.validateContext();
 
     // Wire delivery bus → router (Phase 1 channel infrastructure)
@@ -1359,9 +1377,9 @@ export class OwlGateway {
         | undefined;
       if (this.ctx.providerRegistry) {
         try {
-          fastProvider = this.ctx.providerRegistry.get("anthropic");
+          fastProvider = this.ctx.providerRegistry.byRole("semantic-disambiguator");
         } catch (err) {
-          log.engine.warn("continuity: anthropic provider not registered, using default", err);
+          log.engine.warn("continuity: no semantic-disambiguator provider, using default", err);
           fastProvider = this.ctx.provider;
         }
       }

@@ -29,6 +29,15 @@ import type { ModelDefinition } from "../models/loader.js";
 import { ProviderCircuitBreaker } from "./circuit-breaker.js";
 import type { HealthPolicy } from "../intelligence/router.js";
 
+export type ProviderRole =
+  | "chat-default"
+  | "skill-router"
+  | "semantic-disambiguator"
+  | "vision"
+  | "embedder"
+  | "synthesizer"
+  | "tool-judge";
+
 // ─── Protocol Factories ───────────────────────────────────────────
 
 type ProtocolFactory = (
@@ -71,6 +80,59 @@ export class ProviderRegistry {
   private defaultProviderName: string | null = null;
   private breakers: Map<string, ProviderCircuitBreaker> = new Map();
   private healthPolicy: HealthPolicy = { failureThreshold: 5, recoveryTimeoutMs: 30_000 };
+  private roles: Map<ProviderRole, string> = new Map(); // role → provider name
+
+  /**
+   * Assign a role to a named provider.
+   * Called during boot wiring. Later calls overwrite earlier ones (explicit config wins).
+   */
+  assignRole(role: ProviderRole, providerName: string): void {
+    if (!this.providers.has(providerName)) {
+      log.engine.warn(`[ProviderRegistry] Cannot assign role "${role}" to unregistered provider "${providerName}"`);
+      return;
+    }
+    this.roles.set(role, providerName);
+    log.engine.debug("provider.role.assigned", { role, providerName });
+  }
+
+  /**
+   * Get a provider by role.
+   * Falls back to the default provider with a warn if no role mapping exists.
+   */
+  byRole(role: ProviderRole): ModelProvider {
+    const name = this.roles.get(role);
+    if (!name) {
+      log.engine.warn(`[ProviderRegistry] No provider assigned for role "${role}" — using default`, undefined, { role });
+      return this.getDefault();
+    }
+    return this.get(name);
+  }
+
+  /**
+   * Auto-assign roles based on provider type (called after all providers are registered).
+   * Does NOT overwrite roles already explicitly assigned.
+   */
+  autoAssignRoles(providers: Array<{ name: string; type?: string }>): void {
+    for (const { name, type } of providers) {
+      if (!this.providers.has(name)) continue;
+      if (type === "anthropic") {
+        if (!this.roles.has("semantic-disambiguator")) this.assignRole("semantic-disambiguator", name);
+        if (!this.roles.has("synthesizer")) this.assignRole("synthesizer", name);
+        if (!this.roles.has("tool-judge")) this.assignRole("tool-judge", name);
+      }
+      if (type === "openai") {
+        if (!this.roles.has("vision")) this.assignRole("vision", name);
+      }
+    }
+  }
+
+  /**
+   * Register a provider instance directly (for testing only).
+   * @internal
+   */
+  _registerForTest(name: string, provider: ModelProvider): void {
+    this.providers.set(name, provider);
+  }
 
   /**
    * Register a provider from config.

@@ -315,6 +315,8 @@ export interface StackOwlConfig {
     /** HTTP port for non-socket-mode. Default: 3078 */
     port?: number;
   };
+  /** Role → provider name mappings. Auto-assigned from type when not set. */
+  roles?: Partial<Record<import("../providers/registry.js").ProviderRole, string>>;
 }
 
 export interface ProviderConfigEntry {
@@ -327,6 +329,8 @@ export interface ProviderConfigEntry {
   /** @deprecated Use activeModel instead */
   defaultModel?: string;
   defaultEmbeddingModel?: string;
+  /** Provider protocol type (e.g. "anthropic", "openai") — used by autoAssignRoles. */
+  type?: string;
 }
 
 // ─── Defaults ────────────────────────────────────────────────────

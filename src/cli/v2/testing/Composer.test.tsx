@@ -1,14 +1,22 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render } from "ink-testing-library";
 import { UiStoreProvider } from "../providers/UiStoreProvider.js";
+import { CommandDispatcherProvider } from "../providers/CommandDispatcherProvider.js";
 import { uiStore } from "../state/store.js";
 import { Composer } from "../components/Composer.js";
+import type { CommandDispatcher } from "../commands/dispatcher.js";
+
+const noopDispatcher: CommandDispatcher = {
+  dispatch: async () => ({ kind: "action" }),
+};
 
 function ComposerUnderTest({ disabled }: { disabled: boolean }) {
   return (
-    <UiStoreProvider>
-      <Composer onSubmit={() => {}} disabled={disabled} />
-    </UiStoreProvider>
+    <CommandDispatcherProvider dispatcher={noopDispatcher}>
+      <UiStoreProvider>
+        <Composer onSubmit={() => {}} disabled={disabled} />
+      </UiStoreProvider>
+    </CommandDispatcherProvider>
   );
 }
 
@@ -42,6 +50,7 @@ describe("Composer", () => {
   });
 
   it("generating state: shows generating text instead of ❯", () => {
+    uiStore.setState({ generating: true });
     const { lastFrame } = render(<ComposerUnderTest disabled={true} />);
     expect(lastFrame()).toContain("generating...");
     expect(lastFrame()).not.toContain("❯");
