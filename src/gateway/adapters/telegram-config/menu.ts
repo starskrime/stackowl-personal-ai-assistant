@@ -8,7 +8,6 @@
  *   - Provider add/edit/remove flows
  *   - Model picker (with pagination for large lists)
  *   - Model role assignment
- *   - Smart routing roster management
  *   - Live health check
  *   - Option C API-key security: delete-immediately + secure web form
  *
