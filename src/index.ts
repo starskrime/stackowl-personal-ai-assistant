@@ -1274,13 +1274,6 @@ async function buildGateway(
 // ─── Chat Command ────────────────────────────────────────────────
 
 async function chatCommand(owlName?: string) {
-  // ── TUI v2 flag ───────────────────────────────────────────────
-  if (process.env.STACKOWL_TUI === "v2") {
-    const { startV2 } = await import("./cli/v2/index.js");
-    await startV2();
-    return;
-  }
-
   // ── Phase 0: onboarding (first launch) ────────────────────────
   const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
   if (!existsSync(configPath)) {
@@ -1336,6 +1329,13 @@ async function chatCommand(owlName?: string) {
     provider: b.providerRegistry.getDefault().name,
     model:    b.config.defaultModel,
   }));
+
+  // ── TUI v2 flag — gateway is ready, hand off to v2 stack ─────
+  if (process.env.STACKOWL_TUI === "v2") {
+    const { startV2 } = await import("./cli/v2/index.js");
+    await startV2(gateway);
+    return;
+  }
 
   // ── Phase 2: interactive session ──────────────────────────────
   const adapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
