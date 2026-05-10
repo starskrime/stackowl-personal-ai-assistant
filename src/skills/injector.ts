@@ -366,38 +366,4 @@ export class SkillContextInjector {
     }
   }
 
-  /**
-   * Format skills for system prompt inclusion.
-   * (Synchronous — lists all skills, not per-message matching)
-   */
-  formatForSystemPrompt(): string {
-    const skills = this.registry.listEnabled();
-
-    if (skills.length === 0) {
-      return "";
-    }
-
-    const lines: string[] = [
-      "\n## Available Skills\n",
-      "You have access to the following skills that can help with user requests:\n",
-    ];
-
-    for (const skill of skills) {
-      const emoji = skill.metadata.openclaw?.emoji || "•";
-      const usage = skill.usage;
-      const usageHint =
-        usage && usage.selectionCount > 0
-          ? ` (used ${usage.selectionCount}x, ${(usage.successRate * 100).toFixed(0)}% success)`
-          : "";
-      lines.push(
-        `- ${emoji} **${skill.name}**: ${skill.description}${usageHint}`,
-      );
-    }
-
-    lines.push(
-      "\nUse relevant skills when the user request matches their description.\n",
-    );
-
-    return lines.join("\n");
-  }
 }
