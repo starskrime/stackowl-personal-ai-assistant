@@ -1,11 +1,17 @@
 /**
- * ParliamentScreen — alt-screen modal during multi-owl debates.
+ * ParliamentScreen — full-width multi-owl debate theater.
  *
- * Wired in Phase 2 (P2-A). Displays the active Parliament debate:
- *  - Header: round indicator
- *  - Body: one column per owl, showing their position text
- *  - Footer: round label / synthesis
- *  - Auto-returns to chat when synthesis completes
+ * Layout:
+ *   ⚖ Parliament  Round 1 of 3  Initial Positions
+ *   ─────────────────────────────────────────────────
+ *   ┌─ 🦉 Hoots ──┐  ┌─ 🦅 Sage ──┐  ┌─ 🐦 Wren ──┐
+ *   │ position    │  │ position   │  │ position   │
+ *   └─────────────┘  └────────────┘  └────────────┘
+ *   ╔═ ⚖ Parliament Verdict  (by Sage) ════════════╗
+ *   ║  synthesis text here                         ║
+ *   ╚══════════════════════════════════════════════╝
+ *   ─────────────────────────────────────────────────
+ *   Ctrl+P — return to chat  ·  Round 1 in progress...
  */
 
 import { Box, Text, useStdout } from "ink";
@@ -14,7 +20,7 @@ import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
 import type { ParliamentDebate } from "../state/slices/parliament.js";
 
-// ─── Round label helpers ──────────────────────────────────────────────────────
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 function roundLabel(round: number): string {
   switch (round) {
@@ -25,49 +31,50 @@ function roundLabel(round: number): string {
   }
 }
 
-// ─── OwlColumn — one owl's position column ───────────────────────────────────
+// ─── OwlColumn ────────────────────────────────────────────────────────────────
 
 interface OwlColumnProps {
-  owlName: string;
-  owlEmoji: string;
+  owlName:   string;
+  owlEmoji:  string;
   position?: string;
   challenge?: string;
-  round: number;
-  colWidth: number;
+  round:     number;
+  colWidth:  number;
+  spinning:  boolean;
+  spinFrame: number;
 }
 
-function OwlColumn({ owlName, owlEmoji, position, challenge, round, colWidth }: OwlColumnProps) {
-  const hasContent = round >= 1 && (position ?? challenge);
-  const text = challenge ?? position ?? "";
-  const status = challenge ? "challenged" : position ? "ready" : "waiting...";
-  const statusColor = challenge ? "yellow" : position ? "green" : "gray";
+function OwlColumn({
+  owlName, owlEmoji, position, challenge,
+  colWidth, spinning, spinFrame,
+}: OwlColumnProps) {
+  const text   = challenge ?? position ?? "";
+  const ready  = !!(challenge ?? position);
+  const status = challenge ? "cross-exam" : position ? "ready" : "thinking...";
 
   return (
     <Box
       flexDirection="column"
       width={colWidth}
       borderStyle="single"
-      borderColor="cyan"
+      borderColor={ready ? "cyan" : "gray"}
       paddingX={1}
     >
-      {/* Owl header */}
       <Box>
-        <Text bold color="cyan">
-          {owlEmoji} {owlName}
-        </Text>
+        <Text bold color="cyan">{owlEmoji} {owlName}</Text>
         <Text> </Text>
-        <Text color={statusColor} dimColor={!hasContent}>
-          [{status}]
+        <Text color={ready ? (challenge ? "yellow" : "green") : "gray"} dimColor={!ready}>
+          {spinning && !ready
+            ? `${SPINNER[spinFrame]} ${status}`
+            : `[${status}]`
+          }
         </Text>
       </Box>
-
-      {/* Position / challenge text */}
-      <Box marginTop={1} flexDirection="column">
-        {hasContent ? (
-          <Text wrap="wrap">{text}</Text>
-        ) : (
-          <Text dimColor>Preparing position...</Text>
-        )}
+      <Box marginTop={1}>
+        {ready
+          ? <Text wrap="wrap">{text}</Text>
+          : <Text dimColor>Preparing position...</Text>
+        }
       </Box>
     </Box>
   );
@@ -75,13 +82,8 @@ function OwlColumn({ owlName, owlEmoji, position, challenge, round, colWidth }: 
 
 // ─── SynthesisPanel ──────────────────────────────────────────────────────────
 
-interface SynthesisPanelProps {
-  debate: ParliamentDebate;
-}
-
-function SynthesisPanel({ debate }: SynthesisPanelProps) {
+function SynthesisPanel({ debate }: { debate: ParliamentDebate }) {
   if (!debate.synthesis) return null;
-
   return (
     <Box
       flexDirection="column"
@@ -92,11 +94,9 @@ function SynthesisPanel({ debate }: SynthesisPanelProps) {
       marginTop={1}
     >
       <Box>
-        <Text bold color="yellow">
-          {"⚖"} Parliament Verdict
-        </Text>
+        <Text bold color="yellow">⚖  Parliament Verdict</Text>
         {debate.synthOwlName && (
-          <Text dimColor>  (by {debate.synthOwlName})</Text>
+          <Text dimColor>   by {debate.synthOwlName}</Text>
         )}
       </Box>
       <Box marginTop={1}>
@@ -106,39 +106,45 @@ function SynthesisPanel({ debate }: SynthesisPanelProps) {
   );
 }
 
-// ─── ParliamentScreen ─────────────────────────────────────────────────────────
+// ─── ParliamentScreen ────────────────────────────────────────────────────────
 
 export function ParliamentScreen() {
   const debate = useUiStore((s) => s.activeDebate);
   const { stdout } = useStdout();
   const [cols, setCols] = useState(stdout?.columns ?? 80);
+  const [spinFrame, setSpinFrame] = useState(0);
 
   useEffect(() => {
-    const handler = () => setCols(stdout?.columns ?? 80);
-    stdout?.on("resize", handler);
-    return () => { stdout?.off("resize", handler); };
+    const h = () => setCols(stdout?.columns ?? 80);
+    stdout?.on("resize", h);
+    return () => { stdout?.off("resize", h); };
   }, [stdout]);
 
-  // Auto-return to chat once synthesis completes and debate becomes inactive.
-  // The bridge dismisses the parliament view after a short delay so the user
-  // can read the synthesis before the screen switches back.
+  useEffect(() => {
+    if (!debate?.active) return;
+    const t = setInterval(() => setSpinFrame((f) => (f + 1) % SPINNER.length), 80);
+    return () => clearInterval(t);
+  }, [debate?.active]);
+
   useEffect(() => {
     if (debate && !debate.active && debate.synthesis) {
-      const timer = setTimeout(() => {
-        globalBridge.dismissParliamentView();
-      }, 3000);
-      return () => clearTimeout(timer);
+      const t = setTimeout(() => globalBridge.dismissParliamentView(), 3000);
+      return () => clearTimeout(t);
     }
     return undefined;
   }, [debate]);
 
+  const divider = "─".repeat(Math.max(0, cols));
+
   if (!debate) {
     return (
       <Box flexDirection="column" padding={2}>
-        <Text bold color="cyan">{"⚖️  Parliament"}</Text>
-        <Text dimColor>No active debate. Start a complex question to convene Parliament.</Text>
+        <Text bold color="cyan">⚖  Parliament</Text>
         <Box marginTop={1}>
-          <Text dimColor>Press Ctrl+P to return to chat.</Text>
+          <Text dimColor>No active debate. Ask a complex question to convene Parliament.</Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>Ctrl+P — return to chat</Text>
         </Box>
       </Box>
     );
@@ -151,18 +157,16 @@ export function ParliamentScreen() {
     <Box flexDirection="column" width={cols}>
       {/* Header */}
       <Box paddingX={1} paddingY={0}>
-        <Text bold color="cyan">
-          {"⚖️  Parliament · Round "}{debate.round}{" of "}{debate.totalRounds}
-        </Text>
-        <Text> — </Text>
+        <Text bold color="cyan">⚖  Parliament</Text>
+        <Text dimColor>  Round {debate.round} of {debate.totalRounds}</Text>
+        <Text dimColor>  ·  </Text>
         <Text color="yellow">{roundLabel(debate.round)}</Text>
         {!debate.active && debate.synthesis && (
-          <Text color="green" dimColor>  · Returning to chat in 3s...</Text>
+          <Text dimColor>  ·  returning to chat in 3s...</Text>
         )}
       </Box>
 
-      {/* Divider */}
-      <Text>{"─".repeat(Math.max(0, cols))}</Text>
+      <Text dimColor>{divider}</Text>
 
       {/* Owl columns */}
       <Box flexDirection="row" flexWrap="nowrap">
@@ -175,19 +179,19 @@ export function ParliamentScreen() {
             challenge={debate.challenges[owl.owlId]}
             round={debate.round}
             colWidth={colWidth}
+            spinning={!!debate.active}
+            spinFrame={spinFrame}
           />
         ))}
       </Box>
 
-      {/* Synthesis panel (Round 3 complete) */}
       {debate.synthesis && <SynthesisPanel debate={debate} />}
 
-      {/* Footer */}
-      <Text>{"─".repeat(Math.max(0, cols))}</Text>
+      <Text dimColor>{divider}</Text>
       <Box paddingX={1}>
         <Text dimColor>Ctrl+P — return to chat</Text>
         {debate.active && (
-          <Text dimColor>  · {roundLabel(debate.round)} in progress...</Text>
+          <Text dimColor>  ·  {roundLabel(debate.round)} in progress...</Text>
         )}
       </Box>
     </Box>

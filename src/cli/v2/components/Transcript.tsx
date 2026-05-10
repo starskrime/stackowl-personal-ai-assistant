@@ -1,8 +1,22 @@
-/** <Static> committed turns — no re-diff after turn.committed. Phase 1. */
+/**
+ * Transcript — <Static> committed turns.
+ * No re-diff after turn.committed — native terminal scrollback owns history.
+ *
+ * Visual layout per turn:
+ *
+ *   User:
+ *     ❯ You                    ← bold green header
+ *       message text here      ← 2-space indent
+ *
+ *   Owl:
+ *     🦉 Hoots  strategist     ← emoji + bold name + dim role
+ *       response text here     ← 2-space indent
+ *       └ bash  ✓ 1.2s         ← tool cards (committed state)
+ */
 
 import { Static, Box, Text } from "ink";
 import type { Turn } from "../state/slices/turns.js";
-import { Header } from "./Header.js";
+import { OwlAvatar } from "./OwlAvatar.js";
 
 export interface TranscriptProps {
   turns: Turn[];
@@ -14,15 +28,27 @@ export function Transcript({ turns }: TranscriptProps) {
       {(turn) => (
         <Box key={turn.turnId} flexDirection="column" marginBottom={1}>
           {turn.role === "user" ? (
-            <Text color="green">▸ You</Text>
+            <>
+              <Box>
+                <Text bold color="green">❯ </Text>
+                <Text bold color="green">You</Text>
+              </Box>
+              <Box paddingLeft={2}>
+                <Text wrap="wrap">{turn.text}</Text>
+              </Box>
+            </>
           ) : (
-            <Header
-              emoji={turn.owlEmoji ?? "🦉"}
-              name={turn.owlName ?? "Owl"}
-              role={turn.owlRole}
-            />
+            <>
+              <OwlAvatar
+                emoji={turn.owlEmoji ?? "🦉"}
+                name={turn.owlName ?? "Owl"}
+                role={turn.owlRole}
+              />
+              <Box paddingLeft={2} marginTop={0}>
+                <Text wrap="wrap">{turn.text}</Text>
+              </Box>
+            </>
           )}
-          <Text>{turn.text}</Text>
         </Box>
       )}
     </Static>

@@ -1,13 +1,14 @@
 /**
- * HeartbeatBanner — bordered "knock" card for unsolicited owl proactive messages.
+ * HeartbeatBanner — bordered card for unsolicited owl proactive messages.
  *
- * Layout:
- *   ╭─ 🔔 [unsolicited · OwlName] ──────────╮
- *   │  Message text here                      │
+ *   ╭─────────────────────────────────────────╮
+ *   │  🔔 Hoots  unsolicited                  │
+ *   │                                         │
+ *   │  Your reminder text here                │
  *   ╰─────────────────────────────────────────╯
  *
- * Distinct from solicited chat turns so users immediately recognise a
- * proactive reach-out from the owl rather than a reply to their question.
+ * The magenta border and 🔔 header make proactive messages immediately
+ * distinguishable from solicited chat turns.
  */
 
 import { Box, Text } from "ink";
@@ -18,23 +19,23 @@ export interface HeartbeatBannerProps {
 }
 
 export function HeartbeatBanner({ msg }: HeartbeatBannerProps) {
+  const emoji = msg.owlEmoji ?? "🔔";
   return (
     <Box
       borderStyle="round"
       borderColor="magenta"
       flexDirection="column"
       paddingX={1}
-      marginY={0}
+      paddingY={0}
+      marginTop={0}
+      marginBottom={1}
     >
-      {/* Header row: emoji + [unsolicited · OwlName] */}
       <Box>
-        <Text bold color="magenta">
-          {msg.owlEmoji ? `${msg.owlEmoji} ` : "🔔 "}
-        </Text>
-        <Text dimColor>[unsolicited · {msg.owlName}]</Text>
+        <Text>{emoji} </Text>
+        <Text bold color="magenta">{msg.owlName}</Text>
+        <Text dimColor>  unsolicited</Text>
       </Box>
-      {/* Body: the message text */}
-      <Box paddingTop={0}>
+      <Box marginTop={0} paddingLeft={0}>
         <Text wrap="wrap">{msg.text}</Text>
       </Box>
     </Box>

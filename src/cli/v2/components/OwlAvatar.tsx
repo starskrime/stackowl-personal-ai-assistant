@@ -1,6 +1,6 @@
-/** Signed message author chip: emoji + name + role badge. Phase 1. */
+/** Signed message author chip: emoji + bold name + dim role. */
 
-import { Text } from "ink";
+import { Box, Text } from "ink";
 
 export interface OwlAvatarProps {
   emoji: string;
@@ -9,11 +9,12 @@ export interface OwlAvatarProps {
   color?: string;
 }
 
-export function OwlAvatar({ emoji, name, role, color }: OwlAvatarProps) {
+export function OwlAvatar({ emoji, name, role, color = "cyan" }: OwlAvatarProps) {
   return (
-    <Text color={color ?? "cyan"}>
-      {emoji} <Text bold>{name}</Text>
-      {role ? <Text dimColor> · {role}</Text> : null}
-    </Text>
+    <Box>
+      <Text>{emoji} </Text>
+      <Text bold color={color}>{name}</Text>
+      {role ? <Text dimColor>  {role}</Text> : null}
+    </Box>
   );
 }
