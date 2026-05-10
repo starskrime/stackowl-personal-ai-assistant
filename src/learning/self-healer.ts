@@ -251,7 +251,7 @@ export class SelfHealer {
         "pellets/graph.ts",
         "pellets/concepts.ts",
       ],
-      engine: ["engine/runtime.ts", "engine/router.ts", "engine/planner.ts"],
+      engine: ["engine/runtime.ts", "engine/planner.ts"],
       gateway: [
         "gateway/core.ts",
         "gateway/types.ts",
