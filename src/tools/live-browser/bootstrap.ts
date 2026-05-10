@@ -12,6 +12,7 @@
  * --restore-last-session, polling fetch on /json/version).
  */
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
@@ -68,7 +69,8 @@ export async function defaultIsPortOpen(port: number = DEBUG_PORT): Promise<bool
       signal: AbortSignal.timeout(500),
     });
     return res.ok;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return false;
   }
 }
@@ -78,7 +80,8 @@ export async function defaultRelaunchChrome(): Promise<void> {
   // then reopen with debug port + restore-last-session so tabs come back.
   try {
     await execAsync(`osascript -e 'tell application "Google Chrome" to quit'`);
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     // Chrome wasn't running — that's fine, we're about to launch it fresh.
   }
   // Small grace period so Chrome finishes its session-state flush before

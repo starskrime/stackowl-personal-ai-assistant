@@ -2,6 +2,7 @@ import type { ScreenBuffer, BoundingBox } from "../types.js";
 import { exec } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -152,7 +153,9 @@ export class TripleBufferPipeline {
     } finally {
       try {
         fs.unlinkSync(tmpFile);
-      } catch {}
+      } catch (err) {
+        log.engine.warn("oscar pipeline: temp screenshot cleanup failed", err);
+      }
     }
   }
 
@@ -165,7 +168,8 @@ export class TripleBufferPipeline {
         width: widthMatch ? parseInt(widthMatch[1]) : 1920,
         height: heightMatch ? parseInt(heightMatch[1]) : 1080,
       };
-    } catch {
+    } catch (err) {
+      log.engine.warn("oscar pipeline: getImageSize failed, using default 1920x1080", err);
       return { width: 1920, height: 1080 };
     }
   }
@@ -179,7 +183,7 @@ export class TripleBufferPipeline {
 
       exec(`sips -s format jpeg ${tmpInput} --out ${tmpOutput}`, (error) => {
         if (error) {
-          try { fs.unlinkSync(tmpInput); } catch {}
+          try { fs.unlinkSync(tmpInput); } catch (cleanErr) { log.engine.warn("oscar pipeline: encode temp input cleanup failed", cleanErr); }
           reject(error);
           return;
         }
@@ -188,7 +192,9 @@ export class TripleBufferPipeline {
         try {
           fs.unlinkSync(tmpInput);
           fs.unlinkSync(tmpOutput);
-        } catch {}
+        } catch (cleanErr) {
+          log.engine.warn("oscar pipeline: encode temp output cleanup failed", cleanErr);
+        }
 
         resolve(jpegData);
       });
@@ -214,7 +220,9 @@ export class TripleBufferPipeline {
     } finally {
       try {
         fs.unlinkSync(tmpFile);
-      } catch {}
+      } catch (err) {
+        log.engine.warn("oscar pipeline: captureRegion temp cleanup failed", err);
+      }
     }
   }
 }

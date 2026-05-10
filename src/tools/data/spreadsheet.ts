@@ -6,6 +6,7 @@
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
@@ -31,7 +32,8 @@ async function loadSpreadsheet(
   try {
     const content = await readFile(resolve(dir, `${name}.json`), "utf-8");
     return JSON.parse(content) as SpreadsheetData;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return null;
   }
 }
@@ -124,7 +126,8 @@ export const SpreadsheetTool: ToolImplementation = {
           let headers: string[];
           try {
             headers = JSON.parse(headersStr);
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             return "Error: 'headers' must be a valid JSON array string.";
           }
           if (!Array.isArray(headers) || headers.length === 0) {
@@ -143,7 +146,8 @@ export const SpreadsheetTool: ToolImplementation = {
           let values: string[];
           try {
             values = JSON.parse(valuesStr);
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             return "Error: 'values' must be a valid JSON array string.";
           }
           const sheet = await loadSpreadsheet(dir, name);

@@ -11,6 +11,7 @@ import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 const TIMEOUT = 15_000;
@@ -582,7 +583,8 @@ export async function findUIElements(
 
   try {
     return JSON.parse(result);
-  } catch {
+  } catch (err) {
+    log.tool.warn("findUIElements JSON parse failed", err);
     return [];
   }
 }

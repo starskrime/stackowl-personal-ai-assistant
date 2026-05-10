@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 function execPromise(cmd: string, timeout = 15000): Promise<string> {
   return new Promise((resolve) => {
@@ -74,7 +75,8 @@ export const DailyBriefingTool: ToolImplementation = {
             );
           }
         }
-      } catch {
+      } catch (err) {
+        log.tool.warn("daily-briefing: weather fetch failed", err);
         sections.push("\nWeather: Unable to fetch");
       }
 

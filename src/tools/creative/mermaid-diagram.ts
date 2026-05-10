@@ -6,6 +6,7 @@
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve, basename } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -63,7 +64,8 @@ export const MermaidDiagramTool: ToolImplementation = {
           { timeout: EXEC_TIMEOUT_MS, cwd: _context.cwd },
         );
         return `Diagram saved:\n- Mermaid source: ${mmdPath}\n- SVG: ${svgPath}`;
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Diagram saved as Mermaid source: ${mmdPath}\n(SVG generation failed — mmdc not available or errored. Install @mermaid-js/mermaid-cli to enable SVG output.)`;
       }
     } catch (error: any) {

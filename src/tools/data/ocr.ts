@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const OCRTool: ToolImplementation = {
   definition: {
@@ -88,7 +89,8 @@ for observation in observations {
       if (text && !text.startsWith("ERROR:")) {
         return `📷 OCR Result (${resolvedPath}):\n\n${text}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       // Swift approach failed — try alternatives
     }
 
@@ -105,7 +107,8 @@ for observation in observations {
       if (stdout.trim()) {
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       /* try next */
     }
 
@@ -128,7 +131,8 @@ print(text)
       if (stdout.trim()) {
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       /* try next */
     }
 
@@ -142,7 +146,8 @@ print(text)
       if (stdout.trim()) {
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       /* fallthrough */
     }
 

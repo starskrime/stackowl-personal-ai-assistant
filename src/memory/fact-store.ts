@@ -391,8 +391,9 @@ export class FactStore {
           r.fact.accessCount++;
           return r.fact;
         });
-    } catch {
+    } catch (err) {
       // Embedding failed — fall back to keyword
+      log.memory.warn("fact-store: semantic search failed, falling back to keyword", err);
       return this.search(query, userId, limit);
     }
   }
@@ -409,8 +410,9 @@ export class FactStore {
       try {
         const { embedding } = await provider.embed(fact.fact);
         (fact as any).embedding = embedding;
-      } catch {
+      } catch (err) {
         // Non-fatal — store without embedding
+        log.memory.warn("fact-store: embedding generation failed, storing without embedding", err);
       }
     }
     return this.add(fact);

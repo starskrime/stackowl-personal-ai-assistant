@@ -20,6 +20,7 @@
 
 import { App, type SayFn } from "@slack/bolt";
 import type { KnownBlock } from "@slack/types";
+import { runWithContext } from "../../infra/observability/context.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
@@ -260,7 +261,13 @@ export class SlackAdapter implements ChannelAdapter {
 
         const slackMsg = makeMessage(this.id, msg.user, text, sessionId);
         if (!slackMsg) return;
-        const response = await this.gateway.handle(
+        const response = await runWithContext({
+          channelId: "slack",
+          userId: msg.user,
+          sessionId,
+          messageId: slackMsg.id,
+          spanName: "channel.slack.handle",
+        }, () => this.gateway.handle(
           slackMsg,
           {
             onProgress: async (progressMsg: string) => {
@@ -277,7 +284,7 @@ export class SlackAdapter implements ChannelAdapter {
             },
             onStreamEvent: streamCtx.handler,
           },
-        );
+        ));
 
         // Remove eyes reaction
         try {

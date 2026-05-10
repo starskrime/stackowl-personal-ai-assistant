@@ -5,6 +5,7 @@
  */
 
 import { readFile, writeFile, access, constants } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve, extname } from "node:path";
 import {
   randomBytes,
@@ -64,7 +65,8 @@ export const FileEncryptTool: ToolImplementation = {
 
       try {
         await access(resolvedPath, constants.R_OK);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Error: File not found or not readable: ${resolvedPath}`;
       }
 
@@ -113,7 +115,8 @@ export const FileEncryptTool: ToolImplementation = {
           await writeFile(outputPath, decrypted);
 
           return `File decrypted successfully.\n- Input: ${resolvedPath}\n- Output: ${outputPath}`;
-        } catch {
+        } catch (err) {
+          log.tool.warn('operation failed', err);
           return "Error: Decryption failed. Wrong password or corrupted file.";
         }
       }

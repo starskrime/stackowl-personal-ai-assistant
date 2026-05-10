@@ -4,6 +4,7 @@ import { writeFile, rm, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -75,7 +76,7 @@ export const CodeSandboxTool: ToolImplementation = {
 
       child.on("close", (exitCode) => {
         clearTimeout(timer);
-        rm(dir, { recursive: true }).catch(() => {});
+        rm(dir, { recursive: true }).catch((err) => { log.tool.warn("sandbox temp-dir cleanup failed", err); });
 
         if (timedOut) {
           resolve(JSON.stringify({
@@ -93,7 +94,7 @@ export const CodeSandboxTool: ToolImplementation = {
 
       child.on("error", (err) => {
         clearTimeout(timer);
-        rm(dir, { recursive: true }).catch(() => {});
+        rm(dir, { recursive: true }).catch((err) => { log.tool.warn("sandbox temp-dir cleanup failed", err); });
         resolve(JSON.stringify({
           success: false,
           error: { code: "SPAWN_ERROR", message: (err as Error).message },

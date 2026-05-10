@@ -13,6 +13,7 @@
 
 import { Bot, InputFile, type Context } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
+import { runWithContext } from "../../infra/observability/context.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, extname } from "node:path";
@@ -312,16 +313,23 @@ export class TelegramAdapter implements ChannelAdapter {
       const userId = ctx.from?.id;
       if (!userId) return;
       try {
-        const response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: this.id,
-            userId: String(userId),
-            sessionId: makeSessionId(this.id, String(userId)),
-            text: "/skills install",
-          },
+        const skillsMsg = {
+          id: makeMessageId(),
+          channelId: this.id,
+          userId: String(userId),
+          sessionId: makeSessionId(this.id, String(userId)),
+          text: "/skills install",
+        };
+        const response = await runWithContext({
+          channelId: "telegram",
+          userId: String(userId),
+          sessionId: skillsMsg.sessionId,
+          messageId: skillsMsg.id,
+          spanName: "channel.telegram.handle",
+        }, () => this.gateway.handle(
+          skillsMsg,
           { onProgress: async () => {}, askInstall: async () => false },
-        );
+        ));
         await this.sendWizardResponse(ctx.chat.id, response);
       } catch (err) {
         log.telegram.error(`/skills wizard error: ${err instanceof Error ? err.message : err}`);
@@ -520,7 +528,13 @@ export class TelegramAdapter implements ChannelAdapter {
         );
         const msg = makeMessage(this.id, String(userId), text);
         if (!msg) return;
-        const response = await this.gateway.handle(
+        const response = await runWithContext({
+          channelId: "telegram",
+          userId: String(userId),
+          sessionId: makeSessionId(this.id, String(userId)),
+          messageId: msg.id,
+          spanName: "channel.telegram.handle",
+        }, () => this.gateway.handle(
           msg,
           {
             onProgress: async (msg: string) => {
@@ -560,7 +574,7 @@ export class TelegramAdapter implements ChannelAdapter {
             },
             onStreamEvent: streamCtx.handler,
           },
-        );
+        ));
 
         log.telegram.outgoing(`user:${userId}`, response.content);
         log.telegram.info(
@@ -770,7 +784,13 @@ export class TelegramAdapter implements ChannelAdapter {
 
         const voiceMsg = makeMessage(this.id, String(userId), text);
         if (!voiceMsg) return;
-        const response = await this.gateway.handle(
+        const response = await runWithContext({
+          channelId: "telegram",
+          userId: String(userId),
+          sessionId: makeSessionId(this.id, String(userId)),
+          messageId: voiceMsg.id,
+          spanName: "channel.telegram.handle",
+        }, () => this.gateway.handle(
           voiceMsg,
           {
             onProgress: async (msg: string) => {
@@ -783,7 +803,7 @@ export class TelegramAdapter implements ChannelAdapter {
             },
             onStreamEvent: streamCtx.handler,
           },
-        );
+        ));
 
         log.telegram.outgoing(`user:${userId}`, response.content);
 
@@ -837,10 +857,16 @@ export class TelegramAdapter implements ChannelAdapter {
         try {
           const cbMsg = makeMessage(this.id, String(userId), data);
           if (!cbMsg) return;
-          const response = await this.gateway.handle(
+          const response = await runWithContext({
+            channelId: "telegram",
+            userId: String(userId),
+            sessionId: makeSessionId(this.id, String(userId)),
+            messageId: cbMsg.id,
+            spanName: "channel.telegram.handle",
+          }, () => this.gateway.handle(
             cbMsg,
             { onProgress: async () => {}, askInstall: async () => false },
-          );
+          ));
           const chatId = ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id;
           if (chatId) await this.sendWizardResponse(chatId, response);
         } catch (err) {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { log } from "../../logger.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolImplementation } from "../registry.js";
@@ -18,7 +19,8 @@ async function loadMonitors(filePath: string): Promise<MonitorsFile> {
   try {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as MonitorsFile;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return { monitors: [] };
   }
 }

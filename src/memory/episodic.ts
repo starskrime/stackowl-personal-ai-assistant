@@ -227,8 +227,9 @@ Return ONLY a valid JSON object, no markdown or explanation.`;
           if (embedResp.embedding?.length) {
             episode.embedding = embedResp.embedding;
           }
-        } catch {
+        } catch (err) {
           // Embedding is optional — episode still gets stored
+          log.memory.warn("episodic: embedding generation failed, storing without embedding", err);
         }
 
         this.episodes.set(episode.id, episode);
@@ -282,7 +283,8 @@ Return ONLY a valid JSON object, no markdown or explanation.`;
     try {
       const resp = await provider.embed(query);
       queryEmbedding = resp.embedding ?? [];
-    } catch {
+    } catch (err) {
+      log.memory.warn("episodic: query embedding failed, using keyword matches", err);
       return keywordMatches.slice(0, limit);
     }
 
@@ -461,8 +463,9 @@ Return ONLY a valid JSON object, no markdown.`;
         if (embedResp.embedding?.length) {
           episode.embedding = embedResp.embedding;
         }
-      } catch {
+      } catch (err) {
         // Embedding is optional
+        log.memory.warn("episodic: segment embedding failed (optional)", err);
       }
 
       this.episodes.set(episode.id, episode);
@@ -526,7 +529,7 @@ Return ONLY a valid JSON object, no markdown.`;
     };
 
     this.episodes.set(episode.id, episode);
-    this.save().catch(() => {});
+    this.save().catch((err) => { log.memory.warn("episodic: save minimal episode failed", err); });
     log.engine.info(
       `[EpisodicMemory] Saved minimal episode (LLM unavailable): "${episode.summary.slice(0, 60)}"`,
     );
@@ -577,8 +580,9 @@ Return ONLY a valid JSON object, no markdown.`;
       try {
         const resp = await provider.embed(query);
         queryEmbedding = resp.embedding ?? [];
-      } catch {
+      } catch (err) {
         // Fall through to keyword-only
+        log.memory.warn("episodic: retrieval query embedding failed, using keyword-only", err);
       }
     }
 
@@ -682,7 +686,7 @@ Return ONLY a valid JSON object, no markdown.`;
       log.engine.info(
         `[EpisodicMemory] Decay: ${compressed} compressed, ${archived} archived`,
       );
-      this.save().catch(() => {});
+      this.save().catch((err) => { log.memory.warn("episodic: save after decay failed", err); });
     }
 
     return { compressed, archived };

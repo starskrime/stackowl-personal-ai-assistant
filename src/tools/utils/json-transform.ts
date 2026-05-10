@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const JSONTransformTool: ToolImplementation = {
   definition: {
@@ -39,7 +40,8 @@ export const JSONTransformTool: ToolImplementation = {
       let parsed: unknown;
       try {
         parsed = JSON.parse(dataStr);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return "Error: Invalid JSON input.";
       }
 

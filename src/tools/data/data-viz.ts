@@ -6,6 +6,7 @@
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
@@ -66,12 +67,14 @@ export const DataVisualizationTool: ToolImplementation = {
       let data: number[];
       try {
         labels = JSON.parse(labelsStr);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return "Error: 'labels' must be a valid JSON array string.";
       }
       try {
         data = JSON.parse(dataStr);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return "Error: 'data' must be a valid JSON array string.";
       }
 

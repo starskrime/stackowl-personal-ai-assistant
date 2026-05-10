@@ -6,6 +6,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 import { webFetchEnvelope } from "../browser/smart-fetch.js";
 
 export const WebFetchTool: ToolImplementation = {
@@ -51,7 +52,8 @@ export const WebFetchTool: ToolImplementation = {
         });
       }
       url = parsedUrl.toString();
-    } catch {
+    } catch (err) {
+      log.tool.warn("web: URL parse failed", err);
       return serializeWebToolResult({
         success: false,
         error: { code: "INVALID_URL", message: `Invalid URL: ${url}`, attemptedTiers: [] },

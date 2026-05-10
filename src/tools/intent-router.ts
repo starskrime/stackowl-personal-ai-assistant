@@ -226,7 +226,8 @@ export class ToolIntentRouter {
               msgEmbed.embedding,
               toolEmbed.embedding,
             );
-          } catch {
+          } catch (err) {
+            log.tool.warn("intent-router: tool embedding similarity failed", err);
             return 0;
           }
         }),
@@ -242,7 +243,8 @@ export class ToolIntentRouter {
 
       candidates.sort((a, b) => b.score - a.score);
       return candidates;
-    } catch {
+    } catch (err) {
+      log.tool.warn("intent-router: semantic ranking failed", err);
       return null;
     }
   }

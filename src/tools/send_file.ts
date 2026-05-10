@@ -12,6 +12,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, isAbsolute, extname, basename, join } from "node:path";
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 const DOC_EXTS = new Set([
@@ -49,8 +50,9 @@ async function downloadToLocal(url: string, cwd: string): Promise<string> {
   try {
     const parsed = new URL(url);
     urlExt = extname(parsed.pathname).toLowerCase();
-  } catch {
+  } catch (err) {
     /* non-fatal */
+    log.tool.warn("send_file: URL extension parse failed (non-fatal)", err);
   }
 
   // Fallback extension if none detected

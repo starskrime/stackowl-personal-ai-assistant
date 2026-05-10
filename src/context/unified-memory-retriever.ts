@@ -1,6 +1,7 @@
 import type { MemoryBus, UnifiedMemory } from "../memory/bus.js";
 import type { FactStore } from "../memory/fact-store.js";
 import type { EpisodicMemory, Episode } from "../memory/episodic.js";
+import { log } from "../logger.js";
 
 export class UnifiedMemoryRetriever {
   constructor(
@@ -11,9 +12,9 @@ export class UnifiedMemoryRetriever {
 
   async retrieve(query: string, userId: string): Promise<string> {
     const [busResults, facts, episodes] = await Promise.all([
-      this.memoryBus.recall(query, 10, 2000).catch(() => [] as UnifiedMemory[]),
-      Promise.resolve(this.factStore.search(query, userId, 10)).catch(() => []),
-      this.episodic.search(query, 5, undefined).catch(() => [] as Episode[]),
+      this.memoryBus.recall(query, 10, 2000).catch((err) => { log.memory.warn("memory bus recall failed", err); return [] as UnifiedMemory[]; }),
+      Promise.resolve(this.factStore.search(query, userId, 10)).catch((err) => { log.memory.warn("fact store search failed", err); return []; }),
+      this.episodic.search(query, 5, undefined).catch((err) => { log.memory.warn("episodic memory search failed", err); return [] as Episode[]; }),
     ]);
 
     if (facts.length === 0 && episodes.length === 0 && busResults.length === 0) return "";

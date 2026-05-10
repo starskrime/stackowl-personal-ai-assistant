@@ -6,6 +6,7 @@
  */
 
 import type { ToolDefinition } from "../providers/base.js";
+import { log } from "../logger.js";
 import { SemanticToolGate } from "../intelligence/semantic-tool-gate.js";
 import type { EngineContext } from "../engine/runtime.js";
 import type { GatewayEventBus } from "../gateway/event-bus.js";
@@ -416,7 +417,8 @@ export class ToolRegistry {
               const urlHost = (() => {
                 try {
                   return args.url ? new URL(args.url as string).hostname : "";
-                } catch {
+                } catch (err) {
+                  log.tool.warn("registry: failed to parse tool URL for replanning", err);
                   return "";
                 }
               })();
@@ -462,8 +464,9 @@ export class ToolRegistry {
           if (!envelope && (verification.verdict === "BLOCKED" || verification.verdict === "PARTIAL")) {
             result = result + `\n\n<tool_result_warning verdict="${verification.verdict}">${verification.reason}${verification.suggestion ? ` Suggestion: ${verification.suggestion}` : ""}</tool_result_warning>`;
           }
-        } catch {
+        } catch (err) {
           // Verifier failure is non-fatal — proceed with unmodified result
+          log.tool.warn("registry: tool verifier failed (non-fatal)", err);
         }
       }
 

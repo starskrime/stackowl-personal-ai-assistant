@@ -18,6 +18,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { log } from "../../logger.js";
 
 const TIMEOUT = 20_000;
 
@@ -443,7 +444,8 @@ export async function waitForElement(
       const state = await readScreen(criteria.app);
       const found = findElement(state.elements, criteria);
       if (found) return found;
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       // AX read failed — retry
     }
     const remaining = deadline - Date.now();

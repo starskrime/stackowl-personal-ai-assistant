@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const PDFReaderTool: ToolImplementation = {
   definition: {
@@ -85,7 +86,8 @@ export const PDFReaderTool: ToolImplementation = {
             }
             if (text.trim())
               return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             /* try next method */
           }
 
@@ -133,7 +135,8 @@ except ImportError:
             );
             if (text && text !== "NO_LIB")
               return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             /* try next */
           }
 
@@ -144,7 +147,8 @@ except ImportError:
             );
             if (text.trim())
               return `📄 PDF Content (extracted via Spotlight):\n\n${text}`;
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             /* fallthrough */
           }
 
@@ -160,7 +164,8 @@ except ImportError:
           let info = "";
           try {
             info = await shell(`pdfinfo "${resolvedPath}" 2>/dev/null`);
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             try {
               info = await shell(
                 `python3 -c "
@@ -173,7 +178,8 @@ if meta:
         print(f'{k}: {v}')
 " 2>/dev/null`,
               );
-            } catch {
+            } catch (err) {
+              log.tool.warn('operation failed', err);
               info = await shell(
                 `mdls -name kMDItemNumberOfPages -name kMDItemTitle -name kMDItemAuthors "${resolvedPath}" 2>/dev/null`,
               );
@@ -202,7 +208,8 @@ if meta:
               .slice(0, 20)
               .map((m) => `  Line ${m.line}: ${m.text.trim()}`);
             return `🔍 Found ${matches.length} matches for "${query}":\n\n${formatted.join("\n")}`;
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             return "Search requires pdftotext. Install: brew install poppler";
           }
         }

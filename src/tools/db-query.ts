@@ -1,5 +1,6 @@
 // src/tools/db-query.ts
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 
 export const DbQueryTool: ToolImplementation = {
   definition: {
@@ -44,7 +45,8 @@ export const DbQueryTool: ToolImplementation = {
     if (paramsRaw) {
       try {
         params = JSON.parse(paramsRaw);
-      } catch {
+      } catch (err) {
+        log.tool.warn("db-query: params JSON parse failed", err);
         return JSON.stringify({ success: false, error: { code: "INVALID_PARAMS", message: "params must be a valid JSON array" } });
       }
     }
@@ -55,7 +57,8 @@ export const DbQueryTool: ToolImplementation = {
       // better-sqlite3 uses `export =` style — the module itself is the constructor
       const mod = await import("better-sqlite3");
       DatabaseCtor = (mod as unknown as { default: unknown }).default ?? mod;
-    } catch {
+    } catch (err) {
+      log.tool.warn("db-query: better-sqlite3 not available", err);
       return JSON.stringify({ success: false, error: { code: "MISSING_DEP", message: "better-sqlite3 is not installed" } });
     }
 

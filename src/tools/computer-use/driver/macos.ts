@@ -12,6 +12,7 @@
  */
 
 import { spawn, execFile } from "node:child_process";
+import { log } from "../../../logger.js";
 import { promisify } from "node:util";
 import { writeFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -370,7 +371,8 @@ export class MacOSDriver implements IOSDriver {
               if (msg.ok) pending.resolve(msg.r ?? null);
               else pending.reject(new Error(msg.e ?? "Unknown error"));
             }
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             // Non-JSON output from osascript (e.g. warnings) — ignore
           }
         }

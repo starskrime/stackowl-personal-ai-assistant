@@ -13,6 +13,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../../logger.js";
 import type {
   IOSDriver,
   Point,
@@ -156,7 +157,9 @@ export class LinuxDriver implements IOSDriver {
       if (match) {
         return { width: Number(match[1]), height: Number(match[2]), scaleFactor: 1 };
       }
-    } catch {}
+    } catch (err) {
+      log.tool.warn("xdpyinfo screen-size query failed", err);
+    }
 
     // Fallback: xrandr
     try {
@@ -165,7 +168,9 @@ export class LinuxDriver implements IOSDriver {
       if (match) {
         return { width: Number(match[1]), height: Number(match[2]), scaleFactor: 1 };
       }
-    } catch {}
+    } catch (err) {
+      log.tool.warn("xrandr screen-size query failed", err);
+    }
 
     return { width: 1920, height: 1080, scaleFactor: 1 };
   }
@@ -312,11 +317,16 @@ export class LinuxDriver implements IOSDriver {
     try {
       await this.run("wmctrl", ["-a", name]);
       return;
-    } catch {}
+    } catch (err) {
+      log.tool.warn("wmctrl raise-window failed", err);
+    }
     try {
       await this.run("xdg-open", [name]);
-    } catch {
-      await execFileAsync(name, [], { timeout: 5000 }).catch(() => {});
+    } catch (err) {
+      log.tool.warn("xdg-open failed, attempting direct launch", err);
+      await execFileAsync(name, [], { timeout: 5000 }).catch((launchErr) => {
+        log.tool.warn("direct app launch failed", launchErr);
+      });
     }
   }
 
@@ -330,7 +340,8 @@ export class LinuxDriver implements IOSDriver {
       const wid = await this.xdo("getactivewindow");
       const name = await this.xdo("getwindowname", wid.trim());
       return name;
-    } catch {
+    } catch (err) {
+      log.tool.warn("get front app failed", err);
       return "unknown";
     }
   }

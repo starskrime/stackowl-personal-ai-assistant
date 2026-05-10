@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const YouTubeSearchTool: ToolImplementation = {
   definition: {
@@ -59,7 +60,8 @@ export const YouTubeSearchTool: ToolImplementation = {
               `yt-dlp --skip-download --write-sub --sub-lang en -o - "${url}" 2>/dev/null | head -200`,
           );
           if (result) return `📝 Transcript for ${url}:\n\n${result}`;
-        } catch {
+        } catch (err) {
+          log.tool.warn('operation failed', err);
           /* fallthrough */
         }
 
@@ -79,7 +81,8 @@ for entry in transcript[:100]:
             );
             if (py) return `📝 Transcript for ${url}:\n\n${py}`;
           }
-        } catch {
+        } catch (err) {
+          log.tool.warn('operation failed', err);
           /* fallthrough */
         }
 
@@ -107,7 +110,8 @@ for entry in transcript[:100]:
           });
           return `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
         }
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         /* fallthrough to Python */
       }
 
@@ -155,7 +159,8 @@ if match:
           });
           return `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
         }
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         /* fallthrough */
       }
 

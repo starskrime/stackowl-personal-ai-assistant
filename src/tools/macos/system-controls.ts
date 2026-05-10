@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const SystemControlsTool: ToolImplementation = {
   definition: {
@@ -90,7 +91,8 @@ export const SystemControlsTool: ToolImplementation = {
                 `python3 -c "import subprocess; r=subprocess.run(['brightness','-l'],capture_output=True,text=True); print(r.stdout)" 2>/dev/null`,
               );
               return `Brightness: ${py || "Could not read (install: brew install brightness)"}`;
-            } catch {
+            } catch (err) {
+              log.tool.warn("system-controls: brightness read fallback failed", err);
               return "Brightness: Could not read. Install: brew install brightness";
             }
           }
@@ -103,7 +105,8 @@ export const SystemControlsTool: ToolImplementation = {
           try {
             await shell(`brightness ${brVal}`);
             return `Brightness set to ${value}%`;
-          } catch {
+          } catch (err) {
+            log.tool.warn("system-controls: set brightness failed", err);
             return `Error: Could not set brightness. Install: brew install brightness`;
           }
         }
@@ -148,7 +151,8 @@ export const SystemControlsTool: ToolImplementation = {
                 "ipconfig getifaddr en0 2>/dev/null || echo 'Not connected'",
             );
             return `Wi-Fi: ${network}`;
-          } catch {
+          } catch (err) {
+            log.tool.warn("system-controls: wifi network query failed", err);
             return "Wi-Fi: Not connected or could not detect.";
           }
         }
@@ -170,7 +174,8 @@ export const SystemControlsTool: ToolImplementation = {
           try {
             const bt = await shell("blueutil --power 2>/dev/null");
             return `Bluetooth: ${bt === "1" ? "ON" : "OFF"}`;
-          } catch {
+          } catch (err) {
+            log.tool.warn("system-controls: bluetooth status failed", err);
             return "Bluetooth status unavailable. Install: brew install blueutil";
           }
         }

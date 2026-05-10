@@ -16,6 +16,7 @@
  * tell the user what to do.
  */
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
@@ -61,7 +62,8 @@ export class SafariDriver {
         (t): t is SafariTab =>
           t && typeof t.title === "string" && typeof t.url === "string",
       );
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       return [];
     }
   }

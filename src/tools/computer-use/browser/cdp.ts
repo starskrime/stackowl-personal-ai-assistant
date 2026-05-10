@@ -20,6 +20,7 @@
  */
 
 import puppeteer from "puppeteer";
+import { log } from "../../../logger.js";
 import type { Browser, Page } from "puppeteer";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -107,7 +108,8 @@ export class BrowserBridge {
     try {
       // connect() path — detach without closing the external browser
       await (this.browser as Browser).disconnect();
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       // launch() path — close our managed instance
       try { await this.browser.close(); } catch { /* ignore */ }
     }
@@ -269,7 +271,8 @@ export class BrowserBridge {
         await page.waitForSelector(selector, { timeout: 5_000 });
         await page.click(selector);
         return;
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         // Fall through to text-based match
       }
     }
@@ -344,7 +347,8 @@ export class BrowserBridge {
     try {
       await page.waitForSelector(selector, { timeout: timeoutMs });
       return true;
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       return false;
     }
   }

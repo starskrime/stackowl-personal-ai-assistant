@@ -10,6 +10,7 @@ import type {
 } from "../../types.js";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { log } from "../../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -24,7 +25,8 @@ export class MacOSAdapter {
       );
       this.focusedApp = stdout.trim();
       return this.focusedApp;
-    } catch {
+    } catch (err) {
+      log.engine.warn("oscar macos: getFocusedApp failed", err);
       return null;
     }
   }
@@ -118,7 +120,8 @@ export class MacOSAdapter {
         { timeout: 1000 }
       );
       return stdout.trim();
-    } catch {
+    } catch (err) {
+      log.engine.warn(`oscar macos: getBundleIdForApp failed for "${appName}", using name as fallback`, err);
       return appName;
     }
   }
@@ -145,7 +148,9 @@ export class MacOSAdapter {
           children: [],
         };
       }
-    } catch {}
+    } catch (err) {
+      log.engine.warn("oscar macos: getRootElement failed", err);
+    }
     return null;
   }
 
@@ -166,7 +171,9 @@ export class MacOSAdapter {
         element.children.push(child.id);
         await this.walkTree(child, elements, depth + 1, maxDepth);
       }
-    } catch {}
+    } catch (err) {
+      log.engine.warn("oscar macos: walkTree children failed", err);
+    }
   }
 
   private async getChildren(element: AccessibilityElement): Promise<AccessibilityElement[]> {
@@ -208,7 +215,8 @@ export class MacOSAdapter {
         }
       }
       return children;
-    } catch {
+    } catch (err) {
+      log.engine.warn("oscar macos: getChildren failed", err);
       return [];
     }
   }
@@ -590,7 +598,9 @@ Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
       if (parts.length === 4) {
         return { width: parts[2], height: parts[3] };
       }
-    } catch {}
+    } catch (err) {
+      log.engine.warn("oscar macos: getScreenBounds failed, using default 1920x1080", err);
+    }
     return { width: 1920, height: 1080 };
   }
 

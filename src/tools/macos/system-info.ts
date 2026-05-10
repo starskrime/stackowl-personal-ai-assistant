@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -36,7 +37,8 @@ export const SystemInfoTool: ToolImplementation = {
       try {
         const { stdout } = await execAsync(cmd, { timeout: 15000 });
         results.push(`=== ${label} ===\n${stdout.trim()}`);
-      } catch {
+      } catch (err) {
+        log.tool.warn(`system-info: ${label} command failed`, err);
         results.push(`=== ${label} ===\nUnable to retrieve.`);
       }
     }
@@ -52,8 +54,9 @@ export const SystemInfoTool: ToolImplementation = {
           results[idx] = `=== Memory ===\n${gb} GB`;
         }
       }
-    } catch {
+    } catch (err) {
       // Keep raw output
+      log.tool.warn("system-info: memory GB conversion failed", err);
     }
 
     return results.join("\n\n");

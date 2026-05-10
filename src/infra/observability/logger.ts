@@ -129,8 +129,8 @@ export class Logger {
     _emit(this._module, "info", msg, { fields: this._fields(fields) });
   }
 
-  warn(msg: string, fields?: Record<string, unknown>): void {
-    _emit(this._module, "warn", msg, { fields: this._fields(fields) });
+  warn(msg: string, err?: unknown, fields?: Record<string, unknown>): void {
+    _emit(this._module, "warn", msg, { err, fields: this._fields(fields) });
   }
 
   error(msg: string, err?: unknown, fields?: Record<string, unknown>): void {

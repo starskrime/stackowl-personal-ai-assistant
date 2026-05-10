@@ -126,7 +126,8 @@ export class MemoryFeedback {
           expiresAt: fact.expiresAt,
         });
         message = `Updated the fact. New fact stored with ID ${added.id}`;
-      } catch {
+      } catch (err) {
+        log.memory.warn("memory-feedback: failed to store corrected fact", err);
         message = "Fact removed, but failed to store correction.";
       }
     }
@@ -189,9 +190,9 @@ export class MemoryFeedback {
           1.0,
           event.message,
         );
-      } catch {
+      } catch (err) {
         log.memory.warn(
-          `[MemoryFeedback] Could not add contradiction edge to graph`,
+          `[MemoryFeedback] Could not add contradiction edge to graph`, err,
         );
       }
     }

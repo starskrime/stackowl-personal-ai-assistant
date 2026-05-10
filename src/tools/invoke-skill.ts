@@ -1,5 +1,6 @@
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { toolError, toolSuccess } from "./tool-error.js";
+import { log } from "../logger.js";
 
 /**
  * Minimal interface for an executor that can run a named skill.
@@ -56,8 +57,9 @@ export function createInvokeSkillTool(
       if (args["params"]) {
         try {
           params = JSON.parse(args["params"] as string);
-        } catch {
+        } catch (err) {
           // Non-fatal — proceed with empty params
+          log.tool.warn("invoke-skill: params JSON parse failed, using empty params", err);
         }
       }
 

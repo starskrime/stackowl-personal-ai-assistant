@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 
 export const DocumentTool: ToolImplementation = {
   definition: {
@@ -60,7 +61,8 @@ export const DocumentTool: ToolImplementation = {
     let buf: Buffer;
     try {
       buf = await readFile(filePath);
-    } catch {
+    } catch (err) {
+      log.tool.warn("document: file read failed", err);
       return JSON.stringify({
         success: false,
         error: {

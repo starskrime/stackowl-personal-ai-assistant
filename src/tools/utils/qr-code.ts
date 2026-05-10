@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { resolve, join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import { log } from "../../logger.js";
 
 export const QRCodeTool: ToolImplementation = {
   definition: {
@@ -86,8 +87,9 @@ except ImportError:
           `Use send_file to deliver this to the user.`
         );
       }
-    } catch {
+    } catch (err) {
       // Python libs not available — try CoreImage
+      log.tool.warn("qr-code: Python QR generation failed, trying CoreImage fallback", err);
     }
 
     // Fallback: use CIQRCodeGenerator via JXA
@@ -124,8 +126,9 @@ app.doShellScript("echo '" + script.replace(/'/g, "'\\\\''") + "' | swift -");
           `Use send_file to deliver this to the user.`
         );
       }
-    } catch {
+    } catch (err) {
       // Swift/CoreImage fallback failed
+      log.tool.warn("qr-code: Swift/CoreImage fallback failed", err);
     }
 
     return (

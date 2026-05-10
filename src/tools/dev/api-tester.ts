@@ -1,4 +1,5 @@
 import type { ToolImplementation } from "../registry.js";
+import { log } from "../../logger.js";
 
 const MAX_BODY_LENGTH = 5000;
 
@@ -44,7 +45,8 @@ export const APITesterTool: ToolImplementation = {
       if (headersRaw) {
         try {
           parsedHeaders = JSON.parse(headersRaw);
-        } catch {
+        } catch (err) {
+          log.tool.warn('operation failed', err);
           return "Error: headers must be a valid JSON string.";
         }
       }
@@ -70,7 +72,8 @@ export const APITesterTool: ToolImplementation = {
       let respBody: string;
       try {
         respBody = await resp.text();
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         respBody = "(could not read response body)";
       }
 

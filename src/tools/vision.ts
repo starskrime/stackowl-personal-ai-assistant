@@ -8,6 +8,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { log } from "../logger.js";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 
 export interface VisionResult {
@@ -88,7 +89,8 @@ export const VisionTool: ToolImplementation = {
     let provider: import("../providers/base.js").ModelProvider;
     try {
       provider = providerRegistry.get(resolved.provider);
-    } catch {
+    } catch (err) {
+      log.tool.warn("vision: provider not found", err);
       return JSON.stringify({
         success: false,
         error: {
@@ -102,7 +104,8 @@ export const VisionTool: ToolImplementation = {
     let imageBuffer: Buffer;
     try {
       imageBuffer = await readFile(imagePath);
-    } catch {
+    } catch (err) {
+      log.tool.warn("vision: image file read failed", err);
       return JSON.stringify({
         success: false,
         error: { code: "FILE_NOT_FOUND", message: `Cannot read image: ${imagePath}` },
@@ -144,7 +147,8 @@ export const VisionTool: ToolImplementation = {
     let result: VisionResult;
     try {
       result = JSON.parse(response.content) as VisionResult;
-    } catch {
+    } catch (err) {
+      log.tool.warn("vision: response JSON parse failed, using raw content", err);
       result = { description: response.content, objects: [], text: null };
     }
 

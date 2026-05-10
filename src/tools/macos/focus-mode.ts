@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -47,10 +48,12 @@ export const FocusModeTool: ToolImplementation = {
               );
               const dndActive = parseInt(dndOut.trim(), 10) > 0;
               return `Focus/DND status: ${dndActive ? "ON" : "OFF"} (control center visibility: ${trimmed})`;
-            } catch {
+            } catch (err) {
+              log.tool.warn("focus-mode: DND plist query failed", err);
               return `Focus mode control center visibility: ${trimmed}`;
             }
-          } catch {
+          } catch (err) {
+            log.tool.warn("focus-mode: status check failed", err);
             return "Unable to determine Focus/DND status. macOS privacy settings may be restricting access.";
           }
         }
@@ -62,7 +65,8 @@ export const FocusModeTool: ToolImplementation = {
               { timeout: 15000 },
             );
             return "Focus/Do Not Disturb mode turned ON.";
-          } catch {
+          } catch (err) {
+            log.tool.warn("focus-mode: enable failed", err);
             return "Unable to enable Focus mode. You may need to set up a 'Focus' shortcut in the Shortcuts app, or enable it manually.";
           }
         }
@@ -74,7 +78,8 @@ export const FocusModeTool: ToolImplementation = {
               { timeout: 15000 },
             );
             return "Focus/Do Not Disturb mode turned OFF.";
-          } catch {
+          } catch (err) {
+            log.tool.warn("focus-mode: disable failed", err);
             return "Unable to disable Focus mode. You may need to disable it manually in System Settings.";
           }
         }

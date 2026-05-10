@@ -16,6 +16,7 @@
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { getCamoFoxClient } from "../browser/camofox-client.js";
 import type { SnapshotResponse } from "../browser/camofox-client.js";
+import { log } from "../logger.js";
 
 // ─── Module-level session state ───────────────────────────────────
 // Maps userId → tabId. Survives across multiple tool invocations
@@ -176,7 +177,7 @@ export const CamoFoxTool: ToolImplementation = {
           // Close existing session first (gracefully)
           const existingTabId = sessions.get(userId);
           if (existingTabId) {
-            await client.closeTab(existingTabId, userId).catch(() => {});
+            await client.closeTab(existingTabId, userId).catch((err) => { log.tool.warn("camofox close existing tab failed", err); });
             sessions.delete(userId);
           }
 
@@ -257,7 +258,7 @@ export const CamoFoxTool: ToolImplementation = {
           if (!tabId) {
             return `No active session for userId="${userId}".`;
           }
-          await client.closeTab(tabId, userId).catch(() => {});
+          await client.closeTab(tabId, userId).catch((err) => { log.tool.warn("camofox close tab failed", err); });
           sessions.delete(userId);
           return `Session for userId="${userId}" closed.`;
         }
@@ -327,11 +328,12 @@ export async function camoFoxFetch(
     tabId = tab.tabId;
     const snap = await client.snapshot(tabId, userId);
     return { snapshot: snap.snapshot, pageUrl: snap.url };
-  } catch {
+  } catch (err) {
+    log.tool.warn("camoFoxFetch one-shot fetch failed", err);
     return null;
   } finally {
     if (tabId) {
-      await client.closeTab(tabId, userId).catch(() => {});
+      await client.closeTab(tabId, userId).catch((err) => { log.tool.warn("camoFoxFetch close tab failed", err); });
     }
   }
 }
@@ -354,11 +356,12 @@ export async function camoFoxSearch(
     tabId = tab.tabId;
     const result = await client.navigate(tabId, userId, `${macro} ${query}`);
     return result.snapshot;
-  } catch {
+  } catch (err) {
+    log.tool.warn("camoFoxSearch one-shot search failed", err);
     return null;
   } finally {
     if (tabId) {
-      await client.closeTab(tabId, userId).catch(() => {});
+      await client.closeTab(tabId, userId).catch((err) => { log.tool.warn("camoFoxSearch close tab failed", err); });
     }
   }
 }

@@ -237,8 +237,9 @@ Be specific and actionable. Include tool names, commands, URLs if relevant.`;
         failedApproaches: Array.isArray(parsed.failedApproaches) ? parsed.failedApproaches.slice(0, 5) : [],
         openQuestions: Array.isArray(parsed.openQuestions) ? parsed.openQuestions.slice(0, 4) : [],
       };
-    } catch {
+    } catch (err) {
       // Fallback: minimal summary from raw text
+      log.memory.warn("compressor: summary JSON parse failed, using minimal fallback", err);
       return {
         task: "Conversation summary",
         accomplished: raw.slice(0, 200),

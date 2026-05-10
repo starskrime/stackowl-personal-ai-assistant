@@ -6,6 +6,7 @@
  */
 
 import { readdir, stat, mkdir, rename } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve, extname, join } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
@@ -141,7 +142,8 @@ export const FileOrganizeTool: ToolImplementation = {
       let entries: string[];
       try {
         entries = await readdir(resolvedDir);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Error: Cannot read directory: ${resolvedDir}`;
       }
 
@@ -152,7 +154,8 @@ export const FileOrganizeTool: ToolImplementation = {
         let fileStat;
         try {
           fileStat = await stat(fullPath);
-        } catch {
+        } catch (err) {
+          log.tool.warn('operation failed', err);
           continue;
         }
 

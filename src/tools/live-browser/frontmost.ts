@@ -15,6 +15,7 @@
  * tool we want a clean "no browser available" branch, not an exception.
  */
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
@@ -62,7 +63,8 @@ export async function detectFrontmostBrowser(
   let raw: string;
   try {
     raw = await (opts.runner ?? defaultRunner)();
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return null;
   }
   const name = raw.trim();

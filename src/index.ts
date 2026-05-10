@@ -178,6 +178,7 @@ import { MemorySearcher } from "./memory-threads/searcher.js";
 import { RecallMemoryTool } from "./tools/recall.js";
 import { RememberTool } from "./tools/remember.js";
 import { SkillInstallTool } from "./tools/skill-install.js";
+import { ReadLogsTool } from "./tools/read-logs.js";
 import { PelletRecallTool } from "./tools/pellet-recall.js";
 import { initEmbedder, setEmbedderCacheDir } from "./pellets/embedder.js";
 import { selfSeedIfEmpty } from "./pellets/self-seed.js";
@@ -381,6 +382,7 @@ async function bootstrap() {
     // ── System ──
     new CronTool(workspacePath),
     new SkillInstallTool(workspacePath),
+    new ReadLogsTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
     AppleCalendarTool,

@@ -16,6 +16,7 @@ import type { ChannelAdapter, ChannelCapabilities, GatewayResponse } from "../ty
 import type { UiEvent } from "../../cli/v2/events/UiEvent.js";
 import { globalBridge, type OwlMeta } from "../../cli/v2/events/bridge.js";
 import { OwlGateway, makeMessage, makeSessionId } from "../core.js";
+import { runWithContext } from "../../infra/observability/context.js";
 
 export interface CliV2AdapterConfig {
   userId?: string;
@@ -157,7 +158,13 @@ export class CliV2Adapter implements ChannelAdapter {
     ]);
 
     try {
-      const response = await this._gateway.handle(msg, {
+      const response = await runWithContext({
+        channelId: "cli-v2",
+        userId: this._userId,
+        sessionId: this._sessionId,
+        messageId: msg.id,
+        spanName: "channel.cli-v2.handle",
+      }, () => this._gateway.handle(msg, {
         suppressThinking: true,
 
         onStreamEvent: async (event) => {
@@ -190,7 +197,7 @@ export class CliV2Adapter implements ChannelAdapter {
         },
 
         debateCallbacks,
-      });
+      }));
 
       // Fallback: if the engine did NOT stream a "done" event (non-streaming
       // providers), emit turn.committed from the final GatewayResponse.

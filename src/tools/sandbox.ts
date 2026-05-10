@@ -60,14 +60,14 @@ export const SandboxTool: ToolImplementation = {
         stdout += chunk.toString();
         // Optional: emit to progress stream for real-time UI viewing
         if (context.engineContext?.onProgress) {
-          context.engineContext.onProgress(chunk.toString()).catch(() => {});
+          context.engineContext.onProgress(chunk.toString()).catch((err: unknown) => { log.tool.warn("sandbox: onProgress emit failed", err); });
         }
       });
 
       proc.stderr.on("data", (chunk: Buffer) => {
         stderr += chunk.toString();
         if (context.engineContext?.onProgress) {
-          context.engineContext.onProgress(chunk.toString()).catch(() => {});
+          context.engineContext.onProgress(chunk.toString()).catch((err: unknown) => { log.tool.warn("sandbox: onProgress emit failed", err); });
         }
       });
 

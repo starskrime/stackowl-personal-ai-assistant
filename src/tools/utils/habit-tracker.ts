@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { log } from "../../logger.js";
 import { join, dirname } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
@@ -23,7 +24,8 @@ function loadData(path: string): HabitData {
   try {
     const raw = readFileSync(path, "utf-8");
     return JSON.parse(raw) as HabitData;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return { entries: [] };
   }
 }

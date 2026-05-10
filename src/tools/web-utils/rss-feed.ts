@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { join } from "node:path";
 import type { ToolImplementation } from "../registry.js";
 
@@ -23,7 +24,8 @@ async function loadFeeds(filePath: string): Promise<FeedsFile> {
   try {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as FeedsFile;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return { feeds: [] };
   }
 }

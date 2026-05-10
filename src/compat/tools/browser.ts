@@ -64,7 +64,8 @@ function findChrome(): string | undefined {
               "Google Chrome for Testing",
             ),
           ]);
-      } catch {
+      } catch (err) {
+        log.tool.warn("chrome auto-discovery failed", err);
         return [];
       }
     })(),
@@ -433,8 +434,9 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     if (!this.session) return "Browser was not running.";
     try {
       await this.session.browser.close();
-    } catch {
+    } catch (err) {
       /* already closed */
+      log.tool.warn("browser close failed (may already be closed)", err);
     }
     this.session = null;
     return "Browser stopped.";
@@ -450,7 +452,8 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
         return "ERROR: Only http:// and https:// URLs are supported.";
       }
       url = parsed.toString();
-    } catch {
+    } catch (err) {
+      log.tool.warn("browser navigate: invalid URL", err);
       return `ERROR: Invalid URL: ${url}`;
     }
 
@@ -502,8 +505,9 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       await page.waitForFunction(() => document.readyState === "complete", {
         timeout: 5000,
       });
-    } catch {
+    } catch (err) {
       /* streaming OK */
+      log.tool.warn("browser snapshot: page not fully loaded (streaming OK)", err);
     }
 
     const url = page.url();
@@ -620,7 +624,7 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       case "click": {
         const navP = page
           .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 5000 })
-          .catch(() => null);
+          .catch((err) => { log.tool.warn("browser click: navigation wait timed out (non-fatal)", err); return null; });
         const found = await page.evaluate(
           (sel: string, idx: number) => {
             const el = document.querySelectorAll(sel)[idx - 1] as
@@ -694,7 +698,7 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
                   waitUntil: "domcontentloaded",
                   timeout: 10000,
                 })
-                .catch(() => null)
+                .catch((err) => { log.tool.warn("browser key press: navigation wait timed out (non-fatal)", err); return null; })
             : null;
         await page.keyboard.press(key as any);
         if (navP) await navP;
@@ -881,7 +885,8 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     if (iAction === "modify" && args.headers) {
       try {
         headers = JSON.parse(args.headers as string);
-      } catch {
+      } catch (err) {
+        log.tool.warn("browser intercept: headers JSON parse failed", err);
         return "ERROR: headers must be valid JSON.";
       }
     }
@@ -1204,7 +1209,8 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     try {
       await page.waitForSelector(selector, { timeout: timeout || 5000 });
       return `Element "${selector}" found.`;
-    } catch {
+    } catch (err) {
+      log.tool.warn("browser waitForSelector timed out", err);
       return `Timeout: "${selector}" not found within ${timeout || 5000}ms.`;
     }
   }
@@ -1214,7 +1220,8 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
     try {
       await page.waitForNetworkIdle({ timeout: timeout || 5000 });
       return "Network idle.";
-    } catch {
+    } catch (err) {
+      log.tool.warn("browser waitForNetworkIdle timed out", err);
       return `Timeout: network not idle within ${timeout || 5000}ms.`;
     }
   }
@@ -1311,8 +1318,9 @@ IMPORTANT: Always 'start' before other actions. Use snapshot refs for act comman
       const p = join(dir, lock);
       try {
         if (existsSync(p)) rmSync(p, { force: true });
-      } catch {
+      } catch (err) {
         /* non-fatal */
+        log.tool.warn("browser profile lock removal failed (non-fatal)", err);
       }
     }
   }

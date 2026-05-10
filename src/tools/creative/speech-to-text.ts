@@ -5,6 +5,7 @@
  */
 
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 import { access, constants } from "node:fs/promises";
 import { resolve, extname } from "node:path";
@@ -66,7 +67,8 @@ export const SpeechToTextTool: ToolImplementation = {
       // Check file exists
       try {
         await access(resolvedPath, constants.R_OK);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Error: File not found or not readable: ${resolvedPath}`;
       }
 
@@ -101,7 +103,8 @@ export const SpeechToTextTool: ToolImplementation = {
           return `Transcription:\n\n${result.text}`;
         }
         return `Unexpected API response: ${stdout}`;
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Unexpected API response (not JSON): ${stdout}`;
       }
     } catch (error: any) {

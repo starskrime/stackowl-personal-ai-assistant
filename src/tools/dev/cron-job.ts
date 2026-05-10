@@ -1,4 +1,5 @@
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 import type { ToolImplementation } from "../registry.js";
 
@@ -79,7 +80,8 @@ export const CronJobTool: ToolImplementation = {
               timeout: TIMEOUT_MS,
             });
             existing = stdout.trimEnd();
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             // No existing crontab, that's fine
           }
 
@@ -106,7 +108,8 @@ export const CronJobTool: ToolImplementation = {
               timeout: TIMEOUT_MS,
             });
             existing = stdout.trimEnd();
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             return "No crontab exists — nothing to remove.";
           }
 
