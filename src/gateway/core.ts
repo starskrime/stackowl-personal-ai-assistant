@@ -130,6 +130,7 @@ import { TaskLedgerStore } from "../engine/task-ledger.js";
 import type { SubGoal } from "../engine/types.js";
 import { createInvokeSkillTool } from "../tools/invoke-skill.js"
 import { dispatchSkillCommand } from "./commands/skill-router.js";
+import { SkillCreationWizard } from "./wizards/skill-creation.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -235,6 +236,7 @@ export class OwlGateway {
    */
   private attemptLogs = new AttemptLogRegistry();
   private wizardSessions = new Map<string, WizardSession>();
+  private skillCreationWizard: SkillCreationWizard | null = null;
 
   /** User mental model — infers user state from behavioral signals */
   private userMentalModel: UserMentalModel | null = null;
@@ -332,6 +334,12 @@ export class OwlGateway {
       this.microLearner = new MicroLearner(workspacePath);
       this.microLearner.load().catch(() => {});
     }
+
+    // SkillCreationWizard — channel-agnostic skill creation via ChannelAdapterV2.ask()
+    this.skillCreationWizard = new SkillCreationWizard(
+      ctx.cwd ?? process.cwd(),
+      ctx.db,
+    );
 
     // Proactive anticipator — cross-system prediction engine
     if (ctx.anticipator) {
@@ -1140,10 +1148,9 @@ export class OwlGateway {
       const [, verb, rest] = skillCmdMatch
       const args = rest ? rest.trim().split(/\s+/) : []
       const registry = this.ctx.skillsLoader?.getRegistry()
-      const stubWizard = { start: async () => "Skill creation wizard coming soon.", isActive: () => false, cancel: () => {} }
       const content = await dispatchSkillCommand(verb, args, {
         registry: registry as any,
-        wizard: (this.ctx as any).skillWizard ?? stubWizard,
+        wizard: this.skillCreationWizard!,
         installer: (this.ctx as any).skillInstaller,
         userId: message.userId,
         channelAdapter: undefined,
