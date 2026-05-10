@@ -1,5 +1,7 @@
 import type { UiBridge } from "../events/bridge.js";
 import type { UiState } from "../state/store.js";
+import { handleStatus } from "./handlers/status.js";
+import { handleClear }  from "./handlers/clear.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -211,13 +213,13 @@ export const REGISTRY: CommandSpec[] = [
   {
     name: "/status",
     description: "Show provider, model, and owl info",
-    handler: notImplemented,
+    handler: handleStatus,
   },
   {
     name: "/clear",
     aliases: ["/reset"],
     description: "Clear conversation context",
-    handler: notImplemented,
+    handler: handleClear,
   },
   {
     name: "/capabilities",
