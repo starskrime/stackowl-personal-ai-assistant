@@ -131,6 +131,7 @@ import type { SubGoal } from "../engine/types.js";
 import { createInvokeSkillTool } from "../tools/invoke-skill.js"
 import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
+import { buildDefaultIntelligenceConfig } from "../config/loader.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -429,13 +430,19 @@ export class OwlGateway {
     log.engine.info("[Epic 3&4] Clarification and Tool Mastery modules initialized");
 
     // ─── Intelligence Router (tiered model routing) ────────────
-    if (ctx.config.intelligence) {
+    {
+      const intelligenceConfig = ctx.config.intelligence
+        ?? buildDefaultIntelligenceConfig(ctx.config.defaultProvider, ctx.config.defaultModel);
       ctx.intelligence = new IntelligenceRouter(
-        ctx.config.intelligence,
+        intelligenceConfig,
         ctx.config.defaultProvider,
         ctx.config.defaultModel,
       );
-      log.engine.info("[IntelligenceRouter] Tiered model routing active");
+      log.engine.info(
+        ctx.config.intelligence
+          ? "[IntelligenceRouter] Tiered model routing active"
+          : "[IntelligenceRouter] Using default pass-through config (no intelligence block in config)",
+      );
     }
 
     // Initialize extracted handlers (Improvement #4)

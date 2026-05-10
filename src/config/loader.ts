@@ -368,6 +368,35 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   },
 };
 
+// ─── Default Intelligence Config ─────────────────────────────────
+
+/**
+ * Build a pass-through IntelligenceConfig from bare provider/model defaults.
+ * Used when the user config omits the `intelligence` block entirely.
+ * Every task type resolves to the same provider and model — identical to
+ * the pre-IntelligenceRouter default behavior.
+ */
+export function buildDefaultIntelligenceConfig(
+  defaultProvider: string,
+  defaultModel: string,
+): IntelligenceConfig {
+  const tier = { provider: defaultProvider, model: defaultModel };
+  return {
+    tiers: { high: tier, mid: tier, low: tier },
+    defaults: {
+      conversation:   "mid",
+      parliament:     "high",
+      evolution:      "mid",
+      extraction:     "low",
+      episodic:       "low",
+      classification: "low",
+      synthesis:      "high",
+      summarization:  "low",
+      clarification:  "mid",
+    },
+  };
+}
+
 // ─── Loader ──────────────────────────────────────────────────────
 
 export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
