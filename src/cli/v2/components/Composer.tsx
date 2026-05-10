@@ -18,6 +18,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Box, Text, useInput, useApp } from "ink";
 import { useTheme } from "../providers/ThemeProvider.js";
+import { useTerminalCols } from "../input/useTerminalCols.js";
 import { InputHistory } from "../input/history.js";
 import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
 import { globalBridge } from "../events/bridge.js";
@@ -47,6 +48,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const mode       = useUiStore((s) => s.mode);
   const generating = useUiStore((s) => s.generating);
   const panelFocus = useUiStore((s) => s.panelFocus);
+  const cols       = useTerminalCols();
 
   // CommandContext shell for completions (bridge + store only)
   // Stable ref — globalBridge and uiStore are module-level singletons so this never changes
@@ -183,8 +185,13 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
       {/* Main input box */}
       <Box
         flexDirection="column"
-        borderStyle="round"
-        borderColor={colors.dim}
+        borderStyle="single"
+        borderTop={false}
+        borderBottom={false}
+        borderLeft={true}
+        borderRight={true}
+        borderColor="red"
+        width={cols}
       >
         {generating ? (
           <Box paddingLeft={1}>
