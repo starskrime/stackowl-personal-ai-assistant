@@ -18,7 +18,6 @@ import type { GoalGraph } from "../goals/graph.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { TaskStore } from "../tasks/store.js";
-import type { PatternMiner } from "../skills/pattern-miner.js";
 import type { CapabilityScanner } from "./capability-scanner.js";
 import { log } from "../logger.js";
 
@@ -28,11 +27,9 @@ export type ActionType =
   | "follow_up_stale_goal"
   | "advance_blocked_goal"
   | "self_study"
-  | "skill_evolution"
   | "memory_consolidation"
   | "check_in"
   | "morning_brief"
-  | "mine_patterns"
   | "explore_capabilities"
   | "anticipatory_research"
   | "review_tool_outcomes"
@@ -75,7 +72,6 @@ export interface PlannerDeps {
   preferenceStore?: PreferenceStore;
   skillsRegistry?: SkillsRegistry;
   taskStore?: TaskStore;
-  patternMiner?: PatternMiner;
   capabilityScanner?: CapabilityScanner;
   skillsDir?: string;
   db?: import("../memory/db.js").MemoryDatabase;
@@ -259,16 +255,7 @@ export class AutonomousPlanner {
       });
     }
 
-    // ── 5. Skill evolution (during quiet hours, low priority) ──
-    if (isQuiet && this.deps.skillsRegistry) {
-      candidates.push({
-        type: "skill_evolution",
-        priority: await this.learnedPriority("skill_evolution", 30),
-        description: "Evolve and improve existing skills",
-      });
-    }
-
-    // ── 6. Memory consolidation (during quiet hours) ──
+    // ── 5. Memory consolidation (during quiet hours) ──
     if (isQuiet && this.lastConsolidationDate !== dateKey) {
       candidates.push({
         type: "memory_consolidation",
@@ -297,21 +284,7 @@ export class AutonomousPlanner {
       }
     }
 
-    // ── 8. Pattern mining → crystallize new skills ──
-    if (
-      this.deps.patternMiner &&
-      this.deps.skillsRegistry &&
-      this.idleMinutes > 10
-    ) {
-      candidates.push({
-        type: "mine_patterns",
-        priority: await this.learnedPriority("mine_patterns", 60),
-        description:
-          "Mine conversation patterns and crystallize into new skills",
-      });
-    }
-
-    // ── 9. Capability exploration → find unused platform features ──
+    // ── 8. Capability exploration → find unused platform features ──
     if (this.deps.capabilityScanner && this.idleMinutes > 15) {
       candidates.push({
         type: "explore_capabilities",
