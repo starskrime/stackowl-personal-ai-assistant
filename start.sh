@@ -74,6 +74,29 @@ has_telegram() {
   " 2>/dev/null
 }
 
+read_log_level() {
+  # Reads logging.level from stackowl.config.json; returns "debug" if unset
+  node -e "
+    try {
+      const c = JSON.parse(require('fs').readFileSync('$CONFIG_FILE', 'utf8'));
+      console.log((c.logging && c.logging.level) || 'debug');
+    } catch { console.log('debug'); }
+  " 2>/dev/null
+}
+
+ensure_log_level() {
+  # Writes logging.level = debug into config if not already set
+  node -e "
+    const fs = require('fs');
+    let c = {};
+    try { c = JSON.parse(fs.readFileSync('$CONFIG_FILE', 'utf8')); } catch { return; }
+    if (!c.logging || !c.logging.level) {
+      c.logging = Object.assign({}, c.logging || {}, { level: 'debug' });
+      fs.writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2));
+    }
+  " 2>/dev/null
+}
+
 has_slack() {
   # Returns 0 (true) if stackowl.config.json has slack.botToken and slack.appToken set
   node -e "
@@ -569,6 +592,11 @@ main() {
   MODEL=$(json_read "$CONFIG_FILE" "defaultModel")
   log_info "Config: ${BOLD}$CONFIG_FILE${RESET}"
   log_dim  "Provider: ${PROVIDER:-unknown}  |  Model: ${MODEL:-unknown}"
+
+  # Ensure logging.level = debug is set in config (default for observability)
+  ensure_log_level
+  LOG_LEVEL=$(read_log_level)
+  log_dim  "Log level: ${LOG_LEVEL}"
 
   if [ ! -f "$CONFIG_FILE" ]; then
     # No config yet — skip launch-mode selection; onboarding wizard runs inside tsx
