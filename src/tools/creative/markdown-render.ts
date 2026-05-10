@@ -8,6 +8,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, basename } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 function markdownToHtml(md: string): string {
   let html = md;
@@ -117,6 +118,8 @@ export const MarkdownRenderTool: ToolImplementation = {
       if (!content) return "Error: 'content' parameter is required.";
       if (!output) return "Error: 'output' parameter is required.";
 
+      log.tool.debug("markdown_render.execute: entry", { output, contentLen: content.length });
+
       const safeName = basename(output).replace(/[^a-zA-Z0-9_-]/g, "_");
 
       const renderedDir = resolve(_context.cwd, "workspace", "rendered");
@@ -130,8 +133,10 @@ export const MarkdownRenderTool: ToolImplementation = {
       const html = markdownToHtml(content);
       await writeFile(htmlPath, html, "utf-8");
 
+      log.tool.debug("markdown_render.execute: exit", { success: true, mdPath, htmlPath, htmlLen: html.length });
       return `Files saved:\n- Markdown: ${mdPath}\n- HTML: ${htmlPath}`;
     } catch (error: any) {
+      log.tool.error("markdown_render.execute: unexpected error", error as Error, { output: args["output"] });
       return `Error rendering markdown: ${error.message ?? String(error)}`;
     }
   },

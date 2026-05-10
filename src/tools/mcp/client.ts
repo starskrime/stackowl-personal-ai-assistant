@@ -216,13 +216,22 @@ export class MCPClient {
           args: Record<string, unknown>,
           _context: ToolContext,
         ): Promise<string> {
+          log.tool.debug("mcp.execute: entry", { server: client.config.name, tool: originalName, argsKeys: Object.keys(args) });
           if (!client.isConnected) {
             throw new Error(
               `MCP server "${client.config.name}" is not connected. ` +
                 `Use /mcp reconnect ${client.config.name} to restore the connection.`,
             );
           }
-          return client.callTool(originalName, args);
+          log.tool.debug("mcp.execute: tool call sent", { server: client.config.name, tool: originalName });
+          try {
+            const result = await client.callTool(originalName, args);
+            log.tool.debug("mcp.execute: exit", { success: true, server: client.config.name, tool: originalName, resultLen: result.length });
+            return result;
+          } catch (err) {
+            log.tool.error("mcp.execute: server call failed", err as Error, { server: client.config.name, tool: originalName });
+            throw err;
+          }
         },
       } satisfies ToolImplementation;
     });

@@ -54,6 +54,8 @@ export const DataVisualizationTool: ToolImplementation = {
       const dataStr = args["data"] as string;
       const title = args["title"] as string;
 
+      log.tool.debug("data_visualization.execute: entry", { chartType, title });
+
       if (!chartType) return "Error: 'chart_type' parameter is required.";
       if (!labelsStr) return "Error: 'labels' parameter is required.";
       if (!dataStr) return "Error: 'data' parameter is required.";
@@ -105,6 +107,7 @@ export const DataVisualizationTool: ToolImplementation = {
       };
 
       const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
+      log.tool.debug("data_visualization.execute: chart url built", { chartType, labelCount: labels.length });
 
       // Download chart image
       const chartsDir = resolve(_context.cwd, "workspace", "charts");
@@ -125,11 +128,14 @@ export const DataVisualizationTool: ToolImplementation = {
         const buffer = Buffer.from(await response.arrayBuffer());
         await writeFile(chartPath, buffer);
 
+        log.tool.debug("data_visualization.execute: exit", { success: true, chartPath, chartType });
         return `Chart created:\n- File: ${chartPath}\n- URL: ${chartUrl}`;
       } catch (downloadError: any) {
+        log.tool.error("data_visualization.execute: download failed", downloadError as Error, { chartType, chartUrl });
         return `Chart URL generated but download failed: ${downloadError.message}\nURL: ${chartUrl}`;
       }
     } catch (error: any) {
+      log.tool.error("data_visualization.execute: unexpected error", error as Error, { chartType: args["chart_type"] });
       return `Error creating chart: ${error.message ?? String(error)}`;
     }
   },

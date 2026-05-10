@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const ArchiveTool: ToolImplementation = {
   definition: {
@@ -51,6 +52,8 @@ export const ArchiveTool: ToolImplementation = {
     const password = args.password as string | undefined;
     const cwd = context.cwd || process.cwd();
 
+    log.tool.debug("archive.execute: entry", { action, paths, output });
+
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const { resolve } = await import("node:path");
@@ -67,6 +70,7 @@ export const ArchiveTool: ToolImplementation = {
 
     try {
       if (action === "compress") {
+        log.tool.debug("archive.execute: compressing", { paths, output });
         const inputPaths = paths.split(",").map((p) => p.trim());
         const outPath = output || `archive_${Date.now()}.zip`;
         const resolvedOut = resolve(cwd, outPath);
@@ -107,6 +111,7 @@ export const ArchiveTool: ToolImplementation = {
 
         const stats = statSync(resolvedOut);
         const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
+        log.tool.debug("archive.execute: exit", { success: true, action: "compress", resolvedOut, format, sizeMB });
         return (
           `📦 Archive created: ${resolvedOut}\n` +
           `Format: ${format}\n` +
@@ -117,6 +122,7 @@ export const ArchiveTool: ToolImplementation = {
       }
 
       if (action === "extract") {
+        log.tool.debug("archive.execute: extracting", { paths, output });
         const archivePath = resolve(cwd, paths);
         const outDir = output ? resolve(cwd, output) : cwd;
 
@@ -147,12 +153,14 @@ export const ArchiveTool: ToolImplementation = {
           return `Error: Cannot detect archive format from extension. Supported: .zip, .tar, .tar.gz, .tgz, .tar.bz2, .7z, .rar`;
         }
 
+        log.tool.debug("archive.execute: exit", { success: true, action: "extract", archivePath, outDir });
         return `📂 Extracted: ${archivePath}\nTo: ${outDir}`;
       }
 
       return `Error: Unknown action "${action}". Use 'compress' or 'extract'.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      log.tool.error("archive.execute: operation failed", error as Error, { action, paths });
       return `Error (${action}): ${msg}`;
     }
   },
