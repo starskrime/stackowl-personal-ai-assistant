@@ -1,10 +1,10 @@
 /**
- * Composer — multi-line input editor + generation state indicator.
+ * Composer — registry-driven input editor + completions popup.
  *
  * Idle layout (bordered box):
  *   ╭─────────────────────────────────────────────────╮
  *   │  ❯ your message here▋                           │
- *   │  /help · /owls · /sessions · /skills · /mcp    │
+ *   │  /help · /owls · /sessions · /memory · /skills  │
  *   ╰─────────────────────────────────────────────────╯
  *
  * Generating layout:
@@ -12,8 +12,7 @@
  *   │  ✳ generating...                               │
  *   ╰─────────────────────────────────────────────────╯
  *
- * Footer (owl, model, tokens, cost, status) is rendered by <StatusBar />
- * outside this component in ChatScreen.
+ * When panelFocus === "panel", input is dimmed and disabled.
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -23,9 +22,12 @@ import { InputHistory } from "../input/history.js";
 import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
 import { globalBridge } from "../events/bridge.js";
 import { useUiStore } from "../providers/UiStoreProvider.js";
+import { useCommandDispatcher } from "../providers/CommandDispatcherProvider.js";
 import { STACKOWL_SPINNER, SPINNER_AMBER, SPINNER_INTERVAL_MS } from "./spinner.js";
-
-const SLASH_COMMANDS = ["/help", "/owls", "/skills", "/mcp", "/sessions", "/quit", "/exit"];
+import { getCompletions } from "../commands/completion.js";
+import type { CompletionEntry } from "../commands/completion.js";
+import type { CommandContext } from "../commands/registry.js";
+import { uiStore } from "../state/store.js";
 
 export interface ComposerProps {
   onSubmit: (text: string) => void;
@@ -35,14 +37,25 @@ export interface ComposerProps {
 export function Composer({ onSubmit, disabled }: ComposerProps) {
   const [value, setValue] = useState("");
   const [genFrame, setGenFrame] = useState(0);
-  const [popupIdx, setPopupIdx] = useState(0);
+  const [completions, setCompletions] = useState<CompletionEntry[]>([]);
+  const [completionIdx, setCompletionIdx] = useState(0);
   const historyRef = useRef<InputHistory>(new InputHistory());
   const { exit } = useApp();
   const { colors } = useTheme();
+  const dispatcher = useCommandDispatcher();
 
-  const mode        = useUiStore((s) => s.mode);
-  const generating  = useUiStore((s) => s.generating);
-  const activePanel = useUiStore((s) => s.activePanel);
+  const mode       = useUiStore((s) => s.mode);
+  const generating = useUiStore((s) => s.generating);
+  const panelFocus = useUiStore((s) => s.panelFocus);
+
+  // CommandContext shell for completions (bridge + store only)
+  const completionCtx: CommandContext = {
+    bridge: globalBridge,
+    getStore: () => uiStore.getState(),
+    getMemoryRepo: () => { throw new Error("not available in Composer"); },
+    getMcpManager: () => { throw new Error("not available in Composer"); },
+    getOwlGateway: () => { throw new Error("not available in Composer"); },
+  };
 
   useEffect(() => {
     if (!generating) return;
@@ -50,37 +63,26 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     return () => clearInterval(t);
   }, [generating]);
 
-  // Slash popup: visible when value starts with "/" and has no space (not a sentence)
-  const popupCandidates = (() => {
-    if (!value.startsWith("/") || value.includes(" ")) return [];
-    return SLASH_COMMANDS.filter((cmd) => cmd.startsWith(value));
-  })();
-  const showPopup = popupCandidates.length > 0 && value !== popupCandidates[0];
+  // Recompute completions whenever value changes
+  useEffect(() => {
+    if (!value.startsWith("/")) { setCompletions([]); setCompletionIdx(0); return; }
+    let cancelled = false;
+    getCompletions(value, completionCtx).then((results) => {
+      if (!cancelled) { setCompletions(results); setCompletionIdx(0); }
+    });
+    return () => { cancelled = true; };
+  }, [value]);
 
-  // Reset popup selection index when candidates change
-  useEffect(() => { setPopupIdx(0); }, [popupCandidates.length]);
-
-  function dispatchSlash(cmd: string): void {
-    if (cmd === "/sessions") { globalBridge.requestSessionsView(); return; }
-    if (cmd === "/help")     { globalBridge.requestHelpView();     return; }
-    if (cmd === "/owls")     { globalBridge.requestOwlsView();     return; }
-    // Toggle: second /skills press closes the panel
-    if (cmd === "/skills")   {
-      if (activePanel?.id === "skills") globalBridge.closePanel();
-      else                              globalBridge.openPanel("skills", {});
-      return;
-    }
-    if (cmd === "/mcp") {
-      if (activePanel?.id === "mcp") globalBridge.closePanel();
-      else                           globalBridge.openPanel("mcp", {});
-      return;
-    }
-    if (cmd === "/quit" || cmd === "/exit") { exit(); }
-  }
+  const showPopup = completions.length > 0 && value !== (completions[0]?.value ?? "");
 
   useInput(
     (input, key) => {
       if (key.ctrl && input === "c") { exit(); return; }
+      if (key.ctrl && input === "d" && value === "") { exit(); return; }
+      if (key.ctrl && input === "l") {
+        dispatcher.dispatch("/clear");
+        return;
+      }
 
       if (key.ctrl && input === "p") {
         if (mode === "parliament") globalBridge.dismissParliamentView();
@@ -88,24 +90,49 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         return;
       }
 
-      // Arrow navigation inside slash popup
+      // Arrow navigation inside completions popup
       if (showPopup) {
-        if (key.upArrow)   { setPopupIdx((i) => (i - 1 + popupCandidates.length) % popupCandidates.length); return; }
-        if (key.downArrow) { setPopupIdx((i) => (i + 1) % popupCandidates.length); return; }
+        if (key.upArrow)   { setCompletionIdx((i) => (i - 1 + completions.length) % completions.length); return; }
+        if (key.downArrow) { setCompletionIdx((i) => (i + 1) % completions.length); return; }
         if (key.escape)    { setValue(""); return; }
-        if (key.tab)       { setValue(popupCandidates[popupIdx] ?? value); return; }
+        if (key.tab) {
+          const entry = completions[completionIdx];
+          if (entry) {
+            if (entry.kind === "command") setValue(entry.value);
+            else if (entry.kind === "subcommand") setValue(value.replace(/\S+$/, entry.value).trimEnd() + " ");
+            else setValue(value.replace(/\S*$/, entry.value) + " ");
+          }
+          return;
+        }
       }
 
       if (key.return && !key.shift) {
         const trimmed = value.trim();
-        // If popup is open and there's an exact or single match, dispatch it
-        if (showPopup && popupCandidates.length > 0) {
-          dispatchSlash(popupCandidates[popupIdx] ?? trimmed);
+
+        // Popup open + Enter → accept selected completion
+        if (showPopup && completions.length > 0) {
+          const entry = completions[completionIdx];
+          if (entry) {
+            if (entry.kind === "command") setValue(entry.value + " ");
+            else if (entry.kind === "subcommand") setValue(value.replace(/\S+$/, "").trimEnd() + " " + entry.value + " ");
+          }
+          return;
+        }
+
+        // Slash command → dispatch
+        if (trimmed.startsWith("/")) {
+          dispatcher.dispatch(trimmed).then((result) => {
+            if (result.kind === "error") {
+              globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
+            }
+            if (trimmed === "/quit" || trimmed === "/exit" || trimmed === "/bye") exit();
+          });
+          historyRef.current.push(trimmed);
           setValue("");
           return;
         }
-        if (SLASH_COMMANDS.includes(trimmed)) { dispatchSlash(trimmed); setValue(""); return; }
-        // Unknown slash commands (e.g. /memory list, /mcp status) pass through to the gateway
+
+        // AI message
         if (trimmed) { historyRef.current.push(trimmed); onSubmit(trimmed); }
         setValue("");
         return;
@@ -113,7 +140,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
 
       if (key.backspace || key.delete) { setValue((v) => v.slice(0, -1)); return; }
 
-      // Up/down arrow = history navigation when popup is NOT open
+      // Up/down arrow = history navigation when popup NOT open
       if (!showPopup) {
         if (key.upArrow)   { const p = historyRef.current.prev(value); if (p !== null) setValue(p); return; }
         if (key.downArrow) { const n = historyRef.current.next(); setValue(n !== null ? n : ""); return; }
@@ -127,21 +154,29 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
 
   return (
     <Box flexDirection="column">
-      {/* Slash command popup — rendered above the input box */}
+      {/* Completions popup */}
       {showPopup && (
         <Box flexDirection="column" borderStyle="round" borderColor={colors.accent} paddingX={1} marginBottom={0}>
-          {popupCandidates.map((cmd, i) => (
-            <Box key={cmd}>
-              <Text color={i === popupIdx ? colors.accent : undefined} bold={i === popupIdx}>
-                {i === popupIdx ? "❯ " : "  "}{cmd}
+          {completions.map((entry, i) => (
+            <Box key={entry.value}>
+              <Text color={i === completionIdx ? colors.accent : undefined} bold={i === completionIdx}>
+                {i === completionIdx ? "❯ " : "  "}
+                {entry.value}
               </Text>
+              {entry.description && (
+                <Text dimColor>{"  " + entry.description.slice(0, 45)}</Text>
+              )}
             </Box>
           ))}
         </Box>
       )}
 
       {/* Main input box */}
-      <Box flexDirection="column" borderStyle="round" borderColor={colors.dim}>
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={colors.dim}
+      >
         {generating ? (
           <Box paddingLeft={1}>
             <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[genFrame]} </Text>
@@ -150,13 +185,13 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         ) : (
           <>
             <Box paddingLeft={1}>
-              <Text bold color={colors.user}>❯ </Text>
-              <Text>{value}</Text>
-              <Text color={colors.accent}>▋</Text>
+              <Text bold color={panelFocus === "panel" ? colors.dim : colors.user}>❯ </Text>
+              <Text color={panelFocus === "panel" ? colors.dim : undefined}>{value}</Text>
+              {panelFocus !== "panel" && <Text color={colors.accent}>▋</Text>}
             </Box>
-            {value === "" && (
+            {value === "" && panelFocus !== "panel" && (
               <Box paddingLeft={1}>
-                <Text dimColor>/help · /owls · /sessions · /skills · /mcp</Text>
+                <Text dimColor>/help · /owls · /sessions · /memory · /skills · /mcp</Text>
               </Box>
             )}
           </>
