@@ -19,8 +19,7 @@ import { useState, useEffect } from "react";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
 import type { ParliamentDebate } from "../state/slices/parliament.js";
-
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+import { STACKOWL_SPINNER, SPINNER_AMBER, SPINNER_INTERVAL_MS } from "../components/spinner.js";
 
 function roundLabel(round: number): string {
   switch (round) {
@@ -63,12 +62,16 @@ function OwlColumn({
       <Box>
         <Text bold color="cyan">{owlEmoji} {owlName}</Text>
         <Text> </Text>
-        <Text color={ready ? (challenge ? "yellow" : "green") : "gray"} dimColor={!ready}>
-          {spinning && !ready
-            ? `${SPINNER[spinFrame]} ${status}`
-            : `[${status}]`
-          }
-        </Text>
+        {spinning && !ready ? (
+          <>
+            <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[spinFrame]} </Text>
+            <Text dimColor>{status}</Text>
+          </>
+        ) : (
+          <Text color={ready ? (challenge ? "yellow" : "green") : "gray"} dimColor={!ready}>
+            [{status}]
+          </Text>
+        )}
       </Box>
       <Box marginTop={1}>
         {ready
@@ -122,7 +125,7 @@ export function ParliamentScreen() {
 
   useEffect(() => {
     if (!debate?.active) return;
-    const t = setInterval(() => setSpinFrame((f) => (f + 1) % SPINNER.length), 80);
+    const t = setInterval(() => setSpinFrame((f) => (f + 1) % STACKOWL_SPINNER.length), SPINNER_INTERVAL_MS);
     return () => clearInterval(t);
   }, [debate?.active]);
 
