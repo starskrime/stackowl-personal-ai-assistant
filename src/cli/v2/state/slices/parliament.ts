@@ -47,10 +47,17 @@ export function applyParliamentEvent(state: UiState, event: UiEvent): UiState {
 
     case "parliament.position.ready": {
       if (!state.activeDebate) return state;
+      const owlsAfterPosition = state.activeDebate.owls.some((o) => o.owlId === event.owlId)
+        ? state.activeDebate.owls
+        : [
+            ...state.activeDebate.owls,
+            { owlId: event.owlId, owlName: event.owlName, owlEmoji: event.owlEmoji },
+          ];
       return {
         ...state,
         activeDebate: {
           ...state.activeDebate,
+          owls: owlsAfterPosition,
           positions: {
             ...state.activeDebate.positions,
             [event.owlId]: event.position,
@@ -61,10 +68,17 @@ export function applyParliamentEvent(state: UiState, event: UiEvent): UiState {
 
     case "parliament.challenge.ready": {
       if (!state.activeDebate) return state;
+      const owlsAfterChallenge = state.activeDebate.owls.some((o) => o.owlId === event.owlId)
+        ? state.activeDebate.owls
+        : [
+            ...state.activeDebate.owls,
+            { owlId: event.owlId, owlName: event.owlName, owlEmoji: event.owlEmoji },
+          ];
       return {
         ...state,
         activeDebate: {
           ...state.activeDebate,
+          owls: owlsAfterChallenge,
           challenges: {
             ...state.activeDebate.challenges,
             [event.owlId]: event.challenge,

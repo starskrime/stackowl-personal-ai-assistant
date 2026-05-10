@@ -107,7 +107,7 @@ export class CliV2Adapter implements ChannelAdapter {
     if (!msg) return;
 
     const turnId = uuidv4();
-    const debateId = `debate_${Date.now()}`;
+    const debateId = uuidv4();
 
     // Resolve current owl meta for the bridge.
     const owl = this._gateway.getOwl();
