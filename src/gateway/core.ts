@@ -143,6 +143,52 @@ export function shuffleArray<T>(arr: T[]): T[] {
   return a
 }
 
+/**
+ * CI-3: NL skill install intent detection.
+ * Uses IntelligenceRouter (classification tier) + cheap provider with a 200ms
+ * timeout.  Returns false on timeout or any error (fail-open).
+ */
+async function isSkillInstallIntent(
+  text: string,
+  ctx: GatewayContext,
+): Promise<boolean> {
+  const provider = ctx.provider;
+  if (!provider) return false;
+
+  let model: string | undefined;
+  try {
+    const resolved = ctx.intelligence?.resolve("classification");
+    model = resolved?.model;
+  } catch {
+    // fall through — use provider default
+  }
+
+  const prompt =
+    `Does this message ask to create, make, add, or build a new skill or automation? ` +
+    `Reply YES or NO only. Message: ${text}`;
+
+  const timeout = new Promise<{ timedOut: true }>((resolve) =>
+    setTimeout(() => resolve({ timedOut: true }), 200),
+  );
+  const call = provider.chat(
+    [{ role: "user", content: prompt }],
+    model,
+    { temperature: 0 },
+  );
+
+  let raced: any;
+  try {
+    raced = await Promise.race([call, timeout]);
+  } catch {
+    return false;
+  }
+
+  if (raced && (raced as any).timedOut) return false;
+
+  const answer: string = (raced as { content: string }).content ?? "";
+  return answer.trimStart().toUpperCase().startsWith("YES");
+}
+
 // ─── Constants ───────────────────────────────────────────────────
 
 const MAX_SESSION_HISTORY = 50;
@@ -1143,7 +1189,7 @@ export class OwlGateway {
     const skillCmdMatch = message.text
       .trim()
       .match(/^\/skill\s+(\S+)(?:\s+(.+))?$/i);
-    const SKILL_MGMT_VERBS = new Set(["list", "show", "install", "create", "enable", "disable", "remove", "run"])
+    const SKILL_MGMT_VERBS = new Set(["list", "show", "install", "create", "enable", "disable", "remove", "run", "metrics"])
     if (skillCmdMatch && SKILL_MGMT_VERBS.has(skillCmdMatch[1].toLowerCase())) {
       const [, verb, rest] = skillCmdMatch
       const args = rest ? rest.trim().split(/\s+/) : []
@@ -1583,6 +1629,7 @@ export class OwlGateway {
     log.engine.incoming(message.channelId, message.text);
 
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
+    let memoryContextPrefix = "";
     let dynamicSkillsContext = "";
     let injectedSkillNames: string[] = [];
 
@@ -1640,7 +1687,7 @@ export class OwlGateway {
       }
 
       if (memoryContextParts.length > 0) {
-        dynamicSkillsContext = memoryContextParts.join("\n") + "\n" + dynamicSkillsContext;
+        memoryContextPrefix = memoryContextParts.join("\n") + "\n";
       }
     }
 
@@ -1653,6 +1700,29 @@ export class OwlGateway {
       /^(hi|hello|hey|sup|yo|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|gm|gn)\b/i.test(
         text.trim(),
       );
+
+    // CI-3: NL skill install intent detection
+    if (!isConversational && !text.trim().startsWith('/')) {
+      const installIntent = await isSkillInstallIntent(text, this.ctx)
+      if (installIntent) {
+        const registry = this.ctx.skillsLoader?.getRegistry()
+        const content = await dispatchSkillCommand('create', [], {
+          registry: registry as any,
+          wizard: this.skillCreationWizard!,
+          userId: message.userId,
+          channelAdapter: undefined,
+          workspacePath: this.ctx.cwd ?? process.cwd(),
+          db: this.ctx.db,
+        })
+        return {
+          content,
+          owlName: this.ctx.owl.persona.name,
+          owlEmoji: this.ctx.owl.persona.emoji,
+          toolsUsed: [],
+        }
+      }
+    }
+
     if (this.skillInjector && !isConversational) {
       const relevantMatches = await this.skillInjector.getRelevantMatches(text);
       const relevantSkills = relevantMatches.map((m) => m.skill);
@@ -2029,7 +2099,7 @@ export class OwlGateway {
     const engineCtx = await this.buildEngineContext(
       session,
       callbacks,
-      dynamicSkillsContext,
+      memoryContextPrefix + dynamicSkillsContext,
       isIsolatedTask,
       this.attemptLogs.get(message.sessionId),
       message.channelId,

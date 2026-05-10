@@ -39,7 +39,8 @@ const HELP = `/skill commands:
   /skill enable <name>             — enable a skill
   /skill disable <name>            — disable a skill
   /skill remove <name> yes         — remove a skill (irreversible)
-  /skill run <name>                — run a skill directly`
+  /skill run <name>                — run a skill directly
+  /skill metrics <name>            — show usage stats for a skill`
 
 export async function dispatchSkillCommand(
   verb: string,
@@ -140,6 +141,29 @@ export async function dispatchSkillCommand(
         return `Skill "${name}" is not user-invocable. Only skills marked user-invocable can be run directly.`
       }
       return `Running skill "${name}"... (use the ReAct engine for full execution)`
+    }
+
+    case "metrics": {
+      const name = args[0]
+      if (!name) return "Usage: `/skill metrics <name>`"
+      if (!deps.db?.skillUsage) {
+        return "Usage metrics are not available (no database configured)."
+      }
+      const stats = deps.db.skillUsage.getStats(name)
+      if (!stats) {
+        return `No usage data for skill "${name}" yet.`
+      }
+      const successRate = stats.selection_count > 0
+        ? Math.round((stats.success_count / stats.selection_count) * 100)
+        : 0
+      return [
+        `**${name} metrics**`,
+        `Selections: ${stats.selection_count}`,
+        `Successes: ${stats.success_count} (${successRate}%)`,
+        `Failures: ${stats.failure_count}`,
+        `Avg duration: ${Math.round(stats.avg_duration_ms)}ms`,
+        stats.last_used_at ? `Last used: ${stats.last_used_at}` : "Never used",
+      ].join("\n")
     }
 
     default:

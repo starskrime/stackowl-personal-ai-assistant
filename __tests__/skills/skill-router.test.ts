@@ -63,4 +63,45 @@ describe('SkillManagementRouter', () => {
     const result = await dispatchSkillCommand('bogusverb', [], makeDeps())
     expect(result).toContain('Unknown')
   })
+
+  it('metrics returns usage stats when db has data', async () => {
+    const mockStats = {
+      selection_count: 10,
+      success_count: 8,
+      failure_count: 2,
+      avg_duration_ms: 345.6,
+      last_used_at: '2026-05-09T12:00:00',
+    }
+    const deps = makeDeps({
+      db: {
+        skillUsage: {
+          getStats: (name: string) => name === 'web-research' ? mockStats : null,
+        },
+      } as any,
+    })
+    const result = await dispatchSkillCommand('metrics', ['web-research'], deps)
+    expect(result).toContain('web-research metrics')
+    expect(result).toContain('Selections: 10')
+    expect(result).toContain('Successes: 8 (80%)')
+    expect(result).toContain('Failures: 2')
+    expect(result).toContain('Avg duration: 346ms')
+    expect(result).toContain('Last used: 2026-05-09T12:00:00')
+  })
+
+  it('metrics returns no-data message when no stats exist', async () => {
+    const deps = makeDeps({
+      db: {
+        skillUsage: {
+          getStats: () => null,
+        },
+      } as any,
+    })
+    const result = await dispatchSkillCommand('metrics', ['unknown-skill'], deps)
+    expect(result).toContain('No usage data')
+  })
+
+  it('metrics returns not-available when db is missing', async () => {
+    const result = await dispatchSkillCommand('metrics', ['web-research'], makeDeps({ db: undefined }))
+    expect(result).toContain('not available')
+  })
 })
