@@ -268,11 +268,23 @@ export class UiBridge {
   }
 
   requestSkillsView(): void {
-    this.emit({ kind: "skills.view.requested" });
+    import("../state/store.js").then(({ uiStore }) => {
+      const { installedSkills } = uiStore.getState();
+      const items = installedSkills.map((s) => ({
+        id: s.name,
+        label: s.name,
+        meta: s.enabled ? "✓ enabled" : "✗ disabled",
+      }));
+      this.openPanel("skills", {
+        title: "/skills",
+        items,
+        emptyText: "No skills loaded. Check your skills directory.",
+      });
+    });
   }
 
   dismissSkillsView(): void {
-    this.emit({ kind: "skills.view.dismissed" });
+    this.closePanel();
   }
 
   // ─── MCP overlay ─────────────────────────────────────────────────────────
@@ -282,11 +294,23 @@ export class UiBridge {
   }
 
   requestMcpView(): void {
-    this.emit({ kind: "mcp.view.requested" });
+    import("../state/store.js").then(({ uiStore }) => {
+      const { mcpServers } = uiStore.getState();
+      const items = mcpServers.map((s) => ({
+        id: s.name,
+        label: s.name,
+        meta: `${s.connected ? "● connected" : "○ disconnected"}  ${s.toolCount} tool${s.toolCount !== 1 ? "s" : ""}  ${s.transport}`,
+      }));
+      this.openPanel("mcp", {
+        title: "/mcp",
+        items,
+        emptyText: "No MCP servers configured.",
+      });
+    });
   }
 
   dismissMcpView(): void {
-    this.emit({ kind: "mcp.view.dismissed" });
+    this.closePanel();
   }
 
   // ─── Help overlay ─────────────────────────────────────────────────────────
