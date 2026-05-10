@@ -1,38 +1,49 @@
 /**
- * logger.ts — routes internal log calls through output.ts.
+ * TUI v2 — console redirect
  *
- * Replaces the console.log/console.warn monkey-patch in v1 renderer.ts:117-122.
- * Install via installLoggerRedirect() before Ink mounts.
+ * Routes stray console.{log,warn,error,info} calls through the structured
+ * logger (file sink + ring buffer) instead of raw stdout, which Ink owns.
+ *
+ * Also sets STACKOWL_TUI_MOUNTED=1 so the pretty-console sink stays quiet
+ * (writing to raw stderr during Ink is safe, but unnecessary duplication).
  */
 
-import { writeln } from "./output.js";
+import { getLogger } from "../../../infra/observability/logger.js";
+
+const _log = getLogger("console-stray");
 
 let _installed = false;
-let _origLog: typeof console.log;
-let _origWarn: typeof console.warn;
+let _origLog:   typeof console.log;
+let _origWarn:  typeof console.warn;
 let _origError: typeof console.error;
-let _origInfo: typeof console.info;
+let _origInfo:  typeof console.info;
 
 export function installLoggerRedirect(): void {
   if (_installed) return;
   _installed = true;
-  _origLog = console.log;
-  _origWarn = console.warn;
+
+  // Signal pretty-console sink to suppress stderr output while Ink is mounted
+  process.env.STACKOWL_TUI_MOUNTED = "1";
+
+  _origLog   = console.log;
+  _origWarn  = console.warn;
   _origError = console.error;
-  _origInfo = console.info;
-  // Ink already owns stdout; route stray console output through our writer
+  _origInfo  = console.info;
+
+  // Route stray console calls into the structured logger (file + ring buffer)
   // so background services don't inject raw bytes into the Ink render buffer.
-  console.log = (...args: unknown[]) => writeln(args.map(String).join(" "));
-  console.warn = (...args: unknown[]) => writeln("[warn] " + args.map(String).join(" "));
-  console.error = (...args: unknown[]) => writeln("[error] " + args.map(String).join(" "));
-  console.info = (...args: unknown[]) => writeln("[info] " + args.map(String).join(" "));
+  console.log   = (...args: unknown[]) => _log.info(args.map(String).join(" "));
+  console.warn  = (...args: unknown[]) => _log.warn(args.map(String).join(" "));
+  console.error = (...args: unknown[]) => _log.error(args.map(String).join(" "), undefined);
+  console.info  = (...args: unknown[]) => _log.info(args.map(String).join(" "));
 }
 
 export function uninstallLoggerRedirect(): void {
   if (!_installed) return;
   _installed = false;
-  console.log = _origLog;
-  console.warn = _origWarn;
+  process.env.STACKOWL_TUI_MOUNTED = "";
+  console.log   = _origLog;
+  console.warn  = _origWarn;
   console.error = _origError;
-  console.info = _origInfo;
+  console.info  = _origInfo;
 }
