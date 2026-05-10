@@ -1221,6 +1221,8 @@ ${userMessage}
 
         iterations++;
 
+        const _iterBreak = await withSpan("engine.iteration", async () => {
+
         if (response.content && context.onProgress) {
           await context.onProgress(`_Thinking..._\n${response.content}`);
         }
@@ -1767,7 +1769,7 @@ ${userMessage}
           }
         }
 
-        if (shouldBreakLoop) break;
+        if (shouldBreakLoop) return true;
 
         // ── Self-check every N iterations (deep research only) ────────────
         if (context.depth === "deep") {
@@ -1947,6 +1949,10 @@ ${userMessage}
           response.toolCalls,
           response.usage,
         );
+
+        return false;
+        }, { i: iterations });
+        if (_iterBreak) break;
       }
 
       // ── Empty content recovery ──────────────────────────────────────
