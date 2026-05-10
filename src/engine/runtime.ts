@@ -22,6 +22,7 @@ import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
 import { ModelRouter } from "./router.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
+import { buildDegradationPrompt } from "../infra/capability-registry.js";
 import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
@@ -2753,6 +2754,12 @@ ${skillsContext}
 
     // DNA reminder — last line so it's freshest in context window
     prompt += `\nApply challenge mode (${dna.evolvedTraits.challengeLevel}) and verbosity (${dna.evolvedTraits.verbosity}) at all times.\n`;
+
+    // Degraded-subsystem notice — injected last so it's not buried
+    const degradationHint = buildDegradationPrompt();
+    if (degradationHint) {
+      prompt = prompt + "\n\n" + degradationHint;
+    }
 
     return prompt;
   }

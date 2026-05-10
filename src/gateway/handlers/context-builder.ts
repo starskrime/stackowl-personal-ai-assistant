@@ -43,9 +43,7 @@ export class ContextBuilder {
     const pipeline = this.ctx.contextPipeline;
 
     if (!pipeline) {
-      log.engine.warn(
-        "[ContextBuilder] contextPipeline not set on GatewayContext — returning base context (Task 20 will wire it)",
-      );
+      log.engine.debug("[ContextBuilder] contextPipeline not set — returning base context");
       return {
         ...this.baseContext(session, callbacks, isolatedTask, attemptLog, channelId, userId),
         skillsContext: skillsContext || undefined,

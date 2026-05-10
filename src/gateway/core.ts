@@ -132,6 +132,11 @@ import { createInvokeSkillTool } from "../tools/invoke-skill.js"
 import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
+import {
+  registerCapability,
+  snapshotLog,
+  getDegradedCapabilities,
+} from "../infra/capability-registry.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -509,6 +514,7 @@ export class OwlGateway {
           skillProvider = ctx.providerRegistry.get(synthesisProviderName);
         } catch (err) {
           log.engine.warn("synthesis provider not registered, falling back to default provider", err);
+          registerCapability("synthesisProvider", "DEGRADED", "synthesis provider not registered — skill routing uses default provider");
         }
       }
 
@@ -694,6 +700,9 @@ export class OwlGateway {
       }
 
       log.engine.info("[ContextPipeline] Element 5 pipeline initialized");
+      registerCapability("contextPipeline", "FULL");
+    } else if (!ctx.contextPipeline) {
+      registerCapability("contextPipeline", "OFFLINE", "missing db/memoryBus/factStore/episodicMemory");
     }
 
     // ─── OwlEngine v2 (Element 6a): OwlOrchestrator + ImprovementScheduler ─
@@ -870,6 +879,17 @@ export class OwlGateway {
 
     // Initialize new feature modules (all optional, fire-and-forget load)
     this.initFeatureModules();
+
+    // ─── Capability snapshot at end of boot ──────────────────────
+    const snap = snapshotLog();
+    log.engine.info("capability.snapshot", snap);
+    if (snap.degradedCount > 0) {
+      log.engine.warn(
+        `[CapabilityRegistry] ${snap.degradedCount} degraded subsystem(s) at boot`,
+        { capabilities: getDegradedCapabilities() },
+      );
+    }
+
     this.validateContext();
 
     // Wire delivery bus → router (Phase 1 channel infrastructure)
