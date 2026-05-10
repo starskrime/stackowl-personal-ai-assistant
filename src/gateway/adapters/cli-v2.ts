@@ -57,11 +57,10 @@ export class CliV2Adapter implements ChannelAdapter {
     // Seed the store with the current session.
     globalBridge.emit({ kind: "session.changed", sessionId: this._sessionId });
 
-    // Announce the initial owl (no turn yet — use a placeholder turnId).
-    // The Composer will call submitMessage(), which generates a real turnId per turn.
-    // This pre-seeds the header so the UI shows the owl before the first message.
+    // Seed the owl identity + model without starting a "turn" (which sets generating: true).
+    // Using changeOwl keeps generating: false so the Composer is ready for input immediately.
     const initModel = this._gateway.getConfig().defaultModel ?? "";
-    globalBridge.translateOwlChange("__init__", owlEmoji, owlName, undefined, initModel);
+    globalBridge.changeOwl(owlName, owlEmoji, initModel);
 
     // Load recent sessions asynchronously — must NOT block the UI.
     // The store is pre-seeded with an empty list; sessions.loaded fills it in.

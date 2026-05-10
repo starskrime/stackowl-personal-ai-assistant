@@ -88,6 +88,7 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
         mode: "chat",
         activeOwlName: event.owlName,
         activeOwlEmoji: event.owlEmoji,
+        ...(event.model !== undefined ? { activeModel: event.model } : {}),
       };
 
     // ─── Help overlay ─────────────────────────────────────────────

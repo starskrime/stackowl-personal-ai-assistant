@@ -257,8 +257,8 @@ export class UiBridge {
     this.emit({ kind: "owls.view.dismissed" });
   }
 
-  changeOwl(owlName: string, owlEmoji: string): void {
-    this.emit({ kind: "owl.changed", owlName, owlEmoji });
+  changeOwl(owlName: string, owlEmoji: string, model?: string): void {
+    this.emit({ kind: "owl.changed", owlName, owlEmoji, model });
   }
 
   // ─── Skills overlay ──────────────────────────────────────────────────────

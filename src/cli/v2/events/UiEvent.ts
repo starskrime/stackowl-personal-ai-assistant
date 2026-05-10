@@ -191,6 +191,8 @@ export interface OwlChangedEvent {
   kind: "owl.changed";
   owlName: string;
   owlEmoji: string;
+  /** Active model — populated on startup init and owl switches so footer stays accurate. */
+  model?: string;
 }
 
 // ─── Skills ───────────────────────────────────────────────────────────────────
