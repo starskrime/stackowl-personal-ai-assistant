@@ -197,6 +197,7 @@ if match:
       );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      log.tool.error("youtube_search.execute: unexpected error", error instanceof Error ? error : new Error(msg), { action, query: (args.query as string ?? "").slice(0, 100) });
       return `Error: ${msg}`;
     }
   },
