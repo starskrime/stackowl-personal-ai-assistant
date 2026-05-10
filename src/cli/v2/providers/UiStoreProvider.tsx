@@ -1,7 +1,11 @@
-import React, { createContext, useContext, useSyncExternalStore } from "react";
+import React, { createContext, useContext } from "react";
+import { useStore } from "zustand/react";
 import { uiStore, type UiState } from "../state/store.js";
 
-const UiStoreContext = createContext(uiStore);
+// The singleton vanilla store is used as the context value so that bridge /
+// adapter code (which cannot use React context) continues to target the same
+// store via applyToStore().
+const UiStoreContext = createContext<typeof uiStore | null>(null);
 
 export function UiStoreProvider({ children }: { children: React.ReactNode }) {
   return (
@@ -13,5 +17,6 @@ export function UiStoreProvider({ children }: { children: React.ReactNode }) {
 
 export function useUiStore<T>(selector: (state: UiState) => T): T {
   const store = useContext(UiStoreContext);
-  return useSyncExternalStore(store.subscribe, () => selector(store.getState()));
+  if (!store) throw new Error("useUiStore must be used within UiStoreProvider");
+  return useStore(store, selector);
 }

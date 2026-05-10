@@ -35,10 +35,17 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
     adapter.stop();
   };
 
-  process.once("SIGINT", () => { cleanup(); unmount(); process.exit(0); });
-  process.once("SIGTERM", () => { cleanup(); unmount(); process.exit(0); });
+  // Signal handlers: unmount Ink first so escape sequences don't corrupt its
+  // render buffer, then run cleanup to restore console and disable paste mode.
+  process.once("SIGINT", () => { unmount(); cleanup(); process.exit(0); });
+  process.once("SIGTERM", () => { unmount(); cleanup(); process.exit(0); });
 
-  // Run adapter and Ink in parallel — both must resolve for a clean exit
-  await Promise.all([adapter.start(), waitUntilExit()]);
-  cleanup();
+  // Run adapter and Ink in parallel — both must resolve for a clean exit.
+  // The finally block guarantees terminal restoration even if either rejects.
+  try {
+    await Promise.all([adapter.start(), waitUntilExit()]);
+  } finally {
+    unmount();
+    cleanup();
+  }
 }

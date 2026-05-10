@@ -190,11 +190,17 @@ export class CliV2Adapter implements ChannelAdapter {
 
   private _emitCommitted(response: GatewayResponse): void {
     const turnId = uuidv4();
-    globalBridge.translateOwlChange(turnId, response.owlEmoji, response.owlName);
+    // Do NOT call translateOwlChange here — that emits turn.started which sets
+    // generating: true, causing a flicker if a streaming turn is already in
+    // progress.  Instead, carry owl identity directly on the committed event so
+    // the Transcript component can identify the source without a preceding
+    // turn.started.
     globalBridge.emit({
       kind: "turn.committed",
       turnId,
       text: response.content,
+      owlEmoji: response.owlEmoji,
+      owlName: response.owlName,
       usage: response.usage
         ? {
             promptTokens: response.usage.promptTokens,

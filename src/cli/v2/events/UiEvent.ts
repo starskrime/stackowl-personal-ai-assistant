@@ -39,6 +39,11 @@ export interface TurnCommittedEvent {
   /** Full final text of the turn */
   text: string;
   usage?: { promptTokens: number; completionTokens: number; costUsd: number };
+  /** Optional owl identity — populated for broadcast/sendToUser messages that
+   *  are not preceded by a turn.started event. Renderers should use these when
+   *  no prior turn.started exists for this turnId. */
+  owlEmoji?: string;
+  owlName?: string;
 }
 
 // ─── Tool calls ───────────────────────────────────────────────────────────────
