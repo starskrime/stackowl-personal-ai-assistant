@@ -2,7 +2,7 @@ import type { UiState } from "../store.js";
 import type { UiEvent } from "../../events/UiEvent.js";
 import { getContextWindow } from "../model-context.js";
 
-export type UiMode = "chat" | "parliament" | "onboarding" | "skill-wizard" | "skills" | "mcp" | "sessions" | "owls";
+export type UiMode = "chat" | "parliament" | "onboarding" | "skill-wizard" | "sessions" | "owls";
 
 export interface UiSliceState {
   mode: UiMode;
@@ -18,8 +18,10 @@ export interface UiSliceState {
   totalCostUsd: number;
   /** Context window utilisation [0–100]. */
   contextWindowPct: number;
-  /** Inline overlay shown above the Composer in ChatScreen (help only). */
+  /** Inline overlays shown above the Composer in ChatScreen. */
   showHelp: boolean;
+  showSkillsOverlay: boolean;
+  showMcpOverlay: boolean;
 }
 
 export const initialUiSliceState: UiSliceState = {
@@ -33,6 +35,8 @@ export const initialUiSliceState: UiSliceState = {
   totalCostUsd: 0,
   contextWindowPct: 0,
   showHelp: false,
+  showSkillsOverlay: false,
+  showMcpOverlay: false,
 };
 
 export function applyUiEvent(state: UiState, event: UiEvent): UiState {
@@ -103,21 +107,21 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
     case "help.view.dismissed":
       return { ...state, showHelp: false };
 
-    // ─── Skills full-screen ──────────────────────────────────────
+    // ─── Skills overlay ──────────────────────────────────────────
 
     case "skills.view.requested":
-      return { ...state, mode: "skills" };
+      return { ...state, showSkillsOverlay: true };
 
     case "skills.view.dismissed":
-      return { ...state, mode: "chat" };
+      return { ...state, showSkillsOverlay: false };
 
-    // ─── MCP full-screen ─────────────────────────────────────────
+    // ─── MCP overlay ─────────────────────────────────────────────
 
     case "mcp.view.requested":
-      return { ...state, mode: "mcp" };
+      return { ...state, showMcpOverlay: true };
 
     case "mcp.view.dismissed":
-      return { ...state, mode: "chat" };
+      return { ...state, showMcpOverlay: false };
 
     default:
       return state;

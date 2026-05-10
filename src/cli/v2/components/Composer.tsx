@@ -40,8 +40,10 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
   const { exit } = useApp();
   const { colors } = useTheme();
 
-  const mode      = useUiStore((s) => s.mode);
-  const generating = useUiStore((s) => s.generating);
+  const mode              = useUiStore((s) => s.mode);
+  const generating        = useUiStore((s) => s.generating);
+  const showSkillsOverlay = useUiStore((s) => s.showSkillsOverlay);
+  const showMcpOverlay    = useUiStore((s) => s.showMcpOverlay);
 
   useEffect(() => {
     if (!generating) return;
@@ -63,8 +65,17 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     if (cmd === "/sessions") { globalBridge.requestSessionsView(); return; }
     if (cmd === "/help")     { globalBridge.requestHelpView();     return; }
     if (cmd === "/owls")     { globalBridge.requestOwlsView();     return; }
-    if (cmd === "/skills")   { globalBridge.requestSkillsView();   return; }
-    if (cmd === "/mcp")      { globalBridge.requestMcpView();      return; }
+    // Toggle: second /skills press closes the overlay
+    if (cmd === "/skills")   {
+      if (showSkillsOverlay) globalBridge.dismissSkillsView();
+      else                   globalBridge.requestSkillsView();
+      return;
+    }
+    if (cmd === "/mcp") {
+      if (showMcpOverlay) globalBridge.dismissMcpView();
+      else                globalBridge.requestMcpView();
+      return;
+    }
     if (cmd === "/quit" || cmd === "/exit") { exit(); }
   }
 
@@ -95,6 +106,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
           return;
         }
         if (SLASH_COMMANDS.includes(trimmed)) { dispatchSlash(trimmed); setValue(""); return; }
+        // Unknown slash commands (e.g. /memory list, /mcp status) pass through to the gateway
         if (trimmed) { historyRef.current.push(trimmed); onSubmit(trimmed); }
         setValue("");
         return;
