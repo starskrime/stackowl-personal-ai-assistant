@@ -15,6 +15,7 @@ import {
   SPINNER_AMBER,
   SPINNER_INTERVAL_MS,
 } from "./spinner.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 function fmtTime(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -26,6 +27,7 @@ export interface ToolCallCardProps {
 }
 
 export function ToolCallCard({ tool }: ToolCallCardProps) {
+  const { colors } = useTheme();
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
@@ -56,7 +58,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
     return (
       <Box paddingLeft={2}>
         <Text dimColor>└ {tool.toolName} </Text>
-        <Text color="green">✓</Text>
+        <Text color={colors.success}>✓</Text>
         <Text dimColor> {fmtTime(tool.elapsedMs)}</Text>
       </Box>
     );
@@ -65,7 +67,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
   return (
     <Box paddingLeft={2}>
       <Text dimColor>└ {tool.toolName} </Text>
-      <Text color="red">✗ {tool.error ?? "error"}</Text>
+      <Text color={colors.error}>✗ {tool.error ?? "error"}</Text>
     </Box>
   );
 }

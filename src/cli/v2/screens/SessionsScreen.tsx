@@ -14,6 +14,7 @@ import { Box, Text, useInput, useStdout } from "ink";
 import { useState, useEffect } from "react";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 interface SessionsScreenProps {
   onResume: (sessionId: string, title: string) => void;
@@ -30,6 +31,7 @@ function formatRelativeTime(ts: number): string {
 }
 
 export function SessionsScreen({ onResume }: SessionsScreenProps) {
+  const { colors } = useTheme();
   const sessions       = useUiStore((s) => s.recentSessions);
   const activeSession  = useUiStore((s) => s.activeSessionId);
   const { stdout }     = useStdout();
@@ -64,7 +66,7 @@ export function SessionsScreen({ onResume }: SessionsScreenProps) {
     <Box flexDirection="column" width={cols}>
       {/* Header */}
       <Box paddingX={1}>
-        <Text bold color="cyan">🗂  Recent Sessions</Text>
+        <Text bold color={colors.accent}>🗂  Recent Sessions</Text>
         <Text dimColor>   ↑↓ navigate · Enter resume · Esc cancel</Text>
       </Box>
 
@@ -82,14 +84,14 @@ export function SessionsScreen({ onResume }: SessionsScreenProps) {
             const isCurrent  = s.sessionId === activeSession;
             return (
               <Box key={s.sessionId}>
-                <Text bold={isSelected} color={isSelected ? "cyan" : undefined}>
+                <Text bold={isSelected} color={isSelected ? colors.accent : undefined}>
                   {isSelected ? "❯  " : "   "}
                 </Text>
-                <Text bold={isSelected} color={isSelected ? "cyan" : undefined}>
+                <Text bold={isSelected} color={isSelected ? colors.accent : undefined}>
                   {s.title}
                 </Text>
                 <Text dimColor>{"  "}{formatRelativeTime(s.lastActiveAt)}</Text>
-                {isCurrent && <Text dimColor color="green">{"  [current]"}</Text>}
+                {isCurrent && <Text dimColor color={colors.success}>{"  [current]"}</Text>}
               </Box>
             );
           })}

@@ -14,8 +14,10 @@ import { Box, Text, useInput, useStdout } from "ink";
 import { useState, useEffect } from "react";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export function OwlsScreen() {
+  const { colors, glyphs } = useTheme();
   const owls = useUiStore((s) => s.availableOwls);
   const { stdout } = useStdout();
   const [cols, setCols] = useState(stdout?.columns ?? 80);
@@ -73,7 +75,7 @@ export function OwlsScreen() {
     <Box flexDirection="column" width={cols}>
       {/* Header */}
       <Box paddingX={1} paddingY={0}>
-        <Text bold color="cyan">{"Switch Owl"}</Text>
+        <Text bold color={colors.accent}>{"Switch Owl"}</Text>
         <Text dimColor>{"  (↑↓ navigate · Enter select · Esc cancel)"}</Text>
       </Box>
 
@@ -88,20 +90,20 @@ export function OwlsScreen() {
         <Box flexDirection="column" paddingX={1}>
           {owls.map((owl, i) => {
             const isSelected = i === cursor;
-            const prefix = isSelected ? "> " : "  ";
+            const prefix = isSelected ? glyphs.selection + " " : "  ";
             return (
               <Box key={owl.name}>
-                <Text bold={isSelected} color={isSelected ? "cyan" : owl.isActive ? "green" : undefined}>
+                <Text bold={isSelected} color={isSelected ? colors.accent : owl.isActive ? colors.success : undefined}>
                   {prefix}
                 </Text>
-                <Text bold={isSelected} color={isSelected ? "cyan" : undefined}>
+                <Text bold={isSelected} color={isSelected ? colors.accent : undefined}>
                   {owl.emoji + " " + owl.name}
                 </Text>
                 {owl.description && (
                   <Text dimColor>{"  " + owl.description}</Text>
                 )}
                 {owl.isActive && (
-                  <Text color="green" dimColor>{"  [active]"}</Text>
+                  <Text color={colors.success} dimColor>{"  [active]"}</Text>
                 )}
               </Box>
             );

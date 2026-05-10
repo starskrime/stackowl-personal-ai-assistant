@@ -18,6 +18,7 @@
 
 import { Box, Text, useInput } from "ink";
 import { globalBridge } from "../events/bridge.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 interface KeyRow {
   key:  string;
@@ -41,18 +42,18 @@ const SLASH_COMMANDS: KeyRow[] = [
   { key: "/quit",     desc: "Exit StackOwl"                  },
 ];
 
-const KEY_COL = 16;
-
-function Row({ label, desc, color }: { label: string; desc: string; color: string }) {
+function Row({ label, desc, color, keyCol }: { label: string; desc: string; color: string; keyCol: number }) {
   return (
     <Box paddingLeft={2}>
-      <Text color={color}>{label.padEnd(KEY_COL)}</Text>
+      <Text color={color}>{label.padEnd(keyCol)}</Text>
       <Text dimColor>{desc}</Text>
     </Box>
   );
 }
 
 export function CommandPalette({ onClose: _onClose }: { onClose: () => void }) {
+  const { colors, layout, glyphs } = useTheme();
+
   useInput((_input, key) => {
     if (key.escape) globalBridge.dismissHelpView();
   });
@@ -61,14 +62,14 @@ export function CommandPalette({ onClose: _onClose }: { onClose: () => void }) {
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor="cyan"
+      borderColor={colors.accent}
       paddingX={1}
       paddingY={0}
       marginBottom={1}
     >
       {/* Header */}
       <Box justifyContent="space-between" marginBottom={1}>
-        <Text bold color="cyan">Keybindings & Commands</Text>
+        <Text bold color={colors.accent}>Keybindings & Commands</Text>
         <Text dimColor>  Esc to close</Text>
       </Box>
 
@@ -77,9 +78,9 @@ export function CommandPalette({ onClose: _onClose }: { onClose: () => void }) {
         <Text bold>Keyboard</Text>
       </Box>
       <Box paddingLeft={2} marginBottom={0}>
-        <Text dimColor>{"─".repeat(38)}</Text>
+        <Text dimColor>{glyphs.divider.repeat(layout.dividerWidth)}</Text>
       </Box>
-      {KEYBINDINGS.map((r) => <Row key={r.key} label={r.key} desc={r.desc} color="green" />)}
+      {KEYBINDINGS.map((r) => <Row key={r.key} label={r.key} desc={r.desc} color={colors.success} keyCol={layout.keyCol} />)}
 
       <Box marginTop={1} />
 
@@ -88,9 +89,9 @@ export function CommandPalette({ onClose: _onClose }: { onClose: () => void }) {
         <Text bold>Slash Commands</Text>
       </Box>
       <Box paddingLeft={2} marginBottom={0}>
-        <Text dimColor>{"─".repeat(38)}</Text>
+        <Text dimColor>{glyphs.divider.repeat(layout.dividerWidth)}</Text>
       </Box>
-      {SLASH_COMMANDS.map((r) => <Row key={r.key} label={r.key} desc={r.desc} color="yellow" />)}
+      {SLASH_COMMANDS.map((r) => <Row key={r.key} label={r.key} desc={r.desc} color={colors.warning} keyCol={layout.keyCol} />)}
     </Box>
   );
 }

@@ -20,6 +20,7 @@ import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
 import type { ParliamentDebate } from "../state/slices/parliament.js";
 import { STACKOWL_SPINNER, SPINNER_AMBER, SPINNER_INTERVAL_MS } from "../components/spinner.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 function roundLabel(round: number): string {
   switch (round) {
@@ -47,6 +48,7 @@ function OwlColumn({
   owlName, owlEmoji, position, challenge,
   colWidth, spinning, spinFrame,
 }: OwlColumnProps) {
+  const { colors } = useTheme();
   const text   = challenge ?? position ?? "";
   const ready  = !!(challenge ?? position);
   const status = challenge ? "cross-exam" : position ? "ready" : "thinking...";
@@ -56,7 +58,7 @@ function OwlColumn({
       flexDirection="column"
       width={colWidth}
       borderStyle="single"
-      borderColor={ready ? "cyan" : "gray"}
+      borderColor={ready ? colors.accent : colors.dim}
       paddingX={1}
     >
       <Box>
@@ -68,7 +70,7 @@ function OwlColumn({
             <Text dimColor>{status}</Text>
           </>
         ) : (
-          <Text color={ready ? (challenge ? "yellow" : "green") : "gray"} dimColor={!ready}>
+          <Text color={ready ? (challenge ? colors.warning : colors.success) : colors.dim} dimColor={!ready}>
             [{status}]
           </Text>
         )}
@@ -86,18 +88,19 @@ function OwlColumn({
 // ─── SynthesisPanel ──────────────────────────────────────────────────────────
 
 function SynthesisPanel({ debate }: { debate: ParliamentDebate }) {
+  const { colors } = useTheme();
   if (!debate.synthesis) return null;
   return (
     <Box
       flexDirection="column"
       borderStyle="double"
-      borderColor="yellow"
+      borderColor={colors.verdict}
       paddingX={2}
       paddingY={1}
       marginTop={1}
     >
       <Box>
-        <Text bold color="yellow">⚖  Parliament Verdict</Text>
+        <Text bold color={colors.verdict}>⚖  Parliament Verdict</Text>
         {debate.synthOwlName && (
           <Text dimColor>   by {debate.synthOwlName}</Text>
         )}
@@ -112,6 +115,7 @@ function SynthesisPanel({ debate }: { debate: ParliamentDebate }) {
 // ─── ParliamentScreen ────────────────────────────────────────────────────────
 
 export function ParliamentScreen() {
+  const { colors } = useTheme();
   const debate = useUiStore((s) => s.activeDebate);
   const { stdout } = useStdout();
   const [cols, setCols] = useState(stdout?.columns ?? 80);
@@ -142,7 +146,7 @@ export function ParliamentScreen() {
   if (!debate) {
     return (
       <Box flexDirection="column" padding={2}>
-        <Text bold color="cyan">⚖  Parliament</Text>
+        <Text bold color={colors.accent}>⚖  Parliament</Text>
         <Box marginTop={1}>
           <Text dimColor>No active debate. Ask a complex question to convene Parliament.</Text>
         </Box>
@@ -160,10 +164,10 @@ export function ParliamentScreen() {
     <Box flexDirection="column" width={cols}>
       {/* Header */}
       <Box paddingX={1} paddingY={0}>
-        <Text bold color="cyan">⚖  Parliament</Text>
+        <Text bold color={colors.accent}>⚖  Parliament</Text>
         <Text dimColor>  Round {debate.round} of {debate.totalRounds}</Text>
         <Text dimColor>  ·  </Text>
-        <Text color="yellow">{roundLabel(debate.round)}</Text>
+        <Text color={colors.warning}>{roundLabel(debate.round)}</Text>
         {!debate.active && debate.synthesis && (
           <Text dimColor>  ·  returning to chat in 3s...</Text>
         )}

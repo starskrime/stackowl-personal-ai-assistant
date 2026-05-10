@@ -7,18 +7,20 @@
 
 import { Box, Text } from "ink";
 import type { Notice } from "../state/slices/heartbeat.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export interface NoticeStripProps {
   notice: Notice;
 }
 
 export function NoticeStrip({ notice }: NoticeStripProps) {
+  const { colors } = useTheme();
   if (notice.severity === "error") {
     return (
       <Box paddingLeft={2}>
-        <Text color="red">✕ </Text>
-        <Text color="red" dimColor>[{notice.source}]  </Text>
-        <Text color="red">{notice.text}</Text>
+        <Text color={colors.error}>✕ </Text>
+        <Text color={colors.error} dimColor>[{notice.source}]  </Text>
+        <Text color={colors.error}>{notice.text}</Text>
       </Box>
     );
   }

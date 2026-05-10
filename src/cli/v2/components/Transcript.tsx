@@ -17,12 +17,14 @@
 import { Static, Box, Text } from "ink";
 import type { Turn } from "../state/slices/turns.js";
 import { OwlAvatar } from "./OwlAvatar.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export interface TranscriptProps {
   turns: Turn[];
 }
 
 export function Transcript({ turns }: TranscriptProps) {
+  const { colors } = useTheme();
   return (
     <Static items={turns}>
       {(turn) => (
@@ -30,8 +32,8 @@ export function Transcript({ turns }: TranscriptProps) {
           {turn.role === "user" ? (
             <>
               <Box>
-                <Text bold color="green">❯ </Text>
-                <Text bold color="green">You</Text>
+                <Text bold color={colors.user}>❯ </Text>
+                <Text bold color={colors.user}>You</Text>
               </Box>
               <Box paddingLeft={2}>
                 <Text wrap="wrap">{turn.text}</Text>

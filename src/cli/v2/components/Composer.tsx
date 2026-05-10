@@ -101,10 +101,10 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
       ) : (
         <>
           <Box paddingLeft={1}>
-            <Text bold color="green">❯ </Text>
+            <Text bold color={colors.user}>❯ </Text>
             <Text>{value}</Text>
             {slashHint ? <Text dimColor>{slashHint}</Text> : null}
-            <Text color="cyan">▋</Text>
+            <Text color={colors.accent}>▋</Text>
           </Box>
           {value === "" && (
             <Box paddingLeft={1}>

@@ -12,19 +12,19 @@
 
 import { Box, Text } from "ink";
 import type { HeartbeatMessage } from "../state/slices/heartbeat.js";
-
-const HEARTBEAT_PURPLE = "#A78BFA";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export interface HeartbeatBannerProps {
   msg: HeartbeatMessage;
 }
 
 export function HeartbeatBanner({ msg }: HeartbeatBannerProps) {
+  const { colors } = useTheme();
   const emoji = msg.owlEmoji ?? "🔔";
   return (
     <Box
       borderStyle="round"
-      borderColor={HEARTBEAT_PURPLE}
+      borderColor={colors.heartbeat}
       flexDirection="column"
       paddingX={1}
       paddingY={0}
@@ -33,7 +33,7 @@ export function HeartbeatBanner({ msg }: HeartbeatBannerProps) {
     >
       <Box>
         <Text>{emoji} </Text>
-        <Text bold color={HEARTBEAT_PURPLE}>{msg.owlName}</Text>
+        <Text bold color={colors.heartbeat}>{msg.owlName}</Text>
         <Text dimColor>  unsolicited</Text>
       </Box>
       <Box marginTop={0} paddingLeft={0}>

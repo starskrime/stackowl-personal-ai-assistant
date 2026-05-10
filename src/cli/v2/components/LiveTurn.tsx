@@ -10,6 +10,7 @@ import type { Turn } from "../state/slices/turns.js";
 import type { ToolCall } from "../state/slices/tools.js";
 import { OwlAvatar } from "./OwlAvatar.js";
 import { ToolCallCard } from "./ToolCallCard.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export interface LiveTurnProps {
   turn: Turn | null;
@@ -17,6 +18,7 @@ export interface LiveTurnProps {
 }
 
 export function LiveTurn({ turn, toolCalls }: LiveTurnProps) {
+  const { colors } = useTheme();
   if (!turn) return null;
 
   const myTools = toolCalls.filter((tc) => tc.turnId === turn.turnId);
@@ -34,7 +36,7 @@ export function LiveTurn({ turn, toolCalls }: LiveTurnProps) {
       <Box paddingLeft={2}>
         <Text wrap="wrap">
           {turn.text}
-          <Text color="cyan">▋</Text>
+          <Text color={colors.accent}>▋</Text>
         </Text>
       </Box>
     </Box>

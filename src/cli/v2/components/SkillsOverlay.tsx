@@ -3,9 +3,11 @@
 import { Box, Text, useInput } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export function SkillsOverlay() {
   const skills = useUiStore((s) => s.installedSkills);
+  const { colors } = useTheme();
 
   useInput((_input, key) => {
     if (key.escape) {
@@ -17,12 +19,12 @@ export function SkillsOverlay() {
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor="yellow"
+      borderColor={colors.warning}
       paddingX={1}
       paddingY={0}
     >
       <Box marginBottom={1}>
-        <Text bold color="yellow">Installed Skills</Text>
+        <Text bold color={colors.warning}>Installed Skills</Text>
         <Text dimColor>{"  Esc to close"}</Text>
       </Box>
 
@@ -34,7 +36,7 @@ export function SkillsOverlay() {
         <Box flexDirection="column">
           {skills.map((skill) => (
             <Box key={skill.name}>
-              <Text color={skill.enabled ? "green" : "gray"}>
+              <Text color={skill.enabled ? colors.success : colors.dim}>
                 {skill.enabled ? "  ✓  " : "  ✗  "}
               </Text>
               <Text bold={skill.enabled}>{skill.name}</Text>

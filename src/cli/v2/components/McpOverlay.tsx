@@ -3,9 +3,11 @@
 import { Box, Text, useInput } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { globalBridge } from "../events/bridge.js";
+import { useTheme } from "../providers/ThemeProvider.js";
 
 export function McpOverlay() {
   const servers = useUiStore((s) => s.mcpServers);
+  const { colors } = useTheme();
 
   useInput((_input, key) => {
     if (key.escape) {
@@ -17,12 +19,12 @@ export function McpOverlay() {
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor="magenta"
+      borderColor={colors.heartbeat}
       paddingX={1}
       paddingY={0}
     >
       <Box marginBottom={1}>
-        <Text bold color="magenta">MCP Servers</Text>
+        <Text bold color={colors.heartbeat}>MCP Servers</Text>
         <Text dimColor>{"  Esc to close"}</Text>
       </Box>
 
@@ -34,7 +36,7 @@ export function McpOverlay() {
         <Box flexDirection="column">
           {servers.map((server) => (
             <Box key={server.name}>
-              <Text color={server.connected ? "green" : "red"}>
+              <Text color={server.connected ? colors.success : colors.error}>
                 {server.connected ? "  ● " : "  ○ "}
               </Text>
               <Text bold>{server.name}</Text>
