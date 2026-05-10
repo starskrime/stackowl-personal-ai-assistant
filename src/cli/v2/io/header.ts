@@ -13,9 +13,10 @@ const LOGO_LINES: Array<{ text: string; bright: boolean }> = [
   { text: "╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝  ╚══╝╚══╝╚══════╝", bright: false },
 ];
 
+// Match theme tokens exactly: brand=#F5A623, brandDim=#A07418
 const GREEN  = "\x1b[32m";
-const AMBER  = "\x1b[1m\x1b[33m";   // bold amber (brand)
-const DIM    = "\x1b[2m\x1b[33m";   // dim amber  (brandDim)
+const AMBER  = "\x1b[1m\x1b[38;2;245;166;35m";   // bold #F5A623
+const DIM    = "\x1b[38;2;160;116;24m";            // #A07418
 const BOLD   = "\x1b[1m";
 const DIMTXT = "\x1b[2m";
 const RESET  = "\x1b[0m";
