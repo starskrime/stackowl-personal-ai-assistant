@@ -280,7 +280,7 @@ export class UiBridge {
         items,
         emptyText: "No skills loaded. Check your skills directory.",
       });
-    });
+    }).catch((e) => process.stderr.write(`[bridge] requestSkillsView: ${e}\n`));
   }
 
   dismissSkillsView(): void {
@@ -306,7 +306,7 @@ export class UiBridge {
         items,
         emptyText: "No MCP servers configured.",
       });
-    });
+    }).catch((e) => process.stderr.write(`[bridge] requestMcpView: ${e}\n`));
   }
 
   dismissMcpView(): void {
