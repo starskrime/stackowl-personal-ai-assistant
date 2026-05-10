@@ -37,11 +37,14 @@ export const APITesterTool: ToolImplementation = {
   async execute(args, _context) {
     const method = args.method as string;
     const url = args.url as string;
+    const safeUrl = (() => {
+      try { const u = new URL(url); return u.origin + u.pathname; } catch { return "[invalid-url]"; }
+    })();
     const headersRaw = args.headers as string | undefined;
     const body = args.body as string | undefined;
 
     // 1. ENTRY
-    log.tool.debug("api_tester.execute: entry", { method, url, hasHeaders: !!headersRaw, hasBody: !!body });
+    log.tool.debug("api_tester.execute: entry", { method, url: safeUrl, hasHeaders: !!headersRaw, hasBody: !!body });
 
     try {
       let parsedHeaders: Record<string, string> = {};
@@ -61,7 +64,7 @@ export const APITesterTool: ToolImplementation = {
         : authHeader.toLowerCase().startsWith("basic ") ? "basic"
         : "custom"
         : "none";
-      log.tool.debug("api_tester.execute: request prepared", { method, url, authScheme });
+      log.tool.debug("api_tester.execute: request prepared", { method, url: safeUrl, authScheme });
 
       const fetchOptions: RequestInit = {
         method,
@@ -110,7 +113,7 @@ export const APITesterTool: ToolImplementation = {
       log.tool.debug("api_tester.execute: exit", { success: true, resultLen: result.length });
       return result;
     } catch (e) {
-      log.tool.error("api_tester.execute: request failed", e instanceof Error ? e : new Error(String(e)), { method, url });
+      log.tool.error("api_tester.execute: request failed", e instanceof Error ? e : new Error(String(e)), { method, url: safeUrl });
       return `api_tester error: ${e instanceof Error ? e.message : String(e)}`;
     }
   },
