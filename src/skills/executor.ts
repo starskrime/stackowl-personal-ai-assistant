@@ -236,13 +236,13 @@ export class SkillExecutor {
 
       if (step.type === "llm") {
         output = await this.withTimeout(
-          () => this.executeLlmStep(step, parameters, outputs),
+          (_signal) => this.executeLlmStep(step, parameters, outputs),
           timeout,
           step.id,
         );
       } else {
         output = await this.withTimeout(
-          () => this.executeToolStep(step, parameters, outputs),
+          (_signal) => this.executeToolStep(step, parameters, outputs),
           timeout,
           step.id,
         );
@@ -438,28 +438,26 @@ export class SkillExecutor {
   }
 
   /**
-   * Run an async function with a timeout.
+   * Run an async function with a timeout using AbortController.
+   * Ensures both success and timeout branches clean up resources.
    */
   private async withTimeout<T>(
-    fn: () => Promise<T>,
+    fn: (signal: AbortSignal) => Promise<T>,
     timeoutMs: number,
     stepId: string,
   ): Promise<T> {
-    let timer: ReturnType<typeof setTimeout>;
-    return Promise.race([
-      fn().then((result) => {
-        clearTimeout(timer);
-        return result;
-      }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new Error(`Step "${stepId}" timed out after ${timeoutMs}ms`),
-            ),
-          timeoutMs,
-        );
-      }),
-    ]);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const result = await fn(controller.signal);
+      return result;
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(`Step "${stepId}" timed out after ${timeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
