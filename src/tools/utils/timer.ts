@@ -87,10 +87,11 @@ export const TimerTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const duration = Number(args.duration);
+    const label = args.label ? String(args.label) : "Timer";
+    log.tool.debug("timer.execute: entry", { duration, label });
     try {
-      const duration = Number(args.duration);
       const message = String(args.message || "Timer is up!");
-      const label = args.label ? String(args.label) : "Timer";
 
       if (!isFinite(duration) || duration <= 0) {
         return "Error: Duration must be a positive number of seconds.";
@@ -140,12 +141,14 @@ export const TimerTool: ToolImplementation = {
         );
       }, duration * 1000);
 
+      log.tool.debug("timer.execute: exit", { success: true, id, fireAt, durationSecs: duration });
       return (
         `Timer scheduled: "${label}" — I'll send you this message in ${timeStr} (at ${fireTime}):\n` +
         `"${message}"\n\n` +
         `The message will be delivered right here in this chat.`
       );
     } catch (error) {
+      log.tool.error("timer.execute: failed", error, { duration, label });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error setting timer: ${msg}`;
     }

@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -37,6 +38,7 @@ export const AppleContactsTool: ToolImplementation = {
   ): Promise<string> {
     const action = args.action as string;
     const query = args.query as string;
+    log.tool.debug("apple_contacts.execute: entry", { action, query });
 
     if (action !== "search") {
       return `Error: Unknown action "${action}". Use "search".`;
@@ -47,6 +49,7 @@ export const AppleContactsTool: ToolImplementation = {
     }
 
     try {
+      log.tool.debug("apple_contacts.execute: searching contacts via AppleScript", { query });
       const script = `
 tell application "Contacts"
     set searchTerm to "${escapeForShell(query)}"
@@ -97,8 +100,11 @@ end tell`;
         `osascript -e '${escapeForShell(script)}'`,
         { timeout: 15000 },
       );
-      return stdout.trim() || `No contacts found matching "${query}".`;
+      const result = stdout.trim() || `No contacts found matching "${query}".`;
+      log.tool.debug("apple_contacts.execute: exit", { success: true, resultLen: result.length });
+      return result;
     } catch (error) {
+      log.tool.error("apple_contacts.execute: failed", error instanceof Error ? error : new Error(String(error)), { action, query });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error searching Contacts: ${msg}`;
     }

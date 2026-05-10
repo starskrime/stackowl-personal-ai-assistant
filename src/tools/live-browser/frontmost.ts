@@ -15,6 +15,7 @@
  * tool we want a clean "no browser available" branch, not an exception.
  */
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
@@ -56,19 +57,36 @@ async function defaultRunner(): Promise<string> {
 export async function detectFrontmostBrowser(
   opts: DetectOptions = {},
 ): Promise<FrontmostBrowser | null> {
+  log.tool.debug("frontmost.detectFrontmostBrowser: entry");
   const platform = opts.platform ?? process.platform;
-  if (platform !== "darwin") return null;
+  if (platform !== "darwin") {
+    log.tool.debug("frontmost.detectFrontmostBrowser: exit", { result: null, reason: "non-darwin" });
+    return null;
+  }
 
   let raw: string;
   try {
     raw = await (opts.runner ?? defaultRunner)();
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return null;
   }
   const name = raw.trim();
-  if (!name) return null;
+  if (!name) {
+    log.tool.debug("frontmost.detectFrontmostBrowser: exit", { result: null, reason: "empty-name" });
+    return null;
+  }
 
-  if (SAFARI_FAMILY.has(name)) return "safari";
-  if (CHROME_FAMILY.has(name)) return "chrome";
+  log.tool.debug("frontmost.detectFrontmostBrowser: app queried", { name });
+
+  if (SAFARI_FAMILY.has(name)) {
+    log.tool.debug("frontmost.detectFrontmostBrowser: exit", { result: "safari", name });
+    return "safari";
+  }
+  if (CHROME_FAMILY.has(name)) {
+    log.tool.debug("frontmost.detectFrontmostBrowser: exit", { result: "chrome", name });
+    return "chrome";
+  }
+  log.tool.debug("frontmost.detectFrontmostBrowser: exit", { result: null, name, reason: "not-a-browser" });
   return null;
 }

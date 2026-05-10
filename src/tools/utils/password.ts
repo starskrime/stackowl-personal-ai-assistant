@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const PasswordGeneratorTool: ToolImplementation = {
   definition: {
@@ -29,10 +30,11 @@ export const PasswordGeneratorTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const length = args.length ? Number(args.length) : 16;
+    const includeSymbols = args.includeSymbols !== false;
+    const includeNumbers = args.includeNumbers !== false;
+    log.tool.debug("password.execute: entry", { length, includeSymbols, includeNumbers });
     try {
-      const length = args.length ? Number(args.length) : 16;
-      const includeSymbols = args.includeSymbols !== false;
-      const includeNumbers = args.includeNumbers !== false;
 
       if (!isFinite(length) || length < 4 || length > 256) {
         return "Error: Password length must be between 4 and 256.";
@@ -52,8 +54,11 @@ export const PasswordGeneratorTool: ToolImplementation = {
         password += charset[bytes[i]! % charset.length];
       }
 
+      // NOTE: password value is intentionally not logged
+      log.tool.debug("password.execute: exit", { success: true, length, hasSymbols: includeSymbols, hasNumbers: includeNumbers });
       return `Generated password (${length} chars):\n${password}`;
     } catch (error) {
+      log.tool.error("password.execute: failed", error, { length, includeSymbols, includeNumbers });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error generating password: ${msg}`;
     }

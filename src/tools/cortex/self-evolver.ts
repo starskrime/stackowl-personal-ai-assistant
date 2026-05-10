@@ -13,6 +13,7 @@
  */
 import type { MemoryDatabase } from "../../memory/db.js";
 import type { ShadowRunner } from "./shadow-runner.js";
+import { log } from "../../logger.js";
 
 /**
  * Tools whose code or behavior must never be auto-rewritten by SET.
@@ -88,6 +89,12 @@ export class SelfEvolver {
     const criticalList = [...CRITICAL_TOOLS];
     const placeholders = criticalList.map(() => "?").join(",");
 
+    log.tool.debug("self-evolver.findCandidate: entry", {
+      days,
+      minExecutions: minExec,
+      excludedCriticalTools: criticalList.length,
+    });
+
     const row = this.deps.db.rawDb
       .prepare(
         `SELECT tool_name,
@@ -105,12 +112,29 @@ export class SelfEvolver {
       | { tool_name: string; total: number; successes: number }
       | undefined;
 
-    if (!row) return null;
-    return {
+    if (!row) {
+      log.tool.debug("self-evolver.findCandidate: no candidate found", {
+        reason: "no non-critical tool meets minExecutions threshold",
+        days,
+        minExecutions: minExec,
+      });
+      return null;
+    }
+
+    const candidate: EvolutionCandidate = {
       toolName: row.tool_name,
       successRate: row.successes / row.total,
       failureCount: row.total - row.successes,
     };
+
+    log.tool.debug("self-evolver.findCandidate: candidate identified", {
+      toolName: candidate.toolName,
+      successRate: candidate.successRate,
+      failureCount: candidate.failureCount,
+      reason: "lowest success rate among qualifying non-critical tools",
+    });
+
+    return candidate;
   }
 
   /**
@@ -132,18 +156,42 @@ export class SelfEvolver {
     shadowRunner: ShadowRunner,
     opts: FindCandidateOptions = {},
   ): Promise<RunOnceResult | null> {
+    log.tool.debug("self-evolver.runOnce: entry", { opts });
+
     const active = this.deps.db.rawDb
       .prepare(
         "SELECT COUNT(*) AS n FROM tool_evolution_runs WHERE status = 'running'",
       )
       .get() as { n: number };
-    if (active.n > 0) return null;
+    if (active.n > 0) {
+      log.tool.debug("self-evolver.runOnce: aborted — concurrency lock held", {
+        reason: "another evolution run is already in progress",
+        activeRuns: active.n,
+      });
+      return null;
+    }
 
     const candidate = await this.findCandidate(opts);
-    if (!candidate) return null;
+    if (!candidate) {
+      log.tool.debug("self-evolver.runOnce: aborted — no candidate found");
+      return null;
+    }
 
     const baselinePath = this.deps.resolveToolPath?.(candidate.toolName) ?? null;
-    if (!baselinePath) return null;
+    if (!baselinePath) {
+      log.tool.debug("self-evolver.runOnce: aborted — tool path unresolvable", {
+        reason: "MCP-supplied or dynamically registered tool, no source on disk",
+        toolName: candidate.toolName,
+      });
+      return null;
+    }
+
+    log.tool.debug("self-evolver.runOnce: candidate resolved", {
+      toolName: candidate.toolName,
+      baselinePath,
+      successRate: candidate.successRate,
+      failureCount: candidate.failureCount,
+    });
 
     const failureRows = this.deps.db.rawDb
       .prepare(
@@ -156,12 +204,28 @@ export class SelfEvolver {
     }>;
     const failureTraces = failureRows.map((r) => r.error_message);
 
+    log.tool.debug("self-evolver.runOnce: failure traces collected", {
+      toolName: candidate.toolName,
+      traceCount: failureTraces.length,
+      maxTraces: MAX_FAILURE_TRACES,
+    });
+
     const proposal =
       `SET proposes rewriting tool "${candidate.toolName}" — ` +
       `success rate ${(candidate.successRate * 100).toFixed(1)}% over ` +
       `${candidate.failureCount} failures. Approve rewrite?`;
     const verdict = await this.deps.hitlChannel.propose(proposal);
-    if (!verdict || !verdict.approved) return null;
+    if (!verdict || !verdict.approved) {
+      log.tool.debug("self-evolver.runOnce: aborted — HITL proposal declined", {
+        reason: verdict === null ? "no response from HITL channel" : "user declined rewrite",
+        toolName: candidate.toolName,
+      });
+      return null;
+    }
+
+    log.tool.debug("self-evolver.runOnce: HITL approved — dispatching PatchTool", {
+      toolName: candidate.toolName,
+    });
 
     const candidatePath = await this.deps.patchTool.execute({
       toolPath: baselinePath,
@@ -174,6 +238,14 @@ export class SelfEvolver {
     const runId = shadowRunner.start({
       baselineTool: candidate.toolName,
       candidateTool: `${candidate.toolName}__v2`,
+      baselinePath,
+      candidatePath,
+    });
+
+    log.tool.debug("self-evolver.runOnce: exit", {
+      success: true,
+      runId,
+      toolName: candidate.toolName,
       baselinePath,
       candidatePath,
     });

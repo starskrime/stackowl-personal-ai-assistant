@@ -20,6 +20,7 @@ import type { PerspectiveOverlay } from "./perspectives.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import { log } from "../logger.js";
 import { MultiRoundDebateManager } from "./multi-round-debate.js";
+import { withSpan } from "../infra/observability/context.js";
 
 export class ParliamentOrchestrator {
   private pelletGenerator: PelletGenerator;
@@ -44,6 +45,7 @@ export class ParliamentOrchestrator {
    * Start and run a full Parliament session.
    */
   async convene(config: ParliamentConfig): Promise<ParliamentSession> {
+    return withSpan("parliament.convene", async () => {
     const session: ParliamentSession = {
       id: uuidv4(),
       config,
@@ -94,8 +96,8 @@ export class ParliamentOrchestrator {
             );
           }
         }
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        log.parliament.warn("parliament verdict recall failed", err);
       }
     }
 
@@ -118,8 +120,8 @@ export class ParliamentOrchestrator {
             `[Parliament] Injected ${learnings.length} cross-owl learnings for "${config.topic}"`,
           );
         }
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        log.parliament.warn("parliament cross-owl learnings inject failed", err);
       }
     }
 
@@ -157,8 +159,8 @@ export class ParliamentOrchestrator {
             session.synthesis,
           );
           log.engine.info(`[Parliament] Recorded verdict "${session.verdict}" for topic: ${config.topic.slice(0, 60)}`);
-        } catch {
-          // Non-fatal
+        } catch (err) {
+          log.parliament.warn("parliament verdict record failed", err);
         }
       }
 
@@ -173,8 +175,8 @@ export class ParliamentOrchestrator {
           log.engine.info(
             `[Parliament] Wrote debate outcome to owl_learnings for ${config.participants.length} owls`,
           );
-        } catch {
-          // Non-fatal
+        } catch (err) {
+          log.parliament.warn("parliament owl learnings write failed", err);
         }
       }
 
@@ -183,6 +185,7 @@ export class ParliamentOrchestrator {
       log.engine.error(`[Parliament] Session failed: ${error}`);
       throw error;
     }
+    }); // end withSpan("parliament.convene")
   }
 
   /**

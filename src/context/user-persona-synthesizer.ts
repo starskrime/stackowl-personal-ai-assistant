@@ -23,7 +23,8 @@ function parsePersona(json: string): UserPersona | null {
     const p = JSON.parse(json) as Record<string, unknown>;
     if (typeof p.communicationStyle !== "string" || typeof p.expertiseLevel !== "string") return null;
     return p as unknown as UserPersona;
-  } catch {
+  } catch (err) {
+    log.memory.warn("user-persona-synthesizer: persona JSON parse failed", err);
     return null;
   }
 }

@@ -1,6 +1,7 @@
 import type { SubGoal } from "../engine/types.js";
 import type { ChatMessage, ChatOptions, ModelProvider } from "../providers/base.js";
 import type { IntelligenceRouter } from "../intelligence/router.js";
+import { log } from "../logger.js";
 
 // ─── Public Types ─────────────────────────────────────────────────
 
@@ -122,7 +123,8 @@ Tool result data (first 500 chars): ${JSON.stringify(env.data).slice(0, 500)}`;
       } else {
         throw new Error("not envelope");
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn("goal-verifier: envelope parse failed, using plain content", err);
       userContent = `Sub-goal: ${subGoal.description}
 User request: ${userMessage}
 Tool used: ${toolName}
@@ -142,7 +144,8 @@ Tool result (first 500 chars): ${toolResult.slice(0, 500)}`;
       );
 
       return this.parseResponse(response.content);
-    } catch {
+    } catch (err) {
+      log.tool.warn("goal-verifier: LLM call failed, defaulting to NEUTRAL", err);
       return { verdict: "NEUTRAL", reason: "Verifier unavailable, defaulting to NEUTRAL" };
     }
   }
@@ -168,7 +171,8 @@ Tool result (first 500 chars): ${toolResult.slice(0, 500)}`;
         reason: parsed.reason ?? "No reason provided",
         suggestion: parsed.suggestion,
       };
-    } catch {
+    } catch (err) {
+      log.tool.warn("goal-verifier: response JSON parse failed", err);
       return { verdict: "NEUTRAL", reason: "Failed to parse verifier response" };
     }
   }

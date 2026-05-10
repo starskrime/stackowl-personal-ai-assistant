@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -28,10 +29,12 @@ export const FocusModeTool: ToolImplementation = {
     _context: ToolContext,
   ): Promise<string> {
     const action = args.action as string;
+    log.tool.debug("focus_mode.execute: entry", { action });
 
     try {
       switch (action) {
         case "status": {
+          log.tool.debug("focus_mode.execute: checking DND status via defaults + plutil");
           try {
             const { stdout } = await execAsync(
               `defaults read com.apple.controlcenter "NSStatusItem Visible FocusModes" 2>/dev/null || echo "unknown"`,
@@ -46,35 +49,49 @@ export const FocusModeTool: ToolImplementation = {
                 { timeout: 15000 },
               );
               const dndActive = parseInt(dndOut.trim(), 10) > 0;
-              return `Focus/DND status: ${dndActive ? "ON" : "OFF"} (control center visibility: ${trimmed})`;
-            } catch {
-              return `Focus mode control center visibility: ${trimmed}`;
+              const result = `Focus/DND status: ${dndActive ? "ON" : "OFF"} (control center visibility: ${trimmed})`;
+              log.tool.debug("focus_mode.execute: exit", { success: true, dndActive, resultLen: result.length });
+              return result;
+            } catch (err) {
+              log.tool.warn("focus-mode: DND plist query failed", err);
+              const result = `Focus mode control center visibility: ${trimmed}`;
+              log.tool.debug("focus_mode.execute: exit", { success: true, resultLen: result.length });
+              return result;
             }
-          } catch {
+          } catch (err) {
+            log.tool.warn("focus-mode: status check failed", err);
             return "Unable to determine Focus/DND status. macOS privacy settings may be restricting access.";
           }
         }
 
         case "on": {
+          log.tool.debug("focus_mode.execute: enabling Focus/DND mode");
           try {
             await execAsync(
               `shortcuts run "Focus" 2>/dev/null || osascript -e 'do shell script "defaults -currentHost write com.apple.notificationcenterui dndStart -float 0; defaults -currentHost write com.apple.notificationcenterui dndEnd -float 1440; defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean true; killall NotificationCenter 2>/dev/null || true"'`,
               { timeout: 15000 },
             );
-            return "Focus/Do Not Disturb mode turned ON.";
-          } catch {
+            const result = "Focus/Do Not Disturb mode turned ON.";
+            log.tool.debug("focus_mode.execute: exit", { success: true, action: "on", resultLen: result.length });
+            return result;
+          } catch (err) {
+            log.tool.warn("focus-mode: enable failed", err);
             return "Unable to enable Focus mode. You may need to set up a 'Focus' shortcut in the Shortcuts app, or enable it manually.";
           }
         }
 
         case "off": {
+          log.tool.debug("focus_mode.execute: disabling Focus/DND mode");
           try {
             await execAsync(
               `osascript -e 'do shell script "defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean false; killall NotificationCenter 2>/dev/null || true"'`,
               { timeout: 15000 },
             );
-            return "Focus/Do Not Disturb mode turned OFF.";
-          } catch {
+            const result = "Focus/Do Not Disturb mode turned OFF.";
+            log.tool.debug("focus_mode.execute: exit", { success: true, action: "off", resultLen: result.length });
+            return result;
+          } catch (err) {
+            log.tool.warn("focus-mode: disable failed", err);
             return "Unable to disable Focus mode. You may need to disable it manually in System Settings.";
           }
         }
@@ -83,6 +100,7 @@ export const FocusModeTool: ToolImplementation = {
           return `Error: Unknown action "${action}". Use "status", "on", or "off".`;
       }
     } catch (error) {
+      log.tool.error("focus_mode.execute: failed", error instanceof Error ? error : new Error(String(error)), { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error with Focus mode: ${msg}`;
     }

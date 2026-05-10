@@ -6,6 +6,7 @@
  */
 
 import { readdir, stat, mkdir, rename } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve, extname, join } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
@@ -129,6 +130,8 @@ export const FileOrganizeTool: ToolImplementation = {
       const strategy = (args["strategy"] as string) || "by_type";
       const action = (args["action"] as string) || "preview";
 
+      log.tool.debug("file_organize.execute: entry", { directory, strategy, action });
+
       if (!["by_type", "by_date", "by_size"].includes(strategy)) {
         return `Error: Invalid strategy '${strategy}'. Must be one of: by_type, by_date, by_size`;
       }
@@ -141,7 +144,8 @@ export const FileOrganizeTool: ToolImplementation = {
       let entries: string[];
       try {
         entries = await readdir(resolvedDir);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Error: Cannot read directory: ${resolvedDir}`;
       }
 
@@ -152,7 +156,8 @@ export const FileOrganizeTool: ToolImplementation = {
         let fileStat;
         try {
           fileStat = await stat(fullPath);
-        } catch {
+        } catch (err) {
+          log.tool.warn('operation failed', err);
           continue;
         }
 
@@ -194,8 +199,11 @@ export const FileOrganizeTool: ToolImplementation = {
       }
 
       if (moves.length === 0) {
+        log.tool.debug("file_organize.execute: nothing to organize", { resolvedDir });
         return `No files to organize in ${resolvedDir}.`;
       }
+
+      log.tool.debug("file_organize.execute: plan ready", { strategy, moveCount: moves.length });
 
       if (action === "preview") {
         // Group by target folder for clear display
@@ -214,6 +222,7 @@ export const FileOrganizeTool: ToolImplementation = {
           }
         }
         preview += `\nTotal: ${moves.length} files to move.\nRun with action: "execute" to apply.`;
+        log.tool.debug("file_organize.execute: exit", { success: true, action: "preview", moveCount: moves.length });
         return preview;
       }
 
@@ -236,8 +245,10 @@ export const FileOrganizeTool: ToolImplementation = {
       if (errors.length > 0) {
         result += `\n\nErrors:\n${errors.join("\n")}`;
       }
+      log.tool.debug("file_organize.execute: exit", { success: true, action: "execute", movedCount, errorCount: errors.length });
       return result;
     } catch (error: any) {
+      log.tool.error("file_organize.execute: unexpected error", error as Error, { directory: args["directory"], strategy: args["strategy"] });
       return `Error organizing files: ${error.message ?? String(error)}`;
     }
   },

@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const YouTubeSearchTool: ToolImplementation = {
   definition: {
@@ -41,6 +42,9 @@ export const YouTubeSearchTool: ToolImplementation = {
     const url = args.url as string | undefined;
     const limit = Math.min((args.limit as number) || 5, 20);
 
+    // 1. ENTRY
+    log.tool.debug("youtube_search.execute: entry", { action, query: query.slice(0, 100), url: url ?? "(none)", limit });
+
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const exec = promisify(execFile);
@@ -54,12 +58,18 @@ export const YouTubeSearchTool: ToolImplementation = {
       if (action === "transcript" && url) {
         // Try yt-dlp for subtitles
         try {
+          // 3. STEP — yt-dlp transcript request
+          log.tool.debug("youtube_search.execute: yt-dlp transcript request", { url });
           const result = await shell(
             `yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format txt --print-to-file subtitle "${url}" - 2>/dev/null || ` +
               `yt-dlp --skip-download --write-sub --sub-lang en -o - "${url}" 2>/dev/null | head -200`,
           );
-          if (result) return `📝 Transcript for ${url}:\n\n${result}`;
-        } catch {
+          if (result) {
+            log.tool.debug("youtube_search.execute: exit", { action: "transcript", backend: "yt-dlp", resultLen: result.length });
+            return `📝 Transcript for ${url}:\n\n${result}`;
+          }
+        } catch (err) {
+          log.tool.warn('youtube_search: yt-dlp transcript failed', err);
           /* fallthrough */
         }
 
@@ -69,6 +79,8 @@ export const YouTubeSearchTool: ToolImplementation = {
             /(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
           )?.[1];
           if (videoId) {
+            // 3. STEP — python transcript fallback
+            log.tool.debug("youtube_search.execute: python transcript request", { videoId });
             const py = await shell(
               `python3 -c "
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -77,9 +89,13 @@ for entry in transcript[:100]:
     print(f'[{int(entry[\"start\"])//60}:{int(entry[\"start\"])%60:02d}] {entry[\"text\"]}')
 " 2>/dev/null`,
             );
-            if (py) return `📝 Transcript for ${url}:\n\n${py}`;
+            if (py) {
+              log.tool.debug("youtube_search.execute: exit", { action: "transcript", backend: "youtube_transcript_api", resultLen: py.length });
+              return `📝 Transcript for ${url}:\n\n${py}`;
+            }
           }
-        } catch {
+        } catch (err) {
+          log.tool.warn('youtube_search: python transcript failed', err);
           /* fallthrough */
         }
 
@@ -89,12 +105,16 @@ for entry in transcript[:100]:
       // Search using yt-dlp (most reliable, no API key needed)
       try {
         const escaped = query.replace(/"/g, '\\"');
+        // 3. STEP — yt-dlp search request
+        log.tool.debug("youtube_search.execute: yt-dlp search request", { query: query.slice(0, 100), limit });
         const result = await shell(
           `yt-dlp "ytsearch${limit}:${escaped}" --flat-playlist --print "%(title)s|||%(channel)s|||%(url)s|||%(duration_string)s|||%(view_count)s" 2>/dev/null | head -${limit}`,
         );
 
         if (result) {
           const lines = result.split("\n").filter(Boolean);
+          // 3. STEP — results count
+          log.tool.debug("youtube_search.execute: results parsed", { count: lines.length, backend: "yt-dlp" });
           const formatted = lines.map((line, i) => {
             const [title, channel, videoUrl, duration, views] =
               line.split("|||");
@@ -105,15 +125,21 @@ for entry in transcript[:100]:
               `   ${videoUrl || ""}`
             );
           });
-          return `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
+          const ytdlpResult = `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
+          // 4. EXIT
+          log.tool.debug("youtube_search.execute: exit", { backend: "yt-dlp", resultCount: lines.length, resultLen: ytdlpResult.length });
+          return ytdlpResult;
         }
-      } catch {
+      } catch (err) {
+        log.tool.warn('youtube_search: yt-dlp search failed', err);
         /* fallthrough to Python */
       }
 
       // Fallback: scrape YouTube search page
       try {
         const escaped = query.replace(/'/g, "\\'");
+        // 3. STEP — python scrape request
+        log.tool.debug("youtube_search.execute: python scrape request", { query: query.slice(0, 100) });
         const pyResult = await shell(
           `python3 -c "
 import urllib.request, urllib.parse, json, re
@@ -144,6 +170,8 @@ if match:
 
         if (pyResult) {
           const lines = pyResult.split("\n").filter(Boolean);
+          // 3. STEP — python results count
+          log.tool.debug("youtube_search.execute: results parsed", { count: lines.length, backend: "python-scrape" });
           const formatted = lines.map((line, i) => {
             const [title, channel, videoUrl, duration, views] =
               line.split("|||");
@@ -153,9 +181,13 @@ if match:
               `   ${videoUrl}`
             );
           });
-          return `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
+          const pyFinalResult = `🎬 YouTube results for "${query}":\n\n${formatted.join("\n\n")}`;
+          // 4. EXIT
+          log.tool.debug("youtube_search.execute: exit", { backend: "python-scrape", resultCount: lines.length, resultLen: pyFinalResult.length });
+          return pyFinalResult;
         }
-      } catch {
+      } catch (err) {
+        log.tool.warn('youtube_search: python scrape failed', err);
         /* fallthrough */
       }
 
@@ -165,6 +197,7 @@ if match:
       );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      log.tool.error("youtube_search.execute: unexpected error", error instanceof Error ? error : new Error(msg), { action, query: (args.query as string ?? "").slice(0, 100) });
       return `Error: ${msg}`;
     }
   },

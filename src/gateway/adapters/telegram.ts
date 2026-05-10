@@ -13,6 +13,7 @@
 
 import { Bot, InputFile, type Context } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
+import { runWithContext } from "../../infra/observability/context.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, extname } from "node:path";
@@ -103,11 +104,11 @@ export class TelegramAdapter implements ChannelAdapter {
       {
         get: (name: string) => {
           try { return (gateway as any).ctx?.providerRegistry?.get(name) ?? gateway.getProvider(); }
-          catch { return gateway.getProvider(); }
+          catch (err) { log.telegram.warn("providerRegistry.get failed, using default provider", err, { name }); return gateway.getProvider(); }
         },
         listProviders: () => {
           try { return (gateway as any).ctx?.providerRegistry?.listProviders() ?? [gwConfig.defaultProvider]; }
-          catch { return [gwConfig.defaultProvider]; }
+          catch (err) { log.telegram.warn("providerRegistry.listProviders failed, using default", err); return [gwConfig.defaultProvider]; }
         },
       },
     );
@@ -312,16 +313,23 @@ export class TelegramAdapter implements ChannelAdapter {
       const userId = ctx.from?.id;
       if (!userId) return;
       try {
-        const response = await this.gateway.handle(
-          {
-            id: makeMessageId(),
-            channelId: this.id,
-            userId: String(userId),
-            sessionId: makeSessionId(this.id, String(userId)),
-            text: "/skills install",
-          },
+        const skillsMsg = {
+          id: makeMessageId(),
+          channelId: this.id,
+          userId: String(userId),
+          sessionId: makeSessionId(this.id, String(userId)),
+          text: "/skills install",
+        };
+        const response = await runWithContext({
+          channelId: "telegram",
+          userId: String(userId),
+          sessionId: skillsMsg.sessionId,
+          messageId: skillsMsg.id,
+          spanName: "channel.telegram.handle",
+        }, () => this.gateway.handle(
+          skillsMsg,
           { onProgress: async () => {}, askInstall: async () => false },
-        );
+        ));
         await this.sendWizardResponse(ctx.chat.id, response);
       } catch (err) {
         log.telegram.error(`/skills wizard error: ${err instanceof Error ? err.message : err}`);
@@ -506,8 +514,8 @@ export class TelegramAdapter implements ChannelAdapter {
           { parse_mode: "HTML" },
         );
         ackMessageId = ackMsg.message_id;
-      } catch {
-        // Non-fatal — proceed without ack
+      } catch (err) {
+        log.telegram.warn("ack message send failed, proceeding without ack", err);
       }
 
       try {
@@ -520,7 +528,13 @@ export class TelegramAdapter implements ChannelAdapter {
         );
         const msg = makeMessage(this.id, String(userId), text);
         if (!msg) return;
-        const response = await this.gateway.handle(
+        const response = await runWithContext({
+          channelId: "telegram",
+          userId: String(userId),
+          sessionId: makeSessionId(this.id, String(userId)),
+          messageId: msg.id,
+          spanName: "channel.telegram.handle",
+        }, () => this.gateway.handle(
           msg,
           {
             onProgress: async (msg: string) => {
@@ -560,7 +574,7 @@ export class TelegramAdapter implements ChannelAdapter {
             },
             onStreamEvent: streamCtx.handler,
           },
-        );
+        ));
 
         log.telegram.outgoing(`user:${userId}`, response.content);
         log.telegram.info(
@@ -615,14 +629,15 @@ export class TelegramAdapter implements ChannelAdapter {
                 chunks[0]!,
                 { parse_mode: "HTML" },
               );
-            } catch {
+            } catch (err) {
               // Edit failed — delete streaming message and start fresh
+              log.telegram.warn("streaming message edit failed, retrying with fresh message", err);
               await this.bot.api
                 .deleteMessage(ctx.chat.id, msgId)
-                .catch(() => {});
+                .catch((deleteErr) => { log.telegram.warn("delete streaming message failed", deleteErr); });
               await this.bot.api
                 .sendMessage(ctx.chat.id, chunks[0]!, { parse_mode: "HTML" })
-                .catch(() => {});
+                .catch((sendErr) => { log.telegram.warn("fallback send after edit failure failed", sendErr); });
             }
             // Send remaining chunks
             for (let i = 1; i < Math.min(chunks.length, 5); i++) {
@@ -770,7 +785,13 @@ export class TelegramAdapter implements ChannelAdapter {
 
         const voiceMsg = makeMessage(this.id, String(userId), text);
         if (!voiceMsg) return;
-        const response = await this.gateway.handle(
+        const response = await runWithContext({
+          channelId: "telegram",
+          userId: String(userId),
+          sessionId: makeSessionId(this.id, String(userId)),
+          messageId: voiceMsg.id,
+          spanName: "channel.telegram.handle",
+        }, () => this.gateway.handle(
           voiceMsg,
           {
             onProgress: async (msg: string) => {
@@ -779,11 +800,13 @@ export class TelegramAdapter implements ChannelAdapter {
               try {
                 await ctx.reply(this.renderContent(stripped), { parse_mode: "HTML" });
                 await ctx.api.sendChatAction(ctx.chat.id, "typing");
-              } catch { /* non-fatal */ }
+              } catch (err) {
+                log.telegram.warn("progress reply failed", err);
+              }
             },
             onStreamEvent: streamCtx.handler,
           },
-        );
+        ));
 
         log.telegram.outgoing(`user:${userId}`, response.content);
 
@@ -829,18 +852,24 @@ export class TelegramAdapter implements ChannelAdapter {
         }
         try {
           await ctx.answerCallbackQuery();
-        } catch {
-          /* query expired */
+        } catch (err) {
+          log.telegram.warn("answerCallbackQuery failed (query likely expired)", err);
         }
         const userId = ctx.from?.id;
         if (!userId) return;
         try {
           const cbMsg = makeMessage(this.id, String(userId), data);
           if (!cbMsg) return;
-          const response = await this.gateway.handle(
+          const response = await runWithContext({
+            channelId: "telegram",
+            userId: String(userId),
+            sessionId: makeSessionId(this.id, String(userId)),
+            messageId: cbMsg.id,
+            spanName: "channel.telegram.handle",
+          }, () => this.gateway.handle(
             cbMsg,
             { onProgress: async () => {}, askInstall: async () => false },
-          );
+          ));
           const chatId = ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id;
           if (chatId) await this.sendWizardResponse(chatId, response);
         } catch (err) {
@@ -878,8 +907,8 @@ export class TelegramAdapter implements ChannelAdapter {
       if ((signal !== "like" && signal !== "dislike") || !feedbackId) {
         try {
           await ctx.answerCallbackQuery();
-        } catch {
-          /* query expired — ignore */
+        } catch (err) {
+          log.telegram.warn("answerCallbackQuery (invalid feedback) failed", err);
         }
         return;
       }
@@ -902,8 +931,8 @@ export class TelegramAdapter implements ChannelAdapter {
         await ctx.editMessageText(
           signal === "like" ? "👍 Helpful" : "👎 Not helpful",
         );
-      } catch {
-        // Message too old to edit — ignore
+      } catch (err) {
+        log.telegram.warn("feedback message edit failed (message too old)", err);
       }
 
       // Forward to gateway for learning integration
@@ -1142,8 +1171,8 @@ export class TelegramAdapter implements ChannelAdapter {
               status.streamedContentWithHeader = displayText;
               lastEditTime = Date.now();
               initialMessageDelivered = true;
-            } catch {
-              // If initial send fails, streaming will fall back to final response
+            } catch (err) {
+              log.telegram.warn("initial streaming message send failed, will fall back to final response", err);
             }
             return;
           }
@@ -1381,8 +1410,8 @@ export class TelegramAdapter implements ChannelAdapter {
       );
       for (const id of ids) this.activeChatIds.add(id);
       log.telegram.info(`Loaded ${ids.length} known chat ID(s)`);
-    } catch {
-      /* non-fatal */
+    } catch (err) {
+      log.telegram.warn("loadChatIds failed", err);
     }
   }
 

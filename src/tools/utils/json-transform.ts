@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const JSONTransformTool: ToolImplementation = {
   definition: {
@@ -32,14 +33,16 @@ export const JSONTransformTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const operation = String(args.operation);
+    log.tool.debug("json-transform.execute: entry", { operation, dataLen: String(args.data).length });
     try {
       const dataStr = String(args.data);
-      const operation = String(args.operation);
 
       let parsed: unknown;
       try {
         parsed = JSON.parse(dataStr);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return "Error: Invalid JSON input.";
       }
 
@@ -107,6 +110,7 @@ export const JSONTransformTool: ToolImplementation = {
           return `Error: Unknown operation "${operation}". Use: format, minify, extract, keys, or csv.`;
       }
     } catch (error) {
+      log.tool.error("json-transform.execute: failed", error, { operation });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error transforming JSON: ${msg}`;
     }

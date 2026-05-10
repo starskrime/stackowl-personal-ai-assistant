@@ -7,6 +7,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const ImageGenerationTool: ToolImplementation = {
   definition: {
@@ -48,6 +49,7 @@ export const ImageGenerationTool: ToolImplementation = {
       if (!prompt) return "Error: 'prompt' parameter is required.";
 
       const size = (args["size"] as string) || "1024x1024";
+      log.tool.debug("image_generation.execute: entry", { promptLen: prompt.length, size });
       const validSizes = ["256x256", "512x512", "1024x1024"];
       if (!validSizes.includes(size)) {
         return `Error: Invalid size '${size}'. Must be one of: ${validSizes.join(", ")}`;
@@ -62,6 +64,7 @@ export const ImageGenerationTool: ToolImplementation = {
         );
       }
 
+      log.tool.debug("image_generation.execute: calling DALL-E API", { size, model: "dall-e-3" });
       const response = await fetch(
         "https://api.openai.com/v1/images/generations",
         {
@@ -82,6 +85,7 @@ export const ImageGenerationTool: ToolImplementation = {
 
       if (!response.ok) {
         const errorText = await response.text();
+        log.tool.error("image_generation.execute: API error", new Error(errorText), { status: response.status });
         return `OpenAI API error (HTTP ${response.status}): ${errorText}`;
       }
 
@@ -91,6 +95,8 @@ export const ImageGenerationTool: ToolImplementation = {
 
       const imageUrl = result.data?.[0]?.url;
       if (!imageUrl) return "Error: No image URL returned from API.";
+
+      log.tool.debug("image_generation.execute: image URL received, downloading", { size });
 
       // Download the image
       const imagesDir = resolve(_context.cwd, "workspace", "images");
@@ -114,8 +120,10 @@ export const ImageGenerationTool: ToolImplementation = {
       if (revisedPrompt) {
         output += `\nRevised prompt: ${revisedPrompt}`;
       }
+      log.tool.debug("image_generation.execute: exit", { success: true, imagePath, size });
       return output;
     } catch (error: any) {
+      log.tool.error("image_generation.execute: unexpected error", error as Error, { size: args["size"] });
       return `Error generating image: ${error.message ?? String(error)}`;
     }
   },

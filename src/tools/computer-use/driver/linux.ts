@@ -13,6 +13,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../../logger.js";
 import type {
   IOSDriver,
   Point,
@@ -96,6 +97,7 @@ export class LinuxDriver implements IOSDriver {
   async init(): Promise<void> {
     if (this.ready) return;
 
+    log.tool.debug("LinuxDriver.init: entry");
     // Detect available tools
     const [hasXdo, hasYdo, hasScrot, hasGnome, hasImport] = await Promise.all([
       detectTool("xdotool"),
@@ -126,6 +128,7 @@ export class LinuxDriver implements IOSDriver {
       // Non-fatal — screenshots just won't work
     }
 
+    log.tool.debug("LinuxDriver.init: exit", { mouseTool: this.mouseTool, screenshotTool: this.screenshotTool });
     this.ready = true;
   }
 
@@ -137,8 +140,11 @@ export class LinuxDriver implements IOSDriver {
 
   private async xdo(...args: string[]): Promise<string> {
     const tool = this.mouseTool === "ydotool" ? "ydotool" : "xdotool";
+    log.tool.debug("LinuxDriver.xdo: command", { tool, args });
     const { stdout } = await execFileAsync(tool, args, { timeout: TIMEOUT });
-    return stdout.trim();
+    const result = stdout.trim();
+    log.tool.debug("LinuxDriver.xdo: done", { tool, args: args.slice(0, 2), outputLen: result.length });
+    return result;
   }
 
   private async run(cmd: string, args: string[]): Promise<string> {
@@ -156,7 +162,9 @@ export class LinuxDriver implements IOSDriver {
       if (match) {
         return { width: Number(match[1]), height: Number(match[2]), scaleFactor: 1 };
       }
-    } catch {}
+    } catch (err) {
+      log.tool.warn("xdpyinfo screen-size query failed", err);
+    }
 
     // Fallback: xrandr
     try {
@@ -165,7 +173,9 @@ export class LinuxDriver implements IOSDriver {
       if (match) {
         return { width: Number(match[1]), height: Number(match[2]), scaleFactor: 1 };
       }
-    } catch {}
+    } catch (err) {
+      log.tool.warn("xrandr screen-size query failed", err);
+    }
 
     return { width: 1920, height: 1080, scaleFactor: 1 };
   }
@@ -182,11 +192,13 @@ export class LinuxDriver implements IOSDriver {
   }
 
   async screenshot(outputPath: string, region?: Region): Promise<void> {
+    log.tool.debug("LinuxDriver.screenshot: entry", { outputPath, region });
     switch (this.screenshotTool) {
       case "scrot": {
         const args = region
           ? ["-a", `${region.x},${region.y},${region.width},${region.height}`, outputPath]
           : [outputPath];
+        log.tool.debug("LinuxDriver.screenshot: running scrot", { args });
         await execFileAsync("scrot", args, { timeout: TIMEOUT });
         break;
       }
@@ -194,6 +206,7 @@ export class LinuxDriver implements IOSDriver {
         const args = region
           ? ["--area", `${region.x},${region.y},${region.width}x${region.height}`, "-f", outputPath]
           : ["-f", outputPath];
+        log.tool.debug("LinuxDriver.screenshot: running gnome-screenshot", { args });
         await execFileAsync("gnome-screenshot", args, { timeout: TIMEOUT });
         break;
       }
@@ -202,12 +215,14 @@ export class LinuxDriver implements IOSDriver {
         const args = region
           ? ["-window", "root", "-crop", `${region.width}x${region.height}+${region.x}+${region.y}`, outputPath]
           : ["-window", "root", outputPath];
+        log.tool.debug("LinuxDriver.screenshot: running import", { args });
         await execFileAsync("import", args, { timeout: TIMEOUT });
         break;
       }
       default:
         throw new Error("No screenshot tool available. Install scrot: sudo apt install scrot");
     }
+    log.tool.debug("LinuxDriver.screenshot: exit", { outputPath, tool: this.screenshotTool });
   }
 
   async mouseMove(x: number, y: number): Promise<void> {
@@ -219,6 +234,7 @@ export class LinuxDriver implements IOSDriver {
   }
 
   async mouseClick(x: number, y: number, button: MouseButton, count: number): Promise<void> {
+    log.tool.debug("LinuxDriver.mouseClick: entry", { x, y, button, count });
     const btn = button === "right" ? "3" : button === "middle" ? "2" : "1";
     if (this.mouseTool === "xdotool") {
       await this.xdo("mousemove", "--sync", String(x), String(y));
@@ -229,6 +245,7 @@ export class LinuxDriver implements IOSDriver {
       await this.xdo("mousemove", `${x}`, `${y}`);
       await this.xdo("click", btn);
     }
+    log.tool.debug("LinuxDriver.mouseClick: exit", { x, y, button, count });
   }
 
   async mouseDrag(fromX: number, fromY: number, toX: number, toY: number): Promise<void> {
@@ -269,11 +286,13 @@ export class LinuxDriver implements IOSDriver {
   }
 
   async typeText(text: string): Promise<void> {
+    log.tool.debug("LinuxDriver.typeText: entry", { textLen: text.length });
     if (this.mouseTool === "xdotool") {
       await this.xdo("type", "--clearmodifiers", "--", text);
     } else {
       await this.xdo("type", text);
     }
+    log.tool.debug("LinuxDriver.typeText: exit", { textLen: text.length });
   }
 
   async typeChar(char: string): Promise<void> {
@@ -289,10 +308,12 @@ export class LinuxDriver implements IOSDriver {
   }
 
   async pressKey(key: string, modifiers: string[] = []): Promise<void> {
+    log.tool.debug("LinuxDriver.pressKey: entry", { key, modifiers });
     const k = xkey(key);
     if (modifiers.length > 0) {
       const mods = xmods(modifiers);
       const combo = [...mods, k].join("+");
+      log.tool.debug("LinuxDriver.pressKey: key combo", { combo });
       if (this.mouseTool === "xdotool") {
         await this.xdo("key", "--clearmodifiers", combo);
       } else {
@@ -305,6 +326,7 @@ export class LinuxDriver implements IOSDriver {
         await this.xdo("key", k);
       }
     }
+    log.tool.debug("LinuxDriver.pressKey: exit", { key, k });
   }
 
   async openApp(name: string): Promise<void> {
@@ -312,11 +334,16 @@ export class LinuxDriver implements IOSDriver {
     try {
       await this.run("wmctrl", ["-a", name]);
       return;
-    } catch {}
+    } catch (err) {
+      log.tool.warn("wmctrl raise-window failed", err);
+    }
     try {
       await this.run("xdg-open", [name]);
-    } catch {
-      await execFileAsync(name, [], { timeout: 5000 }).catch(() => {});
+    } catch (err) {
+      log.tool.warn("xdg-open failed, attempting direct launch", err);
+      await execFileAsync(name, [], { timeout: 5000 }).catch((launchErr) => {
+        log.tool.warn("direct app launch failed", launchErr);
+      });
     }
   }
 
@@ -325,12 +352,15 @@ export class LinuxDriver implements IOSDriver {
   }
 
   async getFrontApp(): Promise<string> {
+    log.tool.debug("LinuxDriver.getFrontApp: entry");
     try {
       // Get active window name via xdotool
       const wid = await this.xdo("getactivewindow");
       const name = await this.xdo("getwindowname", wid.trim());
+      log.tool.debug("LinuxDriver.getFrontApp: exit", { name });
       return name;
-    } catch {
+    } catch (err) {
+      log.tool.warn("get front app failed", err);
       return "unknown";
     }
   }

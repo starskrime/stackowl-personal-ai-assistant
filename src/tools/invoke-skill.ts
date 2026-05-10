@@ -1,5 +1,6 @@
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { toolError, toolSuccess } from "./tool-error.js";
+import { log } from "../logger.js";
 
 /**
  * Minimal interface for an executor that can run a named skill.
@@ -48,6 +49,7 @@ export function createInvokeSkillTool(
       _ctx: ToolContext,
     ): Promise<string> {
       const name = (args["name"] as string | undefined)?.trim();
+      log.tool.debug("invoke-skill.execute: entry", { name });
       if (!name) {
         return toolError("MISSING_ARG", "The `name` argument is required.");
       }
@@ -56,8 +58,9 @@ export function createInvokeSkillTool(
       if (args["params"]) {
         try {
           params = JSON.parse(args["params"] as string);
-        } catch {
+        } catch (err) {
           // Non-fatal — proceed with empty params
+          log.tool.warn("invoke-skill: params JSON parse failed, using empty params", err);
         }
       }
 
@@ -70,9 +73,12 @@ export function createInvokeSkillTool(
       }
 
       try {
+        log.tool.debug("invoke-skill.execute: calling skill", { name, paramKeys: Object.keys(params) });
         const result = await skillExecutor.executeByName(name, params);
+        log.tool.debug("invoke-skill.execute: exit", { success: true, name, resultLen: result.length });
         return toolSuccess({ skillName: name, result });
       } catch (err) {
+        log.tool.error("invoke-skill.execute: failed", err, { name });
         return toolError(
           "SKILL_FAILED",
           String(err),

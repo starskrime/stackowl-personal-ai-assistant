@@ -11,6 +11,7 @@
 
 import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import { log } from "../../logger.js";
+import { runWithContext } from "../../infra/observability/context.js";
 import { TerminalRenderer } from "../../cli/renderer.js";
 import { CommandRegistry } from "../../cli/commands.js";
 import { CompletionEngine } from "../../cli/completion-engine.js";
@@ -303,7 +304,13 @@ export class CLIAdapter implements ChannelAdapter {
 
       const msg = makeMessage(this.id, this.userId, input, this.sessionId);
       if (!msg) return;
-      const response = await this.gateway.handle(
+      const response = await runWithContext({
+        channelId: "cli",
+        userId: this.userId,
+        sessionId: this.sessionId,
+        messageId: msg.id,
+        spanName: "channel.cli.handle",
+      }, () => this.gateway.handle(
         msg,
         {
           onProgress: this.thinkingSuppressor?.shouldSuppressProgress()
@@ -317,7 +324,7 @@ export class CLIAdapter implements ChannelAdapter {
           onStreamEvent: suppressedHandler,
           onOwlChange: (emoji, name) => this.renderer.setActiveOwl(emoji, name),
         },
-      );
+      ));
 
       log.cli.outgoing(this.userId, response.content);
 

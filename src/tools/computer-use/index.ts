@@ -23,6 +23,7 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
+import { log } from "../../logger.js";
 import { join, resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import * as mac from "./macos.js";
@@ -239,7 +240,8 @@ export const ComputerUseTool: ToolImplementation = {
             lastScreenState = state;
             textAnalysis =
               "\n\n--- SCREEN CONTENT (text) ---\n" + formatScreenAsText(state);
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             // Accessibility might not be available
           }
 

@@ -6,6 +6,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 import { webFetchEnvelope } from "../browser/smart-fetch.js";
 
 export const WebFetchTool: ToolImplementation = {
@@ -36,6 +37,11 @@ export const WebFetchTool: ToolImplementation = {
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
     const { serializeWebToolResult } = await import("../browser/envelope.js");
     let url = args["url"] as string;
+    const hint = args["hint"] as "anti-bot" | undefined;
+
+    // 1. ENTRY
+    log.tool.debug("web.execute: entry", { url, hint: hint ?? "none" });
+
     if (!url) {
       return serializeWebToolResult({
         success: false,
@@ -51,23 +57,41 @@ export const WebFetchTool: ToolImplementation = {
         });
       }
       url = parsedUrl.toString();
-    } catch {
+    } catch (err) {
+      log.tool.warn("web: URL parse failed", err);
       return serializeWebToolResult({
         success: false,
         error: { code: "INVALID_URL", message: `Invalid URL: ${url}`, attemptedTiers: [] },
       });
     }
 
+    // 2. DECISION — fetch strategy
+    const strategy = hint === "anti-bot" ? "camofox" : "scrapling→camofox";
+    log.tool.debug("web.execute: fetch strategy chosen", { chosen: strategy, hint: hint ?? "none", url });
+
     try {
+      // 3. STEP — fetch
+      log.tool.debug("web.execute: fetching", { url, strategy });
       const envelope = await webFetchEnvelope(url, {
         scrapling: (context.engineContext as any)?.scrapling,
         classifier: context.classifier,
         puppeteer: context.puppeteer,
         bus: (context.engineContext as any)?.eventBus,
-        hint: args["hint"] as "anti-bot" | undefined,
+        hint,
       });
-      return serializeWebToolResult(envelope);
+
+      // 3. STEP — response received
+      const envelopeSuccess = envelope.success;
+      const contentLen = envelopeSuccess && (envelope as any).content ? String((envelope as any).content).length : 0;
+      log.tool.debug("web.execute: response received", { success: envelopeSuccess, contentLen });
+
+      const serialized = serializeWebToolResult(envelope);
+      // 4. EXIT
+      log.tool.debug("web.execute: exit", { success: envelopeSuccess, resultLen: serialized.length });
+      return serialized;
     } catch (error) {
+      // ERROR
+      log.tool.error("web.execute: fetch failed", error instanceof Error ? error : new Error(String(error)), { url });
       return serializeWebToolResult({
         success: false,
         error: {

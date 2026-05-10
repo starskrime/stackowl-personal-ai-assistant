@@ -8,6 +8,7 @@ import type { ToolImplementation, ToolContext } from "../../tools/registry.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../../logger.js";
 
 interface CronJob {
   id: string;
@@ -100,8 +101,9 @@ Examples:
         for (const job of jobs) {
           this.jobs.set(job.id, job);
         }
-      } catch {
+      } catch (err) {
         // Start with empty jobs
+        log.tool.warn("cron: failed to load saved jobs, starting empty", err);
       }
     }
   }

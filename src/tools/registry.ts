@@ -6,6 +6,8 @@
  */
 
 import type { ToolDefinition } from "../providers/base.js";
+import { log } from "../logger.js";
+import { withSpan } from "../infra/observability/context.js";
 import { SemanticToolGate } from "../intelligence/semantic-tool-gate.js";
 import type { EngineContext } from "../engine/runtime.js";
 import type { GatewayEventBus } from "../gateway/event-bus.js";
@@ -346,148 +348,166 @@ export class ToolRegistry {
     const startTime = Date.now();
     this._eventBus?.emit({ type: "tool:start", toolName: name, args, turnId: context.engineContext?.sessionId ?? "" });
 
-    try {
-      let result = await tool.execute(args, context);
-      const durationMs = Date.now() - startTime;
+    // Sanitize args before logging — mask sensitive keys
+    const sanitizedArgs: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(args)) {
+      const lk = k.toLowerCase();
+      sanitizedArgs[k] = (lk === "apikey" || lk === "token" || lk === "password" || lk === "secret" ||
+        lk.endsWith("_key") || lk.startsWith("key_") || lk.endsWith("token") || lk.endsWith("secret"))
+        ? "[REDACTED]"
+        : v;
+    }
 
-      if (this._tracker) {
-        this._tracker.recordSuccess(name, durationMs, {
-          sessionId: context.engineContext?.sessionId,
-        });
-      }
+    return withSpan("tool.exec", async () => {
+      log.tool.toolCall(name, sanitizedArgs);
 
-      // Truncate long results to prevent context bloat
-      let truncated = false;
-      if (result.length > MAX_TOOL_RESULT_LENGTH) {
-        result =
-          result.slice(0, MAX_TOOL_RESULT_LENGTH) +
-          `\n\n[OUTPUT TRUNCATED — ${result.length} chars total, showing first ${MAX_TOOL_RESULT_LENGTH}]`;
-        truncated = true;
-      }
-
-      this._eventBus?.emit({ type: "tool:result", toolName: name, success: true, durationMs, truncated });
-
-      // Envelope passthrough — emit <tool_attempt_summary> regardless of GAV
       try {
-        const { parseWebToolResult, buildAttemptSummaryXml } = await import("../browser/envelope.js");
-        const env = parseWebToolResult(result);
-        if (env && !env.success && !result.includes("<tool_attempt_summary")) {
-          result = result + "\n\n" + buildAttemptSummaryXml(env);
-        }
-      } catch { /* envelope parse is best-effort */ }
+        let result = await tool.execute(args, context);
+        const durationMs = Date.now() - startTime;
 
-      // GAV: verify result against active sub-goal (skip if no sub-goal or no verifier)
-      if (this._goalVerifier && context.engineContext?.activeSubGoal) {
-        const subGoal = context.engineContext.activeSubGoal;
-        const userMessage = context.engineContext.userMessage ?? "";
-        try {
-          const verification = await this._goalVerifier.verify({
-            toolName: name,
-            toolArgs: args,
-            toolResult: result,
-            subGoal,
-            userMessage,
+        if (this._tracker) {
+          this._tracker.recordSuccess(name, durationMs, {
+            sessionId: context.engineContext?.sessionId,
           });
+        }
 
-          if (verification.verdict === "ADVANCES" || verification.verdict === "PARTIAL") {
-            this._eventBus?.emit({
-              type: "tool:goal_advance",
-              toolName: name,
-              subGoal: subGoal.description,
-              verdict: verification.verdict,
-            });
+        // Truncate long results to prevent context bloat
+        let truncated = false;
+        if (result.length > MAX_TOOL_RESULT_LENGTH) {
+          result =
+            result.slice(0, MAX_TOOL_RESULT_LENGTH) +
+            `\n\n[OUTPUT TRUNCATED — ${result.length} chars total, showing first ${MAX_TOOL_RESULT_LENGTH}]`;
+          truncated = true;
+        }
+
+        this._eventBus?.emit({ type: "tool:result", toolName: name, success: true, durationMs, truncated });
+
+        // Envelope passthrough — emit <tool_attempt_summary> regardless of GAV
+        try {
+          const { parseWebToolResult, buildAttemptSummaryXml } = await import("../browser/envelope.js");
+          const env = parseWebToolResult(result);
+          if (env && !env.success && !result.includes("<tool_attempt_summary")) {
+            result = result + "\n\n" + buildAttemptSummaryXml(env);
           }
+        } catch { /* envelope parse is best-effort */ }
 
-          if (verification.verdict === "BLOCKED") {
-            this._eventBus?.emit({
-              type: "tool:goal_blocked",
+        // GAV: verify result against active sub-goal (skip if no sub-goal or no verifier)
+        if (this._goalVerifier && context.engineContext?.activeSubGoal) {
+          const subGoal = context.engineContext.activeSubGoal;
+          const userMessage = context.engineContext.userMessage ?? "";
+          try {
+            const verification = await this._goalVerifier.verify({
               toolName: name,
-              subGoal: subGoal.description,
-              suggestion: verification.suggestion,
+              toolArgs: args,
+              toolResult: result,
+              subGoal,
+              userMessage,
             });
 
-            // CWTG single-hop replan: if a ToolGraph is configured, the failing
-            // tool advertises a capability tag, and we haven't already taken a
-            // fallback hop, ask the graph for the next-best alternative and
-            // execute it. The graph's edge filter excludes the failing tool;
-            // the depth cap prevents the recursive call from re-replanning.
-            const capability = tool.definition.capabilities?.[0];
-            if (this._toolGraph && capability && _replanDepth === 0) {
-              const urlHost = (() => {
-                try {
-                  return args.url ? new URL(args.url as string).hostname : "";
-                } catch {
-                  return "";
+            if (verification.verdict === "ADVANCES" || verification.verdict === "PARTIAL") {
+              this._eventBus?.emit({
+                type: "tool:goal_advance",
+                toolName: name,
+                subGoal: subGoal.description,
+                verdict: verification.verdict,
+              });
+            }
+
+            if (verification.verdict === "BLOCKED") {
+              this._eventBus?.emit({
+                type: "tool:goal_blocked",
+                toolName: name,
+                subGoal: subGoal.description,
+                suggestion: verification.suggestion,
+              });
+
+              // CWTG single-hop replan: if a ToolGraph is configured, the failing
+              // tool advertises a capability tag, and we haven't already taken a
+              // fallback hop, ask the graph for the next-best alternative and
+              // execute it. The graph's edge filter excludes the failing tool;
+              // the depth cap prevents the recursive call from re-replanning.
+              const capability = tool.definition.capabilities?.[0];
+              if (this._toolGraph && capability && _replanDepth === 0) {
+                const urlHost = (() => {
+                  try {
+                    return args.url ? new URL(args.url as string).hostname : "";
+                  } catch (err) {
+                    log.tool.warn("registry: failed to parse tool URL for replanning", err);
+                    return "";
+                  }
+                })();
+                const fallback = this._toolGraph.replan(name, capability, { hostRoot: urlHost });
+                if (fallback && this.tools.has(fallback)) {
+                  this._eventBus?.emit({
+                    type: "tool:fallback",
+                    fromTool: name,
+                    toTool: fallback,
+                    reason: verification.reason,
+                  });
+                  const fallbackStart = Date.now();
+                  const fallbackResult = await this.execute(
+                    fallback,
+                    args,
+                    context,
+                    _replanDepth + 1,
+                  );
+                  this._edgeAccumulator?.observe({
+                    fromTool: name,
+                    toTool: fallback,
+                    capabilityTag: capability,
+                    success: true,
+                    durationMs: Date.now() - fallbackStart,
+                  });
+                  return fallbackResult;
                 }
-              })();
-              const fallback = this._toolGraph.replan(name, capability, { hostRoot: urlHost });
-              if (fallback && this.tools.has(fallback)) {
-                this._eventBus?.emit({
-                  type: "tool:fallback",
-                  fromTool: name,
-                  toTool: fallback,
-                  reason: verification.reason,
-                });
-                const fallbackStart = Date.now();
-                const fallbackResult = await this.execute(
-                  fallback,
-                  args,
-                  context,
-                  _replanDepth + 1,
-                );
-                this._edgeAccumulator?.observe({
-                  fromTool: name,
-                  toTool: fallback,
-                  capabilityTag: capability,
-                  success: true,
-                  durationMs: Date.now() - fallbackStart,
-                });
-                return fallbackResult;
               }
             }
-          }
 
-          // Surface verdict to caller for trajectory recording.
-          if (_verdictSink) {
-            _verdictSink.verdict = verification.verdict;
-            _verdictSink.reason = verification.reason;
-          }
+            // Surface verdict to caller for trajectory recording.
+            if (_verdictSink) {
+              _verdictSink.verdict = verification.verdict;
+              _verdictSink.reason = verification.reason;
+            }
 
-          // Envelope-aware: web tools return JSON-stringified WebToolResult.
-          // For envelope errors, the unconditional passthrough above already
-          // appended <tool_attempt_summary>; only fall back to the legacy
-          // <tool_result_warning> for non-envelope tools.
-          const { parseWebToolResult } = await import("../browser/envelope.js");
-          const envelope = parseWebToolResult(result);
-          if (!envelope && (verification.verdict === "BLOCKED" || verification.verdict === "PARTIAL")) {
-            result = result + `\n\n<tool_result_warning verdict="${verification.verdict}">${verification.reason}${verification.suggestion ? ` Suggestion: ${verification.suggestion}` : ""}</tool_result_warning>`;
+            // Envelope-aware: web tools return JSON-stringified WebToolResult.
+            // For envelope errors, the unconditional passthrough above already
+            // appended <tool_attempt_summary>; only fall back to the legacy
+            // <tool_result_warning> for non-envelope tools.
+            const { parseWebToolResult } = await import("../browser/envelope.js");
+            const envelope = parseWebToolResult(result);
+            if (!envelope && (verification.verdict === "BLOCKED" || verification.verdict === "PARTIAL")) {
+              result = result + `\n\n<tool_result_warning verdict="${verification.verdict}">${verification.reason}${verification.suggestion ? ` Suggestion: ${verification.suggestion}` : ""}</tool_result_warning>`;
+            }
+          } catch (err) {
+            // Verifier failure is non-fatal — proceed with unmodified result
+            log.tool.warn("registry: tool verifier failed (non-fatal)", err);
           }
-        } catch {
-          // Verifier failure is non-fatal — proceed with unmodified result
         }
-      }
 
-      return result;
-    } catch (error) {
-      const durationMs = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorCode =
-        error instanceof ToolExecutionError
-          ? "EXEC_FAILED"
-          : error instanceof Error
-            ? error.constructor.name
-            : "UNKNOWN";
-      if (this._tracker) {
-        this._tracker.recordFailure(name, durationMs, {
-          errorCode,
-          errorMessage,
-          sessionId: context.engineContext?.sessionId,
-        });
+        log.tool.toolResult(name, result, true);
+        return result;
+      } catch (error) {
+        const durationMs = Date.now() - startTime;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorCode =
+          error instanceof ToolExecutionError
+            ? "EXEC_FAILED"
+            : error instanceof Error
+              ? error.constructor.name
+              : "UNKNOWN";
+        if (this._tracker) {
+          this._tracker.recordFailure(name, durationMs, {
+            errorCode,
+            errorMessage,
+            sessionId: context.engineContext?.sessionId,
+          });
+        }
+        this._eventBus?.emit({ type: "tool:result", toolName: name, success: false, durationMs, truncated: false });
+        log.tool.error("tool.exec failed", error, { tool: name, args: sanitizedArgs, durationMs });
+        if (error instanceof ToolExecutionError) throw error;
+        throw new ToolExecutionError(name, errorMessage);
       }
-      this._eventBus?.emit({ type: "tool:result", toolName: name, success: false, durationMs, truncated: false });
-      if (error instanceof ToolExecutionError) throw error;
-      throw new ToolExecutionError(name, errorMessage);
-    }
+    }, { tool: name });
   }
 
   private checkPermission(tool: ToolImplementation): ToolPermission {

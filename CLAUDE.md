@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run dev          # Run in watch mode (tsx watch)
+npm run dev          # Run in watch mode (tsx watch) — uses TUI v2 by default
 npm run build        # Compile TypeScript to dist/
 npm run start        # Run compiled output
 npm run test         # Run all tests (vitest)
@@ -13,6 +13,12 @@ npm run test:watch   # Vitest in watch mode
 npm run lint         # ESLint on src/
 npm run format       # Prettier formatting
 ./start.sh           # Interactive setup (provider, API keys, channels)
+```
+
+TUI version control:
+```bash
+npm run dev                    # TUI v2 (default)
+STACKOWL_TUI=v1 npm run dev    # TUI v1 (explicit opt-out / escape hatch)
 ```
 
 Run a single test file:
@@ -79,3 +85,88 @@ API keys are stored directly in `stackowl.config.json` under each provider's `ap
 - **Tests:** Vitest
 - **File watching:** chokidar
 - **Embeddings/search:** cosine-similarity
+
+---
+
+## Observability & Debugging
+
+### Structured Logging
+
+Every module has a named logger via `src/logger.ts`:
+
+```ts
+import { log } from "../logger.js";
+log.tool.debug("shell.execute: entry", { command, workdir });
+log.engine.error("runtime.execute: provider call failed", err, { model });
+log.gateway.warn("core.handle: instinct blocked", { instinct });
+```
+
+Available namespaces: `log.tool`, `log.engine`, `log.gateway`, `log.cli`, `log.parliament`, `log.cognition`, `log.heartbeat`.
+
+Logs are written to `logs/stackowl-YYYY-MM-DD.log` as JSONL (one JSON object per line). Records carry `traceId`, `spanId`, `parentSpanId`, `sessionId`, `durationMs`, `module`, `level`, `msg`, and a `fields` object.
+
+### Reading Logs
+
+```bash
+# All tool calls in the last run
+cat logs/stackowl-$(date +%F).log | jq 'select(.fields.tool) | {ts, tool: .fields.tool, args: .fields.args, success: .fields.success, durationMs}'
+
+# Errors only
+cat logs/stackowl-$(date +%F).log | jq 'select(.level == "error") | {ts, module, msg, err: .err}'
+
+# Full trace for a specific request (replace traceId value)
+cat logs/stackowl-$(date +%F).log | jq 'select(.traceId == "TRACE_ID_HERE")'
+
+# Trace a specific tool (e.g., shell)
+cat logs/stackowl-$(date +%F).log | jq 'select(.msg | startswith("shell.execute"))'
+
+# Slowest tool calls
+cat logs/stackowl-$(date +%F).log | jq 'select(.fields.tool and .fields.durationMs) | {tool: .fields.tool, durationMs: .fields.durationMs}' | sort
+```
+
+The AI assistant can also query logs directly via the `read_logs` tool:
+```
+"What errors happened in the last hour?"
+"What did the shell tool receive and return in the last session?"
+"Which tools are running slowest?"
+```
+
+### Trace Propagation
+
+Every user message mints a W3C-style `traceId` at the channel adapter (CLI/Telegram/Slack). This ID propagates through all async hops via `AsyncLocalStorage` — no signature changes required. Every log record written during that request automatically carries the same `traceId`.
+
+Child spans are created with `withSpan("span.name", fn, fields)` from `src/infra/observability/context.ts`. The tool registry wraps every tool execute in `withSpan("tool.exec", ...)` automatically.
+
+### Per-Tool 4-Point Logging Standard
+
+All 111 tools follow this pattern:
+
+```ts
+// 1. ENTRY — what came in
+log.tool.debug("toolname.execute: entry", { ...relevantArgs });
+
+// 2. DECISION — which path was chosen and why
+log.tool.debug("toolname.execute: using X strategy", { chosen, reason });
+
+// 3. STEP — significant I/O or subprocess
+log.tool.debug("toolname.execute: request sent", { status, responseLen });
+
+// 4. EXIT — what was produced
+log.tool.debug("toolname.execute: exit", { success, resultLen, durationMs });
+
+// On any error
+log.tool.error("toolname.execute: step failed", err, { ...context });
+```
+
+### Rule: Always Add Logs When Missing
+
+If you encounter a bug or unexpected behavior and the relevant code has no logs, **add them before debugging**. Silent code is undebuggable code. Minimum required for any `execute()` method: entry (inputs) and exit (result/error). Never leave a `catch` block empty or silent — always log with `log.<module>.error("op failed", err, { context })`.
+
+### Sensitive Data Rules
+
+- **Never log** raw passwords, generated secrets, or auth tokens
+- **Truncate** SQL queries to 200 chars in logs
+- **Log URL path only** (strip query strings that may carry API keys): `new URL(url).origin + new URL(url).pathname`
+- **Log key names only** for MCP tool args (not values)
+- **Log prompt length** for image generation (not prompt text)
+- The registry auto-redacts args where the key matches `apikey`, `token`, `password`, `secret`, `*_key`, `key_*`, `*token`, `*secret`

@@ -12,6 +12,7 @@
  */
 
 import { spawn, execFile } from "node:child_process";
+import { log } from "../../../logger.js";
 import { promisify } from "node:util";
 import { writeFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -332,15 +333,19 @@ export class MacOSDriver implements IOSDriver {
   async init(): Promise<void> {
     if (this.ready) return;
 
+    log.tool.debug("MacOSDriver.init: entry");
     // Write worker script to a temp file
     const id = randomBytes(4).toString("hex");
     this.scriptPath = join(tmpdir(), `stackowl-cu-${id}.js`);
     await writeFile(this.scriptPath, JXA_WORKER, "utf8");
+    log.tool.debug("MacOSDriver.init: worker script written", { scriptPath: this.scriptPath });
 
     await this.startWorker();
+    log.tool.debug("MacOSDriver.init: exit", { ready: this.ready });
   }
 
   private async startWorker(): Promise<void> {
+    log.tool.debug("MacOSDriver.startWorker: entry", { scriptPath: this.scriptPath });
     return new Promise((resolve, reject) => {
       const proc = spawn("osascript", ["-l", "JavaScript", this.scriptPath], {
         stdio: ["pipe", "pipe", "pipe"],
@@ -370,7 +375,8 @@ export class MacOSDriver implements IOSDriver {
               if (msg.ok) pending.resolve(msg.r ?? null);
               else pending.reject(new Error(msg.e ?? "Unknown error"));
             }
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             // Non-JSON output from osascript (e.g. warnings) — ignore
           }
         }
@@ -400,6 +406,7 @@ export class MacOSDriver implements IOSDriver {
       // Give the JXA runtime ~800ms to start up, then mark ready
       setTimeout(() => {
         this.ready = true;
+        log.tool.debug("MacOSDriver.startWorker: JXA worker ready");
         resolve();
       }, 800);
     });
@@ -413,6 +420,7 @@ export class MacOSDriver implements IOSDriver {
     }
 
     const id = String(this.idCounter++);
+    log.tool.debug("MacOSDriver.send: command", { action: cmd.a, id });
     const line = JSON.stringify({ ...cmd, id }) + "\n";
 
     return new Promise((resolve, reject) => {
@@ -428,10 +436,12 @@ export class MacOSDriver implements IOSDriver {
 
       this.pending.get(id)!.resolve = (v) => {
         clearTimeout(timer);
+        log.tool.debug("MacOSDriver.send: response received", { action: cmd.a, id });
         resolve(v);
       };
       this.pending.get(id)!.reject = (e) => {
         clearTimeout(timer);
+        log.tool.error("MacOSDriver.send: command failed", e, { action: cmd.a, id });
         reject(e);
       };
 
@@ -468,6 +478,7 @@ export class MacOSDriver implements IOSDriver {
   }
 
   async screenshot(outputPath: string, region?: Region): Promise<void> {
+    log.tool.debug("MacOSDriver.screenshot: entry", { outputPath, region });
     // Use native screencapture — fast file write, no encoding roundtrip
     const regionFlag = region
       ? ["-R", `${region.x},${region.y},${region.width},${region.height}`]
@@ -475,6 +486,7 @@ export class MacOSDriver implements IOSDriver {
     await execFileAsync("screencapture", ["-x", ...regionFlag, outputPath], {
       timeout: 10_000,
     });
+    log.tool.debug("MacOSDriver.screenshot: exit", { outputPath });
   }
 
   async mouseMove(x: number, y: number): Promise<void> {

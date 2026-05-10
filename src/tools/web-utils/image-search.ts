@@ -10,6 +10,7 @@
  */
 
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 interface ImageResult {
   title: string;
@@ -83,15 +84,20 @@ export const WebImageSearchTool: ToolImplementation = {
 
     const count = Math.min(Number(args["count"] ?? 5), 10);
 
+    // 1. ENTRY
+    log.tool.debug("web_image_search.execute: entry", { query: query.slice(0, 100), count });
+
     try {
-      // Step 1: get vqd token
+      // 3. STEP — vqd token request
+      log.tool.debug("web_image_search.execute: vqd token request", { query: query.slice(0, 100) });
       const vqd = await getVqdToken(query);
 
-      // Step 2: fetch image results
       const searchUrl =
         `https://duckduckgo.com/i.js?` +
         `l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${encodeURIComponent(vqd)}&f=,,,,,&p=1`;
 
+      // 3. STEP — image search request
+      log.tool.debug("web_image_search.execute: image search request", { query: query.slice(0, 100), count });
       const response = await fetch(searchUrl, {
         headers: {
           "User-Agent":
@@ -148,12 +154,17 @@ export const WebImageSearchTool: ToolImplementation = {
         `To share an image, use: send_file(path: "<imageUrl>", caption: "<description>")`,
       ];
 
-      return lines.join("\n");
+      const finalResult = lines.join("\n");
+      // 4. EXIT
+      log.tool.debug("web_image_search.execute: exit", { resultCount: results.length, resultLen: finalResult.length });
+      return finalResult;
     } catch (error) {
       if (error instanceof Error) {
         if (error.name === "AbortError") {
           return `Image search timed out. Try a simpler query.`;
         }
+        // ERROR
+        log.tool.error("web_image_search.execute: request failed", error, { query: query.slice(0, 100) });
         return `Image search error: ${error.message}`;
       }
       return `Image search failed: Unknown error`;

@@ -47,7 +47,8 @@ export class MemoryConsolidator {
         );
       }
       return content;
-    } catch {
+    } catch (err) {
+      log.memory.warn("consolidator: memory file read failed", err);
       return "";
     }
   }

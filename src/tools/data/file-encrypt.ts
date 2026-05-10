@@ -5,6 +5,7 @@
  */
 
 import { readFile, writeFile, access, constants } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve, extname } from "node:path";
 import {
   randomBytes,
@@ -60,15 +61,19 @@ export const FileEncryptTool: ToolImplementation = {
         return "Error: 'action' must be 'encrypt' or 'decrypt'.";
       }
 
+      log.tool.debug("file_encrypt.execute: entry", { action, filePath });
+
       const resolvedPath = resolve(_context.cwd, filePath);
 
       try {
         await access(resolvedPath, constants.R_OK);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Error: File not found or not readable: ${resolvedPath}`;
       }
 
       if (action === "encrypt") {
+        log.tool.debug("file_encrypt.execute: encrypting file", { resolvedPath });
         const data = await readFile(resolvedPath);
         const salt = randomBytes(SALT_LENGTH);
         const key = scryptSync(password, salt, KEY_LENGTH);
@@ -82,9 +87,11 @@ export const FileEncryptTool: ToolImplementation = {
         const outputPath = resolvedPath + ".enc";
         await writeFile(outputPath, output);
 
+        log.tool.debug("file_encrypt.execute: exit", { success: true, action: "encrypt", outputPath });
         return `File encrypted successfully.\n- Input: ${resolvedPath}\n- Output: ${outputPath}`;
       } else {
         // decrypt
+        log.tool.debug("file_encrypt.execute: decrypting file", { resolvedPath });
         if (extname(resolvedPath) !== ".enc") {
           return `Warning: File does not have .enc extension. Attempting decryption anyway.`;
         }
@@ -112,12 +119,15 @@ export const FileEncryptTool: ToolImplementation = {
             : resolvedPath + ".decrypted";
           await writeFile(outputPath, decrypted);
 
+          log.tool.debug("file_encrypt.execute: exit", { success: true, action: "decrypt", outputPath });
           return `File decrypted successfully.\n- Input: ${resolvedPath}\n- Output: ${outputPath}`;
-        } catch {
+        } catch (err) {
+          log.tool.error("file_encrypt.execute: decryption failed", err as Error, { resolvedPath });
           return "Error: Decryption failed. Wrong password or corrupted file.";
         }
       }
     } catch (error: any) {
+      log.tool.error("file_encrypt.execute: unexpected error", error as Error, { action: args["action"], filePath: args["file_path"] });
       return `Error in file encryption: ${error.message ?? String(error)}`;
     }
   },

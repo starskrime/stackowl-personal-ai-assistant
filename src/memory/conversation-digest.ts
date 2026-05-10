@@ -97,7 +97,8 @@ export class ConversationDigestManager {
       const digest = JSON.parse(raw) as ConversationDigest;
       this.cache.set(sessionId, digest);
       return digest;
-    } catch {
+    } catch (err) {
+      log.memory.warn("conversation-digest: load failed", err);
       return null;
     }
   }

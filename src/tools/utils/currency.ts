@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const CurrencyConverterTool: ToolImplementation = {
   definition: {
@@ -29,16 +30,17 @@ export const CurrencyConverterTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const amount = Number(args.amount);
+    const from = String(args.from).toUpperCase();
+    const to = String(args.to).toUpperCase();
+    log.tool.debug("currency.execute: entry", { amount, from, to });
     try {
-      const amount = Number(args.amount);
-      const from = String(args.from).toUpperCase();
-      const to = String(args.to).toUpperCase();
-
       if (!isFinite(amount) || amount < 0) {
         return "Error: Amount must be a non-negative number.";
       }
 
       const url = `https://api.exchangerate-api.com/v4/latest/${from}`;
+      log.tool.debug("currency.execute: fetching exchange rates", { url });
       const response = await fetch(url, {
         signal: AbortSignal.timeout(15000),
       });
@@ -58,8 +60,10 @@ export const CurrencyConverterTool: ToolImplementation = {
       const rate = data.rates[to];
       const converted = amount * rate;
 
+      log.tool.debug("currency.execute: exit", { success: true, from, to, rate });
       return `${amount} ${from} = ${converted.toFixed(2)} ${to}\nExchange rate: 1 ${from} = ${rate.toFixed(6)} ${to}`;
     } catch (error) {
+      log.tool.error("currency.execute: failed", error, { amount, from, to });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error converting currency: ${msg}`;
     }

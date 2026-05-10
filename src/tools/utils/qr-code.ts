@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { resolve, join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import { log } from "../../logger.js";
 
 export const QRCodeTool: ToolImplementation = {
   definition: {
@@ -38,6 +39,7 @@ export const QRCodeTool: ToolImplementation = {
     const data = String(args.data);
     const size = (args.size as number) || 400;
     const filename = (args.filename as string) || `qr_${Date.now()}.png`;
+    log.tool.debug("qr-code.execute: entry", { dataLen: data.length, size, filename });
     const cwd = context.cwd || process.cwd();
 
     if (!data.trim()) return "Error: No data provided for QR code.";
@@ -79,6 +81,7 @@ except ImportError:
       });
 
       if (stdout.trim().startsWith("ok:")) {
+        log.tool.debug("qr-code.execute: exit", { success: true, method: "python", outPath, size });
         return (
           `QR code generated: ${outPath}\n` +
           `Data: ${data.length > 100 ? data.slice(0, 100) + "..." : data}\n` +
@@ -86,8 +89,9 @@ except ImportError:
           `Use send_file to deliver this to the user.`
         );
       }
-    } catch {
+    } catch (err) {
       // Python libs not available — try CoreImage
+      log.tool.warn("qr-code: Python QR generation failed, trying CoreImage fallback", err);
     }
 
     // Fallback: use CIQRCodeGenerator via JXA
@@ -118,14 +122,16 @@ app.doShellScript("echo '" + script.replace(/'/g, "'\\\\''") + "' | swift -");
       });
 
       if (existsSync(outPath)) {
+        log.tool.debug("qr-code.execute: exit", { success: true, method: "swift", outPath });
         return (
           `QR code generated: ${outPath}\n` +
           `Data: ${data.length > 100 ? data.slice(0, 100) + "..." : data}\n` +
           `Use send_file to deliver this to the user.`
         );
       }
-    } catch {
+    } catch (err) {
       // Swift/CoreImage fallback failed
+      log.tool.warn("qr-code: Swift/CoreImage fallback failed", err);
     }
 
     return (

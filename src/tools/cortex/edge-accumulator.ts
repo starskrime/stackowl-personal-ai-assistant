@@ -11,6 +11,7 @@
  * supplied (Element 16c), enables host-scoped learned routing for `web_fetch`.
  */
 import type { MemoryDatabase } from "../../memory/db.js";
+import { log } from "../../logger.js";
 
 export interface EdgeObservation {
   fromTool: string;
@@ -27,6 +28,15 @@ export class EdgeAccumulator {
   observe(obs: EdgeObservation): void {
     const hostRoot = obs.hostRoot ?? "";
 
+    log.tool.debug("edge-accumulator.observe: entry", {
+      fromTool: obs.fromTool,
+      toTool: obs.toTool,
+      capabilityTag: obs.capabilityTag,
+      success: obs.success,
+      durationMs: obs.durationMs,
+      hostRoot: hostRoot || "(global)",
+    });
+
     const existing = this.db.rawDb
       .prepare(
         "SELECT success_rate, avg_duration_ms, sample_count FROM tool_edges WHERE from_tool = ? AND to_tool = ? AND capability_tag = ? AND host_root = ?",
@@ -36,6 +46,13 @@ export class EdgeAccumulator {
       | undefined;
 
     if (!existing) {
+      log.tool.debug("edge-accumulator.observe: new edge inserted", {
+        fromTool: obs.fromTool,
+        toTool: obs.toTool,
+        capabilityTag: obs.capabilityTag,
+        hostRoot: hostRoot || "(global)",
+        initialSuccessRate: obs.success ? 1 : 0,
+      });
       this.db.rawDb
         .prepare(
           "INSERT INTO tool_edges (from_tool, to_tool, capability_tag, host_root, success_rate, avg_duration_ms, sample_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
@@ -60,6 +77,18 @@ export class EdgeAccumulator {
       (existing.avg_duration_ms * existing.sample_count + obs.durationMs) /
         newCount,
     );
+
+    log.tool.debug("edge-accumulator.observe: edge updated", {
+      fromTool: obs.fromTool,
+      toTool: obs.toTool,
+      capabilityTag: obs.capabilityTag,
+      hostRoot: hostRoot || "(global)",
+      prevSuccessRate: existing.success_rate,
+      newSuccessRate: newRate,
+      newSampleCount: newCount,
+      newAvgDurationMs: newAvg,
+    });
+
     this.db.rawDb
       .prepare(
         "UPDATE tool_edges SET success_rate = ?, avg_duration_ms = ?, sample_count = ?, updated_at = datetime('now') WHERE from_tool = ? AND to_tool = ? AND capability_tag = ? AND host_root = ?",

@@ -16,6 +16,7 @@
  * tell the user what to do.
  */
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
@@ -44,6 +45,7 @@ export class SafariDriver {
   constructor(private readonly runner: JxaRunner = defaultJxaRunner) {}
 
   async listTabs(): Promise<SafariTab[]> {
+    log.tool.debug("safari-driver.listTabs: entry");
     const script = `
       const safari = Application('Safari');
       const tabs = safari.windows[0].tabs;
@@ -53,62 +55,88 @@ export class SafariDriver {
       }
       JSON.stringify(out);
     `;
+    log.tool.debug("safari-driver.listTabs: AppleScript sent", { scriptLen: script.length });
     const raw = await this.runner(script);
     try {
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
-      return parsed.filter(
+      const tabs = parsed.filter(
         (t): t is SafariTab =>
           t && typeof t.title === "string" && typeof t.url === "string",
       );
-    } catch {
+      log.tool.debug("safari-driver.listTabs: exit", { tabCount: tabs.length });
+      return tabs;
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       return [];
     }
   }
 
   async activeTabUrl(): Promise<string | null> {
+    log.tool.debug("safari-driver.activeTabUrl: entry");
     const script = `Application('Safari').documents[0].url();`;
     const out = (await this.runner(script)).trim();
-    return out.length > 0 ? out : null;
+    const result = out.length > 0 ? out : null;
+    log.tool.debug("safari-driver.activeTabUrl: exit", { url: result });
+    return result;
   }
 
   async activeTabText(): Promise<string> {
-    return this.runJS("document.body ? document.body.innerText : ''");
+    log.tool.debug("safari-driver.activeTabText: entry");
+    const result = await this.runJS("document.body ? document.body.innerText : ''");
+    log.tool.debug("safari-driver.activeTabText: exit", { textLen: result.length });
+    return result;
   }
 
   async navigate(url: string): Promise<void> {
+    log.tool.debug("safari-driver.navigate: entry", { url });
     const script = `Application('Safari').documents[0].url = '${jxa(url)}';`;
+    log.tool.debug("safari-driver.navigate: AppleScript sent", { url });
     await this.runner(script);
+    log.tool.debug("safari-driver.navigate: exit", { url });
   }
 
   async runJS(js: string): Promise<string> {
+    log.tool.debug("safari-driver.runJS: entry", { jsLen: js.length });
     const script = `Application('Safari').doJavaScript('${jxa(js)}', { in: Application('Safari').documents[0] });`;
-    return (await this.runner(script)).trim();
+    const result = (await this.runner(script)).trim();
+    log.tool.debug("safari-driver.runJS: exit", { resultLen: result.length });
+    return result;
   }
 
   async click(selector: string): Promise<void> {
+    log.tool.debug("safari-driver.click: entry", { selector });
     const js = `(function(){const el=document.querySelector('${jxa(selector)}');if(el)el.click();})();`;
     await this.runJS(js);
+    log.tool.debug("safari-driver.click: exit", { selector });
   }
 
   async fill(selector: string, value: string): Promise<void> {
+    log.tool.debug("safari-driver.fill: entry", { selector, valueLen: value.length });
     const js =
       `(function(){const el=document.querySelector('${jxa(selector)}');` +
       `if(!el)return;el.value='${jxa(value)}';` +
       `el.dispatchEvent(new Event('input',{bubbles:true}));` +
       `el.dispatchEvent(new Event('change',{bubbles:true}));})();`;
     await this.runJS(js);
+    log.tool.debug("safari-driver.fill: exit", { selector });
   }
 
   async scroll(deltaPx: number): Promise<void> {
+    log.tool.debug("safari-driver.scroll: entry", { deltaPx });
     await this.runJS(`window.scrollBy(0, ${Math.trunc(deltaPx)});`);
+    log.tool.debug("safari-driver.scroll: exit", { deltaPx });
   }
 
   async back(): Promise<void> {
+    log.tool.debug("safari-driver.back: entry");
     await this.runJS("window.history.back();");
+    log.tool.debug("safari-driver.back: exit");
   }
 
   async forward(): Promise<void> {
+    log.tool.debug("safari-driver.forward: entry");
     await this.runJS("window.history.forward();");
+    log.tool.debug("safari-driver.forward: exit");
   }
 }

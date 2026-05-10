@@ -148,8 +148,9 @@ export class MCPClient {
     for (const impl of this.toToolImplementations()) {
       try {
         toolRegistry.register(impl);
-      } catch {
+      } catch (err) {
         // Tool collision: already registered from another source
+        log.engine.warn(`[MCP] "${this.config.name}": tool registration collision`, err);
       }
     }
 
@@ -215,13 +216,22 @@ export class MCPClient {
           args: Record<string, unknown>,
           _context: ToolContext,
         ): Promise<string> {
+          log.tool.debug("mcp.execute: entry", { server: client.config.name, tool: originalName, argsKeys: Object.keys(args) });
           if (!client.isConnected) {
             throw new Error(
               `MCP server "${client.config.name}" is not connected. ` +
                 `Use /mcp reconnect ${client.config.name} to restore the connection.`,
             );
           }
-          return client.callTool(originalName, args);
+          log.tool.debug("mcp.execute: tool call sent", { server: client.config.name, tool: originalName });
+          try {
+            const result = await client.callTool(originalName, args);
+            log.tool.debug("mcp.execute: exit", { success: true, server: client.config.name, tool: originalName, resultLen: result.length });
+            return result;
+          } catch (err) {
+            log.tool.error("mcp.execute: server call failed", err as Error, { server: client.config.name, tool: originalName });
+            throw err;
+          }
         },
       } satisfies ToolImplementation;
     });
@@ -431,8 +441,8 @@ export class MCPClient {
                   try {
                     const msg = JSON.parse(eventData) as MCPResponse;
                     this.handleIncomingMessage(msg);
-                  } catch {
-                    // skip malformed
+                  } catch (err) {
+                    log.engine.warn(`[MCP:SSE] "${this.config.name}": malformed JSON-RPC message skipped`, err);
                   }
                 }
                 eventType = "";
@@ -459,7 +469,7 @@ export class MCPClient {
       };
 
       // Start pumping asynchronously
-      pump().catch(() => {});
+      pump().catch((err) => { log.engine.warn(`[MCP:SSE] "${this.config.name}": SSE pump error`, err); });
 
       // Timeout if we never receive the endpoint event
       setTimeout(() => {
@@ -508,8 +518,8 @@ export class MCPClient {
       try {
         const msg = JSON.parse(trimmed) as MCPResponse;
         this.handleIncomingMessage(msg);
-      } catch {
-        // Skip malformed lines
+      } catch (err) {
+        log.engine.warn(`[MCP] "${this.config.name}": malformed stdio JSON line skipped`, err);
       }
     }
   }
@@ -571,7 +581,7 @@ export class MCPClient {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(notification),
-        }).catch(() => {});
+        }).catch((err) => { log.engine.warn(`[MCP:SSE] "${this.config.name}": notification POST failed`, err); });
       }
     }
   }

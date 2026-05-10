@@ -38,6 +38,8 @@ export interface FactEnvelopeStoreOptions {
   maxPerSession?: number;
 }
 
+import { log } from "../../logger.js";
+
 const DEFAULT_MAX_PER_SESSION = 200;
 
 export class FactEnvelopeStore {
@@ -55,6 +57,15 @@ export class FactEnvelopeStore {
     turnIndex: number,
     envelope: Omit<FactEnvelope, "retracted">,
   ): void {
+    log.tool.debug("fact-envelope.record: entry", {
+      sessionId,
+      turnIndex,
+      toolName: envelope.provenance.toolName,
+      confidence: envelope.provenance.confidence,
+      verifiedBy: envelope.provenance.verifiedBy,
+      durationMs: envelope.provenance.durationMs,
+    });
+
     let session = this.bySession.get(sessionId);
     if (!session) {
       session = new Map();
@@ -64,8 +75,22 @@ export class FactEnvelopeStore {
 
     if (session.size > this.maxPerSession) {
       const oldestKey = session.keys().next().value;
-      if (oldestKey !== undefined) session.delete(oldestKey);
+      if (oldestKey !== undefined) {
+        session.delete(oldestKey);
+        log.tool.debug("fact-envelope.record: oldest entry evicted", {
+          sessionId,
+          evictedTurnIndex: oldestKey,
+          reason: "maxPerSession cap exceeded",
+          maxPerSession: this.maxPerSession,
+        });
+      }
     }
+
+    log.tool.debug("fact-envelope.record: fact accepted", {
+      sessionId,
+      turnIndex,
+      sessionSize: session.size,
+    });
   }
 
   get(sessionId: string, turnIndex: number): FactEnvelope | null {
@@ -80,8 +105,20 @@ export class FactEnvelopeStore {
    */
   retract(sessionId: string, turnIndex: number): FactEnvelope | null {
     const entry = this.bySession.get(sessionId)?.get(turnIndex);
-    if (!entry) return null;
+    if (!entry) {
+      log.tool.debug("fact-envelope.retract: entry not found — noop", {
+        sessionId,
+        turnIndex,
+      });
+      return null;
+    }
     entry.retracted = true;
+    log.tool.debug("fact-envelope.retract: fact retracted", {
+      sessionId,
+      turnIndex,
+      toolName: entry.provenance.toolName,
+      verifiedBy: entry.provenance.verifiedBy,
+    });
     return entry;
   }
 

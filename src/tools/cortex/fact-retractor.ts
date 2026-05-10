@@ -12,6 +12,7 @@
  */
 import type { GatewayEventBus } from "../../gateway/event-bus.js";
 import type { FactEnvelopeStore } from "./fact-envelope.js";
+import { log } from "../../logger.js";
 
 export interface RetractablePipeline {
   removeShortTermLayer(key: string): boolean;
@@ -33,10 +34,34 @@ export class FactRetractor {
     private readonly pipeline?: RetractablePipeline,
   ) {
     bus.on("fact:retracted", (e) => {
-      this.store.retract(e.sessionId, e.turnIndex);
-      this.pipeline?.removeShortTermLayer(
-        factShortTermKey(e.sessionId, e.turnIndex),
-      );
+      log.tool.debug("fact-retractor: fact:retracted event received", {
+        sessionId: e.sessionId,
+        turnIndex: e.turnIndex,
+      });
+
+      const retracted = this.store.retract(e.sessionId, e.turnIndex);
+
+      if (retracted) {
+        log.tool.debug("fact-retractor: envelope marked retracted", {
+          sessionId: e.sessionId,
+          turnIndex: e.turnIndex,
+          toolName: retracted.provenance.toolName,
+        });
+      } else {
+        log.tool.debug("fact-retractor: envelope not found in store — noop", {
+          sessionId: e.sessionId,
+          turnIndex: e.turnIndex,
+        });
+      }
+
+      const layerKey = factShortTermKey(e.sessionId, e.turnIndex);
+      const removed = this.pipeline?.removeShortTermLayer(layerKey) ?? false;
+
+      log.tool.debug("fact-retractor: context pipeline layer removal", {
+        layerKey,
+        removed,
+        hasPipeline: !!this.pipeline,
+      });
     });
   }
 }

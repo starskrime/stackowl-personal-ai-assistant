@@ -1,4 +1,5 @@
 import type { BoundingBox, UIElement, AccessibilityElement } from "../types.js";
+import { log } from "../../logger.js";
 
 export interface OCRResult {
   text: string;
@@ -415,13 +416,16 @@ export class OCREngine {
 
       const text = require("fs").readFileSync(outputFile, "utf-8");
       return this.parseOCRText(text, imageData);
-    } catch {
+    } catch (err) {
+      log.engine.warn("oscar fusion: OCR (tesseract) failed, falling back to native", err);
       return this.nativeMacOCR();
     } finally {
       try {
         require("fs").unlinkSync(tmpFile);
         require("fs").unlinkSync(outputFile);
-      } catch {}
+      } catch (cleanErr) {
+        log.engine.warn("oscar fusion: OCR temp file cleanup failed", cleanErr);
+      }
     }
   }
 

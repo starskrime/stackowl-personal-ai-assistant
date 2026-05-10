@@ -7,13 +7,13 @@
 // ── Global crash guards ───────────────────────────────────────────
 // Without these, unhandled rejections silently kill the process on Node 22+.
 process.on("uncaughtException", (err) => {
-  console.error("\n[FATAL] Uncaught exception — process will exit:");
-  console.error(err);
+  process.stderr.write("\n[FATAL] Uncaught exception — process will exit:\n");
+  process.stderr.write(String(err) + "\n");
   process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("\n[FATAL] Unhandled promise rejection — process will exit:");
-  console.error(reason);
+  process.stderr.write("\n[FATAL] Unhandled promise rejection — process will exit:\n");
+  process.stderr.write(String(reason) + "\n");
   process.exit(1);
 });
 
@@ -21,7 +21,6 @@ import { resolve } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { program } from "commander";
-import chalk from "chalk";
 // log imported by adapters/gateway internally
 import { initFileLog, log } from "./logger.js";
 import { loadConfig } from "./config/loader.js";
@@ -178,6 +177,7 @@ import { MemorySearcher } from "./memory-threads/searcher.js";
 import { RecallMemoryTool } from "./tools/recall.js";
 import { RememberTool } from "./tools/remember.js";
 import { SkillInstallTool } from "./tools/skill-install.js";
+import { ReadLogsTool } from "./tools/read-logs.js";
 import { PelletRecallTool } from "./tools/pellet-recall.js";
 import { initEmbedder, setEmbedderCacheDir } from "./pellets/embedder.js";
 import { selfSeedIfEmpty } from "./pellets/self-seed.js";
@@ -316,8 +316,14 @@ async function bootstrap() {
     const fetcher = new PuppeteerFetcher();
     const ready = await fetcher.probe();
     if (ready) {
-      await fetcher.init();
-      puppeteerFetcher = fetcher;
+      try {
+        await fetcher.init();
+        puppeteerFetcher = fetcher;
+      } catch (err) {
+        // Non-fatal: Chrome binary exists but failed to launch — puppeteer tier unavailable
+        // Use process.stderr.write so this surfaces even when console is suppressed during boot
+        process.stderr.write(`[puppeteer] Chrome launch failed (tier 3 unavailable): ${err instanceof Error ? err.message : String(err)}\n`);
+      }
     }
   }
 
@@ -375,6 +381,7 @@ async function bootstrap() {
     // ── System ──
     new CronTool(workspacePath),
     new SkillInstallTool(workspacePath),
+    new ReadLogsTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
     AppleCalendarTool,
@@ -471,7 +478,7 @@ async function bootstrap() {
   pelletStore
     .buildGraph()
     .catch((err) =>
-      console.warn(
+      log.engine.warn(
         `[PelletGraph] Build failed (non-fatal): ${err instanceof Error ? err.message : err}`,
       ),
     );
@@ -501,7 +508,7 @@ async function bootstrap() {
   memoryDb
     .importFromJson(workspacePath)
     .catch((err) =>
-      console.warn(`[MemoryDatabase] JSON import failed: ${err}`),
+      log.engine.warn(`[MemoryDatabase] JSON import failed: ${err}`),
     );
 
   // Tool Tracker — SQLite-backed tool execution history (Element 7 / schema v23).
@@ -604,11 +611,7 @@ async function bootstrap() {
   // Load any previously synthesized tools into the registry
   const synthesizedCount = await loader.loadAll(toolRegistry);
   if (synthesizedCount > 0) {
-    console.log(
-      chalk.dim(
-        `  [Loaded ${synthesizedCount} synthesized tool(s) from previous sessions]`,
-      ),
-    );
+    log.engine.info(`[Init] Loaded ${synthesizedCount} synthesized tool(s) from previous sessions`);
   }
 
   // Skills (OpenCLAW-compatible)
@@ -629,7 +632,7 @@ async function bootstrap() {
       watch: config.skills?.watch ?? false,
       watchDebounceMs: config.skills?.watchDebounceMs ?? 250,
     });
-    console.log(chalk.dim(`  [Loaded ${skillsCount} skills]`));
+    log.engine.info(`[Init] Loaded ${skillsCount} skills`);
   }
 
   // ── Infrastructure Profile ──
@@ -780,11 +783,7 @@ async function bootstrap() {
       toolRegistry,
     );
     if (mcpCount > 0) {
-      console.log(
-        chalk.dim(
-          `  [MCP: ${mcpCount} tool(s) from ${config.mcp.servers.length} server(s)]`,
-        ),
-      );
+      log.engine.info(`[Init] MCP: ${mcpCount} tool(s) from ${config.mcp.servers.length} server(s)`);
     }
   }
 
@@ -874,7 +873,7 @@ async function buildGateway(
     const reflexion = new MemoryReflexionEngine(b.workspacePath, provider, owl);
     reflexionContext = await reflexion.getForSystemPrompt();
     if (reflexionContext) {
-      console.log(chalk.dim("  [Reflexion memory loaded]"));
+      log.engine.info("[Init] Reflexion memory loaded");
     }
   } catch {
     /* non-blocking — first run will have no reflexion data */
@@ -883,7 +882,7 @@ async function buildGateway(
   // Owl Inner Life — persistent desires, mood, opinions, inner monologue
   const innerLife = new OwlInnerLife(provider, owl, b.workspacePath);
   await innerLife.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
-  console.log(chalk.dim(`  [Inner Life loaded for ${owl.persona.name}]`));
+  log.engine.info(`[Init] Inner Life loaded for ${owl.persona.name}`);
 
   // Knowledge Council — group learning & peer review sessions
   const knowledgeCouncil = new KnowledgeCouncil(
@@ -1061,11 +1060,7 @@ async function buildGateway(
       b.toolRegistry,
     );
     if (mcpCount > 0) {
-      console.log(
-        chalk.dim(
-          `  [Connectors: ${mcpCount} tool(s) from ${connectorMcpConfigs.length} app connector(s)]`,
-        ),
-      );
+      log.engine.info(`[Init] Connectors: ${mcpCount} tool(s) from ${connectorMcpConfigs.length} app connector(s)`);
     }
   }
 
@@ -1076,6 +1071,8 @@ async function buildGateway(
   // Drives continuous learning from inner desires, capability gaps,
   // pattern mining, skill evolution, and reflexion.
   const { CognitiveLoop } = await import("./cognition/loop.js");
+  const { readLogsArray } = await import("./infra/observability/reader.js");
+  const { summarize: summarizeLogs } = await import("./infra/observability/analyzer.js");
   const skillsDir = b.skillsLoader
     ? resolve(b.workspacePath, "skills")
     : undefined;
@@ -1099,6 +1096,8 @@ async function buildGateway(
       evolutionEngine: b.evolutionEngine,
       providerRegistry: b.providerRegistry,
       skillsLoader: b.skillsLoader,
+      logReader: readLogsArray,
+      logAnalyzer: summarizeLogs,
     },
     b.config.cognition,
   );
@@ -1268,13 +1267,22 @@ async function buildGateway(
 
 async function chatCommand(owlName?: string) {
   // ── Phase 0: onboarding (first launch) ────────────────────────
-  const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
-  if (!existsSync(configPath)) {
-    const wizard = new OnboardingWizard(configPath);
-    const completed = await wizard.run();
-    if (!completed) {
-      console.log(chalk.yellow("\nSetup cancelled. Run again to configure StackOwl."));
-      process.exit(0);
+  if (process.env.STACKOWL_TUI === "v1") {
+    // v1: legacy terminal wizard (explicit opt-out via STACKOWL_TUI=v1).
+    const configPath = resolve(homedir(), ".stackowl", "stackowl.config.json");
+    if (!existsSync(configPath)) {
+      const wizard = new OnboardingWizard(configPath);
+      const completed = await wizard.run();
+      if (!completed) {
+        log.cli.info("Setup cancelled. Run again to configure StackOwl.");
+        process.exit(0);
+      }
+    }
+  } else {
+    // v2 (default): use the @clack/prompts wizard (must run before Ink mounts).
+    const { needsOnboarding, runOnboardingWizard } = await import("./cli/v2/screens/onboarding-wizard.js");
+    if (needsOnboarding(homedir())) {
+      await runOnboardingWizard(homedir());
     }
   }
 
@@ -1293,7 +1301,7 @@ async function chatCommand(owlName?: string) {
         b = await bootstrap();
         const o = owlName ? b.owlRegistry.get(owlName) : b.owlRegistry.getDefault();
         if (!o) {
-          console.error(chalk.red(`\n  Owl "${owlName}" not found.`));
+          log.cli.error(`Owl "${owlName}" not found.`);
           process.exit(1);
         }
         owl = o;
@@ -1323,11 +1331,8 @@ async function chatCommand(owlName?: string) {
     model:    b.config.defaultModel,
   }));
 
-  // ── Phase 2: interactive session ──────────────────────────────
-  const adapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
-  gateway.register(adapter);
-
-  // Auto-start Telegram if it was enabled during onboarding
+  // ── Auto-start Telegram regardless of TUI version ────────────────
+  let telegramPinger: ReturnType<TelegramAdapter["getPinger"]> | undefined;
   if (b.config.telegram?.botToken) {
     const telegramAdapter = new TelegramAdapter(gateway, {
       botToken: b.config.telegram.botToken,
@@ -1338,17 +1343,27 @@ async function chatCommand(owlName?: string) {
     telegramAdapter
       .start()
       .then(() => {
-        // Share the proactive pinger with CLI so user replies get
-        // recorded as engagement signals (Element 12 — Task 6.5).
-        const pinger = telegramAdapter.getPinger();
-        if (pinger) adapter.setPinger(pinger);
+        telegramPinger = telegramAdapter.getPinger() ?? undefined;
       })
       .catch((err) => {
-        console.error(
-          chalk.red(`✗ Telegram failed: ${err instanceof Error ? err.message : err}`),
-        );
+        process.stderr.write(`✗ Telegram failed: ${err instanceof Error ? err.message : err}\n`);
       });
   }
+
+  // ── TUI v2 (default) — gateway is ready, hand off to v2 stack ─────
+  if (process.env.STACKOWL_TUI !== "v1") {
+    const { startV2 } = await import("./cli/v2/index.js");
+    await startV2(gateway);
+    return;
+  }
+
+  // ── Phase 2: v1 interactive session ───────────────────────────
+  const adapter = new CLIAdapter(gateway, { workspacePath: b.workspacePath });
+  gateway.register(adapter);
+
+  // Share the proactive pinger with CLI so user replies get
+  // recorded as engagement signals (Element 12 — Task 6.5).
+  if (telegramPinger) adapter.setPinger(telegramPinger);
 
   process.on("SIGINT", async () => {
     adapter.stop();
@@ -1374,29 +1389,22 @@ async function voiceCommand(opts: {
     ? b.owlRegistry.get(opts.owl)
     : b.owlRegistry.getDefault();
   if (!owl) {
-    console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
+    log.cli.error(`❌ Owl "${opts.owl}" not found.`);
     process.exit(1);
   }
 
   const provider = b.providerRegistry.getDefault();
   if (!(await provider.healthCheck())) {
-    console.error(
-      chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`),
-    );
+    log.cli.error(`❌ Cannot reach ${provider.name}. Is it running?`);
     process.exit(1);
   }
 
   if (process.platform !== "darwin") {
-    console.error(
-      chalk.red("❌ Voice mode currently requires macOS (uses `say` for TTS)."),
-    );
+    log.cli.error("❌ Voice mode currently requires macOS (uses `say` for TTS).");
     process.exit(1);
   }
 
-  console.log(
-    chalk.green(`✓ Connected to ${provider.name}`) +
-      chalk.dim(` (model: ${b.config.defaultModel})`),
-  );
+  log.cli.info(`✓ Connected to ${provider.name} (model: ${b.config.defaultModel})`);
 
   // Merge: CLI flags > config.voice > defaults
   const vc = b.config.voice ?? {};
@@ -1406,9 +1414,7 @@ async function voiceCommand(opts: {
   const resolvedThresh = vc.silenceThreshold  ?? 500;
   const resolvedDur    = vc.silenceDurationMs ?? 1500;
 
-  console.log(
-    chalk.dim(`  Model: ${resolvedModel} | Voice: ${resolvedVoice} | Rate: ${resolvedRate} wpm`),
-  );
+  log.cli.info(`  Model: ${resolvedModel} | Voice: ${resolvedVoice} | Rate: ${resolvedRate} wpm`);
 
   // Pre-warm: build whisper.cpp binary + download model before the interactive loop.
   // Shows real compiler/download output so the user knows what's happening.
@@ -1416,10 +1422,10 @@ async function voiceCommand(opts: {
   try {
     await stt.ensureReady();
   } catch (err) {
-    console.error(chalk.red(`\n❌ Voice setup failed: ${(err as Error).message}`));
+    log.cli.error(`❌ Voice setup failed: ${(err as Error).message}`);
     process.exit(1);
   }
-  console.log(chalk.green("✓ Voice ready — mic and transcription available\n"));
+  log.cli.info("✓ Voice ready — mic and transcription available");
 
   const gateway = await buildGateway(b, owl);
   const adapter = new VoiceChannelAdapter(gateway, {
@@ -1446,14 +1452,8 @@ async function voiceCommand(opts: {
 
 async function parliamentCommand(topic?: string) {
   if (!topic || topic.trim() === "") {
-    console.error(
-      chalk.red("❌ Please provide a topic for the Parliament to debate."),
-    );
-    console.log(
-      chalk.dim(
-        'Example: stackowl parliament "Should we migrate from PostgreSQL to DynamoDB?"',
-      ),
-    );
+    log.cli.error("❌ Please provide a topic for the Parliament to debate.");
+    log.cli.info('Example: stackowl parliament "Should we migrate from PostgreSQL to DynamoDB?"');
     process.exit(1);
   }
 
@@ -1479,18 +1479,14 @@ async function parliamentCommand(topic?: string) {
     // Fallback to whatever owls we have
     const allOwls = owlRegistry.listOwls();
     if (allOwls.length < 2) {
-      console.error(
-        chalk.red(
-          "❌ Parliament requires at least 2 owls. Create more OWL.md files.",
-        ),
-      );
+      log.cli.error("❌ Parliament requires at least 2 owls. Create more OWL.md files.");
       process.exit(1);
     }
     participants.length = 0;
     participants.push(...allOwls.slice(0, 4));
   }
 
-  console.log(chalk.cyan(`\nSummoning Parliament...\n`));
+  log.cli.info("Summoning Parliament...");
 
   const orchestrator = new ParliamentOrchestrator(
     provider,
@@ -1507,11 +1503,10 @@ async function parliamentCommand(topic?: string) {
       contextMessages: [],
     });
 
-    console.log("\n\n" + chalk.bold.green("=== FINAL REPORT ===\n"));
-    console.log(orchestrator.formatSessionMarkdown(session));
+    log.cli.info("=== FINAL REPORT ===\n" + orchestrator.formatSessionMarkdown(session));
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error(chalk.red(`\nParliament session failed: ${msg}`));
+    log.cli.error(`Parliament session failed: ${msg}`, error);
   }
 }
 
@@ -1521,26 +1516,22 @@ async function owlsCommand() {
   const { owlRegistry } = await bootstrap();
   const owls = owlRegistry.listOwls();
 
-  console.log(chalk.bold("\n🦉 StackOwl — Registered Owls\n"));
+  log.cli.info("🦉 StackOwl — Registered Owls");
 
   if (owls.length === 0) {
-    console.log(
-      chalk.dim("  No owls found. Check your workspace/owls/ directory."),
-    );
+    log.cli.info("  No owls found. Check your workspace/owls/ directory.");
     return;
   }
 
   for (const owl of owls) {
     const p = owl.persona;
     const d = owl.dna;
-    console.log(`  ${p.emoji} ${chalk.bold(p.name)} — ${p.type}`);
-    console.log(
-      chalk.dim(
-        `     Challenge: ${d.evolvedTraits.challengeLevel} | Gen: ${d.generation} | Convos: ${d.interactionStats.totalConversations}`,
-      ),
+    log.cli.info(`  ${p.emoji} ${p.name} — ${p.type}`);
+    log.cli.info(
+      `     Challenge: ${d.evolvedTraits.challengeLevel} | Gen: ${d.generation} | Convos: ${d.interactionStats.totalConversations}`,
     );
-    console.log(chalk.dim(`     Specialties: ${p.specialties.join(", ")}`));
-    console.log("");
+    log.cli.info(`     Specialties: ${p.specialties.join(", ")}`);
+    log.cli.info("");
   }
 }
 
@@ -1549,19 +1540,18 @@ async function owlsCommand() {
 async function statusCommand() {
   const { config, providerRegistry } = await bootstrap();
 
-  console.log(chalk.bold("\n🦉 StackOwl — System Status\n"));
+  log.cli.info("🦉 StackOwl — System Status");
 
   const healthResults = await providerRegistry.healthCheckAll();
   for (const [name, healthy] of Object.entries(healthResults)) {
-    const icon = healthy ? chalk.green("✓") : chalk.red("✗");
+    const icon = healthy ? "✓" : "✗";
     const label = name === config.defaultProvider ? `${name} (default)` : name;
-    console.log(`  ${icon} ${label}`);
+    log.cli.info(`  ${icon} ${label}`);
   }
 
-  console.log(`\n  Default model: ${config.defaultModel}`);
-  console.log(`  Gateway: ws://${config.gateway.host}:${config.gateway.port}`);
-  console.log(`  Workspace: ${config.workspace}`);
-  console.log("");
+  log.cli.info(`\n  Default model: ${config.defaultModel}`);
+  log.cli.info(`  Gateway: ws://${config.gateway.host}:${config.gateway.port}`);
+  log.cli.info(`  Workspace: ${config.workspace}`);
 }
 
 // ─── Pellets Command ───────────────────────────────────────────────
@@ -1579,54 +1569,47 @@ async function pelletsCommand(opts: {
   // ─── Bulk Dedup ────────────────────────────────────────────────
   if (opts.dedup) {
     const { bulkDedup } = await import("./pellets/bulk-dedup.js");
-    console.log(
-      chalk.cyan(
-        opts.dryRun
-          ? "🔍 Running bulk dedup DRY RUN (no changes will be made)...\n"
-          : "🧹 Running bulk dedup (duplicates will be merged/removed)...\n",
-      ),
+    log.cli.info(
+      opts.dryRun
+        ? "🔍 Running bulk dedup DRY RUN (no changes will be made)..."
+        : "🧹 Running bulk dedup (duplicates will be merged/removed)...",
     );
     const stats = await bulkDedup(pelletStore, pelletStore.getDeduplicator(), {
       dryRun: opts.dryRun,
     });
-    console.log("\n" + chalk.bold("Results:"));
-    console.log(`  Total pellets:  ${stats.total}`);
-    console.log(`  Checked:        ${stats.checked}`);
-    console.log(chalk.green(`  Kept:           ${stats.kept}`));
-    console.log(chalk.yellow(`  Skipped:        ${stats.skipped}`));
-    console.log(chalk.cyan(`  Merged:         ${stats.merged}`));
-    console.log(chalk.magenta(`  Superseded:     ${stats.superseded}`));
+    log.cli.info("Results:");
+    log.cli.info(`  Total pellets:  ${stats.total}`);
+    log.cli.info(`  Checked:        ${stats.checked}`);
+    log.cli.info(`  Kept:           ${stats.kept}`);
+    log.cli.info(`  Skipped:        ${stats.skipped}`);
+    log.cli.info(`  Merged:         ${stats.merged}`);
+    log.cli.info(`  Superseded:     ${stats.superseded}`);
     if (stats.errors > 0)
-      console.log(chalk.red(`  Errors:         ${stats.errors}`));
+      log.cli.info(`  Errors:         ${stats.errors}`);
     return;
   }
 
   // ─── Knowledge Graph ─────────────────────────────────────────
   if (opts.graph) {
-    console.log(chalk.cyan("🕸️  Building knowledge graph...\n"));
+    log.cli.info("🕸️  Building knowledge graph...");
     await pelletStore.buildGraph();
     const stats = await pelletStore.kuzuGraph.getStats();
-    console.log(chalk.bold("Graph Stats:"));
-    console.log(`  Nodes (pellets): ${stats.nodes}`);
-    console.log(`  Edges (links):   ${stats.edges}`);
+    log.cli.info("Graph Stats:");
+    log.cli.info(`  Nodes (pellets): ${stats.nodes}`);
+    log.cli.info(`  Edges (links):   ${stats.edges}`);
     return;
   }
 
   // ─── Find Related ────────────────────────────────────────────
   if (opts.related) {
-    console.log(
-      chalk.cyan(`🔗 Finding pellets related to "${opts.related}"...\n`),
-    );
+    log.cli.info(`🔗 Finding pellets related to "${opts.related}"...`);
     const results = await pelletStore.searchWithGraph(opts.related as string, 10);
     if (results.length === 0) {
-      console.log(chalk.dim("No related pellets found."));
+      log.cli.info("No related pellets found.");
       return;
     }
     for (const r of results) {
-      console.log(
-        `${chalk.bold(r.title)} ${chalk.dim(`(${r.id})`)}` +
-          ` — tags: ${r.tags.join(", ")}`,
-      );
+      log.cli.info(`${r.title} (${r.id}) — tags: ${r.tags.join(", ")}`);
     }
     return;
   }
@@ -1635,18 +1618,16 @@ async function pelletsCommand(opts: {
     // Read a specific pellet
     const pellet = await pelletStore.get(opts.read);
     if (!pellet) {
-      console.error(chalk.red(`❌ Pellet "${opts.read}" not found.`));
+      log.cli.error(`❌ Pellet "${opts.read}" not found.`);
       process.exit(1);
     }
 
-    console.log(chalk.bold.cyan(`📦 PELLET: ${pellet.title}`));
-    console.log(
-      chalk.dim(`Generated: ${new Date(pellet.generatedAt).toLocaleString()}`),
-    );
-    console.log(chalk.dim(`Source: ${pellet.source}`));
-    console.log(chalk.dim(`Tags: ${pellet.tags.join(", ")}`));
-    console.log(chalk.dim(`Owls: ${pellet.owls.join(", ")}`));
-    console.log("\n" + pellet.content);
+    log.cli.info(`📦 PELLET: ${pellet.title}`);
+    log.cli.info(`Generated: ${new Date(pellet.generatedAt).toLocaleString()}`);
+    log.cli.info(`Source: ${pellet.source}`);
+    log.cli.info(`Tags: ${pellet.tags.join(", ")}`);
+    log.cli.info(`Owls: ${pellet.owls.join(", ")}`);
+    log.cli.info("\n" + pellet.content);
     return;
   }
 
@@ -1655,25 +1636,21 @@ async function pelletsCommand(opts: {
 
   if (opts.search) {
     pellets = await pelletStore.search(opts.search);
-    console.log(chalk.cyan(`🔍 Search results for "${opts.search}":\n`));
+    log.cli.info(`🔍 Search results for "${opts.search}":`);
   } else {
-    console.log(chalk.cyan(`📦 Knowledge Pellets:\n`));
+    log.cli.info("📦 Knowledge Pellets:");
   }
 
   if (pellets.length === 0) {
-    console.log(
-      chalk.dim(
-        "No pellets found. Trigger a Parliament session to generate some.",
-      ),
-    );
+    log.cli.info("No pellets found. Trigger a Parliament session to generate some.");
     return;
   }
 
   for (const p of pellets) {
-    console.log(`${chalk.bold(p.title)} ${chalk.dim(`(ID: ${p.id})`)}`);
-    console.log(`  ${chalk.dim("Tags: ")} ${p.tags.join(", ")}`);
-    console.log(`  ${chalk.dim("Owls: ")} ${p.owls.join(", ")}`);
-    console.log("");
+    log.cli.info(`${p.title} (ID: ${p.id})`);
+    log.cli.info(`  Tags: ${p.tags.join(", ")}`);
+    log.cli.info(`  Owls: ${p.owls.join(", ")}`);
+    log.cli.info("");
   }
 }
 
@@ -1691,10 +1668,8 @@ async function skillsCommand(opts: {
   const { skillsLoader, config } = await bootstrap();
 
   if (!config.skills?.enabled) {
-    console.log(chalk.yellow("⚠️  Skills are not enabled in config."));
-    console.log(
-      chalk.dim("Add 'skills' to your stackowl.config.json to enable them."),
-    );
+    log.cli.warn("⚠️  Skills are not enabled in config.");
+    log.cli.info("Add 'skills' to your stackowl.config.json to enable them.");
     process.exit(1);
   }
 
@@ -1703,29 +1678,22 @@ async function skillsCommand(opts: {
   // Handle ClawHub search
   if (opts.clawhubSearch) {
     const clawHub = new ClawHubClient();
-    console.log(
-      chalk.cyan(`🔍 Searching ClawHub for "${opts.clawhubSearch}"...\n`),
-    );
+    log.cli.info(`🔍 Searching ClawHub for "${opts.clawhubSearch}"...`);
 
     try {
       const results = await clawHub.search(opts.clawhubSearch, 10);
-      console.log(chalk.bold(`Found ${results.total} skills:\n`));
+      log.cli.info(`Found ${results.total} skills:`);
 
       for (const skill of results.skills) {
-        const emoji = "📦";
-        console.log(`${emoji} ${chalk.bold(skill.name)}`);
-        console.log(`   ${chalk.dim(skill.description)}`);
-        console.log(
-          `   ${chalk.dim(`⭐ ${skill.stars} stars | 👇 ${skill.downloads} downloads | by ${skill.author}`)}`,
-        );
-        console.log(
-          chalk.dim(`   Install: stackowl skills --install ${skill.slug}`),
-        );
-        console.log("");
+        log.cli.info(`📦 ${skill.name}`);
+        log.cli.info(`   ${skill.description}`);
+        log.cli.info(`   ⭐ ${skill.stars} stars | 👇 ${skill.downloads} downloads | by ${skill.author}`);
+        log.cli.info(`   Install: stackowl skills --install ${skill.slug}`);
+        log.cli.info("");
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(chalk.red(`ClawHub search failed: ${msg}`));
+      log.cli.error(`ClawHub search failed: ${msg}`, error);
     }
     return;
   }
@@ -1738,36 +1706,36 @@ async function skillsCommand(opts: {
 
     if (source.type === "github") {
       const installer = new SkillInstaller(workspaceRoot);
-      console.log(chalk.cyan(`Installing "${source.skillName}" from GitHub...`));
+      log.cli.info(`Installing "${source.skillName}" from GitHub...`);
       try {
         await installer.fromGitHub(source.rawUrl, source.skillName);
-        console.log(chalk.green(`✓ Installed ${source.skillName}`));
-        console.log(chalk.dim(`Reload skills: restart the assistant`));
+        log.cli.info(`✓ Installed ${source.skillName}`);
+        log.cli.info("Reload skills: restart the assistant");
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        console.error(chalk.red(`GitHub install failed: ${msg}`));
+        log.cli.error(`GitHub install failed: ${msg}`, error);
       }
     } else if (source.type === "local") {
       const installer = new SkillInstaller(workspaceRoot);
-      console.log(chalk.cyan(`Installing "${source.skillName}" from local path...`));
+      log.cli.info(`Installing "${source.skillName}" from local path...`);
       try {
         await installer.fromLocal(source.localPath);
-        console.log(chalk.green(`✓ Installed ${source.skillName}`));
-        console.log(chalk.dim(`Reload skills: restart the assistant`));
+        log.cli.info(`✓ Installed ${source.skillName}`);
+        log.cli.info("Reload skills: restart the assistant");
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        console.error(chalk.red(`Local install failed: ${msg}`));
+        log.cli.error(`Local install failed: ${msg}`, error);
       }
     } else {
       const clawHub = new ClawHubClient();
-      console.log(chalk.cyan(`Installing "${source.slug}" from ClawHub...\n`));
+      log.cli.info(`Installing "${source.slug}" from ClawHub...`);
       try {
         await clawHub.install(source.slug, targetDir);
-        console.log(chalk.green(`\n✓ Successfully installed!`));
-        console.log(chalk.dim(`Reload skills: restart the assistant`));
+        log.cli.info("✓ Successfully installed!");
+        log.cli.info("Reload skills: restart the assistant");
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        console.error(chalk.red(`Installation failed: ${msg}`));
+        log.cli.error(`Installation failed: ${msg}`, error);
       }
     }
     return;
@@ -1776,24 +1744,24 @@ async function skillsCommand(opts: {
   if (opts.read) {
     const skill = registry.get(opts.read);
     if (!skill) {
-      console.error(chalk.red(`❌ Skill "${opts.read}" not found.`));
+      log.cli.error(`❌ Skill "${opts.read}" not found.`);
       process.exit(1);
     }
 
-    console.log(chalk.bold.cyan(`🎯 SKILL: ${skill.name}`));
-    console.log(chalk.dim(`Description: ${skill.description}`));
-    console.log(chalk.dim(`Source: ${skill.sourcePath}`));
-    console.log(chalk.dim(`Enabled: ${skill.enabled ? "Yes" : "No"}`));
+    log.cli.info(`🎯 SKILL: ${skill.name}`);
+    log.cli.info(`Description: ${skill.description}`);
+    log.cli.info(`Source: ${skill.sourcePath}`);
+    log.cli.info(`Enabled: ${skill.enabled ? "Yes" : "No"}`);
 
     if (skill.requiredEnv && skill.requiredEnv.length > 0) {
-      console.log(chalk.dim(`Required env: ${skill.requiredEnv.join(", ")}`));
+      log.cli.info(`Required env: ${skill.requiredEnv.join(", ")}`);
     }
     if (skill.requiredBins && skill.requiredBins.length > 0) {
-      console.log(chalk.dim(`Required bins: ${skill.requiredBins.join(", ")}`));
+      log.cli.info(`Required bins: ${skill.requiredBins.join(", ")}`);
     }
 
-    console.log("\n" + chalk.bold("Instructions:"));
-    console.log(skill.instructions);
+    log.cli.info("Instructions:");
+    log.cli.info(skill.instructions);
     return;
   }
 
@@ -1803,35 +1771,31 @@ async function skillsCommand(opts: {
     : registry.listAll();
 
   if (opts.search) {
-    console.log(chalk.cyan(`🔍 Search results for "${opts.search}":\n`));
+    log.cli.info(`🔍 Search results for "${opts.search}":`);
   } else if (opts.list || (!opts.search && !opts.read)) {
-    console.log(chalk.cyan(`🎯 Loaded Skills:\n`));
+    log.cli.info("🎯 Loaded Skills:");
   }
 
   if (skills.length === 0) {
-    console.log(chalk.dim("No skills found."));
+    log.cli.info("No skills found.");
     if (!config.skills.directories?.length) {
-      console.log(
-        chalk.dim("Configure 'skills.directories' in stackowl.config.json"),
-      );
+      log.cli.info("Configure 'skills.directories' in stackowl.config.json");
     }
     return;
   }
 
   for (const s of skills) {
     const emoji = s.metadata.openclaw?.emoji || "🎯";
-    console.log(
-      `${emoji} ${chalk.bold(s.name)} ${chalk.dim(s.enabled ? "" : "(disabled)")}`,
-    );
-    console.log(`   ${chalk.dim(s.description)}`);
+    log.cli.info(`${emoji} ${s.name} ${s.enabled ? "" : "(disabled)"}`);
+    log.cli.info(`   ${s.description}`);
     if (s.requiredEnv?.length || s.requiredBins?.length) {
       const reqs: string[] = [];
       if (s.requiredEnv?.length) reqs.push(`env: ${s.requiredEnv.join(", ")}`);
       if (s.requiredBins?.length)
         reqs.push(`bins: ${s.requiredBins.join(", ")}`);
-      console.log(`   ${chalk.yellow(reqs.join(" | "))}`);
+      log.cli.info(`   ${reqs.join(" | ")}`);
     }
-    console.log("");
+    log.cli.info("");
   }
 }
 
@@ -1841,21 +1805,17 @@ async function evolveCommand(owlName: string) {
   const { evolutionEngine } = await bootstrap();
 
   if (!owlName) {
-    console.error(chalk.red("❌ Please provide an owl name to evolve."));
+    log.cli.error("❌ Please provide an owl name to evolve.");
     process.exit(1);
   }
 
   try {
     const mutated = await evolutionEngine.evolve(owlName);
     if (!mutated) {
-      console.log(
-        chalk.yellow(
-          `\n🦤 No evolution triggered for ${owlName}. They didn't learn anything new.`,
-        ),
-      );
+      log.cli.info(`🦤 No evolution triggered for ${owlName}. They didn't learn anything new.`);
     }
   } catch (error) {
-    console.error(chalk.red("\nEvolution failed:"), error);
+    log.cli.error("Evolution failed:", error);
     process.exit(1);
   }
 }
@@ -1868,12 +1828,8 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   const botToken = b.config.telegram?.botToken ?? "";
 
   if (!botToken) {
-    console.error(chalk.red("❌ Telegram bot token not found."));
-    console.log(
-      chalk.dim(
-        '  Run ./start.sh to configure, or set "telegram.botToken" in stackowl.config.json',
-      ),
-    );
+    log.cli.error("❌ Telegram bot token not found.");
+    log.cli.info('  Run ./start.sh to configure, or set "telegram.botToken" in stackowl.config.json');
     process.exit(1);
   }
 
@@ -1881,24 +1837,19 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     ? b.owlRegistry.get(opts.owl)
     : b.owlRegistry.getDefault();
   if (!owl) {
-    console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
+    log.cli.error(`❌ Owl "${opts.owl}" not found.`);
     process.exit(1);
   }
 
   const provider = b.providerRegistry.getDefault();
   if (!(await provider.healthCheck())) {
-    console.error(
-      chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`),
-    );
+    log.cli.error(`❌ Cannot reach ${provider.name}. Is it running?`);
     process.exit(1);
   }
 
-  console.log(
-    chalk.green(`✓ Provider: ${provider.name}`) +
-      chalk.dim(` (model: ${b.config.defaultModel})`),
-  );
-  console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
-  console.log(chalk.green(`✓ Channel: 📱 Telegram`));
+  log.cli.info(`✓ Provider: ${provider.name} (model: ${b.config.defaultModel})`);
+  log.cli.info(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`);
+  log.cli.info("✓ Channel: 📱 Telegram");
 
   const gateway = await buildGateway(b, owl);
   const adapter = new TelegramAdapter(gateway, {
@@ -1908,7 +1859,7 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   gateway.register(adapter);
 
   const shutdown = async () => {
-    console.log(chalk.dim("\n🦉 Shutting down..."));
+    log.cli.info("🦉 Shutting down...");
     adapter.stop();
     await b.browserPool?.shutdown();
     await b.puppeteerFetcher?.close();
@@ -1920,7 +1871,7 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
   await adapter.start();
 
   if (opts.withCli) {
-    console.log(chalk.dim("\n📱 Telegram running. CLI also active.\n"));
+    log.cli.info("📱 Telegram running. CLI also active.");
     await chatCommand(opts.owl);
   }
 }
@@ -1932,13 +1883,9 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
 
   const slackConfig = b.config.slack;
   if (!slackConfig?.botToken || !slackConfig?.appToken) {
-    console.error(chalk.red("❌ Slack credentials not found."));
-    console.log(
-      chalk.dim(
-        '  Set "slack.botToken" (xoxb-...) and "slack.appToken" (xapp-...) in stackowl.config.json',
-      ),
-    );
-    console.log(chalk.dim("  See: https://api.slack.com/start/quickstart"));
+    log.cli.error("❌ Slack credentials not found.");
+    log.cli.info('  Set "slack.botToken" (xoxb-...) and "slack.appToken" (xapp-...) in stackowl.config.json');
+    log.cli.info("  See: https://api.slack.com/start/quickstart");
     process.exit(1);
   }
 
@@ -1946,24 +1893,19 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
     ? b.owlRegistry.get(opts.owl)
     : b.owlRegistry.getDefault();
   if (!owl) {
-    console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
+    log.cli.error(`❌ Owl "${opts.owl}" not found.`);
     process.exit(1);
   }
 
   const provider = b.providerRegistry.getDefault();
   if (!(await provider.healthCheck())) {
-    console.error(
-      chalk.red(`❌ Cannot reach ${provider.name}. Is it running?`),
-    );
+    log.cli.error(`❌ Cannot reach ${provider.name}. Is it running?`);
     process.exit(1);
   }
 
-  console.log(
-    chalk.green(`✓ Provider: ${provider.name}`) +
-      chalk.dim(` (model: ${b.config.defaultModel})`),
-  );
-  console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
-  console.log(chalk.green(`✓ Channel: 💬 Slack`));
+  log.cli.info(`✓ Provider: ${provider.name} (model: ${b.config.defaultModel})`);
+  log.cli.info(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`);
+  log.cli.info("✓ Channel: 💬 Slack");
 
   const gateway = await buildGateway(b, owl);
   const adapter = new SlackAdapter(gateway, {
@@ -1977,7 +1919,7 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
   gateway.register(adapter);
 
   const shutdown = async () => {
-    console.log(chalk.dim("\n🦉 Shutting down..."));
+    log.cli.info("🦉 Shutting down...");
     adapter.stop();
     await b.browserPool?.shutdown();
     await b.puppeteerFetcher?.close();
@@ -1989,7 +1931,7 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
   await adapter.start();
 
   if (opts.withCli) {
-    console.log(chalk.dim("\n💬 Slack running. CLI also active.\n"));
+    log.cli.info("💬 Slack running. CLI also active.");
     await chatCommand(opts.owl);
   }
 }
@@ -2005,24 +1947,19 @@ async function webCommand(port?: string, owlName?: string) {
   // Health check
   const healthy = await provider.healthCheck();
   if (!healthy) {
-    console.error(
-      chalk.red(`❌ Cannot reach ${provider.name} provider. Is it running?`),
-    );
+    log.cli.error(`❌ Cannot reach ${provider.name} provider. Is it running?`);
     process.exit(1);
   }
 
   const owl = owlName ? b.owlRegistry.get(owlName) : b.owlRegistry.getDefault();
   if (!owl) {
-    console.error(chalk.red(`❌ Owl "${owlName}" not found.`));
+    log.cli.error(`❌ Owl "${owlName}" not found.`);
     process.exit(1);
   }
 
-  console.log(
-    chalk.green(`✓ Provider: ${provider.name}`) +
-      chalk.dim(` (model: ${b.config.defaultModel})`),
-  );
-  console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
-  console.log(chalk.green(`✓ Channel: 🌐 WebSocket Control Plane`));
+  log.cli.info(`✓ Provider: ${provider.name} (model: ${b.config.defaultModel})`);
+  log.cli.info(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`);
+  log.cli.info("✓ Channel: 🌐 WebSocket Control Plane");
 
   const gateway = await buildGateway(b, owl);
 
@@ -2047,9 +1984,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
 
   const healthy = await provider.healthCheck();
   if (!healthy) {
-    console.error(
-      chalk.red(`❌ Cannot reach ${provider.name} provider. Is it running?`),
-    );
+    log.cli.error(`❌ Cannot reach ${provider.name} provider. Is it running?`);
     process.exit(1);
   }
 
@@ -2057,15 +1992,12 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     ? b.owlRegistry.get(opts.owl)
     : b.owlRegistry.getDefault();
   if (!owl) {
-    console.error(chalk.red(`❌ Owl "${opts.owl}" not found.`));
+    log.cli.error(`❌ Owl "${opts.owl}" not found.`);
     process.exit(1);
   }
 
-  console.log(
-    chalk.green(`✓ Provider: ${provider.name}`) +
-      chalk.dim(` (model: ${b.config.defaultModel})`),
-  );
-  console.log(chalk.green(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`));
+  log.cli.info(`✓ Provider: ${provider.name} (model: ${b.config.defaultModel})`);
+  log.cli.info(`✓ Owl: ${owl.persona.emoji} ${owl.persona.name}`);
 
   // 1. Build Gateway (shared across all channels)
   const gateway = await buildGateway(b, owl);
@@ -2080,9 +2012,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     resolvedPort,
   );
   await server.start();
-  console.log(
-    chalk.green(`✓ Channel: 🌐 WebSocket Control Plane (port ${resolvedPort})`),
-  );
+  log.cli.info(`✓ Channel: 🌐 WebSocket Control Plane (port ${resolvedPort})`);
 
   // 3. Check for Slack (start before Telegram — Telegram's bot.start() blocks)
   if (b.config.slack?.botToken && b.config.slack?.appToken) {
@@ -2097,12 +2027,11 @@ async function allCommand(opts: { owl?: string; port?: string }) {
       });
       gateway.register(slackAdapter);
       await slackAdapter.start();
-      console.log(chalk.green(`✓ Channel: 💬 Slack`));
+      log.cli.info("✓ Channel: 💬 Slack");
     } catch (err) {
-      console.error(
-        chalk.red(
-          `✗ Slack failed to start: ${err instanceof Error ? err.message : err}`,
-        ),
+      log.cli.error(
+        `✗ Slack failed to start: ${err instanceof Error ? err.message : err}`,
+        err,
       );
     }
   }
@@ -2120,13 +2049,12 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     gateway.register(telegramAdapter);
     pendingTelegramAdapter = telegramAdapter;
     telegramAdapter.start().catch((err) => {
-      console.error(
-        chalk.red(
-          `✗ Telegram failed: ${err instanceof Error ? err.message : err}`,
-        ),
+      log.cli.error(
+        `✗ Telegram failed: ${err instanceof Error ? err.message : err}`,
+        err,
       );
     });
-    console.log(chalk.green(`✓ Channel: 📱 Telegram`));
+    log.cli.info("✓ Channel: 📱 Telegram");
   }
 
   // Agent Watch — supervises Claude Code / OpenCode sessions
@@ -2139,7 +2067,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     });
     agentWatch.start();
     gateway.agentWatch = agentWatch;
-    console.log(chalk.green(`✓ Agent Watch: http://localhost:3111/agent-watch`));
+    log.cli.info("✓ Agent Watch: http://localhost:3111/agent-watch");
   }
 
   // 5. Start CLI adapter
@@ -2164,7 +2092,7 @@ async function allCommand(opts: { owl?: string; port?: string }) {
   }
 
   const shutdown = async () => {
-    console.log(chalk.dim("\n🦉 Shutting down all channels..."));
+    log.cli.info("🦉 Shutting down all channels...");
     cliAdapter.stop();
     await b.browserPool?.shutdown();
     await b.puppeteerFetcher?.close();
@@ -2225,7 +2153,7 @@ program
   .description("Convene a Parliament of owls to debate a complex topic")
   .action((topic) => {
     parliamentCommand(topic).catch((err) => {
-      console.error(chalk.red(`Fatal error: ${err.message}`));
+      log.cli.error(`Fatal error: ${err.message}`, err);
       process.exit(1);
     });
   });
@@ -2254,7 +2182,7 @@ program
   )
   .action((opts) => {
     pelletsCommand(opts).catch((err) => {
-      console.error(chalk.red(`Fatal error: ${err.message}`));
+      log.cli.error(`Fatal error: ${err.message}`, err);
       process.exit(1);
     });
   });
@@ -2264,7 +2192,7 @@ program
   .description("Trigger a DNA evolution pass for a specific owl")
   .action((owlName) => {
     evolveCommand(owlName).catch((err) => {
-      console.error(chalk.red(`Fatal error: ${err.message}`));
+      log.cli.error(`Fatal error: ${err.message}`, err);
       process.exit(1);
     });
   });
@@ -2276,7 +2204,7 @@ program
   .option("-o, --owl <name>", "Owl persona to use")
   .action((opts) => {
     webCommand(opts.port, opts.owl).catch((err) => {
-      console.error(chalk.red(`Fatal error: ${err.message}`));
+      log.cli.error(`Fatal error: ${err.message}`, err);
       process.exit(1);
     });
   });
@@ -2308,7 +2236,7 @@ program
       clawhubSearch?: string;
     }) => {
       await skillsCommand(opts).catch((err) => {
-        console.error(chalk.red(`Fatal error: ${err.message}`));
+        log.cli.error(`Fatal error: ${err.message}`, err);
         process.exit(1);
       });
     },
@@ -2323,7 +2251,7 @@ program
   .option("-p, --port <number>", "Port for Web UI", "3000")
   .action((opts) => {
     allCommand(opts).catch((err) => {
-      console.error(chalk.red(`Fatal error: ${err.message}`));
+      log.cli.error(`Fatal error: ${err.message}`, err);
       process.exit(1);
     });
   });

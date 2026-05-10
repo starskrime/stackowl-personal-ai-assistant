@@ -1,6 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ToolImplementation } from "../registry.js";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 const TIMEOUT_MS = 15000;
@@ -44,6 +45,9 @@ export const GitTool: ToolImplementation = {
     const message = args.message as string | undefined;
     const cwd = context.cwd;
 
+    // 1. ENTRY
+    log.tool.debug("git_tool.execute: entry", { action, stashAction, cwd });
+
     try {
       let cmd: string;
 
@@ -80,6 +84,11 @@ export const GitTool: ToolImplementation = {
           return `Unknown action: ${action}. Use status, log, diff, branch, or stash.`;
       }
 
+      // 2. DECISION — local vs remote operation
+      const isRemoteOp = action === "log" || (action === "stash" && stashAction === "pop");
+      log.tool.debug("git_tool.execute: command built", { cmd, isRemoteOp });
+
+      // 3. STEP — subprocess spawned
       const { stdout, stderr } = await execAsync(cmd, {
         timeout: TIMEOUT_MS,
         cwd,
@@ -87,11 +96,17 @@ export const GitTool: ToolImplementation = {
       const output = (stdout || "").trim();
       const errors = (stderr || "").trim();
 
+      log.tool.debug("git_tool.execute: command complete", { outputLen: output.length, hasStderr: !!errors });
+
       if (!output && !errors) return `git ${action}: no output (clean state).`;
       if (errors && !output) return errors;
       if (errors) return `${output}\n\n(stderr: ${errors})`;
+
+      // 4. EXIT
+      log.tool.debug("git_tool.execute: exit", { success: true, resultLen: output.length });
       return output;
     } catch (e) {
+      log.tool.error("git_tool.execute: command failed", e instanceof Error ? e : new Error(String(e)), { action });
       return `git_tool error: ${e instanceof Error ? e.message : String(e)}`;
     }
   },

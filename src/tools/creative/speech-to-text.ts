@@ -5,6 +5,7 @@
  */
 
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 import { access, constants } from "node:fs/promises";
 import { resolve, extname } from "node:path";
@@ -52,6 +53,8 @@ export const SpeechToTextTool: ToolImplementation = {
       const filePath = args["file_path"] as string;
       if (!filePath) return "Error: 'file_path' parameter is required.";
 
+      log.tool.debug("speech_to_text.execute: entry", { filePath });
+
       const apiKey = process.env["OPENAI_API_KEY"];
       if (!apiKey) {
         return (
@@ -66,7 +69,8 @@ export const SpeechToTextTool: ToolImplementation = {
       // Check file exists
       try {
         await access(resolvedPath, constants.R_OK);
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Error: File not found or not readable: ${resolvedPath}`;
       }
 
@@ -77,6 +81,7 @@ export const SpeechToTextTool: ToolImplementation = {
       }
 
       // Use curl for multipart form upload (simpler than Node FormData with files)
+      log.tool.debug("speech_to_text.execute: calling Whisper API", { resolvedPath });
       const { stdout, stderr } = await execAsync(
         `curl -s -X POST "https://api.openai.com/v1/audio/transcriptions" ` +
           `-H "Authorization: Bearer ${apiKey}" ` +
@@ -95,16 +100,20 @@ export const SpeechToTextTool: ToolImplementation = {
           error?: { message: string };
         };
         if (result.error) {
+          log.tool.error("speech_to_text.execute: Whisper API error", new Error(result.error.message), { filePath });
           return `Whisper API error: ${result.error.message}`;
         }
         if (result.text) {
+          log.tool.debug("speech_to_text.execute: exit", { success: true, transcriptLen: result.text.length });
           return `Transcription:\n\n${result.text}`;
         }
         return `Unexpected API response: ${stdout}`;
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
         return `Unexpected API response (not JSON): ${stdout}`;
       }
     } catch (error: any) {
+      log.tool.error("speech_to_text.execute: unexpected error", error as Error, { filePath: args["file_path"] });
       return `Error transcribing audio: ${error.message ?? String(error)}`;
     }
   },

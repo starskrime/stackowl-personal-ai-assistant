@@ -1330,9 +1330,9 @@ export class MemoryDatabase {
       // v16: GAV verifier columns on trajectory_turns + workspace_tools table.
       // Fresh DBs already have these columns via createSchema(); the ALTER TABLE
       // statements are only needed for existing pre-v16 databases.
-      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verification_result TEXT`); } catch {}
-      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verifier_reason TEXT`); } catch {}
-      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN subgoal_id TEXT`); } catch {}
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verification_result TEXT`); } catch (err) { log.memory.warn("db migration: ALTER TABLE trajectory_turns verification_result (may already exist)", err); }
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verifier_reason TEXT`); } catch (err) { log.memory.warn("db migration: ALTER TABLE trajectory_turns verifier_reason (may already exist)", err); }
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN subgoal_id TEXT`); } catch (err) { log.memory.warn("db migration: ALTER TABLE trajectory_turns subgoal_id (may already exist)", err); }
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS workspace_tools (
           tool_name     TEXT PRIMARY KEY,
@@ -1844,8 +1844,9 @@ class FactsRepo {
         this.incrementAccess(ftsRows.map((r: any) => r.id));
         return ftsRows.map(rowToFact);
       }
-    } catch {
+    } catch (err) {
       // FTS5 may fail on special chars — fall through to LIKE
+      log.memory.warn("facts FTS5 query failed, falling back to LIKE", err);
     }
 
     // LIKE fallback
@@ -2307,7 +2308,8 @@ class OwlLearningsRepo {
         LIMIT ?
       `).all(query, limit) as any[];
       return rows.map(rowToLearning);
-    } catch {
+    } catch (err) {
+      log.memory.warn("owl_learnings FTS5 query failed, falling back to LIKE", err);
       const rows = this.db.prepare(`
         SELECT * FROM owl_learnings WHERE learning LIKE ? ORDER BY confidence DESC LIMIT ?
       `).all(`%${query}%`, limit) as any[];
@@ -2917,7 +2919,8 @@ class TrajectoriesRepo {
         LIMIT 10
       `).all(daysBack, minOccurrences) as Array<{ tool_name: string }>;
       return rows.map((r) => r.tool_name);
-    } catch {
+    } catch (err) {
+      log.memory.warn("getFailureDensityTopics db query failed", err);
       return [];
     }
   }
@@ -3569,9 +3572,9 @@ export class StackOwlDB {
       // Safe to skip: createSchema() already creates tables with all columns
       // for fresh databases. The ALTER TABLE statements only apply to existing
       // databases upgrading from an earlier schema version.
-      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verification_result TEXT`); } catch {}
-      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verifier_reason TEXT`); } catch {}
-      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN subgoal_id TEXT`); } catch {}
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verification_result TEXT`); } catch (err) { log.memory.warn("db migration: ALTER TABLE trajectory_turns verification_result (may already exist)", err); }
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN verifier_reason TEXT`); } catch (err) { log.memory.warn("db migration: ALTER TABLE trajectory_turns verifier_reason (may already exist)", err); }
+      try { this.db.exec(`ALTER TABLE trajectory_turns ADD COLUMN subgoal_id TEXT`); } catch (err) { log.memory.warn("db migration: ALTER TABLE trajectory_turns subgoal_id (may already exist)", err); }
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS workspace_tools (
           tool_name     TEXT PRIMARY KEY,

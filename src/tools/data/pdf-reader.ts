@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const PDFReaderTool: ToolImplementation = {
   definition: {
@@ -45,6 +46,8 @@ export const PDFReaderTool: ToolImplementation = {
     const query = args.query as string | undefined;
     const cwd = context.cwd || process.cwd();
 
+    log.tool.debug("pdf_reader.execute: entry", { action, filePath, pages, query });
+
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const { resolve } = await import("node:path");
@@ -53,6 +56,7 @@ export const PDFReaderTool: ToolImplementation = {
 
     const resolvedPath = resolve(cwd, filePath);
     if (!existsSync(resolvedPath)) {
+      log.tool.debug("pdf_reader.execute: file not found", { resolvedPath });
       return `Error: File not found: ${resolvedPath}`;
     }
 
@@ -64,6 +68,7 @@ export const PDFReaderTool: ToolImplementation = {
     try {
       switch (action) {
         case "read": {
+          log.tool.debug("pdf_reader.execute: reading pdf", { resolvedPath, pages });
           // Try multiple PDF extraction methods
           let text = "";
 
@@ -83,9 +88,12 @@ export const PDFReaderTool: ToolImplementation = {
                 `pdftotext -f 1 -l 10 "${resolvedPath}" - 2>/dev/null`,
               );
             }
-            if (text.trim())
+            if (text.trim()) {
+              log.tool.debug("pdf_reader.execute: exit", { success: true, method: "pdftotext", resultLen: text.length });
               return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
-          } catch {
+            }
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             /* try next method */
           }
 
@@ -131,9 +139,12 @@ except ImportError:
             text = await shell(
               `python3 -c '${pyScript.replace(/'/g, "'\\''")}' 2>/dev/null`,
             );
-            if (text && text !== "NO_LIB")
+            if (text && text !== "NO_LIB") {
+              log.tool.debug("pdf_reader.execute: exit", { success: true, method: "python", resultLen: text.length });
               return `📄 PDF Content (${resolvedPath}):\n\n${text}`;
-          } catch {
+            }
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             /* try next */
           }
 
@@ -142,9 +153,12 @@ except ImportError:
             text = await shell(
               `mdimport -d2 "${resolvedPath}" 2>&1 | head -200`,
             );
-            if (text.trim())
+            if (text.trim()) {
+              log.tool.debug("pdf_reader.execute: exit", { success: true, method: "mdimport", resultLen: text.length });
               return `📄 PDF Content (extracted via Spotlight):\n\n${text}`;
-          } catch {
+            }
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             /* fallthrough */
           }
 
@@ -157,10 +171,12 @@ except ImportError:
         }
 
         case "info": {
+          log.tool.debug("pdf_reader.execute: fetching pdf info", { resolvedPath });
           let info = "";
           try {
             info = await shell(`pdfinfo "${resolvedPath}" 2>/dev/null`);
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             try {
               info = await shell(
                 `python3 -c "
@@ -173,16 +189,19 @@ if meta:
         print(f'{k}: {v}')
 " 2>/dev/null`,
               );
-            } catch {
+            } catch (err) {
+              log.tool.warn('operation failed', err);
               info = await shell(
                 `mdls -name kMDItemNumberOfPages -name kMDItemTitle -name kMDItemAuthors "${resolvedPath}" 2>/dev/null`,
               );
             }
           }
+          log.tool.debug("pdf_reader.execute: exit", { success: true, action: "info", infoLen: info.length });
           return `📋 PDF Info (${resolvedPath}):\n${info || "Could not read metadata."}`;
         }
 
         case "search": {
+          log.tool.debug("pdf_reader.execute: searching pdf", { resolvedPath, query });
           if (!query) return "Error: search requires 'query'.";
           try {
             const text = await shell(
@@ -201,8 +220,10 @@ if meta:
             const formatted = matches
               .slice(0, 20)
               .map((m) => `  Line ${m.line}: ${m.text.trim()}`);
+            log.tool.debug("pdf_reader.execute: exit", { success: true, action: "search", matchCount: matches.length });
             return `🔍 Found ${matches.length} matches for "${query}":\n\n${formatted.join("\n")}`;
-          } catch {
+          } catch (err) {
+            log.tool.error("pdf_reader.execute: search failed", err as Error, { resolvedPath, query });
             return "Search requires pdftotext. Install: brew install poppler";
           }
         }
@@ -212,6 +233,7 @@ if meta:
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      log.tool.error("pdf_reader.execute: unexpected error", error as Error, { action, filePath });
       return `Error: ${msg}`;
     }
   },

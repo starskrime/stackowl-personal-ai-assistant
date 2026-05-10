@@ -1,4 +1,5 @@
 import type { ToolImplementation } from "../registry.js";
+import { log } from "../../logger.js";
 
 function extractMeta(html: string, property: string): string | null {
   // Try og: property first
@@ -63,7 +64,12 @@ export const LinkPreviewTool: ToolImplementation = {
   async execute(args, _context) {
     const url = args.url as string;
 
+    // 1. ENTRY
+    log.tool.debug("link_preview.execute: entry", { url });
+
     try {
+      // 3. STEP — http fetch
+      log.tool.debug("link_preview.execute: http fetch", { url });
       const resp = await fetch(url, {
         signal: AbortSignal.timeout(15000),
         headers: {
@@ -88,6 +94,9 @@ export const LinkPreviewTool: ToolImplementation = {
       const type = extractMeta(html, "type") ?? "website";
       const siteName = extractMeta(html, "site_name") ?? "";
 
+      // 3. STEP — metadata extracted
+      log.tool.debug("link_preview.execute: metadata extracted", { title: title.slice(0, 80), hasImage: image !== "No image found", type });
+
       const lines = [
         `Title: ${title}`,
         `Description: ${description}`,
@@ -97,8 +106,13 @@ export const LinkPreviewTool: ToolImplementation = {
       if (siteName) lines.push(`Site: ${siteName}`);
       lines.push(`URL: ${url}`);
 
-      return lines.join("\n");
+      const result = lines.join("\n");
+      // 4. EXIT
+      log.tool.debug("link_preview.execute: exit", { resultLen: result.length });
+      return result;
     } catch (e) {
+      // ERROR
+      log.tool.error("link_preview.execute: fetch failed", e instanceof Error ? e : new Error(String(e)), { url });
       return `link_preview error: ${e instanceof Error ? e.message : String(e)}`;
     }
   },

@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const CalculatorTool: ToolImplementation = {
   definition: {
@@ -22,8 +23,9 @@ export const CalculatorTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const expression = String(args.expression);
+    log.tool.debug("calculator.execute: entry", { expression });
     try {
-      const expression = String(args.expression);
 
       // Sanitize: only allow safe characters and Math.xxx references
       const sanitized = expression.replace(/\s+/g, " ").trim();
@@ -60,8 +62,10 @@ export const CalculatorTool: ToolImplementation = {
         return `Error: Expression evaluated to an invalid number (${result})`;
       }
 
+      log.tool.debug("calculator.execute: exit", { success: true, result });
       return `${expression} = ${result}`;
     } catch (error) {
+      log.tool.error("calculator.execute: failed", error, { expression });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error evaluating expression: ${msg}`;
     }

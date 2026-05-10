@@ -6,6 +6,7 @@
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve, basename } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -47,6 +48,7 @@ export const MermaidDiagramTool: ToolImplementation = {
       if (!code) return "Error: 'code' parameter is required.";
 
       const name = (args["output"] as string) || `diagram-${Date.now()}`;
+      log.tool.debug("mermaid_diagram.execute: entry", { outputName: name, codeLen: code.length });
       const safeName = basename(name).replace(/[^a-zA-Z0-9_-]/g, "_");
 
       const diagramsDir = resolve(_context.cwd, "workspace", "diagrams");
@@ -57,16 +59,21 @@ export const MermaidDiagramTool: ToolImplementation = {
 
       // Attempt SVG generation via mermaid-cli
       const svgPath = resolve(diagramsDir, `${safeName}.svg`);
+      log.tool.debug("mermaid_diagram.execute: attempting SVG generation", { mmdPath, svgPath });
       try {
         await execAsync(
           `npx -y @mermaid-js/mermaid-cli mmdc -i "${mmdPath}" -o "${svgPath}"`,
           { timeout: EXEC_TIMEOUT_MS, cwd: _context.cwd },
         );
+        log.tool.debug("mermaid_diagram.execute: exit", { success: true, mmdPath, svgPath });
         return `Diagram saved:\n- Mermaid source: ${mmdPath}\n- SVG: ${svgPath}`;
-      } catch {
+      } catch (err) {
+        log.tool.warn('operation failed', err);
+        log.tool.debug("mermaid_diagram.execute: exit", { success: true, mmdPath, svgGenerated: false });
         return `Diagram saved as Mermaid source: ${mmdPath}\n(SVG generation failed — mmdc not available or errored. Install @mermaid-js/mermaid-cli to enable SVG output.)`;
       }
     } catch (error: any) {
+      log.tool.error("mermaid_diagram.execute: unexpected error", error as Error, { outputName: args["output"] });
       return `Error creating diagram: ${error.message ?? String(error)}`;
     }
   },

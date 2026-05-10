@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 
 export const DocumentTool: ToolImplementation = {
   definition: {
@@ -37,6 +38,7 @@ export const DocumentTool: ToolImplementation = {
   ): Promise<string> {
     const action = (args["action"] as string) || "parse";
     const filePath = args["filePath"] as string;
+    log.tool.debug("document.execute: entry", { action, filePath });
 
     if (!filePath) {
       return JSON.stringify({
@@ -58,9 +60,11 @@ export const DocumentTool: ToolImplementation = {
     }
 
     let buf: Buffer;
+    log.tool.debug("document.execute: reading file", { filePath, ext });
     try {
       buf = await readFile(filePath);
-    } catch {
+    } catch (err) {
+      log.tool.warn("document: file read failed", err);
       return JSON.stringify({
         success: false,
         error: {
@@ -70,11 +74,13 @@ export const DocumentTool: ToolImplementation = {
       });
     }
 
+    log.tool.debug("document.execute: parsing", { ext, action, fileSize: buf.length });
     try {
       if (ext === ".pdf") {
         const pdfParse = (await import("pdf-parse")).default;
         const data = await pdfParse(buf);
         if (action === "metadata") {
+          log.tool.debug("document.execute: exit", { success: true, ext, action, pages: data.numpages });
           return JSON.stringify({
             success: true,
             data: {
@@ -84,6 +90,7 @@ export const DocumentTool: ToolImplementation = {
             },
           });
         }
+        log.tool.debug("document.execute: exit", { success: true, ext, action, pages: data.numpages, textLen: data.text.length });
         return JSON.stringify({
           success: true,
           data: {
@@ -97,6 +104,7 @@ export const DocumentTool: ToolImplementation = {
       if (ext === ".docx") {
         const mammoth = await import("mammoth");
         const result = await mammoth.extractRawText({ buffer: buf });
+        log.tool.debug("document.execute: exit", { success: true, ext, action, textLen: result.value.length });
         return JSON.stringify({
           success: true,
           data: { text: result.value, tables: [], metadata: {} },
@@ -105,11 +113,13 @@ export const DocumentTool: ToolImplementation = {
 
       // .md and .txt
       const text = buf.toString("utf-8");
+      log.tool.debug("document.execute: exit", { success: true, ext, action, textLen: text.length });
       return JSON.stringify({
         success: true,
         data: { text, tables: [], metadata: { size: buf.length } },
       });
     } catch (err) {
+      log.tool.error("document.execute: parse failed", err, { ext, action, filePath });
       const msg = err instanceof Error ? err.message : String(err);
       return JSON.stringify({
         success: false,

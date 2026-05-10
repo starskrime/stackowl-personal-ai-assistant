@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -21,6 +22,7 @@ export const SystemInfoTool: ToolImplementation = {
     _args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    log.tool.debug("system_info.execute: entry");
     const commands = [
       { label: "macOS Version", cmd: "sw_vers" },
       { label: "Memory (bytes)", cmd: "sysctl -n hw.memsize" },
@@ -34,9 +36,11 @@ export const SystemInfoTool: ToolImplementation = {
 
     for (const { label, cmd } of commands) {
       try {
+        log.tool.debug("system_info.execute: running system command", { label });
         const { stdout } = await execAsync(cmd, { timeout: 15000 });
         results.push(`=== ${label} ===\n${stdout.trim()}`);
-      } catch {
+      } catch (err) {
+        log.tool.warn(`system-info: ${label} command failed`, err);
         results.push(`=== ${label} ===\nUnable to retrieve.`);
       }
     }
@@ -52,10 +56,13 @@ export const SystemInfoTool: ToolImplementation = {
           results[idx] = `=== Memory ===\n${gb} GB`;
         }
       }
-    } catch {
+    } catch (err) {
       // Keep raw output
+      log.tool.warn("system-info: memory GB conversion failed", err);
     }
 
-    return results.join("\n\n");
+    const result = results.join("\n\n");
+    log.tool.debug("system_info.execute: exit", { success: true, sectionsCount: results.length, resultLen: result.length });
+    return result;
   },
 };

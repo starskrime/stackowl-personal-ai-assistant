@@ -8,6 +8,7 @@
 import type { ToolImplementation, ToolContext } from "../../tools/registry.js";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { log } from "../../logger.js";
 
 export class SessionsListTool implements ToolImplementation {
   private workspacePath: string;
@@ -57,8 +58,9 @@ Examples:
             lastUpdated: data.metadata?.lastUpdatedAt || 0,
             owl: data.metadata?.owlName || "unknown",
           });
-        } catch {
+        } catch (err) {
           // Skip invalid files
+          log.tool.warn("sessions_list: skipping invalid session file", err);
         }
       }
 

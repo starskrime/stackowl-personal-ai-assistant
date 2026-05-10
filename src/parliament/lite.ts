@@ -165,7 +165,9 @@ export class ParliamentLite {
           votes.map((v) => v.owlName),
           synthesis,
         );
-      } catch { /* non-fatal */ }
+      } catch (err) {
+        log.parliament.warn("lite parliament verdict record failed", err);
+      }
     }
 
     log.engine.info(`[ParliamentLite] Verdict: ${verdict} — ${synthesis.slice(0, 100)}`);

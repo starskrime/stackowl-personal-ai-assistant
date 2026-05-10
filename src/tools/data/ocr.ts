@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const OCRTool: ToolImplementation = {
   definition: {
@@ -36,6 +37,8 @@ export const OCRTool: ToolImplementation = {
     const language = (args.language as string) || "en";
     const cwd = context.cwd || process.cwd();
 
+    log.tool.debug("ocr.execute: entry", { filePath, language });
+
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const { resolve } = await import("node:path");
@@ -44,6 +47,7 @@ export const OCRTool: ToolImplementation = {
 
     const resolvedPath = resolve(cwd, filePath);
     if (!existsSync(resolvedPath)) {
+      log.tool.debug("ocr.execute: file not found", { resolvedPath });
       return `Error: File not found: ${resolvedPath}`;
     }
 
@@ -86,9 +90,11 @@ for observation in observations {
 
       const text = stdout.trim();
       if (text && !text.startsWith("ERROR:")) {
+        log.tool.debug("ocr.execute: exit", { success: true, method: "swift-vision", resultLen: text.length });
         return `📷 OCR Result (${resolvedPath}):\n\n${text}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       // Swift approach failed — try alternatives
     }
 
@@ -103,9 +109,11 @@ for observation in observations {
         { timeout: 15000 },
       );
       if (stdout.trim()) {
+        log.tool.debug("ocr.execute: exit", { success: true, method: "macos-shortcuts", resultLen: stdout.trim().length });
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       /* try next */
     }
 
@@ -126,9 +134,11 @@ print(text)
         { timeout: 20000 },
       );
       if (stdout.trim()) {
+        log.tool.debug("ocr.execute: exit", { success: true, method: "python-tesseract", resultLen: stdout.trim().length });
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       /* try next */
     }
 
@@ -140,12 +150,15 @@ print(text)
         { timeout: 20000 },
       );
       if (stdout.trim()) {
+        log.tool.debug("ocr.execute: exit", { success: true, method: "tesseract-cli", resultLen: stdout.trim().length });
         return `📷 OCR Result (${resolvedPath}):\n\n${stdout.trim()}`;
       }
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       /* fallthrough */
     }
 
+    log.tool.debug("ocr.execute: all methods failed", { resolvedPath, language });
     return (
       `Could not perform OCR. Available options:\n` +
       `  1. macOS Vision framework (should work on macOS 10.15+)\n` +

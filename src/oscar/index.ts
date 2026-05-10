@@ -25,6 +25,7 @@ import { CheckpointManager } from "./action/checkpoint-manager.js";
 import { VisualMemoryNetwork, visualMemoryNetwork } from "./memory/index.js";
 import type { Affordance, Skill } from "./memory/types.js";
 import { CognitionEngine, cognitionEngine } from "./cognition/index.js";
+import { log } from "../logger.js";
 
 export interface OscarConfig {
   enableScreenPipeline?: boolean;
@@ -326,7 +327,8 @@ export class Oscar {
         { timeout: 1000 }
       );
       return stdout.trim();
-    } catch {
+    } catch (err) {
+      log.engine.warn(`oscar: getBundleId for "${appName}" failed, using name as fallback`, err);
       return appName;
     }
   }

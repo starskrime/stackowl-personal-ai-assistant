@@ -1,4 +1,5 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 export const WeatherTool: ToolImplementation = {
   definition: {
@@ -21,9 +22,11 @@ export const WeatherTool: ToolImplementation = {
     args: Record<string, unknown>,
     _context: ToolContext,
   ): Promise<string> {
+    const location = String(args.location);
+    log.tool.debug("weather.execute: entry", { location });
     try {
-      const location = String(args.location);
       const url = `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
+      log.tool.debug("weather.execute: fetching API", { url });
 
       const response = await fetch(url, {
         headers: { "User-Agent": "stackowl-weather-tool" },
@@ -81,8 +84,10 @@ export const WeatherTool: ToolImplementation = {
         }
       }
 
+      log.tool.debug("weather.execute: exit", { success: true, location, forecastDays: forecast?.length ?? 0 });
       return result;
     } catch (error) {
+      log.tool.error("weather.execute: failed", error, { location });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error fetching weather: ${msg}`;
     }

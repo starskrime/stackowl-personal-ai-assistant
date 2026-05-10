@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import { existsSync, statSync } from "node:fs";
 import { resolve, isAbsolute, basename } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
+import { log } from "../../logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,6 +54,7 @@ export const AirDropTool: ToolImplementation = {
     context: ToolContext,
   ): Promise<string> {
     const filePath = args.file_path as string | undefined;
+    log.tool.debug("airdrop.execute: entry", { filePath });
     if (!filePath) return "Error: airdrop requires file_path parameter.";
 
     const cwd = context.cwd || process.cwd();
@@ -71,6 +73,7 @@ export const AirDropTool: ToolImplementation = {
 
     const fileName = basename(absPath);
     const sizeKb = Math.round(stat.size / 1024);
+    log.tool.debug("airdrop.execute: file validated", { absPath, fileName, sizeKb });
 
     // Use NSSharingService via JXA ObjC bridge to trigger the AirDrop share sheet.
     // This is the only reliable programmatic path — AirDrop has no CLI interface.
@@ -104,6 +107,7 @@ airdropSvc.performWithItems(items);
 `;
 
     try {
+      log.tool.debug("airdrop.execute: spawning osascript JXA NSSharingService", { fileName });
       const { stdout } = await execFileAsync(
         "osascript",
         ["-l", "JavaScript", "-e", script],
@@ -111,18 +115,22 @@ airdropSvc.performWithItems(items);
       );
 
       if (stdout.trim() === "ok") {
-        return (
+        const result =
           `AirDrop share sheet opened for: ${fileName} (${sizeKb}KB)\n` +
           `The AirDrop picker is now visible — select a nearby device to send the file.\n` +
-          `The recipient must accept the transfer on their device.`
-        );
+          `The recipient must accept the transfer on their device.`;
+        log.tool.debug("airdrop.execute: exit", { success: true, resultLen: result.length });
+        return result;
       }
 
-      return `AirDrop initiated for ${fileName}. Check for the share sheet on screen.`;
+      const result = `AirDrop initiated for ${fileName}. Check for the share sheet on screen.`;
+      log.tool.debug("airdrop.execute: exit", { success: true, resultLen: result.length });
+      return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
 
       if (msg.includes("AirDrop not available")) {
+        log.tool.error("airdrop.execute: failed — AirDrop not available", err instanceof Error ? err : new Error(msg), { filePath });
         return (
           "AirDrop is not available.\n" +
           "Ensure:\n" +
@@ -132,6 +140,7 @@ airdropSvc.performWithItems(items);
         );
       }
 
+      log.tool.error("airdrop.execute: failed", err instanceof Error ? err : new Error(msg), { filePath });
       return `AirDrop error: ${msg}`;
     }
   },

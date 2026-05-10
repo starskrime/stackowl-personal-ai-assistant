@@ -334,7 +334,8 @@ export class MemoryBus {
         })
         .filter((m) => m.relevance > 0.25) // Only return matches
         .slice(0, 5);
-    } catch {
+    } catch (err) {
+      log.memory.warn("memory bus: fact search failed", err);
       return [];
     }
   }

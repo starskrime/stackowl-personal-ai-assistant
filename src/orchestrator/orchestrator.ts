@@ -21,6 +21,7 @@ import { OwlEngine } from "../engine/runtime.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
 import type { TaskStrategy, OrchestrationResult, SubTask } from "./types.js";
 import { log } from "../logger.js";
+import { withSpan } from "../infra/observability/context.js";
 import { SwarmBlackboard } from "../swarm/blackboard.js";
 import type { PlanLedger } from "../tasks/plan-ledger.js";
 import { DelegationDecider } from "../delegation/delegation-decider.js";
@@ -304,12 +305,14 @@ export class TaskOrchestrator {
     userMessage: string,
     baseContext: EngineContext,
   ): Promise<OrchestrationResult> {
-    const ctx: EngineContext = {
-      ...baseContext,
-      skipGapDetection: true,
-    };
-    const response = await this.engine.run(userMessage, ctx);
-    return toOrchResult(response, "DIRECT");
+    return withSpan("orchestrator.direct", async () => {
+      const ctx: EngineContext = {
+        ...baseContext,
+        skipGapDetection: true,
+      };
+      const response = await this.engine.run(userMessage, ctx);
+      return toOrchResult(response, "DIRECT");
+    });
   }
 
   // ─── STANDARD (with goal loop + strategy escalation) ─────────
@@ -328,6 +331,7 @@ export class TaskOrchestrator {
     userMessage: string,
     baseContext: EngineContext,
   ): Promise<OrchestrationResult> {
+    return withSpan("orchestrator.standard", async () => {
     const MAX_GOAL_ATTEMPTS = 3;
     const escalationLadder: Array<"STANDARD" | "PLANNED" | "SWARM"> = [
       "STANDARD",
@@ -446,6 +450,7 @@ export class TaskOrchestrator {
 
     // All attempts exhausted — return whatever we have
     return lastResult!;
+    }); // end withSpan("orchestrator.standard")
   }
 
   // ─── SPECIALIST ──────────────────────────────────────────────
@@ -456,27 +461,29 @@ export class TaskOrchestrator {
     strategy: TaskStrategy,
     callbacks: GatewayCallbacks,
   ): Promise<OrchestrationResult> {
-    const assignment = strategy.owlAssignments[0];
-    const specialistOwl = this.resolveOwl(assignment?.owlName);
+    return withSpan("orchestrator.specialist", async () => {
+      const assignment = strategy.owlAssignments[0];
+      const specialistOwl = this.resolveOwl(assignment?.owlName);
 
-    if (
-      specialistOwl &&
-      specialistOwl.persona.name !== baseContext.owl.persona.name
-    ) {
-      if (callbacks.onProgress) {
-        await callbacks.onProgress(
-          `${specialistOwl.persona.emoji} Routing to **${specialistOwl.persona.name}** (${specialistOwl.persona.type}) — ${assignment?.reasoning ?? "specialist match"}`,
-        );
+      if (
+        specialistOwl &&
+        specialistOwl.persona.name !== baseContext.owl.persona.name
+      ) {
+        if (callbacks.onProgress) {
+          await callbacks.onProgress(
+            `${specialistOwl.persona.emoji} Routing to **${specialistOwl.persona.name}** (${specialistOwl.persona.type}) — ${assignment?.reasoning ?? "specialist match"}`,
+          );
+        }
       }
-    }
 
-    const ctx: EngineContext = {
-      ...baseContext,
-      owl: specialistOwl ?? baseContext.owl,
-    };
+      const ctx: EngineContext = {
+        ...baseContext,
+        owl: specialistOwl ?? baseContext.owl,
+      };
 
-    const response = await this.engine.run(userMessage, ctx);
-    return toOrchResult(response, "SPECIALIST");
+      const response = await this.engine.run(userMessage, ctx);
+      return toOrchResult(response, "SPECIALIST");
+    });
   }
 
   // ─── PLANNED (wave-based parallel) ──────────────────────────
@@ -490,6 +497,7 @@ export class TaskOrchestrator {
     resumeContext?: Map<number, string>,
     planId?: string,
   ): Promise<OrchestrationResult> {
+    return withSpan("orchestrator.planned", async () => {
     let subtasks = strategy.subtasks;
 
     // Fallback: use TaskPlanner if classifier didn't provide subtasks
@@ -718,6 +726,7 @@ export class TaskOrchestrator {
       subtaskResults,
       usage: synthesisResponse.usage,
     };
+    }); // end withSpan("orchestrator.planned")
   }
 
   /**
@@ -762,6 +771,7 @@ export class TaskOrchestrator {
     strategy: TaskStrategy,
     callbacks: GatewayCallbacks,
   ): Promise<OrchestrationResult> {
+    return withSpan("orchestrator.parliament", async () => {
     // Resolve participants from classifier assignments
     const participants: OwlInstance[] = [];
     for (const assignment of strategy.owlAssignments) {
@@ -847,6 +857,7 @@ export class TaskOrchestrator {
       toolsUsed: ["summon_parliament"],
       strategy: "PARLIAMENT",
     };
+    }); // end withSpan("orchestrator.parliament")
   }
 
   // ─── SWARM (parallel specialist owls) ────────────────────────
@@ -857,6 +868,7 @@ export class TaskOrchestrator {
     strategy: TaskStrategy,
     callbacks: GatewayCallbacks,
   ): Promise<OrchestrationResult> {
+    return withSpan("orchestrator.swarm", async () => {
     const subtasks = strategy.subtasks;
     if (!subtasks || subtasks.length === 0) {
       return this.executeStandard(userMessage, baseContext);
@@ -1035,6 +1047,7 @@ export class TaskOrchestrator {
       subtaskResults,
       usage: synthesisResponse.usage,
     };
+    }); // end withSpan("orchestrator.swarm")
   }
 
 // ─── DELEGATED (sub-owl parallel execution) ──────────────────
@@ -1045,6 +1058,7 @@ export class TaskOrchestrator {
     strategy: TaskStrategy,
     callbacks: GatewayCallbacks,
   ): Promise<OrchestrationResult> {
+    return withSpan("orchestrator.delegated", async () => {
     const decider = new DelegationDecider();
     const decision = decider.decide(userMessage, {
       estimatedSubtasks: strategy.subtasks?.length ?? 0,
@@ -1102,6 +1116,7 @@ export class TaskOrchestrator {
         content: r.output,
       })),
     };
+    }); // end withSpan("orchestrator.delegated")
   }
 
   // ─── Helpers ─────────────────────────────────────────────────

@@ -6,6 +6,7 @@
  */
 
 import { log } from "../logger.js";
+import { runWithContext } from "../infra/observability/context.js";
 import { makeEnvelope } from "../gateway/delivery-envelope.js";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
@@ -79,6 +80,12 @@ export interface PingContext {
   eventBus?: import("../events/bus.js").EventBus;
   /** GatewayEventBus — when set, proactive messages are routed through the delivery bus */
   gatewayEventBus?: import("../gateway/event-bus.js").GatewayEventBus;
+  /**
+   * Channel adapter reference — when set and `capabilities().tuiV2` is true,
+   * proactive messages are emitted as `heartbeat.message` UiEvents so the
+   * TUI v2 HeartbeatBanner card lane renders them distinctly.
+   */
+  channelAdapter?: import("../gateway/types.js").ChannelAdapter;
   /** MemoryDatabase — used to record delivery outcomes */
   db?: import("../memory/db.js").MemoryDatabase;
   /** Stable user identifier for delivery/engagement rows */
@@ -156,7 +163,7 @@ export class ProactivePinger {
     if (!this.config.enabled) return;
 
     this.stop();
-    console.log("[ProactivePinger] 🔔 Proactive pinging started (queue-driven)");
+    log.heartbeat.info("[ProactivePinger] Proactive pinging started (queue-driven)");
 
     const userId = this.context.userId ?? "default";
 
@@ -169,20 +176,24 @@ export class ProactivePinger {
     // Replaces 8 independent timers. Polls the queue, respects quiet hours
     // by rescheduling jobs rather than skipping them.
     const workerTimer = setInterval(() => {
-      this.tickJobQueue(userId).catch((err) => {
-        console.error("[ProactivePinger] Job queue tick error:", err);
-      });
+      runWithContext({ channelId: "heartbeat", spanName: "heartbeat.worker-tick" }, () =>
+        this.tickJobQueue(userId).catch((err) => {
+          log.heartbeat.error("[ProactivePinger] Job queue tick error", err);
+        }),
+      );
     }, 30_000);
     this.timers.push(workerTimer);
 
     // ── Background worker (5-minute cycle, unchanged) ────────────
     // Executes pending AgentTask records (separate from the proactive queue).
     const bgTimer = setInterval(() => {
-      if (this._backgroundWorker && !this.isQuietHours()) {
-        this._backgroundWorker.tick().catch((err) => {
-          console.error("[ProactivePinger] Background worker tick error:", err);
-        });
-      }
+      runWithContext({ channelId: "heartbeat", spanName: "heartbeat.bg-worker-tick" }, () => {
+        if (this._backgroundWorker && !this.isQuietHours()) {
+          void this._backgroundWorker.tick().catch((err) => {
+            log.heartbeat.error("[ProactivePinger] Background worker tick error", err);
+          });
+        }
+      });
     }, 5 * 60 * 1000);
     this.timers.push(bgTimer);
   }
@@ -463,7 +474,7 @@ export class ProactivePinger {
       clearInterval(timer);
     }
     this.timers = [];
-    console.log("[ProactivePinger] 🔕 Proactive pinging stopped");
+    log.heartbeat.info("[ProactivePinger] Proactive pinging stopped");
   }
 
   /**
@@ -512,7 +523,7 @@ export class ProactivePinger {
           return;
         }
       } catch (err) {
-        console.error("[ProactivePinger] AutonomousPlanner error:", err);
+        log.heartbeat.error("[ProactivePinger] AutonomousPlanner error", err);
       }
     }
 
@@ -565,7 +576,7 @@ export class ProactivePinger {
             return;
           }
         } catch (err) {
-          console.warn("[ProactivePinger] Stale goal check failed:", err);
+          log.heartbeat.warn(`[ProactivePinger] Stale goal check failed: ${err instanceof Error ? err.message : err}`);
         }
       }
     }
@@ -610,7 +621,7 @@ export class ProactivePinger {
       if (staleGoals.length > 0) {
         goalContext = `Active goals: ${staleGoals.map((g) => `"${g.title}" (${g.progress}%)`).join(", ")}.`;
       }
-    } catch { /* non-critical */ }
+    } catch (err) { log.heartbeat.warn(`[ProactivePinger] Goal context load failed: ${err instanceof Error ? err.message : err}`); }
 
     // Use episodic memory to fetch semantic thematic clustering instead of raw text
     let historyContext = "";
@@ -672,7 +683,7 @@ export class ProactivePinger {
       );
       await pruner.scanAndPrune();
     } catch (e) {
-      console.error("[ProactivePinger] Tool pruning failed:", e);
+      log.heartbeat.error("[ProactivePinger] Tool pruning failed", e);
     }
   }
 
@@ -697,21 +708,19 @@ export class ProactivePinger {
     this.lastSelfStudyDate = dateKey;
 
     try {
-      console.log(
-        "[ProactivePinger] 🧠 Starting overnight self-study session...",
-      );
+      log.heartbeat.info("[ProactivePinger] Starting overnight self-study session...");
 
       const cycle =
         await this.context.learningOrchestrator.runProactiveSession();
       if (cycle.synthesisReport) {
-        console.log(
-          `[ProactivePinger] ✓ Self-study (orchestrator) done: ` +
+        log.heartbeat.info(
+          `[ProactivePinger] Self-study (orchestrator) done: ` +
             `${cycle.topicsPrioritized} topics, ` +
             `${cycle.synthesisReport.pelletsCreated} pellets created`,
         );
       }
     } catch (err) {
-      console.error("[ProactivePinger] Self-study session failed:", err);
+      log.heartbeat.error("[ProactivePinger] Self-study session failed", err);
     }
   }
 
@@ -733,8 +742,8 @@ export class ProactivePinger {
             `Active goals:\n${activeGoals.slice(0, 3).map((g: any) => `- ${g.title}`).join("\n")}`,
           );
         }
-      } catch {
-        // non-fatal
+      } catch (err) {
+        log.heartbeat.warn(`[ProactivePinger] assembleGoalContext failed: ${err instanceof Error ? err.message : err}`);
       }
     }
 
@@ -815,9 +824,35 @@ export class ProactivePinger {
     jobId: string = "",
     verdict: string = "skipped_check",
   ): Promise<void> {
-    const { gatewayEventBus, userId, db } = this.context;
+    const { gatewayEventBus, channelAdapter, userId, db } = this.context;
     const deliveryId = `del_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const channel = gatewayEventBus ? "gateway" : "direct";
+
+    // TUI v2 fast path: emit a heartbeat.message UiEvent so the HeartbeatBanner
+    // card lane renders it distinctly from solicited replies.
+    if (channelAdapter?.capabilities?.()?.tuiV2 && channelAdapter.emit) {
+      channelAdapter.emit({
+        kind: "heartbeat.message",
+        owlId: this.context.owl.persona.name,
+        owlName: this.context.owl.persona.name,
+        owlEmoji: this.context.owl.persona.emoji ?? "🔔",
+        text: message,
+        timestamp: Date.now(),
+      });
+      db?.writeProactiveDelivery({
+        id: deliveryId,
+        jobId,
+        channel: "tui-v2",
+        userId: userId ?? "local",
+        messagePreview: message.slice(0, 100),
+        verdict,
+        deliveredAt: new Date().toISOString(),
+        status: "delivered",
+      });
+      this.lastDeliveryId = deliveryId;
+      this.lastPingTime = Date.now();
+      return;
+    }
 
     if (gatewayEventBus && userId) {
       gatewayEventBus.publish(makeEnvelope({
@@ -910,8 +945,8 @@ export class ProactivePinger {
                 .join("\n") +
               "\n</past_sessions>\n\n";
           }
-        } catch {
-          // Non-fatal — proceed without episodes
+        } catch (err) {
+          log.heartbeat.warn(`[ProactivePinger] Episodic memory search failed: ${err instanceof Error ? err.message : err}`);
         }
       }
 
@@ -931,8 +966,7 @@ export class ProactivePinger {
         await this.handleUndeliverable(this.currentJobId, "no transport available (eventBus, gatewayEventBus, sendToUser all missing)");
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`[ProactivePinger] Failed to generate ping: ${msg}`);
+      log.heartbeat.error(`[ProactivePinger] Failed to generate ping: ${error instanceof Error ? error.message : String(error)}`, error);
     }
   }
 

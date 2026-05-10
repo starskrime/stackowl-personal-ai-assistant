@@ -17,6 +17,7 @@
  * by data. Not needed at current scale.
  */
 import type { MemoryDatabase } from "../../memory/db.js";
+import { log } from "../../logger.js";
 
 export interface ReplanOptions {
   /** Tool names to skip in addition to the current/failing tool. */
@@ -47,6 +48,14 @@ export class ToolGraph {
     );
     const placeholders = exclude.map(() => "?").join(",");
 
+    log.tool.debug("tool-graph.replan: entry", {
+      currentTool,
+      capabilityTag,
+      exclude,
+      minSamples,
+      hostRoot: opts.hostRoot,
+    });
+
     // 1. Try host-specific edge first when hostRoot is provided
     if (opts.hostRoot) {
       const hostRow = this.db.rawDb
@@ -60,7 +69,19 @@ export class ToolGraph {
         .get(capabilityTag, opts.hostRoot, minSamples, ...exclude) as
         | { to_tool: string }
         | undefined;
-      if (hostRow) return hostRow.to_tool;
+      if (hostRow) {
+        log.tool.debug("tool-graph.replan: host-specific alternative selected", {
+          chosen: hostRow.to_tool,
+          reason: "host-specific edge matched",
+          hostRoot: opts.hostRoot,
+          capabilityTag,
+        });
+        return hostRow.to_tool;
+      }
+      log.tool.debug("tool-graph.replan: no host-specific edge found, falling back to global", {
+        hostRoot: opts.hostRoot,
+        capabilityTag,
+      });
     }
 
     // 2. Global fallback — filter to host_root = '' to prevent per-host rows
@@ -77,6 +98,26 @@ export class ToolGraph {
       .get(capabilityTag, minSamples, ...exclude) as
       | { to_tool: string }
       | undefined;
+
+    if (row) {
+      log.tool.debug("tool-graph.replan: global alternative selected", {
+        chosen: row.to_tool,
+        reason: "global edge matched",
+        capabilityTag,
+      });
+    } else {
+      log.tool.debug("tool-graph.replan: no alternative found", {
+        reason: "no qualifying edge in graph",
+        capabilityTag,
+        exclude,
+        minSamples,
+      });
+    }
+
+    log.tool.debug("tool-graph.replan: exit", {
+      result: row?.to_tool ?? null,
+      success: true,
+    });
 
     return row?.to_tool ?? null;
   }

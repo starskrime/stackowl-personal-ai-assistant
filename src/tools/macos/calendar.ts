@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -55,10 +56,12 @@ export const AppleCalendarTool: ToolImplementation = {
     _context: ToolContext,
   ): Promise<string> {
     const action = args.action as string;
+    log.tool.debug("apple_calendar.execute: entry", { action });
 
     try {
       switch (action) {
         case "list": {
+          log.tool.debug("apple_calendar.execute: listing today's events via AppleScript");
           const script = `
 tell application "Calendar"
     set today to current date
@@ -86,7 +89,9 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || "No events found for today.";
+          const result = stdout.trim() || "No events found for today.";
+          log.tool.debug("apple_calendar.execute: exit", { success: true, resultLen: result.length });
+          return result;
         }
 
         case "add": {
@@ -99,6 +104,7 @@ end tell`;
             return "Error: 'add' action requires title, date, time, and duration parameters.";
           }
 
+          log.tool.debug("apple_calendar.execute: creating timed event via AppleScript", { title, date, time, duration });
           const [year, month, day] = date.split("-");
           const [hour, minute] = time.split(":");
 
@@ -121,7 +127,9 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || `Event "${title}" created successfully.`;
+          const result = stdout.trim() || `Event "${title}" created successfully.`;
+          log.tool.debug("apple_calendar.execute: exit", { success: true, resultLen: result.length });
+          return result;
         }
 
         case "search": {
@@ -130,6 +138,7 @@ end tell`;
             return "Error: 'search' action requires a keyword parameter.";
           }
 
+          log.tool.debug("apple_calendar.execute: searching events via AppleScript", { keyword });
           const script = `
 tell application "Calendar"
     set output to ""
@@ -155,13 +164,16 @@ end tell`;
             `osascript -e '${escapeForShell(script)}'`,
             { timeout: 15000 },
           );
-          return stdout.trim() || `No events found matching "${keyword}".`;
+          const result = stdout.trim() || `No events found matching "${keyword}".`;
+          log.tool.debug("apple_calendar.execute: exit", { success: true, resultLen: result.length });
+          return result;
         }
 
         default:
           return `Error: Unknown action "${action}". Use "list", "add", or "search".`;
       }
     } catch (error) {
+      log.tool.error("apple_calendar.execute: failed", error instanceof Error ? error : new Error(String(error)), { action });
       const msg = error instanceof Error ? error.message : String(error);
       return `Error interacting with Calendar: ${msg}`;
     }

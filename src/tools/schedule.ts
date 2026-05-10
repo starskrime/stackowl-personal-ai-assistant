@@ -1,6 +1,7 @@
 // src/tools/schedule.ts
 import { randomUUID } from "node:crypto";
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { log } from "../logger.js";
 
 interface ScheduledJob {
   id: string;
@@ -70,6 +71,7 @@ export const ScheduleTool: ToolImplementation = {
     const when    = args["when"]    as string | undefined;
     const message = args["message"] as string | undefined;
     const id      = args["id"]      as string | undefined;
+    log.tool.debug("schedule.execute: entry", { action, when, hasMessage: !!message, id });
 
     switch (action) {
       case "remind": {
@@ -82,6 +84,7 @@ export const ScheduleTool: ToolImplementation = {
         const job: ScheduledJob = { id: jobId, type: "remind", message, schedule: fireAt.toISOString(), createdAt: new Date().toISOString() };
         const timer = setTimeout(() => { JOB_STORE.delete(jobId); }, delayMs);
         JOB_STORE.set(jobId, { job, timer });
+        log.tool.debug("schedule.execute: exit", { success: true, action, jobId, fireAt: fireAt.toISOString(), delayMs });
         return JSON.stringify({ success: true, data: { id: jobId, message: `Reminder scheduled for ${fireAt.toISOString()}` } });
       }
 
@@ -94,6 +97,7 @@ export const ScheduleTool: ToolImplementation = {
         const job: ScheduledJob = { id: jobId, type: "repeat", message, schedule: `every ${intervalMs}ms`, createdAt: new Date().toISOString() };
         const timer = setInterval(() => {}, intervalMs);
         JOB_STORE.set(jobId, { job, timer });
+        log.tool.debug("schedule.execute: exit", { success: true, action, jobId, intervalMs });
         return JSON.stringify({ success: true, data: { id: jobId, message: `Repeating job every ${intervalMs}ms` } });
       }
 
@@ -104,11 +108,13 @@ export const ScheduleTool: ToolImplementation = {
         clearTimeout(entry.timer as ReturnType<typeof setTimeout>);
         clearInterval(entry.timer as ReturnType<typeof setInterval>);
         JOB_STORE.delete(id);
+        log.tool.debug("schedule.execute: exit", { success: true, action, id });
         return JSON.stringify({ success: true, data: { id, message: "Job cancelled" } });
       }
 
       case "list": {
         const jobs = Array.from(JOB_STORE.values()).map(({ job }) => job);
+        log.tool.debug("schedule.execute: exit", { success: true, action, jobCount: jobs.length });
         return JSON.stringify({ success: true, data: { jobs, count: jobs.length } });
       }
 

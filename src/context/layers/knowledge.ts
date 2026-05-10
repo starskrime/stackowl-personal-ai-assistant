@@ -1,5 +1,6 @@
 import type { ContextLayer, ContextRequest, TriageSignals, LayerResults } from "../layer.js";
 import { hash } from "../utils.js";
+import { log } from "../../logger.js";
 
 export class KnowledgeGraphLayer implements ContextLayer {
   name = "KnowledgeGraphLayer";
@@ -45,7 +46,8 @@ export class RelevantPelletsLayer implements ContextLayer {
       }
       lines.push("</relevant_pellets>");
       return lines.join("\n");
-    } catch {
+    } catch (err) {
+      log.memory.warn("knowledge layer: pellet retrieval failed", err);
       return "";
     }
   }

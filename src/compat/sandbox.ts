@@ -6,6 +6,7 @@
  */
 
 import { exec, spawn } from "node:child_process";
+import { log } from "../logger.js";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 
@@ -51,7 +52,8 @@ export class DockerSandbox {
     try {
       await execAsync("docker info", { timeout: 5000 });
       return true;
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       return false;
     }
   }
@@ -133,7 +135,8 @@ export class DockerSandbox {
         // Try to kill the container
         try {
           await execAsync(`docker kill ${containerName}`, { timeout: 5000 });
-        } catch {
+        } catch (err) {
+          log.tool.warn('operation failed', err);
           /* ignore */
         }
 
@@ -283,7 +286,8 @@ export class DockerSandbox {
         `docker ps -aq --filter "name=${CONTAINER_PREFIX}" | xargs -r docker rm`,
         { timeout: 10000 },
       );
-    } catch {
+    } catch (err) {
+      log.tool.warn('operation failed', err);
       /* ignore cleanup errors */
     }
   }

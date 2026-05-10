@@ -12,6 +12,7 @@
  * --restore-last-session, polling fetch on /json/version).
  */
 import { exec } from "node:child_process";
+import { log } from "../../logger.js";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
@@ -39,20 +40,33 @@ export interface BootstrapDeps {
  * port never came up.
  */
 export async function ensureChromeBootstrap(deps: BootstrapDeps): Promise<boolean> {
+  log.tool.debug("bootstrap.ensureChromeBootstrap: entry");
   if (await deps.isPortOpen()) {
+    log.tool.debug("bootstrap.ensureChromeBootstrap: CDP port already open, connecting");
     await deps.connect();
+    log.tool.debug("bootstrap.ensureChromeBootstrap: exit", { success: true, path: "port-already-open" });
     return true;
   }
 
+  log.tool.debug("bootstrap.ensureChromeBootstrap: port not open, prompting user");
   const approved = await deps.prompt();
-  if (!approved) return false;
+  if (!approved) {
+    log.tool.debug("bootstrap.ensureChromeBootstrap: exit", { success: false, path: "user-declined" });
+    return false;
+  }
 
+  log.tool.debug("bootstrap.ensureChromeBootstrap: relaunching Chrome with debug port");
   await deps.relaunchChrome();
 
+  log.tool.debug("bootstrap.ensureChromeBootstrap: waiting for port");
   const ready = await deps.waitForPort();
-  if (!ready) return false;
+  if (!ready) {
+    log.tool.debug("bootstrap.ensureChromeBootstrap: exit", { success: false, path: "port-timeout" });
+    return false;
+  }
 
   await deps.connect();
+  log.tool.debug("bootstrap.ensureChromeBootstrap: exit", { success: true, path: "relaunched" });
   return true;
 }
 
@@ -63,22 +77,28 @@ const DEFAULT_POLL_MS = 250;
 const DEFAULT_MAX_WAIT_MS = 8_000;
 
 export async function defaultIsPortOpen(port: number = DEBUG_PORT): Promise<boolean> {
+  log.tool.debug("bootstrap.defaultIsPortOpen: checking", { port });
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json/version`, {
       signal: AbortSignal.timeout(500),
     });
+    log.tool.debug("bootstrap.defaultIsPortOpen: result", { port, open: res.ok });
     return res.ok;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return false;
   }
 }
 
 export async function defaultRelaunchChrome(): Promise<void> {
+  log.tool.debug("bootstrap.defaultRelaunchChrome: entry", { debugPort: DEBUG_PORT });
   // Quit Chrome (preserves session via Chrome's own restore mechanism)
   // then reopen with debug port + restore-last-session so tabs come back.
   try {
     await execAsync(`osascript -e 'tell application "Google Chrome" to quit'`);
-  } catch {
+    log.tool.debug("bootstrap.defaultRelaunchChrome: Chrome quit");
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     // Chrome wasn't running — that's fine, we're about to launch it fresh.
   }
   // Small grace period so Chrome finishes its session-state flush before
@@ -87,6 +107,7 @@ export async function defaultRelaunchChrome(): Promise<void> {
   await execAsync(
     `open -a "Google Chrome" --args --remote-debugging-port=${DEBUG_PORT} --restore-last-session`,
   );
+  log.tool.debug("bootstrap.defaultRelaunchChrome: Chrome relaunched", { debugPort: DEBUG_PORT });
 }
 
 export async function defaultWaitForPort(

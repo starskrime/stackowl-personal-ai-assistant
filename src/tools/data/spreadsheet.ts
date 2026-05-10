@@ -6,6 +6,7 @@
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { log } from "../../logger.js";
 import { resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "../registry.js";
 
@@ -31,7 +32,8 @@ async function loadSpreadsheet(
   try {
     const content = await readFile(resolve(dir, `${name}.json`), "utf-8");
     return JSON.parse(content) as SpreadsheetData;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return null;
   }
 }
@@ -113,6 +115,8 @@ export const SpreadsheetTool: ToolImplementation = {
       if (!action) return "Error: 'action' parameter is required.";
       if (!rawName) return "Error: 'name' parameter is required.";
 
+      log.tool.debug("spreadsheet.execute: entry", { action, name: rawName });
+
       const name = sanitizeName(rawName);
       const dir = await getSpreadsheetDir(_context.cwd);
 
@@ -124,7 +128,8 @@ export const SpreadsheetTool: ToolImplementation = {
           let headers: string[];
           try {
             headers = JSON.parse(headersStr);
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             return "Error: 'headers' must be a valid JSON array string.";
           }
           if (!Array.isArray(headers) || headers.length === 0) {
@@ -133,6 +138,7 @@ export const SpreadsheetTool: ToolImplementation = {
           const data: SpreadsheetData = { headers, rows: [] };
           await saveSpreadsheet(dir, name, data);
           const filePath = resolve(dir, `${name}.json`);
+          log.tool.debug("spreadsheet.execute: exit", { success: true, action: "create", name, columnCount: headers.length });
           return `Spreadsheet '${name}' created with columns: ${headers.join(", ")}\nFile: ${filePath}`;
         }
 
@@ -143,7 +149,8 @@ export const SpreadsheetTool: ToolImplementation = {
           let values: string[];
           try {
             values = JSON.parse(valuesStr);
-          } catch {
+          } catch (err) {
+            log.tool.warn('operation failed', err);
             return "Error: 'values' must be a valid JSON array string.";
           }
           const sheet = await loadSpreadsheet(dir, name);
@@ -153,6 +160,7 @@ export const SpreadsheetTool: ToolImplementation = {
           }
           sheet.rows.push(values);
           await saveSpreadsheet(dir, name, sheet);
+          log.tool.debug("spreadsheet.execute: exit", { success: true, action: "add_row", name, totalRows: sheet.rows.length });
           return `Row added to '${name}' (total rows: ${sheet.rows.length}).`;
         }
 
@@ -165,6 +173,7 @@ export const SpreadsheetTool: ToolImplementation = {
           const header = sheet.headers.join(" | ");
           const separator = sheet.headers.map(() => "---").join(" | ");
           const rowLines = rows.map((r) => r.join(" | "));
+          log.tool.debug("spreadsheet.execute: exit", { success: true, action: "read", name, rowCount: rows.length });
           return `Spreadsheet '${name}' (rows ${start}-${Math.min(end, sheet.rows.length)} of ${sheet.rows.length}):\n\n${header}\n${separator}\n${rowLines.join("\n")}`;
         }
 
@@ -203,6 +212,7 @@ export const SpreadsheetTool: ToolImplementation = {
           const header = sheet.headers.join(" | ");
           const separator = sheet.headers.map(() => "---").join(" | ");
           const rowLines = matches.map((r) => r.join(" | "));
+          log.tool.debug("spreadsheet.execute: exit", { success: true, action: "query", name, matchCount: matches.length });
           return `Query results (${matches.length} matches for ${column} ${operator} ${value}):\n\n${header}\n${separator}\n${rowLines.join("\n")}`;
         }
 
@@ -222,6 +232,7 @@ export const SpreadsheetTool: ToolImplementation = {
           const csvContent = lines.join("\n");
           const csvPath = resolve(dir, `${name}.csv`);
           await writeFile(csvPath, csvContent, "utf-8");
+          log.tool.debug("spreadsheet.execute: exit", { success: true, action: "export_csv", name, csvPath });
           return `CSV exported to: ${csvPath}`;
         }
 
@@ -229,6 +240,7 @@ export const SpreadsheetTool: ToolImplementation = {
           return `Error: Unknown action '${action}'. Valid actions: create, add_row, read, query, export_csv`;
       }
     } catch (error: any) {
+      log.tool.error("spreadsheet.execute: operation failed", error as Error, { action: args["action"] });
       return `Error in spreadsheet operation: ${error.message ?? String(error)}`;
     }
   },

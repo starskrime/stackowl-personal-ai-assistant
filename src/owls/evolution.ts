@@ -256,8 +256,8 @@ export class OwlEvolutionEngine {
             `- High tool failure (>20%) → consider noting tool limitations in preferences\n` +
             `- High loop exhaustion (>10%) → reduce complexity, simplify approach\n\n`;
         }
-      } catch {
-        // Non-fatal — metrics may not exist yet
+      } catch (err) {
+        log.evolution.warn("[Evolution] owlPerf metrics retrieval failed", err);
       }
     }
 
@@ -321,8 +321,8 @@ export class OwlEvolutionEngine {
             `- Reinforce traits that correlate with high-reward outcomes\n` +
             `- Suggest "promptRules" for low-reward failure domains (e.g. specific tool guidance)\n\n`;
         }
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        log.evolution.warn("[Evolution] trajectory analysis retrieval failed", err);
       }
     }
 
@@ -514,8 +514,8 @@ export class OwlEvolutionEngine {
               changed = true;
             }
           }
-        } catch {
-          // Non-fatal — outcome_journal may not have data yet
+        } catch (err) {
+          log.evolution.warn("[Evolution] challenge_instances DB query failed", err);
         }
       }
 
@@ -774,7 +774,9 @@ export async function updateParliamentDNA(
         owl.dna.learnedPreferences[key] = clamp(current - LEARNING_RATE, 0.1, 0.9);
       }
     }
-  } catch { /* non-fatal — DNA mutation failures must not crash Parliament */ }
+  } catch (err) {
+    log.evolution.warn("[evolution] updateParliamentDNA failed — non-fatal, DNA mutation skipped", err);
+  }
 }
 
 /**

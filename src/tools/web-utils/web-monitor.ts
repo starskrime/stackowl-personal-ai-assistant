@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { log } from "../../logger.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolImplementation } from "../registry.js";
@@ -18,7 +19,8 @@ async function loadMonitors(filePath: string): Promise<MonitorsFile> {
   try {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as MonitorsFile;
-  } catch {
+  } catch (err) {
+    log.tool.warn('operation failed', err);
     return { monitors: [] };
   }
 }
@@ -71,6 +73,9 @@ export const WebMonitorTool: ToolImplementation = {
     const intervalMinutes = (args.interval_minutes as number) ?? 60;
     const monitorsPath = join(context.cwd, "workspace", "monitors.json");
 
+    // 1. ENTRY
+    log.tool.debug("web_monitor.execute: entry", { action, url: url ?? "(none)", intervalMinutes });
+
     try {
       if (action === "watch") {
         if (!url) return "Error: url is required for the watch action.";
@@ -83,12 +88,14 @@ export const WebMonitorTool: ToolImplementation = {
           return `Updated monitor for ${url} — interval set to ${intervalMinutes} minutes.`;
         }
 
-        // Fetch initial content to get baseline hash
+        // 3. STEP — fetch initial snapshot
+        log.tool.debug("web_monitor.execute: fetching initial snapshot", { url });
         let initialHash = "";
         try {
           const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
           const body = await resp.text();
           initialHash = hashContent(body);
+          log.tool.debug("web_monitor.execute: initial snapshot fetched", { url, hash: initialHash.slice(0, 8), bodyLen: body.length });
         } catch (e) {
           return `Error fetching ${url} for initial snapshot: ${e instanceof Error ? e.message : String(e)}`;
         }
@@ -100,7 +107,9 @@ export const WebMonitorTool: ToolImplementation = {
           lastChecked: new Date().toISOString(),
         });
         await saveMonitors(monitorsPath, data);
-        return `Now watching ${url} (interval: ${intervalMinutes}m). Initial content hash: ${initialHash}`;
+        const watchResult = `Now watching ${url} (interval: ${intervalMinutes}m). Initial content hash: ${initialHash}`;
+        log.tool.debug("web_monitor.execute: exit", { action: "watch", resultLen: watchResult.length });
+        return watchResult;
       }
 
       if (action === "list") {
@@ -111,7 +120,9 @@ export const WebMonitorTool: ToolImplementation = {
           (m) =>
             `- ${m.url} (every ${m.intervalMinutes}m, last checked: ${m.lastChecked})`,
         );
-        return `Monitored URLs:\n${lines.join("\n")}`;
+        const listResult = `Monitored URLs:\n${lines.join("\n")}`;
+        log.tool.debug("web_monitor.execute: exit", { action: "list", resultLen: listResult.length });
+        return listResult;
       }
 
       if (action === "check") {
@@ -122,12 +133,18 @@ export const WebMonitorTool: ToolImplementation = {
         const results: string[] = [];
         for (const monitor of data.monitors) {
           try {
+            // 3. STEP — fetch for comparison
+            log.tool.debug("web_monitor.execute: fetching for check", { url: monitor.url });
             const resp = await fetch(monitor.url, {
               signal: AbortSignal.timeout(15000),
             });
             const body = await resp.text();
             const newHash = hashContent(body);
             const changed = newHash !== monitor.contentHash;
+
+            // 2. DECISION — changed vs unchanged
+            log.tool.debug("web_monitor.execute: change decision", { url: monitor.url, changed, oldHash: monitor.contentHash.slice(0, 8), newHash: newHash.slice(0, 8) });
+
             results.push(
               `${monitor.url}: ${changed ? "CHANGED" : "no change"} (old: ${monitor.contentHash.slice(0, 8)}, new: ${newHash.slice(0, 8)})`,
             );
@@ -140,7 +157,10 @@ export const WebMonitorTool: ToolImplementation = {
           }
         }
         await saveMonitors(monitorsPath, data);
-        return `Check results:\n${results.join("\n")}`;
+        const checkResult = `Check results:\n${results.join("\n")}`;
+        // 4. EXIT
+        log.tool.debug("web_monitor.execute: exit", { action: "check", changed: results.filter(r => r.includes("CHANGED")).length, resultLen: checkResult.length });
+        return checkResult;
       }
 
       if (action === "stop") {
@@ -156,6 +176,8 @@ export const WebMonitorTool: ToolImplementation = {
 
       return `Unknown action: ${action}. Use watch, list, check, or stop.`;
     } catch (e) {
+      // ERROR
+      log.tool.error("web_monitor.execute: operation failed", e instanceof Error ? e : new Error(String(e)), { action, url: url ?? "(none)" });
       return `web_monitor error: ${e instanceof Error ? e.message : String(e)}`;
     }
   },

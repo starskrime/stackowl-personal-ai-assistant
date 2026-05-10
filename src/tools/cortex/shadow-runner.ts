@@ -12,6 +12,7 @@
  * survive restarts; any process holding the same DB can evaluate the run.
  */
 import type { MemoryDatabase } from "../../memory/db.js";
+import { log } from "../../logger.js";
 
 export interface ShadowRunStartArgs {
   baselineTool: string;
@@ -35,6 +36,11 @@ export class ShadowRunner {
   constructor(private readonly db: MemoryDatabase) {}
 
   start(args: ShadowRunStartArgs): number {
+    log.tool.debug("shadow-runner.start: entry", {
+      baselineTool: args.baselineTool,
+      candidateTool: args.candidateTool,
+    });
+
     const result = this.db.rawDb
       .prepare(
         `INSERT INTO tool_evolution_runs
@@ -47,7 +53,16 @@ export class ShadowRunner {
         args.baselinePath,
         args.candidatePath,
       );
-    return Number(result.lastInsertRowid);
+    const runId = Number(result.lastInsertRowid);
+
+    log.tool.debug("shadow-runner.start: exit", {
+      runId,
+      baselineTool: args.baselineTool,
+      candidateTool: args.candidateTool,
+      success: true,
+    });
+
+    return runId;
   }
 
   record(runId: number, obs: ShadowRecord): void {
@@ -55,6 +70,13 @@ export class ShadowRunner {
       obs.which === "baseline" ? "baseline_successes" : "candidate_successes";
     const totalCol =
       obs.which === "baseline" ? "baseline_total" : "candidate_total";
+
+    log.tool.debug("shadow-runner.record: observation recorded", {
+      runId,
+      which: obs.which,
+      success: obs.success,
+    });
+
     this.db.rawDb
       .prepare(
         `UPDATE tool_evolution_runs
@@ -66,6 +88,8 @@ export class ShadowRunner {
   }
 
   evaluate(runId: number): ShadowVerdict {
+    log.tool.debug("shadow-runner.evaluate: entry", { runId });
+
     const row = this.db.rawDb
       .prepare(
         `SELECT baseline_successes, baseline_total, candidate_successes, candidate_total
@@ -79,20 +103,52 @@ export class ShadowRunner {
           candidate_total: number;
         }
       | undefined;
-    if (!row) return "continue";
-    if (row.candidate_total < MIN_CALLS) return "continue";
-    if (row.baseline_total === 0) return "continue";
+    if (!row) {
+      log.tool.debug("shadow-runner.evaluate: run not found — returning continue", { runId });
+      return "continue";
+    }
+    if (row.candidate_total < MIN_CALLS) {
+      log.tool.debug("shadow-runner.evaluate: insufficient candidate calls — continuing", {
+        runId,
+        candidateTotal: row.candidate_total,
+        minCalls: MIN_CALLS,
+      });
+      return "continue";
+    }
+    if (row.baseline_total === 0) {
+      log.tool.debug("shadow-runner.evaluate: baseline has no calls — continuing", { runId });
+      return "continue";
+    }
 
     const baselineRate = row.baseline_successes / row.baseline_total;
     const candidateRate = row.candidate_successes / row.candidate_total;
     const delta = candidateRate - baselineRate;
 
-    if (delta >= PROMOTE_DELTA) return "promote";
-    if (delta <= -ROLLBACK_DELTA) return "rollback";
-    return "continue";
+    let verdict: ShadowVerdict;
+    if (delta >= PROMOTE_DELTA) verdict = "promote";
+    else if (delta <= -ROLLBACK_DELTA) verdict = "rollback";
+    else verdict = "continue";
+
+    log.tool.debug("shadow-runner.evaluate: verdict reached", {
+      runId,
+      verdict,
+      baselineRate,
+      candidateRate,
+      delta,
+      reason:
+        verdict === "promote"
+          ? `candidate improved by ${delta.toFixed(3)} >= ${PROMOTE_DELTA}`
+          : verdict === "rollback"
+            ? `candidate degraded by ${Math.abs(delta).toFixed(3)} >= ${ROLLBACK_DELTA}`
+            : "delta within noise band",
+    });
+
+    return verdict;
   }
 
   finish(runId: number, status: "promoted" | "rolled_back"): void {
+    log.tool.debug("shadow-runner.finish: shadow run closed", { runId, status });
+
     this.db.rawDb
       .prepare(
         `UPDATE tool_evolution_runs

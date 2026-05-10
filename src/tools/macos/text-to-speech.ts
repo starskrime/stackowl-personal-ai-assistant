@@ -1,6 +1,7 @@
 import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logger.js";
 
 const execAsync = promisify(exec);
 
@@ -58,6 +59,7 @@ export const TextToSpeechTool: ToolImplementation = {
   ): Promise<string> {
     const text = args.text as string;
     const voice = args.voice as string | undefined;
+    log.tool.debug("text_to_speech.execute: entry", { textLen: text?.length, voice, platform: process.platform });
 
     if (!text) {
       return "Error: text parameter is required.";
@@ -68,10 +70,16 @@ export const TextToSpeechTool: ToolImplementation = {
       return `Error: Text-to-speech not supported on platform "${process.platform}".`;
     }
 
+    log.tool.debug("text_to_speech.execute: decision — TTS command resolved", { platform: process.platform, hasVoice: !!voice });
+
     try {
+      log.tool.debug("text_to_speech.execute: invoking TTS command via shell", { textLen: text.length });
       await execAsync(cmd, { timeout: 30000 });
-      return `Spoke: "${text.length > 100 ? text.substring(0, 100) + "..." : text}"${voice ? ` (voice: ${voice})` : ""}`;
+      const result = `Spoke: "${text.length > 100 ? text.substring(0, 100) + "..." : text}"${voice ? ` (voice: ${voice})` : ""}`;
+      log.tool.debug("text_to_speech.execute: exit", { success: true, resultLen: result.length });
+      return result;
     } catch (error) {
+      log.tool.error("text_to_speech.execute: failed", error instanceof Error ? error : new Error(String(error)), { voice });
       const msg = error instanceof Error ? error.message : String(error);
       if (process.platform === "linux") {
         return `Error with text-to-speech: ${msg}\nHint: Install espeak-ng (apt install espeak-ng) for TTS support.`;

@@ -269,6 +269,34 @@ export interface StackOwlConfig {
     /** Milliseconds of continuous silence that trigger end-of-speech. Default: 1500. */
     silenceDurationMs?: number;
   };
+  /** Structured logging configuration */
+  logging?: {
+    /** Minimum log level to emit. Default: "info" */
+    level?: "debug" | "info" | "warn" | "error";
+    sinks?: {
+      /** Write JSONL to logs/stackowl-YYYY-MM-DD.log. Default: true */
+      file?: boolean;
+      /** Keep an in-memory ring buffer (for TUI overlay + tests). Default: true */
+      ringBuffer?: boolean;
+      /** Color-coded stderr output when TUI is not mounted. Default: false */
+      prettyConsole?: boolean;
+    };
+    /** PII fields to mask before writing. Default: ["tokens","emails"] */
+    redact?: Array<"tokens" | "emails" | "paths">;
+    /** Days to retain log files. Default: 7 */
+    retentionDays?: number;
+    /** Ring buffer capacity (records). Default: 5000 */
+    ringBufferSize?: number;
+  };
+  /** Distributed tracing configuration */
+  tracing?: {
+    /** Enable W3C trace-context propagation. Default: true */
+    enabled?: boolean;
+    /** Fraction of debug-level records to emit (0-1). info+ always emitted. Default: 1 */
+    sampleRate?: number;
+    /** Cross-boundary propagation targets. Default: ["queue","mcp"] */
+    propagatePast?: Array<"queue" | "http" | "mcp">;
+  };
   /** Telegram bot configuration */
   telegram?: {
     botToken: string;
@@ -365,6 +393,18 @@ const DEFAULT_CONFIG: StackOwlConfig = {
     enableDiminishingReturns: true,
     similarityThreshold: 0.7,
     cloudFallbackAfter: 2,
+  },
+  logging: {
+    level: "info",
+    sinks: { file: true, ringBuffer: true, prettyConsole: false },
+    redact: ["tokens", "emails"],
+    retentionDays: 7,
+    ringBufferSize: 5000,
+  },
+  tracing: {
+    enabled: true,
+    sampleRate: 1,
+    propagatePast: ["queue", "mcp"],
   },
 };
 
@@ -477,6 +517,18 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         obscura: {
           enabled: userConfig.webFetch?.obscura?.enabled === true,
         },
+      },
+      logging: {
+        ...DEFAULT_CONFIG.logging!,
+        ...(userConfig.logging || {}),
+        sinks: {
+          ...DEFAULT_CONFIG.logging!.sinks,
+          ...(userConfig.logging?.sinks || {}),
+        },
+      },
+      tracing: {
+        ...DEFAULT_CONFIG.tracing!,
+        ...(userConfig.tracing || {}),
       },
     };
 
@@ -629,6 +681,27 @@ function validateConfig(config: StackOwlConfig): string[] {
     (!config.skills.directories || config.skills.directories.length === 0)
   ) {
     errors.push("skills.enabled=true but no directories configured");
+  }
+
+  // Logging
+  if (config.logging) {
+    const { level, retentionDays, ringBufferSize, sampleRate } = {
+      ...config.logging,
+      sampleRate: config.tracing?.sampleRate,
+    };
+    const validLevels = ["debug", "info", "warn", "error"];
+    if (level && !validLevels.includes(level)) {
+      errors.push(`logging.level must be one of ${validLevels.join(", ")} (got "${level}")`);
+    }
+    if (retentionDays !== undefined && (retentionDays < 1 || retentionDays > 90)) {
+      errors.push(`logging.retentionDays must be 1-90 (got ${retentionDays})`);
+    }
+    if (ringBufferSize !== undefined && ringBufferSize < 100) {
+      errors.push(`logging.ringBufferSize must be >= 100 (got ${ringBufferSize})`);
+    }
+    if (sampleRate !== undefined && (sampleRate < 0 || sampleRate > 1)) {
+      errors.push(`tracing.sampleRate must be 0-1 (got ${sampleRate})`);
+    }
   }
 
   return errors;
