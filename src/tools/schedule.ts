@@ -11,6 +11,8 @@ interface ScheduledJob {
   createdAt: string;
 }
 
+// TODO: jobs are not durable across restarts (JOB_STORE is a Map).
+//       Migrate to SQLite-backed cron store when scheduling becomes a primary UX.
 const JOB_STORE = new Map<string, { job: ScheduledJob; timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval> }>();
 
 function parseWhen(when: string): Date | null {
@@ -66,11 +68,12 @@ export const ScheduleTool: ToolImplementation = {
   category: "cognitive",
   source: "builtin",
 
-  async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
     const action  = args["action"]  as string;
     const when    = args["when"]    as string | undefined;
     const message = args["message"] as string | undefined;
     const id      = args["id"]      as string | undefined;
+    const onProgress = context.engineContext?.onProgress;
     log.tool.debug("schedule.execute: entry", { action, when, hasMessage: !!message, id });
 
     switch (action) {
@@ -82,8 +85,18 @@ export const ScheduleTool: ToolImplementation = {
         const delayMs = fireAt.getTime() - Date.now();
         const jobId   = randomUUID();
         const job: ScheduledJob = { id: jobId, type: "remind", message, schedule: fireAt.toISOString(), createdAt: new Date().toISOString() };
-        const timer = setTimeout(() => { JOB_STORE.delete(jobId); }, delayMs);
+        const timer = setTimeout(async () => {
+          JOB_STORE.delete(jobId);
+          try {
+            await onProgress?.(message);
+          } catch (err) {
+            log.tool.error("schedule.remind: delivery failed", err as Error, { jobId });
+          }
+        }, delayMs);
         JOB_STORE.set(jobId, { job, timer });
+        if (!onProgress) {
+          log.tool.warn("schedule.remind: no onProgress available — reminder will fire but cannot be delivered to user", { jobId });
+        }
         log.tool.debug("schedule.execute: exit", { success: true, action, jobId, fireAt: fireAt.toISOString(), delayMs });
         return JSON.stringify({ success: true, data: { id: jobId, message: `Reminder scheduled for ${fireAt.toISOString()}` } });
       }
@@ -95,8 +108,15 @@ export const ScheduleTool: ToolImplementation = {
         if (isNaN(intervalMs) || intervalMs <= 0) return JSON.stringify({ success: false, error: { code: "INVALID_TIME", message: "when for repeat must be positive ms" } });
         const jobId = randomUUID();
         const job: ScheduledJob = { id: jobId, type: "repeat", message, schedule: `every ${intervalMs}ms`, createdAt: new Date().toISOString() };
-        const timer = setInterval(() => {}, intervalMs);
+        const timer = setInterval(async () => {
+          try {
+            await onProgress?.(message);
+          } catch (err) {
+            log.tool.error("schedule.repeat: delivery failed", err as Error, { jobId });
+          }
+        }, intervalMs);
         JOB_STORE.set(jobId, { job, timer });
+        log.tool.warn("schedule.repeat: registered (NOT durable across restarts)", { jobId, intervalMs, hasOnProgress: !!onProgress });
         log.tool.debug("schedule.execute: exit", { success: true, action, jobId, intervalMs });
         return JSON.stringify({ success: true, data: { id: jobId, message: `Repeating job every ${intervalMs}ms` } });
       }
