@@ -1,5 +1,6 @@
 import { CognitiveLoop, cognitiveLoop } from "./loop.js";
 import { ProactiveAssistant, proactiveAssistant } from "./proactive.js";
+import type { ModelProvider } from "../../providers/base.js";
 import { SelfSupervisedLearner, selfSupervisedLearner } from "./self-learner.js";
 import type { LearnedInsight, FailureAnalysis } from "./self-learner.js";
 import { AnomalyDetector, anomalyDetector } from "./anomaly-detector.js";
@@ -13,6 +14,7 @@ export interface CognitionConfig {
   cognitiveLoop?: Partial<CognitiveLoopConfig>;
   anomaly?: Partial<AnomalyConfig>;
   enableParliament?: boolean;
+  provider?: ModelProvider;
 }
 
 export class CognitionEngine {
@@ -24,7 +26,7 @@ export class CognitionEngine {
 
   constructor(config: CognitionConfig = {}) {
     this.cognitiveLoop = new CognitiveLoop(config.cognitiveLoop);
-    this.proactiveAssistant = new ProactiveAssistant();
+    this.proactiveAssistant = new ProactiveAssistant(config.provider);
     this.selfLearner = new SelfSupervisedLearner();
     this.anomalyDetector = new AnomalyDetector(config.anomaly);
     this.parliament = new MultiOscarParliament();

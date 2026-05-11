@@ -230,6 +230,7 @@ import { KnowledgeBase } from "./pellets/knowledge-base.js";
 import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
 import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
+import { BackgroundOrchestrator } from "./background/orchestrator.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
 import { SignalPool } from "./signals/pool.js";
 import { SignalClassifier } from "./signals/classifier.js";
@@ -1198,6 +1199,22 @@ async function buildGateway(
     proactiveGenerator,
     eventBasedGenerator,
   });
+
+  // ─── Background Orchestrator ────────────────────────────────────
+  // Drives background jobs: desire execution, memory consolidation,
+  // proactive pings, and session debriefs. Needs provider + episodic memory.
+  const backgroundOrchestrator = new BackgroundOrchestrator(
+    provider,
+    owl,
+    innerLife,
+    undefined,        // DesireExecutor — not yet instantiated at top level
+    undefined,        // FulfillmentTracker — not yet instantiated at top level
+    undefined,        // onProactiveMessage — wired after Telegram/CLI adapters attach
+    undefined,        // config — use BackgroundOrchestrator defaults
+    b.episodicMemory, // EpisodicMemory for runDecay() in memory-consolidation job
+  );
+  gateway.ctx.backgroundOrchestrator = backgroundOrchestrator;
+  backgroundOrchestrator.start();
 
   // ─── Element 15 — canonical memory surface ─────────────────────
   // Repository owns all reads/writes against `memories`/`memory_invalidations`/
