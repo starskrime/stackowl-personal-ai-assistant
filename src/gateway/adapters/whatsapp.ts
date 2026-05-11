@@ -10,7 +10,12 @@
 
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { Client, LocalAuth, type Message } from "whatsapp-web.js";
+// whatsapp-web.js is CommonJS — Node ESM can't see named exports reliably.
+// Pull constructors off the default export at runtime; types come from the
+// declaration-merged module shape via separate type-only imports.
+import wweb from "whatsapp-web.js";
+import type { Message, Client as ClientType } from "whatsapp-web.js";
+const { Client, LocalAuth } = wweb;
 // @ts-ignore — qrcode-terminal has no type definitions
 import qrcode from "qrcode-terminal";
 import { runWithContext } from "../../infra/observability/context.js";
@@ -33,7 +38,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
   readonly id = "whatsapp";
   readonly name = "WhatsApp";
 
-  private client: Client | null = null;
+  private client: ClientType | null = null;
   private config: Required<Omit<WhatsAppAdapterConfig, "pairingService">>;
   private pairingService?: PairingService;
 
@@ -101,7 +106,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   stop(): void {
     if (this.client) {
-      this.client.destroy().catch((err) => {
+      this.client.destroy().catch((err: unknown) => {
         log.gateway.warn("WhatsApp destroy error", err as Error);
       });
       this.client = null;
