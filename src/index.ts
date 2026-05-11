@@ -1925,6 +1925,108 @@ async function pairingCommand(channel: string, userId: string, code: string) {
   }
 }
 
+// ─── Cron Commands ──────────────────────────────────────────────
+
+async function cronListCommand() {
+  const { CronService } = await import("./cron/service.js");
+  const service = new CronService({ persist: true });
+
+  const jobs = service.listJobs();
+  if (jobs.length === 0) {
+    log.cli.info("No scheduled jobs.");
+    service.stop();
+    return;
+  }
+
+  log.cli.info("");
+  for (const job of jobs) {
+    const state = service.getJobState(job.id);
+    const nextRunStr = state?.nextRunAt
+      ? new Date(state.nextRunAt).toISOString()
+      : "unknown";
+    const desc = job.description ? ` — ${job.description}` : "";
+    log.cli.info(`${job.id} [${job.schedule}] — next: ${nextRunStr}${desc}`);
+  }
+  log.cli.info("");
+  service.stop();
+}
+
+async function cronAddCommand(opts: {
+  prompt?: string;
+  schedule?: string;
+  id?: string;
+  safety?: string;
+  deliver?: boolean;
+}) {
+  const { CronService } = await import("./cron/service.js");
+  const { randomUUID } = await import("node:crypto");
+
+  if (!opts.prompt || !opts.schedule) {
+    log.cli.error(
+      "❌ Usage: stackowl cron add --prompt <text> --schedule <cron-expr> [--id <id>] [--safety low|medium|full] [--deliver]",
+    );
+    process.exit(1);
+  }
+
+  const safety = (opts.safety || "low") as "low" | "medium" | "full";
+  if (!["low", "medium", "full"].includes(safety)) {
+    log.cli.error("❌ --safety must be one of: low, medium, full");
+    process.exit(1);
+  }
+
+  const jobId = opts.id || randomUUID().substring(0, 8);
+  const service = new CronService({ persist: true });
+
+  try {
+    const job = {
+      id: jobId,
+      prompt: opts.prompt,
+      schedule: opts.schedule,
+      safetyProfile: safety,
+      deliver: opts.deliver ?? false,
+    };
+    service.addJob(job);
+    const state = service.getJobState(jobId);
+    const nextRunStr = state?.nextRunAt
+      ? new Date(state.nextRunAt).toISOString()
+      : "unknown";
+    log.cli.info(`✓ Job "${jobId}" scheduled for ${opts.schedule}.`);
+    log.cli.info(`  Next run: ${nextRunStr}`);
+  } catch (err) {
+    log.cli.error(`❌ Failed to add job: ${(err as Error).message}`);
+    process.exit(1);
+  } finally {
+    service.stop();
+  }
+}
+
+async function cronRemoveCommand(id: string) {
+  const { CronService } = await import("./cron/service.js");
+
+  if (!id) {
+    log.cli.error("❌ Usage: stackowl cron remove <id>");
+    process.exit(1);
+  }
+
+  const service = new CronService({ persist: true });
+
+  try {
+    const jobs = service.listJobs();
+    const found = jobs.some((j) => j.id === id);
+    if (!found) {
+      log.cli.error(`❌ Job "${id}" not found.`);
+      process.exit(1);
+    }
+    service.removeJob(id);
+    log.cli.info(`✓ Job "${id}" removed.`);
+  } catch (err) {
+    log.cli.error(`❌ Failed to remove job: ${(err as Error).message}`);
+    process.exit(1);
+  } finally {
+    service.stop();
+  }
+}
+
 // ─── Telegram Command ────────────────────────────────────────────
 
 async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
@@ -2355,6 +2457,53 @@ program
       process.exit(1);
     }
   });
+
+program
+  .command("cron <subcommand> [args...]")
+  .description("Manage scheduled background jobs")
+  .option("--prompt <text>", "Job prompt (required for add)")
+  .option("--schedule <cron>", "Cron expression (required for add)")
+  .option("--id <id>", "Job ID (optional, auto-generated for add)")
+  .option("--safety <level>", "Safety profile: low, medium, full (default: low)")
+  .option("--deliver", "Enable delivery to channel (flag)")
+  .action(
+    (
+      subcommand: string,
+      args: string[],
+      opts: {
+        prompt?: string;
+        schedule?: string;
+        id?: string;
+        safety?: string;
+        deliver?: boolean;
+      },
+    ) => {
+      if (subcommand === "list") {
+        cronListCommand().catch((err) => {
+          log.cli.error(`Fatal error: ${err.message}`, err);
+          process.exit(1);
+        });
+      } else if (subcommand === "add") {
+        cronAddCommand(opts).catch((err) => {
+          log.cli.error(`Fatal error: ${err.message}`, err);
+          process.exit(1);
+        });
+      } else if (subcommand === "remove" && args.length >= 1) {
+        cronRemoveCommand(args[0]).catch((err) => {
+          log.cli.error(`Fatal error: ${err.message}`, err);
+          process.exit(1);
+        });
+      } else {
+        log.cli.error("❌ Usage:");
+        log.cli.error("  stackowl cron list");
+        log.cli.error(
+          "  stackowl cron add --prompt <text> --schedule <cron> [--id <id>] [--safety low|medium|full] [--deliver]",
+        );
+        log.cli.error("  stackowl cron remove <id>");
+        process.exit(1);
+      }
+    },
+  );
 
 program
   .command("web")
