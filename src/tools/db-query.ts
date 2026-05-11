@@ -3,20 +3,37 @@ import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
 import { resolve, isAbsolute, normalize, sep } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 // ─── Sandbox Helper ───────────────────────────────────────────────
+//
+// Cross-platform path-allowlist check. Allowed roots:
+//   • the current workspace (`cwd`)
+//   • the OS temp dir (resolved via os.tmpdir() — works on Linux/macOS/Windows)
+//
+// Docker short-circuit: when running inside a container the host fs is
+// already isolated, so we allow the full container path tree.
+
+// Resolve the temp root once at module load. On macOS tmpdir() returns
+// `/var/folders/...` which is a symlink target — realpath ensures comparisons
+// match what realpathSync returns for paths inside it. Fall back to the raw
+// tmpdir() if resolution fails (Windows network drives, etc.).
+const TEMP_ROOT = (() => {
+  try {
+    return realpathSync(tmpdir());
+  } catch {
+    return tmpdir();
+  }
+})();
 
 function assertWithinSandbox(resolvedPath: string, cwd: string): string | null {
-  // Check if running in Docker
   const inDocker =
     process.env.IN_DOCKER === "true" || existsSync("/.dockerenv");
 
-  // In Docker, allow access to the entire container (it's already sandboxed)
   if (inDocker) {
-    return null; // Full access in Docker
+    return null;
   }
 
-  // On host machine, restrict to workspace and /tmp
   const sandboxRoot = resolve(cwd);
 
   // Resolve symlinks to prevent symlink escape attacks
@@ -24,16 +41,16 @@ function assertWithinSandbox(resolvedPath: string, cwd: string): string | null {
   try {
     realResolved = realpathSync(resolvedPath);
   } catch {
-    // File doesn't exist yet or can't be resolved — use lexical path
     realResolved = resolvedPath;
   }
 
   const isInWorkspace =
     realResolved.startsWith(sandboxRoot + sep) || realResolved === sandboxRoot;
-  const isInTemp = realResolved.startsWith("/tmp/") || realResolved === "/tmp";
+  const isInTemp =
+    realResolved.startsWith(TEMP_ROOT + sep) || realResolved === TEMP_ROOT;
 
   if (!isInWorkspace && !isInTemp) {
-    return `Access denied: "${realResolved}" is outside the allowed paths. Allowed: ${sandboxRoot}, /tmp (or entire container in Docker)`;
+    return `Access denied: "${realResolved}" is outside the allowed paths. Allowed: ${sandboxRoot}, ${TEMP_ROOT} (or entire container in Docker)`;
   }
 
   return null;

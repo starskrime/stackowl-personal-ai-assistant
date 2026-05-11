@@ -1,11 +1,15 @@
 // __tests__/tools/db-query.test.ts
 import { describe, it, expect, afterEach } from "vitest";
-import { unlinkSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { unlinkSync, existsSync, mkdirSync, symlinkSync, rmSync } from "node:fs";
 import Database from "better-sqlite3";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { tmpdir, homedir } from "node:os";
 
 const TEST_DB = join(tmpdir(), "stackowl-dbquery-test.sqlite");
+
+// Cross-platform "outside the temp tree" directory: live under homedir.
+// realpathSync(tmpdir()) is never a prefix of homedir on Linux, macOS, or Windows.
+const EXTERNAL_ROOT = join(homedir(), ".stackowl-test-external");
 
 function createTestDb() {
   const db = new Database(TEST_DB);
@@ -55,7 +59,7 @@ describe("DbQueryTool", () => {
   it("returns structured error when db file not found", async () => {
     const mod = await import("../../src/tools/db-query.js");
     const result = await mod.DbQueryTool.execute(
-      { dbPath: "/tmp/nonexistent-stackowl-xyz.sqlite", sql: "SELECT 1" },
+      { dbPath: join(tmpdir(), "nonexistent-stackowl-xyz.sqlite"), sql: "SELECT 1" },
       { cwd: tmpdir() },
     );
     const parsed = JSON.parse(result);
@@ -63,11 +67,11 @@ describe("DbQueryTool", () => {
     expect(["FILE_NOT_FOUND", "QUERY_ERROR"]).toContain(parsed.error.code);
   });
 
-  it("rejects paths outside workspace and /tmp (path traversal attempt)", async () => {
+  it("rejects paths outside workspace and OS tempdir (path traversal attempt)", async () => {
     const mod = await import("../../src/tools/db-query.js");
-    // Attempt to query a database outside the workspace (e.g., home directory)
+    // homedir is guaranteed to be outside both the workspace (tmpdir) and tmpdir itself
     const result = await mod.DbQueryTool.execute(
-      { dbPath: "/etc/hostname.db", sql: "SELECT 1" },
+      { dbPath: join(homedir(), "stackowl-traversal-target.db"), sql: "SELECT 1" },
       { cwd: tmpdir() },
     );
     const parsed = JSON.parse(result);
@@ -79,7 +83,7 @@ describe("DbQueryTool", () => {
   it("rejects non-.db and non-.sqlite file extensions", async () => {
     const mod = await import("../../src/tools/db-query.js");
     const result = await mod.DbQueryTool.execute(
-      { dbPath: "/tmp/data.txt", sql: "SELECT 1" },
+      { dbPath: join(tmpdir(), "data.txt"), sql: "SELECT 1" },
       { cwd: tmpdir() },
     );
     const parsed = JSON.parse(result);
@@ -88,7 +92,7 @@ describe("DbQueryTool", () => {
     expect(parsed.error.message).toContain("Only .db and .sqlite");
   });
 
-  it("allows queries to files in /tmp", async () => {
+  it("allows queries to files in OS tempdir", async () => {
     createTestDb();
     const mod = await import("../../src/tools/db-query.js");
     const result = await mod.DbQueryTool.execute(
@@ -103,7 +107,7 @@ describe("DbQueryTool", () => {
   it("allows relative paths within the workspace", async () => {
     createTestDb();
     const mod = await import("../../src/tools/db-query.js");
-    // Pass a relative path that resolves within /tmp (the cwd)
+    // Relative path resolves against cwd (tmpdir)
     const result = await mod.DbQueryTool.execute(
       { dbPath: "stackowl-dbquery-test.sqlite", sql: "SELECT * FROM items ORDER BY id" },
       { cwd: tmpdir() },
@@ -114,17 +118,13 @@ describe("DbQueryTool", () => {
   });
 
   it("rejects symlink escape attempts (symlink pointing outside sandbox)", async () => {
-    // Create a temporary workspace directory (inside /tmp, allowed by sandbox)
-    const testTmpDir = join(tmpdir(), "stackowl-symlink-test-" + Date.now());
-    mkdirSync(testTmpDir, { recursive: true });
+    const testWorkspace = join(tmpdir(), "stackowl-symlink-test-" + Date.now());
+    mkdirSync(testWorkspace, { recursive: true });
 
-    // Create a separate external directory outside /tmp to hold the "secret" database
-    // Use /var/tmp which is not in the /tmp/ prefix check
-    const externalDir = "/var/tmp/stackowl-external-" + Date.now();
+    const externalDir = join(EXTERNAL_ROOT, "symlink-target-" + Date.now());
     mkdirSync(externalDir, { recursive: true });
 
     try {
-      // Create a test database file in the external directory (outside the allowed sandbox)
       const externalDbPath = join(externalDir, "secret.db");
       const externalDb = new Database(externalDbPath);
       externalDb.exec(`
@@ -133,50 +133,40 @@ describe("DbQueryTool", () => {
       `);
       externalDb.close();
 
-      // Create a symlink inside the test workspace pointing to the external database
-      const symlinkPath = join(testTmpDir, "evil.db");
-      symlinkSync(externalDbPath, symlinkPath);
+      const symlinkPath = join(testWorkspace, "evil.db");
+      try {
+        symlinkSync(externalDbPath, symlinkPath);
+      } catch (err) {
+        // Windows requires admin or Developer Mode for symlinks. If we can't
+        // create one we can't run this test path — skip rather than fail.
+        if ((err as NodeJS.ErrnoException).code === "EPERM") {
+          return;
+        }
+        throw err;
+      }
 
-      // Attempt to query the symlink from within the workspace
       const mod = await import("../../src/tools/db-query.js");
       const result = await mod.DbQueryTool.execute(
         { dbPath: symlinkPath, sql: "SELECT * FROM secret" },
-        { cwd: testTmpDir },
+        { cwd: testWorkspace },
       );
       const parsed = JSON.parse(result);
 
-      // Should be rejected because the real path (after realpathSync) is outside the sandbox
       expect(parsed.success).toBe(false);
       expect(parsed.error.code).toBe("ACCESS_DENIED");
       expect(parsed.error.message).toContain("Access denied");
     } finally {
-      // Clean up the test directory
-      try {
-        const files = require("node:fs").readdirSync(testTmpDir);
-        files.forEach((f: string) => unlinkSync(join(testTmpDir, f)));
-        require("node:fs").rmdirSync(testTmpDir);
-      } catch {
-        // Ignore cleanup errors
-      }
-
-      // Clean up external directory
-      try {
-        const files = require("node:fs").readdirSync(externalDir);
-        files.forEach((f: string) => unlinkSync(join(externalDir, f)));
-        require("node:fs").rmdirSync(externalDir);
-      } catch {
-        // Ignore cleanup errors
-      }
+      rmSync(testWorkspace, { recursive: true, force: true });
+      rmSync(externalDir, { recursive: true, force: true });
     }
   });
 
   it("allows database access from workspace root when cwd is the project root", async () => {
-    // Use the actual project root as the workspace
-    const projectRoot = "/ssd/projects/stackowl-personal-ai-assistant";
+    // Use the resolved cwd as workspace — works regardless of OS
+    const projectRoot = resolve(process.cwd());
     const workspaceDbPath = join(projectRoot, ".stackowl-test-" + Date.now() + ".sqlite");
 
     try {
-      // Create a test database in the project root
       const db = new Database(workspaceDbPath);
       db.exec(`
         CREATE TABLE IF NOT EXISTS test_data (id INTEGER PRIMARY KEY, name TEXT);
@@ -184,7 +174,6 @@ describe("DbQueryTool", () => {
       `);
       db.close();
 
-      // Execute query with cwd set to project root
       const mod = await import("../../src/tools/db-query.js");
       const result = await mod.DbQueryTool.execute(
         { dbPath: workspaceDbPath, sql: "SELECT * FROM test_data" },
