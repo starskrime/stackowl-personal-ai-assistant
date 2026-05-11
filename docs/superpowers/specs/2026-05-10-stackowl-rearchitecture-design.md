@@ -204,11 +204,47 @@ Tool that lets the LLM create new skills from conversation:
 
 **New file:** `src/skills/hub.ts`
 
-Lightweight skill marketplace:
-- `SkillHub.search(query)` → fetches from JSON index (GitHub-hosted, no auth required)
-- `SkillHub.install(name)` → downloads SKILL.md + resources to `~/.stackowl/skills/`
-- Initial index: curated selection of the most useful community skills
-- CLI: `stackowl skill add <name>`, `stackowl skill search <query>`
+Two-layer architecture: remote JSON as upstream source of truth, local SQLite as the query/cache layer.
+
+```
+Remote (GitHub CDN):  registry.json         ← upstream, updated by maintainers
+       ↓  hub.sync() on refresh / startup
+Local (SQLite):       skills_catalog table  ← FTS5 on name+description, install_status, version
+       ↓
+hub.ts API:           search(), install(), list(), refresh()
+```
+
+**SQLite schema** (added to existing `MemoryDatabase`):
+```sql
+CREATE TABLE skills_catalog (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  description  TEXT NOT NULL,
+  version      TEXT NOT NULL,
+  author       TEXT,
+  homepage     TEXT,
+  registry_url TEXT NOT NULL,   -- URL to fetch SKILL.md bundle
+  installed    INTEGER DEFAULT 0,
+  installed_at INTEGER,
+  last_synced  INTEGER NOT NULL
+);
+CREATE VIRTUAL TABLE skills_catalog_fts USING fts5(name, description, content='skills_catalog');
+```
+
+**API:**
+- `SkillHub.refresh()` → fetches `registry.json`, upserts into SQLite, rebuilds FTS index
+- `SkillHub.search(query)` → FTS5 query on `skills_catalog_fts`, returns ranked results — zero network
+- `SkillHub.install(name)` → fetches bundle URL, extracts to `~/.stackowl/skills/<name>/`, marks `installed=1`
+- `SkillHub.list()` → query `WHERE installed=1`
+
+**Why SQLite over querying JSON directly:**
+- FTS5 search is instant and local — no network round-trip per search
+- Install status, version, and usage count are columns, not scattered files
+- Already using `better-sqlite3` in MemoryDatabase — zero new dependency
+- Sync is explicit (`hub.sync()`) — works offline between refreshes
+
+Initial registry: curated 50-skill index, GitHub-hosted JSON, community-submitted via PR.
+CLI: `stackowl skill add <name>`, `stackowl skill search <query>`, `stackowl skill refresh`
 
 #### Migration Note
 
