@@ -315,6 +315,19 @@ export interface StackOwlConfig {
     /** HTTP port for non-socket-mode. Default: 3078 */
     port?: number;
   };
+  /** Discord bot configuration */
+  discord?: {
+    /** Bot token — from Discord Developer Portal → Bot → Token */
+    botToken: string;
+    /** Restrict to specific guild (server) IDs. Empty = all guilds. */
+    guildIds?: string[];
+    /**
+     * DM policy:
+     *  - "open"    — accept DMs from anyone
+     *  - "pairing" — require pairing handshake (default)
+     */
+    dmPolicy?: "open" | "pairing";
+  };
   /** Role → provider name mappings. Auto-assigned from type when not set. */
   roles?: Partial<Record<import("../providers/registry.js").ProviderRole, string>>;
 }

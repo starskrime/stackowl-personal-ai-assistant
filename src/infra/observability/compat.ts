@@ -25,6 +25,7 @@ export function initFileLog(workspacePath: string): void {
 export const log = {
   telegram:  getLogger("telegram"),
   slack:     getLogger("slack"),
+  discord:   getLogger("discord"),
   cli:       getLogger("cli"),
   engine:    getLogger("engine"),
   tool:      getLogger("tool"),

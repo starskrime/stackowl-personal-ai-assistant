@@ -162,6 +162,7 @@ import { StackOwlServer } from "./server/index.js";
 import { OwlGateway } from "./gateway/core.js";
 import { TelegramAdapter } from "./gateway/adapters/telegram.js";
 import { SlackAdapter } from "./gateway/adapters/slack.js";
+import { DiscordAdapter } from "./gateway/adapters/discord.js";
 import { CLIAdapter } from "./gateway/adapters/cli.js";
 import { BootSplash } from "./cli/splash.js";
 import type { BootStep } from "./cli/splash.js";
@@ -2078,6 +2079,25 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     } catch (err) {
       log.cli.error(
         `✗ Slack failed to start: ${err instanceof Error ? err.message : err}`,
+        err,
+      );
+    }
+  }
+
+  // 3b. Check for Discord
+  if (b.config.discord?.botToken) {
+    try {
+      const discordAdapter = new DiscordAdapter({
+        botToken: b.config.discord.botToken,
+        guildIds: b.config.discord.guildIds,
+        dmPolicy: b.config.discord.dmPolicy ?? "pairing",
+      });
+      gateway.register(discordAdapter);
+      await discordAdapter.start(gateway);
+      log.cli.info("✓ Channel: Discord");
+    } catch (err) {
+      log.cli.error(
+        `✗ Discord failed to start: ${err instanceof Error ? err.message : err}`,
         err,
       );
     }
