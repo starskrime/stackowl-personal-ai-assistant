@@ -25,6 +25,7 @@ import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { ChatMessage } from "../providers/base.js";
 import { ActivityLog } from "./activity-log.js";
+import type { EpisodicMemory } from "../memory/episodic.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ export class BackgroundOrchestrator {
     private fulfillmentTracker: FulfillmentTracker | undefined,
     private onProactiveMessage?: (msg: string) => Promise<void>,
     config?: Partial<BackgroundOrchestratorConfig>,
+    private episodicMemory?: EpisodicMemory,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -280,8 +282,21 @@ export class BackgroundOrchestrator {
   // ─── Job: Memory Consolidation ────────────────────────────────
 
   private async runMemoryConsolidation(): Promise<void> {
-    log.engine.debug("[BackgroundOrchestrator] Memory consolidation tick");
-    this.activityLog.add("memory_consolidated", "Memory consolidation ran");
+    if (!this.episodicMemory) {
+      log.engine.debug("[BackgroundOrchestrator] Memory consolidation skipped — no episodic store");
+      return;
+    }
+
+    const { compressed, archived } = this.episodicMemory.runDecay();
+    await this.episodicMemory.save?.();
+
+    this.activityLog.add(
+      "memory_consolidated",
+      `Compressed ${compressed} episodes, archived ${archived}`,
+    );
+    log.engine.info(
+      `[BackgroundOrchestrator] Memory consolidation: compressed=${compressed} archived=${archived}`,
+    );
   }
 
   // ─── Job: Proactive Ping ──────────────────────────────────────
