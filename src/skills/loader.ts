@@ -6,7 +6,8 @@
 
 import { existsSync } from "node:fs";
 import { watch, type FSWatcher } from "chokidar";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import chalk from "chalk";
 import { SkillsRegistry } from "./registry.js";
 import type { SkillLoadOptions, SkillFilter, Skill } from "./types.js";
@@ -21,6 +22,14 @@ export class SkillsLoader {
 
   constructor() {
     this.registry = new SkillsRegistry();
+  }
+
+  /**
+   * Get the user skills directory: ~/.stackowl/skills/
+   * This is where users can install custom skills.
+   */
+  static userSkillsDir(): string {
+    return join(homedir(), ".stackowl", "skills");
   }
 
   /**

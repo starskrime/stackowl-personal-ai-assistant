@@ -637,6 +637,7 @@ async function bootstrap() {
   // Always include built-in defaults + any user-configured directories
   const skillsLoader = new SkillsLoader();
   {
+    const userSkillsDir = SkillsLoader.userSkillsDir();
     const builtInSkillsDir = resolve(
       new URL(".", import.meta.url).pathname,
       "skills/defaults",
@@ -644,8 +645,8 @@ async function bootstrap() {
     const userDirs = (config.skills?.directories ?? []).map((d) =>
       resolve(basePath, d),
     );
-    // Built-in defaults first, then user overrides (user skills take precedence)
-    const allSkillsDirs = [builtInSkillsDir, ...userDirs];
+    // User's ~/.stackowl/skills/ first (highest priority), then built-in defaults, then config dirs
+    const allSkillsDirs = [userSkillsDir, builtInSkillsDir, ...userDirs];
     const skillsCount = await skillsLoader.load({
       directories: allSkillsDirs,
       watch: config.skills?.watch ?? false,
