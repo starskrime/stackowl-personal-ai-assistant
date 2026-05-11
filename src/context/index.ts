@@ -11,7 +11,7 @@ export { UserPersonaSynthesizer } from "./user-persona-synthesizer.js";
 export type { UserPersona } from "./user-persona-synthesizer.js";
 export { UnifiedMemoryRetriever } from "./unified-memory-retriever.js";
 
-import { MemoryMdLayer } from "./layers/memory-md.js";
+import { SqliteTier0Layer } from "./layers/sqlite-memory.js";
 import { SynthesisIdentityLayer } from "./layers/identity.js";
 import { InnerMonologueLayer } from "./layers/inner-monologue.js";
 import { WorkingMemoryDigestLayer, ContinuityPriorResponseLayer, CompressionSummaryLayer } from "./layers/working-memory.js";
@@ -52,7 +52,7 @@ export interface ContextPipelineDeps {
 
 export function createContextPipeline(deps: ContextPipelineDeps): ContextPipeline {
   const layers: ContextLayer[] = [
-    new MemoryMdLayer(),  // Tier 0 — fresh MEMORY.md injection every turn
+    new SqliteTier0Layer(deps.db),  // Tier 0 — high-confidence facts from SQLite
     new SynthesisIdentityLayer(),
     new InnerMonologueLayer(),
     new WorkingMemoryDigestLayer(),
