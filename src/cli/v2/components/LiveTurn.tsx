@@ -10,6 +10,7 @@ import type { Turn } from "../state/slices/turns.js";
 import type { ToolCall } from "../state/slices/tools.js";
 import { OwlAvatar } from "./OwlAvatar.js";
 import { ToolCallCard } from "./ToolCallCard.js";
+import { ThinkingIndicator } from "./ThinkingIndicator.js";
 import { useTheme } from "../providers/ThemeProvider.js";
 
 export interface LiveTurnProps {
@@ -34,10 +35,14 @@ export function LiveTurn({ turn, toolCalls }: LiveTurnProps) {
         <ToolCallCard key={tc.toolCallId} tool={tc} />
       ))}
       <Box paddingLeft={2}>
-        <Text wrap="wrap">
-          {turn.text}
-          <Text color={colors.accent}>▋</Text>
-        </Text>
+        {turn.text === "" && myTools.length === 0 ? (
+          <ThinkingIndicator />
+        ) : (
+          <Text wrap="wrap">
+            {turn.text}
+            <Text color={colors.accent}>▋</Text>
+          </Text>
+        )}
       </Box>
     </Box>
   );

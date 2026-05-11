@@ -49,10 +49,11 @@ describe("Composer", () => {
     expect(lastFrame()).not.toContain("/help");
   });
 
-  it("generating state: shows generating text instead of ❯", () => {
+  it("generating state: shows dimmed input row, no cursor", () => {
     uiStore.setState({ generating: true });
     const { lastFrame } = render(<ComposerUnderTest disabled={true} />);
-    expect(lastFrame()).toContain("generating...");
-    expect(lastFrame()).not.toContain("❯");
+    expect(lastFrame()).toContain("❯");
+    expect(lastFrame()).not.toContain("generating...");
+    expect(lastFrame()).not.toContain("▋");
   });
 });

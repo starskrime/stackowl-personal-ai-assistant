@@ -17,6 +17,8 @@ import { Transcript } from "../components/Transcript.js";
 import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
 import { NoticeStrip } from "../components/NoticeStrip.js";
 import { LiveTurn } from "../components/LiveTurn.js";
+import { ThinkingIndicator } from "../components/ThinkingIndicator.js";
+import { OwlAvatar } from "../components/OwlAvatar.js";
 import { Composer } from "../components/Composer.js";
 import { CommandPalette } from "../components/CommandPalette.js";
 import { PanelHost } from "../panels/PanelHost.js";
@@ -27,14 +29,16 @@ export interface ChatScreenProps {
 }
 
 export function ChatScreen({ onSubmit }: ChatScreenProps) {
-  const turns      = useUiStore((s) => s.turns);
-  const liveTurn   = useUiStore((s) => s.liveTurn);
-  const toolCalls  = useUiStore((s) => s.toolCalls);
-  const heartbeats = useUiStore((s) => s.heartbeats);
-  const notices    = useUiStore((s) => s.notices);
-  const generating = useUiStore((s) => s.generating);
-  const showHelp   = useUiStore((s) => s.showHelp);
-  const panelFocus = useUiStore((s) => s.panelFocus);
+  const turns         = useUiStore((s) => s.turns);
+  const liveTurn      = useUiStore((s) => s.liveTurn);
+  const toolCalls     = useUiStore((s) => s.toolCalls);
+  const heartbeats    = useUiStore((s) => s.heartbeats);
+  const notices       = useUiStore((s) => s.notices);
+  const generating    = useUiStore((s) => s.generating);
+  const showHelp      = useUiStore((s) => s.showHelp);
+  const panelFocus    = useUiStore((s) => s.panelFocus);
+  const activeOwlName  = useUiStore((s) => s.activeOwlName);
+  const activeOwlEmoji = useUiStore((s) => s.activeOwlEmoji);
 
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
@@ -55,6 +59,15 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         {recentNotices.map((n) => (
           <NoticeStrip key={n.id} notice={n} />
         ))}
+        {/* Show owl + thinking indicator before the live turn object exists */}
+        {generating && !liveTurn && (
+          <Box flexDirection="column" marginBottom={1}>
+            <OwlAvatar emoji={activeOwlEmoji} name={activeOwlName} />
+            <Box paddingLeft={2}>
+              <ThinkingIndicator />
+            </Box>
+          </Box>
+        )}
         <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
         <PanelHost />

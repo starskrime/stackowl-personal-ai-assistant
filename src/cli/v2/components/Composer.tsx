@@ -23,7 +23,6 @@ import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
 import { globalBridge } from "../events/bridge.js";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { useCommandDispatcher } from "../providers/CommandDispatcherProvider.js";
-import { STACKOWL_SPINNER, SPINNER_AMBER, SPINNER_INTERVAL_MS } from "./spinner.js";
 import { getCompletions } from "../commands/completion.js";
 import type { CompletionEntry } from "../commands/completion.js";
 import type { CommandContext } from "../commands/registry.js";
@@ -36,7 +35,6 @@ export interface ComposerProps {
 
 export function Composer({ onSubmit, disabled }: ComposerProps) {
   const [value, setValue] = useState("");
-  const [genFrame, setGenFrame] = useState(0);
   const [completions, setCompletions] = useState<CompletionEntry[]>([]);
   const [completionIdx, setCompletionIdx] = useState(0);
   const historyRef = useRef<InputHistory>(new InputHistory());
@@ -59,12 +57,6 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     getMcpManager: () => { throw new Error("not available in Composer"); },
     getOwlGateway: () => { throw new Error("not available in Composer"); },
   });
-
-  useEffect(() => {
-    if (!generating) return;
-    const t = setInterval(() => setGenFrame((f) => (f + 1) % STACKOWL_SPINNER.length), SPINNER_INTERVAL_MS);
-    return () => clearInterval(t);
-  }, [generating]);
 
   // Recompute completions whenever value changes
   useEffect(() => {
@@ -193,23 +185,14 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
         </Box>
       )}
 
-      {/* Main input box — border owned by ChatScreen wrapper */}
+      {/* Main input row — dimmed while generating, no cursor */}
       <Box flexDirection="column">
-        {generating ? (
-          <Box paddingLeft={1}>
-            <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[genFrame]} </Text>
-            <Text dimColor>generating...</Text>
-          </Box>
-        ) : (
-          <>
-            <Box paddingLeft={1}>
-              <Text dimColor>{activeOwlEmoji} {activeOwlName} </Text>
-              <Text bold color={panelFocus === "panel" ? colors.dim : colors.user}>❯ </Text>
-              <Text color={panelFocus === "panel" ? colors.dim : undefined}>{value}</Text>
-              {panelFocus !== "panel" && <Text color={colors.accent}>▋</Text>}
-            </Box>
-          </>
-        )}
+        <Box paddingLeft={1}>
+          <Text dimColor={generating}>{activeOwlEmoji} {activeOwlName} </Text>
+          <Text bold color={generating || panelFocus === "panel" ? colors.dim : colors.user}>❯ </Text>
+          <Text color={generating || panelFocus === "panel" ? colors.dim : undefined}>{value}</Text>
+          {!generating && panelFocus !== "panel" && <Text color={colors.accent}>▋</Text>}
+        </Box>
       </Box>
     </Box>
   );
