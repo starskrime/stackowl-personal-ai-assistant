@@ -379,6 +379,7 @@ async function bootstrap() {
     await import("./compat/tools/memory.js");
   const { CronTool } = await import("./compat/tools/cron.js");
   const { BrowserTool } = await import("./compat/tools/browser.js");
+  const updateMemoryTool = new UpdateMemoryTool();
   toolRegistry.registerAll([
     // ── Core tools ──
     ShellTool,
@@ -408,7 +409,7 @@ async function bootstrap() {
     new CronTool(workspacePath),
     new SkillInstallTool(workspacePath),
     new CreateSkillTool(),
-    new UpdateMemoryTool(),
+    updateMemoryTool,
     new ReadLogsTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
@@ -538,6 +539,9 @@ async function bootstrap() {
     .catch((err) =>
       log.engine.warn(`[MemoryDatabase] JSON import failed: ${err}`),
     );
+
+  // Late-inject the MemoryDatabase into UpdateMemoryTool (created before memoryDb above).
+  updateMemoryTool.setDb(memoryDb);
 
   // Tool Tracker — SQLite-backed tool execution history (Element 7 / schema v23).
   // Wired here so registry.execute() records every tool call into tool_executions.
