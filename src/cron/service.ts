@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
-import type { CronJob, CronJobState, CronRun } from "./types.js";
+import type { CronJob, CronJobState } from "./types.js";
 
 const DEFAULT_PERSIST_PATH = join(homedir(), ".stackowl", "crons.json");
 

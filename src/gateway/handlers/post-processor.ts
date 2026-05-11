@@ -66,7 +66,7 @@ export class PostProcessor {
 
     // SentimentProbe — detects user corrections and increments challenge_instances
     // so DNA evolution can increase challengeLevel (reducing sycophancy) over time.
-    this.sentimentProbe = new SentimentProbe((sentiment, incrementChallenge) => {
+    this.sentimentProbe = new SentimentProbe((_sentiment, incrementChallenge) => {
       if (incrementChallenge && this._lastProcessUserId) {
         this.enqueueJob("sentiment-challenge-update", "critical", async () => {
           this.ctx.db?.rawDb?.prepare(
@@ -817,9 +817,6 @@ export class PostProcessor {
       log.engine.warn("tool telemetry record failed", err);
     }
   }
-
-  // Test-only alias — exposes enqueueJob for unit testing
-  private enqueueJobForTest = this.enqueueJob.bind(this);
 
   // ─── Gap Learning Feedback ────────────────────────────────────
 

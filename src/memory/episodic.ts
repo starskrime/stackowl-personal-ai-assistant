@@ -548,7 +548,7 @@ Return ONLY a valid JSON object, no markdown.`;
   async searchWithScoring(
     query: string,
     limit = 5,
-    provider?: ModelProvider,
+    _provider?: ModelProvider,
     threshold = 0.3,
   ): Promise<Array<Episode & { retrievalScore: number }>> {
     const now = Date.now();

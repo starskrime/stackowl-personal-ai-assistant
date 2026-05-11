@@ -1,12 +1,6 @@
 import { log } from "../logger.js";
-import type { CronJob, SafetyProfile } from "./types.js";
+import type { CronJob } from "./types.js";
 import type { ChatMessage, ModelProvider } from "../providers/base.js";
-
-const TOOL_PROFILES: Record<SafetyProfile, string[]> = {
-  low: ["ReadFileTool", "WebFetchTool"],
-  medium: ["ReadFileTool", "WebFetchTool", "ShellTool", "WriteFileTool"],
-  full: [], // empty = all tools
-};
 
 export interface IsolatedRunnerOptions {
   provider: ModelProvider;

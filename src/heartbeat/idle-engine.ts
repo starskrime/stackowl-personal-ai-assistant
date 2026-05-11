@@ -57,7 +57,7 @@ export class IdleActivityEngine {
   private running = false;
 
   constructor(
-    private readonly stackConfig: StackOwlConfig,
+    _stackConfig: StackOwlConfig,
     callbacks: IdleEngineCallbacks,
     idleConfig?: Partial<IdleEngineConfig>,
   ) {

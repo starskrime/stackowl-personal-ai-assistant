@@ -24,15 +24,6 @@ export interface OwlRouterDeps {
   workspacePath?: string
 }
 
-const HELP = `/helper commands:
-  /helper list                     — list all helpers
-  /helper show <name>              — show helper details
-  /helper create                   — launch creation wizard
-  /helper design <name>            — edit helper design
-  /helper capabilities <name>      — edit helper capabilities
-  /helper rename <old-name> <new-name>
-  /helper delete <name> yes        — delete a helper (irreversible)`
-
 export async function dispatchOwlCommand(
   verb: string,
   args: string[],
