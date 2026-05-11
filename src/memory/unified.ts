@@ -146,18 +146,22 @@ export class UnifiedMemory {
     // Populate v30 columns (domain, scope, source, confidence, evidence_ids)
     // that MemoryInsert doesn't cover yet.
     if (this.db) {
-      this.db
-        .prepare(
-          `UPDATE memories SET domain = ?, scope = ?, source = ?, confidence = ?, evidence_ids = ? WHERE id = ?`,
-        )
-        .run(
-          input.domain,
-          input.scope ?? "user",
-          input.source ?? "inferred",
-          input.confidence ?? 0.8,
-          JSON.stringify(input.evidence ?? []),
-          id,
-        );
+      try {
+        this.db
+          .prepare(
+            `UPDATE memories SET domain = ?, scope = ?, source = ?, confidence = ?, evidence_ids = ? WHERE id = ?`,
+          )
+          .run(
+            input.domain,
+            input.scope ?? "user",
+            input.source ?? "inferred",
+            input.confidence ?? 0.8,
+            JSON.stringify(input.evidence ?? []),
+            id,
+          );
+      } catch (err) {
+        log.memory.error("unified.remember: v30 UPDATE failed — partial write, metadata not persisted", err, { id });
+      }
     }
 
     log.memory.debug("unified.remember: exit", { id, kind: input.kind, domain: input.domain });
@@ -189,6 +193,7 @@ export class UnifiedMemory {
       topK: filter.topK ?? 50,
     });
 
+    // Empty query → relevance scores 0, ranking falls back to recency + importance
     const records = await this.repo.search("", {
       kinds: filter.kinds,
       topK: filter.topK ?? 50,
@@ -208,7 +213,9 @@ export class UnifiedMemory {
       log.memory.debug("unified.get: not found", { id });
       return null;
     }
-    return this.repoRecordToMemoryRecord(record);
+    const result = this.repoRecordToMemoryRecord(record);
+    log.memory.debug("unified.get: exit", { id });
+    return result;
   }
 
   forget(id: MemoryId, reason = "user-requested"): void {
@@ -219,7 +226,12 @@ export class UnifiedMemory {
 
   reinforce(id: MemoryId): void {
     log.memory.debug("unified.reinforce: entry", { id });
-    this.repo.recordAccess(id);
+    try {
+      this.repo.recordAccess(id);
+    } catch (err) {
+      log.memory.warn("unified.reinforce: recordAccess failed (id may not exist)", err, { id });
+      return;
+    }
     log.memory.debug("unified.reinforce: exit", { id });
   }
 
@@ -233,16 +245,18 @@ export class UnifiedMemory {
   }
 
   stats(): UnifiedMemoryStats {
+    log.memory.debug("unified.stats: entry");
     const s = this.repo.stats();
-    // byDomain requires v30 domain column — return {} until that migration lands
-    return {
+    const result: UnifiedMemoryStats = {
       total: s.total,
-      byKind: s.byKind as Record<MemoryKind, number>,
-      byDomain: {},
+      byKind: s.byKind,
+      byDomain: {}, // requires v30 domain column — placeholder until Phase 2 migration
       invalidated: s.invalidated,
-      pinned: 0,
+      pinned: 0, // requires v30 pinned column — placeholder until Phase 2 migration
       avgImportance: s.avgImportance,
     };
+    log.memory.debug("unified.stats: exit", { total: s.total });
+    return result;
   }
 
   why(id: MemoryId): MemoryProvenance | null {
@@ -252,12 +266,14 @@ export class UnifiedMemory {
       log.memory.debug("unified.why: not found", { id });
       return null;
     }
-    return {
+    const provenance: MemoryProvenance = {
       id,
-      source: null, // populated from domain column in later migration phase
-      evidence_ids: [],
+      source: null, // populated from v30 source column in later migration phase
+      evidence_ids: [], // populated from v30 evidence_ids column in later migration phase
       created_at: record.created_at,
     };
+    log.memory.debug("unified.why: exit", { id });
+    return provenance;
   }
 
   // ---------------------------------------------------------------------------
