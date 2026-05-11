@@ -80,12 +80,14 @@ export class RememberTool implements ToolImplementation {
     };
     const kind = kindMap[category] ?? "semantic";
 
+    log.memory.debug("remember.execute: entry", { category, kind, contentLen: content.length });
+
     const unifiedMemory = (context.engineContext as any)?.unifiedMemory;
 
     if (unifiedMemory) {
       try {
-        const userId = (context.engineContext as any)?.userId ?? "default";
-        const owlName = (context.engineContext as any)?.owl?.persona?.name ?? "default";
+        const userId = context.engineContext?.userId ?? "default";
+        const owlName = context.engineContext?.owl?.persona?.name ?? "default";
 
         await unifiedMemory.remember({
           content,
@@ -94,22 +96,21 @@ export class RememberTool implements ToolImplementation {
           scope: "user",
           source: "inferred",
           confidence: 0.9,
-          goal_id: undefined,
           userId,
           owlName,
         });
 
-        log.memory.info(`[RememberTool] Stored via UnifiedMemory (${category}/${kind}): "${content.slice(0, 80)}"`);
+        log.memory.info("remember.execute: stored", { category, kind, contentLen: content.length });
         return `Remembered (${category}): "${content.slice(0, 80)}${content.length > 80 ? "..." : ""}"`;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        log.memory.error("[RememberTool] UnifiedMemory.remember failed", err, { category, kind });
+        log.memory.error("remember.execute: UnifiedMemory.remember failed", err, { category, kind });
         return `Failed to store memory: ${msg}`;
       }
     }
 
     // Graceful degradation — no memory store available
-    log.memory.warn("[RememberTool] No unifiedMemory in context — memory not persisted");
+    log.memory.warn("remember.execute: no unifiedMemory in context — memory not persisted");
     return `Noted: "${content.slice(0, 80)}" — (memory store not available, won't persist across sessions)`;
   }
 }
