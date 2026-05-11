@@ -62,4 +62,54 @@ describe("DbQueryTool", () => {
     expect(parsed.success).toBe(false);
     expect(["FILE_NOT_FOUND", "QUERY_ERROR"]).toContain(parsed.error.code);
   });
+
+  it("rejects paths outside workspace and /tmp (path traversal attempt)", async () => {
+    const mod = await import("../../src/tools/db-query.js");
+    // Attempt to query a database outside the workspace (e.g., home directory)
+    const result = await mod.DbQueryTool.execute(
+      { dbPath: "/etc/hostname.db", sql: "SELECT 1" },
+      { cwd: tmpdir() },
+    );
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.code).toBe("ACCESS_DENIED");
+    expect(parsed.error.message).toContain("Access denied");
+  });
+
+  it("rejects non-.db and non-.sqlite file extensions", async () => {
+    const mod = await import("../../src/tools/db-query.js");
+    const result = await mod.DbQueryTool.execute(
+      { dbPath: "/tmp/data.txt", sql: "SELECT 1" },
+      { cwd: tmpdir() },
+    );
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.code).toBe("INVALID_PATH");
+    expect(parsed.error.message).toContain("Only .db and .sqlite");
+  });
+
+  it("allows queries to files in /tmp", async () => {
+    createTestDb();
+    const mod = await import("../../src/tools/db-query.js");
+    const result = await mod.DbQueryTool.execute(
+      { dbPath: TEST_DB, sql: "SELECT * FROM items ORDER BY id" },
+      { cwd: tmpdir() },
+    );
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.rows).toHaveLength(2);
+  });
+
+  it("allows relative paths within the workspace", async () => {
+    createTestDb();
+    const mod = await import("../../src/tools/db-query.js");
+    // Pass a relative path that resolves within /tmp (the cwd)
+    const result = await mod.DbQueryTool.execute(
+      { dbPath: "stackowl-dbquery-test.sqlite", sql: "SELECT * FROM items ORDER BY id" },
+      { cwd: tmpdir() },
+    );
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.rows).toHaveLength(2);
+  });
 });

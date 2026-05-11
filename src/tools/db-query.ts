@@ -1,6 +1,41 @@
 // src/tools/db-query.ts
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
+import { resolve, isAbsolute, normalize, sep } from "node:path";
+import { existsSync } from "node:fs";
+
+// ─── Sandbox Helper ───────────────────────────────────────────────
+
+function assertWithinSandbox(resolvedPath: string, cwd: string): string | null {
+  // Check if running in Docker
+  const inDocker =
+    process.env.IN_DOCKER === "true" || existsSync("/.dockerenv");
+
+  // In Docker, allow access to the entire container (it's already sandboxed)
+  if (inDocker) {
+    return null; // Full access in Docker
+  }
+
+  // On host machine, restrict to workspace and /tmp
+  const sandboxRoot = resolve(cwd);
+  const isInWorkspace =
+    resolvedPath.startsWith(sandboxRoot + sep) || resolvedPath === sandboxRoot;
+  const isInTemp = resolvedPath.startsWith("/tmp/") || resolvedPath === "/tmp";
+
+  if (!isInWorkspace && !isInTemp) {
+    return `Access denied: "${resolvedPath}" is outside the allowed paths. Allowed: ${sandboxRoot}, /tmp (or entire container in Docker)`;
+  }
+
+  return null;
+}
+
+// ─── Verify Database Extension ────────────────────────────────────
+
+function isValidDatabasePath(dbPath: string): boolean {
+  return dbPath.endsWith(".db") || dbPath.endsWith(".sqlite");
+}
+
+// ─────────────────────────────────────────────────────────────────
 
 export const DbQueryTool: ToolImplementation = {
   definition: {
@@ -33,7 +68,7 @@ export const DbQueryTool: ToolImplementation = {
   category: "cognitive",
   source: "builtin",
 
-  async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
     const dbPath    = args["dbPath"]  as string;
     const sql       = args["sql"]     as string;
     const paramsRaw = args["params"]  as string | undefined;
@@ -41,6 +76,22 @@ export const DbQueryTool: ToolImplementation = {
 
     if (!dbPath) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "dbPath is required" } });
     if (!sql)    return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "sql is required" } });
+
+    // Sandbox check: validate file extension
+    if (!isValidDatabasePath(dbPath)) {
+      log.tool.warn("db-query.execute: invalid database extension", { dbPath });
+      return JSON.stringify({ success: false, error: { code: "INVALID_PATH", message: "Only .db and .sqlite files are allowed" } });
+    }
+
+    // Sandbox check: resolve and validate path boundaries
+    const normalizedInput = normalize(dbPath);
+    const cwd = context.cwd || process.cwd();
+    const resolved = isAbsolute(normalizedInput) ? normalizedInput : resolve(cwd, normalizedInput);
+    const sandboxError = assertWithinSandbox(resolved, cwd);
+    if (sandboxError) {
+      log.tool.warn("db-query.execute: path traversal attempt blocked", { dbPath, resolved, reason: sandboxError });
+      return JSON.stringify({ success: false, error: { code: "ACCESS_DENIED", message: "Access denied: path outside workspace" } });
+    }
 
     let params: unknown[] = [];
     if (paramsRaw) {
@@ -66,8 +117,8 @@ export const DbQueryTool: ToolImplementation = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let db: any = null;
     try {
-      log.tool.debug("db-query.execute: opening database", { dbPath });
-      db = new DatabaseCtor(dbPath, { readonly: true, fileMustExist: true });
+      log.tool.debug("db-query.execute: opening database", { dbPath: resolved });
+      db = new DatabaseCtor(resolved, { readonly: true, fileMustExist: true });
       log.tool.debug("db-query.execute: executing query", { sql: sql.slice(0, 200) });
       const stmt = db.prepare(sql);
       const rows = stmt.all(...params) as Record<string, unknown>[];
@@ -75,7 +126,7 @@ export const DbQueryTool: ToolImplementation = {
       log.tool.debug("db-query.execute: exit", { success: true, rowCount: rows.length, columns });
       return JSON.stringify({ success: true, data: { rows, rowCount: rows.length, columns } });
     } catch (err) {
-      log.tool.error("db-query.execute: failed", err, { dbPath, sql: sql.slice(0, 200) });
+      log.tool.error("db-query.execute: failed", err, { dbPath: resolved, sql: sql.slice(0, 200) });
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("ENOENT") || msg.includes("no such file")) {
         return JSON.stringify({ success: false, error: { code: "FILE_NOT_FOUND", message: msg } });
