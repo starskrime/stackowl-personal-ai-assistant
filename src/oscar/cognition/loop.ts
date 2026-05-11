@@ -120,7 +120,7 @@ export class CognitiveLoop {
       const { macOSAdapter } = await import("../platform/adapters/macos.js");
       focusedApp = await macOSAdapter.getFocusedApp();
     } catch (err) {
-      log.cognition.debug("[CognitiveLoop] macOS adapter unavailable, focusedApp stays null", err as Error);
+      log.cognition.debug("[CognitiveLoop] macOS adapter unavailable — focusedApp stays null");
     }
 
     // Detect app switch before updating lastApp — only fire when both sides are non-null to
