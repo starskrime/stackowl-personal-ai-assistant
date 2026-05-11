@@ -139,7 +139,6 @@ export function sanitize(content: string): SanitizationResult {
 
   // Phase 1: deterministic substitutions on body only
   let sanitizedBody = body;
-  const bodyLines = body.split("\n");
 
   for (const sub of SUBSTITUTIONS) {
     let match: RegExpExecArray | null;
@@ -149,7 +148,6 @@ export function sanitize(content: string): SanitizationResult {
     const clone = new RegExp(sub.pattern.source, sub.pattern.flags);
     const bodyForScan = body;
     clone.lastIndex = 0;
-    let charOffset = 0;
     const lineStarts: number[] = [0];
     for (let i = 0; i < body.length; i++) {
       if (body[i] === "\n") lineStarts.push(i + 1);
