@@ -1238,7 +1238,22 @@ async function buildGateway(
     persist: true,
     maxConcurrentRuns: 3,
     onJobFire: async (job, traceId) => {
-      return await isolatedRunner.run(job, traceId);
+      const result = await isolatedRunner.run(job, traceId);
+      if (job.deliver) {
+        if (job.deliveryTarget) {
+          try {
+            await gateway.sendProactive(job.deliveryTarget.channel, job.deliveryTarget.userId, result);
+          } catch (err) {
+            log.engine.warn("[CronService] Failed to deliver job result", { jobId: job.id });
+          }
+        } else {
+          log.engine.info("[CronService] [DELIVER_PENDING] Job result ready but no deliveryTarget configured", {
+            jobId: job.id,
+            resultPreview: result.slice(0, 200),
+          });
+        }
+      }
+      return result;
     },
   });
 
@@ -1256,6 +1271,9 @@ async function buildGateway(
 
   // Ensure cron service stops on shutdown
   process.on("SIGINT", () => {
+    cronService.stop();
+  });
+  process.on("SIGTERM", () => {
     cronService.stop();
   });
 

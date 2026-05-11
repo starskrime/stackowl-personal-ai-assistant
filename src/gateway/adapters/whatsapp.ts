@@ -17,12 +17,14 @@ import { runWithContext } from "../../infra/observability/context.js";
 import { log } from "../../logger.js";
 import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
+import type { PairingService } from "../security/pairing.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
 export interface WhatsAppAdapterConfig {
   sessionDataPath?: string;
   dmPolicy?: "open" | "pairing";
+  pairingService?: PairingService;
 }
 
 // ─── Adapter ──────────────────────────────────────────────────────
@@ -32,13 +34,15 @@ export class WhatsAppAdapter implements ChannelAdapter {
   readonly name = "WhatsApp";
 
   private client: Client | null = null;
-  private config: Required<WhatsAppAdapterConfig>;
+  private config: Required<Omit<WhatsAppAdapterConfig, "pairingService">>;
+  private pairingService?: PairingService;
 
   constructor(config: WhatsAppAdapterConfig = {}) {
     this.config = {
       sessionDataPath: config.sessionDataPath ?? join(homedir(), ".stackowl", "whatsapp-session"),
       dmPolicy: config.dmPolicy ?? "pairing",
     };
+    this.pairingService = config.pairingService;
   }
 
   // ─── ChannelAdapter interface ─────────────────────────────────
@@ -111,6 +115,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
     if (!this.client) return;
 
     this.client.on("message", async (msg: Message) => {
+      // Guard: ignore self-sent messages to prevent infinite loop
+      if ((msg as any).fromMe) return;
+
       // 1. ENTRY — what came in
       log.gateway.debug("whatsapp.messageCreate: entry", {
         id: msg.id._serialized,
@@ -135,6 +142,14 @@ export class WhatsAppAdapter implements ChannelAdapter {
         sessionId: normalized.sessionId,
         textLen: normalized.text.length,
       });
+
+      if (this.config.dmPolicy === "pairing" && this.pairingService) {
+        if (!this.pairingService.isAuthorized("whatsapp", normalized.userId)) {
+          const code = this.pairingService.challenge("whatsapp", normalized.userId);
+          await msg.reply(`To authorize, run: stackowl pairing approve whatsapp ${normalized.userId} ${code}`);
+          return;
+        }
+      }
 
       try {
         gateway.getCognitiveLoop?.()?.notifyUserActivity?.();

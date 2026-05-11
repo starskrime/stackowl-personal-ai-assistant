@@ -27,6 +27,7 @@ import { runWithContext } from "../../infra/observability/context.js";
 import { log } from "../../logger.js";
 import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
+import type { PairingService } from "../../gateway/security/pairing.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -41,6 +42,8 @@ export interface DiscordAdapterConfig {
    *  - "pairing" — require pairing handshake before responding (default)
    */
   dmPolicy?: "open" | "pairing";
+  /** Optional pairing service — enforced when dmPolicy is "pairing" */
+  pairingService?: PairingService;
 }
 
 // ─── Mention strip regex ─────────────────────────────────────────
@@ -55,11 +58,13 @@ export class DiscordAdapter implements ChannelAdapter {
   readonly name = "Discord";
 
   private client: Client | null = null;
+  private pairingService?: PairingService;
 
   constructor(private config: DiscordAdapterConfig) {
     if (!config.botToken?.trim()) {
       throw new Error("[DiscordAdapter] botToken is required.");
     }
+    this.pairingService = config.pairingService;
     // Client is intentionally NOT constructed here so that tests
     // can instantiate DiscordAdapter without triggering any network I/O
     // or import side-effects from discord.js. The Client is built in start().
@@ -148,6 +153,14 @@ export class DiscordAdapter implements ChannelAdapter {
         sessionId: normalized.sessionId,
         textLen: normalized.text.length,
       });
+
+      if (this.config.dmPolicy === "pairing" && this.pairingService) {
+        if (!this.pairingService.isAuthorized("discord", normalized.userId)) {
+          const code = this.pairingService.challenge("discord", normalized.userId);
+          await message.reply(`To authorize, run: stackowl pairing approve discord ${normalized.userId} ${code}`);
+          return;
+        }
+      }
 
       try {
         gateway.getCognitiveLoop?.()?.notifyUserActivity?.();
