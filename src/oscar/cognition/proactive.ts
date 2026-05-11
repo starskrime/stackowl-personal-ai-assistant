@@ -1,4 +1,6 @@
+import type { ModelProvider, ChatMessage } from "../../providers/base.js";
 import type { Suggestion } from "./types.js";
+import { log } from "../../logger.js";
 
 export interface SuggestionContext {
   currentApp: string | null;
@@ -8,151 +10,86 @@ export interface SuggestionContext {
   dayOfWeek: number;
 }
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+function contextKey(ctx: SuggestionContext): string {
+  return `${ctx.currentApp}|${ctx.timeOfDay}|${ctx.recentActions.slice(0, 3).join(",")}`;
+}
+
 export class ProactiveAssistant {
+  private cache = new Map<string, { suggestion: Suggestion; expiresAt: number }>();
   private suggestionHistory: Map<string, Suggestion> = new Map();
   private maxHistoryAge = 24 * 60 * 60 * 1000;
 
+  constructor(private provider?: ModelProvider) {}
+
   async suggest(context: SuggestionContext): Promise<Suggestion[]> {
-    const suggestions: Suggestion[] = [];
+    log.cognition.debug("proactive.suggest: entry", {
+      app: context.currentApp,
+      timeOfDay: context.timeOfDay,
+      actions: context.recentActions.slice(0, 3),
+    });
 
-    const habitual = await this.findHabitualSuggestions(context);
-    suggestions.push(...habitual);
-
-    const contextual = await this.findContextualSuggestions(context);
-    suggestions.push(...contextual);
-
-    const preventive = await this.findPreventiveSuggestions(context);
-    suggestions.push(...preventive);
-
-    const proactive = await this.findProactiveSuggestions(context);
-    suggestions.push(...proactive);
-
-    const filtered = suggestions
-      .filter((s) => s.confidence > 0.6)
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 5);
-
-    this.pruneHistory();
-
-    return filtered;
-  }
-
-  private async findHabitualSuggestions(context: SuggestionContext): Promise<Suggestion[]> {
-    const suggestions: Suggestion[] = [];
-
-    const hour = context.timeOfDay;
-
-    if (hour === 9 && context.currentApp === null) {
-      suggestions.push({
-        id: `habitual_morning_${Date.now()}`,
-        type: "habitual",
-        message: "Good morning! Ready to start your daily routine?",
-        confidence: 0.85,
-        context: { timeOfDay: hour },
-        createdAt: Date.now(),
-      });
+    if (!this.provider) {
+      log.cognition.debug("proactive.suggest: no provider, returning empty");
+      return [];
     }
 
-    if (hour === 17 && context.currentApp === "email") {
-      suggestions.push({
-        id: `habitual_evening_${Date.now()}`,
-        type: "habitual",
-        message: "End of day approaching. Wrap up emails and prepare for tomorrow?",
-        confidence: 0.75,
-        context: { timeOfDay: hour, app: "email" },
-        createdAt: Date.now(),
-      });
+    const key = contextKey(context);
+    const cached = this.cache.get(key);
+    if (cached && Date.now() < cached.expiresAt) {
+      log.cognition.debug("proactive.suggest: cache hit, returning cached suggestion", { key });
+      return [cached.suggestion];
     }
 
-    return suggestions;
-  }
+    const appDesc = context.currentApp ?? "unknown application";
+    const timeLabel =
+      context.timeOfDay < 12 ? "morning" : context.timeOfDay < 17 ? "afternoon" : "evening";
 
-  private async findContextualSuggestions(context: SuggestionContext): Promise<Suggestion[]> {
-    const suggestions: Suggestion[] = [];
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content:
+          "You are a proactive AI assistant. Given the user's current context, " +
+          "suggest ONE brief, actionable insight (1 sentence, under 20 words). " +
+          "Be specific and useful. Output only the suggestion text — no preamble.",
+      },
+      {
+        role: "user",
+        content:
+          `App: ${appDesc}. Time: ${timeLabel}. ` +
+          `Recent actions: ${context.recentActions.slice(0, 3).join(", ") || "none"}.`,
+      },
+    ];
 
-    if (context.currentApp === "photoshop" && context.recentActions.includes("click")) {
-      suggestions.push({
-        id: `context_save_${Date.now()}`,
-        type: "contextual",
-        message: "You've been editing. Would you like me to create a checkpoint?",
-        confidence: 0.7,
-        action: { type: "checkpoint.create" },
-        context: { app: "photoshop" },
-        createdAt: Date.now(),
-      });
-    }
+    try {
+      log.cognition.debug("proactive.suggest: calling provider.chat", { appDesc, timeLabel });
+      const response = await this.provider.chat(messages);
+      const message = response.content.trim();
 
-    if (context.currentApp === "browser" && context.recentActions.includes("navigate")) {
-      suggestions.push({
-        id: `context_bookmark_${Date.now()}`,
-        type: "contextual",
-        message: "I notice you've been browsing. Want me to bookmark this page?",
-        confidence: 0.5,
-        action: { type: "bookmark.create" },
-        context: { app: "browser" },
-        createdAt: Date.now(),
-      });
-    }
-
-    return suggestions;
-  }
-
-  private async findPreventiveSuggestions(context: SuggestionContext): Promise<Suggestion[]> {
-    const suggestions: Suggestion[] = [];
-
-    if (context.recentActions.includes("delete") && context.recentActions.includes("delete")) {
-      suggestions.push({
-        id: `preventive_backup_${Date.now()}`,
-        type: "preventive",
-        message: "I see multiple delete actions. Would you like me to create a backup first?",
-        confidence: 0.8,
-        action: { type: "backup.create" },
-        context: {},
-        createdAt: Date.now(),
-      });
-    }
-
-    if (context.currentApp === "excel" && context.recentActions.includes("type")) {
-      suggestions.push({
-        id: `preventive_save_${Date.now()}`,
-        type: "preventive",
-        message: "You've been typing in Excel. Save your work to prevent data loss?",
-        confidence: 0.75,
-        action: { type: "save" },
-        context: { app: "excel" },
-        createdAt: Date.now(),
-      });
-    }
-
-    return suggestions;
-  }
-
-  private async findProactiveSuggestions(context: SuggestionContext): Promise<Suggestion[]> {
-    const suggestions: Suggestion[] = [];
-
-    const recentSameContext = this.findRecentSuggestions(context);
-    if (recentSameContext.length > 0) {
-      const last = recentSameContext[0];
-      if (last.type === "learning") {
-        suggestions.push({
-          id: `proactive_repeat_${Date.now()}`,
-          type: "proactive",
-          message: "Would you like to repeat that action I just learned?",
-          confidence: 0.65,
-          context: {},
-          createdAt: Date.now(),
-        });
+      if (!message || message.length < 5) {
+        log.cognition.debug("proactive.suggest: provider returned empty/too-short content");
+        return [];
       }
+
+      const suggestion: Suggestion = {
+        id: `proactive_${Date.now()}`,
+        type: "proactive",
+        message,
+        confidence: 0.75,
+        context: { app: context.currentApp ?? undefined, timeOfDay: context.timeOfDay },
+        createdAt: Date.now(),
+      };
+
+      this.cache.set(key, { suggestion, expiresAt: Date.now() + CACHE_TTL_MS });
+      log.cognition.debug("proactive.suggest: exit", { message, cached: true });
+      return [suggestion];
+    } catch (err) {
+      log.cognition.error("proactive.suggest: provider call failed", err as Error, {
+        app: context.currentApp,
+      });
+      return [];
     }
-
-    return suggestions;
-  }
-
-  private findRecentSuggestions(_context: SuggestionContext): Suggestion[] {
-    const now = Date.now();
-    return Array.from(this.suggestionHistory.values())
-      .filter((s) => now - s.createdAt < 5 * 60 * 1000)
-      .filter((s) => s.type === "learning");
   }
 
   recordSuggestion(suggestion: Suggestion): void {
@@ -165,6 +102,16 @@ export class ProactiveAssistant {
       suggestion.confidence = accepted
         ? Math.min(1, suggestion.confidence + 0.1)
         : Math.max(0.1, suggestion.confidence - 0.2);
+    }
+
+    // Also update confidence in the cache if present
+    for (const [, cached] of this.cache) {
+      if (cached.suggestion.id === suggestionId) {
+        cached.suggestion.confidence = accepted
+          ? Math.min(1, cached.suggestion.confidence + 0.1)
+          : Math.max(0.1, cached.suggestion.confidence - 0.2);
+        break;
+      }
     }
   }
 
@@ -182,6 +129,7 @@ export class ProactiveAssistant {
     byType: Record<string, number>;
     avgConfidence: number;
   } {
+    this.pruneHistory();
     const suggestions = Array.from(this.suggestionHistory.values());
     const byType: Record<string, number> = {};
     let totalConfidence = 0;
