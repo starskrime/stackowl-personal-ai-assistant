@@ -6,6 +6,7 @@ import type { ContextLayer, ContextRequest, TriageSignals, LayerResults } from "
 
 const DEFAULT_MEMORY_PATH = join(homedir(), ".stackowl", "workspace", "MEMORY.md");
 
+/** @deprecated Superseded by SqliteTier0Layer — kept for migration reference only. */
 export class MemoryMdLayer implements ContextLayer {
   name = "MemoryMdLayer";
   priority = 0;
