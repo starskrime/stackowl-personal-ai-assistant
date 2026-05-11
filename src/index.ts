@@ -1869,6 +1869,29 @@ async function evolveCommand(owlName: string) {
   }
 }
 
+// ─── Pairing Command ─────────────────────────────────────────────
+
+async function pairingCommand(channel: string, userId: string, code: string) {
+  const { memoryDb } = await bootstrap();
+
+  if (!channel || !userId || !code) {
+    log.cli.error("❌ Usage: stackowl pairing approve <channel> <userId> <code>");
+    log.cli.error("  Example: stackowl pairing approve discord user123 ABC123");
+    process.exit(1);
+  }
+
+  const { PairingService } = await import("./gateway/security/pairing.js");
+  const pairing = new PairingService(memoryDb.rawDb);
+
+  const ok = pairing.approve(channel, userId, code);
+  if (ok) {
+    log.cli.info(`✓ Approved: ${userId} on ${channel}`);
+  } else {
+    log.cli.error(`✗ Failed: wrong code or unknown sender`);
+    process.exit(1);
+  }
+}
+
 // ─── Telegram Command ────────────────────────────────────────────
 
 async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
@@ -2281,6 +2304,23 @@ program
       log.cli.error(`Fatal error: ${err.message}`, err);
       process.exit(1);
     });
+  });
+
+program
+  .command("pairing <subcommand> [args...]")
+  .description("Manage DM pairing approvals for Discord/WhatsApp")
+  .action((subcommand: string, args: string[]) => {
+    if (subcommand === "approve" && args.length >= 3) {
+      const [channel, userId, code] = args;
+      pairingCommand(channel, userId, code).catch((err) => {
+        log.cli.error(`Fatal error: ${err.message}`, err);
+        process.exit(1);
+      });
+    } else {
+      log.cli.error("❌ Usage: stackowl pairing approve <channel> <userId> <code>");
+      log.cli.error("  Example: stackowl pairing approve discord user123 ABC123");
+      process.exit(1);
+    }
   });
 
 program
