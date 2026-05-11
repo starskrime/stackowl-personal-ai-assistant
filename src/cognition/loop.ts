@@ -905,17 +905,18 @@ export class CognitiveLoop {
     const { ToolSynthesizer } = await import("../evolution/synthesizer.js");
     const synthesizer = new ToolSynthesizer();
 
-    // Resolve synthesis provider (prefer Anthropic for quality)
+    // Resolve synthesis provider (explicit config > default)
     const synthesisConfig = this.deps.config.synthesis;
-    const providerName = synthesisConfig?.provider ?? "anthropic";
     const synthesisModel = synthesisConfig?.model ?? this.deps.config.defaultModel;
     let synthesisProvider = this.deps.provider;
 
     if (this.deps.providerRegistry) {
       try {
-        synthesisProvider = this.deps.providerRegistry.get(providerName);
-      } catch (err) {
-        log.engine.warn(`[CognitiveLoop] Synthesis provider "${providerName}" not found, falling back to default: ${err instanceof Error ? err.message : err}`);
+        synthesisProvider = synthesisConfig?.provider
+          ? this.deps.providerRegistry.get(synthesisConfig.provider)
+          : this.deps.providerRegistry.getDefault();
+      } catch {
+        synthesisProvider = this.deps.providerRegistry.getDefault();
       }
     }
 

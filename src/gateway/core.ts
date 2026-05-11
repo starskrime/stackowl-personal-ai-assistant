@@ -531,9 +531,9 @@ export class OwlGateway {
       if (ctx.providerRegistry) {
         try {
           skillProvider = ctx.providerRegistry.byRole("synthesizer");
-        } catch (err) {
-          log.engine.warn("synthesis: no synthesizer role assigned, falling back to default provider", err);
-          registerCapability("synthesisProvider", "DEGRADED", "no synthesizer role assigned — explicit config.roles.synthesizer needed");
+        } catch {
+          // No synthesizer role configured — silently use default provider
+          skillProvider = ctx.provider;
         }
       }
 
