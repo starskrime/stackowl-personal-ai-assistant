@@ -22,6 +22,7 @@
  *   Windows win32/win64 work normally.
  */
 
+import { log } from "../logger.js";
 import puppeteer from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, BrowserContext } from "puppeteer";
@@ -149,9 +150,7 @@ export class PuppeteerFetcher {
             const ok = await this.checkLinuxElfArch(bundled);
             if (!ok) {
               const hint = arch === "x64" ? "x86-64" : arch;
-              process.stderr.write(
-                `[puppeteer] bundled Chrome is wrong arch for ${hint} — falling back to system browser\n`,
-              );
+              log.tool.warn("puppeteer.findExecutable: bundled Chrome wrong arch, falling back to system browser", { hint });
             } else {
               return bundled;
             }
@@ -161,9 +160,7 @@ export class PuppeteerFetcher {
           }
         }
       } catch (err) {
-        process.stderr.write(
-          `[puppeteer] bundled Chrome check failed: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        log.tool.warn("puppeteer.findExecutable: bundled Chrome check failed", { err: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -171,7 +168,7 @@ export class PuppeteerFetcher {
     const candidates = SYSTEM_CANDIDATES[platform as NodeJS.Platform] ?? [];
     for (const candidate of candidates) {
       if (existsSync(candidate)) {
-        process.stderr.write(`[puppeteer] using system browser: ${candidate}\n`);
+        log.tool.info("puppeteer.findExecutable: using system browser", { candidate });
         return candidate;
       }
     }
@@ -183,9 +180,7 @@ export class PuppeteerFetcher {
       win32:  "winget install Google.Chrome",
     };
     const hint = installHints[platform as NodeJS.Platform] ?? "install Chromium for your platform";
-    process.stderr.write(
-      `[puppeteer] no compatible browser found on ${platform}/${arch}. To enable tier-3 fetching: ${hint}\n`,
-    );
+    log.tool.warn("puppeteer.findExecutable: no compatible browser found", { platform, arch, hint });
     return null;
   }
 
@@ -255,9 +250,7 @@ export class PuppeteerFetcher {
             timeout: waitForSelectorTimeout,
           });
         } catch (err) {
-          process.stderr.write(
-            `[puppeteer] waitForSelector "${waitForSelector}" timed out: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
+          log.tool.warn("puppeteer.fetch: waitForSelector timed out", { waitForSelector, err: err instanceof Error ? err.message : String(err) });
           // proceed with whatever content loaded
         }
       }
@@ -288,7 +281,7 @@ export class PuppeteerFetcher {
     try {
       return (await this.findExecutable()) !== null;
     } catch (err) {
-      process.stderr.write(`[puppeteer] probe error: ${err instanceof Error ? err.message : String(err)}\n`);
+      log.tool.warn("puppeteer.probe: error", { err: err instanceof Error ? err.message : String(err) });
       return false;
     }
   }

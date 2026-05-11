@@ -39,16 +39,15 @@ export class PelletRetriever {
    */
   async retrieveRelevant(query: string): Promise<Pellet[]> {
     try {
-      const pellets = await this.pelletStore.search(
+      const pellets = await this.pelletStore.searchWithGraph(
         query,
         this.config.topK,
-        1 - this.config.threshold,
       );
 
       if (pellets.length > 0) {
         log.engine.info(
-          `[PelletRetriever] Retrieved ${pellets.length}/${await this.pelletStore.count()} pellets ` +
-            `(threshold: ${this.config.threshold})`,
+          `[PelletRetriever] Retrieved ${pellets.length}/${await this.pelletStore.count()} pellets via graph` +
+            ` (topK: ${this.config.topK})`,
         );
       }
 
@@ -96,7 +95,8 @@ export class PelletRetriever {
     for (const pellet of pellets) {
       const domain = pellet.tags[0] ?? "general";
       const excerpt = this.truncateContent(pellet.content, this.config.maxTokensPerPellet);
-      lines.push(`[${domain}] ${pellet.title}`);
+      const date = pellet.generatedAt ? pellet.generatedAt.slice(0, 10) : "";
+      lines.push(`[${domain}] ${pellet.title} (id:${pellet.id}${date ? ` · ${date}` : ""})`);
       lines.push(excerpt);
       lines.push("");
     }

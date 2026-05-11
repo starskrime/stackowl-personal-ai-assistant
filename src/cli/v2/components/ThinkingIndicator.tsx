@@ -5,7 +5,6 @@ import {
   THINKING_SPIN_INTERVAL_MS,
   SPINNER_AMBER,
   FADE_COLORS,
-  LANG_INTERVAL_MS,
   THINKING_MESSAGES,
 } from "./spinner.js";
 
@@ -16,20 +15,12 @@ import {
  */
 export function ThinkingIndicator() {
   const [spinFrame, setSpinFrame] = useState(0);
-  const [langIdx,   setLangIdx]   = useState(0);
+  const [langIdx] = useState(() => Math.floor(Math.random() * THINKING_MESSAGES.length));
 
   useEffect(() => {
     const t = setInterval(
       () => setSpinFrame((f) => (f + 1) % STACKOWL_SPINNER.length),
       THINKING_SPIN_INTERVAL_MS,
-    );
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    const t = setInterval(
-      () => setLangIdx((i) => (i + 1) % THINKING_MESSAGES.length),
-      LANG_INTERVAL_MS,
     );
     return () => clearInterval(t);
   }, []);

@@ -4,7 +4,7 @@
  * of the terminal scroll buffer for the lifetime of the session.
  */
 
-const LOGO_LINES: Array<{ text: string; bright: boolean }> = [
+export const LOGO_LINES: Array<{ text: string; bright: boolean }> = [
   { text: "███████╗████████╗ █████╗  ██████╗██╗  ██╗ ██████╗ ██╗    ██╗██╗     ", bright: true  },
   { text: "██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝██╔═══██╗██║    ██║██║     ", bright: true  },
   { text: "███████╗   ██║   ███████║██║     █████╔╝ ██║   ██║██║ █╗ ██║██║     ", bright: true  },
@@ -15,7 +15,7 @@ const LOGO_LINES: Array<{ text: string; bright: boolean }> = [
 
 const GREEN  = "\x1b[32m";
 const AMBER  = "\x1b[1m\x1b[33m";   // bold yellow — top half of logo
-const DIM    = "\x1b[2m\x1b[33m";   // dim yellow  — bottom half (renders warm red/brown)
+const DIM    = "\x1b[1m\x1b[31m";   // bold red    — bottom half of logo
 const BOLD   = "\x1b[1m";
 const DIMTXT = "\x1b[2m";
 const RESET  = "\x1b[0m";

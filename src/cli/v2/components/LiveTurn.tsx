@@ -1,6 +1,7 @@
 /**
  * LiveTurn — token-streaming live region.
- * Matches Transcript layout: owl header + 2-space indent for content.
+ * Left-aligned (owl side). Matches Transcript's owl layout exactly.
+ * Width = cols - 4 (parent paddingX={2} consumes 4 cols). Adaptive on resize.
  * Tool cards render before text (they execute before the text references them).
  * Cursor ▋ appears at the live streaming edge.
  */
@@ -12,6 +13,7 @@ import { OwlAvatar } from "./OwlAvatar.js";
 import { ToolCallCard } from "./ToolCallCard.js";
 import { ThinkingIndicator } from "./ThinkingIndicator.js";
 import { useTheme } from "../providers/ThemeProvider.js";
+import { useTerminalCols } from "../input/useTerminalCols.js";
 
 export interface LiveTurnProps {
   turn: Turn | null;
@@ -19,13 +21,16 @@ export interface LiveTurnProps {
 }
 
 export function LiveTurn({ turn, toolCalls }: LiveTurnProps) {
-  const { colors } = useTheme();
+  const { colors }  = useTheme();
+  const cols        = useTerminalCols();
+  const contentWidth = Math.max(8, cols - 4);
+
   if (!turn) return null;
 
   const myTools = toolCalls.filter((tc) => tc.turnId === turn.turnId);
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" width={contentWidth} marginBottom={1}>
       <OwlAvatar
         emoji={turn.owlEmoji ?? "🦉"}
         name={turn.owlName ?? "Owl"}

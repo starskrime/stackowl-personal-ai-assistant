@@ -360,29 +360,48 @@ export class PelletStore {
     const seeds = await this.lance.searchSimilar(vec, 5, 0.55);
     if (seeds.length === 0) return [];
 
-    // Step 2: expand seeds via Kuzu graph (1-hop neighbors)
-    const neighborIds = new Set<string>(seeds.map((s) => s.pellet.id));
+    // Step 2: expand seeds via Kuzu graph — 2-hop BFS with hop-distance tracking
+    // 1-hop neighbors are stronger associations than 2-hop (spreading activation)
+    const seedIds = new Set(seeds.map((s) => s.pellet.id));
+    const hop1Ids = new Set<string>();
+    const hop2Ids = new Set<string>();
     if (this.graph.isBuilt) {
       for (const { pellet: seed } of seeds) {
-        const neighbors = await this.graph
-          .getNeighbors(seed.id, 1, 8)
-          .catch(() => [] as string[]);
-        neighbors.forEach((id) => neighborIds.add(id));
+        const h1 = await this.graph.getNeighbors(seed.id, 1, 8).catch(() => [] as string[]);
+        const h2 = await this.graph.getNeighbors(seed.id, 2, 12).catch(() => [] as string[]);
+        h1.forEach((id) => { if (!seedIds.has(id)) hop1Ids.add(id); });
+        h2.forEach((id) => { if (!seedIds.has(id) && !hop1Ids.has(id)) hop2Ids.add(id); });
       }
     }
 
     // Step 3: fetch all candidates from LanceDB
-    const candidates = await this.lance.getByIds([...neighborIds]);
+    const allIds = [...seedIds, ...hop1Ids, ...hop2Ids];
+    const candidates = await this.lance.getByIds(allIds);
 
-    // Step 4: score candidates
-    // Seeds get their vector similarity score; graph neighbors get a fixed 0.35 bonus
+    // Step 4: score candidates using spreading activation + recency + quality
+    // Recency: exponential decay — today ≈ +0.08, 1 month ≈ +0.03, older → 0
+    // Quality: proven pellets (high successCount) score higher
+    const recencyBonus = (p: Pellet): number => {
+      const daysSince = (Date.now() - new Date(p.generatedAt).getTime()) / 86_400_000;
+      return Math.max(0, 0.08 * Math.exp(-daysSince / 30));
+    };
+    const qualityBonus = (p: Pellet): number =>
+      (p.successCount / (p.successCount + p.failureCount + 1)) * 0.15;
+
     const seedScores = new Map(seeds.map((s) => [s.pellet.id, s.score]));
-    const scored = candidates.map((p) => ({
-      pellet: p,
-      score: seedScores.has(p.id)
-        ? seedScores.get(p.id)! * 0.8 + 0.2
-        : 0.35,
-    }));
+    const scored = candidates.map((p) => {
+      const rb = recencyBonus(p);
+      const qb = qualityBonus(p);
+      let score: number;
+      if (seedIds.has(p.id)) {
+        score = seedScores.get(p.id)! * 0.70 + rb + qb;
+      } else if (hop1Ids.has(p.id)) {
+        score = 0.35 + rb * 0.7 + qb * 0.5;
+      } else {
+        score = 0.20 + rb * 0.5 + qb * 0.25;
+      }
+      return { pellet: p, score };
+    });
 
     return scored
       .sort((a, b) => b.score - a.score)

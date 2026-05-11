@@ -1,18 +1,22 @@
 /**
- * ChatScreen — inline-scroll chat surface.
+ * ChatScreen — alt-screen chat surface.
  *
- * The persistent header (green rules + STACKOWL logo) is written to stdout
- * once in startV2() before Ink starts. Ink renders below it and never touches it.
+ * Alt-screen mode (\x1B[?1049h) is entered in startV2() so the entire UI
+ * re-renders on terminal resize. There is no native scrollback; instead we
+ * maintain a viewport window over the turn history and wire PageUp/PageDown
+ * to scroll it.
  *
- * Ink layout:
- *   <Transcript />   ← Static: committed turns appended below the header
- *   [activity]       ← dynamic: LiveTurn, panels, heartbeats
- *   <Composer />     ← dynamic: always visible at current cursor position
+ * Layout:
+ *   <Header />       ← green rules + STACKOWL logo + tagline (adaptive)
+ *   [messaging area] ← paddingX={2}, viewport slice of committed turns
+ *   <Composer />     ← full-width, always visible
+ *   [footer hint]
  */
 
-import { Box, Text } from "ink";
+import { useState, useEffect } from "react";
+import { Box, Text, useInput } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
-import { Frame } from "../components/Frame.js";
+import { Header } from "../components/Header.js";
 import { Transcript } from "../components/Transcript.js";
 import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
 import { NoticeStrip } from "../components/NoticeStrip.js";
@@ -23,10 +27,16 @@ import { Composer } from "../components/Composer.js";
 import { CommandPalette } from "../components/CommandPalette.js";
 import { PanelHost } from "../panels/PanelHost.js";
 import { globalBridge } from "../events/bridge.js";
+import { useTerminalRows } from "../input/useTerminalRows.js";
 
 export interface ChatScreenProps {
   onSubmit: (text: string) => void;
 }
+
+/** Approximate header height: 2 rules + 6 logo lines + tagline = 9 rows. */
+const HEADER_ROWS = 9;
+/** Approximate composer + footer height: border-top + input + border-bottom + hint = 4 rows. */
+const CHROME_ROWS = HEADER_ROWS + 4;
 
 export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const turns         = useUiStore((s) => s.turns);
@@ -40,19 +50,55 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const activeOwlName  = useUiStore((s) => s.activeOwlName);
   const activeOwlEmoji = useUiStore((s) => s.activeOwlEmoji);
 
+  const rows = useTerminalRows();
+
+  // Viewport: 0 = follow latest. Positive = scrolled back by that many turns.
+  const [viewportOffset, setViewportOffset] = useState(0);
+
+  // Auto-follow to latest when a new turn is committed.
+  useEffect(() => { setViewportOffset(0); }, [turns.length]);
+
+  // Estimate how many turns fit on screen. Each turn averages ~3 rows.
+  const windowSize = Math.max(5, Math.floor((rows - CHROME_ROWS) / 3));
+
+  const tailIdx      = turns.length - viewportOffset;
+  const startIdx     = Math.max(0, tailIdx - windowSize);
+  const visibleTurns = turns.slice(startIdx, Math.max(0, tailIdx));
+
+  const scrolledBack = viewportOffset > 0;
+  const hiddenAbove  = startIdx;
+  const hiddenBelow  = viewportOffset;
+
+  // PageUp / PageDown scrolling — only when no overlay / panel is active.
+  useInput((_input, key) => {
+    if (showHelp || panelFocus === "panel") return;
+    if (key.pageUp) {
+      setViewportOffset((prev) => Math.min(prev + Math.max(1, windowSize - 2), turns.length - 1));
+    } else if (key.pageDown) {
+      setViewportOffset((prev) => Math.max(0, prev - Math.max(1, windowSize - 2)));
+    } else if (key.escape && scrolledBack) {
+      setViewportOffset(0);
+    }
+  });
+
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
   const activeCalls      = Array.from(toolCalls.values());
 
   return (
     <Box flexDirection="column">
-      {/* Committed turns — appended to scroll buffer below the pre-rendered header */}
-      <Frame>
-        <Transcript turns={turns} />
-      </Frame>
+      <Header />
 
-      {/* Dynamic activity area */}
-      <Frame>
+      {/* Scroll indicator — shown when not at the bottom */}
+      {hiddenAbove > 0 && (
+        <Box justifyContent="center">
+          <Text dimColor>↑ {hiddenAbove} earlier {hiddenAbove === 1 ? "turn" : "turns"} — PageUp to scroll</Text>
+        </Box>
+      )}
+
+      {/* Messaging area — 2-col gutter each side */}
+      <Box flexDirection="column" paddingX={2}>
+        <Transcript turns={visibleTurns} />
         {unreadHeartbeats.map((msg) => (
           <HeartbeatBanner key={msg.id} msg={msg} />
         ))}
@@ -71,7 +117,14 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
         <PanelHost />
-      </Frame>
+      </Box>
+
+      {/* Scroll-to-bottom hint when scrolled back */}
+      {hiddenBelow > 0 && (
+        <Box justifyContent="center">
+          <Text dimColor>↓ {hiddenBelow} newer {hiddenBelow === 1 ? "turn" : "turns"} — PageDown or Esc to follow</Text>
+        </Box>
+      )}
 
       {/* Input — full terminal width, always visible */}
       <Box

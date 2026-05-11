@@ -1,6 +1,9 @@
 import type { ModelProvider } from '../providers/base.js';
 import type { IntelligenceRouter } from '../intelligence/router.js';
 import type { VerificationResult } from './types.js';
+import { getLogger } from '../infra/observability/logger.js';
+
+const logger = getLogger('EscalationHandler');
 
 export interface ConfirmationIntent {
   intent: 'confirm' | 'reject' | 'unclear';
@@ -184,9 +187,7 @@ Respond with JSON only:
       | 'behavioral.escalation.user_unclear',
     taskId: string,
   ): void {
-    console.log(
-      `${new Date().toISOString()} INFO [EscalationHandler] ${event} taskId=${taskId}`,
-    );
+    logger.behavioral(event, { taskId });
   }
 }
 

@@ -343,9 +343,49 @@ export class ProactivePinger {
       case "check_in":
         await this.sendCheckIn();
         break;
-      case "memory_consolidation":
-        log.engine.debug("[ProactivePinger] memory_consolidation handled by CognitiveLoop — skipping");
+      case "memory_consolidation": {
+        // Step 1: Episodic decay sweep — compress/archive old memories (like NREM sleep)
+        if (this.context.episodicMemory) {
+          const decay = this.context.episodicMemory.runDecay();
+          log.engine.info(
+            `[ProactivePinger] memory_consolidation: decay sweep — compressed ${decay.compressed}, archived ${decay.archived}`,
+          );
+        }
+
+        // Step 2: Cross-session synthesis — feed top episodic themes into learning orchestrator
+        // so they become durable semantic pellets (hippocampal → cortical transfer)
+        if (this.context.learningOrchestrator && this.context.episodicMemory) {
+          const threadStrings = this.context.episodicMemory.getThematicThreads(5);
+          const themes = threadStrings
+            .map((t) => {
+              const m = t.match(/^\[Topic: ([^\]]+)\]/);
+              return m ? m[1].toLowerCase() : "";
+            })
+            .filter(Boolean);
+
+          if (themes.length > 0) {
+            try {
+              const cycle = await this.context.learningOrchestrator.runProactiveSession({
+                upcomingPatterns: themes,
+                maxTopics: 3,
+              });
+              log.engine.info(
+                `[ProactivePinger] memory_consolidation: synthesis — ` +
+                  `${cycle.topicsPrioritized} topics, ${cycle.synthesisReport?.pelletsCreated ?? 0} pellets`,
+              );
+            } catch (err) {
+              log.engine.warn(
+                `[ProactivePinger] memory_consolidation: synthesis failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          } else {
+            log.engine.debug("[ProactivePinger] memory_consolidation: no thematic threads — skipping synthesis");
+          }
+        } else {
+          log.engine.debug("[ProactivePinger] memory_consolidation: episodicMemory or learningOrchestrator unavailable — skipping");
+        }
         break;
+      }
       case "tool_pruning":
         await this.maybePruneTools();
         break;
