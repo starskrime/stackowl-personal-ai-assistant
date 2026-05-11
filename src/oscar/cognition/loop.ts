@@ -1,5 +1,6 @@
 import type { Observation, Reflection, Episode, Pattern, Improvement } from "./types.js";
 import { patternAnalyzer } from "./types.js";
+import { log } from "../../logger.js";
 
 export interface CognitiveLoopConfig {
   observeIntervalMs: number;
@@ -118,12 +119,13 @@ export class CognitiveLoop {
       // Lazy import so non-macOS environments don't crash on module load
       const { macOSAdapter } = await import("../platform/adapters/macos.js");
       focusedApp = await macOSAdapter.getFocusedApp();
-    } catch {
-      // Non-macOS or AppleScript unavailable — leave focusedApp null
+    } catch (err) {
+      log.cognition.debug("[CognitiveLoop] macOS adapter unavailable, focusedApp stays null", err as Error);
     }
 
-    // Detect app switch before updating lastApp
-    const screenChanged = focusedApp !== this.lastApp;
+    // Detect app switch before updating lastApp — only fire when both sides are non-null to
+    // avoid a false positive when the macOS adapter fails and focusedApp is null
+    const screenChanged = focusedApp !== null && focusedApp !== this.lastApp;
 
     // Update internal tracker so reflect() can detect app switches
     if (focusedApp !== null) {

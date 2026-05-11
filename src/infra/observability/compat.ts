@@ -34,4 +34,5 @@ export const log = {
   pellet:    getLogger("pellet"),
   parliament: getLogger("parliament"),
   gateway:   getLogger("gateway"),
+  cognition: getLogger("cognition"),
 };
