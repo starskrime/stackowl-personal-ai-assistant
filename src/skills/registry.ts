@@ -188,4 +188,21 @@ export class SkillsRegistry {
   formatForContextSingle(skill: Skill): string {
     return `<skill>\n<name>${skill.name}</name>\n<description>${skill.description}</description>\n<instructions>${skill.instructions}</instructions>\n</skill>`;
   }
+
+  /**
+   * Format skills for header injection — name and description only.
+   * Used for base system prompt where full instructions would be too verbose.
+   */
+  formatSkillsHeader(skills: Skill[]): string {
+    if (skills.length === 0) return "";
+    const lines: string[] = ["<available_skills>"];
+    for (const skill of skills) {
+      lines.push(`  <skill>`);
+      lines.push(`    <name>${skill.name}</name>`);
+      lines.push(`    <description>${skill.description}</description>`);
+      lines.push(`  </skill>`);
+    }
+    lines.push("</available_skills>");
+    return lines.join("\n");
+  }
 }
