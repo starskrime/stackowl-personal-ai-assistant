@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 30;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -1396,6 +1396,10 @@ export class MemoryDatabase {
     if (current < 29) {
       applyV29SkillUsageMigration(this.db);
       this.db.pragma(`user_version = 29`);
+    }
+    if (current < 30) {
+      applyV30UnifiedMemoryColumnsMigration(this.db);
+      this.db.pragma(`user_version = 30`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -3635,6 +3639,10 @@ export class StackOwlDB {
       applyV28Element17Migration(this.db);
       this.db.pragma(`user_version = 28`);
     }
+    if (current < 30) {
+      applyV30UnifiedMemoryColumnsMigration(this.db);
+      this.db.pragma(`user_version = 30`);
+    }
   }
 }
 
@@ -4036,6 +4044,9 @@ export function applyMigrations(db: Database.Database): void {
   if (current < 28) {
     applyV28Element17Migration(db);
   }
+  if (current < 30) {
+    applyV30UnifiedMemoryColumnsMigration(db);
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -4312,4 +4323,38 @@ export function applyV28Element17Migration(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_owl_recurring_jobs_owner ON owl_recurring_jobs(owner_id);
   `)
+}
+
+export function applyV30UnifiedMemoryColumnsMigration(db: Database.Database): void {
+  const existingCols = (db.prepare(`PRAGMA table_info(memories)`).all() as Array<{ name: string }>).map(c => c.name);
+
+  // Each ALTER TABLE is idempotent — skip if already present
+  if (!existingCols.includes('domain')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN domain TEXT`);
+  }
+  if (!existingCols.includes('scope')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'user'`);
+  }
+  if (!existingCols.includes('source')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'inferred'`);
+  }
+  if (!existingCols.includes('confidence')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5`);
+  }
+  if (!existingCols.includes('evidence_ids')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN evidence_ids TEXT NOT NULL DEFAULT '[]'`);
+  }
+  if (!existingCols.includes('pinned')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!existingCols.includes('suppressed')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!existingCols.includes('superseded_by')) {
+    db.exec(`ALTER TABLE memories ADD COLUMN superseded_by TEXT`);
+  }
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_domain ON memories(domain)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(pinned)`);
 }
