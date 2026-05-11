@@ -1,17 +1,25 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { log } from "../logger.js";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import type { ToolDefinition } from "../providers/base.js";
+import type { MemoryDatabase, FactCategory } from "../memory/db.js";
 
-const DEFAULT_MEMORY_PATH = join(
-  homedir(),
-  ".stackowl",
-  "workspace",
-  "MEMORY.md",
-);
-const MAX_LINES = 150;
+export const SECTION_TO_CATEGORY: Record<string, FactCategory> = {
+  preferences: "preference",
+  preference: "preference",
+  "about me": "personal",
+  personal: "personal",
+  goals: "active_goal",
+  "active goals": "active_goal",
+  active_goals: "active_goal",
+  relationships: "relationship",
+  "key relationships": "relationship",
+  relationship: "relationship",
+  habits: "habit",
+  habit: "habit",
+  decisions: "decision",
+  decision: "decision",
+};
+
 const MAX_LINE_LENGTH = 200;
 
 export interface UpdateMemoryInput {
@@ -24,26 +32,25 @@ export class UpdateMemoryTool implements ToolImplementation {
   definition: ToolDefinition = {
     name: "update_memory",
     description:
-      "Update MEMORY.md — the always-loaded Tier-0 memory. " +
-      "Use to persist durable facts: user preferences, ongoing projects, key relationships. " +
-      "Operations: add (append to section), update (replace matching line), remove (delete matching line).",
+      "Persist durable facts about the user: preferences, goals, relationships, decisions. " +
+      "Operations: add (store new fact), update (replace matching fact), remove (retire matching fact). " +
+      "Each fact is stored in the SQLite facts table and surfaces automatically in Tier-0 context.",
     parameters: {
       type: "object",
       properties: {
         operation: {
           type: "string",
           enum: ["add", "update", "remove"],
-          description:
-            "Operation to perform: add (append line to section), update (replace matching line), remove (delete matching line)",
+          description: "add — store new fact; update — replace matching; remove — retire matching",
         },
         section: {
           type: "string",
           description:
-            'Section heading (without # prefix, e.g. "Preferences" for "# Preferences")',
+            'Semantic category: "Preferences", "About me", "Goals", "Relationships", "Habits", "Decisions"',
         },
         content: {
           type: "string",
-          description: "Content to add/update/remove (max 200 chars per line)",
+          description: "The fact to store, update, or remove (max 200 chars)",
         },
       },
       required: ["operation", "section", "content"],
@@ -53,7 +60,15 @@ export class UpdateMemoryTool implements ToolImplementation {
   category = "filesystem" as const;
   source = "builtin";
 
-  constructor(private memoryPath: string = DEFAULT_MEMORY_PATH) {}
+  private db?: MemoryDatabase;
+
+  constructor(db?: MemoryDatabase) {
+    this.db = db;
+  }
+
+  setDb(db: MemoryDatabase): void {
+    this.db = db;
+  }
 
   async execute(
     args: Record<string, unknown>,
@@ -68,73 +83,69 @@ export class UpdateMemoryTool implements ToolImplementation {
 
     if (input.content.length > MAX_LINE_LENGTH) {
       const err = new Error(
-        `Line too long (${input.content.length} chars). Keep lines under ${MAX_LINE_LENGTH}.`,
+        `Content too long (${input.content.length} chars). Keep under ${MAX_LINE_LENGTH}.`,
       );
-      log.tool.error("update_memory.execute: line too long", err, {
+      log.tool.error("update_memory.execute: content too long", err, {
         contentLen: input.content.length,
       });
       throw err;
     }
 
-    mkdirSync(dirname(this.memoryPath), { recursive: true });
-
-    const raw = existsSync(this.memoryPath)
-      ? readFileSync(this.memoryPath, "utf-8")
-      : "";
-
-    let lines = raw.split("\n");
-
-    if (input.operation === "add") {
-      if (lines.length + 1 > MAX_LINES) {
-        const err = new Error(
-          `MEMORY.md is at ${MAX_LINES} lines — remove stale entries before adding new ones.`,
-        );
-        log.tool.error("update_memory.execute: file too large", err, {
-          currentLines: lines.length,
-        });
-        throw err;
-      }
-
-      const sectionHeader = `# ${input.section}`;
-      const idx = lines.findIndex((l) => l.trim() === sectionHeader);
-
-      if (idx === -1) {
-        // Append new section at end
-        lines = [
-          ...lines.filter((l) => l !== ""),
-          "",
-          sectionHeader,
-          input.content,
-          "",
-        ];
-      } else {
-        // Find end of section (next heading or EOF)
-        let insertAt = idx + 1;
-        while (insertAt < lines.length && !lines[insertAt].startsWith("#")) {
-          insertAt++;
-        }
-        lines.splice(insertAt, 0, input.content);
-      }
-    } else if (input.operation === "remove") {
-      const keyword = input.content.toLowerCase();
-      lines = lines.filter((l) => !l.toLowerCase().includes(keyword));
-    } else if (input.operation === "update") {
-      const keyword = input.content.split(":")[0].toLowerCase().trim();
-      const replaceIdx = lines.findIndex((l) =>
-        l.toLowerCase().startsWith(keyword),
-      );
-      if (replaceIdx !== -1) {
-        lines[replaceIdx] = input.content;
-      } else {
-        lines.push(input.content);
-      }
+    if (!this.db) {
+      log.tool.warn("update_memory.execute: no db injected — operation dropped", {
+        operation: input.operation,
+      });
+      return `Memory operation skipped (db not ready).`;
     }
 
-    writeFileSync(this.memoryPath, lines.join("\n"), "utf-8");
-    log.tool.info("update_memory.execute: written", {
-      operation: input.operation,
-      lines: lines.length,
-    });
-    return `MEMORY.md updated (${input.operation} in "${input.section}").`;
+    const category =
+      SECTION_TO_CATEGORY[input.section.toLowerCase()] ?? "preference";
+
+    if (input.operation === "add") {
+      this.db.facts.add({
+        userId: "default",
+        owlName: "default",
+        fact: input.content,
+        category,
+        confidence: 0.9,
+        source: "explicit",
+      });
+      log.tool.info("update_memory.execute: fact added", { category, content: input.content.slice(0, 60) });
+      return `Fact stored in "${category}".`;
+    }
+
+    if (input.operation === "remove") {
+      const keyword = input.content.toLowerCase();
+      const all = this.db.facts.getAllForUser();
+      const matches = all.filter((f) => f.fact.toLowerCase().includes(keyword) && f.category === category);
+      for (const f of matches) {
+        this.db.facts.retire(f.id);
+      }
+      log.tool.info("update_memory.execute: facts retired", { count: matches.length, category });
+      return `Retired ${matches.length} fact(s) matching "${input.content}".`;
+    }
+
+    if (input.operation === "update") {
+      const keyword = input.content.split(":")[0].toLowerCase().trim();
+      const all = this.db.facts.getAllForUser();
+      const matches = all.filter(
+        (f) => f.fact.toLowerCase().startsWith(keyword) && f.category === category,
+      );
+      for (const f of matches) {
+        this.db.facts.retire(f.id);
+      }
+      this.db.facts.add({
+        userId: "default",
+        owlName: "default",
+        fact: input.content,
+        category,
+        confidence: 0.9,
+        source: "explicit",
+      });
+      log.tool.info("update_memory.execute: fact updated", { retired: matches.length, category });
+      return `Updated fact in "${category}" (retired ${matches.length} old, added 1 new).`;
+    }
+
+    return "Unknown operation.";
   }
 }
