@@ -72,6 +72,7 @@ import {
 import { UserMentalModel } from "../cognition/user-mental-model.js";
 import { ConversationDigestManager } from "../memory/conversation-digest.js";
 import { MemoryDatabase } from "../memory/db.js";
+import { UnifiedMemory } from "../memory/unified.js";
 import { MessageCompressor } from "../memory/compressor.js";
 import { FeedbackStore } from "../feedback/store.js";
 import { OutputFilter, resolveOutputMode } from "./output-filter.js";
@@ -3162,6 +3163,15 @@ export class OwlGateway {
   }
   getMemoryRepo() {
     return this.ctx.memoryRepo;
+  }
+  getUnifiedMemory(): UnifiedMemory | undefined {
+    if (!this.ctx.unifiedMemory && this.ctx.memoryRepo) {
+      this.ctx.unifiedMemory = new UnifiedMemory(
+        this.ctx.memoryRepo,
+        this.ctx.db?.rawDb,
+      );
+    }
+    return this.ctx.unifiedMemory;
   }
   getMemoryWriter() {
     return this.ctx.memoryWriter;

@@ -334,6 +334,7 @@ export interface GatewayContext {
   // ─── Element 15 — Canonical memory surface ─────────────────
   memoryRepo?: import("../memory/repository.js").MemoryRepository;
   memoryWriter?: import("../memory/writer.js").MemoryWriter;
+  unifiedMemory?: import("../memory/unified.js").UnifiedMemory;
 
   // ─── Message Compressor (Phase 2 — batch summarization) ──────
   compressor?: import("../memory/compressor.js").MessageCompressor;

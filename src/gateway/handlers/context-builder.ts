@@ -136,6 +136,7 @@ export class ContextBuilder {
       factStore: this.ctx.factStore,
       memoryRepo: (this.ctx as any).memoryRepo,
       episodicMemory: (this.ctx as any).episodicMemory,
+      unifiedMemory: (this.ctx as any).unifiedMemory,
       userId,
       db: this.ctx.db,
       sessionId: session.id,

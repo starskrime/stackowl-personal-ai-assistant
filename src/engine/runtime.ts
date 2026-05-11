@@ -125,6 +125,8 @@ export interface EngineContext {
   memoryRepo?: import("../memory/repository.js").MemoryRepository;
   /** EpisodicMemory — for recall() tool read path */
   episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
+  /** UnifiedMemory — single interface over all memory stores (Phase 1 facade) */
+  unifiedMemory?: import("../memory/unified.js").UnifiedMemory;
   /** Active userId — used by remember/recall tools for per-user scoping */
   userId?: string;
   /** SQLite DB — gives tools direct write access to owl_learnings etc. */
