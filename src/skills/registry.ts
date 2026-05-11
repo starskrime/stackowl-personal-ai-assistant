@@ -197,10 +197,10 @@ export class SkillsRegistry {
     if (skills.length === 0) return "";
     const lines: string[] = ["<available_skills>"];
     for (const skill of skills) {
-      lines.push(`  <skill>`);
-      lines.push(`    <name>${skill.name}</name>`);
-      lines.push(`    <description>${skill.description}</description>`);
-      lines.push(`  </skill>`);
+      lines.push(`<skill>`);
+      lines.push(`<name>${skill.name}</name>`);
+      lines.push(`<description>${skill.description}</description>`);
+      lines.push(`</skill>`);
     }
     lines.push("</available_skills>");
     return lines.join("\n");

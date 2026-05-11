@@ -39,4 +39,16 @@ describe("SkillsRegistry.formatSkillsHeader", () => {
     expect(header).toMatch(/<available_skills>/);
     expect(header).toMatch(/<\/available_skills>/);
   });
+
+  it("handles multiple skills and includes both names", () => {
+    const registry = new SkillsRegistry();
+    registry.register(makeSkill("skill_one", "First skill description"));
+    registry.register(makeSkill("skill_two", "Second skill description"));
+    const header = registry.formatSkillsHeader(registry.listEnabled());
+
+    expect(header).toContain("<name>skill_one</name>");
+    expect(header).toContain("<name>skill_two</name>");
+    expect(header).toContain("<description>First skill description</description>");
+    expect(header).toContain("<description>Second skill description</description>");
+  });
 });
