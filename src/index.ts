@@ -528,6 +528,12 @@ async function bootstrap() {
   const microLearner = new MicroLearner(workspacePath);
   await microLearner.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
+  // Platform layer — probes OS capabilities once at startup, caches the matrix
+  // for every consumer (paths, sandbox, notifier, process, shell). Must run
+  // before any tool registry sees a sandbox check.
+  const { platform } = await import("./platform/index.js");
+  await platform.initialize();
+
   // SQLite Memory Database — single source of truth for all persistent memory.
   // Created early so FactStore, EpisodicMemory, and FeedbackStore can use it.
   // The gateway will reuse this instance (ctx.db) instead of creating its own.
