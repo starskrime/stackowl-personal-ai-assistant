@@ -8,7 +8,8 @@ export type ToolCategory =
   | "network"
   | "system"
   | "cognitive"
-  | "mcp";
+  | "mcp"
+  | "memory";
 
 export type ToolPermission = "allowed" | "prompt" | "denied";
 
@@ -19,4 +20,5 @@ export const DEFAULT_PERMISSIONS: Record<ToolCategory, ToolPermission> = {
   system: "allowed",
   cognitive: "allowed",
   mcp: "allowed",
+  memory: "allowed",
 };

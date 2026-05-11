@@ -412,7 +412,7 @@ export async function backendsCommand(
     if (!which || !(which in (deps.installer ?? {}))) {
       return "usage: stackowl backends install <camofox|scrapling|live-browser>";
     }
-    const fn = deps.installer![which as keyof typeof deps.installer]!;
+    const fn = deps.installer![which as keyof typeof deps.installer] as () => Promise<boolean>;
     const ok = await fn();
     return `install ${which}: ${ok ? "ok" : "failed"}`;
   }

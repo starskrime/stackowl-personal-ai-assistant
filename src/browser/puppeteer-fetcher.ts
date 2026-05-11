@@ -257,7 +257,7 @@ export class PuppeteerFetcher {
 
       const html = await page.content();
       const updatedCookies = await page.cookies();
-      session.setCookiesFromResponse(updatedCookies as any, new URL(url).origin);
+      session.setCookies(updatedCookies as any, new URL(url).origin);
       session.markGood();
 
       return {

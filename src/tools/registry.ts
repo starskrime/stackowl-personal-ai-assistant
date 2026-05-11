@@ -339,7 +339,7 @@ export class ToolRegistry {
 
     // Risk guard — Mode B pre-action check (fires after schema validation, before execution)
     if (this._riskGuard) {
-      const riskResult = await this._riskGuard.check(name, args, tool.definition.executionPolicy ?? {});
+      const riskResult = await this._riskGuard.check(name, args, (tool.definition.executionPolicy ?? {}) as Record<string, unknown>);
       if (!riskResult.allowed) {
         return riskResult.userFacingMessage;
       }

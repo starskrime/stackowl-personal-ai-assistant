@@ -77,26 +77,29 @@ export const DocumentTool: ToolImplementation = {
     log.tool.debug("document.execute: parsing", { ext, action, fileSize: buf.length });
     try {
       if (ext === ".pdf") {
-        const pdfParse = (await import("pdf-parse")).default;
-        const data = await pdfParse(buf);
+        const { PDFParse } = await import("pdf-parse");
+        const parser = new PDFParse({ data: buf });
+        const textResult = await parser.getText();
+        const infoResult = await parser.getInfo();
+        await parser.destroy();
         if (action === "metadata") {
-          log.tool.debug("document.execute: exit", { success: true, ext, action, pages: data.numpages });
+          log.tool.debug("document.execute: exit", { success: true, ext, action, pages: infoResult.total });
           return JSON.stringify({
             success: true,
             data: {
               text: "",
               tables: [],
-              metadata: { pages: data.numpages, info: data.info },
+              metadata: { pages: infoResult.total, info: infoResult.info },
             },
           });
         }
-        log.tool.debug("document.execute: exit", { success: true, ext, action, pages: data.numpages, textLen: data.text.length });
+        log.tool.debug("document.execute: exit", { success: true, ext, action, pages: textResult.total, textLen: textResult.text.length });
         return JSON.stringify({
           success: true,
           data: {
-            text: data.text,
+            text: textResult.text,
             tables: [],
-            metadata: { pages: data.numpages },
+            metadata: { pages: textResult.total },
           },
         });
       }

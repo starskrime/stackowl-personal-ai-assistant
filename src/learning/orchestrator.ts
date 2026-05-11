@@ -314,7 +314,7 @@ export class LearningOrchestrator {
       const kgQueue = this.graphManager.getStudyQueue(max - topics.length);
       topics = [
         ...topics,
-        ...kgQueue.map((t: { normalizedName: string }) => t.normalizedName),
+        ...kgQueue,
       ].slice(0, max);
     }
 
