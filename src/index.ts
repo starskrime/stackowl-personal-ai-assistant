@@ -218,6 +218,7 @@ import { FactExtractor } from "./memory/fact-extractor.js";
 import { MemoryDatabase } from "./memory/db.js";
 import { MemoryRepository } from "./memory/repository.js";
 import { UnifiedMemory } from "./memory/unified.js";
+import { WorkspaceGit } from "./workspace/git.js";
 import { MemoryWriter } from "./memory/writer.js";
 import { HitlCheckpointStore } from "./engine/hitl.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
@@ -1206,6 +1207,10 @@ async function buildGateway(
   const memoryRepo = new MemoryRepository(b.memoryDb.rawDb, gateway.gatewayEventBus);
   gateway.ctx.memoryRepo = memoryRepo;
   gateway.ctx.unifiedMemory = new UnifiedMemory(memoryRepo, b.memoryDb.rawDb, b.providerRegistry.getDefault());
+
+  // Workspace git — local-only history for rollback
+  const workspaceGit = new WorkspaceGit(b.workspacePath);
+  workspaceGit.init().then(() => workspaceGit.subscribe(gateway.gatewayEventBus)).catch(() => {});
 
   if (gateway.ctx.intelligence) {
     const memoryWriter = new MemoryWriter({
