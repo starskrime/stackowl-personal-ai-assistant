@@ -90,6 +90,7 @@ export class LearningOrchestrator {
    * the knowledge system (pellets) with the skill system (SKILL.md synthesis).
    */
   private onCapabilityGap?: (gap: string, description: string) => void;
+  private _busy = false;
 
   private cycles: LearningCycle[] = [];
   private stats: LearningStats = {
@@ -157,6 +158,11 @@ export class LearningOrchestrator {
   }
 
   async processConversation(messages: ChatMessage[]): Promise<LearningCycle> {
+    if (this._busy) {
+      log.evolution.warn("[Orchestrator] processConversation skipped — already running");
+      return this.recordCycle({ id: `reactive_skip_${Date.now()}`, trigger: "reactive", startedAt: new Date().toISOString(), insightsExtracted: 0, topicsPrioritized: 0, criticalTopics: 0, durationMs: 0, success: true });
+    }
+    this._busy = true;
     const cycleId = `reactive_${Date.now()}`;
     const startTime = Date.now();
 
@@ -254,6 +260,7 @@ export class LearningOrchestrator {
       cycle.error = String(err);
     }
 
+    this._busy = false;
     cycle.completedAt = new Date().toISOString();
     cycle.durationMs = Date.now() - startTime;
     return this.recordCycle(cycle);
@@ -266,6 +273,12 @@ export class LearningOrchestrator {
    * zeroed counts if there is nothing to study.
    */
   async runProactiveSession(context?: ProactiveContext): Promise<LearningCycle> {
+    if (this._busy) {
+      log.evolution.warn("[Orchestrator] runProactiveSession skipped — already running");
+      const now = new Date().toISOString();
+      return this.recordCycle({ id: `proactive_skip_${Date.now()}`, trigger: "scheduled", startedAt: now, completedAt: now, insightsExtracted: 0, topicsPrioritized: 0, criticalTopics: 0, durationMs: 0, success: true });
+    }
+    this._busy = true;
     const startTime = Date.now();
     const cycleId = `proactive_${Date.now()}`;
     const max = context?.maxTopics ?? 3;
@@ -354,6 +367,7 @@ export class LearningOrchestrator {
       cycle.error = String(err);
     }
 
+    this._busy = false;
     cycle.completedAt = new Date().toISOString();
     cycle.durationMs = Date.now() - startTime;
     return this.recordCycle(cycle);

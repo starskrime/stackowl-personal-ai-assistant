@@ -38,9 +38,26 @@ export class GitStatusCollector implements SignalCollector {
   readonly source: SignalSource = "git";
   readonly mode = "poll" as const;
   readonly intervalMs = 60_000;
+  private _isGitRepo: boolean | null = null;
   constructor(private workspacePath: string) {}
 
   async collect(): Promise<ContextSignal[]> {
+    // Check once whether this path is inside a git repo; skip silently if not
+    if (this._isGitRepo === null) {
+      try {
+        execSync("git rev-parse --git-dir", {
+          cwd: this.workspacePath,
+          encoding: "utf-8",
+          timeout: 5_000,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        this._isGitRepo = true;
+      } catch {
+        this._isGitRepo = false;
+      }
+    }
+    if (!this._isGitRepo) return [];
+
     const opts: ExecSyncOptions = {
       cwd: this.workspacePath,
       encoding: "utf-8",

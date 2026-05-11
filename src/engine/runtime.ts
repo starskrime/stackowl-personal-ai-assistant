@@ -198,9 +198,9 @@ export interface EngineResponse {
 // ─── Constants ───────────────────────────────────────────────────
 
 /** Default max iterations — overridable via config.engine.maxToolIterations */
-const DEFAULT_MAX_TOOL_ITERATIONS = 500;
-/** Deep research max iterations — 40 as per research config */
-const DEFAULT_DEEP_MAX_TOOL_ITERATIONS = 1000;
+const DEFAULT_MAX_TOOL_ITERATIONS = 25;
+/** Deep research max iterations */
+const DEFAULT_DEEP_MAX_TOOL_ITERATIONS = 50;
 
 /**
  * OpenCLAW-style completion signal.

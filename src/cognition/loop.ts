@@ -163,9 +163,9 @@ function isCapabilityDesire(description: string): boolean {
 }
 
 const DEFAULT_CONFIG: CognitiveLoopConfig = {
-  tickIntervalMinutes: 15,
+  tickIntervalMinutes: 60,  // was 15 — hourly to prevent token burn
   minIdleMinutes: 5,
-  maxActionsPerDay: 20,
+  maxActionsPerDay: 8,      // was 20 — each action = up to 4 LLM calls
   enabled: true,
 };
 
@@ -194,6 +194,8 @@ export class CognitiveLoop {
   private skillsCreatedToday: number = 0;
   private history: CognitiveTickResult[] = [];
   private capabilityScanner: CapabilityScanner | null = null;
+  private _isTicking = false;
+  private _rateLimitedUntil = 0;
 
   /**
    * Persistent synthesis queue — targets discovered during conversations or
@@ -280,17 +282,7 @@ export class CognitiveLoop {
       `[CognitiveLoop] Started — ticking every ${this.config.tickIntervalMinutes} min`,
     );
 
-    // Run first tick after a short warmup delay (30s) instead of waiting
-    // a full interval. This ensures the loop does something on startup.
-    const warmupTimeout = setTimeout(() => {
-      this.tick().catch((err) => {
-        log.engine.error(
-          `[CognitiveLoop] Initial tick error: ${err instanceof Error ? err.message : err}`,
-        );
-      });
-    }, 30_000);
-    warmupTimeout.unref();
-
+    // First tick fires after one full interval — no startup burst
     this.timer = setInterval(
       () => {
         runWithContext({ channelId: "cognition", spanName: "cognition.tick" }, () =>
@@ -411,6 +403,24 @@ export class CognitiveLoop {
   // ─── Core Tick ────────────────────────────────────────────────
 
   private async tick(): Promise<void> {
+    // Prevent overlapping ticks — only one tick runs at a time
+    if (this._isTicking) return;
+    this._isTicking = true;
+
+    try {
+      await this._tickInner();
+    } finally {
+      this._isTicking = false;
+    }
+  }
+
+  private async _tickInner(): Promise<void> {
+    // Rate-limit guard — stop all background LLM work when provider is 429
+    if (Date.now() < this._rateLimitedUntil) {
+      log.engine.debug(`[CognitiveLoop] Rate-limited — skipping tick until ${new Date(this._rateLimitedUntil).toISOString()}`);
+      return;
+    }
+
     // Reset daily counters
     const dayKey = new Date().toISOString().split("T")[0];
     if (dayKey !== this.lastDayKey) {
@@ -453,10 +463,19 @@ export class CognitiveLoop {
       };
       this.actionsToday++;
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Always count failed actions toward the daily budget — prevents infinite
+      // retry loop when every call returns 429 (failed actions kept budget at 0)
+      this.actionsToday++;
+      // Detect rate-limit errors — pause all background LLM work for 1 hour
+      if (msg.includes("429") || msg.toLowerCase().includes("rate_limit") || msg.toLowerCase().includes("usage limit")) {
+        this._rateLimitedUntil = Date.now() + 60 * 60 * 1000;
+        log.engine.warn(`[CognitiveLoop] Rate limit detected — suspending background LLM calls for 1 hour (until ${new Date(this._rateLimitedUntil).toISOString()})`);
+      }
       result = {
         action: decision.action,
         success: false,
-        detail: err instanceof Error ? err.message : String(err),
+        detail: msg,
         durationMs: Date.now() - startTime,
       };
     }
