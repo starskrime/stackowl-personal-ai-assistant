@@ -101,7 +101,7 @@ export class KuzuPelletGraph {
       const isCorrupted = msg.includes("wal") || msg.includes("WAL") || msg.includes("Corrupted") || msg.includes("recovery");
 
       if (isCorrupted && !isRetry) {
-        log.engine.warn(`[KuzuGraph] Corrupted WAL detected — wiping and reinitializing. Graph will rebuild from LanceDB.`);
+        log.engine.info(`[KuzuGraph] Corrupted WAL detected — wiping and reinitializing. Graph will rebuild from LanceDB.`);
         const { rm } = await import("node:fs/promises");
         await rm(this.dbPath, { recursive: true, force: true });
         await this._initAttempt(true);

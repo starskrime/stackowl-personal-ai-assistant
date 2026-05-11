@@ -17,6 +17,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelProvider } from "../providers/base.js";
 import type { Session } from "./store.js";
+import { embed as fasteEmbed } from "../pellets/embedder.js";
 import { log } from "../logger.js";
 import type { MemoryDatabase } from "./db.js";
 
@@ -574,16 +575,13 @@ Return ONLY a valid JSON object, no markdown.`;
       keywordScores.set(ep.id, Math.min(score, 1.0));
     }
 
-    // Try to get semantic scores via embedding
+    // Try to get semantic scores via in-process embedder (fastembed)
     let queryEmbedding: number[] = [];
-    if (provider) {
-      try {
-        const resp = await provider.embed(query);
-        queryEmbedding = resp.embedding ?? [];
-      } catch (err) {
-        // Fall through to keyword-only
-        log.memory.warn("episodic: retrieval query embedding failed, using keyword-only", err);
-      }
+    try {
+      const vec = await fasteEmbed(query);
+      if (vec) queryEmbedding = vec;
+    } catch {
+      // Fall through to keyword-only — embedder unavailable
     }
 
     // Score each episode
