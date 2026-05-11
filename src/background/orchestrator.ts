@@ -266,7 +266,6 @@ export class BackgroundOrchestrator {
     if (result) {
       if (result.pelletSaved) {
         this.activityLog.add("desire_executed", result.desire.description.slice(0, 80), result.pelletTitle);
-        this.activityLog.add("pellet_created", result.pelletTitle);
         if (this.fulfillmentTracker) {
           await this.fulfillmentTracker.recordFulfillment(result, owlName);
         }

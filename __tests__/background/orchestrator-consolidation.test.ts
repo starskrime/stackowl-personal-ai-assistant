@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { EpisodicMemory } from "../../src/memory/episodic.js";
 
 // Minimal BackgroundOrchestrator interface needed for this test
