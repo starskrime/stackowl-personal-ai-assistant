@@ -1205,7 +1205,7 @@ async function buildGateway(
   const hitlCheckpointStore = new HitlCheckpointStore(b.memoryDb);
   const memoryRepo = new MemoryRepository(b.memoryDb.rawDb, gateway.gatewayEventBus);
   gateway.ctx.memoryRepo = memoryRepo;
-  gateway.ctx.unifiedMemory = new UnifiedMemory(memoryRepo, b.memoryDb.rawDb);
+  gateway.ctx.unifiedMemory = new UnifiedMemory(memoryRepo, b.memoryDb.rawDb, b.providerRegistry.getDefault());
 
   if (gateway.ctx.intelligence) {
     const memoryWriter = new MemoryWriter({

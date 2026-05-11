@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { log } from "../logger.js";
 import type { MemoryRepository, MemoryRecord as RepoRecord } from "./repository.js";
+import type { ModelProvider } from "../providers/base.js";
 
 // ---------------------------------------------------------------------------
 // Exported types
@@ -117,26 +118,30 @@ export class UnifiedMemory {
   constructor(
     private readonly repo: MemoryRepository,
     private readonly db?: Database.Database,
+    private readonly provider?: ModelProvider,
   ) {}
 
   async remember(input: RememberInput): Promise<MemoryId> {
     const id = `mem_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = new Date().toISOString();
 
+    const rawLen = input.content.length;
     log.memory.debug("unified.remember: entry", {
       id,
       kind: input.kind,
       domain: input.domain,
       scope: input.scope ?? "user",
       source: input.source ?? "inferred",
-      contentLen: input.content.length,
+      contentLen: rawLen,
     });
+
+    const content = await this.compressContent(input.content, input.kind, input.domain);
 
     this.repo.insertBatch([
       {
         id,
         kind: input.kind,
-        content: input.content,
+        content,
         importance: input.importance ?? input.confidence ?? 0.8,
         goal_id: input.goal_id,
         valid_at: now,
@@ -164,8 +169,54 @@ export class UnifiedMemory {
       }
     }
 
-    log.memory.debug("unified.remember: exit", { id, kind: input.kind, domain: input.domain });
+    log.memory.debug("unified.remember: exit", {
+      id,
+      kind: input.kind,
+      domain: input.domain,
+      rawLen,
+      storedLen: content.length,
+      compressed: content !== input.content,
+    });
     return id;
+  }
+
+  private async compressContent(
+    raw: string,
+    kind: MemoryKind,
+    domain: MemoryDomain,
+  ): Promise<string> {
+    if (!this.provider || raw.length < 80) {
+      // Skip compression for very short content — already concise
+      return raw;
+    }
+
+    const prompt =
+      `You are a memory compressor. Convert the following ${kind} memory (domain: ${domain}) ` +
+      `into the shortest possible form that preserves all meaning, intent, and actionable detail. ` +
+      `Use telegraphic style. No filler words. No "the user" framing — write the fact directly. ` +
+      `Return ONLY the compressed memory, nothing else.\n\n${raw}`;
+
+    try {
+      const response = await this.provider.chat(
+        [{ role: "user", content: prompt }],
+        undefined,
+        { maxTokens: 120, temperature: 0 },
+      );
+      const compressed = response.content.trim();
+      if (!compressed || compressed.length >= raw.length) {
+        // Compression made it longer or empty — keep raw
+        return raw;
+      }
+      log.memory.debug("unified.compressContent: compressed", {
+        rawLen: raw.length,
+        compressedLen: compressed.length,
+        ratio: (compressed.length / raw.length).toFixed(2),
+      });
+      return compressed;
+    } catch (err) {
+      log.memory.warn("unified.compressContent: LLM call failed — using raw content", err);
+      return raw;
+    }
   }
 
   async recall(query: RecallQuery): Promise<MemoryHit[]> {
