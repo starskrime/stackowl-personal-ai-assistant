@@ -86,7 +86,16 @@
   "optionalDependencies": {
     "camofox-browser": "^2.1.1",
     "naudiodon": "^2.3.6",
-    "nodejs-whisper": "^0.3.0"
+    "nodejs-whisper": "^0.3.0",
+    "@anush008/tokenizers-linux-x64-gnu": "0.6.0",
+    "@anush008/tokenizers-linux-x64-musl": "0.6.0",
+    "@anush008/tokenizers-linux-arm64-gnu": "0.6.0",
+    "@anush008/tokenizers-linux-arm64-musl": "0.6.0",
+    "@anush008/tokenizers-darwin-universal": "0.6.0",
+    "@anush008/tokenizers-win32-x64-msvc": "0.6.0"
+  },
+  "overrides": {
+    "@anush008/tokenizers": "0.6.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
