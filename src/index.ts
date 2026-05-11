@@ -1279,6 +1279,34 @@ async function buildGateway(
       log.engine.debug("[startup] Cron job already registered (from persistence), skipping", { id: job.id });
     }
   }
+
+  // Nightly fact-promotion job (deterministic SQL — no LLM call)
+  // Bumps confidence on frequently-accessed Tier-0-category facts so they
+  // graduate into always-injected context over time. StackOwl's equivalent
+  // of OpenClaw's "dreaming" consolidation, but free (no token cost).
+  try {
+    cronService.addJob({
+      id: "tier0-fact-promotion",
+      schedule: "30 3 * * *",
+      prompt: "(direct handler)",
+      safetyProfile: "low",
+      deliver: false,
+      description: "Nightly Tier-0 fact promotion at 3:30am — bumps confidence on frequently-accessed facts",
+      handler: async (traceId) => {
+        const promoted = b.memoryDb.facts.promoteFrequentlyAccessed({
+          minAccess: 3,
+          minConfidence: 0.7,
+          boost: 0.1,
+        });
+        log.engine.info("[cron:tier0-fact-promotion] promoted facts", { promoted, traceId });
+        return JSON.stringify({ promoted });
+      },
+    });
+    registeredCount++;
+  } catch {
+    log.engine.debug("[startup] tier0-fact-promotion already registered (from persistence), skipping");
+  }
+
   log.engine.info("[startup] Cron service initialized", { registeredCount, totalDefault: DEFAULT_CRON_JOBS.length });
 
   // Ensure cron service stops on shutdown

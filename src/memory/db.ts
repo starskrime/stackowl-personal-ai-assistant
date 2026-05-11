@@ -1947,6 +1947,38 @@ class FactsRepo {
     ).run(id);
   }
 
+  /**
+   * Promote frequently-accessed facts toward Tier-0 by bumping their confidence.
+   * Facts in tier-0 categories with confidence in [minConfidence, 0.85) and
+   * access_count >= minAccess get their confidence raised by `boost` (capped at 0.95).
+   * Returns count of facts promoted.
+   *
+   * Intended for nightly cron — implements OpenClaw-style "dreaming" where
+   * repeatedly-accessed facts graduate to always-injected status.
+   */
+  promoteFrequentlyAccessed(opts: {
+    minAccess?: number;
+    minConfidence?: number;
+    boost?: number;
+  } = {}): number {
+    const minAccess = opts.minAccess ?? 3;
+    const minConfidence = opts.minConfidence ?? 0.7;
+    const boost = opts.boost ?? 0.1;
+    if (TIER0_CATEGORIES.length === 0) return 0;
+    const placeholders = TIER0_CATEGORIES.map(() => "?").join(",");
+    const result = this.db.prepare(`
+      UPDATE facts
+      SET confidence = MIN(0.95, confidence + ?),
+          updated_at = datetime('now')
+      WHERE access_count >= ?
+        AND confidence >= ?
+        AND confidence < 0.85
+        AND category IN (${placeholders})
+        AND invalidated_at IS NULL
+    `).run(boost, minAccess, minConfidence, ...TIER0_CATEGORIES);
+    return result.changes;
+  }
+
   getHighConfidenceFacts(userId?: string, limit = 30): Fact[] {
     if (TIER0_CATEGORIES.length === 0) return [];
     const placeholders = TIER0_CATEGORIES.map(() => "?").join(",");

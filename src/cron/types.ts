@@ -10,6 +10,14 @@ export interface CronJob {
   deliver?: boolean;
   deliveryTarget?: { channel: string; userId: string };
   description?: string;
+  /**
+   * Optional direct callback. When present, CronService invokes this
+   * instead of the LLM prompt — for deterministic operations that
+   * don't need model reasoning (e.g., fact promotion, dedup).
+   * Not persisted to disk (callbacks can't be serialized); jobs that
+   * use this must be re-attached in code on startup.
+   */
+  handler?: (traceId: string) => Promise<string>;
 }
 
 export interface CronJobState {

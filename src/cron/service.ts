@@ -124,7 +124,12 @@ export class CronService {
     state.lastRunAt = new Date();
 
     try {
-      if (this.options.onJobFire) {
+      // Direct callback bypasses the LLM — used for deterministic SQL/maintenance work.
+      if (job.handler) {
+        const result = await job.handler(traceId);
+        state.status = "completed";
+        state.lastResult = result;
+      } else if (this.options.onJobFire) {
         const result = await this.options.onJobFire(job, traceId);
         state.status = "completed";
         state.lastResult = result;
@@ -163,7 +168,12 @@ export class CronService {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
-      const data = { jobs: Array.from(this.jobs.values()), updatedAt: Date.now() };
+      // Skip jobs with a `handler` callback — those are code-registered on every
+      // startup and their function can't be serialized. Persisting their config
+      // would lose the handler on reload and fall back to running the placeholder
+      // prompt through the LLM.
+      const persistable = Array.from(this.jobs.values()).filter((j) => !j.handler);
+      const data = { jobs: persistable, updatedAt: Date.now() };
       writeFileSync(this.options.persistPath, JSON.stringify(data, null, 2), "utf-8");
     } catch (err) {
       log.engine.error(
