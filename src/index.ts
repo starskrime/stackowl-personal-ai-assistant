@@ -217,6 +217,7 @@ import { FactStore } from "./memory/fact-store.js";
 import { FactExtractor } from "./memory/fact-extractor.js";
 import { MemoryDatabase } from "./memory/db.js";
 import { MemoryRepository } from "./memory/repository.js";
+import { UnifiedMemory } from "./memory/unified.js";
 import { MemoryWriter } from "./memory/writer.js";
 import { HitlCheckpointStore } from "./engine/hitl.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
@@ -1204,6 +1205,7 @@ async function buildGateway(
   const hitlCheckpointStore = new HitlCheckpointStore(b.memoryDb);
   const memoryRepo = new MemoryRepository(b.memoryDb.rawDb, gateway.gatewayEventBus);
   gateway.ctx.memoryRepo = memoryRepo;
+  gateway.ctx.unifiedMemory = new UnifiedMemory(memoryRepo, b.memoryDb.rawDb);
 
   if (gateway.ctx.intelligence) {
     const memoryWriter = new MemoryWriter({
