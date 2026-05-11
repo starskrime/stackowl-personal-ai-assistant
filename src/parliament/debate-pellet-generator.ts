@@ -5,21 +5,35 @@
  * for future reference and recall.
  */
 
-import type { ModelProvider } from "../providers/base.js";
+import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { ParliamentSession } from "./protocol.js";
 import { PelletGenerator, makeProviderRouter } from "../pellets/generator.js";
 import type { Pellet, PelletStore } from "../pellets/store.js";
+import type { FactStore } from "../memory/fact-store.js";
+import type { FactExtractor } from "../memory/fact-extractor.js";
 import { log } from "../logger.js";
 
 // ─── DebatePelletGenerator ──────────────────────────────────────
 
 export class DebatePelletGenerator {
   private pelletGenerator: PelletGenerator;
+  private factStore: FactStore | null = null;
+  private factExtractor: FactExtractor | null = null;
 
   constructor(
     private provider: ModelProvider,
   ) {
     this.pelletGenerator = new PelletGenerator(makeProviderRouter(provider));
+  }
+
+  /**
+   * Wire fact extraction so Parliament synthesis compounds into the
+   * always-retrieved Tier-1 fact store, not just the pellet archive.
+   * Optional — pellet generation works without it.
+   */
+  attachFactPipeline(factStore: FactStore, factExtractor: FactExtractor): void {
+    this.factStore = factStore;
+    this.factExtractor = factExtractor;
   }
 
   /**
@@ -34,8 +48,9 @@ export class DebatePelletGenerator {
     );
 
     try {
+      const summary = this.generateDebateSummary(session);
       const pellet = await this.pelletGenerator.generate(
-        this.generateDebateSummary(session),
+        summary,
         `Parliament: ${session.config.topic}`,
       );
 
@@ -53,6 +68,15 @@ export class DebatePelletGenerator {
         `[DebatePelletGenerator] Saved debate pellet: ${pellet.id}.md`,
       );
 
+      // Extract facts from the synthesis and write to FactStore so the
+      // conclusions surface in future Tier-0/Tier-1 context retrieval.
+      // Non-blocking: never fail pellet save because extraction failed.
+      if (this.factStore && this.factExtractor) {
+        this.persistAsFacts(session, summary).catch((err) =>
+          log.engine.warn("[DebatePelletGenerator] Fact extraction failed (non-fatal)", { err: String(err) }),
+        );
+      }
+
       return pellet;
     } catch (err) {
       log.engine.error(
@@ -60,6 +84,32 @@ export class DebatePelletGenerator {
       );
       return null;
     }
+  }
+
+  private async persistAsFacts(session: ParliamentSession, summary: string): Promise<void> {
+    if (!this.factStore || !this.factExtractor) return;
+    const userId = "default";
+    const pseudoTranscript: ChatMessage[] = [
+      { role: "user", content: `Parliament debate topic: ${session.config.topic}` },
+      { role: "assistant", content: summary },
+    ];
+    const extracted = await this.factExtractor.extract(pseudoTranscript, userId);
+    if (extracted.length === 0) {
+      log.engine.debug("[DebatePelletGenerator] No facts extracted from debate", { sessionId: session.id });
+      return;
+    }
+    // Stamp with parliament provenance + slightly elevated confidence to reflect multi-owl synthesis.
+    const stamped = extracted.map((f) => ({
+      ...f,
+      source: "explicit" as const,
+      confidence: Math.min(0.95, (f.confidence ?? 0.7) + 0.1),
+      entity: f.entity ?? `parliament:${session.id}`,
+    }));
+    await this.factStore.addBatch(stamped);
+    log.engine.info("[DebatePelletGenerator] Persisted Parliament facts", {
+      sessionId: session.id,
+      count: stamped.length,
+    });
   }
 
   /**

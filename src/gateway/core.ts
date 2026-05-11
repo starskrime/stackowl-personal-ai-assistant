@@ -868,7 +868,13 @@ export class OwlGateway {
       this.debatePelletGenerator = new DebatePelletGenerator(ctx.provider);
     }
     if (this.debatePelletGenerator) {
-      log.engine.info("[parliament] DebatePelletGenerator initialized");
+      // Compound debate synthesis into the always-retrieved fact store, not just the pellet archive.
+      if (ctx.factStore && ctx.factExtractor) {
+        this.debatePelletGenerator.attachFactPipeline(ctx.factStore, ctx.factExtractor);
+        log.engine.info("[parliament] DebatePelletGenerator initialized with fact pipeline");
+      } else {
+        log.engine.info("[parliament] DebatePelletGenerator initialized (no fact pipeline — pellet-only)");
+      }
     }
 
     if (ctx.routingWirer) {
