@@ -91,5 +91,7 @@ describe("SqliteTier0Layer", () => {
 
     expect(result).toContain("preference:");
     expect(result).toContain("active_goal:");
+    expect(result).toContain("- Prefers TypeScript");
+    expect(result).toContain("- Goal: ship StackOwl v1");
   });
 });

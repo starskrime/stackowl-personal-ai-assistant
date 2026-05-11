@@ -28,6 +28,8 @@ export class SqliteTier0Layer implements ContextLayer {
 
     let facts: Fact[];
     try {
+      // Single-user deployment: no userId filter applied.
+      // When multi-user support lands, thread req.userId here.
       facts = this.db.facts.getHighConfidenceFacts();
     } catch (err) {
       log.engine.error("[SqliteTier0Layer] Failed to query facts", err as Error);
