@@ -220,6 +220,7 @@ import { MemoryRepository } from "./memory/repository.js";
 import { UnifiedMemory } from "./memory/unified.js";
 import { WorkspaceGit } from "./workspace/git.js";
 import { MemoryWriter } from "./memory/writer.js";
+import { MemoryBus } from "./memory/bus.js";
 import { HitlCheckpointStore } from "./engine/hitl.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
 import { GoalGraph } from "./goals/graph.js";
@@ -887,9 +888,10 @@ async function buildGateway(
 
   // Load reflexion-based structured memory (Phase 3 replacement for memory.md)
   let reflexionContext = "";
+  let owlReflexion: MemoryReflexionEngine | undefined;
   try {
-    const reflexion = new MemoryReflexionEngine(b.workspacePath, provider, owl);
-    reflexionContext = await reflexion.getForSystemPrompt();
+    owlReflexion = new MemoryReflexionEngine(b.workspacePath, provider, owl);
+    reflexionContext = await owlReflexion.getForSystemPrompt();
     if (reflexionContext) {
       log.engine.info("[Init] Reflexion memory loaded");
     }
@@ -1177,6 +1179,7 @@ async function buildGateway(
     preferenceModel: b.preferenceModel,
     workingContextManager: b.workingContextManager,
     db: b.memoryDb,
+    memoryBus: new MemoryBus(owlReflexion, b.pelletStore, b.microLearner, b.workspacePath),
     episodicMemory: b.episodicMemory,
     factStore: b.factStore,
     factExtractor: b.factExtractor,
