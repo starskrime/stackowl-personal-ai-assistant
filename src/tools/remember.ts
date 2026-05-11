@@ -9,15 +9,14 @@
  * ("I just solved X using Y — I'll remember this approach") and when the
  * user states something important ("User prefers MP4 format").
  *
- * Writes directly to FactStore with confidence:0.9, source:"inferred",
- * TTL 365 days. Bypasses the post-session extraction pipeline so the fact
- * is available immediately in the next turn.
+ * Writes via UnifiedMemory.remember() with confidence:0.9, source:"inferred".
+ * Bypasses the post-session extraction pipeline so the fact is available
+ * immediately in the next turn.
  */
 
-import { randomUUID } from "node:crypto";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import type { FactCategory } from "../memory/fact-store.js";
-import type { MemoryKind } from "../memory/repository.js";
+import type { MemoryKind, MemoryDomain } from "../memory/unified.js";
 import { log } from "../logger.js";
 
 export class RememberTool implements ToolImplementation {
@@ -69,67 +68,48 @@ export class RememberTool implements ToolImplementation {
     if (!content?.trim()) return "Error: content is required.";
 
     const category = ((args.category as string) ?? "skill") as FactCategory;
-    const factStore = context.engineContext?.factStore;
 
-    if (!factStore) {
-      // Graceful degradation — log but don't fail the model's tool call
-      log.memory.warn("[RememberTool] FactStore not available — memory not persisted");
-      return `Noted: "${content.slice(0, 80)}" — (memory store not available, won't persist across sessions)`;
-    }
+    const kindMap: Record<string, MemoryKind> = {
+      skill: "procedural",
+      habit: "procedural",
+      preference: "semantic",
+      personal: "semantic",
+      project_detail: "semantic",
+      context: "semantic",
+      goal: "semantic",
+    };
+    const kind = kindMap[category] ?? "semantic";
 
-    try {
-      const userId = (context.engineContext as any)?.userId ?? "default";
-      const provider = context.engineContext?.provider;
+    const unifiedMemory = (context.engineContext as any)?.unifiedMemory;
 
-      // Write to FactStore — semantic search via embeddings
-      await factStore.addWithEmbedding(
-        {
-          userId,
-          fact: content,
-          category,
-          confidence: 0.9,
-          source: "inferred",
-          expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-        provider,
-      );
+    if (unifiedMemory) {
+      try {
+        const userId = (context.engineContext as any)?.userId ?? "default";
+        const owlName = (context.engineContext as any)?.owl?.persona?.name ?? "default";
 
-      // Write to MemoryRepository — the canonical store that /memory list reads from
-      const memoryRepo = context.engineContext?.memoryRepo;
-      if (memoryRepo) {
-        const kindMap: Record<string, MemoryKind> = {
-          skill: "procedural",
-          habit: "procedural",
-          preference: "semantic",
-          personal: "semantic",
-          project_detail: "semantic",
-          context: "semantic",
-          goal: "semantic",
-        };
-        memoryRepo.insertBatch([{
-          id: `mem_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-          kind: kindMap[category] ?? "semantic",
+        await unifiedMemory.remember({
           content,
-          importance: 0.9,
-          verdict: "ADVANCES",
-        }]);
-      } else {
-        log.memory.debug("[RememberTool] memoryRepo not in context — /memory list won't show this entry");
-      }
+          kind,
+          domain: category as MemoryDomain,
+          scope: "user",
+          source: "inferred",
+          confidence: 0.9,
+          goal_id: undefined,
+          userId,
+          owlName,
+        });
 
-      // Write to owl_learnings for cross-owl sharing
-      const db = (context.engineContext as any)?.db;
-      const owlName = (context.engineContext as any)?.owl?.persona?.name ?? "default";
-      if (db && (category === "skill" || category === "habit")) {
-        db.owlLearnings.add(owlName, content, "skill", undefined, 0.85);
+        log.memory.info(`[RememberTool] Stored via UnifiedMemory (${category}/${kind}): "${content.slice(0, 80)}"`);
+        return `Remembered (${category}): "${content.slice(0, 80)}${content.length > 80 ? "..." : ""}"`;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.memory.error("[RememberTool] UnifiedMemory.remember failed", err, { category, kind });
+        return `Failed to store memory: ${msg}`;
       }
-
-      log.memory.info(`[RememberTool] Stored (${category}): "${content.slice(0, 80)}"`);
-      return `Remembered (${category}): "${content.slice(0, 80)}${content.length > 80 ? "..." : ""}"`;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.memory.warn(`[RememberTool] Failed to store: ${msg}`);
-      return `Failed to store memory: ${msg}`;
     }
+
+    // Graceful degradation — no memory store available
+    log.memory.warn("[RememberTool] No unifiedMemory in context — memory not persisted");
+    return `Noted: "${content.slice(0, 80)}" — (memory store not available, won't persist across sessions)`;
   }
 }
