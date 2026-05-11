@@ -1948,6 +1948,7 @@ class FactsRepo {
   }
 
   getHighConfidenceFacts(userId?: string, limit = 30): Fact[] {
+    if (TIER0_CATEGORIES.length === 0) return [];
     const placeholders = TIER0_CATEGORIES.map(() => "?").join(",");
     const now = new Date().toISOString();
     const rows = this.db.prepare(`
@@ -1965,6 +1966,7 @@ class FactsRepo {
       ...(userId ? [userId] : []),
       limit,
     ) as any[];
+    // Passive injection — do not increment access_count; these reads are automated, not user-driven.
     return rows.map(rowToFact);
   }
 
