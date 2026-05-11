@@ -1,25 +1,24 @@
 /**
  * Header — adaptive Ink component replacing the pre-painted writeHeader().
- * Green rules track terminal width via useTerminalCols() so they reflow on resize.
- * Logo lines are fixed-width box-drawing art; rules around them adapt.
+ * Rules use Box borders (Yoga layout dimensions) so they track real terminal width
+ * without depending on React state, which can be stale during Ink's own resize renders.
  */
 
+import { memo } from "react";
 import { Box, Text } from "ink";
 import { LOGO_LINES } from "../io/header.js";
-import { useTerminalCols } from "../input/useTerminalCols.js";
 
-export function Header() {
-  const cols = useTerminalCols();
-  const rule = "─".repeat(cols);
-
+function HeaderImpl() {
   return (
-    <Box flexDirection="column" width={cols}>
-      <Text color="green">{rule}</Text>
+    <Box flexDirection="column">
+      <Box width="100%" borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
       {LOGO_LINES.map(({ text, bright }, i) => (
         <Text key={i} bold color={bright ? "yellow" : "red"}>{text}</Text>
       ))}
       <Text> <Text bold>Personal AI Assistant</Text><Text dimColor> • Challenge Everything</Text></Text>
-      <Text color="green">{rule}</Text>
+      <Box width="100%" borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="green" />
     </Box>
   );
 }
+
+export const Header = memo(HeaderImpl);

@@ -2,11 +2,22 @@ import { useState, useEffect } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useTheme } from "../providers/ThemeProvider.js";
 
+// ─── Editable item spec ───────────────────────────────────────────────────────
+
+export type EditableSpec =
+  | { kind: "string"; currentValue: string; mask?: boolean; onSubmit: (raw: string) => Promise<void> | void }
+  | { kind: "number"; currentValue: number; onSubmit: (n: number) => Promise<void> | void }
+  | { kind: "boolean"; currentValue: boolean; onToggle: () => Promise<void> | void }
+  | { kind: "drill"; onEnter: () => void };
+
+// ─── Panel types ─────────────────────────────────────────────────────────────
+
 export interface PanelItem {
   id: string;
   label: string;
   meta?: string;
   data?: unknown;
+  edit?: EditableSpec;
 }
 
 export interface PanelAction {
@@ -33,6 +44,9 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [confirming, setConfirming] = useState<PanelAction | null>(null);
   const [confirmInput, setConfirmInput] = useState("");
+  const [editing, setEditing] = useState<PanelItem | null>(null);
+  const [editInput, setEditInput] = useState("");
+  const [editError, setEditError] = useState("");
   const [working, setWorking] = useState(false);
 
   const rows = stdout?.rows ?? 24;
@@ -53,7 +67,34 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
   // Clamp selectedIdx to valid range when items change
   const clampedIdx = items.length > 0 ? Math.min(selectedIdx, items.length - 1) : 0;
 
+  function exitEdit() { setEditing(null); setEditInput(""); setEditError(""); }
+
   useInput((_input, key) => {
+    // ── Edit mode ────────────────────────────────────────────────────────────
+    if (editing) {
+      if (working) return;
+      if (key.escape) { exitEdit(); return; }
+      if (key.return) {
+        const spec = editing.edit!;
+        if (spec.kind === "string") {
+          setWorking(true);
+          setEditError("");
+          Promise.resolve(spec.onSubmit(editInput)).finally(() => { setWorking(false); exitEdit(); });
+        } else if (spec.kind === "number") {
+          const n = Number(editInput.trim());
+          if (isNaN(n)) { setEditError(`"${editInput}" is not a number`); return; }
+          setWorking(true);
+          setEditError("");
+          Promise.resolve(spec.onSubmit(n)).finally(() => { setWorking(false); exitEdit(); });
+        }
+        return;
+      }
+      if (key.backspace || key.delete) { setEditInput((v) => v.slice(0, -1)); setEditError(""); return; }
+      if (!key.ctrl && !key.meta && _input.length === 1) { setEditInput((v) => v + _input); setEditError(""); return; }
+      return;
+    }
+
+    // ── Confirm mode ─────────────────────────────────────────────────────────
     if (confirming) {
       if (key.escape) { setConfirming(null); setConfirmInput(""); return; }
       if (key.return) {
@@ -75,6 +116,7 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
       return;
     }
 
+    // ── Navigation ───────────────────────────────────────────────────────────
     if (key.escape) { onDismiss(); return; }
 
     if (key.upArrow) {
@@ -90,9 +132,10 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
       return;
     }
 
-    // Action key dispatch
+    // ── Existing actions ─────────────────────────────────────────────────────
     const selectedItem = items[clampedIdx];
     if (!selectedItem) return;
+
     for (const action of actions) {
       const matches =
         action.key === "return" ? key.return :
@@ -108,15 +151,70 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
         return;
       }
     }
+
+    // ── Edit spec fallback (fires only if no action consumed the key) ─────────
+    if (!working && selectedItem.edit) {
+      const spec = selectedItem.edit;
+      if (spec.kind === "boolean" && key.return) {
+        setWorking(true);
+        Promise.resolve(spec.onToggle()).finally(() => setWorking(false));
+        return;
+      }
+      if (spec.kind === "drill" && key.return) {
+        spec.onEnter();
+        return;
+      }
+      if ((spec.kind === "string" || spec.kind === "number") && (_input === "e" || key.return)) {
+        const prefill = spec.kind === "string" && !spec.mask ? (spec.currentValue ?? "") : "";
+        setEditing(selectedItem);
+        setEditInput(prefill);
+        setEditError("");
+        return;
+      }
+    }
   }, { isActive });
 
-  const footerActions = confirming
-    ? (confirming.confirm ?? `Type 'yes' to confirm ${confirming.label}`) + " (Enter/Esc):"
-    : [
-        "↑↓ nav",
-        ...actions.map((a) => `${a.key === "return" ? "Enter" : a.key} ${a.label}`),
-        "Esc close",
-      ].join("  ·  ");
+  // ── Footer text ──────────────────────────────────────────────────────────
+
+  const footerContent = (() => {
+    if (editing) {
+      const isNum = editing.edit?.kind === "number";
+      const label = editing.label;
+      return (
+        <Box flexDirection="column">
+          <Box>
+            <Text color={colors.accent}>{`edit ${label}  value: `}</Text>
+            <Text>{editInput}</Text>
+            <Text color={colors.accent}>▋</Text>
+            <Text dimColor>{"  Enter save · Esc cancel"}</Text>
+          </Box>
+          {editError ? <Text color={colors.warning}>{editError}</Text> : null}
+          {isNum ? <Text dimColor>{"  (enter a number)"}</Text> : null}
+        </Box>
+      );
+    }
+    if (confirming) {
+      const prompt = (confirming.confirm ?? `Type 'yes' to confirm ${confirming.label}`) + " (Enter/Esc):";
+      return (
+        <Box>
+          <Text color={colors.warning}>{prompt} </Text>
+          <Text>{confirmInput}</Text>
+          <Text color={colors.accent}>▋</Text>
+        </Box>
+      );
+    }
+    const editHints = items[clampedIdx]?.edit
+      ? (items[clampedIdx]!.edit!.kind === "boolean" ? "  Enter toggle" :
+         items[clampedIdx]!.edit!.kind === "drill"   ? "  Enter open" :
+         "  e edit")
+      : "";
+    const hint = [
+      "↑↓ nav",
+      ...actions.map((a) => `${a.key === "return" ? "Enter" : a.key} ${a.label}`),
+      "Esc close",
+    ].join("  ·  ") + editHints;
+    return <Text dimColor>{hint}</Text>;
+  })();
 
   return (
     <Box flexDirection="column" borderStyle="single" borderTop borderBottom borderLeft={false} borderRight={false} borderColor={borderColor} paddingX={1}>
@@ -160,15 +258,7 @@ export function Panel({ title, color, items, actions = [], onDismiss, emptyText 
       )}
 
       <Box marginTop={1}>
-        {confirming ? (
-          <Box>
-            <Text color={colors.warning}>{footerActions} </Text>
-            <Text>{confirmInput}</Text>
-            <Text color={colors.accent}>▋</Text>
-          </Box>
-        ) : (
-          <Text dimColor>{footerActions}</Text>
-        )}
+        {footerContent}
       </Box>
     </Box>
   );

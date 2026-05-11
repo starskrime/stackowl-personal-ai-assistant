@@ -1,5 +1,6 @@
 import type { UiBridge } from "../events/bridge.js";
 import type { UiState } from "../state/store.js";
+import type { PanelItem } from "../panels/Panel.js";
 import { handleStatus } from "./handlers/status.js";
 import { handleClear }  from "./handlers/clear.js";
 import {
@@ -39,17 +40,18 @@ import {
   handleHelperCapabilities,
   completeHelperNames,
 } from "./handlers/helper.js";
+import { handleConfigList } from "./handlers/config.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PanelPayload {
   title: string;
   color?: string;
-  items: Array<{ id: string; label: string; meta?: string; data?: unknown }>;
+  items: PanelItem[];
   actions?: Array<{
     key: string;
     label: string;
-    handler: (item: { id: string; label: string; meta?: string; data?: unknown }) => void | Promise<void>;
+    handler: (item: PanelItem) => void | Promise<void>;
     confirm?: string;
   }>;
   emptyText?: string;
@@ -142,7 +144,7 @@ export const REGISTRY: CommandSpec[] = [
         {
           key: "return",
           label: "resume",
-          handler: (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+          handler: (item: PanelItem) => {
             ctx.bridge.emit({ kind: "session.changed" as const, sessionId: item.id, title: item.label });
             ctx.bridge.closePanel();
           },
@@ -181,7 +183,7 @@ export const REGISTRY: CommandSpec[] = [
         {
           key: "return",
           label: "switch",
-          handler: (item: { id: string; label: string; meta?: string; data?: unknown }) => {
+          handler: (item: PanelItem) => {
             const owlData = item.data as { name: string; emoji: string } | undefined;
             if (owlData) ctx.bridge.changeOwl(owlData.name, owlData.emoji);
             else ctx.bridge.changeOwl(item.id, "🦉");
@@ -277,6 +279,11 @@ export const REGISTRY: CommandSpec[] = [
     handler: handleClear,
   },
   {
+    name: "/config",
+    description: "View and edit runtime config",
+    handler: handleConfigList,
+  },
+  {
     name: "/capabilities",
     description: "List synthesized capabilities",
     handler: handleCapabilities,
@@ -296,7 +303,6 @@ export const REGISTRY: CommandSpec[] = [
   },
   {
     name: "/quit",
-    aliases: ["/exit", "/bye"],
     description: "Save session and exit",
     handler: async (_ctx) => {
       return { kind: "action" };

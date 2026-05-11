@@ -13,7 +13,7 @@
  *   [footer hint]
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { Header } from "../components/Header.js";
@@ -62,11 +62,18 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   useEffect(() => { setViewportOffset(0); }, [turns.length]);
 
   // Estimate how many turns fit on screen. Each turn averages ~3 rows.
-  const windowSize = Math.max(5, Math.floor((rows - CHROME_ROWS) / 3));
+  const windowSize = Math.max(1, Math.floor((rows - CHROME_ROWS) / 3));
 
-  const tailIdx      = turns.length - viewportOffset;
-  const startIdx     = Math.max(0, tailIdx - windowSize);
-  const visibleTurns = turns.slice(startIdx, Math.max(0, tailIdx));
+  const tailIdx  = turns.length - viewportOffset;
+  const startIdx = Math.max(0, tailIdx - windowSize);
+
+  // Stable reference: only changes when committed turns list or scroll position changes,
+  // not on every token.delta. Combined with React.memo(Transcript) this prevents
+  // Transcript from re-rendering during streaming.
+  const visibleTurns = useMemo(
+    () => turns.slice(startIdx, Math.max(0, tailIdx)),
+    [turns, startIdx, tailIdx],
+  );
 
   const scrolledBack = viewportOffset > 0;
   const hiddenAbove  = startIdx;
@@ -93,45 +100,50 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   }
 
   return (
-    <Box flexDirection="column">
+    // height={rows} pins the layout to the terminal height so Header + Composer
+    // are never evicted when transcript content grows past the screen boundary.
+    <Box flexDirection="column" height={rows}>
       <Header />
 
-      {/* Scroll indicator — shown when not at the bottom */}
-      {hiddenAbove > 0 && (
-        <Box justifyContent="center">
-          <Text dimColor>↑ {hiddenAbove} earlier {hiddenAbove === 1 ? "turn" : "turns"} — PageUp to scroll</Text>
-        </Box>
-      )}
-
-      {/* Messaging area — 2-col gutter each side */}
-      <Box flexDirection="column" paddingX={2}>
-        <Transcript turns={visibleTurns} />
-        {unreadHeartbeats.map((msg) => (
-          <HeartbeatBanner key={msg.id} msg={msg} />
-        ))}
-        {recentNotices.map((n) => (
-          <NoticeStrip key={n.id} notice={n} />
-        ))}
-        {/* Show owl + thinking indicator before the live turn object exists */}
-        {generating && !liveTurn && (
-          <Box flexDirection="column" marginBottom={1}>
-            <OwlAvatar emoji={activeOwlEmoji} name={activeOwlName} />
-            <Box paddingLeft={2}>
-              <ThinkingIndicator />
-            </Box>
+      {/* Middle region: grows to fill remaining space, clips overflow at bottom */}
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+        {/* Scroll indicator — shown when not at the bottom */}
+        {hiddenAbove > 0 && (
+          <Box justifyContent="center">
+            <Text dimColor>↑ {hiddenAbove} earlier {hiddenAbove === 1 ? "turn" : "turns"} — PageUp to scroll</Text>
           </Box>
         )}
-        <LiveTurn turn={liveTurn} toolCalls={activeCalls} memoryCount={liveMemoryCount} />
-        {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
-        <PanelHost />
-      </Box>
 
-      {/* Scroll-to-bottom hint when scrolled back */}
-      {hiddenBelow > 0 && (
-        <Box justifyContent="center">
-          <Text dimColor>↓ {hiddenBelow} newer {hiddenBelow === 1 ? "turn" : "turns"} — PageDown or Esc to follow</Text>
+        {/* Messaging area — 2-col gutter each side */}
+        <Box flexDirection="column" paddingX={2} flexGrow={1} flexShrink={1} overflow="hidden">
+          <Transcript turns={visibleTurns} />
+          {unreadHeartbeats.map((msg) => (
+            <HeartbeatBanner key={msg.id} msg={msg} />
+          ))}
+          {recentNotices.map((n) => (
+            <NoticeStrip key={n.id} notice={n} />
+          ))}
+          {/* Show owl + thinking indicator before the live turn object exists */}
+          {generating && !liveTurn && (
+            <Box flexDirection="column" marginBottom={1}>
+              <OwlAvatar emoji={activeOwlEmoji} name={activeOwlName} />
+              <Box paddingLeft={2}>
+                <ThinkingIndicator />
+              </Box>
+            </Box>
+          )}
+          <LiveTurn turn={liveTurn} toolCalls={activeCalls} memoryCount={liveMemoryCount} />
+          {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
+          <PanelHost />
         </Box>
-      )}
+
+        {/* Scroll-to-bottom hint when scrolled back */}
+        {hiddenBelow > 0 && (
+          <Box justifyContent="center">
+            <Text dimColor>↓ {hiddenBelow} newer {hiddenBelow === 1 ? "turn" : "turns"} — PageDown or Esc to follow</Text>
+          </Box>
+        )}
+      </Box>
 
       {/* Input — full terminal width, always visible */}
       <Box

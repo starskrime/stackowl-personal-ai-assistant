@@ -333,6 +333,10 @@ export class UiBridge {
     this.emit({ kind: "panel.closed" });
   }
 
+  popPanel(): void {
+    this.emit({ kind: "panel.popped" });
+  }
+
   // ─── Onboarding ───────────────────────────────────────────────────────────────
 
   requestOnboardingView(): void {

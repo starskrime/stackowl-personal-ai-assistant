@@ -38,6 +38,7 @@ const SLASH_COMMANDS: KeyRow[] = [
   { key: "/owls",     desc: "Switch active owl persona"      },
   { key: "/skills",   desc: "List installed skills"          },
   { key: "/mcp",      desc: "MCP server status"              },
+  { key: "/config",   desc: "View and edit runtime config"   },
   { key: "/help",     desc: "This help overlay"              },
   { key: "/quit",     desc: "Exit StackOwl"                  },
 ];

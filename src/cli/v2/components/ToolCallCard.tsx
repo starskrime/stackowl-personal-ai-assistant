@@ -13,7 +13,7 @@ import type { ToolCall } from "../state/slices/tools.js";
 import {
   STACKOWL_SPINNER,
   SPINNER_AMBER,
-  SPINNER_INTERVAL_MS,
+  TOOL_SPIN_INTERVAL_MS,
 } from "./spinner.js";
 import { useTheme } from "../providers/ThemeProvider.js";
 import { glyphs } from "../theme/tokens.js";
@@ -35,7 +35,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
     if (tool.status !== "running" && tool.status !== "pending") return;
     const t = setInterval(
       () => setFrame((f) => (f + 1) % STACKOWL_SPINNER.length),
-      SPINNER_INTERVAL_MS,
+      TOOL_SPIN_INTERVAL_MS,
     );
     return () => clearInterval(t);
   }, [tool.status]);

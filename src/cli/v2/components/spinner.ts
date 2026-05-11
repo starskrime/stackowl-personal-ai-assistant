@@ -5,8 +5,11 @@ export const STACKOWL_SPINNER = ["·", "◌", "◍", "◉", "✳", "✶"] as con
 export const SPINNER_AMBER = colors.brand;  // #F5A623 — sourced from design token
 export const SPINNER_INTERVAL_MS = 80;
 
+/** Spinner interval for tool call cards (ms). Slower than the raw 80ms to cut re-render rate. */
+export const TOOL_SPIN_INTERVAL_MS = 150;
+
 /** Slower tick for the thinking indicator spinner (ms). */
-export const THINKING_SPIN_INTERVAL_MS = 180;
+export const THINKING_SPIN_INTERVAL_MS = 250;
 
 /** Yellow → red → yellow fade palette for the thinking animation. */
 export const FADE_COLORS = [

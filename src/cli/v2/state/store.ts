@@ -13,6 +13,7 @@ import type { SessionState } from "./slices/session.js";
 import type { UiSliceState } from "./slices/ui.js";
 import type { PaletteState } from "./slices/palette.js";
 import type { PanelSliceState } from "./slices/panel.js";
+import type { ExitConfirmState } from "./slices/exitConfirm.js";
 import { initialTurnsState } from "./slices/turns.js";
 import { initialToolsState } from "./slices/tools.js";
 import { initialParliamentState } from "./slices/parliament.js";
@@ -21,6 +22,7 @@ import { initialSessionState } from "./slices/session.js";
 import { initialUiSliceState } from "./slices/ui.js";
 import { initialPaletteState } from "./slices/palette.js";
 import { initialPanelSliceState } from "./slices/panel.js";
+import { initialExitConfirmState } from "./slices/exitConfirm.js";
 
 export interface UiState
   extends TurnsState,
@@ -30,7 +32,8 @@ export interface UiState
     SessionState,
     UiSliceState,
     PaletteState,
-    PanelSliceState {}
+    PanelSliceState,
+    ExitConfirmState {}
 
 export const initialState: UiState = {
   ...initialTurnsState,
@@ -41,6 +44,7 @@ export const initialState: UiState = {
   ...initialUiSliceState,
   ...initialPaletteState,
   ...initialPanelSliceState,
+  ...initialExitConfirmState,
 };
 
 export const uiStore = createStore<UiState>(() => initialState);

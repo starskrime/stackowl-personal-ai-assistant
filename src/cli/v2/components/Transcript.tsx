@@ -1,6 +1,6 @@
 /**
- * Transcript — <Static> committed turns.
- * No re-diff after turn.committed — native terminal scrollback owns history.
+ * Transcript — committed turns, viewport slice.
+ * Rendered into a memoized subtree so token.delta events do not cause re-renders here.
  *
  * Messaging-app layout (adaptive — reacts to terminal resize via useTerminalCols):
  *   User:  fully right-aligned within the 2-col-guttered content area
@@ -10,10 +10,9 @@
  * Width model:
  *   ChatScreen wraps this in a paddingX={2} Box → 2 cols each side consumed by parent.
  *   contentWidth = cols - 4  (accounts for parent's 2+2 padding)
- *   Explicit width on Static children is required — Static items are measured
- *   in isolation and flex-end has no effect without a concrete width.
  */
 
+import { memo, useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Turn } from "../state/slices/turns.js";
 import { OwlAvatar } from "./OwlAvatar.js";
@@ -24,14 +23,15 @@ export interface TranscriptProps {
   turns: Turn[];
 }
 
-export function Transcript({ turns }: TranscriptProps) {
+function TranscriptImpl({ turns }: TranscriptProps) {
   const { colors } = useTheme();
   const cols        = useTerminalCols();
-  // Parent paddingX={2} consumes 4 cols total; clamp to minimum usable width.
-  const contentWidth = Math.max(8, cols - 4);
-  // Divider: 80% of full terminal width, capped to fit inside the content area.
-  const dividerLen   = Math.max(4, Math.min(Math.round(cols * 0.8), contentWidth - 2));
-  const dividerChars = ("─·".repeat(Math.ceil(dividerLen / 2)).slice(0, dividerLen)).split("");
+  const { contentWidth, dividerChars } = useMemo(() => {
+    const cw = Math.max(8, cols - 4);
+    const dl = Math.max(4, Math.min(Math.round(cols * 0.8), cw - 2));
+    const dc = ("─·".repeat(Math.ceil(dl / 2)).slice(0, dl)).split("");
+    return { contentWidth: cw, dividerChars: dc };
+  }, [cols]);
   const firstTurnId  = turns[0]?.turnId;
 
   return (
@@ -80,3 +80,5 @@ export function Transcript({ turns }: TranscriptProps) {
     </Box>
   );
 }
+
+export const Transcript = memo(TranscriptImpl);

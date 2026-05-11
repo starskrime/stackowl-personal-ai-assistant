@@ -7,21 +7,31 @@ export interface ActivePanel {
 }
 
 export interface PanelSliceState {
-  activePanel: ActivePanel | null;
+  panelStack: ActivePanel[];
+  activePanel: ActivePanel | null;  // mirrors panelStack top; kept for consumer compat
   panelFocus: "composer" | "panel";
 }
 
 export const initialPanelSliceState: PanelSliceState = {
+  panelStack: [],
   activePanel: null,
   panelFocus: "composer",
 };
 
 export function applyPanelEvent(state: UiState, event: UiEvent): UiState {
   switch (event.kind) {
-    case "panel.opened":
-      return { ...state, activePanel: { id: event.id, props: event.props }, panelFocus: "panel" };
+    case "panel.opened": {
+      const next = { id: event.id, props: event.props };
+      const newStack = [...state.panelStack, next];
+      return { ...state, panelStack: newStack, activePanel: next, panelFocus: "panel" };
+    }
+    case "panel.popped": {
+      const newStack = state.panelStack.slice(0, -1);
+      const top = newStack.at(-1) ?? null;
+      return { ...state, panelStack: newStack, activePanel: top, panelFocus: top ? "panel" : "composer" };
+    }
     case "panel.closed":
-      return { ...state, activePanel: null, panelFocus: "composer" };
+      return { ...state, panelStack: [], activePanel: null, panelFocus: "composer" };
     case "onboarding.view.requested":
       return { ...state, mode: "onboarding" };
     case "onboarding.view.dismissed":

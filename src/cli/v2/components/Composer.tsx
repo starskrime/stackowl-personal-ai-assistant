@@ -15,8 +15,8 @@
  * When panelFocus === "panel", input is dimmed and disabled.
  */
 
-import { useState, useRef, useEffect } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import { useState, useRef, useEffect, memo } from "react";
+import { Box, Text, useInput } from "ink";
 import { useTheme } from "../providers/ThemeProvider.js";
 import { InputHistory } from "../input/history.js";
 import { stripPasteMarkers, isPasteChunk } from "../input/paste.js";
@@ -33,12 +33,11 @@ export interface ComposerProps {
   disabled: boolean;
 }
 
-export function Composer({ onSubmit, disabled }: ComposerProps) {
+function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
   const [value, setValue] = useState("");
   const [completions, setCompletions] = useState<CompletionEntry[]>([]);
   const [completionIdx, setCompletionIdx] = useState(0);
   const historyRef = useRef<InputHistory>(new InputHistory());
-  const { exit } = useApp();
   const { colors } = useTheme();
   const dispatcher = useCommandDispatcher();
 
@@ -72,8 +71,8 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
 
   useInput(
     (input, key) => {
-      if (key.ctrl && input === "c") { exit(); return; }
-      if (key.ctrl && input === "d" && value === "") { exit(); return; }
+      if (key.ctrl && input === "c") { uiStore.setState({ exitConfirmOpen: true }); return; }
+      if (key.ctrl && input === "d" && value === "") { uiStore.setState({ exitConfirmOpen: true }); return; }
       if (key.ctrl && input === "l") {
         dispatcher.dispatch("/clear").then((result) => {
           if (result.kind === "error") {
@@ -139,7 +138,7 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
             if (result.kind === "error") {
               globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
             }
-            if (trimmed === "/quit" || trimmed === "/exit" || trimmed === "/bye") exit();
+            if (trimmed === "/quit") uiStore.setState({ exitConfirmOpen: true });
           }).catch((e) => process.stderr.write(`[Composer] dispatch error: ${e}\n`));
           historyRef.current.push(trimmed);
           setValue("");
@@ -197,3 +196,5 @@ export function Composer({ onSubmit, disabled }: ComposerProps) {
     </Box>
   );
 }
+
+export const Composer = memo(ComposerImpl);

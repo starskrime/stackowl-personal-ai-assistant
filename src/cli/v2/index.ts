@@ -10,6 +10,7 @@
 import React from "react";
 import { render } from "ink";
 import { App } from "./app.js";
+import { uiStore } from "./state/store.js";
 import { installLoggerRedirect, uninstallLoggerRedirect } from "./io/logger.js";
 import { enableBracketedPaste, disableBracketedPaste } from "./input/paste.js";
 import { detectCapabilities } from "./io/capabilities.js";
@@ -36,22 +37,17 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
 
   const restoreScreen = () => { process.stdout.write("\x1B[?1049l"); };
 
-  // On every resize, clear the screen and home the cursor before Ink
-  // re-renders. Without this, Ink's cursor-tracking can drift in alt-screen
-  // mode, leaving a ghost copy of the old narrow header above the new one.
-  const onResize = () => { process.stdout.write("\x1B[H\x1B[2J"); };
-  process.stdout.on("resize", onResize);
-
   const { unmount, waitUntilExit } = render(
     React.createElement(App, {
       onSubmit: (text: string) => adapter.submitMessage(text),
       onResume: (sessionId: string, title: string) => adapter.resumeSession(sessionId, title),
       commandDispatcher: adapter.getCommandDispatcher(),
-    })
+    }),
+    // Disable Ink's built-in Ctrl+C → exit so our ExitConfirmDialog intercepts it first.
+    { exitOnCtrlC: false }
   );
 
   const cleanup = () => {
-    process.stdout.off("resize", onResize);
     disableBracketedPaste();
     uninstallLoggerRedirect();
     restoreScreen();
@@ -60,7 +56,12 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
 
   // Signal handlers: unmount Ink first so escape sequences don't corrupt its
   // render buffer, then run cleanup to restore console and disable paste mode.
-  process.once("SIGINT", () => { unmount(); cleanup(); process.exit(0); });
+  // SIGINT is blocked while the exit-confirm dialog is open so the user must
+  // explicitly choose Yes/No rather than getting force-killed by a stray signal.
+  process.on("SIGINT", () => {
+    if (uiStore.getState().exitConfirmOpen) return;
+    unmount(); cleanup(); process.exit(0);
+  });
   process.once("SIGTERM", () => { unmount(); cleanup(); process.exit(0); });
   process.once("uncaughtException", (err) => { unmount(); restoreScreen(); throw err; });
 

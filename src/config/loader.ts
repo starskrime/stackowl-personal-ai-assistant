@@ -578,7 +578,7 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
 
 // ─── Runtime Validation ───────────────────────────────────────────
 
-function validateConfig(config: StackOwlConfig): string[] {
+export function validateConfig(config: StackOwlConfig): string[] {
   const errors: string[] = [];
 
   // Required fields

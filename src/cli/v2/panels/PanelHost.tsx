@@ -15,7 +15,7 @@ export function PanelHost() {
     <Panel
       {...props}
       isActive={panelFocus === "panel"}
-      onDismiss={() => globalBridge.closePanel()}
+      onDismiss={() => globalBridge.popPanel()}
     />
   );
 }
