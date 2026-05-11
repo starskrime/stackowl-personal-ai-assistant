@@ -67,6 +67,11 @@ export function Transcript({ turns }: TranscriptProps) {
               <Box paddingLeft={2}>
                 <Text wrap="wrap">{turn.text}</Text>
               </Box>
+              {(turn.memoryCount ?? 0) > 0 && (
+                <Box paddingLeft={2}>
+                  <Text color="cyan" dimColor>[+{turn.memoryCount}m]</Text>
+                </Box>
+              )}
             </Box>
           )}
 

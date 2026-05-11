@@ -18,9 +18,10 @@ import { useTerminalCols } from "../input/useTerminalCols.js";
 export interface LiveTurnProps {
   turn: Turn | null;
   toolCalls: ToolCall[];
+  memoryCount?: number;
 }
 
-export function LiveTurn({ turn, toolCalls }: LiveTurnProps) {
+export function LiveTurn({ turn, toolCalls, memoryCount = 0 }: LiveTurnProps) {
   const { colors }  = useTheme();
   const cols        = useTerminalCols();
   const contentWidth = Math.max(8, cols - 4);
@@ -49,6 +50,11 @@ export function LiveTurn({ turn, toolCalls }: LiveTurnProps) {
           </Text>
         )}
       </Box>
+      {memoryCount > 0 && (
+        <Box paddingLeft={2}>
+          <Text color="cyan" dimColor>[+{memoryCount}m]</Text>
+        </Box>
+      )}
     </Box>
   );
 }

@@ -266,6 +266,21 @@ export interface PanelClosedEvent {
   kind: "panel.closed";
 }
 
+export interface PanelPoppedEvent {
+  kind: "panel.popped";
+}
+
+// ─── Memory ───────────────────────────────────────────────────────────────────
+
+export interface MemoryWrittenEvent {
+  kind: "memory.written";
+  /** Memory turn ID — which turn triggered the write (use current active turnId) */
+  turnId: string;
+  /** kind of memory written (semantic, procedural, etc.) */
+  memoryKind: string;
+  importance: number;
+}
+
 // ─── Onboarding ───────────────────────────────────────────────────────────────
 
 export interface OnboardingViewRequestedEvent {
@@ -313,7 +328,9 @@ export type UiEvent =
   | HelpViewDismissedEvent
   | PanelOpenedEvent
   | PanelClosedEvent
+  | PanelPoppedEvent
   | OnboardingViewRequestedEvent
-  | OnboardingViewDismissedEvent;
+  | OnboardingViewDismissedEvent
+  | MemoryWrittenEvent;
 
 export type UiEventKind = UiEvent["kind"];

@@ -11,6 +11,8 @@ export interface Turn {
   text: string;
   committed: boolean;
   timestamp: number;
+  /** Number of memories written during this turn. */
+  memoryCount?: number;
 }
 
 export interface TurnsState {
@@ -18,11 +20,14 @@ export interface TurnsState {
   turns: Turn[];
   /** Live streaming turn (not yet in `turns`). */
   liveTurn: Turn | null;
+  /** Memory writes during the current active turn (reset on turn.committed). */
+  liveMemoryCount: number;
 }
 
 export const initialTurnsState: TurnsState = {
   turns: [],
   liveTurn: null,
+  liveMemoryCount: 0,
 };
 
 /** Maximum turns to hold in memory before the oldest are trimmed. */
@@ -39,7 +44,7 @@ export function applyTurnsEvent(state: UiState, event: UiEvent): UiState {
         timestamp: Date.now(),
       };
       const turns = [...state.turns, userTurn].slice(-MAX_TURNS);
-      return { ...state, turns };
+      return { ...state, turns, liveMemoryCount: 0 };
     }
 
     case "turn.started": {
@@ -54,7 +59,7 @@ export function applyTurnsEvent(state: UiState, event: UiEvent): UiState {
         committed: false,
         timestamp: Date.now(),
       };
-      return { ...state, liveTurn: live };
+      return { ...state, liveTurn: live, liveMemoryCount: 0 };
     }
 
     case "token.delta": {
@@ -67,16 +72,21 @@ export function applyTurnsEvent(state: UiState, event: UiEvent): UiState {
 
     case "turn.committed": {
       const committed: Turn = state.liveTurn
-        ? { ...state.liveTurn, text: event.text, committed: true }
+        ? { ...state.liveTurn, text: event.text, committed: true, memoryCount: state.liveMemoryCount || undefined }
         : {
             turnId: event.turnId,
             role: "assistant",
             text: event.text,
             committed: true,
             timestamp: Date.now(),
+            memoryCount: state.liveMemoryCount || undefined,
           };
       const turns = [...state.turns, committed].slice(-MAX_TURNS);
-      return { ...state, turns, liveTurn: null };
+      return { ...state, turns, liveTurn: null, liveMemoryCount: 0 };
+    }
+
+    case "memory.written": {
+      return { ...state, liveMemoryCount: state.liveMemoryCount + 1 };
     }
 
     default:

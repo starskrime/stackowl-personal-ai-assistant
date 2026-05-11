@@ -18,6 +18,7 @@ import { Box, Text, useInput } from "ink";
 import { useUiStore } from "../providers/UiStoreProvider.js";
 import { Header } from "../components/Header.js";
 import { Transcript } from "../components/Transcript.js";
+import { ExitConfirmDialog } from "../components/ExitConfirmDialog.js";
 import { HeartbeatBanner } from "../components/HeartbeatBanner.js";
 import { NoticeStrip } from "../components/NoticeStrip.js";
 import { LiveTurn } from "../components/LiveTurn.js";
@@ -45,10 +46,12 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const heartbeats    = useUiStore((s) => s.heartbeats);
   const notices       = useUiStore((s) => s.notices);
   const generating    = useUiStore((s) => s.generating);
-  const showHelp      = useUiStore((s) => s.showHelp);
-  const panelFocus    = useUiStore((s) => s.panelFocus);
-  const activeOwlName  = useUiStore((s) => s.activeOwlName);
-  const activeOwlEmoji = useUiStore((s) => s.activeOwlEmoji);
+  const showHelp         = useUiStore((s) => s.showHelp);
+  const panelFocus       = useUiStore((s) => s.panelFocus);
+  const exitConfirmOpen  = useUiStore((s) => s.exitConfirmOpen);
+  const activeOwlName    = useUiStore((s) => s.activeOwlName);
+  const activeOwlEmoji   = useUiStore((s) => s.activeOwlEmoji);
+  const liveMemoryCount  = useUiStore((s) => s.liveMemoryCount);
 
   const rows = useTerminalRows();
 
@@ -71,7 +74,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
 
   // PageUp / PageDown scrolling — only when no overlay / panel is active.
   useInput((_input, key) => {
-    if (showHelp || panelFocus === "panel") return;
+    if (showHelp || panelFocus === "panel" || exitConfirmOpen) return;
     if (key.pageUp) {
       setViewportOffset((prev) => Math.min(prev + Math.max(1, windowSize - 2), turns.length - 1));
     } else if (key.pageDown) {
@@ -84,6 +87,10 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
   const activeCalls      = Array.from(toolCalls.values());
+
+  if (exitConfirmOpen) {
+    return <ExitConfirmDialog />;
+  }
 
   return (
     <Box flexDirection="column">
@@ -114,7 +121,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
             </Box>
           </Box>
         )}
-        <LiveTurn turn={liveTurn} toolCalls={activeCalls} />
+        <LiveTurn turn={liveTurn} toolCalls={activeCalls} memoryCount={liveMemoryCount} />
         {showHelp && <CommandPalette onClose={() => globalBridge.dismissHelpView()} />}
         <PanelHost />
       </Box>

@@ -38,6 +38,8 @@ export class CliV2Adapter implements ChannelAdapter {
   private _quitResolve: (() => void) | null = null;
   private _quitPromise: Promise<void>;
   private _commandDispatcher: CommandDispatcher | null = null;
+  /** Active turn ID during assistant response; null between turns. */
+  private _currentTurnId: string | null = null;
 
   constructor(gateway: OwlGateway, config: CliV2AdapterConfig = {}) {
     this._gateway = gateway;
@@ -74,6 +76,16 @@ export class CliV2Adapter implements ChannelAdapter {
     this._loadOwlsAsync();
     this._loadSkillsAsync();
     this._loadMcpAsync();
+
+    // Subscribe to memory:written events — forward to TUI as memory.written UiEvents.
+    this._gateway.gatewayEventBus.on("memory:written", (e) => {
+      globalBridge.emit({
+        kind: "memory.written",
+        turnId: this._currentTurnId ?? "unknown",
+        memoryKind: e.kind,
+        importance: e.importance,
+      });
+    });
 
     // Stay alive until stop() is called (Ink owns the event loop via stdin).
     await this._quitPromise;
@@ -158,6 +170,7 @@ export class CliV2Adapter implements ChannelAdapter {
     globalBridge.emit({ kind: "user.message", turnId: uuidv4(), text: trimmed });
 
     // Announce turn start (current owl + model).
+    this._currentTurnId = turnId;
     globalBridge.translateOwlChange(turnId, owlMeta.owlEmoji, owlMeta.owlName, undefined, owlMeta.model);
 
     // Accumulate streamed text so we can supply fullText on "done".
@@ -240,6 +253,8 @@ export class CliV2Adapter implements ChannelAdapter {
         text: errMsg,
         severity: "error",
       });
+    } finally {
+      this._currentTurnId = null;
     }
   }
 
