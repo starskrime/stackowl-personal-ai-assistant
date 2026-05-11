@@ -6,35 +6,11 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { resolve, isAbsolute, sep, normalize } from "node:path";
+import { resolve, isAbsolute, normalize } from "node:path";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
-
-// ─── Sandbox Helper ───────────────────────────────────────────────
-
-function assertWithinSandbox(resolvedPath: string, cwd: string): void {
-  // Check if running in Docker
-  const inDocker =
-    process.env.IN_DOCKER === "true" || existsSync("/.dockerenv");
-
-  // In Docker, allow access to the entire container (it's already sandboxed)
-  if (inDocker) {
-    return; // Full access in Docker
-  }
-
-  // On host machine, restrict to workspace and /tmp
-  const sandboxRoot = resolve(cwd);
-  const isInWorkspace =
-    resolvedPath.startsWith(sandboxRoot + sep) || resolvedPath === sandboxRoot;
-  const isInTemp = resolvedPath.startsWith("/tmp/") || resolvedPath === "/tmp";
-
-  if (!isInWorkspace && !isInTemp) {
-    throw new Error(
-      `Access denied: "${resolvedPath}" is outside the allowed paths. Allowed: ${sandboxRoot}, /tmp (or entire container in Docker)`,
-    );
-  }
-}
+import { platform } from "../platform/index.js";
+import type { SandboxPolicy } from "../platform/index.js";
 
 // ─── Read File ────────────────────────────────────────────────────
 
@@ -72,17 +48,33 @@ export const ReadFileTool: ToolImplementation = {
     const resolved = isAbsolute(normalizedInput)
       ? normalizedInput
       : resolve(cwd, normalizedInput);
-    assertWithinSandbox(resolved, cwd);
+
+    // Sandbox check: resolve symlinks and validate boundaries
+    const policy: SandboxPolicy = {
+      workspaceRoots: [cwd],
+      allowTempdir: true, // file tools allow temp for build artifacts
+      resolveSymlinks: true,
+    };
+    const sandboxResult = platform.sandbox.check(resolved, policy);
+    if (!sandboxResult.ok) {
+      log.tool.warn("read_file.execute: sandbox check failed", {
+        path: filePath,
+        reason: sandboxResult.reason,
+        message: sandboxResult.message,
+      });
+      return `Access denied: ${sandboxResult.message ?? "outside workspace"}`;
+    }
+    const safePath = sandboxResult.resolvedPath;
 
     // 1. ENTRY
-    log.tool.debug("read_file.execute: entry", { op: "read", path: resolved });
+    log.tool.debug("read_file.execute: entry", { op: "read", path: safePath });
     // 2. DECISION
-    log.tool.debug("read_file.execute: operation branch", { chosen: "read", path: resolved });
+    log.tool.debug("read_file.execute: operation branch", { chosen: "read", path: safePath });
 
     try {
       // 3. STEP — fs read
-      log.tool.debug("read_file.execute: reading", { path: resolved });
-      const content = await readFile(resolved, "utf-8");
+      log.tool.debug("read_file.execute: reading", { path: safePath });
+      const content = await readFile(safePath, "utf-8");
       const truncated =
         content.length > 20000 ? content.substring(0, 20000) : content;
       const wasTruncated = content.length > 20000;
@@ -101,7 +93,7 @@ export const ReadFileTool: ToolImplementation = {
       return result;
     } catch (error: any) {
       // ERROR
-      log.tool.error("read_file.execute: read failed", error, { path: resolved });
+      log.tool.error("read_file.execute: read failed", error, { path: safePath });
       return `Failed to read file: ${error.message}`;
     }
   },
@@ -149,17 +141,33 @@ export const WriteFileTool: ToolImplementation = {
     const resolved = isAbsolute(normalizedInput)
       ? normalizedInput
       : resolve(cwd, normalizedInput);
-    assertWithinSandbox(resolved, cwd);
+
+    // Sandbox check: resolve symlinks and validate boundaries
+    const policy: SandboxPolicy = {
+      workspaceRoots: [cwd],
+      allowTempdir: true, // file tools allow temp for build artifacts
+      resolveSymlinks: true,
+    };
+    const sandboxResult = platform.sandbox.check(resolved, policy);
+    if (!sandboxResult.ok) {
+      log.tool.warn("write_file.execute: sandbox check failed", {
+        path: filePath,
+        reason: sandboxResult.reason,
+        message: sandboxResult.message,
+      });
+      return `Access denied: ${sandboxResult.message ?? "outside workspace"}`;
+    }
+    const safePath = sandboxResult.resolvedPath;
 
     // 1. ENTRY
-    log.tool.debug("write_file.execute: entry", { op: "write", path: resolved, contentLen: content.length });
+    log.tool.debug("write_file.execute: entry", { op: "write", path: safePath, contentLen: content.length });
     // 2. DECISION
-    log.tool.debug("write_file.execute: operation branch", { chosen: "write", path: resolved });
+    log.tool.debug("write_file.execute: operation branch", { chosen: "write", path: safePath });
 
     try {
       // 3. STEP — fs write
-      log.tool.debug("write_file.execute: writing", { path: resolved, bytes: content.length });
-      await writeFile(resolved, content, "utf-8");
+      log.tool.debug("write_file.execute: writing", { path: safePath, bytes: content.length });
+      await writeFile(safePath, content, "utf-8");
       log.tool.debug("write_file.execute: fs write complete", { bytes: content.length });
 
       const result = `Successfully wrote ${content.length} chars to ${filePath}`;
@@ -168,7 +176,7 @@ export const WriteFileTool: ToolImplementation = {
       return result;
     } catch (error: any) {
       // ERROR
-      log.tool.error("write_file.execute: write failed", error, { path: resolved });
+      log.tool.error("write_file.execute: write failed", error, { path: safePath });
       return `Failed to write file: ${error.message}`;
     }
   },
@@ -226,17 +234,33 @@ export const EditFileTool: ToolImplementation = {
     const resolved = isAbsolute(normalizedInput)
       ? normalizedInput
       : resolve(cwd, normalizedInput);
-    assertWithinSandbox(resolved, cwd);
+
+    // Sandbox check: resolve symlinks and validate boundaries
+    const policy: SandboxPolicy = {
+      workspaceRoots: [cwd],
+      allowTempdir: true, // file tools allow temp for build artifacts
+      resolveSymlinks: true,
+    };
+    const sandboxResult = platform.sandbox.check(resolved, policy);
+    if (!sandboxResult.ok) {
+      log.tool.warn("edit_file.execute: sandbox check failed", {
+        path: filePath,
+        reason: sandboxResult.reason,
+        message: sandboxResult.message,
+      });
+      return `Access denied: ${sandboxResult.message ?? "outside workspace"}`;
+    }
+    const safePath = sandboxResult.resolvedPath;
 
     // 1. ENTRY
-    log.tool.debug("edit_file.execute: entry", { op: "edit", path: resolved, oldLen: oldString.length, newLen: newString.length });
+    log.tool.debug("edit_file.execute: entry", { op: "edit", path: safePath, oldLen: oldString.length, newLen: newString.length });
     // 2. DECISION
-    log.tool.debug("edit_file.execute: operation branch", { chosen: "surgical-edit", path: resolved });
+    log.tool.debug("edit_file.execute: operation branch", { chosen: "surgical-edit", path: safePath });
 
     try {
       // 3. STEP — read then write
-      log.tool.debug("edit_file.execute: reading for edit", { path: resolved });
-      const content = await readFile(resolved, "utf-8");
+      log.tool.debug("edit_file.execute: reading for edit", { path: safePath });
+      const content = await readFile(safePath, "utf-8");
       const idx = content.indexOf(oldString);
       if (idx === -1) {
         return `Error: old_string not found in ${filePath}. Make sure it matches exactly (including whitespace and newlines).`;
@@ -246,8 +270,8 @@ export const EditFileTool: ToolImplementation = {
         content.slice(0, idx) +
         newString +
         content.slice(idx + oldString.length);
-      log.tool.debug("edit_file.execute: writing edited file", { path: resolved, bytes: updated.length });
-      await writeFile(resolved, updated, "utf-8");
+      log.tool.debug("edit_file.execute: writing edited file", { path: safePath, bytes: updated.length });
+      await writeFile(safePath, updated, "utf-8");
 
       const lineNum = content.slice(0, idx).split("\n").length;
       const result = `Successfully edited ${filePath} at line ~${lineNum} (replaced ${oldString.length} chars with ${newString.length} chars)`;
@@ -256,7 +280,7 @@ export const EditFileTool: ToolImplementation = {
       return result;
     } catch (error: any) {
       // ERROR
-      log.tool.error("edit_file.execute: edit failed", error, { path: resolved });
+      log.tool.error("edit_file.execute: edit failed", error, { path: safePath });
       return `Failed to edit file: ${error.message}`;
     }
   },
