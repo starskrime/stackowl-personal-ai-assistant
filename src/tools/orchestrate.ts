@@ -40,24 +40,24 @@ export const OrchestrateTasksTool: ToolImplementation = {
       `Spawning ${tasks.length} background sub-owls for parallel execution.`,
     );
 
-    // Fire and forget the background tasks so we don't block the primary agent
-    Promise.allSettled(
+    type LaneResult =
+      | { laneId: string; status: "ok"; taskText: string; content: string }
+      | { laneId: string; status: "error"; taskText: string; error: string };
+
+    // Collect lane results — primary owl returns immediately, but the aggregated
+    // summary is emitted via onProgress when all lanes complete so nothing is lost.
+    const orchestrationPromise = Promise.allSettled<LaneResult>(
       tasks.map(async (taskText, index) => {
         const laneId = `Lane-${index + 1}`;
         try {
           if (eCtx.onProgress) {
-            await eCtx.onProgress(
-              `🚀 **[Swarm]** ${laneId} launched: "${taskText}"`,
-            );
+            await eCtx.onProgress(`🚀 ${laneId} ← ${taskText}`);
           }
 
           const engine = new OwlEngine();
-          // Pass a deeply cloned or isolated session history to prevent bleeding
           const subContext = {
             ...eCtx,
             sessionHistory: [],
-            // Do not pass the onProgress callback to the sub-agent directly if we want to avoid UI spam,
-            // but for now we'll let it log so the user sees them working.
           };
 
           const backgroundPrompt = `[SYSTEM DIRECTIVE: You are an asynchronous background Sub-Owl spawned by the Primary Owl to execute a specific lane task. Do NOT ask clarifying questions. Execute this task to completion using your tools. Your final output will be shown directly to the user.]\n\nYOUR TASK: ${taskText}`;
@@ -65,21 +65,46 @@ export const OrchestrateTasksTool: ToolImplementation = {
           const result = await engine.run(backgroundPrompt, subContext);
 
           if (eCtx.onProgress) {
-            await eCtx.onProgress(
-              `✅ **[Swarm]** ${laneId} finished!\n\n${result.content}`,
-            );
+            await eCtx.onProgress(`✅ ${laneId} → ${result.content}`);
           }
+          return { laneId, status: "ok" as const, taskText, content: result.content };
         } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
           log.engine.error(`${laneId} failed:`, error);
           if (eCtx.onProgress) {
-            await eCtx.onProgress(
-              `❌ **[Swarm]** ${laneId} failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            await eCtx.onProgress(`❌ ${laneId} → ${msg}`);
           }
+          return { laneId, status: "error" as const, taskText, error: msg };
         }
       }),
     );
 
-    return `Successfully spawned ${tasks.length} background sub-owls. Tell the user you have delegated their requests to your Swarm and they are running asynchronously.`;
+    // Aggregated summary fires when all lanes complete (background, doesn't block primary)
+    orchestrationPromise
+      .then(async (settled) => {
+        const lanes: LaneResult[] = settled.map((s) =>
+          s.status === "fulfilled"
+            ? s.value
+            : { laneId: "?", status: "error" as const, taskText: "", error: String(s.reason) },
+        );
+        const successCount = lanes.filter((l) => l.status === "ok").length;
+        const errorCount = lanes.length - successCount;
+        log.engine.info(
+          `Orchestration complete: ${successCount}/${lanes.length} succeeded, ${errorCount} failed`,
+        );
+        if (eCtx.onProgress) {
+          const summary = { total: lanes.length, success: successCount, error: errorCount, lanes };
+          await eCtx.onProgress(`📊 ${JSON.stringify(summary)}`);
+        }
+      })
+      .catch((err) => {
+        log.engine.error("orchestrate_tasks: aggregation failed", err);
+      });
+
+    return JSON.stringify({
+      spawned: tasks.length,
+      status: "running",
+      laneIds: tasks.map((_, i) => `Lane-${i + 1}`),
+    });
   },
 };
