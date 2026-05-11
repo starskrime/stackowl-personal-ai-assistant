@@ -10,6 +10,8 @@
  * system keeps working (search just returns empty results).
  */
 
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { log } from "../logger.js";
 
 // ─── State ───────────────────────────────────────────────────────
@@ -39,6 +41,26 @@ export async function initEmbedder(): Promise<void> {
   if (_initPromise) return _initPromise;
 
   _initPromise = (async () => {
+    const MODEL_DIR_NAME = "fast-bge-small-en-v1.5";
+    const REQUIRED_FILES = ["tokenizer.json", "model_optimized.onnx", "config.json"];
+
+    // Self-heal: if the model dir exists but is missing required files (partial
+    // download/extraction), wipe it so fastembed re-downloads cleanly.
+    if (_cacheDir) {
+      const modelDir = join(_cacheDir, MODEL_DIR_NAME);
+      if (existsSync(modelDir)) {
+        const missing = REQUIRED_FILES.filter(f => !existsSync(join(modelDir, f)));
+        if (missing.length > 0) {
+          log.engine.warn(`[Embedder] Incomplete model cache (missing: ${missing.join(", ")}) — purging for re-download`);
+          try {
+            rmSync(modelDir, { recursive: true, force: true });
+          } catch (rmErr) {
+            log.engine.warn(`[Embedder] Could not purge cache dir: ${rmErr instanceof Error ? rmErr.message : rmErr}`);
+          }
+        }
+      }
+    }
+
     try {
       const { FlagEmbedding, EmbeddingModel } = await import("fastembed");
       log.engine.info("[Embedder] Loading in-process embedding model (first run may download ~50 MB)...");
