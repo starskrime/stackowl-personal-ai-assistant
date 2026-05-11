@@ -3,9 +3,9 @@
  *
  * Five-tier routing for intelligent per-turn tool selection:
  *
- *   Tier 1 — BM25 retrieval fallback (no-op, deprecated)
- *     TfIdfEngine has been removed. Tier 1 is now a no-op stub.
- *     Returns top-25 candidates with equal scores.
+ *   Tier 1 — BM25 keyword retrieval
+ *     In-process BM25 index over tool.name + description + capabilities.
+ *     Returns top-K candidates ranked by lexical relevance.
  *
  *   Tier 2 — Recency-weighted usage re-ranking
  *     Boost tools with higher recency-adjusted success rates from ToolTracker
@@ -24,7 +24,7 @@
  *     Fuzzy name match as fallback for LLM output
  *
  * Architecture:
- *   - Tier 1 (BM25) is now a no-op stub returning equal-scored candidates
+ *   - Tier 1 (BM25) is a self-contained in-process inverted index — no external deps
  *   - LLM disambiguation gated: only fires when ambiguous AND provider available
  *   - Semantic re-ranking gated: only fires if provider returns non-empty embeddings
  *   - Results cached per SHA256(message) with 200-entry LRU
@@ -35,6 +35,70 @@ import type { ToolDefinition } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { ToolTracker } from "./tracker.js";
 import { log } from "../logger.js";
+
+// ─── BM25 keyword index ───────────────────────────────────────────────────────
+
+/**
+ * Language-agnostic tokenizer.
+ * Splits on Unicode non-letter/non-digit boundaries — works for English, Cyrillic,
+ * CJK punctuation boundaries, etc. No stopword list: BM25's IDF naturally
+ * downweights high-frequency terms in any language.
+ */
+function tokenize(text: string): string[] {
+  // \p{L} = any Unicode letter, \p{N} = any digit. Split on everything else.
+  return text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}_]+/u)
+    .filter((t) => t.length >= 2);
+}
+
+class BM25Index {
+  private docs: string[][] = [];
+  private docFreq = new Map<string, number>();
+  private avgDocLen = 0;
+  private readonly k1 = 1.5;
+  private readonly b = 0.75;
+
+  build(documents: string[]): void {
+    this.docs = documents.map(tokenize);
+    this.docFreq.clear();
+    let totalLen = 0;
+    for (const doc of this.docs) {
+      totalLen += doc.length;
+      const seen = new Set<string>();
+      for (const term of doc) {
+        if (seen.has(term)) continue;
+        seen.add(term);
+        this.docFreq.set(term, (this.docFreq.get(term) ?? 0) + 1);
+      }
+    }
+    this.avgDocLen = this.docs.length > 0 ? totalLen / this.docs.length : 0;
+  }
+
+  /** Score every document against the query. Returns array of scores indexed by doc position. */
+  score(query: string): number[] {
+    const queryTerms = tokenize(query);
+    const N = this.docs.length;
+    const scores = new Array<number>(N).fill(0);
+    if (queryTerms.length === 0 || N === 0) return scores;
+
+    for (const term of queryTerms) {
+      const df = this.docFreq.get(term) ?? 0;
+      if (df === 0) continue;
+      const idf = Math.log((N - df + 0.5) / (df + 0.5) + 1);
+      for (let i = 0; i < N; i++) {
+        const doc = this.docs[i];
+        if (doc.length === 0) continue;
+        let tf = 0;
+        for (const t of doc) if (t === term) tf++;
+        if (tf === 0) continue;
+        const denom = tf + this.k1 * (1 - this.b + (this.b * doc.length) / (this.avgDocLen || 1));
+        scores[i] += idf * ((tf * (this.k1 + 1)) / denom);
+      }
+    }
+    return scores;
+  }
+}
 
 export type ToolMatchMethod =
   | "bm25"
@@ -52,6 +116,7 @@ export interface ToolMatch {
 
 export class ToolIntentRouter {
   private definitions: ToolDefinition[] = [];
+  private bm25: BM25Index = new BM25Index();
   private provider: ModelProvider | null;
   private tracker: ToolTracker | null;
   private cache: Map<string, ToolMatch[]> = new Map();
@@ -69,8 +134,13 @@ export class ToolIntentRouter {
   reindex(definitions: ToolDefinition[]): void {
     this.definitions = definitions;
     this.cache.clear();
+    const docs = definitions.map((d) => {
+      const caps = d.capabilities?.join(" ") ?? "";
+      return `${d.name} ${d.description ?? ""} ${caps}`;
+    });
+    this.bm25.build(docs);
     log.engine.debug(
-      `[ToolIntentRouter] Indexed ${definitions.length} tools (BM25 deprecated, using simple fallback)`,
+      `[ToolIntentRouter] Indexed ${definitions.length} tools (BM25 keyword index built)`,
     );
   }
 
@@ -88,19 +158,36 @@ export class ToolIntentRouter {
       return cached.slice(0, maxTools);
     }
 
-    // BM25 search deprecated; return all definitions with equal scores
     if (this.definitions.length === 0) {
       log.engine.debug("[ToolIntentRouter] No tools available");
       return [];
     }
 
-    let matches: ToolMatch[] = this.definitions
-      .slice(0, ToolIntentRouter.BM25_RETRIEVAL_LIMIT)
-      .map((def) => ({
-        definition: def,
-        score: 0.5, // Equal fallback score
-        method: "bm25" as const,
-      }));
+    // Tier 1: BM25 keyword retrieval
+    const bm25Scores = this.bm25.score(userMessage);
+    const scored = bm25Scores
+      .map((score, idx) => ({ definition: this.definitions[idx], score }))
+      .filter((m) => m.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, ToolIntentRouter.BM25_RETRIEVAL_LIMIT);
+
+    // Normalize BM25 scores to [0,1] for fair blending with later tiers
+    const maxBm25 = scored[0]?.score ?? 0;
+    let matches: ToolMatch[] = scored.length > 0
+      ? scored.map((m) => ({
+          definition: m.definition,
+          score: maxBm25 > 0 ? m.score / maxBm25 : 0,
+          method: "bm25" as const,
+        }))
+      // Fallback: no lexical matches — return top-K by registration order with low equal score
+      // so downstream tiers (usage, semantic) can still rank them.
+      : this.definitions
+          .slice(0, ToolIntentRouter.BM25_RETRIEVAL_LIMIT)
+          .map((def) => ({
+            definition: def,
+            score: 0.1,
+            method: "bm25" as const,
+          }));
 
     // Tier 2: Usage-weighted re-ranking
     if (this.tracker) {
