@@ -10,9 +10,11 @@ import type {
   MemoryInvalidation,
   MemoryContradiction,
 } from "../../memory/repository.js";
+import type { UnifiedMemory } from "../../memory/unified.js";
 
 export interface MemoryRouterDeps {
   repo: MemoryRepository;
+  unifiedMemory?: UnifiedMemory;
 }
 
 const HELP = `/memory commands:
@@ -31,6 +33,17 @@ export async function dispatchMemoryCommand(
 ): Promise<string> {
   switch (verb) {
     case "list": {
+      if (deps.unifiedMemory) {
+        const hits = await deps.unifiedMemory.list({ topK: 20 });
+        if (hits.length === 0) return "0 memories.";
+        return (
+          `${hits.length} memories:\n` +
+          hits
+            .map((h) => `  [${h.kind}] ${h.id.slice(0, 8)} — ${h.content.slice(0, 80)}`)
+            .join("\n")
+        );
+      }
+      // fallback to direct repo
       const records = await deps.repo.search("", { topK: 20 });
       if (records.length === 0) return "0 memories.";
       return (
@@ -44,6 +57,14 @@ export async function dispatchMemoryCommand(
     case "search": {
       const q = args.join(" ").trim();
       if (!q) return "Usage: /memory search <query>";
+      if (deps.unifiedMemory) {
+        const hits = await deps.unifiedMemory.recall({ query: q, topK: 8 });
+        if (hits.length === 0) return `No matches for "${q}".`;
+        return hits
+          .map((h) => `[${h.kind}] ${h.content} (importance=${h.importance.toFixed(2)})`)
+          .join("\n");
+      }
+      // fallback
       const records = await deps.repo.search(q, { topK: 8 });
       if (records.length === 0) return `No matches for "${q}".`;
       return records
@@ -52,6 +73,17 @@ export async function dispatchMemoryCommand(
     }
 
     case "stats": {
+      if (deps.unifiedMemory) {
+        const s = deps.unifiedMemory.stats();
+        const lines = [
+          `Total: ${s.total}`,
+          `Invalidated: ${s.invalidated}`,
+          `Avg importance: ${s.avgImportance.toFixed(3)}`,
+        ];
+        for (const [k, c] of Object.entries(s.byKind)) lines.push(`  ${k}: ${c}`);
+        return lines.join("\n");
+      }
+      // fallback
       const s = deps.repo.stats();
       const lines = [
         `Total: ${s.total}`,
