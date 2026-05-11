@@ -95,9 +95,7 @@
     "naudiodon": "^2.3.6",
     "nodejs-whisper": "^0.3.0"
   },
-  "overrides": {
-    "@anush008/tokenizers": "0.6.0"
-  },
+  "overrides": {},
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
