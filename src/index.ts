@@ -375,8 +375,6 @@ async function bootstrap() {
   const toolRegistry = new ToolRegistry();
   const { SessionsListTool, SessionsHistoryTool, SessionStatusTool } =
     await import("./compat/tools/sessions.js");
-  const { MemorySearchTool, MemoryGetTool } =
-    await import("./compat/tools/memory.js");
   const { CronTool } = await import("./compat/tools/cron.js");
   const { BrowserTool } = await import("./compat/tools/browser.js");
   const updateMemoryTool = new UpdateMemoryTool();
@@ -400,8 +398,7 @@ async function bootstrap() {
     new SummonParliamentTool(),
     OrchestrateTasksTool,
     // ── Memory & sessions ──
-    new MemorySearchTool(workspacePath),
-    new MemoryGetTool(workspacePath),
+    // (MemorySearchTool/MemoryGetTool removed — canonical `memory` tool registered post-gateway)
     new SessionsListTool(workspacePath),
     new SessionsHistoryTool(workspacePath),
     new SessionStatusTool(),
