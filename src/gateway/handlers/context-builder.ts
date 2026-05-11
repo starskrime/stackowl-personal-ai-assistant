@@ -134,6 +134,7 @@ export class ContextBuilder {
       capsuleManager: this.ctx.capsuleManager,
       innerLife: this.ctx.innerLife,
       factStore: this.ctx.factStore,
+      memoryRepo: (this.ctx as any).memoryRepo,
       episodicMemory: (this.ctx as any).episodicMemory,
       userId,
       db: this.ctx.db,

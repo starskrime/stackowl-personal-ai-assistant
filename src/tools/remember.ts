@@ -14,8 +14,10 @@
  * is available immediately in the next turn.
  */
 
+import { randomUUID } from "node:crypto";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import type { FactCategory } from "../memory/fact-store.js";
+import type { MemoryKind } from "../memory/repository.js";
 import { log } from "../logger.js";
 
 export class RememberTool implements ToolImplementation {
@@ -77,10 +79,9 @@ export class RememberTool implements ToolImplementation {
 
     try {
       const userId = (context.engineContext as any)?.userId ?? "default";
-
-      // Use addWithEmbedding so the fact is immediately searchable via semantic search.
-      // The provider is available on EngineContext and used for embed() calls.
       const provider = context.engineContext?.provider;
+
+      // Write to FactStore — semantic search via embeddings
       await factStore.addWithEmbedding(
         {
           userId,
@@ -88,14 +89,35 @@ export class RememberTool implements ToolImplementation {
           category,
           confidence: 0.9,
           source: "inferred",
-          expiresAt: new Date(
-            Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year
-          ).toISOString(),
+          expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
         },
         provider,
       );
 
-      // Also write to owl_learnings for cross-owl knowledge sharing (Phase 4)
+      // Write to MemoryRepository — the canonical store that /memory list reads from
+      const memoryRepo = context.engineContext?.memoryRepo;
+      if (memoryRepo) {
+        const kindMap: Record<string, MemoryKind> = {
+          skill: "procedural",
+          habit: "procedural",
+          preference: "semantic",
+          personal: "semantic",
+          project_detail: "semantic",
+          context: "semantic",
+          goal: "semantic",
+        };
+        memoryRepo.insertBatch([{
+          id: `mem_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+          kind: kindMap[category] ?? "semantic",
+          content,
+          importance: 0.9,
+          verdict: "ADVANCES",
+        }]);
+      } else {
+        log.memory.debug("[RememberTool] memoryRepo not in context — /memory list won't show this entry");
+      }
+
+      // Write to owl_learnings for cross-owl sharing
       const db = (context.engineContext as any)?.db;
       const owlName = (context.engineContext as any)?.owl?.persona?.name ?? "default";
       if (db && (category === "skill" || category === "habit")) {

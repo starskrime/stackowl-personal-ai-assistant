@@ -121,6 +121,8 @@ export interface EngineContext {
   channelName?: string;
   /** FactStore — for remember() tool write path and recall() tool read path */
   factStore?: import("../memory/fact-store.js").FactStore;
+  /** MemoryRepository — canonical store read by /memory list; remember() must write here too */
+  memoryRepo?: import("../memory/repository.js").MemoryRepository;
   /** EpisodicMemory — for recall() tool read path */
   episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
   /** Active userId — used by remember/recall tools for per-user scoping */
