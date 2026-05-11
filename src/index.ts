@@ -236,6 +236,9 @@ import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
 import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { BackgroundOrchestrator } from "./background/orchestrator.js";
+import { CronService } from "./cron/service.js";
+import { IsolatedRunner } from "./cron/isolated-runner.js";
+import { DEFAULT_CRON_JOBS } from "./cron/default-jobs.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
 import { SignalPool } from "./signals/pool.js";
 import { SignalClassifier } from "./signals/classifier.js";
@@ -1225,6 +1228,36 @@ async function buildGateway(
   );
   gateway.ctx.backgroundOrchestrator = backgroundOrchestrator;
   backgroundOrchestrator.start();
+
+  // ─── Cron Service ────────────────────────────────────────────────
+  // Runs background jobs on schedules (memory consolidation, DNA evolution,
+  // pellet deduplication, desire execution, daily briefings).
+  const isolatedRunner = new IsolatedRunner({ provider });
+
+  const cronService = new CronService({
+    persist: true,
+    maxConcurrentRuns: 3,
+    onJobFire: async (job, traceId) => {
+      return await isolatedRunner.run(job, traceId);
+    },
+  });
+
+  // Register default jobs (skip duplicates from persisted crons.json)
+  let registeredCount = 0;
+  for (const job of DEFAULT_CRON_JOBS) {
+    try {
+      cronService.addJob(job);
+      registeredCount++;
+    } catch {
+      log.engine.debug("[startup] Cron job already registered (from persistence), skipping", { id: job.id });
+    }
+  }
+  log.engine.info("[startup] Cron service initialized", { registeredCount, totalDefault: DEFAULT_CRON_JOBS.length });
+
+  // Ensure cron service stops on shutdown
+  process.on("SIGINT", () => {
+    cronService.stop();
+  });
 
   // ─── Element 15 — canonical memory surface ─────────────────────
   // Repository owns all reads/writes against `memories`/`memory_invalidations`/
