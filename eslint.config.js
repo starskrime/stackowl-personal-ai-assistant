@@ -42,6 +42,38 @@ export default [
       ],
     },
   },
+  // ─── Platform abstraction: warn on direct OS calls outside src/platform/ ──
+  {
+    files: ["**/*.ts", "**/*.tsx"],
+    ignores: ["src/platform/**", "__tests__/**"],
+    languageOptions: {
+      parser: tsparser,
+      parserOptions: {
+        ecmaVersion: 2023,
+        sourceType: "module",
+      },
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector: "CallExpression[callee.object.name='os'][callee.property.name='tmpdir']",
+          message: "Use platform.paths.tempdir() instead. Direct os.tmpdir() is restricted to src/platform/.",
+        },
+        {
+          selector: "CallExpression[callee.object.name='os'][callee.property.name='homedir']",
+          message: "Use platform.paths.home() instead. Direct os.homedir() is restricted to src/platform/.",
+        },
+        {
+          selector: "MemberExpression[object.name='process'][property.name='platform']",
+          message: "Use platform.systemInfo.current().platform instead.",
+        },
+      ],
+    },
+  },
   // ─── Exempt the one module that IS allowed to write stdout ──────────
   {
     files: ["src/cli/v2/io/output.ts"],
@@ -52,6 +84,13 @@ export default [
   // ─── Exempt legacy v1 code (will be deleted at cutover) ─────────────
   {
     files: ["src/cli/renderer.ts", "src/gateway/adapters/cli.ts", "src/cli/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": "off",
+    },
+  },
+  // ─── Exempt src/platform/ and tests from OS call restrictions ──────────
+  {
+    files: ["src/platform/**/*.ts", "__tests__/**/*.ts"],
     rules: {
       "no-restricted-syntax": "off",
     },
