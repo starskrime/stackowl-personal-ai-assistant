@@ -413,21 +413,23 @@ async function bootstrap() {
     new ReadLogsTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
-    AppleCalendarTool,
-    AppleRemindersTool,
-    AppleContactsTool,
-    AppleNotesTool,
-    AppleMailTool,
-    SystemInfoTool,
-    NotificationTool,
-    ClipboardTool,
-    FocusModeTool,
-    SpotlightSearchTool,
-    TextToSpeechTool,
-    SystemControlsTool,
-    MusicControlTool,
-    IMessageTool,
-    AirDropTool,
+    ...(process.platform === "darwin" ? [
+      AppleCalendarTool,
+      AppleRemindersTool,
+      AppleContactsTool,
+      AppleNotesTool,
+      AppleMailTool,
+      SystemInfoTool,
+      NotificationTool,
+      ClipboardTool,
+      FocusModeTool,
+      SpotlightSearchTool,
+      TextToSpeechTool,
+      SystemControlsTool,
+      MusicControlTool,
+      IMessageTool,
+      AirDropTool,
+    ] : []),
     // ── Utilities ──
     CalculatorTool,
     TimerTool,
@@ -753,18 +755,20 @@ async function bootstrap() {
   // Element 15 — canonical `memory` tool is registered AFTER gateway construction
   // (it depends on gateway-owned GatewayEventBus and HitlCheckpointStore).
 
-  toolRegistry.register(createMacosCommsTool({
-    mail:     (args, ctx) => toolRegistry.execute("apple_mail", args, ctx),
-    contacts: (args, ctx) => toolRegistry.execute("apple_contacts", args, ctx),
-    imessage: (args, ctx) => toolRegistry.execute("imessage", args, ctx),
-  }));
+  if (process.platform === "darwin") {
+    toolRegistry.register(createMacosCommsTool({
+      mail:     (args, ctx) => toolRegistry.execute("apple_mail", args, ctx),
+      contacts: (args, ctx) => toolRegistry.execute("apple_contacts", args, ctx),
+      imessage: (args, ctx) => toolRegistry.execute("imessage", args, ctx),
+    }));
 
-  toolRegistry.register(createMacosSystemTool({
-    spotlight:     (args, ctx) => toolRegistry.execute("spotlight_search", args, ctx),
-    focus_mode:    (args, ctx) => toolRegistry.execute("focus_mode", args, ctx),
-    notifications: (args, ctx) => toolRegistry.execute("send_notification", args, ctx),
-    system_info:   (args, ctx) => toolRegistry.execute("system_info", args, ctx),
-  }));
+    toolRegistry.register(createMacosSystemTool({
+      spotlight:     (args, ctx) => toolRegistry.execute("spotlight_search", args, ctx),
+      focus_mode:    (args, ctx) => toolRegistry.execute("focus_mode", args, ctx),
+      notifications: (args, ctx) => toolRegistry.execute("send_notification", args, ctx),
+      system_info:   (args, ctx) => toolRegistry.execute("system_info", args, ctx),
+    }));
+  }
 
   // ── Tool Cortex 7d — register new capability tools ──
   toolRegistry.register(VisionTool);
