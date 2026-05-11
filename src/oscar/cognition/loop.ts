@@ -113,11 +113,28 @@ export class CognitiveLoop {
     const now = Date.now();
     const timeOfDay = new Date(now).getHours();
 
+    let focusedApp: string | null = null;
+    try {
+      // Lazy import so non-macOS environments don't crash on module load
+      const { macOSAdapter } = await import("../platform/adapters/macos.js");
+      focusedApp = await macOSAdapter.getFocusedApp();
+    } catch {
+      // Non-macOS or AppleScript unavailable — leave focusedApp null
+    }
+
+    // Detect app switch before updating lastApp
+    const screenChanged = focusedApp !== this.lastApp;
+
+    // Update internal tracker so reflect() can detect app switches
+    if (focusedApp !== null) {
+      this.lastApp = focusedApp;
+    }
+
     return {
       timestamp: now,
-      app: this.lastApp,
+      app: focusedApp,
       focusedElement: null,
-      screenChanged: true,
+      screenChanged,
       elements: [],
       cursorPosition: { x: 0, y: 0 },
       recentActions: [],
