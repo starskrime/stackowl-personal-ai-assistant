@@ -4326,31 +4326,30 @@ export function applyV28Element17Migration(db: Database.Database): void {
 }
 
 export function applyV30UnifiedMemoryColumnsMigration(db: Database.Database): void {
-  const existingCols = (db.prepare(`PRAGMA table_info(memories)`).all() as Array<{ name: string }>).map(c => c.name);
+  const existingCols = (db.prepare(`PRAGMA table_info(memories)`).all() as Array<{ name: string }>).map((c) => c.name);
 
-  // Each ALTER TABLE is idempotent — skip if already present
-  if (!existingCols.includes('domain')) {
+  if (!existingCols.includes("domain")) {
     db.exec(`ALTER TABLE memories ADD COLUMN domain TEXT`);
   }
-  if (!existingCols.includes('scope')) {
+  if (!existingCols.includes("scope")) {
     db.exec(`ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'user'`);
   }
-  if (!existingCols.includes('source')) {
+  if (!existingCols.includes("source")) {
     db.exec(`ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'inferred'`);
   }
-  if (!existingCols.includes('confidence')) {
+  if (!existingCols.includes("confidence")) {
     db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5`);
   }
-  if (!existingCols.includes('evidence_ids')) {
+  if (!existingCols.includes("evidence_ids")) {
     db.exec(`ALTER TABLE memories ADD COLUMN evidence_ids TEXT NOT NULL DEFAULT '[]'`);
   }
-  if (!existingCols.includes('pinned')) {
+  if (!existingCols.includes("pinned")) {
     db.exec(`ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
   }
-  if (!existingCols.includes('suppressed')) {
+  if (!existingCols.includes("suppressed")) {
     db.exec(`ALTER TABLE memories ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0`);
   }
-  if (!existingCols.includes('superseded_by')) {
+  if (!existingCols.includes("superseded_by")) {
     db.exec(`ALTER TABLE memories ADD COLUMN superseded_by TEXT`);
   }
 
