@@ -5,10 +5,11 @@
  * ClawHub installs are handled by ClawHubClient (clawhub.ts).
  */
 
-import { mkdir, copyFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { log } from "../logger.js";
+import { sanitize, type SanitizationResult } from "./sanitizer.js";
 
 export type InstallSource =
   | { type: "github"; rawUrl: string; skillName: string }
@@ -60,6 +61,25 @@ export class SkillInstaller {
     this.workspacePath = workspacePath;
   }
 
+  private logSanitizationResult(
+    skillName: string,
+    replacements: SanitizationResult["replacements"],
+    flagged: SanitizationResult["flagged"],
+  ): void {
+    if (replacements.length > 0) {
+      log.engine.info(
+        `[Installer] Sanitized ${replacements.length} vendor reference(s) in "${skillName}"`,
+        { replacements: replacements.map((r) => `${r.from} → ${r.to} (line ${r.line})`) },
+      );
+    }
+    if (flagged.length > 0) {
+      log.engine.warn(
+        `[Installer] "${skillName}" has ${flagged.length} unresolved vendor token(s) — review recommended`,
+        { flagged: flagged.map((f) => `line ${f.line}: ${f.token} — ${f.context}`) },
+      );
+    }
+  }
+
   /**
    * Install a skill from a GitHub raw URL.
    */
@@ -73,12 +93,14 @@ export class SkillInstaller {
       );
     }
 
-    const content = await response.text();
+    const rawContent = await response.text();
+    const { content, replacements, flagged } = sanitize(rawContent);
     const destDir = join(this.workspacePath, "skills", skillName);
     const destPath = join(destDir, "SKILL.md");
 
     await mkdir(destDir, { recursive: true });
     await writeFile(destPath, content, "utf-8");
+    this.logSanitizationResult(skillName, replacements, flagged);
     log.engine.info(`[Installer] Installed ${skillName} to ${destPath}`);
   }
 
@@ -98,7 +120,10 @@ export class SkillInstaller {
     const destFile = join(destDir, "SKILL.md");
 
     await mkdir(destDir, { recursive: true });
-    await copyFile(srcFile, destFile);
+    const rawContent = await readFile(srcFile, "utf-8");
+    const { content, replacements, flagged } = sanitize(rawContent);
+    await writeFile(destFile, content, "utf-8");
+    this.logSanitizationResult(skillName, replacements, flagged);
     log.engine.info(`[Installer] Copied ${skillName} from ${resolved} to ${destDir}`);
   }
 }
