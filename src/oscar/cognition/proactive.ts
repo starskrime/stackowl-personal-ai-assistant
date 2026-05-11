@@ -39,7 +39,7 @@ export class ProactiveAssistant {
     const cached = this.cache.get(key);
     if (cached && Date.now() < cached.expiresAt) {
       log.cognition.debug("proactive.suggest: cache hit, returning cached suggestion", { key });
-      return [cached.suggestion];
+      return [{ ...cached.suggestion }];
     }
 
     const appDesc = context.currentApp ?? "unknown application";
@@ -82,10 +82,10 @@ export class ProactiveAssistant {
       };
 
       this.cache.set(key, { suggestion, expiresAt: Date.now() + CACHE_TTL_MS });
-      log.cognition.debug("proactive.suggest: exit", { message, cached: true });
+      log.cognition.debug("proactive.suggest: exit", { message, source: "llm", stored: true });
       return [suggestion];
     } catch (err) {
-      log.cognition.error("proactive.suggest: provider call failed", err as Error, {
+      log.cognition.error("proactive.suggest: provider call failed", err, {
         app: context.currentApp,
       });
       return [];

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ModelProvider } from "../../src/providers/base.js";
 import type { SuggestionContext } from "../../src/oscar/cognition/proactive.js";
 
