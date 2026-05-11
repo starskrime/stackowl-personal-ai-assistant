@@ -35,6 +35,11 @@ export type FactCategory =
   | "context" | "goal" | "habit" | "relationship" | "decision"
   | "open_question" | "active_goal" | "sub_goal";
 
+export const TIER0_CATEGORIES: FactCategory[] = [
+  "preference", "personal", "active_goal", "goal",
+  "relationship", "habit", "decision",
+];
+
 export type FactSource = "explicit" | "inferred" | "confirmed";
 
 export interface Fact {
@@ -1940,6 +1945,27 @@ class FactsRepo {
     this.db.prepare(
       "UPDATE facts SET confidence = 0, updated_at = datetime('now') WHERE id = ?"
     ).run(id);
+  }
+
+  getHighConfidenceFacts(userId?: string, limit = 30): Fact[] {
+    const placeholders = TIER0_CATEGORIES.map(() => "?").join(",");
+    const now = new Date().toISOString();
+    const rows = this.db.prepare(`
+      SELECT * FROM facts
+      WHERE confidence >= 0.8
+        AND category IN (${placeholders})
+        AND (invalidated_at IS NULL)
+        AND (expires_at IS NULL OR expires_at > ?)
+        ${userId ? "AND user_id = ?" : ""}
+      ORDER BY confidence DESC, updated_at DESC
+      LIMIT ?
+    `).all(
+      ...TIER0_CATEGORIES,
+      now,
+      ...(userId ? [userId] : []),
+      limit,
+    ) as any[];
+    return rows.map(rowToFact);
   }
 
   private incrementAccess(ids: string[]): void {
