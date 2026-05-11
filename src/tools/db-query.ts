@@ -1,66 +1,9 @@
 // src/tools/db-query.ts
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
-import { resolve, isAbsolute, normalize, sep } from "node:path";
-import { existsSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
-
-// ─── Sandbox Helper ───────────────────────────────────────────────
-//
-// Cross-platform path-allowlist check. Allowed roots:
-//   • the current workspace (`cwd`)
-//   • the OS temp dir (resolved via os.tmpdir() — works on Linux/macOS/Windows)
-//
-// Docker short-circuit: when running inside a container the host fs is
-// already isolated, so we allow the full container path tree.
-
-// Resolve the temp root once at module load. On macOS tmpdir() returns
-// `/var/folders/...` which is a symlink target — realpath ensures comparisons
-// match what realpathSync returns for paths inside it. Fall back to the raw
-// tmpdir() if resolution fails (Windows network drives, etc.).
-const TEMP_ROOT = (() => {
-  try {
-    return realpathSync(tmpdir());
-  } catch {
-    return tmpdir();
-  }
-})();
-
-function assertWithinSandbox(resolvedPath: string, cwd: string): string | null {
-  const inDocker =
-    process.env.IN_DOCKER === "true" || existsSync("/.dockerenv");
-
-  if (inDocker) {
-    return null;
-  }
-
-  const sandboxRoot = resolve(cwd);
-
-  // Resolve symlinks to prevent symlink escape attacks
-  let realResolved = resolvedPath;
-  try {
-    realResolved = realpathSync(resolvedPath);
-  } catch {
-    realResolved = resolvedPath;
-  }
-
-  const isInWorkspace =
-    realResolved.startsWith(sandboxRoot + sep) || realResolved === sandboxRoot;
-  const isInTemp =
-    realResolved.startsWith(TEMP_ROOT + sep) || realResolved === TEMP_ROOT;
-
-  if (!isInWorkspace && !isInTemp) {
-    return `Access denied: "${realResolved}" is outside the allowed paths. Allowed: ${sandboxRoot}, ${TEMP_ROOT} (or entire container in Docker)`;
-  }
-
-  return null;
-}
-
-// ─── Verify Database Extension ────────────────────────────────────
-
-function isValidDatabasePath(dbPath: string): boolean {
-  return dbPath.endsWith(".db") || dbPath.endsWith(".sqlite");
-}
+import { resolve, isAbsolute, normalize } from "node:path";
+import { platform } from "../platform/index.js";
+import type { SandboxPolicy } from "../platform/index.js";
 
 // ─────────────────────────────────────────────────────────────────
 
@@ -104,21 +47,39 @@ export const DbQueryTool: ToolImplementation = {
     if (!dbPath) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "dbPath is required" } });
     if (!sql)    return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "sql is required" } });
 
-    // Sandbox check: validate file extension
-    if (!isValidDatabasePath(dbPath)) {
-      log.tool.warn("db-query.execute: invalid database extension", { dbPath });
-      return JSON.stringify({ success: false, error: { code: "INVALID_PATH", message: "Only .db and .sqlite files are allowed" } });
-    }
-
-    // Sandbox check: resolve and validate path boundaries
+    // Sandbox check: resolve and validate path + extension boundaries
     const normalizedInput = normalize(dbPath);
     const cwd = context.cwd || process.cwd();
     const resolved = isAbsolute(normalizedInput) ? normalizedInput : resolve(cwd, normalizedInput);
-    const sandboxError = assertWithinSandbox(resolved, cwd);
-    if (sandboxError) {
-      log.tool.warn("db-query.execute: path traversal attempt blocked", { dbPath, resolved, reason: sandboxError });
-      return JSON.stringify({ success: false, error: { code: "ACCESS_DENIED", message: "Access denied: path outside workspace" } });
+
+    const policy: SandboxPolicy = {
+      workspaceRoots: [cwd],
+      allowTempdir: true, // db_query historically allowed tempdir (test fixtures)
+      allowExtensions: [".db", ".sqlite"],
+      resolveSymlinks: true,
+    };
+    const sandboxResult = platform.sandbox.check(resolved, policy);
+    if (!sandboxResult.ok) {
+      log.tool.warn("db-query.execute: sandbox check failed", {
+        dbPath,
+        reason: sandboxResult.reason,
+        message: sandboxResult.message,
+      });
+      // Map platform error codes to the legacy tool codes the tests expect
+      const code =
+        sandboxResult.reason === "E_EXTENSION_BLOCKED" ? "INVALID_PATH"
+        : sandboxResult.reason === "E_OUTSIDE_SANDBOX" ? "ACCESS_DENIED"
+        : "INVALID_PATH";
+      const message =
+        sandboxResult.reason === "E_EXTENSION_BLOCKED"
+          ? `Only .db and .sqlite files are supported. Got: ${resolved}`
+          : (sandboxResult.message ?? "Access denied");
+      return JSON.stringify({
+        success: false,
+        error: { code, message },
+      });
     }
+    const resolvedDbPath = sandboxResult.resolvedPath;
 
     let params: unknown[] = [];
     if (paramsRaw) {
@@ -144,8 +105,8 @@ export const DbQueryTool: ToolImplementation = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let db: any = null;
     try {
-      log.tool.debug("db-query.execute: opening database", { dbPath: resolved });
-      db = new DatabaseCtor(resolved, { readonly: true, fileMustExist: true });
+      log.tool.debug("db-query.execute: opening database", { dbPath: resolvedDbPath });
+      db = new DatabaseCtor(resolvedDbPath, { readonly: true, fileMustExist: true });
       log.tool.debug("db-query.execute: executing query", { sql: sql.slice(0, 200) });
       const stmt = db.prepare(sql);
       const rows = stmt.all(...params) as Record<string, unknown>[];
@@ -153,7 +114,7 @@ export const DbQueryTool: ToolImplementation = {
       log.tool.debug("db-query.execute: exit", { success: true, rowCount: rows.length, columns });
       return JSON.stringify({ success: true, data: { rows, rowCount: rows.length, columns } });
     } catch (err) {
-      log.tool.error("db-query.execute: failed", err, { dbPath: resolved, sql: sql.slice(0, 200) });
+      log.tool.error("db-query.execute: failed", err, { dbPath: resolvedDbPath, sql: sql.slice(0, 200) });
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("ENOENT") || msg.includes("no such file")) {
         return JSON.stringify({ success: false, error: { code: "FILE_NOT_FOUND", message: msg } });
