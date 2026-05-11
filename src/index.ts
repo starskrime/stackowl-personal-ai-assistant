@@ -35,6 +35,7 @@ import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
 import { CreateSkillTool } from "./tools/create-skill.js";
+import { UpdateMemoryTool } from "./tools/update-memory.js";
 import { WebSearchTool as InternalWebSearchTool } from "./tools/search.js";
 import { WebFetchTool } from "./tools/web.js";
 import { SessionStore } from "./memory/store.js";
@@ -402,6 +403,7 @@ async function bootstrap() {
     new CronTool(workspacePath),
     new SkillInstallTool(workspacePath),
     new CreateSkillTool(),
+    new UpdateMemoryTool(),
     new ReadLogsTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
