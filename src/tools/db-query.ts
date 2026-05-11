@@ -2,7 +2,7 @@
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
 import { resolve, isAbsolute, normalize, sep } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 
 // ─── Sandbox Helper ───────────────────────────────────────────────
 
@@ -18,12 +18,22 @@ function assertWithinSandbox(resolvedPath: string, cwd: string): string | null {
 
   // On host machine, restrict to workspace and /tmp
   const sandboxRoot = resolve(cwd);
+
+  // Resolve symlinks to prevent symlink escape attacks
+  let realResolved = resolvedPath;
+  try {
+    realResolved = realpathSync(resolvedPath);
+  } catch {
+    // File doesn't exist yet or can't be resolved — use lexical path
+    realResolved = resolvedPath;
+  }
+
   const isInWorkspace =
-    resolvedPath.startsWith(sandboxRoot + sep) || resolvedPath === sandboxRoot;
-  const isInTemp = resolvedPath.startsWith("/tmp/") || resolvedPath === "/tmp";
+    realResolved.startsWith(sandboxRoot + sep) || realResolved === sandboxRoot;
+  const isInTemp = realResolved.startsWith("/tmp/") || realResolved === "/tmp";
 
   if (!isInWorkspace && !isInTemp) {
-    return `Access denied: "${resolvedPath}" is outside the allowed paths. Allowed: ${sandboxRoot}, /tmp (or entire container in Docker)`;
+    return `Access denied: "${realResolved}" is outside the allowed paths. Allowed: ${sandboxRoot}, /tmp (or entire container in Docker)`;
   }
 
   return null;
