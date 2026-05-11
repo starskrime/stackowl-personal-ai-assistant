@@ -163,6 +163,7 @@ import { OwlGateway } from "./gateway/core.js";
 import { TelegramAdapter } from "./gateway/adapters/telegram.js";
 import { SlackAdapter } from "./gateway/adapters/slack.js";
 import { DiscordAdapter } from "./gateway/adapters/discord.js";
+import { WhatsAppAdapter } from "./gateway/adapters/whatsapp.js";
 import { CLIAdapter } from "./gateway/adapters/cli.js";
 import { BootSplash } from "./cli/splash.js";
 import type { BootStep } from "./cli/splash.js";
@@ -2098,6 +2099,24 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     } catch (err) {
       log.cli.error(
         `✗ Discord failed to start: ${err instanceof Error ? err.message : err}`,
+        err,
+      );
+    }
+  }
+
+  // 3c. Check for WhatsApp
+  if (b.config.whatsapp?.enabled) {
+    try {
+      const whatsappAdapter = new WhatsAppAdapter({
+        sessionDataPath: b.config.whatsapp.sessionDataPath,
+        dmPolicy: b.config.whatsapp.dmPolicy ?? "pairing",
+      });
+      gateway.register(whatsappAdapter);
+      await whatsappAdapter.start(gateway);
+      log.cli.info("✓ Channel: WhatsApp");
+    } catch (err) {
+      log.cli.error(
+        `✗ WhatsApp failed to start: ${err instanceof Error ? err.message : err}`,
         err,
       );
     }

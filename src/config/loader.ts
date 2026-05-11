@@ -328,6 +328,19 @@ export interface StackOwlConfig {
      */
     dmPolicy?: "open" | "pairing";
   };
+  /** WhatsApp Web configuration */
+  whatsapp?: {
+    /** Enable WhatsApp channel. Default: false */
+    enabled?: boolean;
+    /** Path to session data directory. Default: ~/.stackowl/whatsapp-session */
+    sessionDataPath?: string;
+    /**
+     * DM policy:
+     *  - "open"    — accept messages from anyone
+     *  - "pairing" — require pairing handshake (default)
+     */
+    dmPolicy?: "open" | "pairing";
+  };
   /** Role → provider name mappings. Auto-assigned from type when not set. */
   roles?: Partial<Record<import("../providers/registry.js").ProviderRole, string>>;
 }
