@@ -14,6 +14,9 @@ export interface CognitionConfig {
   cognitiveLoop?: Partial<CognitiveLoopConfig>;
   anomaly?: Partial<AnomalyConfig>;
   enableParliament?: boolean;
+  /** Provider for LLM-driven suggestions. Pass a real provider here when
+   *  constructing CognitionEngine in oscar/index.ts to enable ProactiveAssistant.
+   *  The module-level `cognitionEngine` singleton currently uses no provider. */
   provider?: ModelProvider;
 }
 

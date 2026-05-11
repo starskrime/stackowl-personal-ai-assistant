@@ -3048,6 +3048,7 @@ export class OwlGateway {
       this.ctx.skillArena?.save?.().catch((err) => { log.engine.warn("skillArena save failed", err); });
       this.ctx.signalPool?.stop?.();
       this.ctx.backgroundJobRunner?.stop();
+      this.ctx.backgroundOrchestrator?.stop();
     };
     process.once("beforeExit", saveOnExit);
   }
