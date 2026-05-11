@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Box, Text } from "ink";
 import {
   STACKOWL_SPINNER,
-  SPINNER_INTERVAL_MS,
+  THINKING_SPIN_INTERVAL_MS,
   SPINNER_AMBER,
   FADE_COLORS,
   LANG_INTERVAL_MS,
@@ -21,7 +21,7 @@ export function ThinkingIndicator() {
   useEffect(() => {
     const t = setInterval(
       () => setSpinFrame((f) => (f + 1) % STACKOWL_SPINNER.length),
-      SPINNER_INTERVAL_MS,
+      THINKING_SPIN_INTERVAL_MS,
     );
     return () => clearInterval(t);
   }, []);
