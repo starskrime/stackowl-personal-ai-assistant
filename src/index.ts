@@ -34,6 +34,7 @@ import { CredentialsTool } from "./tools/credentials.js";
 import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
 import { SendFileTool } from "./tools/send_file.js";
+import { CreateSkillTool } from "./tools/create-skill.js";
 import { WebSearchTool as InternalWebSearchTool } from "./tools/search.js";
 import { WebFetchTool } from "./tools/web.js";
 import { SessionStore } from "./memory/store.js";
@@ -400,6 +401,7 @@ async function bootstrap() {
     // ── System ──
     new CronTool(workspacePath),
     new SkillInstallTool(workspacePath),
+    new CreateSkillTool(),
     new ReadLogsTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
