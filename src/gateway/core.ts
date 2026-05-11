@@ -23,6 +23,7 @@ import { IntelligenceRouter } from "../intelligence/router.js";
 import { FactInvalidator } from "../intelligence/fact-invalidator.js";
 import { SleepTimeConsolidator } from "../intelligence/sleep-time-consolidator.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
+import { SessionSaver } from "../memory/session-saver.js";
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
 import { SkillInstallWizard, SkillsMenuWizard, type WizardSession } from "../skills/wizard.js";
@@ -296,6 +297,9 @@ export class OwlGateway {
 
   /** User mental model — infers user state from behavioral signals */
   private userMentalModel: UserMentalModel | null = null;
+
+  // ─── Epic 3: Memory Module Instances (SessionSaver) ────────────────────────
+  private sessionSaver: SessionSaver = new SessionSaver();
 
   // ─── Epic 5: Memory Module Instances ────────────────────────
   private priorContextRetriever: PriorContextRetriever | null = null;
@@ -1195,6 +1199,9 @@ export class OwlGateway {
 
     // Check for /reset command - clear session history
     if (message.text.trim().toLowerCase() === "/reset") {
+      // Save the current session before clearing
+      await this.sessionSaver.save(session.messages, message.sessionId);
+
       this.wizardSessions.delete(message.sessionId);
       session.messages = [];
       this.attemptLogs.delete(message.sessionId);
