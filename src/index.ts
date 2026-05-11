@@ -543,6 +543,13 @@ async function bootstrap() {
   // Late-inject the MemoryDatabase into UpdateMemoryTool (created before memoryDb above).
   updateMemoryTool.setDb(memoryDb);
 
+  // One-shot MEMORY.md → facts table migration (idempotent)
+  const { migrateMemoryMd } = await import("./memory/memory-migration.js");
+  const memoryMdPath = join(homedir(), ".stackowl", "workspace", "MEMORY.md");
+  migrateMemoryMd(memoryDb, memoryMdPath).catch((err) =>
+    log.engine.warn(`[MemoryMigration] Migration failed: ${err}`),
+  );
+
   // Tool Tracker — SQLite-backed tool execution history (Element 7 / schema v23).
   // Wired here so registry.execute() records every tool call into tool_executions.
   const toolTracker = new ToolTracker(memoryDb);
