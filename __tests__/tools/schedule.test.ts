@@ -1,19 +1,42 @@
-// __tests__/tools/schedule.test.ts
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { MemoryDatabase } from "../../src/memory/db.js";
+import { ScheduleStore } from "../../src/schedule/store.js";
+import { ScheduleRunner } from "../../src/schedule/runner.js";
+import { ScheduleTool, attachSchedule } from "../../src/tools/schedule.js";
+import type { Notifier } from "../../src/platform/index.js";
+
+let dir: string;
+let runner: ScheduleRunner;
+let store: ScheduleStore;
+
+const stubNotifier: Notifier = {
+  notify: async () => ({ delivered: true, via: "system" }),
+  capabilities: () => ({ native: false, system: true }),
+};
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "stackowl-schedule-tool-"));
+  const db = new MemoryDatabase(dir);
+  store = new ScheduleStore(db);
+  runner = new ScheduleRunner(store, stubNotifier);
+  attachSchedule(runner, store);
+});
+
+afterEach(() => {
+  runner.stop();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe("ScheduleTool", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it("tool name is 'schedule'", async () => {
-    const mod = await import("../../src/tools/schedule.js");
-    expect(mod.ScheduleTool.definition.name).toBe("schedule");
+    expect(ScheduleTool.definition.name).toBe("schedule");
   });
 
   it("action enum includes remind, repeat, cancel, list", async () => {
-    const mod = await import("../../src/tools/schedule.js");
-    const actionEnum = mod.ScheduleTool.definition.parameters.properties.action.enum;
+    const actionEnum = ScheduleTool.definition.parameters.properties.action.enum;
     expect(actionEnum).toContain("remind");
     expect(actionEnum).toContain("repeat");
     expect(actionEnum).toContain("cancel");
@@ -21,54 +44,45 @@ describe("ScheduleTool", () => {
   });
 
   it("remind action schedules a job and returns an id", async () => {
-    vi.useFakeTimers();
-    const mod = await import("../../src/tools/schedule.js");
-    const result = await mod.ScheduleTool.execute(
+    const result = await ScheduleTool.execute(
       { action: "remind", when: "in 5 minutes", message: "Check the build" },
       { cwd: process.cwd() },
     );
     const parsed = JSON.parse(result);
     expect(parsed.success).toBe(true);
     expect(typeof parsed.data.id).toBe("string");
-    vi.useRealTimers();
   });
 
   it("list returns scheduled jobs", async () => {
-    vi.useFakeTimers();
-    const mod = await import("../../src/tools/schedule.js");
-    await mod.ScheduleTool.execute(
+    await ScheduleTool.execute(
       { action: "remind", when: "in 10 minutes", message: "Test reminder" },
       { cwd: process.cwd() },
     );
-    const result = await mod.ScheduleTool.execute(
+    const result = await ScheduleTool.execute(
       { action: "list" },
       { cwd: process.cwd() },
     );
     const parsed = JSON.parse(result);
     expect(parsed.success).toBe(true);
     expect(Array.isArray(parsed.data.jobs)).toBe(true);
-    vi.useRealTimers();
+    expect(parsed.data.jobs.length).toBeGreaterThanOrEqual(1);
   });
 
   it("cancel removes a job", async () => {
-    vi.useFakeTimers();
-    const mod = await import("../../src/tools/schedule.js");
-    const scheduleResult = await mod.ScheduleTool.execute(
+    const scheduleResult = await ScheduleTool.execute(
       { action: "remind", when: "in 15 minutes", message: "To cancel" },
       { cwd: process.cwd() },
     );
     const { id } = JSON.parse(scheduleResult).data;
-    const cancelResult = await mod.ScheduleTool.execute(
+    const cancelResult = await ScheduleTool.execute(
       { action: "cancel", id },
       { cwd: process.cwd() },
     );
     expect(JSON.parse(cancelResult).success).toBe(true);
-    vi.useRealTimers();
   });
 
   it("invalid when expression returns structured error", async () => {
-    const mod = await import("../../src/tools/schedule.js");
-    const result = await mod.ScheduleTool.execute(
+    const result = await ScheduleTool.execute(
       { action: "remind", when: "not-a-time", message: "Bad time" },
       { cwd: process.cwd() },
     );
