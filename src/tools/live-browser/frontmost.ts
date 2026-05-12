@@ -17,6 +17,7 @@
 import { exec } from "node:child_process";
 import { log } from "../../logger.js";
 import { promisify } from "node:util";
+import { platform } from "../../platform/index.js";
 
 const execAsync = promisify(exec);
 
@@ -58,8 +59,8 @@ export async function detectFrontmostBrowser(
   opts: DetectOptions = {},
 ): Promise<FrontmostBrowser | null> {
   log.tool.debug("frontmost.detectFrontmostBrowser: entry");
-  const platform = opts.platform ?? process.platform;
-  if (platform !== "darwin") {
+  const platformValue = opts.platform ?? platform.systemInfo.current().platform;
+  if (platformValue !== "darwin") {
     log.tool.debug("frontmost.detectFrontmostBrowser: exit", { result: null, reason: "non-darwin" });
     return null;
   }

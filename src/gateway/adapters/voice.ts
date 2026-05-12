@@ -23,6 +23,7 @@ import { Logger } from "../../logger.js";
 import { runWithContext } from "../../infra/observability/context.js";
 import { MicrophoneRecorder } from "../../voice/recorder.js";
 import { WhisperSTT, type WhisperModel } from "../../voice/stt.js";
+import { platform } from "../../platform/index.js";
 import type { StreamEvent } from "../../providers/base.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 
@@ -262,7 +263,7 @@ export class VoiceChannelAdapter implements ChannelAdapter {
    * Strips markdown syntax before speaking.
    */
   private async speak(text: string): Promise<void> {
-    if (process.platform !== "darwin") {
+    if (platform.systemInfo.current().platform !== "darwin") {
       log.warn("System TTS (say) is only available on macOS");
       return;
     }

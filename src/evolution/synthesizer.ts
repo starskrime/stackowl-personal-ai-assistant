@@ -22,6 +22,7 @@ import type { CapabilityGap } from "./detector.js";
 import { SkillCritic } from "../skills/critic.js";
 import { SkillParser } from "../skills/parser.js";
 import { log } from "../logger.js";
+import { platform } from "../platform/index.js";
 
 const MAX_SYNTHESIS_RETRIES = 1;
 const MIN_QUALITY_THRESHOLD = 0.6;
@@ -119,7 +120,7 @@ export class ToolSynthesizer {
     toolDescriptions?: string[],
     synthesisModel?: string,
   ): Promise<SkillSynthesisResult> {
-    const platform = process.platform;
+    const platformValue = platform.systemInfo.current().platform;
 
     // Build tool list — use full registry if available, otherwise defaults
     const toolList =
@@ -138,7 +139,7 @@ export class ToolSynthesizer {
 
     const prompt =
       `You are writing a SKILL.md for an AI assistant called StackOwl.\n` +
-      `StackOwl runs locally on ${platform} and has access to these tools:\n` +
+      `StackOwl runs locally on ${platformValue} and has access to these tools:\n` +
       `${toolList}\n\n` +
       `The user tried to do: "${gap.userRequest}"\n\n` +
       `Write a SKILL.md that teaches the LLM how to accomplish this GENERAL CAPABILITY using the tools above.\n` +
@@ -296,11 +297,11 @@ export class ToolSynthesizer {
     config: StackOwlConfig,
     synthesisModel?: string,
   ): Promise<ToolProposal> {
-    const platform = process.platform; // 'darwin' | 'linux' | 'win32'
+    const platformValue = platform.systemInfo.current().platform; // 'darwin' | 'linux' | 'win32'
 
     const prompt =
       `You are the self-improvement engine for an AI assistant called StackOwl.\n` +
-      `StackOwl runs as a Node.js process on the SAME MACHINE as the user (platform: ${platform}).\n` +
+      `StackOwl runs as a Node.js process on the SAME MACHINE as the user (platform: ${platformValue}).\n` +
       `It has full access to: child_process (exec/spawn), the filesystem, network, and all system commands.\n\n` +
       `The user made this request: "${gap.userRequest}"\n\n` +
       `Design a tool that DIRECTLY FULFILLS the user's request using system-level capabilities.\n` +
@@ -401,11 +402,11 @@ export class ToolSynthesizer {
     const pascalName = toPascalCase(proposal.toolName);
     const timestamp = new Date().toISOString();
 
-    const platform = process.platform;
+    const platformValue = platform.systemInfo.current().platform;
 
     let prompt =
       `You are implementing a new TypeScript tool for the StackOwl AI assistant.\n` +
-      `StackOwl runs as a Node.js process on the SAME MACHINE as the user (platform: ${platform}).\n` +
+      `StackOwl runs as a Node.js process on the SAME MACHINE as the user (platform: ${platformValue}).\n` +
       `The tool has FULL access to child_process, filesystem, network, and all system commands.\n\n`;
 
     if (previousError) {
@@ -427,7 +428,7 @@ export class ToolSynthesizer {
       `CRITICAL: The execute() function must ACTIVELY PERFORM the action.\n` +
       `Do NOT write code that just tells the user what to do manually.\n` +
       `Do NOT write code that waits for the user to upload something.\n` +
-      `Examples of correct approach (adapt to current platform ${platform}):\n` +
+      `Examples of correct approach (adapt to current platform ${platformValue}):\n` +
       `  - "take screenshot" → linux: exec('scrot /tmp/shot.png'), macOS: exec('screencapture /tmp/shot.png')\n` +
       `  - "open browser" → linux: exec('xdg-open https://example.com'), macOS: exec('open https://example.com')\n` +
       `  - "read clipboard" → linux: exec('xclip -selection clipboard -o'), macOS: exec('pbpaste')\n\n` +

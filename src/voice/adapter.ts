@@ -1,10 +1,10 @@
 import { execSync } from "node:child_process";
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { Logger } from "../logger.js";
 import { VoicePersona } from "./persona.js";
+import { platform } from "../platform/index.js";
 import type { VoiceConfig, VoiceProfile } from "./types.js";
 
 const log = new Logger("VOICE");
@@ -12,7 +12,7 @@ const log = new Logger("VOICE");
 const DEFAULT_CONFIG: VoiceConfig = {
   enabled: false,
   provider: "system",
-  outputDir: join(homedir(), ".stackowl", "workspace", "voice"),
+  outputDir: join(platform.paths.home(), ".stackowl", "workspace", "voice"),
 };
 
 export class VoiceAdapter {
@@ -48,7 +48,7 @@ export class VoiceAdapter {
 
     switch (this.config.provider) {
       case "system":
-        return process.platform === "darwin";
+        return platform.systemInfo.current().platform === "darwin";
       case "openai":
         return !!this.config.openaiVoice;
       case "elevenlabs":
@@ -64,7 +64,7 @@ export class VoiceAdapter {
     text: string,
     profile: VoiceProfile,
   ): Promise<null> {
-    if (process.platform !== "darwin") {
+    if (platform.systemInfo.current().platform !== "darwin") {
       log.warn("System voice is only available on macOS");
       return null;
     }
@@ -87,7 +87,7 @@ export class VoiceAdapter {
     text: string,
     profile: VoiceProfile,
   ): Promise<string> {
-    const outputDir = this.config.outputDir ?? join(homedir(), ".stackowl", "workspace", "voice");
+    const outputDir = this.config.outputDir ?? join(platform.paths.home(), ".stackowl", "workspace", "voice");
     if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
     const filePath = join(outputDir, `${randomUUID()}.mp3`);
@@ -132,7 +132,7 @@ export class VoiceAdapter {
     text: string,
     profile: VoiceProfile,
   ): Promise<string> {
-    const outputDir = this.config.outputDir ?? join(homedir(), ".stackowl", "workspace", "voice");
+    const outputDir = this.config.outputDir ?? join(platform.paths.home(), ".stackowl", "workspace", "voice");
     if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
     const filePath = join(outputDir, `${randomUUID()}.mp3`);
