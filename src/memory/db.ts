@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 30;
+const SCHEMA_VERSION = 31;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -988,6 +988,33 @@ export class MemoryDatabase {
         metadata     TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due ON scheduled_jobs(next_fire_at, status);
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id              TEXT PRIMARY KEY,
+        parent_id       TEXT,
+        status          TEXT NOT NULL CHECK(status IN ('pending', 'running', 'awaiting_input', 'completed', 'terminated', 'failed')),
+        prompt          TEXT NOT NULL,
+        history_json    TEXT,
+        result          TEXT,
+        error           TEXT,
+        metadata        TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        terminated_at   TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id);
+
+      CREATE TABLE IF NOT EXISTS session_messages (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   TEXT NOT NULL,
+        direction    TEXT NOT NULL CHECK(direction IN ('to_session', 'from_session')),
+        content      TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        consumed_at  TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_messages_pending ON session_messages(session_id, consumed_at);
     `);
   }
 
@@ -3718,6 +3745,37 @@ export class StackOwlDB {
       applyV30UnifiedMemoryColumnsMigration(this.db);
       this.db.pragma(`user_version = 30`);
     }
+    if (current < 31) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id              TEXT PRIMARY KEY,
+          parent_id       TEXT,
+          status          TEXT NOT NULL CHECK(status IN ('pending', 'running', 'awaiting_input', 'completed', 'terminated', 'failed')),
+          prompt          TEXT NOT NULL,
+          history_json    TEXT,
+          result          TEXT,
+          error           TEXT,
+          metadata        TEXT,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          terminated_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id);
+
+        CREATE TABLE IF NOT EXISTS session_messages (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id   TEXT NOT NULL,
+          direction    TEXT NOT NULL CHECK(direction IN ('to_session', 'from_session')),
+          content      TEXT NOT NULL,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          consumed_at  TEXT,
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_messages_pending ON session_messages(session_id, consumed_at);
+      `);
+      this.db.pragma(`user_version = 31`);
+    }
   }
 }
 
@@ -4121,6 +4179,36 @@ export function applyMigrations(db: Database.Database): void {
   }
   if (current < 30) {
     applyV30UnifiedMemoryColumnsMigration(db);
+  }
+  if (current < 31) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id              TEXT PRIMARY KEY,
+        parent_id       TEXT,
+        status          TEXT NOT NULL CHECK(status IN ('pending', 'running', 'awaiting_input', 'completed', 'terminated', 'failed')),
+        prompt          TEXT NOT NULL,
+        history_json    TEXT,
+        result          TEXT,
+        error           TEXT,
+        metadata        TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        terminated_at   TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id);
+
+      CREATE TABLE IF NOT EXISTS session_messages (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   TEXT NOT NULL,
+        direction    TEXT NOT NULL CHECK(direction IN ('to_session', 'from_session')),
+        content      TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        consumed_at  TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_messages_pending ON session_messages(session_id, consumed_at);
+    `);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
