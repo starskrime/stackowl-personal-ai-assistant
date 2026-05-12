@@ -58,7 +58,7 @@ export default [
     },
     rules: {
       "no-restricted-syntax": [
-        "warn",
+        "error",
         {
           selector: "CallExpression[callee.object.name='os'][callee.property.name='tmpdir']",
           message: "Use platform.paths.tempdir() instead. Direct os.tmpdir() is restricted to src/platform/.",
