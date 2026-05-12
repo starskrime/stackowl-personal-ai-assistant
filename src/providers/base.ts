@@ -191,6 +191,8 @@ export interface ChatOptions {
   maxTokens?: number;
   topP?: number;
   stop?: string[];
+  /** Optional cancellation signal. Providers that support it can pass this to their underlying APIs. */
+  signal?: AbortSignal;
   /** Provider-specific options */
   raw?: Record<string, unknown>;
 }

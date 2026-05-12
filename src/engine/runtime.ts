@@ -162,6 +162,11 @@ export interface EngineContext {
   additionalSystemPrompt?: string;
   /** IntelligenceRouter for per-turn model-tier resolution. Wired from GatewayContext. */
   intelligence?: import("../intelligence/router.js").IntelligenceRouter;
+  /**
+   * Optional cancellation signal. When aborted, the engine throws AbortError
+   * at the next turn boundary. Propagated to provider call where supported.
+   */
+  signal?: AbortSignal;
 }
 
 export interface PendingCapabilityGap {
@@ -1207,6 +1212,13 @@ ${userMessage}
         response.toolCalls.length > 0 &&
         iterations < MAX_TOOL_ITERATIONS
       ) {
+        // ── Cancellation check ───────────────────────────────────────
+        // Check if an AbortSignal was provided and has been aborted.
+        // If so, throw an AbortError to halt the engine immediately.
+        if (context.signal?.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+
         // ── OpenCLAW-style pre-execution completion check ──────────────
         // Check whether the model's content already constitutes a final answer
         // BEFORE executing any tool calls. If the [DONE] signal is present,
