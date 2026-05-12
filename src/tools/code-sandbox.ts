@@ -89,6 +89,32 @@ export async function runInDocker(opts: SandboxRunOptions): Promise<SandboxRunRe
   };
 }
 
+export async function runOnHost(opts: SandboxRunOptions): Promise<SandboxRunResult> {
+  if (opts.workspaceAccess === "rw") {
+    return {
+      exitCode: null, stdout: "", stderr: "",
+      durationMs: 0, via: "host", timedOut: false,
+      warning: "E_UNSAFE_HOST: workspace_access:'rw' rejected without Docker isolation",
+    };
+  }
+  const interpreter =
+    opts.language === "python" ? "python3"
+    : opts.language === "typescript" ? "tsx"
+    : "node";
+  const cmd = `${interpreter} -`;
+  log.tool.debug("code-sandbox.runOnHost: spawning", { interpreter, timeoutMs: opts.timeoutMs });
+  const r = await platform.shell.exec(cmd, { timeoutMs: opts.timeoutMs, inputStdin: opts.code });
+  return {
+    exitCode: r.exitCode,
+    stdout: r.stdout,
+    stderr: r.stderr,
+    durationMs: r.durationMs,
+    via: "host",
+    warning: "Docker unavailable — code ran on host without isolation",
+    timedOut: r.timedOut,
+  };
+}
+
 export const CodeSandboxTool: ToolImplementation = {
   definition: {
     name: "sandbox",
