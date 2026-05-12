@@ -909,6 +909,7 @@ async function bootstrap() {
     planLedger,
     puppeteerFetcher,
     camofoxClient,
+    platform,
   };
 }
 
@@ -1279,10 +1280,18 @@ async function buildGateway(
             log.engine.warn("[CronService] Failed to deliver job result", { jobId: job.id });
           }
         } else {
-          log.engine.info("[CronService] [DELIVER_PENDING] Job result ready but no deliveryTarget configured", {
-            jobId: job.id,
-            resultPreview: result.slice(0, 200),
-          });
+          // Fall back to the platform notifier so the user actually sees critical
+          // cron output (e.g., daily-briefing) even without a channel configured.
+          try {
+            await b.platform.notifier.notify({
+              title: `cron: ${job.id}`,
+              body: result.slice(0, 500),
+              category: "cron",
+            });
+            log.engine.info("[CronService] result delivered via platform.notifier", { jobId: job.id });
+          } catch (err) {
+            log.engine.warn("[CronService] notifier delivery failed", { jobId: job.id, err: String(err) });
+          }
         }
       }
       return result;
