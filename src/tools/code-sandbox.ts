@@ -1,14 +1,8 @@
 // src/tools/code-sandbox.ts
-import { spawn } from "node:child_process";
-import { writeFile, rm, mkdtemp } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
 import { platform } from "../platform/index.js";
 import { SANDBOX_IMAGES } from "../platform/capabilities/system-info.js";
-
-const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface SandboxRunOptions {
   language: "python" | "javascript" | "typescript";
@@ -119,24 +113,37 @@ export const CodeSandboxTool: ToolImplementation = {
   definition: {
     name: "sandbox",
     description:
-      "Execute a Python or JavaScript code snippet in a temporary subprocess. " +
-      "Returns stdout, stderr, and exit code. Timeout defaults to 30s. " +
-      'Example: sandbox(language: "javascript", code: "console.log(2+2)")',
+      "Run Python/JavaScript/TypeScript code in an isolated sandbox. Uses Docker container with no-network/non-root/resource-limited defaults when available; " +
+      "falls back to host execution with a degradation warning when Docker isn't installed. " +
+      'Example: sandbox(language: "python", code: "print(\\"hi\\")")',
     parameters: {
       type: "object",
       properties: {
         language: {
           type: "string",
-          enum: ["python", "javascript"],
-          description: "Programming language to execute.",
+          enum: ["python", "javascript", "typescript"],
+          description: "Code language",
         },
         code: {
           type: "string",
-          description: "Code snippet to run.",
+          description: "Source code to execute",
         },
-        timeout: {
+        timeoutMs: {
           type: "number",
-          description: "Timeout in milliseconds. Default: 30000.",
+          description: "Timeout in ms (default 30000, max 300000)",
+        },
+        allow_network: {
+          type: "boolean",
+          description: "Allow network access (default false)",
+        },
+        workspace_access: {
+          type: "string",
+          enum: ["none", "ro", "rw"],
+          description: "Workspace mount mode (default ro; rw requires Docker)",
+        },
+        packages: {
+          type: "string",
+          description: "Comma-separated package names to install (requires allow_network)",
         },
       },
       required: ["language", "code"],
@@ -148,79 +155,54 @@ export const CodeSandboxTool: ToolImplementation = {
   category: "shell",
   source: "builtin",
 
-  async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
-    const language = args["language"] as string;
-    const code     = args["code"]     as string;
-    const timeout  = typeof args["timeout"] === "number"
-      ? (args["timeout"] as number)
-      : DEFAULT_TIMEOUT_MS;
+  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
+    const language = args["language"] as SandboxRunOptions["language"];
+    const code = args["code"] as string;
+    const timeoutMs = Math.min((args["timeoutMs"] as number | undefined) ?? 30_000, 300_000);
+    const allowNetwork = args["allow_network"] === true;
+    const workspaceAccess = (args["workspace_access"] as SandboxRunOptions["workspaceAccess"] | undefined) ?? "ro";
+    const packagesRaw = args["packages"];
+    const packages = Array.isArray(packagesRaw)
+      ? (packagesRaw as string[])
+      : typeof packagesRaw === "string"
+        ? packagesRaw.split(",").map(s => s.trim()).filter(Boolean)
+        : [];
+    const cwd = context.cwd || process.cwd();
 
-    if (!language) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "language is required" } });
-    if (!code)     return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "code is required" } });
+    if (!language || !["python", "javascript", "typescript"].includes(language)) {
+      return JSON.stringify({ success: false, error: { code: "INVALID_ARG", message: "language must be python|javascript|typescript" } });
+    }
+    if (!code) {
+      return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "code is required" } });
+    }
+    if (packages.length > 0 && !allowNetwork) {
+      return JSON.stringify({ success: false, error: { code: "E_NETWORK_REQUIRED", message: "packages installs require allow_network:true" } });
+    }
 
-    // 1. ENTRY
-    log.tool.debug("sandbox.execute: entry", { language, codeLen: code.length, timeout });
+    const hasDocker = platform.systemInfo.current().capabilities.hasDocker;
+    log.tool.debug("code-sandbox.execute: entry", { language, hasDocker, allowNetwork, workspaceAccess, packageCount: packages.length });
 
-    const dir  = await mkdtemp(join(tmpdir(), "stackowl-sandbox-"));
-    const ext  = language === "python" ? "py" : "js";
-    const file = join(dir, `script.${ext}`);
-    await writeFile(file, code, "utf-8");
+    const runOpts: SandboxRunOptions = { language, code, timeoutMs, allowNetwork, workspaceAccess, packages, cwd };
 
-    const cmd     = language === "python" ? "python3" : "node";
-    const cmdArgs = [file];
-
-    // 2. DECISION — language runtime selection
-    log.tool.debug("sandbox.execute: runtime selected", { cmd, file });
-
-    return new Promise<string>((resolve) => {
-      let stdout = "";
-      let stderr = "";
-      let timedOut = false;
-
-      // 3. STEP — subprocess spawned
-      log.tool.debug("sandbox.execute: spawning subprocess", { cmd, cwd: dir });
-      const child = spawn(cmd, cmdArgs, { cwd: dir });
-
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGKILL");
-        log.tool.debug("sandbox.execute: timeout triggered", { timeout });
-      }, timeout);
-
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-      child.on("close", (exitCode) => {
-        clearTimeout(timer);
-        rm(dir, { recursive: true }).catch((err) => { log.tool.warn("sandbox temp-dir cleanup failed", err); });
-
-        if (timedOut) {
-          const result = JSON.stringify({
-            success: false,
-            error: { code: "TIMEOUT", message: `Execution exceeded ${timeout}ms` },
-          });
-          log.tool.debug("sandbox.execute: exit", { success: false, reason: "TIMEOUT", timeout });
-          resolve(result);
-          return;
+    let result: SandboxRunResult;
+    try {
+      if (hasDocker) {
+        result = await runInDocker(runOpts);
+        if (result.warning?.startsWith("E_IMAGE_NOT_PULLED")) {
+          return JSON.stringify({ success: false, error: { code: "E_IMAGE_NOT_PULLED", message: result.warning } });
         }
+      } else {
+        result = await runOnHost(runOpts);
+        if (result.warning?.startsWith("E_UNSAFE_HOST")) {
+          return JSON.stringify({ success: false, error: { code: "E_UNSAFE_HOST", message: result.warning } });
+        }
+      }
+    } catch (err) {
+      log.tool.error("code-sandbox.execute: dispatch failed", err as Error);
+      return JSON.stringify({ success: false, error: { code: "SANDBOX_ERROR", message: String(err) } });
+    }
 
-        // 4. EXIT
-        log.tool.debug("sandbox.execute: exit", { success: true, exitCode: exitCode ?? 0, stdoutLen: stdout.length, stderrLen: stderr.length });
-        resolve(JSON.stringify({
-          success: true,
-          data: { stdout, stderr, exitCode: exitCode ?? 0 },
-        }));
-      });
-
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        rm(dir, { recursive: true }).catch((err) => { log.tool.warn("sandbox temp-dir cleanup failed", err); });
-        log.tool.error("sandbox.execute: spawn failed", err as Error, { cmd, language });
-        resolve(JSON.stringify({
-          success: false,
-          error: { code: "SPAWN_ERROR", message: (err as Error).message },
-        }));
-      });
-    });
+    log.tool.debug("code-sandbox.execute: exit", { via: result.via, exitCode: result.exitCode, durationMs: result.durationMs, timedOut: result.timedOut });
+    return JSON.stringify({ success: true, data: result });
   },
 };
