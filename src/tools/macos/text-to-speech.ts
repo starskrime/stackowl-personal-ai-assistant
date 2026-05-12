@@ -2,6 +2,7 @@ import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { log } from "../../logger.js";
+import { platform } from "../../platform/index.js";
 
 const execAsync = promisify(exec);
 
@@ -12,7 +13,7 @@ function escapeForShell(str: string): string {
 function getTTSCommand(text: string, voice?: string): string | null {
   const escaped = escapeForShell(text);
 
-  switch (process.platform) {
+  switch (platform.systemInfo.current().platform) {
     case "darwin":
       return voice
         ? `say -v '${escapeForShell(voice)}' '${escaped}'`
@@ -59,7 +60,8 @@ export const TextToSpeechTool: ToolImplementation = {
   ): Promise<string> {
     const text = args.text as string;
     const voice = args.voice as string | undefined;
-    log.tool.debug("text_to_speech.execute: entry", { textLen: text?.length, voice, platform: process.platform });
+    const currentPlatform = platform.systemInfo.current().platform;
+    log.tool.debug("text_to_speech.execute: entry", { textLen: text?.length, voice, platform: currentPlatform });
 
     if (!text) {
       return "Error: text parameter is required.";
@@ -67,10 +69,10 @@ export const TextToSpeechTool: ToolImplementation = {
 
     const cmd = getTTSCommand(text, voice);
     if (!cmd) {
-      return `Error: Text-to-speech not supported on platform "${process.platform}".`;
+      return `Error: Text-to-speech not supported on platform "${currentPlatform}".`;
     }
 
-    log.tool.debug("text_to_speech.execute: decision — TTS command resolved", { platform: process.platform, hasVoice: !!voice });
+    log.tool.debug("text_to_speech.execute: decision — TTS command resolved", { platform: currentPlatform, hasVoice: !!voice });
 
     try {
       log.tool.debug("text_to_speech.execute: invoking TTS command via shell", { textLen: text.length });
@@ -81,7 +83,7 @@ export const TextToSpeechTool: ToolImplementation = {
     } catch (error) {
       log.tool.error("text_to_speech.execute: failed", error instanceof Error ? error : new Error(String(error)), { voice });
       const msg = error instanceof Error ? error.message : String(error);
-      if (process.platform === "linux") {
+      if (platform.systemInfo.current().platform === "linux") {
         return `Error with text-to-speech: ${msg}\nHint: Install espeak-ng (apt install espeak-ng) for TTS support.`;
       }
       return `Error with text-to-speech: ${msg}`;

@@ -2,6 +2,7 @@ import type { ToolImplementation, ToolContext } from "../registry.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { log } from "../../logger.js";
+import { platform } from "../../platform/index.js";
 
 const execAsync = promisify(exec);
 
@@ -13,7 +14,7 @@ function getClipboardCommands(): {
   read: string;
   write: (content: string) => string;
 } | null {
-  switch (process.platform) {
+  switch (platform.systemInfo.current().platform) {
     case "darwin":
       return {
         read: "pbpaste",
@@ -71,14 +72,15 @@ export const ClipboardTool: ToolImplementation = {
     _context: ToolContext,
   ): Promise<string> {
     const action = args.action as string;
-    log.tool.debug("clipboard.execute: entry", { action, platform: process.platform });
+    const currentPlatform = platform.systemInfo.current().platform;
+    log.tool.debug("clipboard.execute: entry", { action, platform: currentPlatform });
     const commands = getClipboardCommands();
 
     if (!commands) {
-      return `Error: Clipboard not supported on platform "${process.platform}".`;
+      return `Error: Clipboard not supported on platform "${currentPlatform}".`;
     }
 
-    log.tool.debug("clipboard.execute: platform commands resolved", { platform: process.platform });
+    log.tool.debug("clipboard.execute: platform commands resolved", { platform: currentPlatform });
 
     try {
       switch (action) {
@@ -112,7 +114,7 @@ export const ClipboardTool: ToolImplementation = {
     } catch (error) {
       log.tool.error("clipboard.execute: failed", error instanceof Error ? error : new Error(String(error)), { action });
       const msg = error instanceof Error ? error.message : String(error);
-      if (process.platform === "linux") {
+      if (platform.systemInfo.current().platform === "linux") {
         return `Error with clipboard: ${msg}\nHint: Install xclip (apt install xclip) or xsel (apt install xsel) for clipboard access.`;
       }
       return `Error with clipboard: ${msg}`;
