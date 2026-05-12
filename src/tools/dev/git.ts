@@ -1,10 +1,18 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import type { ToolImplementation } from "../registry.js";
 import { log } from "../../logger.js";
+import { platform } from "../../platform/index.js";
 
-const execAsync = promisify(exec);
 const TIMEOUT_MS = 15000;
+
+async function gitCmd(
+  cwd: string,
+  args: string[],
+  timeoutMs = TIMEOUT_MS
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  const quoted = args.map(a => (/[\s"'$`\\]/.test(a) ? JSON.stringify(a) : a)).join(" ");
+  const result = await platform.shell.exec(`git ${quoted}`, { cwd, timeoutMs });
+  return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+}
 
 export const GitTool: ToolImplementation = {
   definition: {
@@ -49,32 +57,52 @@ export const GitTool: ToolImplementation = {
     log.tool.debug("git_tool.execute: entry", { action, stashAction, cwd });
 
     try {
-      let cmd: string;
+      let cmdArgs: string[];
 
       switch (action) {
         case "status":
-          cmd = "git status --short --branch";
+          cmdArgs = ["status", "--short", "--branch"];
           break;
         case "log":
-          cmd = `git log --oneline --graph -n ${count}`;
+          cmdArgs = ["log", "--oneline", "--graph", "-n", String(count)];
           break;
         case "diff":
-          cmd = "git diff && echo '\\n--- STAGED ---\\n' && git diff --staged";
-          break;
+          // Compose a shell command that shows unstaged and staged diffs
+          const { stdout: unstaged, stderr: unstagedErr } = await gitCmd(cwd, ["diff"]);
+          const { stdout: staged, stderr: stagedErr } = await gitCmd(cwd, ["diff", "--staged"]);
+          const output = (unstaged || "").trim();
+          const stagedOutput = (staged || "").trim();
+          const errors = [(unstagedErr || "").trim(), (stagedErr || "").trim()].filter(Boolean).join("\n");
+
+          if (!output && !stagedOutput && !errors)
+            return `git ${action}: no output (clean state).`;
+          if (errors && !output && !stagedOutput) return errors;
+          if (errors)
+            return `${output}\n\n--- STAGED ---\n${stagedOutput}\n\n(stderr: ${errors})`;
+
+          log.tool.debug("git_tool.execute: exit", { success: true, resultLen: output.length + stagedOutput.length });
+          return `${output}\n\n--- STAGED ---\n${stagedOutput}`;
         case "branch":
-          cmd =
-            "git branch -a --format='%(if)%(HEAD)%(then)* %(end)%(refname:short) %(upstream:short)'";
+          cmdArgs = [
+            "branch",
+            "-a",
+            "--format=%(if)%(HEAD)%(then)* %(end)%(refname:short) %(upstream:short)",
+          ];
           break;
         case "stash":
           switch (stashAction) {
             case "list":
-              cmd = "git stash list";
+              cmdArgs = ["stash", "list"];
               break;
             case "save":
-              cmd = message ? `git stash save "${message}"` : "git stash";
+              if (message) {
+                cmdArgs = ["stash", "save", message];
+              } else {
+                cmdArgs = ["stash"];
+              }
               break;
             case "pop":
-              cmd = "git stash pop";
+              cmdArgs = ["stash", "pop"];
               break;
             default:
               return `Unknown stash action: ${stashAction}. Use list, save, or pop.`;
@@ -86,13 +114,10 @@ export const GitTool: ToolImplementation = {
 
       // 2. DECISION — local vs remote operation
       const isRemoteOp = action === "log" || (action === "stash" && stashAction === "pop");
-      log.tool.debug("git_tool.execute: command built", { cmd, isRemoteOp });
+      log.tool.debug("git_tool.execute: command built", { action, isRemoteOp });
 
-      // 3. STEP — subprocess spawned
-      const { stdout, stderr } = await execAsync(cmd, {
-        timeout: TIMEOUT_MS,
-        cwd,
-      });
+      // 3. STEP — subprocess spawned via platform.shell.exec
+      const { stdout, stderr } = await gitCmd(cwd, cmdArgs, TIMEOUT_MS);
       const output = (stdout || "").trim();
       const errors = (stderr || "").trim();
 
