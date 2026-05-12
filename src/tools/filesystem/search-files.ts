@@ -10,6 +10,7 @@ import { createReadStream, readFileSync } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { resolve, isAbsolute, normalize, relative, join } from "node:path";
 import { createInterface } from "node:readline";
+import { spawn } from "node:child_process";
 import micromatch from "micromatch";
 import ignore from "ignore";
 import { log } from "../../logger.js";
@@ -131,6 +132,76 @@ function buildMatcher(pattern: string, regex: boolean, caseSensitive: boolean): 
   return (line: string) => re.exec(line);
 }
 
+interface RgJsonLine {
+  type: string;
+  data?: {
+    path?: { text: string };
+    line_number?: number;
+    lines?: { text: string };
+    submatches?: Array<{ start: number; end: number }>;
+  };
+}
+
+async function searchViaRipgrep(
+  root: string,
+  pattern: string,
+  opts: { regex: boolean; caseSensitive: boolean; glob?: string; maxMatches: number; contextLines: number },
+): Promise<SearchMatch[]> {
+  const rgArgs: string[] = ["--json", "--max-count", String(opts.maxMatches)];
+  if (opts.caseSensitive) rgArgs.push("--case-sensitive");
+  else rgArgs.push("--smart-case");
+  if (opts.regex) rgArgs.push("--regexp", pattern);
+  else rgArgs.push("--fixed-strings", pattern);
+  if (opts.glob) rgArgs.push("--glob", opts.glob);
+  if (opts.contextLines > 0) rgArgs.push("--context", String(opts.contextLines));
+  rgArgs.push(root);
+
+  const matches: SearchMatch[] = [];
+  let contextBefore: string[] = [];
+
+  return new Promise((resolveResult, rejectResult) => {
+    const child = spawn("rg", rgArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    let buf = "";
+    child.stdout.on("data", (c: Buffer) => {
+      buf += c.toString("utf-8");
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line) as RgJsonLine;
+          if (obj.type === "context" && obj.data?.lines?.text) {
+            contextBefore.push(obj.data.lines.text.replace(/\n$/, ""));
+            if (contextBefore.length > opts.contextLines) contextBefore.shift();
+          } else if (obj.type === "match" && obj.data?.path?.text && obj.data.line_number !== undefined && obj.data.lines?.text) {
+            const submatch = obj.data.submatches?.[0];
+            const m: SearchMatch = {
+              path: toPosix(relative(root, obj.data.path.text)),
+              line: obj.data.line_number,
+              column: (submatch?.start ?? 0) + 1,
+              preview: obj.data.lines.text.replace(/\n$/, ""),
+            };
+            if (opts.contextLines > 0) {
+              m.before = [...contextBefore];
+              m.after = [];
+            }
+            matches.push(m);
+            contextBefore = [];
+            if (matches.length >= opts.maxMatches) {
+              child.kill("SIGTERM");
+              break;
+            }
+          }
+        } catch { /* skip malformed lines */ }
+      }
+    });
+    child.stderr.on("data", () => { /* ignore */ });
+    child.on("close", () => resolveResult(matches));
+    child.on("error", (err) => rejectResult(err));
+  });
+}
+
 async function searchViaJs(
   root: string,
   pattern: string,
@@ -223,13 +294,19 @@ export const SearchFilesTool: ToolImplementation = {
     log.tool.debug("search_files.execute: entry", { root, pattern, regex, useRg });
 
     let matches: SearchMatch[];
-    const via: "ripgrep" | "js-fallback" = "js-fallback";
+    let via: "ripgrep" | "js-fallback";
     try {
-      matches = await searchViaJs(root, pattern, { regex, caseSensitive, glob, maxMatches, contextLines });
-      void useRg; // ripgrep path lands in C2-T7
+      if (useRg) {
+        matches = await searchViaRipgrep(root, pattern, { regex, caseSensitive, glob, maxMatches, contextLines });
+        via = "ripgrep";
+      } else {
+        matches = await searchViaJs(root, pattern, { regex, caseSensitive, glob, maxMatches, contextLines });
+        via = "js-fallback";
+      }
     } catch (err) {
-      log.tool.error("search_files.execute: search failed", err as Error);
-      return JSON.stringify({ success: false, error: { code: "SEARCH_FAILED", message: String(err) } });
+      log.tool.warn("search_files.execute: rg failed, falling back to JS", { err: String(err) });
+      matches = await searchViaJs(root, pattern, { regex, caseSensitive, glob, maxMatches, contextLines });
+      via = "js-fallback";
     }
 
     const truncated = matches.length >= maxMatches;
