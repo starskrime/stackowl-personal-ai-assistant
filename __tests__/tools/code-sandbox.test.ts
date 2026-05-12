@@ -32,12 +32,12 @@ describe("CodeSandboxTool", () => {
       {
         language: "javascript",
         code: "const start=Date.now(); while(Date.now()-start<5000){}",
-        timeout: 500,
+        timeoutMs: 500,
       },
       { cwd: process.cwd() },
     );
     const parsed = JSON.parse(result);
-    expect(parsed.success).toBe(false);
-    expect(parsed.error.code).toBe("TIMEOUT");
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.timedOut).toBe(true);
   }, 10_000);
 });
