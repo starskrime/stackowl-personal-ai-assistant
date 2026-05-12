@@ -191,7 +191,7 @@ export const EditFileTool: ToolImplementation = {
       "Make a surgical edit to a file by replacing an exact string. " +
       "Prefer this over write_file when changing only part of a file. " +
       "The old_string must match exactly (including whitespace). " +
-      "Only replaces the FIRST occurrence.",
+      "Default: replaces only the FIRST occurrence. Set replace_all:true to replace every occurrence in one call.",
     parameters: {
       type: "object",
       properties: {
@@ -209,6 +209,10 @@ export const EditFileTool: ToolImplementation = {
           type: "string",
           description: "The replacement string (use empty string to delete)",
         },
+        replace_all: {
+          type: "boolean",
+          description: "If true, replaces every occurrence of old_string. If false or omitted, replaces only the first.",
+        },
       },
       required: ["path", "old_string", "new_string"],
     },
@@ -224,6 +228,7 @@ export const EditFileTool: ToolImplementation = {
     const filePath = args["path"] as string;
     const oldString = args["old_string"] as string;
     const newString = args["new_string"] as string;
+    const replaceAll = args["replace_all"] === true;
 
     if (!filePath) throw new Error("Path argument missing");
     if (oldString === undefined) throw new Error("old_string argument missing");
@@ -252,25 +257,42 @@ export const EditFileTool: ToolImplementation = {
     }
     const safePath = sandboxResult.resolvedPath;
 
+    if (replaceAll && oldString === "") {
+      return `Error: old_string cannot be empty when replace_all=true (would loop forever).`;
+    }
+
     // 1. ENTRY
-    log.tool.debug("edit_file.execute: entry", { op: "edit", path: safePath, oldLen: oldString.length, newLen: newString.length });
+    log.tool.debug("edit_file.execute: entry", { op: "edit", path: safePath, oldLen: oldString.length, newLen: newString.length, replaceAll });
     // 2. DECISION
-    log.tool.debug("edit_file.execute: operation branch", { chosen: "surgical-edit", path: safePath });
+    log.tool.debug("edit_file.execute: operation branch", { chosen: replaceAll ? "replace-all" : "surgical-edit", path: safePath });
 
     try {
-      // 3. STEP — read then write
-      log.tool.debug("edit_file.execute: reading for edit", { path: safePath });
       const content = await readFile(safePath, "utf-8");
+
+      if (replaceAll) {
+        if (oldString === newString) {
+          log.tool.debug("edit_file.execute: exit", { op: "edit", noop: true });
+          return `0 replacements (no-op: replacement equals search) in ${filePath}`;
+        }
+        const parts = content.split(oldString);
+        const count = parts.length - 1;
+        if (count === 0) {
+          return `Error: old_string not found in ${filePath}. Make sure it matches exactly (including whitespace and newlines).`;
+        }
+        const updated = parts.join(newString);
+        await writeFile(safePath, updated, "utf-8");
+        const preview = oldString.length > 40 ? oldString.slice(0, 40) + "…" : oldString;
+        const result = `Replaced ${count} occurrences of '${preview}' in ${filePath}`;
+        log.tool.debug("edit_file.execute: exit", { op: "edit", count });
+        return result;
+      }
+
+      // single-occurrence branch (existing behaviour)
       const idx = content.indexOf(oldString);
       if (idx === -1) {
         return `Error: old_string not found in ${filePath}. Make sure it matches exactly (including whitespace and newlines).`;
       }
-
-      const updated =
-        content.slice(0, idx) +
-        newString +
-        content.slice(idx + oldString.length);
-      log.tool.debug("edit_file.execute: writing edited file", { path: safePath, bytes: updated.length });
+      const updated = content.slice(0, idx) + newString + content.slice(idx + oldString.length);
       await writeFile(safePath, updated, "utf-8");
 
       const lineNum = content.slice(0, idx).split("\n").length;
