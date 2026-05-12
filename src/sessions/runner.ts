@@ -32,7 +32,21 @@ export class SessionRunner {
   }
 
   async start(): Promise<void> {
-    log.engine.info("[SessionRunner] starting");
+    log.engine.info("[SessionRunner] starting — hydrating non-terminal sessions");
+    const active = this.store.list({ status: "running" });
+    const pending = this.store.list({ status: "pending" });
+    let resumed = 0;
+    for (const session of [...active, ...pending]) {
+      setImmediate(() =>
+        this.driveSession(session.id).catch((err) => {
+          log.engine.error("[SessionRunner] hydrated session failed", err as Error, {
+            id: session.id,
+          });
+        }),
+      );
+      resumed++;
+    }
+    log.engine.info("[SessionRunner] hydration complete", { resumed });
   }
 
   stop(): void {
