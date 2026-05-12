@@ -11,6 +11,9 @@ const createMockPelletStore = (pellets: Pellet[] = []): PelletStore => {
     search: vi.fn().mockImplementation(async (query: string, limit?: number, threshold?: number) => {
       return pellets.slice(0, limit ?? 5);
     }),
+    searchWithGraph: vi.fn().mockImplementation(async (query: string, limit?: number) => {
+      return pellets.slice(0, limit ?? 5);
+    }),
     count: vi.fn().mockResolvedValue(pellets.length),
     delete: vi.fn().mockResolvedValue(undefined),
     buildGraph: vi.fn().mockResolvedValue(undefined),
@@ -53,10 +56,9 @@ describe("PelletRetriever", () => {
 
     it("should use default config values", async () => {
       await retriever.retrieveRelevant("test");
-      expect(mockPelletStore.search).toHaveBeenCalledWith(
+      expect(mockPelletStore.searchWithGraph).toHaveBeenCalledWith(
         "test",
         DEFAULT_RETRIEVAL_CONFIG.topK,
-        1 - DEFAULT_RETRIEVAL_CONFIG.threshold,
       );
     });
 
