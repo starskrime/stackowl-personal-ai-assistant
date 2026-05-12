@@ -161,4 +161,16 @@ describe("GitTool writes (add/commit/fetch/push/pull)", () => {
     expect(JSON.parse(res).success).toBe(true);
     expect(git(repo, "tag").stdout.trim()).toBe("v0.1");
   });
+
+  it("rejects writes when cwd is not inside a git repo", async () => {
+    const notRepo = mkdtempSync(join(tmpdir(), "stackowl-not-git-"));
+    try {
+      const res = await GitTool.execute({ action: "add", paths: ["."] }, { cwd: notRepo } as any);
+      const parsed = JSON.parse(res);
+      expect(parsed.success).toBe(false);
+      expect(parsed.error.code).toBe("NOT_A_GIT_REPO");
+    } finally {
+      rmSync(notRepo, { recursive: true, force: true });
+    }
+  });
 });

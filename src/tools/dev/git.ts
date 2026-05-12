@@ -4,6 +4,12 @@ import { platform } from "../../platform/index.js";
 
 const TIMEOUT_MS = 15000;
 
+const WRITE_ACTIONS = new Set([
+  "add", "commit", "fetch", "push", "pull",
+  "checkout", "merge", "rebase", "reset",
+  "branch_create", "branch_delete", "tag",
+]);
+
 async function gitCmd(
   cwd: string,
   args: string[],
@@ -131,6 +137,18 @@ export const GitTool: ToolImplementation = {
 
     // 1. ENTRY
     log.tool.debug("git_tool.execute: entry", { action, stashAction, cwd });
+
+    // Guard: reject writes outside a git repo
+    if (WRITE_ACTIONS.has(action)) {
+      const check = await gitCmd(cwd, ["rev-parse", "--show-toplevel"]);
+      if (check.exitCode !== 0) {
+        log.tool.warn("git_tool: write action blocked (not in git repo)", { action, cwd });
+        return JSON.stringify({
+          success: false,
+          error: { code: "NOT_A_GIT_REPO", message: `${cwd} is not inside a git repository` },
+        });
+      }
+    }
 
     // Destructive action gate — must come BEFORE switch statement
     const isDestructive =
