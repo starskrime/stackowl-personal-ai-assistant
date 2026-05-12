@@ -117,6 +117,31 @@ export class SessionRunner {
     }
   }
 
+  terminate(sessionId: string): { terminated: boolean; previousStatus: SessionStatus } {
+    const session = this.store.findOne(sessionId);
+    if (!session) {
+      return { terminated: false, previousStatus: "failed" };
+    }
+    const previousStatus = session.status;
+    const isTerminal = ["completed", "terminated", "failed"].includes(previousStatus);
+
+    // Abort any in-flight run
+    const handle = this.active.get(sessionId);
+    if (handle) {
+      handle.abortController.abort();
+      this.active.delete(sessionId);
+    }
+
+    if (!isTerminal) {
+      this.store.update(sessionId, {
+        status: "terminated",
+        terminatedAt: new Date().toISOString(),
+      });
+      log.engine.info("[SessionRunner] terminated", { id: sessionId, previousStatus });
+    }
+    return { terminated: true, previousStatus };
+  }
+
   enqueueMessage(sessionId: string, content: string): SessionMessage {
     const session = this.store.findOne(sessionId);
     if (!session) {
