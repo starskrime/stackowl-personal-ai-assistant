@@ -63,13 +63,14 @@ describe("SkillInstaller.fromLocal", () => {
     vi.mocked(fs.existsSync).mockImplementation((p) => {
       return String(p).includes("SKILL.md") || String(p).includes("cost_alarm");
     });
+    vi.mocked(fsp.readFile).mockResolvedValue("---\ntitle: Test\n---\nTest content");
     vi.mocked(fsp.mkdir).mockResolvedValue(undefined);
-    vi.mocked(fsp.copyFile).mockResolvedValue(undefined);
+    vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
 
     const installer = new SkillInstaller("/workspace");
     await installer.fromLocal("./fixtures/cost_alarm");
 
-    expect(fsp.copyFile).toHaveBeenCalledOnce();
+    expect(fsp.writeFile).toHaveBeenCalledOnce();
   });
 
   it("throws when SKILL.md not found at local path", async () => {
