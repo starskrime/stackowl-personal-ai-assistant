@@ -303,6 +303,7 @@ export const REGISTRY: CommandSpec[] = [
   },
   {
     name: "/quit",
+    aliases: ["/exit"],
     description: "Save session and exit",
     handler: async (_ctx) => {
       return { kind: "action" };
