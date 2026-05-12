@@ -818,6 +818,10 @@ export class PostProcessor {
     }
   }
 
+  // Test-only alias — exposes enqueueJob for unit testing
+  // @ts-expect-error TS6133: needed for test seam access
+  private enqueueJobForTest = this.enqueueJob.bind(this);
+
   // ─── Gap Learning Feedback ────────────────────────────────────
 
   /** Pellet ID from the most recent gap learning — used to absorb user corrections. */
