@@ -6,7 +6,7 @@ import type { SessionStore } from "./store.js";
 
 export interface SessionRunnerOptions {
   pollIntervalMs?: number;
-  _maxConcurrent?: number;
+  maxConcurrent?: number;
   _defaultTimeoutMs?: number;
   _sessionMaxAgeDays?: number;
 }
@@ -33,20 +33,15 @@ export class SessionRunner {
 
   async start(): Promise<void> {
     log.engine.info("[SessionRunner] starting — hydrating non-terminal sessions");
-    const active = this.store.list({ status: "running" });
-    const pending = this.store.list({ status: "pending" });
-    let resumed = 0;
-    for (const session of [...active, ...pending]) {
-      setImmediate(() =>
-        this.driveSession(session.id).catch((err) => {
-          log.engine.error("[SessionRunner] hydrated session failed", err as Error, {
-            id: session.id,
-          });
-        }),
-      );
-      resumed++;
+    const wasRunning = this.store.list({ status: "running" });
+    const pendingCount = this.store.list({ status: "pending" }).length;
+    for (const s of wasRunning) {
+      this.store.update(s.id, { status: "pending" });
     }
-    log.engine.info("[SessionRunner] hydration complete", { resumed });
+    setImmediate(() => this.pumpQueue());
+    log.engine.info("[SessionRunner] hydration complete", {
+      resumed: wasRunning.length + pendingCount,
+    });
   }
 
   stop(): void {
@@ -77,16 +72,31 @@ export class SessionRunner {
     };
     this.store.create(session);
     log.engine.info("[SessionRunner] spawned", { id, parentId: session.parentId });
-
-    setImmediate(() =>
-      this.driveSession(id).catch((err) => {
-        log.engine.error("[SessionRunner] driveSession failed", err as Error, {
-          id,
-        });
-      }),
-    );
-
+    setImmediate(() => this.pumpQueue());
     return session;
+  }
+
+  private pumpQueue(): void {
+    if (this.stopped) return;
+    const maxConcurrent = this.opts.maxConcurrent ?? 5;
+    while (this.active.size < maxConcurrent) {
+      const pending = this.store.list({ status: "pending", limit: 1 });
+      if (pending.length === 0) return;
+      const next = pending[0]!;
+      const abortController = new AbortController();
+      this.active.set(next.id, {
+        sessionId: next.id,
+        abortController,
+        promise: Promise.resolve(),
+      });
+      this.driveSession(next.id)
+        .catch((err) =>
+          log.engine.error("[SessionRunner] driveSession failed", err as Error, {
+            id: next.id,
+          }),
+        )
+        .finally(() => setImmediate(() => this.pumpQueue()));
+    }
   }
 
   private async driveSession(sessionId: string): Promise<void> {
@@ -95,20 +105,20 @@ export class SessionRunner {
     if (!session) return;
 
     this.store.update(sessionId, { status: "running" });
-    const abortController = new AbortController();
-    this.active.set(sessionId, {
-      sessionId,
-      abortController,
-      promise: Promise.resolve(),
-    });
+    const handle = this.active.get(sessionId);
+    const signal = handle?.abortController.signal;
 
     try {
       const engine = this.engineFactory();
       const context = {
         ...this.baseContext(),
-        signal: abortController.signal,
+        signal,
       };
       const result = await engine.run(session.prompt, context);
+
+      if (signal?.aborted) {
+        return;
+      }
       this.store.update(sessionId, {
         status: "completed",
         result:
