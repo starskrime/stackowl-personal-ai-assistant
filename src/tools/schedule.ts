@@ -1,19 +1,17 @@
-// src/tools/schedule.ts
 import { randomUUID } from "node:crypto";
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import type { ScheduleRunner } from "../schedule/runner.js";
+import type { ScheduleStore } from "../schedule/store.js";
 import { log } from "../logger.js";
 
-interface ScheduledJob {
-  id: string;
-  type: "remind" | "repeat";
-  message: string;
-  schedule: string;
-  createdAt: string;
-}
+let runnerRef: ScheduleRunner | null = null;
+let storeRef: ScheduleStore | null = null;
 
-// TODO: jobs are not durable across restarts (JOB_STORE is a Map).
-//       Migrate to SQLite-backed cron store when scheduling becomes a primary UX.
-const JOB_STORE = new Map<string, { job: ScheduledJob; timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval> }>();
+/** Called from src/index.ts after the runner is created. */
+export function attachSchedule(runner: ScheduleRunner, store: ScheduleStore): void {
+  runnerRef = runner;
+  storeRef = store;
+}
 
 function parseWhen(when: string): Date | null {
   const now = Date.now();
@@ -36,108 +34,72 @@ export const ScheduleTool: ToolImplementation = {
     name: "schedule",
     description:
       "Schedule reminders and recurring tasks. Natural language times: \"in 5 minutes\", \"in 2 hours\". " +
-      "NOTE: In-process job store only — jobs do not survive restarts and fire no external notification. " +
+      "Durable: jobs survive process restarts (SQLite-backed). " +
       'Example: schedule(action: "remind", when: "in 30 minutes", message: "Check deployment")',
     parameters: {
       type: "object",
       properties: {
-        action: {
-          type: "string",
-          enum: ["remind", "repeat", "cancel", "list"],
-          description: "What to do.",
-        },
-        when: {
-          type: "string",
-          description: "When to fire. For remind: \"in N minutes/hours/days\" or ISO 8601. For repeat: interval in ms.",
-        },
-        message: {
-          type: "string",
-          description: "Message to deliver when the job fires.",
-        },
-        id: {
-          type: "string",
-          description: "Job ID for cancel action.",
-        },
+        action: { type: "string", enum: ["remind", "repeat", "cancel", "list"], description: "What to do" },
+        when: { type: "string", description: "For remind: \"in N minutes/hours/days\" or ISO 8601. For repeat: interval in ms." },
+        message: { type: "string", description: "Message to deliver when the job fires" },
+        id: { type: "string", description: "Job ID for cancel" },
       },
       required: ["action"],
     },
     capabilities: ["schedule", "reminder"],
     executionPolicy: { timeoutMs: 10_000, maxRetries: 0 },
   },
-
   category: "cognitive",
   source: "builtin",
 
-  async execute(args: Record<string, unknown>, context: ToolContext): Promise<string> {
-    const action  = args["action"]  as string;
-    const when    = args["when"]    as string | undefined;
+  async execute(args: Record<string, unknown>, _context: ToolContext): Promise<string> {
+    if (!runnerRef || !storeRef) {
+      return JSON.stringify({ success: false, error: { code: "NOT_READY", message: "Schedule runner not yet initialized" } });
+    }
+    const action = args["action"] as string;
+    const when = args["when"] as string | undefined;
     const message = args["message"] as string | undefined;
-    const id      = args["id"]      as string | undefined;
-    const onProgress = context.engineContext?.onProgress;
-    log.tool.debug("schedule.execute: entry", { action, when, hasMessage: !!message, id });
+    const id = args["id"] as string | undefined;
+    log.tool.debug("schedule.execute: entry", { action });
 
     switch (action) {
       case "remind": {
-        if (!when)    return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "when is required" } });
+        if (!when) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "when is required" } });
         if (!message) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "message is required" } });
         const fireAt = parseWhen(when);
         if (!fireAt) return JSON.stringify({ success: false, error: { code: "INVALID_TIME", message: `Cannot parse: "${when}"` } });
-        const delayMs = fireAt.getTime() - Date.now();
-        const jobId   = randomUUID();
-        const job: ScheduledJob = { id: jobId, type: "remind", message, schedule: fireAt.toISOString(), createdAt: new Date().toISOString() };
-        const timer = setTimeout(async () => {
-          JOB_STORE.delete(jobId);
-          try {
-            await onProgress?.(message);
-          } catch (err) {
-            log.tool.error("schedule.remind: delivery failed", err as Error, { jobId });
-          }
-        }, delayMs);
-        JOB_STORE.set(jobId, { job, timer });
-        if (!onProgress) {
-          log.tool.warn("schedule.remind: no onProgress available — reminder will fire but cannot be delivered to user", { jobId });
-        }
-        log.tool.debug("schedule.execute: exit", { success: true, action, jobId, fireAt: fireAt.toISOString(), delayMs });
+        const jobId = randomUUID();
+        runnerRef.scheduleJob({
+          id: jobId, type: "remind", message,
+          scheduleAt: fireAt.toISOString(), nextFireAt: fireAt.toISOString(),
+          createdAt: new Date().toISOString(), status: "active", metadata: {},
+        });
         return JSON.stringify({ success: true, data: { id: jobId, message: `Reminder scheduled for ${fireAt.toISOString()}` } });
       }
-
       case "repeat": {
-        if (!when)    return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "when (interval ms) is required" } });
+        if (!when) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "when (interval ms) is required" } });
         if (!message) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "message is required" } });
         const intervalMs = parseInt(when, 10);
         if (isNaN(intervalMs) || intervalMs <= 0) return JSON.stringify({ success: false, error: { code: "INVALID_TIME", message: "when for repeat must be positive ms" } });
         const jobId = randomUUID();
-        const job: ScheduledJob = { id: jobId, type: "repeat", message, schedule: `every ${intervalMs}ms`, createdAt: new Date().toISOString() };
-        const timer = setInterval(async () => {
-          try {
-            await onProgress?.(message);
-          } catch (err) {
-            log.tool.error("schedule.repeat: delivery failed", err as Error, { jobId });
-          }
-        }, intervalMs);
-        JOB_STORE.set(jobId, { job, timer });
-        log.tool.warn("schedule.repeat: registered (NOT durable across restarts)", { jobId, intervalMs, hasOnProgress: !!onProgress });
-        log.tool.debug("schedule.execute: exit", { success: true, action, jobId, intervalMs });
-        return JSON.stringify({ success: true, data: { id: jobId, message: `Repeating job every ${intervalMs}ms` } });
+        runnerRef.scheduleJob({
+          id: jobId, type: "repeat", intervalMs, message,
+          nextFireAt: new Date(Date.now() + intervalMs).toISOString(),
+          createdAt: new Date().toISOString(), status: "active", metadata: {},
+        });
+        return JSON.stringify({ success: true, data: { id: jobId, message: `Repeating every ${intervalMs}ms` } });
       }
-
       case "cancel": {
         if (!id) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "id is required" } });
-        const entry = JOB_STORE.get(id);
-        if (!entry) return JSON.stringify({ success: false, error: { code: "JOB_NOT_FOUND", message: `Job "${id}" not found` } });
-        clearTimeout(entry.timer as ReturnType<typeof setTimeout>);
-        clearInterval(entry.timer as ReturnType<typeof setInterval>);
-        JOB_STORE.delete(id);
-        log.tool.debug("schedule.execute: exit", { success: true, action, id });
-        return JSON.stringify({ success: true, data: { id, message: "Job cancelled" } });
+        const ok = runnerRef.cancelJob(id);
+        return ok
+          ? JSON.stringify({ success: true, data: { id, message: "cancelled" } })
+          : JSON.stringify({ success: false, error: { code: "JOB_NOT_FOUND", message: `Job "${id}" not found` } });
       }
-
       case "list": {
-        const jobs = Array.from(JOB_STORE.values()).map(({ job }) => job);
-        log.tool.debug("schedule.execute: exit", { success: true, action, jobCount: jobs.length });
+        const jobs = storeRef.list({ status: "active" });
         return JSON.stringify({ success: true, data: { jobs, count: jobs.length } });
       }
-
       default:
         return JSON.stringify({ success: false, error: { code: "INVALID_ACTION", message: `Unknown action: "${action}"` } });
     }

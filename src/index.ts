@@ -40,6 +40,9 @@ import { CreateSkillTool } from "./tools/create-skill.js";
 import { UpdateMemoryTool } from "./tools/update-memory.js";
 import { WebSearchTool as InternalWebSearchTool } from "./tools/search.js";
 import { WebFetchTool } from "./tools/web.js";
+import { ScheduleStore } from "./schedule/store.js";
+import { ScheduleRunner } from "./schedule/runner.js";
+import { attachSchedule } from "./tools/schedule.js";
 import { SessionStore } from "./memory/store.js";
 import { StackOwlEventBus } from "./events/index.js";
 import { TaskQueue } from "./queue/index.js";
@@ -559,6 +562,12 @@ async function bootstrap() {
     log.engine.warn(`[MemoryMigration] Migration failed: ${err}`),
   );
 
+  // Schedule runner — SQLite-backed durable reminders/repeats
+  const scheduleStore = new ScheduleStore(memoryDb);
+  const scheduleRunner = new ScheduleRunner(scheduleStore, platform.notifier);
+  attachSchedule(scheduleRunner, scheduleStore);
+  await scheduleRunner.start();
+
   // Tool Tracker — SQLite-backed tool execution history (Element 7 / schema v23).
   // Wired here so registry.execute() records every tool call into tool_executions.
   const toolTracker = new ToolTracker(memoryDb);
@@ -887,6 +896,7 @@ async function bootstrap() {
     mutationTracker,
     workingContextManager,
     memoryDb,
+    scheduleRunner,
     episodicMemory,
     factStore,
     factExtractor,
@@ -1322,9 +1332,11 @@ async function buildGateway(
   // Ensure cron service stops on shutdown
   process.on("SIGINT", () => {
     cronService.stop();
+    b.scheduleRunner.stop();
   });
   process.on("SIGTERM", () => {
     cronService.stop();
+    b.scheduleRunner.stop();
   });
 
   // ─── Element 15 — canonical memory surface ─────────────────────
