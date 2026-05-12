@@ -161,9 +161,14 @@ export const ListDirectoryTool: ToolImplementation = {
           } catch { /* skip */ }
         }
 
-        if (glob && type === "file" && !micromatch.isMatch(rel, glob)) continue;
+        // When a glob is set, directories are kept for recursion but excluded
+        // from results — the caller asked for files matching the pattern, not
+        // the containing folders.
+        const matchesGlob = !glob || (type === "file" && micromatch.isMatch(rel, glob));
 
-        entries.push({ path: rel, type, size, modified });
+        if (matchesGlob) {
+          entries.push({ path: rel, type, size, modified });
+        }
 
         if (recursive && type === "dir") {
           await walk(abs);
