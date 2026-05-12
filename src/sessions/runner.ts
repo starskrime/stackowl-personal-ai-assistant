@@ -8,7 +8,7 @@ export interface SessionRunnerOptions {
   pollIntervalMs?: number;
   maxConcurrent?: number;
   _defaultTimeoutMs?: number;
-  _sessionMaxAgeDays?: number;
+  sessionMaxAgeDays?: number;
 }
 
 interface RunHandle {
@@ -33,14 +33,35 @@ export class SessionRunner {
 
   async start(): Promise<void> {
     log.engine.info("[SessionRunner] starting — hydrating non-terminal sessions");
-    const wasRunning = this.store.list({ status: "running" });
-    const pendingCount = this.store.list({ status: "pending" }).length;
-    for (const s of wasRunning) {
+    const maxAgeDays = this.opts.sessionMaxAgeDays ?? 7;
+    const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+
+    let expired = 0;
+    const nonTerminal = [
+      ...this.store.list({ status: "running" }),
+      ...this.store.list({ status: "pending" }),
+      ...this.store.list({ status: "awaiting_input" }),
+    ];
+    for (const s of nonTerminal) {
+      if (s.createdAt < cutoff) {
+        this.store.update(s.id, {
+          status: "terminated",
+          error: `auto-terminated: session too old (>${maxAgeDays} days)`,
+          terminatedAt: new Date().toISOString(),
+        });
+        expired++;
+      }
+    }
+
+    // Bring 'running' (from prior process) back to 'pending' so pumpQueue picks them up under the cap
+    for (const s of this.store.list({ status: "running" })) {
       this.store.update(s.id, { status: "pending" });
     }
+    const pendingCount = this.store.list({ status: "pending" }).length;
     setImmediate(() => this.pumpQueue());
     log.engine.info("[SessionRunner] hydration complete", {
-      resumed: wasRunning.length + pendingCount,
+      resumed: pendingCount,
+      autoTerminated: expired,
     });
   }
 
