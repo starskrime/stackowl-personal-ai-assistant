@@ -5,8 +5,89 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
+import { platform } from "../platform/index.js";
+import { SANDBOX_IMAGES } from "../platform/capabilities/system-info.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+export interface SandboxRunOptions {
+  language: "python" | "javascript" | "typescript";
+  code: string;
+  timeoutMs: number;
+  allowNetwork: boolean;
+  workspaceAccess: "none" | "ro" | "rw";
+  packages: string[];
+  cwd: string;
+}
+
+export interface SandboxRunResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  via: "docker" | "host";
+  warning?: string;
+  timedOut: boolean;
+  oomKilled?: boolean;
+}
+
+function imageForLanguage(lang: SandboxRunOptions["language"]): string {
+  return lang === "python" ? SANDBOX_IMAGES.python : SANDBOX_IMAGES.node;
+}
+
+function interpreterForLanguage(lang: SandboxRunOptions["language"]): string[] {
+  if (lang === "python") return ["python", "-"];
+  if (lang === "typescript") return ["sh", "-c", "tsx -"];
+  return ["node", "-"];
+}
+
+export async function runInDocker(opts: SandboxRunOptions): Promise<SandboxRunResult> {
+  const caps = platform.systemInfo.current().capabilities;
+  const image = imageForLanguage(opts.language);
+  const imageKey = opts.language === "python" ? "python" : "node";
+  if (!caps.hasDockerImagesPulled[imageKey]) {
+    return {
+      exitCode: null, stdout: "", stderr: "",
+      durationMs: 0, via: "docker", timedOut: false,
+      warning: `E_IMAGE_NOT_PULLED: Sandbox image '${image}' not present. Run: docker pull ${image}`,
+    };
+  }
+
+  const dockerArgs = [
+    "run", "--rm", "-i",
+    "--network", opts.allowNetwork ? "bridge" : "none",
+    "--memory=512m", "--memory-swap=512m",
+    "--cpus=1", "--pids-limit=100",
+    "--read-only",
+    "--tmpfs", "/tmp:size=64m,exec",
+    "--tmpfs", "/work-out:size=16m",
+    "--user", "65534:65534",
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+  ];
+  if (opts.workspaceAccess !== "none") {
+    dockerArgs.push("-v", `${opts.cwd}:/work:${opts.workspaceAccess}`);
+    dockerArgs.push("-w", "/work");
+  }
+  dockerArgs.push("-e", "PYTHONDONTWRITEBYTECODE=1");
+  dockerArgs.push("-e", "NODE_OPTIONS=--no-warnings");
+  dockerArgs.push(image);
+  dockerArgs.push(...interpreterForLanguage(opts.language));
+
+  const cmd = `docker ${dockerArgs.map(a => /["\s]/.test(a) ? JSON.stringify(a) : a).join(" ")}`;
+  log.tool.debug("code-sandbox.runInDocker: spawning", { image, allowNetwork: opts.allowNetwork, workspaceAccess: opts.workspaceAccess });
+
+  const r = await platform.shell.exec(cmd, { timeoutMs: opts.timeoutMs, inputStdin: opts.code });
+  return {
+    exitCode: r.exitCode,
+    stdout: r.stdout,
+    stderr: r.stderr,
+    durationMs: r.durationMs,
+    via: "docker",
+    timedOut: r.timedOut,
+    oomKilled: r.exitCode === 137,
+  };
+}
 
 export const CodeSandboxTool: ToolImplementation = {
   definition: {
