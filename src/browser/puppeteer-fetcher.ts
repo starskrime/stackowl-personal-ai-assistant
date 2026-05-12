@@ -23,6 +23,7 @@
  */
 
 import { log } from "../logger.js";
+import { platform } from "../platform/index.js";
 import puppeteer from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, BrowserContext } from "puppeteer";
@@ -188,7 +189,7 @@ export class PuppeteerFetcher {
     const execPath = await this.findExecutable();
     if (!execPath) {
       throw new Error(
-        `PuppeteerFetcher: no compatible Chromium/Chrome found for ${process.platform}/${process.arch}`,
+        `PuppeteerFetcher: no compatible Chromium/Chrome found for ${platform.systemInfo.current().platform}/${process.arch}`,
       );
     }
 

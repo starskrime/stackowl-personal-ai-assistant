@@ -5,6 +5,7 @@
  */
 
 import { readdir } from "node:fs/promises";
+import { platform } from "../platform/index.js";
 import { SkillParser, meetsRequirements } from "./parser.js";
 import type { Skill, SkillFilter } from "./types.js";
 
@@ -97,7 +98,7 @@ export class SkillsRegistry {
       }
 
       const check = meetsRequirements(skill, {
-        os: process.platform as NodeJS.Platform,
+        os: platform.systemInfo.current().platform as NodeJS.Platform,
         bins: [], // Would need to check PATH
         env: process.env as Record<string, string>,
         config: {},

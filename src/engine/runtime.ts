@@ -20,6 +20,7 @@ import type { OwlRegistry } from "../owls/registry.js";
 import type { PelletStore } from "../pellets/store.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
+import { platform } from "../platform/index.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
 import { buildDegradationPrompt } from "../infra/capability-registry.js";
 import { GapDetector } from "../evolution/detector.js";
@@ -2478,7 +2479,7 @@ ${userMessage}
     prompt += persona.systemPrompt + "\n\n";
 
     prompt += "## Host Environment\n";
-    prompt += `- OS Platform: ${process.platform}\n`;
+    prompt += `- OS Platform: ${platform.systemInfo.current().platform}\n`;
     prompt += `- OS Architecture: ${process.arch}\n`;
     if (channelName) {
       prompt += `- Active channel: ${channelName}\n`;

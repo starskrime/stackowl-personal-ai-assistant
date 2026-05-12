@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { join, isAbsolute, basename } from "node:path";
 import { watch as chokidarWatch, type FSWatcher } from "chokidar";
+import { platform } from "../platform/index.js";
 import { log } from "../logger.js";
 import type {
   ContextSignal,
@@ -256,7 +257,7 @@ export class ClipboardCollector implements SignalCollector {
   private lastContent = "";
 
   async collect(): Promise<ContextSignal[]> {
-    if (process.platform !== "darwin") return [];
+    if (platform.systemInfo.current().platform !== "darwin") return [];
     try {
       const raw = execSync("pbpaste", {
         encoding: "utf-8",

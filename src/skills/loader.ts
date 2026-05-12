@@ -7,8 +7,8 @@
 import { existsSync } from "node:fs";
 import { watch, type FSWatcher } from "chokidar";
 import { resolve, join } from "node:path";
-import { homedir } from "node:os";
 import chalk from "chalk";
+import { platform } from "../platform/index.js";
 import { SkillsRegistry } from "./registry.js";
 import type { SkillLoadOptions, SkillFilter, Skill } from "./types.js";
 
@@ -29,7 +29,7 @@ export class SkillsLoader {
    * This is where users can install custom skills.
    */
   static userSkillsDir(): string {
-    return join(homedir(), ".stackowl", "skills");
+    return join(platform.paths.home(), ".stackowl", "skills");
   }
 
   /**
@@ -173,7 +173,7 @@ export class SkillsLoader {
   getEligibleSkills(filter?: SkillFilter): Skill[] {
     return this.registry.getEligible(
       filter || {
-        os: process.platform as NodeJS.Platform,
+        os: platform.systemInfo.current().platform as NodeJS.Platform,
         bins: [], // Would need to check PATH
         env: process.env as Record<string, string>,
         config: {},

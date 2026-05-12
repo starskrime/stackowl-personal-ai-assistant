@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
+import { platform } from "../platform/index.js";
 import { Logger } from "../logger.js";
 import type {
   SwarmConfig,
@@ -119,7 +120,7 @@ export class LocalSwarmNode {
       lastSeen: new Date().toISOString(),
       latencyMs: 0,
       currentLoad: this.currentLoad,
-      platform: process.platform,
+      platform: platform.systemInfo.current().platform,
     };
   }
 
