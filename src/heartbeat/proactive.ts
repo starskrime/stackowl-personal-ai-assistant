@@ -8,6 +8,7 @@
 import { log } from "../logger.js";
 import { runWithContext } from "../infra/observability/context.js";
 import { makeEnvelope } from "../gateway/delivery-envelope.js";
+import { platform } from "../platform/index.js";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
@@ -942,8 +943,49 @@ export class ProactivePinger {
           status: "failed",
         });
       }
+    } else {
+      // No channel adapter, gatewayEventBus, or sendToUser — fall back to platform notifier
+      // This ensures proactive messages reach the user via native notifications or stderr
+      try {
+        const result = await platform.notifier.notify({
+          title: this.context.owl?.persona?.name ?? "Heartbeat",
+          body: message,
+          category: "heartbeat",
+        });
+        db?.writeProactiveDelivery({
+          id: deliveryId,
+          jobId,
+          channel: result.via,
+          userId: userId ?? "local",
+          messagePreview: message.slice(0, 100),
+          verdict,
+          deliveredAt: new Date().toISOString(),
+          status: result.delivered ? "delivered" : "failed",
+        });
+        if (result.delivered) {
+          this.lastDeliveryId = deliveryId;
+          this.lastPingTime = Date.now();
+          log.heartbeat.debug(`[ProactivePinger] notifier fallback delivered via ${result.via}`);
+        } else {
+          log.heartbeat.warn(`[ProactivePinger] notifier fallback failed (${result.reason})`);
+        }
+      } catch (err) {
+        log.heartbeat.error(
+          "[ProactivePinger] notifier fallback error",
+          err,
+          { deliveryId, message: message.slice(0, 100) },
+        );
+        db?.writeProactiveDelivery({
+          id: deliveryId,
+          jobId,
+          channel: "notifier-error",
+          userId: userId ?? "local",
+          verdict,
+          status: "failed",
+          deliveredAt: new Date().toISOString(),
+        });
+      }
     }
-    // No else — if neither is available, job stays pending (retry logic handles it)
   }
 
   /**
