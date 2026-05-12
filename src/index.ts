@@ -24,6 +24,7 @@ import { program } from "commander";
 // log imported by adapters/gateway internally
 import { initFileLog, log } from "./logger.js";
 import { loadConfig } from "./config/loader.js";
+import { platform } from "./platform/index.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import type { ProviderRole } from "./providers/registry.js";
 import { OwlRegistry } from "./owls/registry.js";
@@ -418,7 +419,7 @@ async function bootstrap() {
     new ReadLogsTool(workspacePath),
     PatchTool,
     // ── macOS Native ──
-    ...(process.platform === "darwin" ? [
+    ...(platform.systemInfo.current().platform === "darwin" ? [
       AppleCalendarTool,
       AppleRemindersTool,
       AppleContactsTool,
@@ -539,7 +540,6 @@ async function bootstrap() {
   // Platform layer — probes OS capabilities once at startup, caches the matrix
   // for every consumer (paths, sandbox, notifier, process, shell). Must run
   // before any tool registry sees a sandbox check.
-  const { platform } = await import("./platform/index.js");
   await platform.initialize();
 
   // SQLite Memory Database — single source of truth for all persistent memory.
@@ -773,7 +773,7 @@ async function bootstrap() {
   // Element 15 — canonical `memory` tool is registered AFTER gateway construction
   // (it depends on gateway-owned GatewayEventBus and HitlCheckpointStore).
 
-  if (process.platform === "darwin") {
+  if (platform.systemInfo.current().platform === "darwin") {
     toolRegistry.register(createMacosCommsTool({
       mail:     (args, ctx) => toolRegistry.execute("apple_mail", args, ctx),
       contacts: (args, ctx) => toolRegistry.execute("apple_contacts", args, ctx),
@@ -1572,7 +1572,7 @@ async function voiceCommand(opts: {
     process.exit(1);
   }
 
-  if (process.platform !== "darwin") {
+  if (platform.systemInfo.current().platform !== "darwin") {
     log.cli.error("❌ Voice mode currently requires macOS (uses `say` for TTS).");
     process.exit(1);
   }
