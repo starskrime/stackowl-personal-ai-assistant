@@ -24,6 +24,7 @@ import {
 import type { ToolIntentRouter } from "./intent-router.js";
 import type { ToolTracker } from "./tracker.js";
 import type { BlockingClassifier } from "../browser/blocking-classifier.js";
+import { platform } from "../platform/index.js";
 
 export type { ToolDefinition };
 
@@ -316,13 +317,13 @@ export class ToolRegistry {
 
     // Platform enforcement
     // Platform-blocked calls are intentionally not emitted to the event bus — no execution occurred.
-    if (tool.definition.platforms && !tool.definition.platforms.includes(process.platform as NodeJS.Platform)) {
+    if (tool.definition.platforms && !tool.definition.platforms.includes(platform.systemInfo.current().platform as NodeJS.Platform)) {
       return JSON.stringify({
         success: false,
         data: null,
         error: {
           code: "PLATFORM_NOT_SUPPORTED",
-          message: `Tool '${name}' is only available on: ${tool.definition.platforms.join(", ")}. Current platform: ${process.platform}.`,
+          message: `Tool '${name}' is only available on: ${tool.definition.platforms.join(", ")}. Current platform: ${platform.systemInfo.current().platform}.`,
           suggestion: "Use a cross-platform alternative or run on a supported OS.",
         },
       });

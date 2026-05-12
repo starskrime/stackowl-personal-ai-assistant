@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ToolImplementation, ToolContext } from "./registry.js";
+import { platform } from "../platform/index.js";
 
 const execAsync = promisify(exec);
 
@@ -65,18 +66,18 @@ export const ScreenshotTool: ToolImplementation = {
     const resolvedDir = resolve(outDir);
     if (
       !resolvedPath.startsWith(
-        resolvedDir + (process.platform === "win32" ? "\\" : "/"),
+        resolvedDir + (platform.systemInfo.current().platform === "win32" ? "\\" : "/"),
       )
     ) {
       return `Screenshot failed: path traversal detected.`;
     }
 
-    if (process.platform !== "darwin") {
+    if (platform.systemInfo.current().platform !== "darwin") {
       const hint =
-        process.platform === "linux"
+        platform.systemInfo.current().platform === "linux"
           ? " On Linux/Docker, screenshot requires a display server (X11) which is not available in containerized environments."
           : " This tool requires macOS.";
-      return `Screenshot failed: not supported on ${process.platform}.${hint}`;
+      return `Screenshot failed: not supported on ${platform.systemInfo.current().platform}.${hint}`;
     }
 
     try {

@@ -7,6 +7,7 @@
  */
 
 import type { IOSDriver } from "./interface.js";
+import { platform } from "../../../platform/index.js";
 
 export class DriverManager {
   private static instance: DriverManager | null = null;
@@ -41,7 +42,7 @@ export class DriverManager {
   }
 
   private async createAndInit(): Promise<IOSDriver> {
-    const os = process.platform;
+    const os = platform.systemInfo.current().platform;
 
     let driver: IOSDriver;
 
@@ -75,7 +76,7 @@ export class DriverManager {
 
   /** Expose current platform without initializing a driver */
   static get platform(): "darwin" | "win32" | "linux" {
-    const p = process.platform;
+    const p = platform.systemInfo.current().platform;
     if (p === "darwin") return "darwin";
     if (p === "win32") return "win32";
     return "linux";
