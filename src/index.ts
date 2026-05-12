@@ -33,6 +33,8 @@ import { ShellTool } from "./tools/shell.js";
 import { CredentialsTool } from "./tools/credentials.js";
 import { SandboxTool } from "./tools/sandbox.js";
 import { ReadFileTool, WriteFileTool, EditFileTool } from "./tools/files.js";
+import { ListDirectoryTool } from "./tools/filesystem/list-directory.js";
+import { SearchFilesTool } from "./tools/filesystem/search-files.js";
 import { SendFileTool } from "./tools/send_file.js";
 import { CreateSkillTool } from "./tools/create-skill.js";
 import { UpdateMemoryTool } from "./tools/update-memory.js";
@@ -385,6 +387,8 @@ async function bootstrap() {
     ReadFileTool,
     WriteFileTool,
     EditFileTool,
+    ListDirectoryTool,
+    SearchFilesTool,
     // ── Credentials ──
     CredentialsTool,
     // ── Web & search ──
