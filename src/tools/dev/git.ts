@@ -261,6 +261,68 @@ export const GitTool: ToolImplementation = {
             : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
         }
 
+        case "checkout": {
+          const target = args["target"] as string;
+          const createBranch = args["create_branch"] === true;
+          if (!target) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "target is required" } });
+          const cmdArgs = ["checkout"];
+          if (createBranch) cmdArgs.push("-b");
+          cmdArgs.push(target);
+          const r = await gitCmd(cwd, cmdArgs);
+          return r.exitCode === 0
+            ? JSON.stringify({ success: true, data: { stdout: r.stdout.trim() } })
+            : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+        }
+
+        case "merge": {
+          const abort = args["abort"] === true;
+          if (abort) {
+            const r = await gitCmd(cwd, ["merge", "--abort"]);
+            return r.exitCode === 0
+              ? JSON.stringify({ success: true, data: { stdout: "merge aborted" } })
+              : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+          }
+          const branch = args["branch"] as string;
+          const noFf = args["no_ff"] === true;
+          if (!branch) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "branch is required" } });
+          const cmdArgs = ["merge"];
+          if (noFf) cmdArgs.push("--no-ff");
+          cmdArgs.push(branch);
+          const r = await gitCmd(cwd, cmdArgs);
+          return r.exitCode === 0
+            ? JSON.stringify({ success: true, data: { stdout: r.stdout.trim() } })
+            : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+        }
+
+        case "rebase": {
+          const abort = args["abort"] === true;
+          const cont = args["continue"] === true;
+          const onto = args["onto"] as string | undefined;
+          const cmdArgs = ["rebase"];
+          if (abort) cmdArgs.push("--abort");
+          else if (cont) cmdArgs.push("--continue");
+          else if (onto) cmdArgs.push("--onto", onto);
+          else return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "rebase requires onto, abort, or continue" } });
+          const r = await gitCmd(cwd, cmdArgs);
+          return r.exitCode === 0
+            ? JSON.stringify({ success: true, data: { stdout: r.stdout.trim() } })
+            : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+        }
+
+        case "reset": {
+          const target = args["target"] as string;
+          const mode = (args["mode"] as string) ?? "mixed";
+          if (!target) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "target is required" } });
+          if (!["soft", "mixed", "hard"].includes(mode)) {
+            return JSON.stringify({ success: false, error: { code: "INVALID_ARG", message: `mode must be soft|mixed|hard, got ${mode}` } });
+          }
+          if (mode === "hard") log.tool.warn("git_tool.reset: destructive --hard proceeding (audit)", { target });
+          const r = await gitCmd(cwd, ["reset", `--${mode}`, target]);
+          return r.exitCode === 0
+            ? JSON.stringify({ success: true, data: { stdout: r.stdout.trim() || `reset ${mode}` } })
+            : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+        }
+
         default:
           return `Unknown action: ${action}. Use status, log, diff, branch, stash, add, commit, fetch, push, or pull.`;
       }

@@ -79,4 +79,52 @@ describe("GitTool writes (add/commit/fetch/push/pull)", () => {
     const parsed = JSON.parse(res);
     expect(parsed.success).toBe(false);
   });
+
+  it("checkout creates and switches to a new branch", async () => {
+    writeFileSync(join(repo, "a.txt"), "x");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "init" }, { cwd: repo } as any);
+    const res = await GitTool.execute({ action: "checkout", target: "feature", create_branch: true }, { cwd: repo } as any);
+    const parsed = JSON.parse(res);
+    expect(parsed.success).toBe(true);
+    expect(git(repo, "branch", "--show-current").stdout.trim()).toBe("feature");
+  });
+
+  it("merge --abort cancels an in-progress merge", async () => {
+    writeFileSync(join(repo, "a.txt"), "x");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "init" }, { cwd: repo } as any);
+    await GitTool.execute({ action: "checkout", target: "branch-b", create_branch: true }, { cwd: repo } as any);
+    writeFileSync(join(repo, "a.txt"), "y");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "b" }, { cwd: repo } as any);
+    await GitTool.execute({ action: "checkout", target: "main" }, { cwd: repo } as any);
+    writeFileSync(join(repo, "a.txt"), "z");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "a" }, { cwd: repo } as any);
+
+    await GitTool.execute({ action: "merge", branch: "branch-b" }, { cwd: repo } as any);
+    const abort = await GitTool.execute({ action: "merge", abort: true }, { cwd: repo } as any);
+    const parsed = JSON.parse(abort);
+    expect(parsed.success).toBe(true);
+  });
+
+  it("reset mixed (default) unstages", async () => {
+    writeFileSync(join(repo, "a.txt"), "x");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "init" }, { cwd: repo } as any);
+    writeFileSync(join(repo, "a.txt"), "y");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    const res = await GitTool.execute({ action: "reset", target: "HEAD" }, { cwd: repo } as any);
+    const parsed = JSON.parse(res);
+    expect(parsed.success).toBe(true);
+    expect(git(repo, "diff", "--cached", "--name-only").stdout.trim()).toBe("");
+  });
+
+  it("reset --hard without i_understand_destructive is blocked", async () => {
+    const res = await GitTool.execute({ action: "reset", target: "HEAD", mode: "hard" }, { cwd: repo } as any);
+    const parsed = JSON.parse(res);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.code).toBe("DESTRUCTIVE_ACTION_BLOCKED");
+  });
 });
