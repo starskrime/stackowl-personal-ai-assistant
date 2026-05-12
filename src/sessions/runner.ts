@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { log } from "../logger.js";
 import type { OwlEngine } from "../engine/runtime.js";
-import type { Session, SessionMetadata } from "./types.js";
+import type { Session, SessionMessage, SessionMetadata, SessionStatus } from "./types.js";
 import type { SessionStore } from "./store.js";
 
 export interface SessionRunnerOptions {
-  _pollIntervalMs?: number;
+  pollIntervalMs?: number;
   _maxConcurrent?: number;
   _defaultTimeoutMs?: number;
   _sessionMaxAgeDays?: number;
@@ -20,13 +20,16 @@ interface RunHandle {
 export class SessionRunner {
   private active = new Map<string, RunHandle>();
   private stopped = false;
+  private opts: SessionRunnerOptions;
 
   constructor(
     private readonly store: SessionStore,
     private readonly engineFactory: () => OwlEngine,
     private readonly baseContext: () => any,
-    _opts: SessionRunnerOptions = {},
-  ) {}
+    opts: SessionRunnerOptions = {},
+  ) {
+    this.opts = opts;
+  }
 
   async start(): Promise<void> {
     log.engine.info("[SessionRunner] starting");
@@ -112,5 +115,60 @@ export class SessionRunner {
     } finally {
       this.active.delete(sessionId);
     }
+  }
+
+  enqueueMessage(sessionId: string, content: string): SessionMessage {
+    const session = this.store.findOne(sessionId);
+    if (!session) {
+      throw new Error(`Session "${sessionId}" not found`);
+    }
+    const msg = this.store.appendMessage(sessionId, "to_session", content);
+    log.engine.debug("[SessionRunner] message enqueued", { sessionId, messageId: msg.id });
+    return msg;
+  }
+
+  async awaitNextEvent(
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<{
+    ready: boolean;
+    status: SessionStatus;
+    newMessages: SessionMessage[];
+  }> {
+    const start = Date.now();
+    const POLL_MS = this.opts.pollIntervalMs ?? 250;
+
+    // Quick check
+    const initial = this.store.pendingMessages(sessionId, "from_session");
+    const session0 = this.store.findOne(sessionId);
+    if (!session0) {
+      return { ready: false, status: "failed", newMessages: [] };
+    }
+    if (
+      initial.length > 0 ||
+      ["completed", "terminated", "failed"].includes(session0.status)
+    ) {
+      for (const m of initial) this.store.markConsumed(m.id);
+      return { ready: true, status: session0.status, newMessages: initial };
+    }
+
+    // Poll
+    while (Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      const session = this.store.findOne(sessionId);
+      if (!session) {
+        return { ready: false, status: "failed", newMessages: [] };
+      }
+      const msgs = this.store.pendingMessages(sessionId, "from_session");
+      const terminal = ["completed", "terminated", "failed"].includes(
+        session.status,
+      );
+      if (msgs.length > 0 || terminal) {
+        for (const m of msgs) this.store.markConsumed(m.id);
+        return { ready: true, status: session.status, newMessages: msgs };
+      }
+    }
+    const session = this.store.findOne(sessionId)!;
+    return { ready: false, status: session.status, newMessages: [] };
   }
 }
