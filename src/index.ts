@@ -138,6 +138,7 @@ import { DocumentTool }    from "./tools/document.js";
 import { CodeSandboxTool } from "./tools/code-sandbox.js";
 import { DbQueryTool }     from "./tools/db-query.js";
 import { ScheduleTool }    from "./tools/schedule.js";
+import { createNotificationSendTool } from "./tools/notification-send.js";
 // ── Tool Cortex T22 — frontmost-aware live browser control ──
 import { createLiveBrowserTool } from "./tools/live-browser/index.js";
 import { detectFrontmostBrowser } from "./tools/live-browser/frontmost.js";
@@ -766,6 +767,7 @@ async function bootstrap() {
     createWorkflowTool(workflowStore, workflowExecutor),
     createMonitorTool(healthChecker),
     createConnectorTool(connectorResolver),
+    createNotificationSendTool(platform),
   ]);
 
   // Element 15 — canonical `memory` tool is registered AFTER gateway construction
