@@ -22,11 +22,11 @@ export function applyPanelEvent(state: UiState, event: UiEvent): UiState {
   switch (event.kind) {
     case "panel.opened": {
       const next = { id: event.id, props: event.props };
-      const newStack = [...state.panelStack, next];
+      const newStack = [...(state.panelStack ?? []), next];
       return { ...state, panelStack: newStack, activePanel: next, panelFocus: "panel" };
     }
     case "panel.popped": {
-      const newStack = state.panelStack.slice(0, -1);
+      const newStack = (state.panelStack ?? []).slice(0, -1);
       const top = newStack.at(-1) ?? null;
       return { ...state, panelStack: newStack, activePanel: top, panelFocus: top ? "panel" : "composer" };
     }
