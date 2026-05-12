@@ -44,7 +44,16 @@ import { WebFetchTool } from "./tools/web.js";
 import { ScheduleStore } from "./schedule/store.js";
 import { ScheduleRunner } from "./schedule/runner.js";
 import { attachSchedule } from "./tools/schedule.js";
-import { SessionStore } from "./memory/store.js";
+import { SessionStore as ConversationSessionStore } from "./memory/store.js";
+import { SessionStore as MultiAgentSessionStore } from "./sessions/store.js";
+import { SessionRunner } from "./sessions/runner.js";
+import { attachSessions } from "./tools/sessions/attach.js";
+import { SubagentsTool } from "./tools/sessions/subagents.js";
+import { SessionsStatusTool } from "./tools/sessions/sessions-status.js";
+import { SessionsSendTool } from "./tools/sessions/sessions-send.js";
+import { SessionsYieldTool } from "./tools/sessions/sessions-yield.js";
+import { SessionsListTool as SessionsListTool_Sessions } from "./tools/sessions/sessions-list.js";
+import { SessionsTerminateTool } from "./tools/sessions/sessions-terminate.js";
 import { StackOwlEventBus } from "./events/index.js";
 import { TaskQueue } from "./queue/index.js";
 import { CostTracker } from "./costs/index.js";
@@ -203,6 +212,7 @@ import { CapsuleManager } from "./capsules/manager.js";
 import { TimeCapsuleTool } from "./tools/capsule.js";
 import { ConstellationMiner } from "./constellations/miner.js";
 import { SocraticEngine } from "./socratic/engine.js";
+import { OwlEngine } from "./engine/runtime.js";
 import { join } from "node:path";
 // ── Persistent Browser Pool ──
 import { BrowserPool, initSmartFetch, initCamoFox, getCamoFoxClient } from "./browser/index.js";
@@ -380,8 +390,8 @@ async function bootstrap() {
 
   // Initialize tools
   const toolRegistry = new ToolRegistry();
-  const { SessionsListTool, SessionsHistoryTool, SessionStatusTool } =
-    await import("./compat/tools/sessions.js");
+  // const { SessionsListTool, SessionsHistoryTool, SessionStatusTool } =
+  //   await import("./compat/tools/sessions.js");  // Removed — replaced by Cycle 4 tools
   const { CronTool } = await import("./compat/tools/cron.js");
   const { BrowserTool } = await import("./compat/tools/browser.js");
   const updateMemoryTool = new UpdateMemoryTool();
@@ -406,11 +416,16 @@ async function bootstrap() {
     // ── Cognitive ──
     new SummonParliamentTool(),
     OrchestrateTasksTool,
+    // ── Multi-agent Sessions (Cycle 4) ──
+    SubagentsTool,
+    SessionsStatusTool,
+    SessionsSendTool,
+    SessionsYieldTool,
+    SessionsListTool_Sessions,
+    SessionsTerminateTool,
     // ── Memory & sessions ──
     // (MemorySearchTool/MemoryGetTool removed — canonical `memory` tool registered post-gateway)
-    new SessionsListTool(workspacePath),
-    new SessionsHistoryTool(workspacePath),
-    new SessionStatusTool(),
+    // (SessionsListTool, SessionsHistoryTool, SessionStatusTool from compat removed — replaced by Cycle 4 multi-agent versions above)
     // ── System ──
     new CronTool(workspacePath),
     new SkillInstallTool(workspacePath),
@@ -495,7 +510,7 @@ async function bootstrap() {
   ]);
 
   // Initialize session store
-  const sessionStore = new SessionStore(workspacePath);
+  const sessionStore = new ConversationSessionStore(workspacePath);
   await sessionStore.init();
 
   // Initialize pellet store (with AI-powered deduplication)
@@ -568,6 +583,17 @@ async function bootstrap() {
   const scheduleRunner = new ScheduleRunner(scheduleStore, platform.notifier);
   attachSchedule(scheduleRunner, scheduleStore);
   await scheduleRunner.start();
+
+  // Multi-agent runtime — subagents that outlive the spawning conversation (Cycle 4)
+  const sessionStore_runner = new MultiAgentSessionStore(memoryDb);
+  const sessionRunner = new SessionRunner(
+    sessionStore_runner,
+    () => new OwlEngine(),
+    () => ({} as any),   // base context — populated per session by the runner during driveSession
+    { maxConcurrent: 5 },
+  );
+  attachSessions(sessionRunner, sessionStore_runner);
+  await sessionRunner.start();
 
   // Tool Tracker — SQLite-backed tool execution history (Element 7 / schema v23).
   // Wired here so registry.execute() records every tool call into tool_executions.
@@ -912,6 +938,7 @@ async function bootstrap() {
     puppeteerFetcher,
     camofoxClient,
     platform,
+    sessionRunner,
   };
 }
 
@@ -1344,10 +1371,12 @@ async function buildGateway(
   process.on("SIGINT", () => {
     cronService.stop();
     b.scheduleRunner.stop();
+    b.sessionRunner.stop();
   });
   process.on("SIGTERM", () => {
     cronService.stop();
     b.scheduleRunner.stop();
+    b.sessionRunner.stop();
   });
 
   // ─── Element 15 — canonical memory surface ─────────────────────
