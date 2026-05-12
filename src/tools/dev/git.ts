@@ -323,6 +323,45 @@ export const GitTool: ToolImplementation = {
             : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
         }
 
+        case "branch_create": {
+          const name = args["name"] as string;
+          const from = args["from"] as string | undefined;
+          if (!name) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "name is required" } });
+          const cmdArgs = ["branch", name];
+          if (from) cmdArgs.push(from);
+          const r = await gitCmd(cwd, cmdArgs);
+          return r.exitCode === 0
+            ? JSON.stringify({ success: true, data: { created: name } })
+            : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+        }
+
+        case "branch_delete": {
+          const name = args["name"] as string;
+          const force = args["force"] === true;
+          if (!name) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "name is required" } });
+          const flag = force ? "-D" : "-d";
+          if (force) log.tool.warn("git_tool.branch_delete: destructive --force proceeding (audit)", { name });
+          const r = await gitCmd(cwd, ["branch", flag, name]);
+          return r.exitCode === 0
+            ? JSON.stringify({ success: true, data: { deleted: name } })
+            : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+        }
+
+        case "tag": {
+          const name = args["name"] as string;
+          const message = args["message"] as string | undefined;
+          const del = args["delete"] === true;
+          if (!name) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "name is required" } });
+          const cmdArgs = ["tag"];
+          if (del) cmdArgs.push("-d", name);
+          else if (message) cmdArgs.push("-a", name, "-m", message);
+          else cmdArgs.push(name);
+          const r = await gitCmd(cwd, cmdArgs);
+          return r.exitCode === 0
+            ? JSON.stringify({ success: true, data: { tag: name, deleted: del } })
+            : JSON.stringify({ success: false, error: { code: "GIT_ERROR", message: r.stderr.trim() || `exit ${r.exitCode}` } });
+        }
+
         default:
           return `Unknown action: ${action}. Use status, log, diff, branch, stash, add, commit, fetch, push, or pull.`;
       }

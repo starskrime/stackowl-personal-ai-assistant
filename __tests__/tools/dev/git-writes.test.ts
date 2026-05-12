@@ -127,4 +127,38 @@ describe("GitTool writes (add/commit/fetch/push/pull)", () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error.code).toBe("DESTRUCTIVE_ACTION_BLOCKED");
   });
+
+  it("branch_create makes a new branch from current HEAD", async () => {
+    writeFileSync(join(repo, "a.txt"), "x");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "init" }, { cwd: repo } as any);
+    const res = await GitTool.execute({ action: "branch_create", name: "topic" }, { cwd: repo } as any);
+    expect(JSON.parse(res).success).toBe(true);
+    expect(git(repo, "branch", "--list", "topic").stdout.includes("topic")).toBe(true);
+  });
+
+  it("branch_delete non-force on merged branch succeeds", async () => {
+    writeFileSync(join(repo, "a.txt"), "x");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "init" }, { cwd: repo } as any);
+    await GitTool.execute({ action: "branch_create", name: "topic" }, { cwd: repo } as any);
+    const res = await GitTool.execute({ action: "branch_delete", name: "topic" }, { cwd: repo } as any);
+    expect(JSON.parse(res).success).toBe(true);
+  });
+
+  it("branch_delete --force without i_understand_destructive is blocked", async () => {
+    const res = await GitTool.execute({ action: "branch_delete", name: "any", force: true }, { cwd: repo } as any);
+    const parsed = JSON.parse(res);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.code).toBe("DESTRUCTIVE_ACTION_BLOCKED");
+  });
+
+  it("tag creates a tag", async () => {
+    writeFileSync(join(repo, "a.txt"), "x");
+    await GitTool.execute({ action: "add", paths: ["."] }, { cwd: repo } as any);
+    await GitTool.execute({ action: "commit", message: "init" }, { cwd: repo } as any);
+    const res = await GitTool.execute({ action: "tag", name: "v0.1" }, { cwd: repo } as any);
+    expect(JSON.parse(res).success).toBe(true);
+    expect(git(repo, "tag").stdout.trim()).toBe("v0.1");
+  });
 });
