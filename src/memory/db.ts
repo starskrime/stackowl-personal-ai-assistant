@@ -973,6 +973,21 @@ export class MemoryDatabase {
         promoted_at   TEXT,
         created_at    TEXT NOT NULL DEFAULT (datetime('now'))
       );
+
+      -- Scheduled jobs for durable notification + reminders
+      CREATE TABLE IF NOT EXISTS scheduled_jobs (
+        id           TEXT PRIMARY KEY,
+        type         TEXT NOT NULL CHECK(type IN ('remind', 'repeat')),
+        message      TEXT NOT NULL,
+        schedule_at  TEXT,
+        interval_ms  INTEGER,
+        next_fire_at TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        status       TEXT NOT NULL DEFAULT 'active'
+                       CHECK(status IN ('active', 'fired', 'cancelled', 'expired')),
+        metadata     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due ON scheduled_jobs(next_fire_at, status);
     `);
   }
 
