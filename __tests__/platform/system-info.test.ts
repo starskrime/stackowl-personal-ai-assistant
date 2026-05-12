@@ -40,4 +40,13 @@ describe("SystemInfoImpl", () => {
     await api.refresh();
     expect(typeof api.current().capabilities.hasRipgrep).toBe("boolean");
   });
+
+  it("capabilities includes hasDockerImagesPulled after refresh", async () => {
+    const api = new SystemInfoImpl();
+    await api.refresh();
+    const info = api.current();
+    expect(info.capabilities.hasDockerImagesPulled).toBeDefined();
+    expect(typeof info.capabilities.hasDockerImagesPulled.python).toBe("boolean");
+    expect(typeof info.capabilities.hasDockerImagesPulled.node).toBe("boolean");
+  });
 });

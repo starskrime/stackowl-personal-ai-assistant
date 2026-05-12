@@ -24,12 +24,34 @@ function detectInWSL(): boolean {
   }
 }
 
+export const SANDBOX_IMAGES = {
+  python: "python:3.12-slim",
+  node: "node:22-alpine",
+} as const;
+
 async function commandAvailable(cmd: string): Promise<boolean> {
   return new Promise((resolveResult) => {
     const checker = osPlatform() === "win32" ? "where" : "which";
     const child = spawn(checker, [cmd], { stdio: "ignore" });
     child.on("error", () => resolveResult(false));
     child.on("close", (code) => resolveResult(code === 0));
+  });
+}
+
+async function probeDockerImages(hasDocker: boolean): Promise<{ python: boolean; node: boolean }> {
+  if (!hasDocker) return { python: false, node: false };
+  return new Promise((resolveResult) => {
+    const child = spawn("docker", ["images", "--format", "{{.Repository}}:{{.Tag}}"], { stdio: ["ignore", "pipe", "ignore"] });
+    const chunks: Buffer[] = [];
+    child.stdout.on("data", (c) => chunks.push(c as Buffer));
+    child.on("error", () => resolveResult({ python: false, node: false }));
+    child.on("close", () => {
+      const list = Buffer.concat(chunks).toString("utf-8");
+      resolveResult({
+        python: list.includes(SANDBOX_IMAGES.python),
+        node: list.includes(SANDBOX_IMAGES.node),
+      });
+    });
   });
 }
 
@@ -45,6 +67,7 @@ async function probeCapabilities(): Promise<SystemCapabilities> {
     commandAvailable("python3").then((found) => found || commandAvailable("python")),
     commandAvailable("rg"),
   ]);
+  const hasDockerImagesPulled = await probeDockerImages(hasDocker);
   return {
     hasNotifier: true,
     hasOpener,
@@ -53,6 +76,7 @@ async function probeCapabilities(): Promise<SystemCapabilities> {
     hasPython,
     hasNode: true,
     hasRipgrep,
+    hasDockerImagesPulled,
   };
 }
 
@@ -75,6 +99,7 @@ export class SystemInfoImpl implements SystemInfoAPI {
         hasPython: false,
         hasNode: true,
         hasRipgrep: false,
+        hasDockerImagesPulled: { python: false, node: false },
       },
     };
   }

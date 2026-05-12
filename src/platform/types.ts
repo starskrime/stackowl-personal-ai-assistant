@@ -105,6 +105,7 @@ export interface SystemCapabilities {
   hasPython: boolean;
   hasNode: boolean;
   hasRipgrep: boolean;
+  hasDockerImagesPulled: { python: boolean; node: boolean };
 }
 
 export type PlatformName =
