@@ -39,6 +39,28 @@ sudo apt install chromium
 
 The `live_browser` and `web_fetch` tools detect Chromium via the system PATH.
 
+### Docker note
+
+The `code_sandbox` tool isolates user code in a Docker container when one is
+available, with a host fallback (degraded — no isolation) when not. To get full
+isolation:
+
+1. Install Docker following the OS-specific guide:
+   - macOS: https://docs.docker.com/desktop/install/mac-install/
+   - Linux: https://docs.docker.com/engine/install/
+   - Windows: https://docs.docker.com/desktop/install/windows-install/
+
+2. Pull the two sandbox images once. This makes the first `code_sandbox` call fast:
+
+```bash
+docker pull python:3.12-slim
+docker pull node:22-alpine
+```
+
+If the images aren't pulled, the tool returns `E_IMAGE_NOT_PULLED` with the
+exact `docker pull` command to run rather than blocking 30+ seconds on a
+download.
+
 ## Running
 
 | Command | What it does |
