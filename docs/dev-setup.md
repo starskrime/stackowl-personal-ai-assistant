@@ -100,3 +100,20 @@ branches in the impls are covered by stubbed-platform unit tests where possible.
 `stackowl.config.json` is the per-machine config (provider keys, channel tokens,
 parliament settings). It is **gitignored** and must be created via `./start.sh`
 on first run.
+
+### Subagents vs orchestrate_tasks
+
+Two tools spawn child work. Pick by lifetime:
+
+| | `orchestrate_tasks` | `subagents` |
+|---|---|---|
+| Lifetime | Bounded by the parent turn | Outlives the spawning conversation |
+| Result delivery | Aggregated summary at end | Queryable any time via session id |
+| Use case | "Run 3 things in parallel and give me the combined answer" | "Spawn researchers; check back in an hour" |
+| Inter-session messaging | Not supported | Native via `sessions_send` / `sessions_yield` |
+| Cancellation | Implicit on parent turn end | Explicit via `sessions_terminate` |
+
+The companion tools `sessions_status`, `sessions_list`, `sessions_send`,
+`sessions_yield`, `sessions_terminate` form the full lifecycle API around
+subagents. Sessions persist in SQLite and survive process restarts (older
+than 7 days are auto-terminated on boot).
