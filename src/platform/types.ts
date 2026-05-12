@@ -104,6 +104,7 @@ export interface SystemCapabilities {
   hasGit: boolean;
   hasPython: boolean;
   hasNode: boolean;
+  hasRipgrep: boolean;
 }
 
 export type PlatformName =

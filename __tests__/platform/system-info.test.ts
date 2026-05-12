@@ -34,4 +34,10 @@ describe("SystemInfoImpl", () => {
     const info = api.current();
     expect(typeof info.inContainer).toBe("boolean");
   });
+
+  it("capabilities includes hasRipgrep boolean after refresh", async () => {
+    const api = new SystemInfoImpl();
+    await api.refresh();
+    expect(typeof api.current().capabilities.hasRipgrep).toBe("boolean");
+  });
 });

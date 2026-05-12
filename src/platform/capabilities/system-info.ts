@@ -34,7 +34,7 @@ async function commandAvailable(cmd: string): Promise<boolean> {
 }
 
 async function probeCapabilities(): Promise<SystemCapabilities> {
-  const [hasOpener, hasDocker, hasGit, hasPython] = await Promise.all([
+  const [hasOpener, hasDocker, hasGit, hasPython, hasRipgrep] = await Promise.all([
     osPlatform() === "win32"
       ? Promise.resolve(true)
       : osPlatform() === "darwin"
@@ -43,6 +43,7 @@ async function probeCapabilities(): Promise<SystemCapabilities> {
     commandAvailable("docker"),
     commandAvailable("git"),
     commandAvailable("python3").then((found) => found || commandAvailable("python")),
+    commandAvailable("rg"),
   ]);
   return {
     hasNotifier: true,
@@ -51,6 +52,7 @@ async function probeCapabilities(): Promise<SystemCapabilities> {
     hasGit,
     hasPython,
     hasNode: true,
+    hasRipgrep,
   };
 }
 
@@ -72,6 +74,7 @@ export class SystemInfoImpl implements SystemInfoAPI {
         hasGit: false,
         hasPython: false,
         hasNode: true,
+        hasRipgrep: false,
       },
     };
   }
