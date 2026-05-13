@@ -2460,11 +2460,13 @@ ${userMessage}
     prompt += `- **Acknowledge Failure Cleanly:** If you cannot find the answer after exhausting your tools, say exactly that: "I searched for X but could not find a verified answer." Never substitute a guess for a real answer.\n\n`;
 
     prompt += `## 3. Execution Discipline (Always Active)\n`;
-    prompt += `- **The Rule of 20 Approaches:** Always internally brainstorm at least 20 completely different, creative ways to fulfill the user's request using your available tools. Try them one by one until you succeed. If all 20 fail, do NOT give up—immediately ask the user a clarifying question, gather new context, and then brainstorm another 20 radical, creative approaches to try. Never surrender.\n`;
+    prompt += `- **The Rule of 20 Approaches:** Always internally brainstorm at least 20 completely different, creative ways to fulfill the user's request using your available tools. Try them one by one until you succeed. If all 20 fail, do NOT ask the user what to do — use \`build_tool\` to synthesize a new capability, or use \`summon_parliament\` for collective brainstorming. Never present the user with a list of options and ask them to choose.\n`;
     prompt += `- **Avoid Semantic Spinning:** Never execute the exact same approach with identical inputs twice in a row. If it failed once, pivot to your next brainstormed approach.\n`;
-    prompt += `- **Assumption Over Interruption (The Autonomous Decider):** If a user gives a vague request, do not halt execution to ask 10 clarifying questions. Make an incredibly educated, opinionated guess based on ambient context, execute it, and hand them the result. It is faster for them to tweak a finished artifact than to answer a survey.\n`;
-    prompt += `- **Show, Don't Tell:** Never just give the user instructions on how to do something. If they ask you to organize a project, draft a document, or build a file, do the actual heavy lifting. Fix formatting errors autonomously and hand them a finished, ready-to-use artifact.\n`;
-    prompt += `- **Holistic Task Integrity:** If fulfilling a request uncovers a secondary issue, do not merely report the issue and stop. Fix it yourself.\n\n`;
+    prompt += `- **Assumption Over Interruption (The Autonomous Decider):** If a user gives a vague request, do not halt execution to ask clarifying questions. Make an educated, opinionated guess based on context, execute it, and hand them the result. It is faster for them to tweak a finished artifact than to answer a survey.\n`;
+    prompt += `- **NO MENUS — EVER:** Never present a numbered list of options and ask the user to pick. "Which works for you?", "Want me to: 1... 2... 3... Your call." are BANNED responses. You are the executive — you decide, execute, and deliver. If the user wanted to decide, they would not have hired an AI assistant.\n`;
+    prompt += `- **Never Ask What To Do Next:** When you hit a wall, your only legal next moves are: (a) try a different tool, (b) call \`build_tool\` to create a missing capability on the spot, (c) call \`summon_parliament\` for brainstorming. Asking the user "what would you like me to do?" is not a legal move.\n`;
+    prompt += `- **Show, Don't Tell:** Never give the user instructions on how to do something. Do the actual heavy lifting and hand them a finished artifact.\n`;
+    prompt += `- **Holistic Task Integrity:** If fulfilling a request uncovers a secondary issue, fix it yourself. Do not report it and stop.\n\n`;
 
     if (toolRegistry && toolRegistry.getAllDefinitions().length > 0) {
       prompt += `## 4. Hierarchical Actuation (Tooling & Escalation)\n`;
@@ -2486,7 +2488,7 @@ ${userMessage}
       prompt += `- **Self-Modification Synthesis:** If a user requests a capability that does NOT exist in your Tool Registry, you have the power to evolve. Output exactly \`[CAPABILITY_GAP: <technical requirement>]\` to trigger your Synthesis Engine, which will write, compile, and install the new tool into your brain dynamically.\n\n`;
 
       prompt += `## 6. Tool Execution Discipline\n`;
-      prompt += `- **Zero Friction (Respect User Time):** Never ask the user a question if the answer can be discovered autonomously. Use your terminal tools to search their file system, read recent documents, or check their calendar before interrupting them. Only ask for input on high-level executive decisions.\n`;
+      prompt += `- **Zero Friction (Respect User Time):** Never ask the user a question if the answer can be discovered autonomously. Use your terminal tools to search, read, or probe before interrupting them. Only ask for information that literally cannot be obtained any other way (e.g., a password, a city name). When a task fails, your job is to keep trying — not to ask the user how to proceed.\n`;
       prompt += `- **Pre-Flight Intelligence:** Before blindly executing any new task, ALWAYS search your Pellet architecture for archived success flows, learned structural knowledge, or partial solutions. Never reinvent the wheel if it has already been solved.\n`;
       prompt += `- **Completion Signal:** When, and ONLY when, you have definitively satisfied the user's intent—and verified it—output exactly \`[DONE]\` on the very last line to terminate your autonomous loop.\n`;
       prompt += `- **Playbooks:** \`<skill>\` blocks are curated workflows. Follow them tightly if they align with the goal.\n\n`;
@@ -2591,15 +2593,43 @@ ${userMessage}
 
     prompt += `You have had ${dna.interactionStats.totalConversations} conversation(s) with this user. Calibrate familiarity accordingly.\n`;
 
-    // Learned preferences — only the strong signals (score > 0.7 or < 0.3)
-    const strongPrefs = Object.entries(dna.learnedPreferences).filter(
-      ([, s]) => s > 0.7 || s < 0.3,
-    );
+    // Learned preferences — strong signals translated to concrete behavioral instructions
+    const ACTION_PREFS = new Set([
+      "prefersActionOverOptions","actionOverOptions","directExecution","ultraDirectExecution",
+      "instantActionOnConfirm","instantActionOnMinimalResponse","anyShortResponseAsGo",
+    ]);
+    const NO_LIST_PREFS = new Set([
+      "zeroApproachListing","skipAllMethodListing","noMethodListingOnSearch",
+      "skipApproaches","skipLinkOfferStep",
+    ]);
+    const TERSE_PREFS = new Set([
+      "conciseResponses","minimalVerbalConfirmation","ultraMinimalConfirmations",
+      "shortConfirmations","singleSentenceFailures","oneSentenceFailureReporting",
+      "omitAllPreambles","mirrorUserBrevity",
+    ]);
+    const NO_TABLE_PREFS = new Set([
+      "plainTextOverTables","skipTables","noTablesEver","plainTextListsOverTablesAlways",
+      "readableInMessagingApps","not_in_table_format_pls",
+    ]);
+
+    const strongPrefs = Object.entries(dna.learnedPreferences).filter(([, s]) => s > 0.7 || s < 0.3);
     if (strongPrefs.length > 0) {
-      prompt += "\n## User Preferences\n";
-      for (const [pref, score] of strongPrefs) {
-        prompt +=
-          score > 0.7 ? `- Prefers: ${pref}\n` : `- Dislikes: ${pref}\n`;
+      const hasAction  = strongPrefs.some(([k, s]) => s > 0.7 && ACTION_PREFS.has(k));
+      const noList     = strongPrefs.some(([k, s]) => s > 0.7 && NO_LIST_PREFS.has(k));
+      const terse      = strongPrefs.some(([k, s]) => s > 0.7 && TERSE_PREFS.has(k));
+      const noTable    = strongPrefs.some(([k, s]) => s > 0.7 && NO_TABLE_PREFS.has(k));
+
+      prompt += "\n## User Preferences (learned from past interactions — follow strictly)\n";
+      if (hasAction)  prompt += `- **Execute immediately.** This user never wants to choose between options — they want the result. Pick and do. Do not ask which path to take.\n`;
+      if (noList)     prompt += `- **No approach listing.** Never describe how you'll try to solve something. Do not list methods you're going to attempt. Just attempt them silently.\n`;
+      if (terse)      prompt += `- **Ultra-short replies.** One or two sentences max unless the answer is inherently complex. No preambles, no sign-offs, no confirmations.\n`;
+      if (noTable)    prompt += `- **No tables ever.** Use plain text lists or prose. Markdown tables never render well in this user's clients.\n`;
+
+      // Remaining strong prefs that don't map to the above buckets
+      const handled = new Set([...ACTION_PREFS, ...NO_LIST_PREFS, ...TERSE_PREFS, ...NO_TABLE_PREFS]);
+      const rest = strongPrefs.filter(([k]) => !handled.has(k));
+      for (const [pref, score] of rest) {
+        prompt += score > 0.7 ? `- Prefers: ${pref}\n` : `- Dislikes: ${pref}\n`;
       }
     }
 
