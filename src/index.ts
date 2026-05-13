@@ -19,6 +19,7 @@ process.on("unhandledRejection", (reason) => {
 
 import { resolve } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { program } from "commander";
 // log imported by adapters/gateway internally
@@ -169,7 +170,7 @@ import { LearningOrchestrator } from "./learning/orchestrator.js";
 import { MemoryReflexionEngine } from "./memory/reflexion.js";
 import { OwlInnerLife } from "./owls/inner-life.js";
 import { KnowledgeCouncil } from "./parliament/knowledge-council.js";
-import { ToolSynthesizer } from "./evolution/synthesizer.js";
+import { ToolSynthesizer, getSynthesizedDir } from "./evolution/synthesizer.js";
 import { CapabilityLedger } from "./evolution/ledger.js";
 import { DynamicToolLoader } from "./evolution/loader.js";
 import { EvolutionHandler } from "./evolution/handler.js";
@@ -692,8 +693,14 @@ async function bootstrap() {
   );
   ledger.setDb(memoryDb);
 
+  // Derive and ensure the synthesized tool directory exists
+  const synthesizedDir = getSynthesizedDir(config);
+  await mkdir(synthesizedDir, { recursive: true });
+  await mkdir(join(synthesizedDir, "tools"), { recursive: true });
+  await mkdir(join(synthesizedDir, "skills"), { recursive: true });
+
   // Load any previously synthesized tools into the registry
-  const synthesizedCount = await loader.loadAll(toolRegistry);
+  const synthesizedCount = await loader.loadAll(toolRegistry, synthesizedDir);
   if (synthesizedCount > 0) {
     log.engine.info(`[Init] Loaded ${synthesizedCount} synthesized tool(s) from previous sessions`);
   }

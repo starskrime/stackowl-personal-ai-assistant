@@ -13,7 +13,7 @@
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
@@ -29,7 +29,21 @@ const MIN_QUALITY_THRESHOLD = 0.6;
 const TARGET_QUALITY_THRESHOLD = 0.75;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** @deprecated Use getSynthesizedDir(config) instead. Kept for toolsmith.ts back-compat. */
 export const SYNTHESIZED_DIR = join(__dirname, "../tools/synthesized");
+
+/**
+ * Returns the synthesized tool directory from config, or falls back to
+ * <workspace>/synthesized. Always returns an absolute path.
+ */
+export function getSynthesizedDir(config: Pick<StackOwlConfig, "workspace" | "synthesis">): string {
+  if (config.synthesis?.synthesizedDir) {
+    return resolve(config.synthesis.synthesizedDir);
+  }
+  const workspaceBase = resolve(config.workspace ?? "./workspace");
+  return join(workspaceBase, "synthesized");
+}
 
 // ─── Skill Synthesis (primary path) ──────────────────────────────
 

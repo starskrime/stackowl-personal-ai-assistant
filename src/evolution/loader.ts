@@ -18,13 +18,14 @@ export class DynamicToolLoader {
    * Load all active synthesized tools at startup.
    * Returns the count of successfully loaded tools.
    */
-  async loadAll(registry: ToolRegistry): Promise<number> {
+  async loadAll(registry: ToolRegistry, synthesizedDir?: string): Promise<number> {
     await this.ledger.load();
     const active = this.ledger.listActive();
+    const dir = synthesizedDir ?? SYNTHESIZED_DIR;
     let loaded = 0;
 
     for (const record of active) {
-      const tsPath = join(SYNTHESIZED_DIR, record.fileName);
+      const tsPath = join(dir, record.fileName);
 
       if (!existsSync(tsPath)) {
         console.warn(

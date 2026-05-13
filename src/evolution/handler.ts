@@ -32,7 +32,7 @@ import { GapDetector } from "./detector.js";
 import {
   ToolSynthesizer,
   type ToolProposal,
-  SYNTHESIZED_DIR,
+  getSynthesizedDir,
 } from "./synthesizer.js";
 import { CapabilityNeedAssessor } from "./assessor.js";
 import { CapabilityLedger } from "./ledger.js";
@@ -193,7 +193,7 @@ export class EvolutionHandler {
         rationale: existing.rationale,
         dependencies: existing.dependencies,
         safetyNote: existing.safetyNote,
-        filePath: join(SYNTHESIZED_DIR, existing.fileName),
+        filePath: join(getSynthesizedDir(context.config), existing.fileName),
         owlName: existing.createdBy,
         owlEmoji: context.owl.persona.emoji,
         existingTool: true,

@@ -74,6 +74,11 @@ export interface StackOwlConfig {
     provider: string;
     /** Model to use for synthesis. Default: 'claude-sonnet-4-5-20241022' */
     model: string;
+    /**
+     * Directory where synthesized tools and skills are stored.
+     * Default: <workspace>/synthesized
+     */
+    synthesizedDir?: string;
   };
   /** MCP server connections */
   mcp?: {
