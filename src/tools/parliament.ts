@@ -61,42 +61,25 @@ export class SummonParliamentTool implements ToolImplementation {
       );
     }
 
-    const { provider, config, pelletStore, owlRegistry } =
-      context.engineContext;
+    const { provider, config, pelletStore } = context.engineContext;
 
-    if (!provider || !config || !pelletStore || !owlRegistry) {
+    if (!provider || !config || !pelletStore) {
       throw new Error(
-        "Tool execution failed: Missing required engine components (provider, config, pelletStore, or owlRegistry).",
+        "Tool execution failed: Missing required engine components (provider, config, or pelletStore).",
       );
     }
 
-    // Gather participants automatically from the registry
-    const preferredScns = ["Noctua", "Archimedes", "Scrooge", "Socrates"];
-    const participants = preferredScns
-      .map((name) => owlRegistry.get(name))
-      .filter(Boolean) as any[];
-
-    if (participants.length < 2) {
-      const allOwls = owlRegistry.listOwls();
-      if (allOwls.length >= 2) {
-        participants.length = 0;
-        participants.push(...allOwls.slice(0, 4));
-      } else {
-        // Fall back to BMAD agents from specializedRegistry
-        const specializedRegistry = context.engineContext.specializedRegistry;
-        const bmadAgents = specializedRegistry
-          ? specializedRegistry.listAll().filter((s: SpecializedOwlSpec) => s.source === "bmad")
-          : [];
-        if (allOwls.length + bmadAgents.length < 2) {
-          throw new Error(
-            "Parliament requires at least 2 participants. Add owls to workspace/owls/ or ensure BMAD agents are loaded.",
-          );
-        }
-        participants.length = 0;
-        participants.push(...allOwls);
-        participants.push(...bmadAgents.slice(0, 4 - allOwls.length).map(buildBmadParticipant));
-      }
+    // Parliament uses BMAD agents exclusively as participants
+    const specializedRegistry = context.engineContext.specializedRegistry;
+    const bmadAgents = specializedRegistry
+      ? specializedRegistry.listAll().filter((s: SpecializedOwlSpec) => s.source === "bmad")
+      : [];
+    if (bmadAgents.length < 2) {
+      throw new Error(
+        "Parliament requires at least 2 BMAD agents. Ensure bmad-method is installed and agents loaded.",
+      );
     }
+    const participants = bmadAgents.slice(0, 4).map(buildBmadParticipant);
 
     // Build streaming callbacks from engine context onProgress
     const onProgress = context.engineContext.onProgress;
