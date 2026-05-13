@@ -300,6 +300,13 @@ export async function probeCamoFoxAtBoot(
 // ─── Bootstrap StackOwl ──────────────────────────────────────────
 
 async function bootstrap() {
+  // Auto-update must run before any other initialization so that new migrations
+  // in the pulled code take effect on the restarted process, not the old one.
+  // This runs for every launch method (npm start, stackowl binary, Docker, etc.)
+  // — not just start.sh which is dev-only tooling.
+  const { tryAutoUpdate } = await import("./updater/auto-update.js");
+  await tryAutoUpdate();
+
   const basePath = resolve(homedir(), ".stackowl");
   mkdirSync(basePath, { recursive: true });
   const config = await loadConfig(basePath);
