@@ -33,8 +33,8 @@ export interface ValidatorResult {
 export function parseValidatorResponse(content: string): ValidatorResult {
   const upper = content.toUpperCase();
   let signal: ValidatorResult["signal"] = "UNCERTAIN";
-  if (upper.includes("INVALID")) signal = "INVALID";
-  else if (upper.includes("VALID")) signal = "VALID";
+  if (upper.includes("INVALID") && !upper.includes("NOT INVALID")) signal = "INVALID";
+  else if (upper.includes("VALID") && !upper.includes("NOT VALID")) signal = "VALID";
 
   const reasonMatch = content.match(/(?:VALID|INVALID|UNCERTAIN)[^\n]*?[—–-]\s*(.+)/i);
   const reason = reasonMatch ? reasonMatch[1].trim() : content.slice(0, 200).trim();

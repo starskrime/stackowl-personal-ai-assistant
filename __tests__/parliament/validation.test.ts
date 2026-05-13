@@ -117,4 +117,9 @@ describe("parseValidatorResponse", () => {
     const r = parseValidatorResponse("The synthesis is somewhat reasonable.");
     expect(r.signal).toBe("UNCERTAIN");
   });
+
+  it("treats NOT VALID as UNCERTAIN (not VALID)", () => {
+    const r = parseValidatorResponse("NOT VALID — the logic doesn't hold.");
+    expect(r.signal).not.toBe("VALID");
+  });
 });

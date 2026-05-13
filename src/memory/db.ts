@@ -328,7 +328,7 @@ export interface TrajectoryTurn {
   createdAt: string;
 }
 
-export type ParliamentVerdictSignal = "PROCEED" | "HOLD" | "ABORT" | "REVISE" | "PARLIAMENT_INCONCLUSIVE";
+export type ParliamentVerdictSignal = "PROCEED" | "HOLD" | "ABORT" | "REVISE" | "REJECT" | "PARLIAMENT_INCONCLUSIVE";
 export type ParliamentValidationSignal = "correct" | "wrong" | "partial";
 
 export interface ParliamentVerdictRecord {
