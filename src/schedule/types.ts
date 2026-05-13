@@ -14,5 +14,6 @@ export interface ScheduledJob {
     category?: string;
     channel?: string;
     userId?: string;
+    cronExpr?: string;
   };
 }

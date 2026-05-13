@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Cron } from "croner";
 import type { ToolImplementation, ToolContext } from "./registry.js";
 import type { ScheduleRunner } from "../schedule/runner.js";
 import type { ScheduleStore } from "../schedule/store.js";
@@ -35,12 +36,13 @@ export const ScheduleTool: ToolImplementation = {
     description:
       "Schedule reminders and recurring tasks. Natural language times: \"in 5 minutes\", \"in 2 hours\". " +
       "Durable: jobs survive process restarts (SQLite-backed). " +
-      'Example: schedule(action: "remind", when: "in 30 minutes", message: "Check deployment")',
+      'Example: schedule(action: "remind", when: "in 30 minutes", message: "Check deployment"). ' +
+      'For recurring tasks use cron expressions: schedule(action: "repeat", when: "0 22 * * *", message: "Daily at 10 PM")',
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["remind", "repeat", "cancel", "list"], description: "What to do" },
-        when: { type: "string", description: "For remind: \"in N minutes/hours/days\" or ISO 8601. For repeat: interval in ms." },
+        when: { type: "string", description: "For remind: \"in N minutes/hours/days\" or ISO 8601. For repeat: interval in ms OR cron expression (e.g. \"0 22 * * *\" for daily at 10 PM)." },
         message: { type: "string", description: "Message to deliver when the job fires" },
         id: { type: "string", description: "Job ID for cancel" },
       },
@@ -77,11 +79,30 @@ export const ScheduleTool: ToolImplementation = {
         return JSON.stringify({ success: true, data: { id: jobId, message: `Reminder scheduled for ${fireAt.toISOString()}` } });
       }
       case "repeat": {
-        if (!when) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "when (interval ms) is required" } });
+        if (!when) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "when (interval ms or cron expression) is required" } });
         if (!message) return JSON.stringify({ success: false, error: { code: "MISSING_ARG", message: "message is required" } });
-        const intervalMs = parseInt(when, 10);
-        if (isNaN(intervalMs) || intervalMs <= 0) return JSON.stringify({ success: false, error: { code: "INVALID_TIME", message: "when for repeat must be positive ms" } });
         const jobId = randomUUID();
+        // Detect cron expression: contains whitespace (not a plain number/natural-lang phrase)
+        const isCron = /\s/.test(when.trim()) && isNaN(Number(when));
+        if (isCron) {
+          let cronJob: InstanceType<typeof Cron>;
+          try {
+            cronJob = new Cron(when);
+          } catch {
+            return JSON.stringify({ success: false, error: { code: "INVALID_CRON", message: `Invalid cron expression: "${when}"` } });
+          }
+          const nextRun = cronJob.nextRun();
+          cronJob.stop();
+          if (!nextRun) return JSON.stringify({ success: false, error: { code: "INVALID_CRON", message: `Cron expression "${when}" has no future runs` } });
+          runnerRef.scheduleJob({
+            id: jobId, type: "repeat", message,
+            nextFireAt: nextRun.toISOString(),
+            createdAt: new Date().toISOString(), status: "active", metadata: { cronExpr: when },
+          });
+          return JSON.stringify({ success: true, data: { id: jobId, message: `Repeating on schedule "${when}", next at ${nextRun.toISOString()}` } });
+        }
+        const intervalMs = parseInt(when, 10);
+        if (isNaN(intervalMs) || intervalMs <= 0) return JSON.stringify({ success: false, error: { code: "INVALID_TIME", message: "when for repeat must be positive ms or a valid cron expression" } });
         runnerRef.scheduleJob({
           id: jobId, type: "repeat", intervalMs, message,
           nextFireAt: new Date(Date.now() + intervalMs).toISOString(),

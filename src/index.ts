@@ -395,7 +395,6 @@ async function bootstrap() {
   const toolRegistry = new ToolRegistry();
   // const { SessionsListTool, SessionsHistoryTool, SessionStatusTool } =
   //   await import("./compat/tools/sessions.js");  // Removed — replaced by Cycle 4 tools
-  const { CronTool } = await import("./compat/tools/cron.js");
   const { BrowserTool } = await import("./compat/tools/browser.js");
   const updateMemoryTool = new UpdateMemoryTool();
   toolRegistry.registerAll([
@@ -431,7 +430,6 @@ async function bootstrap() {
     // (MemorySearchTool/MemoryGetTool removed — canonical `memory` tool registered post-gateway)
     // (SessionsListTool, SessionsHistoryTool, SessionStatusTool from compat removed — replaced by Cycle 4 multi-agent versions above)
     // ── System ──
-    new CronTool(workspacePath),
     new SkillInstallTool(workspacePath),
     new CreateSkillTool(),
     updateMemoryTool,

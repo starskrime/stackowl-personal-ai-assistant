@@ -1,3 +1,4 @@
+import { Cron } from "croner";
 import { log } from "../logger.js";
 import type { ScheduleStore } from "./store.js";
 import type { ScheduledJob } from "./types.js";
@@ -74,11 +75,35 @@ export class ScheduleRunner {
       log.engine.error("[ScheduleRunner] notify failed", err as Error, { id: job.id });
     }
 
-    if (job.type === "repeat" && job.intervalMs) {
-      const nextFireAt = new Date(Date.now() + job.intervalMs).toISOString();
+    if (job.type === "repeat") {
+      const cronExpr = job.metadata?.cronExpr;
+      let nextFireAt: string;
+      let delayMs: number;
+      if (cronExpr) {
+        let nextRun: Date | null = null;
+        try {
+          const c = new Cron(cronExpr);
+          nextRun = c.nextRun();
+          c.stop();
+        } catch (err) {
+          log.engine.error("[ScheduleRunner] invalid cronExpr on repeat job", err as Error, { id: job.id, cronExpr });
+        }
+        if (!nextRun) {
+          this.store.update(job.id, { status: "expired" });
+          return;
+        }
+        nextFireAt = nextRun.toISOString();
+        delayMs = Math.max(0, nextRun.getTime() - Date.now());
+      } else if (job.intervalMs) {
+        nextFireAt = new Date(Date.now() + job.intervalMs).toISOString();
+        delayMs = job.intervalMs;
+      } else {
+        this.store.update(job.id, { status: "expired" });
+        return;
+      }
       const updated: ScheduledJob = { ...job, nextFireAt };
       this.store.update(job.id, { nextFireAt });
-      const timer = setTimeout(() => this.fire(updated), job.intervalMs);
+      const timer = setTimeout(() => this.fire(updated), delayMs);
       this.timers.set(job.id, timer);
     } else {
       this.store.update(job.id, { status: "fired" });
