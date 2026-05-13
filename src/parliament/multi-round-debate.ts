@@ -361,7 +361,9 @@ export class MultiRoundDebateManager {
       `1. Provide a clear recommendation (e.g., PROCEED, HOLD, ABORT, REVISE). ` +
       `2. Summarize the critical tradeoffs identified by the group. ` +
       `3. Suggest the concrete next step. ` +
-      `Do NOT give a non-answer. Make a call even if the group is divided.`;
+      `Do NOT give a non-answer. Make a call even if the group is divided.\n\n` +
+      `REQUIRED: End your response with exactly this format on its own line:\n` +
+      `CITED: [AgentName] — because [one sentence explaining which position most influenced your verdict]`;
 
     const sessionHistory = session.config.contextMessages.map((m) => ({
       role: m.role as import("../providers/base.js").MessageRole,
@@ -381,9 +383,15 @@ export class MultiRoundDebateManager {
       /\b(PROCEED|HOLD|ABORT|REVISE|APPROVE|REJECT)\b/i,
     );
     session.verdict = match ? match[1].toUpperCase() : "CONSENSUS_REACHED";
+    session.agentCitations = parseCitationFromSynthesis(response.content);
 
     if (cb?.onSynthesisReady) {
       await cb.onSynthesisReady(session.synthesis, session.verdict ?? "CONSENSUS_REACHED");
     }
   }
+}
+
+export function parseCitationFromSynthesis(content: string): string | undefined {
+  const match = content.match(/^CITED:\s*(.+)$/m);
+  return match ? match[1].trim() : undefined;
 }

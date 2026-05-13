@@ -63,4 +63,8 @@ export interface ParliamentSession {
   diversePair?: [OwlPosition, OwlPosition];
   /** Reasoning from DiversityFilter about why these two positions diverge most */
   diversityReasoning?: string;
+  /** Citations from the synthesizer: "AgentName — because one-sentence-reason" */
+  agentCitations?: string;
+  /** One-sentence reason from the adversarial validator (set by orchestrator). */
+  validatorReasoning?: string;
 }

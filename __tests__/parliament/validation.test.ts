@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { parseCitationFromSynthesis } from "../../src/parliament/multi-round-debate.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -82,5 +83,19 @@ describe("parliament_verdicts confidence_score", () => {
       // Expired verdict must not appear
       expect(results.find(r => r.id === id3)).toBeUndefined();
     } finally { cleanup(); }
+  });
+});
+
+describe("parseCitationFromSynthesis", () => {
+  it("extracts CITED line from synthesis response", () => {
+    const response = "PROCEED. The group agrees on the direction.\n\nCITED: Winston — because his risk assessment was most thorough.";
+    const result = parseCitationFromSynthesis(response);
+    expect(result).toBe("Winston — because his risk assessment was most thorough.");
+  });
+
+  it("returns undefined when no CITED line present", () => {
+    const response = "PROCEED. The group agrees.";
+    const result = parseCitationFromSynthesis(response);
+    expect(result).toBeUndefined();
   });
 });
