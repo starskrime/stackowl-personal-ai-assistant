@@ -146,6 +146,7 @@ export class ContextBuilder {
       tavilyApiKey: this.ctx.tavilyApiKey,
       relationshipContext: this.ctx.relationshipContext,
       intelligence: this.ctx.intelligence,
+      synthesizedDir: this.ctx.synthesizedDir,
     };
   }
 }

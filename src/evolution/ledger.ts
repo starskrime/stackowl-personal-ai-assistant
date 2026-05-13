@@ -198,9 +198,7 @@ export class CapabilityLedger {
 
       // At least one strong word match in the tool name → high confidence
       if (nameMatchCount >= 1) {
-        console.log(
-          `[Ledger] Tier-1 name match: "${tool.toolName}" (matched ${nameMatchCount} word(s))`,
-        );
+        log.cognition.debug("ledger.findExisting: tier-1 name match", { toolName: tool.toolName, matchedWords: nameMatchCount });
         return tool;
       }
     }
@@ -224,9 +222,7 @@ export class CapabilityLedger {
     }
 
     if (bestMatch) {
-      console.log(
-        `[Ledger] Tier-2 keyword match: "${bestMatch.toolName}" (score=${bestScore.toFixed(2)})`,
-      );
+      log.cognition.debug("ledger.findExisting: tier-2 keyword match", { toolName: bestMatch.toolName, score: bestScore.toFixed(2) });
     }
 
     return bestMatch;

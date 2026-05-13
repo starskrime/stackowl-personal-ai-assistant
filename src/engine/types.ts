@@ -32,6 +32,8 @@ export interface TurnRequest {
   activeSubGoal?: SubGoal;
   /** Original user message text — passed to GoalVerifier for context */
   userMessage?: string;
+  /** Optional: pre-resolved synthesized tools directory path. */
+  synthesizedDir?: string;
 }
 
 export interface FailedToolCall {

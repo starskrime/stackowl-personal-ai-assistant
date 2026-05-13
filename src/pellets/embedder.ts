@@ -73,7 +73,14 @@ export async function initEmbedder(): Promise<void> {
       _dim = probe.length;
       log.engine.info(`[Embedder] Ready — model: BGE-small-en-v1.5, dim: ${_dim}`);
     } catch (err) {
-      log.engine.warn(`[Embedder] Failed to initialize: ${err instanceof Error ? err.message : err}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      // ARM64 Linux: native tokenizer binary not bundled — expected, not actionable
+      const isArm64Missing = msg.includes("tokenizers-linux-arm64");
+      if (isArm64Missing) {
+        log.engine.debug("[Embedder] ARM64 native tokenizer unavailable — in-process embeddings disabled (semantic search falls back to provider)");
+      } else {
+        log.engine.warn(`[Embedder] Failed to initialize: ${msg}`);
+      }
       _embedder = null;
     }
   })();

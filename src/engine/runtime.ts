@@ -3048,7 +3048,7 @@ ${skillsContext}
       const registry = request.toolRegistry;
       const toolCtx = {
         cwd: process.cwd(),
-        synthesizedDir: (request as any).synthesizedDir,
+        synthesizedDir: request.synthesizedDir,
         engineContext: {
           activeSubGoal: request.activeSubGoal,
           userMessage: request.userMessage,

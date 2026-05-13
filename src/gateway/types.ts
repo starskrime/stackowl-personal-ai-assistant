@@ -406,4 +406,7 @@ export interface GatewayContext {
   // ─── Element 16e — Search escalation ─────────────────────────────
   camofox?: import("../browser/camofox-client.js").CamoFoxClient;
   tavilyApiKey?: string;
+
+  /** Absolute path to the synthesized tools/skills directory. Pre-resolved at bootstrap. */
+  synthesizedDir?: string;
 }
