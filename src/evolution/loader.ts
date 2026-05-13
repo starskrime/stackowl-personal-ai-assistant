@@ -6,9 +6,11 @@
  */
 
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { CapabilityLedger } from "./ledger.js";
+import { PythonAdapter } from "./python-adapter.js";
 import { SYNTHESIZED_DIR } from "./synthesizer.js";
 
 export class DynamicToolLoader {
@@ -35,7 +37,11 @@ export class DynamicToolLoader {
       }
 
       try {
-        await this.importAndRegister(tsPath, registry);
+        if (record.fileName.endsWith(".py")) {
+          await this.loadPython(tsPath, registry);
+        } else {
+          await this.importAndRegister(tsPath, registry);
+        }
         loaded++;
       } catch (err) {
         console.error(
@@ -54,7 +60,11 @@ export class DynamicToolLoader {
    * Throws an error with the detailed module loading failure reason if it fails.
    */
   async loadOne(filePath: string, registry: ToolRegistry): Promise<void> {
-    await this.importAndRegister(filePath, registry);
+    if (filePath.endsWith(".py")) {
+      await this.loadPython(filePath, registry);
+    } else {
+      await this.importAndRegister(filePath, registry);
+    }
   }
 
   private async importAndRegister(
@@ -76,5 +86,11 @@ export class DynamicToolLoader {
       // Re-throw so the caller (handler.ts) can feed this compile/load error back to the LLM
       throw err;
     }
+  }
+
+  private async loadPython(filePath: string, registry: ToolRegistry): Promise<void> {
+    const code = await readFile(filePath, "utf-8");
+    const tool = PythonAdapter.wrap(filePath, code);
+    registry.register(tool);
   }
 }

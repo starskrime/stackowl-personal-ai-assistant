@@ -45,6 +45,7 @@ import { WebFetchTool } from "./tools/web.js";
 import { ScheduleStore } from "./schedule/store.js";
 import { ScheduleRunner } from "./schedule/runner.js";
 import { attachSchedule } from "./tools/schedule.js";
+import { BuildToolTool, attachBuildTool } from "./tools/build-tool.js";
 import { SessionStore as ConversationSessionStore } from "./memory/store.js";
 import { SessionStore as MultiAgentSessionStore } from "./sessions/store.js";
 import { SessionRunner } from "./sessions/runner.js";
@@ -430,6 +431,7 @@ async function bootstrap() {
     // (MemorySearchTool/MemoryGetTool removed — canonical `memory` tool registered post-gateway)
     // (SessionsListTool, SessionsHistoryTool, SessionStatusTool from compat removed — replaced by Cycle 4 multi-agent versions above)
     // ── System ──
+    BuildToolTool,
     new SkillInstallTool(workspacePath),
     new CreateSkillTool(),
     updateMemoryTool,
@@ -698,6 +700,7 @@ async function bootstrap() {
     cliApprovalChannel,
   );
   ledger.setDb(memoryDb);
+  attachBuildTool(toolRegistry, ledger, synthesizedDir);
 
   // Ensure the synthesized tool directory tree exists
   try {

@@ -116,6 +116,44 @@ export class CapabilityLedger {
     await this.save();
   }
 
+  /** Record a Python tool created on-demand via the build_tool ReAct tool. */
+  async recordPython(opts: {
+    toolName: string;
+    fileName: string;
+    description: string;
+    createdBy: string;
+    rationale: string;
+    dependencies: string[];
+    safetyNote: string;
+  }): Promise<void> {
+    await this.ensureLoaded();
+    log.cognition.debug("ledger.recordPython: entry", { toolName: opts.toolName, fileName: opts.fileName });
+
+    const record: ToolRecord = {
+      toolName: opts.toolName,
+      fileName: opts.fileName,
+      description: opts.description,
+      createdAt: new Date().toISOString(),
+      createdBy: opts.createdBy,
+      rationale: opts.rationale,
+      dependencies: opts.dependencies,
+      safetyNote: opts.safetyNote,
+      timesUsed: 0,
+      status: "active",
+      consecutiveFailures: 0,
+    };
+
+    const idx = this.manifest.tools.findIndex((t) => t.toolName === opts.toolName);
+    if (idx >= 0) {
+      this.manifest.tools[idx] = record;
+    } else {
+      this.manifest.tools.push(record);
+    }
+
+    await this.save();
+    log.cognition.debug("ledger.recordPython: exit", { toolName: opts.toolName, status: "active" });
+  }
+
   async recordUsage(toolName: string, success: boolean): Promise<void> {
     await this.ensureLoaded();
     const record = this.manifest.tools.find((t) => t.toolName === toolName);
