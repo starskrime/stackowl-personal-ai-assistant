@@ -36,12 +36,23 @@ export const SYNTHESIZED_DIR = join(__dirname, "../tools/synthesized");
 /**
  * Returns the synthesized tool directory from config, or falls back to
  * <workspace>/synthesized. Always returns an absolute path.
+ *
+ * @param config   The config object (must have workspace and synthesis fields).
+ * @param basePath Optional base path to resolve a relative workspace against.
+ *                 Pass the bootstrap basePath (e.g. ~/.stackowl) so that
+ *                 `workspace: "./workspace"` resolves to the correct absolute dir.
+ *                 If omitted, falls back to resolve() against CWD (legacy behaviour).
  */
-export function getSynthesizedDir(config: Pick<StackOwlConfig, "workspace" | "synthesis">): string {
+export function getSynthesizedDir(
+  config: Pick<StackOwlConfig, "workspace" | "synthesis">,
+  basePath?: string,
+): string {
   if (config.synthesis?.synthesizedDir) {
     return resolve(config.synthesis.synthesizedDir);
   }
-  const workspaceBase = resolve(config.workspace ?? "./workspace");
+  const workspaceBase = basePath
+    ? resolve(basePath, config.workspace ?? "workspace")
+    : resolve(config.workspace ?? "./workspace");
   return join(workspaceBase, "synthesized");
 }
 
@@ -310,6 +321,8 @@ export class ToolSynthesizer {
     owl: OwlInstance,
     config: StackOwlConfig,
     synthesisModel?: string,
+    /** Pre-resolved absolute synthesized directory (avoids relative workspace ambiguity) */
+    resolvedSynthesizedDir?: string,
   ): Promise<ToolProposal> {
     const platformValue = platform.systemInfo.current().platform; // 'darwin' | 'linux' | 'win32'
 
@@ -374,7 +387,7 @@ export class ToolSynthesizer {
         ? (spec.dependencies as string[])
         : [],
       safetyNote: (spec.safetyNote as string | undefined) ?? "Unknown",
-      filePath: join(getSynthesizedDir(config), fileName),
+      filePath: join(resolvedSynthesizedDir ?? getSynthesizedDir(config), fileName),
       owlName: owl.persona.name,
       owlEmoji: owl.persona.emoji,
     };
@@ -497,8 +510,8 @@ export class ToolSynthesizer {
       code = fenceMatch[1].trim();
     }
 
-    // Write to synthesized directory
-    await mkdir(getSynthesizedDir(config), { recursive: true });
+    // Write to synthesized directory (use filePath's directory — already resolved correctly)
+    await mkdir(dirname(proposal.filePath), { recursive: true });
     await writeFile(proposal.filePath, code, "utf-8");
 
     return proposal.filePath;

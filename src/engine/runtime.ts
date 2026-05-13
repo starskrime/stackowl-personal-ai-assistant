@@ -167,6 +167,12 @@ export interface EngineContext {
    * at the next turn boundary. Propagated to provider call where supported.
    */
   signal?: AbortSignal;
+  /**
+   * Absolute path to the synthesized tools/skills directory.
+   * Pre-resolved at bootstrap from getSynthesizedDir(config, basePath) so that
+   * handlers never need to re-derive it from a potentially-relative config.workspace.
+   */
+  synthesizedDir?: string;
 }
 
 export interface PendingCapabilityGap {

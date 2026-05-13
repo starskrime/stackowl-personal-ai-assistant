@@ -193,7 +193,14 @@ export class EvolutionHandler {
         rationale: existing.rationale,
         dependencies: existing.dependencies,
         safetyNote: existing.safetyNote,
-        filePath: join(getSynthesizedDir(context.config), existing.fileName),
+        // context.cwd is the resolved workspacePath — use it so that a relative
+        // config.workspace doesn't resolve against CWD instead of basePath.
+        filePath: join(
+          context.cwd
+            ? join(context.cwd, "synthesized")
+            : getSynthesizedDir(context.config),
+          existing.fileName,
+        ),
         owlName: existing.createdBy,
         owlEmoji: context.owl.persona.emoji,
         existingTool: true,
@@ -211,12 +218,19 @@ export class EvolutionHandler {
 
     const { provider: synthesisProvider, model: synthesisModel } =
       this.resolveSynthesisProvider(context);
+    // Derive the pre-resolved synthesized dir: context.cwd is workspacePath (absolute),
+    // so synthesized dir is always <workspacePath>/synthesized regardless of how
+    // config.workspace is written in the JSON.
+    const resolvedSynthesizedDir = context.cwd
+      ? join(context.cwd, "synthesized")
+      : undefined;
     const proposal = await this.synthesizer.designSpec(
       capabilityGap,
       synthesisProvider,
       context.owl,
       context.config,
       synthesisModel,
+      resolvedSynthesizedDir,
     );
     log.evolution.evolve(
       `Spec ready: ${proposal.toolName} (deps: ${proposal.dependencies.join(", ") || "none"})`,

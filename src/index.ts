@@ -681,8 +681,12 @@ async function bootstrap() {
   }
 
   // Self-improvement system
+  // Derive the synthesized tool directory using basePath so that a relative
+  // workspace (e.g. "./workspace") resolves to ~/.stackowl/workspace/synthesized
+  // rather than <cwd>/workspace/synthesized.
+  const synthesizedDir = getSynthesizedDir(config, basePath);
   const synthesizer = new ToolSynthesizer();
-  const ledger = new CapabilityLedger();
+  const ledger = new CapabilityLedger(synthesizedDir);
   const loader = new DynamicToolLoader(ledger);
   const evolution = new EvolutionHandler(
     synthesizer,
@@ -693,11 +697,15 @@ async function bootstrap() {
   );
   ledger.setDb(memoryDb);
 
-  // Derive and ensure the synthesized tool directory exists
-  const synthesizedDir = getSynthesizedDir(config);
-  await mkdir(synthesizedDir, { recursive: true });
-  await mkdir(join(synthesizedDir, "tools"), { recursive: true });
-  await mkdir(join(synthesizedDir, "skills"), { recursive: true });
+  // Ensure the synthesized tool directory tree exists
+  try {
+    await mkdir(synthesizedDir, { recursive: true });
+    await mkdir(join(synthesizedDir, "tools"), { recursive: true });
+    await mkdir(join(synthesizedDir, "skills"), { recursive: true });
+  } catch (err) {
+    log.engine.error("bootstrap: failed to create synthesized dirs", err as Error, { synthesizedDir });
+    // non-fatal: continue startup
+  }
 
   // Load any previously synthesized tools into the registry
   const synthesizedCount = await loader.loadAll(toolRegistry, synthesizedDir);

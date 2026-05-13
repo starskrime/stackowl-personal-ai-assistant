@@ -2,7 +2,11 @@
  * StackOwl — Capability Ledger
  *
  * Tracks all AI-synthesized tools: what was built, why, by whom,
- * and how well it's performing. Persists to src/tools/synthesized/_manifest.json.
+ * and how well it's performing. Persists to <synthesizedDir>/_manifest.json.
+ *
+ * The synthesized dir is injected at construction time via the constructor
+ * argument so that the manifest always co-locates with the tool files,
+ * regardless of the configured workspace path.
  */
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -10,8 +14,6 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { SYNTHESIZED_DIR } from "./synthesizer.js";
 import type { ToolProposal } from "./synthesizer.js";
-
-const MANIFEST_PATH = join(SYNTHESIZED_DIR, "_manifest.json");
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -49,19 +51,33 @@ export class CapabilityLedger {
   private manifest: Manifest = { version: 1, tools: [] };
   private loaded = false;
   private db?: import("../memory/db.js").MemoryDatabase;
+  /** Absolute path to _manifest.json inside the synthesized tools directory. */
+  private readonly manifestPath: string;
+  /** Absolute path to the synthesized tools directory (used for mirror writes). */
+  private readonly synthesizedDir: string;
+
+  /**
+   * @param synthesizedDir Absolute path to the synthesized tools directory.
+   *                       Defaults to the legacy source-tree constant so that
+   *                       callers that haven't migrated yet still work.
+   */
+  constructor(synthesizedDir: string = SYNTHESIZED_DIR) {
+    this.synthesizedDir = synthesizedDir;
+    this.manifestPath = join(synthesizedDir, "_manifest.json");
+  }
 
   setDb(db: import("../memory/db.js").MemoryDatabase): void {
     this.db = db;
   }
 
   async load(): Promise<void> {
-    if (!existsSync(MANIFEST_PATH)) {
+    if (!existsSync(this.manifestPath)) {
       this.manifest = { version: 1, tools: [] };
       this.loaded = true;
       return;
     }
     try {
-      const raw = await readFile(MANIFEST_PATH, "utf-8");
+      const raw = await readFile(this.manifestPath, "utf-8");
       this.manifest = JSON.parse(raw);
     } catch {
       this.manifest = { version: 1, tools: [] };
@@ -120,7 +136,7 @@ export class CapabilityLedger {
     // Mirror usage counts into SynthesisMemory (keyed by file path)
     if (this.db) {
       try {
-        const filePath = join(SYNTHESIZED_DIR, record.fileName);
+        const filePath = join(this.synthesizedDir, record.fileName);
         this.db.synthesisMemory.recordUse(filePath, success);
       } catch { /* non-fatal */ }
     }
@@ -239,9 +255,9 @@ export class CapabilityLedger {
   }
 
   private async save(): Promise<void> {
-    await mkdir(SYNTHESIZED_DIR, { recursive: true });
+    await mkdir(this.synthesizedDir, { recursive: true });
     await writeFile(
-      MANIFEST_PATH,
+      this.manifestPath,
       JSON.stringify(this.manifest, null, 2),
       "utf-8",
     );
