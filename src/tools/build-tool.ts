@@ -110,6 +110,8 @@ export const BuildToolTool: ToolImplementation = {
     const dependencies = Array.isArray(args["dependencies"])
       ? (args["dependencies"] as string[])
       : [];
+    const depsInstalled: string[] = [];
+    const depsSkipped: string[] = [];
 
     log.tool.debug("build-tool.execute: entry", { toolName, description, codeLen: rawCode.length, dependencies });
 
@@ -142,23 +144,51 @@ export const BuildToolTool: ToolImplementation = {
     }
     log.tool.debug("build-tool.execute: safety check passed", { toolName });
 
-    // ── 4. Install pip dependencies (host shell) ──────────────────
+    // ── 4. Install pip dependencies (host shell, per-package with pre-check) ──
     if (dependencies.length > 0) {
-      log.tool.debug("build-tool.execute: installing dependencies", { toolName, dependencies });
-      try {
-        const { stdout, stderr } = await execFileAsync(
-          "pip3",
-          ["install", "--quiet", ...dependencies],
-          { timeout: 60_000 },
-        );
-        log.tool.debug("build-tool.execute: pip install done", { toolName, stdout: stdout.slice(0, 200), stderr: stderr.slice(0, 200) });
-      } catch (err) {
-        log.tool.error("build-tool.execute: pip install failed", err as Error, { toolName, dependencies });
-        return JSON.stringify({
-          success: false,
-          error: { code: "INSTALL_FAILED", message: `pip3 install failed: ${(err as Error).message}` },
-        });
+      log.tool.debug("build-tool.execute: processing dependencies", { toolName, dependencies });
+      const installed = depsInstalled;
+      const skipped = depsSkipped;
+
+      for (const pkg of dependencies) {
+        // Python module name: yt-dlp → yt_dlp, Pillow → PIL, etc.
+        const importName = pkg.replace(/-/g, "_").split("==")[0]!;
+
+        // Pre-check: if already importable, skip pip entirely
+        log.tool.debug("build-tool.execute: pre-checking package", { toolName, pkg, importName });
+        const alreadyInstalled = await execFileAsync(
+          "python3",
+          ["-c", `import ${importName}`],
+          { timeout: 5_000 },
+        ).then(() => true).catch(() => false);
+
+        if (alreadyInstalled) {
+          log.tool.debug("build-tool.execute: package already importable, skipping install", { toolName, pkg });
+          skipped.push(pkg);
+          continue;
+        }
+
+        // Install: --user avoids permission issues, SIGKILL ensures timeout is respected
+        log.tool.debug("build-tool.execute: installing package", { toolName, pkg });
+        try {
+          const { stderr } = await execFileAsync(
+            "pip3",
+            ["install", "--user", "--quiet", pkg],
+            { timeout: 90_000, killSignal: "SIGKILL" },
+          );
+          if (stderr) log.tool.warn("build-tool.execute: pip stderr", { toolName, pkg, stderr: stderr.slice(0, 300) });
+          installed.push(pkg);
+          log.tool.debug("build-tool.execute: package installed", { toolName, pkg });
+        } catch (err) {
+          log.tool.error("build-tool.execute: pip install failed", err as Error, { toolName, pkg });
+          return JSON.stringify({
+            success: false,
+            error: { code: "INSTALL_FAILED", message: `pip3 install ${pkg} failed: ${(err as Error).message}` },
+          });
+        }
       }
+
+      log.tool.debug("build-tool.execute: dependency step complete", { toolName, installed, skipped });
     } else {
       log.tool.debug("build-tool.execute: no dependencies to install", { toolName });
     }
@@ -236,7 +266,8 @@ export const BuildToolTool: ToolImplementation = {
         registeredName,
         filePath,
         message: `Tool "${registeredName}" built, registered, and ready to use. Call it now.`,
-        depsInstalled: dependencies.length > 0 ? dependencies : undefined,
+        depsInstalled: depsInstalled.length > 0 ? depsInstalled : undefined,
+        depsSkipped: depsSkipped.length > 0 ? depsSkipped : undefined,
         durationMs,
       },
     });
