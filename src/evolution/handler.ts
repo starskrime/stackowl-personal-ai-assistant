@@ -21,6 +21,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type {
   OwlEngine,
@@ -43,7 +44,7 @@ export type ApprovalCallback = (request: ApprovalRequest) => Promise<"approved" 
 import type { Skill } from "../skills/types.js";
 import type { ModelProvider } from "../providers/base.js";
 import { log } from "../logger.js";
-import type { ApprovalChannel } from "./critical-tools-guard.js";
+import { CriticalToolsGuard, type ApprovalChannel } from "./critical-tools-guard.js";
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -606,6 +607,17 @@ export class EvolutionHandler {
     let lastError: string | undefined;
     let filePath = "";
 
+    // ── Critical tools permission guard — created once before retry loop ──
+    // Using a single instance preserves the in-memory grant cache across retries,
+    // so the user is not re-prompted if the same tool is rebuilt on a subsequent attempt.
+    const permissionsFile = join(
+      context.synthesizedDir ?? getSynthesizedDir(context.config),
+      ".permissions.json",
+    );
+    const guard = this.approvalChannel
+      ? new CriticalToolsGuard(permissionsFile, this.approvalChannel)
+      : null;
+
     while (attempt <= MAX_RETRIES) {
       try {
         await progress(
@@ -656,15 +668,8 @@ export class EvolutionHandler {
         }
 
         // ── Critical tools permission gate ──────────────────────────
-        if (this.approvalChannel && filePath) {
-          const permissionsFile = join(
-            context.synthesizedDir ?? getSynthesizedDir(context.config),
-            ".permissions.json",
-          );
-          const { CriticalToolsGuard } = await import("./critical-tools-guard.js");
-          const { readFile: readFileFsPromises } = await import("node:fs/promises");
-          const code = await readFileFsPromises(filePath, "utf-8");
-          const guard = new CriticalToolsGuard(permissionsFile, this.approvalChannel);
+        if (guard && filePath) {
+          const code = await readFile(filePath, "utf-8");
           const approved = await guard.check(proposal.toolName, code);
           if (!approved) {
             log.synthesis.warn("critical-tools-guard: user denied dangerous tool", {

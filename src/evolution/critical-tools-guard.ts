@@ -44,8 +44,13 @@ export class CriticalToolsGuard {
    * An empty array means the code is safe.
    */
   static detectDangerousPatterns(code: string): string[] {
+    // Strip comments to avoid false positives (e.g., "// does NOT use child_process")
+    const strippedCode = code
+      .replace(/\/\/[^\n]*/g, "")          // single-line comments
+      .replace(/\/\*[\s\S]*?\*\//g, "");   // block comments
+
     return DANGEROUS_PATTERNS
-      .filter(({ regex }) => regex.test(code))
+      .filter(({ regex }) => regex.test(strippedCode))
       .map(({ name }) => name);
   }
 

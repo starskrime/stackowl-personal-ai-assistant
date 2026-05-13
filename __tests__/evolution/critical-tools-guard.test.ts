@@ -10,6 +10,7 @@ const permissionsFile = path.join(tmpDir, ".permissions.json");
 beforeEach(() => {
   fs.mkdirSync(tmpDir, { recursive: true });
   if (fs.existsSync(permissionsFile)) fs.unlinkSync(permissionsFile);
+  vi.mocked(mockChannel.ask).mockClear();
 });
 
 const mockChannel: ApprovalChannel = {
@@ -40,6 +41,18 @@ describe("CriticalToolsGuard.detectDangerousPatterns", () => {
     const patterns = CriticalToolsGuard.detectDangerousPatterns(code);
     expect(patterns).toHaveLength(0);
   });
+
+  it("does not flag dangerous keywords inside comments", () => {
+    const code = `// This tool does NOT use child_process\n// eval() is intentionally avoided\nconst x = 1 + 1;`;
+    const patterns = CriticalToolsGuard.detectDangerousPatterns(code);
+    expect(patterns).toHaveLength(0);
+  });
+
+  it("detects new Function usage", () => {
+    const code = `const fn = new Function("return 1");`;
+    const patterns = CriticalToolsGuard.detectDangerousPatterns(code);
+    expect(patterns).toContain("new Function");
+  });
 });
 
 describe("CriticalToolsGuard.check", () => {
@@ -67,12 +80,30 @@ describe("CriticalToolsGuard.check", () => {
     expect(result).toBe(false);
   });
 
-  it("does not ask again for a previously granted tool", async () => {
+  it("does not re-prompt in the same session (in-memory cache)", async () => {
     const guard = new CriticalToolsGuard(permissionsFile, mockChannel);
     const dangerous = `import { exec } from "node:child_process"; exec("cmd");`;
     await guard.check("my_tool", dangerous);          // first call — asks
     vi.mocked(mockChannel.ask).mockClear();
     await guard.check("my_tool", dangerous);          // second call — should NOT ask
+    expect(mockChannel.ask).not.toHaveBeenCalled();
+  });
+
+  it("does not ask again when grant is persisted to file (cross-session)", async () => {
+    // Session 1: grant the tool
+    const guard1 = new CriticalToolsGuard(permissionsFile, mockChannel);
+    const dangerous = `import { exec } from "node:child_process"; exec("cmd");`;
+    await guard1.check("my_tool", dangerous);
+    expect(mockChannel.ask).toHaveBeenCalledOnce();
+
+    // Verify file was written
+    expect(fs.existsSync(permissionsFile)).toBe(true);
+
+    // Session 2: new instance, should load from file and not ask
+    vi.mocked(mockChannel.ask).mockClear();
+    const guard2 = new CriticalToolsGuard(permissionsFile, mockChannel);
+    const result = await guard2.check("my_tool", dangerous);
+    expect(result).toBe(true);
     expect(mockChannel.ask).not.toHaveBeenCalled();
   });
 });
