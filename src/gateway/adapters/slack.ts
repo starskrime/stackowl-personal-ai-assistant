@@ -373,6 +373,35 @@ export class SlackAdapter implements ChannelAdapter {
       await respond({ text: msg });
     });
 
+    // ── /owl — owl management ──────────────────────────────────────────────
+    this.app.command("/owl", async ({ ack, respond, command }) => {
+      await ack();
+      log.gateway.debug("slack.owl: entry", { userId: command.user_id });
+      const parts = (command.text ?? "").trim().split(/\s+/).filter(Boolean);
+      const verb = parts[0] || "list";
+      const args = parts.slice(1);
+      const workspacePath = this.gateway.getWorkspacePath();
+      const registry = this.gateway.getSpecializedRegistry();
+      if (registry) await registry.loadAll(workspacePath);
+      log.gateway.debug("slack.owl: dispatching", { verb, args });
+
+      const { dispatchOwlCommand } = await import("../../gateway/commands/owl-command.js");
+      try {
+        const result = await dispatchOwlCommand(verb, args, {
+          registry: registry as any,
+          userId: command.user_id,
+          workspacePath,
+          gateway: this.gateway as any,
+        });
+        log.gateway.debug("slack.owl: exit", { result: result.slice(0, 50) });
+        await respond({ text: result });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.gateway.error("slack.owl: dispatch failed", err, { verb });
+        await respond({ text: `Error: ${msg}` });
+      }
+    });
+
   }
 
   // ─── Streaming (edit-in-place) ──────────────────────────────────
