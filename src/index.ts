@@ -63,6 +63,7 @@ import { RateLimiter } from "./ratelimit/index.js";
 import type { RateLimitRule } from "./ratelimit/index.js";
 import { OrchestrateTasksTool } from "./tools/orchestrate.js";
 import { SummonParliamentTool } from "./tools/parliament.js";
+import { SynthesizedCatalogTool } from "./tools/synthesized-catalog.js";
 import { PatchTool } from "./tools/toolsmith.js";
 import { ScreenshotTool } from "./tools/screenshot.js";
 // ── macOS native tools ──
@@ -418,6 +419,7 @@ async function bootstrap() {
     // ── Cognitive ──
     new SummonParliamentTool(),
     OrchestrateTasksTool,
+    SynthesizedCatalogTool,
     // ── Multi-agent Sessions (Cycle 4) ──
     SubagentsTool,
     SessionsStatusTool,

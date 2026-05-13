@@ -296,6 +296,13 @@ export class ToolRegistry {
   }
 
   /**
+   * Returns all registered tools. Used by catalog and diagnostics.
+   */
+  getAll(): ToolImplementation[] {
+    return Array.from(this.tools.values());
+  }
+
+  /**
    * Execute a tool by name with arguments.
    * Validates args against schema, checks permissions, truncates long results.
    */
