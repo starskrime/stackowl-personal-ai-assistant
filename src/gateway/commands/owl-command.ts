@@ -7,9 +7,18 @@
 
 import { rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import type { Database } from "better-sqlite3";
 import type { SpecializedOwlRegistry } from "../../owls/specialized-registry.js";
 import type { SpecializedOwlSpec } from "../../owls/specialized-types.js";
+import type { OwlInstance } from "../../owls/persona.js";
 import { log } from "../../logger.js";
+
+export interface GatewayMethods {
+  pinOwl?(userId: string, owlName: string): Promise<void>;
+  unpinOwl?(userId: string): Promise<void>;
+  getDb?(): Database | null;
+  getOwl?(): OwlInstance | null;
+}
 
 export interface OwlCommandContext {
   registry: SpecializedOwlRegistry;
@@ -18,7 +27,7 @@ export interface OwlCommandContext {
   channelAdapter?: {
     ask(userId: string, prompt: { text: string; choices?: string[]; defaultChoice?: string }): Promise<string>;
   };
-  gateway?: any;
+  gateway?: GatewayMethods;
 }
 
 export async function dispatchOwlCommand(
@@ -130,7 +139,11 @@ async function cmdStatus(ctx: OwlCommandContext): Promise<string> {
     return "Database not available.";
   }
   log.gateway.debug("dispatchOwlCommand.cmdStatus: fetching owl state", {});
-  const owl = gateway.getOwl();
+  const owl = gateway.getOwl?.();
+  if (!owl) {
+    log.gateway.debug("dispatchOwlCommand.cmdStatus: exit", { result: "no owl" });
+    return "Owl instance not available.";
+  }
   const { OwlStateReporter } = await import("../../intelligence/owl-state-reporter.js");
   const reporter = new OwlStateReporter(db);
   const dna = owl.dna.evolvedTraits as Record<string, unknown>;
@@ -254,11 +267,10 @@ async function cmdPin(name: string, ctx: OwlCommandContext): Promise<string> {
     log.gateway.debug("dispatchOwlCommand.cmdPin: exit", { result: "not found" });
     return `Owl "${name}" not found. Use /owl list to see available owls.`;
   }
-  const gw = ctx.gateway as any;
-  if (typeof gw?.pinOwl === "function") {
-    log.gateway.debug("dispatchOwlCommand.cmdPin: calling gw.pinOwl", { userId: ctx.userId, owlName: spec.name });
+  if (ctx.gateway?.pinOwl) {
+    log.gateway.debug("dispatchOwlCommand.cmdPin: calling gateway.pinOwl", { userId: ctx.userId, owlName: spec.name });
     try {
-      await gw.pinOwl(ctx.userId, spec.name);
+      await ctx.gateway.pinOwl(ctx.userId, spec.name);
     } catch (err) {
       log.gateway.error("dispatchOwlCommand.cmdPin: pinOwl failed", err, { userId: ctx.userId, owlName: spec.name });
     }
@@ -270,11 +282,10 @@ async function cmdPin(name: string, ctx: OwlCommandContext): Promise<string> {
 
 async function cmdUnpin(ctx: OwlCommandContext): Promise<string> {
   log.gateway.debug("dispatchOwlCommand.cmdUnpin: entry", { userId: ctx.userId });
-  const gw = ctx.gateway as any;
-  if (typeof gw?.unpinOwl === "function") {
-    log.gateway.debug("dispatchOwlCommand.cmdUnpin: calling gw.unpinOwl", { userId: ctx.userId });
+  if (ctx.gateway?.unpinOwl) {
+    log.gateway.debug("dispatchOwlCommand.cmdUnpin: calling gateway.unpinOwl", { userId: ctx.userId });
     try {
-      await gw.unpinOwl(ctx.userId);
+      await ctx.gateway.unpinOwl(ctx.userId);
     } catch (err) {
       log.gateway.error("dispatchOwlCommand.cmdUnpin: unpinOwl failed", err, { userId: ctx.userId });
     }

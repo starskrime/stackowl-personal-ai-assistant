@@ -3857,8 +3857,25 @@ export class StackOwlDB {
       this.db.pragma(`user_version = 31`);
     }
     if (current < 32) {
-      // v32: parliament_verdicts — add confidence_score, topic_class, expires_at,
-      //      validator_reasoning, agent_citations; add supporting indexes
+      // v32: parliament_verdicts — ensure table exists (StackOwlDB schema may not
+      //      include it), then add confidence_score, topic_class, expires_at,
+      //      validator_reasoning, agent_citations columns.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS parliament_verdicts (
+          id                  TEXT PRIMARY KEY,
+          session_id          TEXT NOT NULL,
+          topic               TEXT NOT NULL,
+          verdict             TEXT NOT NULL,
+          synthesis           TEXT,
+          participants        TEXT NOT NULL DEFAULT '[]',
+          validated           INTEGER NOT NULL DEFAULT 0,
+          validation_signal   TEXT,
+          validation_reward   REAL,
+          created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_pv_topic     ON parliament_verdicts(topic);
+        CREATE INDEX IF NOT EXISTS idx_pv_validated ON parliament_verdicts(validated);
+      `);
       const pvCols = this.db.prepare("PRAGMA table_info(parliament_verdicts)").all() as { name: string }[];
       const pvColNames = pvCols.map(c => c.name);
       if (!pvColNames.includes("confidence_score")) {
@@ -4317,8 +4334,25 @@ export function applyMigrations(db: Database.Database): void {
     `);
   }
   if (current < 32) {
-    // v32: parliament_verdicts — add confidence_score, topic_class, expires_at,
-    //      validator_reasoning, agent_citations; add supporting indexes
+    // v32: parliament_verdicts — ensure table exists (may be fresh DB that never
+    //      ran the class-based v7 migration), then add confidence_score,
+    //      topic_class, expires_at, validator_reasoning, agent_citations columns.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS parliament_verdicts (
+        id                  TEXT PRIMARY KEY,
+        session_id          TEXT NOT NULL,
+        topic               TEXT NOT NULL,
+        verdict             TEXT NOT NULL,
+        synthesis           TEXT,
+        participants        TEXT NOT NULL DEFAULT '[]',
+        validated           INTEGER NOT NULL DEFAULT 0,
+        validation_signal   TEXT,
+        validation_reward   REAL,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pv_topic     ON parliament_verdicts(topic);
+      CREATE INDEX IF NOT EXISTS idx_pv_validated ON parliament_verdicts(validated);
+    `);
     const pvCols = db.prepare("PRAGMA table_info(parliament_verdicts)").all() as { name: string }[];
     const pvColNames = pvCols.map(c => c.name);
     if (!pvColNames.includes("confidence_score")) {
