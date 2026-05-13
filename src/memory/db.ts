@@ -2918,13 +2918,13 @@ class ParliamentVerdictsRepo {
       .filter((w) => w.length >= 4)
       .slice(0, 10);
 
-    const expireFilter = `(expires_at IS NULL OR expires_at > ${nowSec})`;
+    const expireFilter = `(expires_at IS NULL OR expires_at > ?)`;
 
     if (words.length === 0) {
       const rows = this.db.prepare(
         `SELECT * FROM parliament_verdicts WHERE ${expireFilter}
          ORDER BY confidence_score DESC, created_at DESC LIMIT ?`
-      ).all(limit) as any[];
+      ).all(nowSec, limit) as any[];
       return rows.map(rowToParliamentVerdict);
     }
 
@@ -2935,7 +2935,7 @@ class ParliamentVerdictsRepo {
       `SELECT * FROM parliament_verdicts
        WHERE (${conditions}) AND ${expireFilter}
        ORDER BY confidence_score DESC, created_at DESC LIMIT ?`
-    ).all(...params, limit) as any[];
+    ).all(...params, nowSec, limit) as any[];
     return rows.map(rowToParliamentVerdict);
   }
 
