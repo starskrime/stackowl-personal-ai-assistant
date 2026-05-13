@@ -54,47 +54,6 @@ export function resolveOwl(
 
 // ─── Commands ─────────────────────────────────────────────────────
 
-const cmdHelper: CommandFn = async (args, ui, gateway) => {
-  const parts = args.trim().split(/\s+/).filter(Boolean);
-  const verb = parts[0] || "list";
-  const verbArgs = parts.slice(1);
-  const registry = gateway.getSpecializedRegistry();
-  if (registry) {
-    await registry.loadAll(gateway.getWorkspacePath());
-  }
-  const workspacePath = gateway.getWorkspacePath();
-  const { dispatchOwlCommand } = await import("../gateway/commands/owl-router.js");
-  const { OwlCreationWizard } = await import("../gateway/wizards/owl-creation.js");
-  const wizard = new OwlCreationWizard(workspacePath, undefined);
-  const adapter = {
-    ask: async (_userId: string, prompt: { text: string; choices?: string[]; defaultChoice?: string }) => {
-      const { default: readline } = await import("node:readline");
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const choices = prompt.choices ? `\n${prompt.choices.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}` : "";
-      return new Promise<string>((resolve) => {
-        rl.question(`${prompt.text}${choices}\n> `, (ans) => {
-          rl.close();
-          if (!ans && prompt.defaultChoice) resolve(prompt.defaultChoice);
-          else if (prompt.choices) {
-            const idx = parseInt(ans) - 1;
-            resolve(!isNaN(idx) && prompt.choices[idx] ? prompt.choices[idx] : ans);
-          }
-          else resolve(ans);
-        });
-      });
-    },
-  };
-  const result = await dispatchOwlCommand(verb, verbArgs, {
-    registry: registry as any,
-    wizard: wizard as any,
-    userId: "local",
-    channelAdapter: adapter as any,
-    workspacePath,
-  });
-  ui.printLines(["", ...result.split("\n"), ""]);
-  return true;
-};
-
 const cmdHelp: CommandFn = async (_args, ui) => {
   ui.printLines([
     "",
@@ -103,7 +62,6 @@ const cmdHelp: CommandFn = async (_args, ui) => {
     C("/help".padEnd(20)) + D("Show this list"),
     C("/status".padEnd(20)) + D("Provider, model, owl info"),
     C("/owls".padEnd(20)) + D("List owl personas"),
-    C("/helper".padEnd(20)) + D("Manage helpers"),
     C("/clear".padEnd(20)) + D("Clear conversation context"),
     C("/capabilities".padEnd(20)) + D("List synthesized tools"),
     C("/skills".padEnd(20)) + D("List or install skills"),
@@ -272,11 +230,6 @@ const COMMANDS: Record<string, CommandDef> = {
   "?": { description: "Show command list", fn: cmdHelp },
   status: { description: "Provider / model / owl info", fn: cmdStatus },
   owls: { description: "List owl personas", fn: cmdOwls },
-  helper: {
-    description: "Manage helpers",
-    fn: cmdHelper,
-    subcommands: ["list", "show", "create", "rename", "delete", "design", "capabilities"],
-  },
   skills: {
     description: "List or install skills",
     fn: async (_args, _ui, _gateway) => false,
