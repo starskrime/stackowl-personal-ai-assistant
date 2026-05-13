@@ -106,20 +106,20 @@ export class EvolutionHandler {
     if (context.providerRegistry) {
       try {
         const provider = context.providerRegistry.get(providerName);
-        log.evolution.info(
-          `[Synthesis] Using ${providerName}/${model} for tool generation`,
+        log.synthesis.info(
+          `resolveSynthesisProvider: using ${providerName}/${model}`,
         );
         return { provider, model };
       } catch {
-        log.evolution.warn(
-          `[Synthesis] Provider "${providerName}" not registered. Falling back to default provider.`,
+        log.synthesis.warn(
+          `resolveSynthesisProvider: provider "${providerName}" not registered, falling back to default`,
         );
       }
     }
 
     // Fallback to the context's default provider
-    log.evolution.warn(
-      `[Synthesis] No provider registry available. Using default provider with model ${model}.`,
+    log.synthesis.warn(
+      `resolveSynthesisProvider: no provider registry, using default with model ${model}`,
     );
     return { provider: context.provider, model };
   }
@@ -181,8 +181,8 @@ export class EvolutionHandler {
     gap: PendingCapabilityGap,
     context: EngineContext,
   ): Promise<ToolProposal & { existingTool?: boolean }> {
-    log.evolution.evolve(
-      `Designing spec for gap: "${gap.description.slice(0, 80)}"`,
+    log.synthesis.debug(
+      `designSpec: gap detected: "${gap.description.slice(0, 80)}"`,
     );
 
     // Add container awareness to the LLM prompt
@@ -191,8 +191,8 @@ export class EvolutionHandler {
     // Dedup: does a tool for this gap already exist?
     const existing = await this.ledger.findExisting(gap.userRequest);
     if (existing) {
-      log.evolution.info(
-        `Found existing tool: "${existing.toolName}" — skipping design`,
+      log.synthesis.info(
+        `designSpec: found existing tool: "${existing.toolName}" — skipping design`,
       );
       return {
         toolName: existing.toolName,
@@ -236,8 +236,8 @@ export class EvolutionHandler {
       synthesisModel,
       resolvedSynthesizedDir,
     );
-    log.evolution.evolve(
-      `Spec ready: ${proposal.toolName} (deps: ${proposal.dependencies.join(", ") || "none"})`,
+    log.synthesis.debug(
+      `designSpec: spec ready: ${proposal.toolName} (deps: ${proposal.dependencies.join(", ") || "none"})`,
     );
 
     // Add container detection to the proposal
@@ -354,8 +354,8 @@ export class EvolutionHandler {
         existingSkills,
         proposal.rationale, // Pass the gap description so CNA knows the engine already tried existing tools
       );
-      log.evolution.info(
-        `[CNA] verdict=${assessment.verdict} type=${assessment.requestType} — ${assessment.reasoning}`,
+      log.synthesis.debug(
+        `buildAndRetry: CNA verdict=${assessment.verdict} type=${assessment.requestType} — ${assessment.reasoning}`,
       );
 
       if (assessment.verdict === "SKIP") {
@@ -496,8 +496,8 @@ export class EvolutionHandler {
     });
 
     if (lang === "python") {
-      log.evolution.warn(
-        "No skills directory configured — falling back to Python synthesis (data-processing task detected)",
+      log.synthesis.warn(
+        `buildAndRetry: no skills dir configured, falling back to Python synthesis`,
       );
       return this.buildWithPython(
         proposal,
@@ -508,8 +508,8 @@ export class EvolutionHandler {
       );
     }
 
-    log.evolution.warn(
-      "No skills directory configured — falling back to TypeScript synthesis",
+    log.synthesis.warn(
+      `buildAndRetry: no skills dir configured, falling back to TypeScript synthesis`,
     );
     return this.buildWithTypeScript(
       proposal,
@@ -674,8 +674,8 @@ export class EvolutionHandler {
                 `npm install ${proposal.dependencies.join(" ")}`,
                 { cwd: PROJECT_ROOT },
               );
-              if (stdout) log.evolution.debug(`npm stdout: ${stdout.trim()}`);
-              if (stderr) log.evolution.warn(`npm stderr: ${stderr.trim()}`);
+              if (stdout) log.synthesis.debug(`buildWithTypeScript: npm stdout: ${stdout.trim()}`);
+              if (stderr) log.synthesis.warn(`buildWithTypeScript: npm stderr: ${stderr.trim()}`);
               await progress(`✅ npm install complete.`);
             } catch (err) {
               await progress(
