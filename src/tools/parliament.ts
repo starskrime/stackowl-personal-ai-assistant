@@ -4,7 +4,7 @@ import type {
   ToolDefinition,
 } from "./registry.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
-import type { ParliamentCallbacks } from "../parliament/protocol.js";
+import type { ParliamentCallbacks, ParliamentSession } from "../parliament/protocol.js";
 import { createDefaultDNA } from "../owls/persona.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
@@ -24,6 +24,32 @@ export function buildBmadParticipant(spec: SpecializedOwlSpec): OwlInstance {
     dna: createDefaultDNA(spec.name, spec.personality.challengeLevel),
     specialistPrompt: spec.additionalPrompt || undefined,
   } as OwlInstance;
+}
+
+export function buildAuditSummary(session: ParliamentSession): string {
+  const topic = session.config.topic.slice(0, 100);
+
+  const s1 = `Parliament debated: "${topic}."`;
+
+  const forPos = session.positions.find((p) => p.position === "FOR" || p.position === "CONDITIONAL");
+  const againstPos = session.positions.find((p) => p.position === "AGAINST");
+  let s2: string;
+  if (forPos && againstPos) {
+    s2 = `${forPos.owlEmoji} ${forPos.owlName} argued FOR; ${againstPos.owlEmoji} ${againstPos.owlName} argued AGAINST.`;
+  } else if (session.positions.length >= 2) {
+    const [a, b] = session.positions;
+    s2 = `${a.owlEmoji} ${a.owlName} said [${a.position}]; ${b.owlEmoji} ${b.owlName} said [${b.position}].`;
+  } else {
+    s2 = `${session.positions.length} position(s) presented.`;
+  }
+
+  const verdict = session.verdict ?? "PENDING";
+  const citationNote = session.agentCitations
+    ? ` (Cited: ${session.agentCitations.slice(0, 120)})`
+    : "";
+  const s3 = `Verdict: **${verdict}**${citationNote}.`;
+
+  return [s1, s2, s3].join(" ");
 }
 
 export class SummonParliamentTool implements ToolImplementation {
@@ -127,7 +153,14 @@ export class SummonParliamentTool implements ToolImplementation {
         callbacks,
       });
 
-      return orchestrator.formatSessionMarkdown(session);
+      const formatted = orchestrator.formatSessionMarkdown(session);
+
+      if (onProgress) {
+        const summary = buildAuditSummary(session);
+        await onProgress(`\n📋 **Parliament Audit Summary**\n${summary}`);
+      }
+
+      return formatted;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(`Parliament session failed: ${msg}`);

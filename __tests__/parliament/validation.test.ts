@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { parseCitationFromSynthesis } from "../../src/parliament/multi-round-debate.js";
 import { parseValidatorResponse } from "../../src/parliament/orchestrator.js";
+import { buildAuditSummary } from "../../src/tools/parliament.js";
+import type { ParliamentSession } from "../../src/parliament/protocol.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -142,5 +144,24 @@ describe("recall context injection", () => {
         expect(results[0].confidenceScore).toBeGreaterThanOrEqual(results[1].confidenceScore);
       }
     } finally { cleanup(); }
+  });
+});
+
+describe("buildAuditSummary", () => {
+  it("produces a 3-sentence summary from session data", () => {
+    const session: Partial<ParliamentSession> = {
+      config: { topic: "Should we use GraphQL?", participants: [], contextMessages: [] },
+      positions: [
+        { owlName: "Winston", owlEmoji: "🏗️", position: "FOR", argument: "Better developer experience." },
+        { owlName: "Mary", owlEmoji: "📊", position: "AGAINST", argument: "Adds complexity for simple APIs." },
+      ],
+      verdict: "HOLD",
+      agentCitations: "Winston — because his DX argument was most compelling.",
+    };
+    const summary = buildAuditSummary(session as ParliamentSession);
+    expect(summary).toContain("GraphQL");
+    expect(summary).toContain("Winston");
+    expect(summary).toContain("HOLD");
+    expect(summary.split(".").filter(s => s.trim().length > 0).length).toBeGreaterThanOrEqual(2);
   });
 });
