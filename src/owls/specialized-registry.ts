@@ -116,6 +116,11 @@ export class SpecializedOwlRegistry {
     await writeFile(dnaPath, JSON.stringify(dna, null, 2), "utf-8");
     this.dnaMap.set(owlName.toLowerCase(), dna);
   }
+
+  registerSpec(spec: SpecializedOwlSpec): void {
+    log.engine.debug("[SpecializedOwlRegistry] registerSpec", { name: spec.name, source: (spec as any).source });
+    this.specs.set(spec.name.toLowerCase(), spec);
+  }
 }
 
 // ─── Helper rebrand aliases (Element 17) ─────────────────────────
