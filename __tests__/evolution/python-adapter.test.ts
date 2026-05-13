@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as childProcessModule from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
@@ -28,7 +30,7 @@ if __name__ == "__main__":
     cwd = sys.argv[2]
     print(execute(args, cwd))
 `;
-    const tool = PythonAdapter.wrap("/tmp/csv_parser.py", code);
+    const tool = PythonAdapter.wrap(join(tmpdir(), "csv_parser.py"), code);
     expect(tool.definition.name).toBe("synth_csv_parser");
     expect(tool.definition.description).toBe("Parse a CSV file and return rows as JSON");
     expect(tool.source).toBe("synthesized");
@@ -59,7 +61,7 @@ if __name__ == "__main__":
       return {} as any;
     });
 
-    const tool = PythonAdapter.wrap("/tmp/tool.py", `# TOOL_NAME: synth_x\n# DESCRIPTION: x`);
+    const tool = PythonAdapter.wrap(join(tmpdir(), "tool.py"), `# TOOL_NAME: synth_x\n# DESCRIPTION: x`);
     const result = await tool.execute({}, mockContext);
     expect(result).toContain("ERROR");
     expect(result).toContain("python3 not found");

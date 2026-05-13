@@ -51,4 +51,22 @@ if __name__ == "__main__":
     expect(result.safe).toBe(true);
     expect(result.patterns).toHaveLength(0);
   });
+
+  it("does not flag forbidden keywords inside comments", () => {
+    const code = `# FORBIDDEN: subprocess, os.system, eval(), exec(), __import__()\nimport json\ndef execute(args, cwd): return json.dumps(args)`;
+    const result = PythonAnalyzer.analyze(code);
+    expect(result.safe).toBe(true);
+  });
+
+  it("flags os.popen", () => {
+    expect(PythonAnalyzer.analyze(`import os\nos.popen("ls")`).patterns).toContain("os.popen");
+  });
+
+  it("flags os.execv", () => {
+    expect(PythonAnalyzer.analyze(`import os\nos.execv("/bin/sh", [])`).patterns).toContain("os.execv");
+  });
+
+  it("flags ctypes", () => {
+    expect(PythonAnalyzer.analyze(`import ctypes`).patterns).toContain("ctypes");
+  });
 });

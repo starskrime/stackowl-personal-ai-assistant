@@ -771,7 +771,7 @@ export class EvolutionHandler {
 
   // ─── Language selection heuristic ────────────────────────────────
 
-  private selectSynthesisLanguage(gap: { description: string; userRequest: string }): "skill" | "typescript" | "python" {
+  private selectSynthesisLanguage(gap: { description: string; userRequest: string }): "typescript" | "python" {
     const desc = (gap.description + " " + gap.userRequest).toLowerCase();
     const pythonSignals = [
       "csv", "pandas", "numpy", "excel", "xlsx", "json transform",
@@ -806,6 +806,7 @@ export class EvolutionHandler {
 
     await progress(`🐍 Synthesizing Python tool: "${proposal.toolName}"`);
     log.synthesis.debug("handler.buildWithPython: entry", { toolName: proposal.toolName });
+    log.synthesis.debug("handler.buildWithPython: using provider", { provider: synthesisProvider.name ?? "default", model: synthesisModel, synthesisLanguage: "python" });
 
     const pythonSynth = new PythonSynthesizer();
     let { toolName, code } = await pythonSynth.generate(gap, synthesisProvider, synthesisModel);
@@ -814,11 +815,20 @@ export class EvolutionHandler {
     let analysis = PythonAnalyzer.analyze(code);
     if (!analysis.safe) {
       await progress(`⚠️ Unsafe patterns detected [${analysis.patterns.join(", ")}] — regenerating...`);
+      const originalPrompt =
+        `You are generating a Python tool for StackOwl.\n\n` +
+        `Capability needed: ${gap.description}\n` +
+        `User request: ${gap.userRequest}\n\n` +
+        `Output ONLY the complete Python file.`;
       const retryPrompt =
-        `The previous code contained forbidden patterns: ${analysis.patterns.join(", ")}. ` +
-        `Regenerate the tool without using any of these patterns.`;
+        `The code you generated contained forbidden patterns: ${analysis.patterns.join(", ")}.\n` +
+        `Please regenerate the complete Python tool WITHOUT using any of: subprocess, os.system, eval(), exec(), __import__, os.popen, ctypes.`;
       const retry = await synthesisProvider.chat(
-        [{ role: "user", content: retryPrompt }],
+        [
+          { role: "user", content: originalPrompt },
+          { role: "assistant", content: code },
+          { role: "user", content: retryPrompt },
+        ],
         synthesisModel,
       );
       code = retry.content.trim().replace(/^```python\n?|```$/gmu, "").trim();
@@ -861,9 +871,15 @@ export class EvolutionHandler {
 
     // Write to disk
     const toolsDir = join(synthesizedDir, "tools");
-    await mkdir(toolsDir, { recursive: true });
-    const filePath = join(toolsDir, `${toolName}.py`);
-    await writeFile(filePath, code, "utf-8");
+    const safeName = toolName.replace(/[^a-z0-9_]/giu, "_").slice(0, 64);
+    const filePath = join(toolsDir, `${safeName}.py`);
+    try {
+      await mkdir(toolsDir, { recursive: true });
+      await writeFile(filePath, code, "utf-8");
+    } catch (err) {
+      log.synthesis.error("handler.buildWithPython: writeFile failed", err as Error, { filePath, toolName });
+      throw err;
+    }
     await progress(`✅ ${toolName}.py written`);
 
     // Register via adapter
