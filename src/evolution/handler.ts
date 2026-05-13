@@ -43,6 +43,7 @@ export type ApprovalCallback = (request: ApprovalRequest) => Promise<"approved" 
 import type { Skill } from "../skills/types.js";
 import type { ModelProvider } from "../providers/base.js";
 import { log } from "../logger.js";
+import type { ApprovalChannel } from "./critical-tools-guard.js";
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -66,6 +67,7 @@ export class EvolutionHandler {
   private loader: DynamicToolLoader;
   private db?: import("../memory/db.js").MemoryDatabase;
   private owlRegistry?: import("../owls/registry.js").OwlRegistry;
+  private readonly approvalChannel?: ApprovalChannel;
 
   constructor(
     synthesizer: ToolSynthesizer,
@@ -73,12 +75,14 @@ export class EvolutionHandler {
     loader: DynamicToolLoader,
     db?: import("../memory/db.js").MemoryDatabase,
     owlRegistry?: import("../owls/registry.js").OwlRegistry,
+    approvalChannel?: ApprovalChannel,
   ) {
     this.synthesizer = synthesizer;
     this.ledger = ledger;
     this.loader = loader;
     this.db = db;
     this.owlRegistry = owlRegistry;
+    this.approvalChannel = approvalChannel;
   }
 
   /**
@@ -648,6 +652,31 @@ export class EvolutionHandler {
             }
           } else {
             await progress(`⏭️ Skipped npm install.`);
+          }
+        }
+
+        // ── Critical tools permission gate ──────────────────────────
+        if (this.approvalChannel && filePath) {
+          const permissionsFile = join(
+            context.synthesizedDir ?? getSynthesizedDir(context.config),
+            ".permissions.json",
+          );
+          const { CriticalToolsGuard } = await import("./critical-tools-guard.js");
+          const { readFile: readFileFsPromises } = await import("node:fs/promises");
+          const code = await readFileFsPromises(filePath, "utf-8");
+          const guard = new CriticalToolsGuard(permissionsFile, this.approvalChannel);
+          const approved = await guard.check(proposal.toolName, code);
+          if (!approved) {
+            log.synthesis.warn("critical-tools-guard: user denied dangerous tool", {
+              toolName: proposal.toolName,
+            });
+            await progress(`⛔ Tool "${proposal.toolName}" was not approved. Synthesis cancelled.`);
+            return {
+              filePath: "",
+              response: await engine.run(originalMessage, { ...context, skipGapDetection: true }),
+              depsToInstall: [],
+              depsInstalled: false,
+            };
           }
         }
 

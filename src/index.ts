@@ -174,6 +174,7 @@ import { ToolSynthesizer, getSynthesizedDir } from "./evolution/synthesizer.js";
 import { CapabilityLedger } from "./evolution/ledger.js";
 import { DynamicToolLoader } from "./evolution/loader.js";
 import { EvolutionHandler } from "./evolution/handler.js";
+import { cliApprovalChannel } from "./evolution/cli-approval-channel.js";
 import { SkillInstaller, parseInstallSource } from "./skills/installer.js";
 import { StackOwlServer } from "./server/index.js";
 import { OwlGateway } from "./gateway/core.js";
@@ -694,6 +695,7 @@ async function bootstrap() {
     loader,
     memoryDb,
     owlRegistry,
+    cliApprovalChannel,
   );
   ledger.setDb(memoryDb);
 
