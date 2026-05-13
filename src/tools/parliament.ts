@@ -5,6 +5,26 @@ import type {
 } from "./registry.js";
 import { ParliamentOrchestrator } from "../parliament/orchestrator.js";
 import type { ParliamentCallbacks } from "../parliament/protocol.js";
+import { createDefaultDNA } from "../owls/persona.js";
+import type { OwlInstance } from "../owls/persona.js";
+import type { SpecializedOwlSpec } from "../owls/specialized-types.js";
+
+export function buildBmadParticipant(spec: SpecializedOwlSpec): OwlInstance {
+  return {
+    persona: {
+      name: spec.name,
+      type: spec.type,
+      emoji: spec.emoji,
+      challengeLevel: spec.personality.challengeLevel,
+      specialties: spec.expertise,
+      traits: [],
+      systemPrompt: [spec.role, spec.additionalPrompt].filter(Boolean).join(". "),
+      sourcePath: "",
+    },
+    dna: createDefaultDNA(spec.name, spec.personality.challengeLevel),
+    specialistPrompt: spec.additionalPrompt || undefined,
+  } as OwlInstance;
+}
 
 export class SummonParliamentTool implements ToolImplementation {
   definition = {
@@ -58,13 +78,24 @@ export class SummonParliamentTool implements ToolImplementation {
 
     if (participants.length < 2) {
       const allOwls = owlRegistry.listOwls();
-      if (allOwls.length < 2) {
-        throw new Error(
-          "Parliament requires at least 2 owls to exist in the registry (check the workspace/owls directory).",
-        );
+      if (allOwls.length >= 2) {
+        participants.length = 0;
+        participants.push(...allOwls.slice(0, 4));
+      } else {
+        // Fall back to BMAD agents from specializedRegistry
+        const specializedRegistry = context.engineContext.specializedRegistry;
+        const bmadAgents = specializedRegistry
+          ? specializedRegistry.listAll().filter((s: SpecializedOwlSpec) => s.source === "bmad")
+          : [];
+        if (allOwls.length + bmadAgents.length < 2) {
+          throw new Error(
+            "Parliament requires at least 2 participants. Add owls to workspace/owls/ or ensure BMAD agents are loaded.",
+          );
+        }
+        participants.length = 0;
+        participants.push(...allOwls);
+        participants.push(...bmadAgents.slice(0, 4 - allOwls.length).map(buildBmadParticipant));
       }
-      participants.length = 0;
-      participants.push(...allOwls.slice(0, 4));
     }
 
     // Build streaming callbacks from engine context onProgress

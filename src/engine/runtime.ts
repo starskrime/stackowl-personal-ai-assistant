@@ -173,6 +173,8 @@ export interface EngineContext {
    * handlers never need to re-derive it from a potentially-relative config.workspace.
    */
   synthesizedDir?: string;
+  /** Specialized owl registry — BMAD agents and custom specialists */
+  specializedRegistry?: import("../owls/specialized-registry.js").SpecializedOwlRegistry;
 }
 
 export interface PendingCapabilityGap {
