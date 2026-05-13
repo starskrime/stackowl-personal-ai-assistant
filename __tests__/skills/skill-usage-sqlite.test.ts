@@ -22,7 +22,7 @@ afterEach(() => {
 describe('Q2: skill_usage SQLite persistence', () => {
   it('creates skill_usage table at v29', () => {
     const version = db.rawDb.pragma('user_version', { simple: true }) as number
-    expect(version).toBe(30)
+    expect(version).toBe(32)
     const tables = (db.rawDb.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='skill_usage'`
     ).all() as Array<{ name: string }>)

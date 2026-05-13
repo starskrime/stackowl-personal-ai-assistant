@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 32;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -343,6 +343,16 @@ export interface ParliamentVerdictRecord {
   validationSignal?: ParliamentValidationSignal;
   /** Reward from the trajectory that followed this verdict */
   validationReward?: number;
+  /** Confidence score 0.0–1.0. Warm start 0.6, updated by validator and user signal. */
+  confidenceScore: number;
+  /** "tactical" | "architectural" — controls decay rate */
+  topicClass: string;
+  /** Unix timestamp after which this verdict is excluded from recall. null = never. */
+  expiresAt?: number;
+  /** One-sentence reason from the adversarial validator. */
+  validatorReasoning?: string;
+  /** JSON: array of {agentName, claim} cited by the synthesizer. */
+  agentCitations?: string;
   createdAt: string;
 }
 
@@ -924,10 +934,17 @@ export class MemoryDatabase {
         validated           INTEGER NOT NULL DEFAULT 0,
         validation_signal   TEXT,
         validation_reward   REAL,
+        confidence_score    REAL NOT NULL DEFAULT 0.6,
+        topic_class         TEXT NOT NULL DEFAULT 'tactical',
+        expires_at          INTEGER,
+        validator_reasoning TEXT,
+        agent_citations     TEXT,
         created_at          TEXT NOT NULL DEFAULT (datetime('now'))
       );
-      CREATE INDEX IF NOT EXISTS idx_pv_topic     ON parliament_verdicts(topic);
-      CREATE INDEX IF NOT EXISTS idx_pv_validated ON parliament_verdicts(validated);
+      CREATE INDEX IF NOT EXISTS idx_pv_topic       ON parliament_verdicts(topic);
+      CREATE INDEX IF NOT EXISTS idx_pv_validated   ON parliament_verdicts(validated);
+      CREATE INDEX IF NOT EXISTS idx_pv_confidence  ON parliament_verdicts(confidence_score DESC);
+      CREATE INDEX IF NOT EXISTS idx_pv_expires     ON parliament_verdicts(expires_at);
 
       CREATE TABLE IF NOT EXISTS agent_goals (
         id                TEXT PRIMARY KEY,
@@ -1447,6 +1464,32 @@ export class MemoryDatabase {
     if (current < 30) {
       applyV30UnifiedMemoryColumnsMigration(this.db);
       this.db.pragma(`user_version = 30`);
+    }
+    if (current < 32) {
+      // v32: parliament_verdicts — add confidence_score, topic_class, expires_at,
+      //      validator_reasoning, agent_citations; add supporting indexes
+      const pvCols = this.db.prepare("PRAGMA table_info(parliament_verdicts)").all() as { name: string }[];
+      const pvColNames = pvCols.map(c => c.name);
+      if (!pvColNames.includes("confidence_score")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.6");
+      }
+      if (!pvColNames.includes("topic_class")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN topic_class TEXT NOT NULL DEFAULT 'tactical'");
+      }
+      if (!pvColNames.includes("expires_at")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN expires_at INTEGER");
+      }
+      if (!pvColNames.includes("validator_reasoning")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN validator_reasoning TEXT");
+      }
+      if (!pvColNames.includes("agent_citations")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN agent_citations TEXT");
+      }
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_pv_confidence ON parliament_verdicts(confidence_score DESC);
+        CREATE INDEX IF NOT EXISTS idx_pv_expires    ON parliament_verdicts(expires_at);
+      `);
+      this.db.pragma(`user_version = 32`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
@@ -2807,17 +2850,33 @@ class ParliamentVerdictsRepo {
     verdict: ParliamentVerdictSignal,
     participants: string[],
     synthesis?: string,
+    options?: {
+      confidenceScore?: number;
+      topicClass?: string;
+      expiresAt?: number;
+      agentCitations?: string;
+    },
   ): string {
     const id = uuidv4();
+    const confidenceScore = options?.confidenceScore ?? 0.6;
+    const topicClass = options?.topicClass ?? "tactical";
+    const expiresAt = options?.expiresAt ?? null;
+    const agentCitations = options?.agentCitations ?? null;
     this.db.prepare(`
-      INSERT INTO parliament_verdicts (id, session_id, topic, verdict, participants, synthesis)
-      VALUES (?,?,?,?,?,?)
+      INSERT INTO parliament_verdicts
+        (id, session_id, topic, verdict, participants, synthesis,
+         confidence_score, topic_class, expires_at, agent_citations)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
     `).run(
       id, sessionId,
       topic.slice(0, 400),
       verdict,
       JSON.stringify(participants),
       synthesis ? synthesis.slice(0, 1000) : null,
+      confidenceScore,
+      topicClass,
+      expiresAt,
+      agentCitations,
     );
     return id;
   }
@@ -2835,11 +2894,22 @@ class ParliamentVerdictsRepo {
     `).run(validationSignal, validationReward, id);
   }
 
+  /** Update confidence score and validator reasoning after adversarial validation. */
+  updateConfidence(id: string, confidenceScore: number, validatorReasoning?: string): void {
+    this.db.prepare(`
+      UPDATE parliament_verdicts
+      SET confidence_score = ?, validator_reasoning = ?
+      WHERE id = ?
+    `).run(Math.min(0.95, Math.max(0.0, confidenceScore)), validatorReasoning ?? null, id);
+  }
+
   /**
    * Find past verdicts on topics similar to the given query.
    * Simple keyword overlap — no embeddings needed for MVP.
+   * Excludes expired verdicts; orders by confidence_score DESC.
    */
-  findRelated(topic: string, limit = 5): ParliamentVerdictRecord[] {
+  findRelated(topic: string, limit = 2): ParliamentVerdictRecord[] {
+    const nowSec = Math.floor(Date.now() / 1000);
     // Tokenize topic into meaningful words
     const words = topic
       .toLowerCase()
@@ -2848,9 +2918,12 @@ class ParliamentVerdictsRepo {
       .filter((w) => w.length >= 4)
       .slice(0, 10);
 
+    const expireFilter = `(expires_at IS NULL OR expires_at > ${nowSec})`;
+
     if (words.length === 0) {
       const rows = this.db.prepare(
-        `SELECT * FROM parliament_verdicts ORDER BY created_at DESC LIMIT ?`
+        `SELECT * FROM parliament_verdicts WHERE ${expireFilter}
+         ORDER BY confidence_score DESC, created_at DESC LIMIT ?`
       ).all(limit) as any[];
       return rows.map(rowToParliamentVerdict);
     }
@@ -2859,7 +2932,9 @@ class ParliamentVerdictsRepo {
     const conditions = words.map(() => `topic LIKE ?`).join(" OR ");
     const params = words.map((w) => `%${w}%`);
     const rows = this.db.prepare(
-      `SELECT * FROM parliament_verdicts WHERE (${conditions}) ORDER BY created_at DESC LIMIT ?`
+      `SELECT * FROM parliament_verdicts
+       WHERE (${conditions}) AND ${expireFilter}
+       ORDER BY confidence_score DESC, created_at DESC LIMIT ?`
     ).all(...params, limit) as any[];
     return rows.map(rowToParliamentVerdict);
   }
@@ -3227,6 +3302,11 @@ function rowToParliamentVerdict(r: any): ParliamentVerdictRecord {
     validated: r.validated,
     validationSignal: r.validation_signal ?? undefined,
     validationReward: r.validation_reward ?? undefined,
+    confidenceScore: r.confidence_score ?? 0.6,
+    topicClass: r.topic_class ?? "tactical",
+    expiresAt: r.expires_at ?? undefined,
+    validatorReasoning: r.validator_reasoning ?? undefined,
+    agentCitations: r.agent_citations ?? undefined,
     createdAt: r.created_at,
   };
 }
@@ -3776,6 +3856,32 @@ export class StackOwlDB {
       `);
       this.db.pragma(`user_version = 31`);
     }
+    if (current < 32) {
+      // v32: parliament_verdicts — add confidence_score, topic_class, expires_at,
+      //      validator_reasoning, agent_citations; add supporting indexes
+      const pvCols = this.db.prepare("PRAGMA table_info(parliament_verdicts)").all() as { name: string }[];
+      const pvColNames = pvCols.map(c => c.name);
+      if (!pvColNames.includes("confidence_score")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.6");
+      }
+      if (!pvColNames.includes("topic_class")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN topic_class TEXT NOT NULL DEFAULT 'tactical'");
+      }
+      if (!pvColNames.includes("expires_at")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN expires_at INTEGER");
+      }
+      if (!pvColNames.includes("validator_reasoning")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN validator_reasoning TEXT");
+      }
+      if (!pvColNames.includes("agent_citations")) {
+        this.db.exec("ALTER TABLE parliament_verdicts ADD COLUMN agent_citations TEXT");
+      }
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_pv_confidence ON parliament_verdicts(confidence_score DESC);
+        CREATE INDEX IF NOT EXISTS idx_pv_expires    ON parliament_verdicts(expires_at);
+      `);
+      this.db.pragma(`user_version = 32`);
+    }
   }
 }
 
@@ -4208,6 +4314,31 @@ export function applyMigrations(db: Database.Database): void {
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_session_messages_pending ON session_messages(session_id, consumed_at);
+    `);
+  }
+  if (current < 32) {
+    // v32: parliament_verdicts — add confidence_score, topic_class, expires_at,
+    //      validator_reasoning, agent_citations; add supporting indexes
+    const pvCols = db.prepare("PRAGMA table_info(parliament_verdicts)").all() as { name: string }[];
+    const pvColNames = pvCols.map(c => c.name);
+    if (!pvColNames.includes("confidence_score")) {
+      db.exec("ALTER TABLE parliament_verdicts ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.6");
+    }
+    if (!pvColNames.includes("topic_class")) {
+      db.exec("ALTER TABLE parliament_verdicts ADD COLUMN topic_class TEXT NOT NULL DEFAULT 'tactical'");
+    }
+    if (!pvColNames.includes("expires_at")) {
+      db.exec("ALTER TABLE parliament_verdicts ADD COLUMN expires_at INTEGER");
+    }
+    if (!pvColNames.includes("validator_reasoning")) {
+      db.exec("ALTER TABLE parliament_verdicts ADD COLUMN validator_reasoning TEXT");
+    }
+    if (!pvColNames.includes("agent_citations")) {
+      db.exec("ALTER TABLE parliament_verdicts ADD COLUMN agent_citations TEXT");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_pv_confidence ON parliament_verdicts(confidence_score DESC);
+      CREATE INDEX IF NOT EXISTS idx_pv_expires    ON parliament_verdicts(expires_at);
     `);
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
