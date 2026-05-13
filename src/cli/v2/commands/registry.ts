@@ -30,16 +30,6 @@ import {
   handleMcpReconnect,
   completeMcpServers,
 } from "./handlers/mcp.js";
-import {
-  handleHelperList,
-  handleHelperShow,
-  handleHelperCreate,
-  handleHelperRename,
-  handleHelperDelete,
-  handleHelperDesign,
-  handleHelperCapabilities,
-  completeHelperNames,
-} from "./handlers/helper.js";
 import { handleConfigList } from "./handlers/config.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -244,20 +234,6 @@ export const REGISTRY: CommandSpec[] = [
       { name: "export",     description: "JSON dump of all valid memories",      handler: handleMemoryExport },
     ],
     handler: handleMemoryList,
-  },
-  {
-    name: "/helper",
-    description: "Manage helper owl personas",
-    subcommands: [
-      { name: "list",         description: "List all helpers",             handler: handleHelperList },
-      { name: "show",         description: "Show helper details",          args: [{ name: "<name>" }], handler: handleHelperShow, complete: completeHelperNames },
-      { name: "create",       description: "Create a new helper",          handler: handleHelperCreate },
-      { name: "rename",       description: "Rename a helper",              args: [{ name: "<old>" }, { name: "<new>" }], handler: handleHelperRename, complete: completeHelperNames },
-      { name: "delete",       description: "Delete a helper",              args: [{ name: "<name>" }], handler: handleHelperDelete, complete: completeHelperNames },
-      { name: "design",       description: "Redesign a helper",            args: [{ name: "<name>" }], handler: handleHelperDesign, complete: completeHelperNames },
-      { name: "capabilities", description: "Show helper capabilities",     args: [{ name: "<name>" }], handler: handleHelperCapabilities, complete: completeHelperNames },
-    ],
-    handler: handleHelperList,
   },
   {
     name: "/owl",
