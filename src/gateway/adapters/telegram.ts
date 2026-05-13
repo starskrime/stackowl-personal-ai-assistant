@@ -395,21 +395,58 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // ── /owl status — observable owl state ─────────────────────────────
+    // ── /owl — full owl management (list/show/create/from-bmad/delete/pin/unpin/status) ──
     this.bot.command("owl", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
-      const db = this.gateway.getDb();
-      if (!db) {
-        await ctx.reply("Database not available.");
-        return;
-      }
+      log.telegram.debug("telegram.owl: entry", { from: ctx.from?.id });
+      const text = ctx.message?.text ?? "";
+      const parts = text.replace(/^\/owl\s*/, "").trim().split(/\s+/).filter(Boolean);
+      const verb = parts[0] || "list";
+      const args = parts.slice(1);
       const userId = String(ctx.from?.id ?? "local");
-      const { OwlStateReporter } = await import("../../intelligence/owl-state-reporter.js");
-      const reporter = new OwlStateReporter(db);
-      const currentOwl = this.gateway.getOwl();
-      const dna = currentOwl.dna.evolvedTraits as Record<string, unknown>;
-      const report = await reporter.report(userId, currentOwl.persona.name, dna);
-      await ctx.reply(report);
+      const workspacePath = this.gateway.getWorkspacePath();
+      const registry = this.gateway.getSpecializedRegistry();
+      if (registry) await registry.loadAll(workspacePath);
+      log.telegram.debug("telegram.owl: dispatching", { verb, args });
+
+      const { dispatchOwlCommand } = await import("../../gateway/commands/owl-command.js");
+
+      // Build a simple adapter for interactive prompts (sequential reply-based)
+      const pendingAsks: Array<(answer: string) => void> = [];
+      const adapter = {
+        ask: async (_uid: string, prompt: { text: string; choices?: string[]; defaultChoice?: string }): Promise<string> => {
+          const choices = prompt.choices?.map((c, i) => `${i + 1}. ${c}`).join("\n") ?? "";
+          const defaultHint = prompt.defaultChoice ? `\n(default: ${prompt.defaultChoice})` : "";
+          const fullPrompt = [prompt.text, choices, defaultHint].filter(Boolean).join("\n");
+          await ctx.reply(fullPrompt).catch(() => {});
+          return new Promise<string>((resolve) => {
+            pendingAsks.push((answer: string) => {
+              if (!answer.trim() && prompt.defaultChoice) return resolve(prompt.defaultChoice);
+              if (prompt.choices) {
+                const idx = parseInt(answer) - 1;
+                return resolve(!isNaN(idx) && prompt.choices[idx] ? prompt.choices[idx] : answer);
+              }
+              resolve(answer);
+            });
+          });
+        },
+      };
+
+      try {
+        const result = await dispatchOwlCommand(verb, args, {
+          registry: registry as any,
+          userId,
+          workspacePath,
+          channelAdapter: verb === "create" || verb === "from-bmad" ? adapter : undefined,
+          gateway: this.gateway as any,
+        });
+        log.telegram.debug("telegram.owl: exit", { result: result.slice(0, 50) });
+        await ctx.reply(result, { parse_mode: "Markdown" }).catch(() => ctx.reply(result));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.telegram.error("telegram.owl: dispatch failed", err, { verb });
+        await ctx.reply(`Error: ${msg}`).catch(() => {});
+      }
     });
 
     this.bot.on("message:text", async (ctx) => {
