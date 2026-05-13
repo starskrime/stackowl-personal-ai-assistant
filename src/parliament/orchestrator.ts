@@ -21,12 +21,33 @@ import type { MemoryDatabase } from "../memory/db.js";
 import { log } from "../logger.js";
 import { MultiRoundDebateManager } from "./multi-round-debate.js";
 import { withSpan } from "../infra/observability/context.js";
+import { OwlEngine } from "../engine/runtime.js";
+import type { OwlInstance } from "../owls/persona.js";
+import { createDefaultDNA } from "../owls/persona.js";
+
+export interface ValidatorResult {
+  signal: "VALID" | "INVALID" | "UNCERTAIN";
+  reason: string;
+}
+
+export function parseValidatorResponse(content: string): ValidatorResult {
+  const upper = content.toUpperCase();
+  let signal: ValidatorResult["signal"] = "UNCERTAIN";
+  if (upper.includes("INVALID")) signal = "INVALID";
+  else if (upper.includes("VALID")) signal = "VALID";
+
+  const reasonMatch = content.match(/(?:VALID|INVALID|UNCERTAIN)[^\n]*?[—–-]\s*(.+)/i);
+  const reason = reasonMatch ? reasonMatch[1].trim() : content.slice(0, 200).trim();
+  return { signal, reason };
+}
 
 export class ParliamentOrchestrator {
   private pelletGenerator: PelletGenerator;
   private pelletStore: PelletStore;
   private db?: MemoryDatabase;
   private readonly multiRoundDebate: MultiRoundDebateManager;
+  private readonly provider: ModelProvider;
+  private readonly config: StackOwlConfig;
 
   constructor(
     provider: ModelProvider,
@@ -35,10 +56,61 @@ export class ParliamentOrchestrator {
     _toolRegistry?: ToolRegistry,
     db?: MemoryDatabase,
   ) {
+    this.provider = provider;
+    this.config = config;
     this.pelletStore = pelletStore;
     this.db = db;
     this.pelletGenerator = new PelletGenerator(makeProviderRouter(provider));
     this.multiRoundDebate = new MultiRoundDebateManager(provider, config);
+  }
+
+  private async runAdversarialValidator(
+    session: ParliamentSession,
+  ): Promise<ValidatorResult> {
+    const engine = new OwlEngine();
+    const validatorOwl: OwlInstance = {
+      persona: {
+        name: "Validator",
+        type: "specialist",
+        emoji: "🔍",
+        challengeLevel: "relentless",
+        specialties: ["logic", "critical thinking"],
+        traits: ["skeptical"],
+        systemPrompt:
+          "You are an adversarial logic validator. Your job is to find flaws in reasoning, not to agree. Be brief and ruthless.",
+        sourcePath: "",
+      },
+      dna: createDefaultDNA("Validator", "relentless"),
+    } as OwlInstance;
+
+    const positionsText = session.positions
+      .map((p) => `- ${p.owlName} [${p.position}]: ${p.argument}`)
+      .join("\n");
+
+    const prompt =
+      `You are validating a Parliament verdict.\n\n` +
+      `TOPIC: ${session.config.topic}\n\n` +
+      `POSITIONS:\n${positionsText}\n\n` +
+      `VERDICT: ${session.verdict}\n\n` +
+      `SYNTHESIS: ${session.synthesis?.slice(0, 600) ?? "(none)"}\n\n` +
+      (session.agentCitations ? `CITED BY SYNTHESIZER: ${session.agentCitations}\n\n` : "") +
+      `Task: Does the verdict logically follow from the positions and cited reasoning? ` +
+      `Output EXACTLY one of: VALID, INVALID, or UNCERTAIN. ` +
+      `Follow it with an em-dash and ONE sentence explaining why. ` +
+      `Example: "VALID — the cited position directly supports the PROCEED recommendation."`;
+
+    try {
+      const response = await engine.run(prompt, {
+        provider: this.provider,
+        owl: validatorOwl,
+        sessionHistory: [],
+        config: this.config,
+      });
+      return parseValidatorResponse(response.content);
+    } catch (err) {
+      log.parliament.warn("[Parliament] Adversarial validator failed — defaulting UNCERTAIN", err);
+      return { signal: "UNCERTAIN", reason: "Validator call failed." };
+    }
   }
 
   /**
@@ -131,6 +203,60 @@ export class ParliamentOrchestrator {
       session.completedAt = Date.now();
       session.phase = "complete";
 
+      // ── Adversarial validator ──────────────────────────────────────────
+      const HIGH_STAKES_VERDICTS = new Set(["ABORT", "REJECT"]);
+      let confidenceScore = 0.6;
+      let validatorResult: ValidatorResult = { signal: "UNCERTAIN", reason: "" };
+
+      try {
+        validatorResult = await this.runAdversarialValidator(session);
+        session.validatorReasoning = validatorResult.reason;
+
+        if (validatorResult.signal === "VALID") {
+          confidenceScore = Math.min(0.95, 0.6 + 0.2);
+          log.engine.info(`[Parliament] Validator: VALID — ${validatorResult.reason.slice(0, 80)}`);
+        } else if (validatorResult.signal === "INVALID") {
+          if (HIGH_STAKES_VERDICTS.has(session.verdict ?? "")) {
+            log.engine.warn(`[Parliament] Validator INVALID on high-stakes verdict "${session.verdict}" — re-convening`);
+            const rotated = [...session.config.participants].reverse();
+            const retrySession: ParliamentSession = {
+              id: session.id + "-retry",
+              config: { ...session.config, participants: rotated },
+              phase: "setup",
+              positions: [],
+              challenges: [],
+              startedAt: Date.now(),
+            };
+            try {
+              await this.multiRoundDebate.runDebate(retrySession);
+              const retryValidator = await this.runAdversarialValidator(retrySession);
+              if (retryValidator.signal === "VALID") {
+                session.synthesis = retrySession.synthesis;
+                session.verdict = retrySession.verdict;
+                session.agentCitations = retrySession.agentCitations;
+                session.validatorReasoning = retryValidator.reason;
+                confidenceScore = 0.75;
+                log.engine.info(`[Parliament] Retry VALID — adopted retry verdict "${session.verdict}"`);
+              } else {
+                session.verdict = "PARLIAMENT_INCONCLUSIVE";
+                session.synthesis = `Original verdict was rejected by the validator. Retry also inconclusive. Reason: ${retryValidator.reason}`;
+                confidenceScore = 0.1;
+                log.engine.warn("[Parliament] Retry also invalid — verdict set to PARLIAMENT_INCONCLUSIVE");
+              }
+            } catch (retryErr) {
+              log.parliament.warn("[Parliament] Re-convene failed", retryErr);
+              confidenceScore = 0.2;
+            }
+          } else {
+            confidenceScore = 0.3;
+            log.engine.warn(`[Parliament] Validator INVALID on "${session.verdict}" — confidence lowered to 0.3`);
+          }
+        }
+        // UNCERTAIN: keep warm start 0.6
+      } catch (err) {
+        log.parliament.warn("[Parliament] Validator pipeline error", err);
+      }
+
       // Automatically generate a Pellet from this session
       const mdTranscript = this.formatSessionMarkdown(session, perspectives);
       try {
@@ -157,6 +283,11 @@ export class ParliamentOrchestrator {
             session.verdict as import("../memory/db.js").ParliamentVerdictSignal,
             config.participants.map((p) => p.persona.name),
             session.synthesis,
+            {
+              confidenceScore,
+              topicClass: "tactical",
+              agentCitations: session.agentCitations,
+            },
           );
           log.engine.info(`[Parliament] Recorded verdict "${session.verdict}" for topic: ${config.topic.slice(0, 60)}`);
         } catch (err) {

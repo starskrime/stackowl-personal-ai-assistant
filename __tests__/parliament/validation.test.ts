@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseCitationFromSynthesis } from "../../src/parliament/multi-round-debate.js";
+import { parseValidatorResponse } from "../../src/parliament/orchestrator.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -97,5 +98,23 @@ describe("parseCitationFromSynthesis", () => {
     const response = "PROCEED. The group agrees.";
     const result = parseCitationFromSynthesis(response);
     expect(result).toBeUndefined();
+  });
+});
+
+describe("parseValidatorResponse", () => {
+  it("extracts VALID from validator output", () => {
+    const r = parseValidatorResponse("VALID — the verdict follows logically from Winston's cited position.");
+    expect(r.signal).toBe("VALID");
+    expect(r.reason).toContain("verdict follows");
+  });
+
+  it("extracts INVALID from validator output", () => {
+    const r = parseValidatorResponse("INVALID — the synthesizer ignored Mary's AGAINST position entirely.");
+    expect(r.signal).toBe("INVALID");
+  });
+
+  it("extracts UNCERTAIN for ambiguous output", () => {
+    const r = parseValidatorResponse("The synthesis is somewhat reasonable.");
+    expect(r.signal).toBe("UNCERTAIN");
   });
 });
