@@ -1345,6 +1345,7 @@ ${userMessage}
         const executableActions = actions.filter((a) => a.kind === "execute");
         const toolCtx = {
           cwd: cwd || process.cwd(),
+          synthesizedDir: context.synthesizedDir,
           engineContext: {
             ...context,
             activeSubGoal: context.activeSubGoal,
@@ -3047,6 +3048,7 @@ ${skillsContext}
       const registry = request.toolRegistry;
       const toolCtx = {
         cwd: process.cwd(),
+        synthesizedDir: (request as any).synthesizedDir,
         engineContext: {
           activeSubGoal: request.activeSubGoal,
           userMessage: request.userMessage,

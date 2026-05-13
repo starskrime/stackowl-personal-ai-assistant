@@ -48,7 +48,7 @@ export function getSynthesizedDir(
   basePath?: string,
 ): string {
   if (config.synthesis?.synthesizedDir) {
-    return resolve(config.synthesis.synthesizedDir);
+    return resolve(basePath ?? ".", config.synthesis.synthesizedDir);
   }
   const workspaceBase = basePath
     ? resolve(basePath, config.workspace ?? "workspace")

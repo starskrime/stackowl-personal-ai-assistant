@@ -30,6 +30,10 @@ export type { ToolDefinition };
 
 export interface ToolContext {
   cwd: string;
+  /** Absolute path to the synthesized tools directory. Used by patch_tool and other
+   *  tools that need to locate synthesized tool files. Falls back to the legacy
+   *  source-tree constant when not provided. */
+  synthesizedDir?: string;
   engineContext?: EngineContext;
   classifier?: Pick<BlockingClassifier, "classify">;
   puppeteer?: import("../browser/puppeteer-fetcher.js").PuppeteerFetcher;

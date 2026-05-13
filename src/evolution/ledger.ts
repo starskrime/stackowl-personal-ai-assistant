@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { SYNTHESIZED_DIR } from "./synthesizer.js";
 import type { ToolProposal } from "./synthesizer.js";
+import { log } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -79,7 +80,8 @@ export class CapabilityLedger {
     try {
       const raw = await readFile(this.manifestPath, "utf-8");
       this.manifest = JSON.parse(raw);
-    } catch {
+    } catch (err) {
+      log.cognition.warn("ledger.load: manifest parse failed, resetting", err as Error, { path: this.manifestPath });
       this.manifest = { version: 1, tools: [] };
     }
     this.loaded = true;
@@ -138,7 +140,9 @@ export class CapabilityLedger {
       try {
         const filePath = join(this.synthesizedDir, record.fileName);
         this.db.synthesisMemory.recordUse(filePath, success);
-      } catch { /* non-fatal */ }
+      } catch (err) {
+        log.cognition.warn("ledger.recordUsage: synthesisMemory.recordUse failed", err as Error);
+      }
     }
   }
 

@@ -954,6 +954,7 @@ async function bootstrap() {
     camofoxClient,
     platform,
     sessionRunner,
+    synthesizedDir,
   };
 }
 
@@ -1228,6 +1229,7 @@ async function buildGateway(
     skillsLoader: b.skillsLoader,
     memoryContext: reflexionContext || undefined,
     cwd: b.workspacePath,
+    synthesizedDir: b.synthesizedDir,
     providerRegistry: b.providerRegistry,
     microLearner: b.microLearner,
     memorySearcher: b.memorySearcher,

@@ -49,8 +49,9 @@ export const PatchTool: ToolImplementation = {
     );
 
     // Try to find the tool file
-    // 1. Check synthesized directory first
-    const synthesizedPath = join(SYNTHESIZED_DIR, `${toolName}.ts`);
+    // 1. Check synthesized directory first (prefer runtime-configured dir over source-tree constant)
+    const effectiveSynthesizedDir = _context.synthesizedDir ?? SYNTHESIZED_DIR;
+    const synthesizedPath = join(effectiveSynthesizedDir, `${toolName}.ts`);
     const builtInPath = resolve(
       process.cwd(),
       "src",

@@ -193,12 +193,10 @@ export class EvolutionHandler {
         rationale: existing.rationale,
         dependencies: existing.dependencies,
         safetyNote: existing.safetyNote,
-        // context.cwd is the resolved workspacePath — use it so that a relative
-        // config.workspace doesn't resolve against CWD instead of basePath.
+        // context.synthesizedDir is pre-resolved at bootstrap via getSynthesizedDir(config, basePath)
+        // so it correctly handles both default and explicit synthesis.synthesizedDir config values.
         filePath: join(
-          context.cwd
-            ? join(context.cwd, "synthesized")
-            : getSynthesizedDir(context.config),
+          context.synthesizedDir ?? getSynthesizedDir(context.config),
           existing.fileName,
         ),
         owlName: existing.createdBy,
@@ -218,12 +216,10 @@ export class EvolutionHandler {
 
     const { provider: synthesisProvider, model: synthesisModel } =
       this.resolveSynthesisProvider(context);
-    // Derive the pre-resolved synthesized dir: context.cwd is workspacePath (absolute),
-    // so synthesized dir is always <workspacePath>/synthesized regardless of how
-    // config.workspace is written in the JSON.
-    const resolvedSynthesizedDir = context.cwd
-      ? join(context.cwd, "synthesized")
-      : undefined;
+    // Use the pre-resolved synthesizedDir from EngineContext (set at bootstrap via
+    // getSynthesizedDir(config, basePath)) so explicit synthesis.synthesizedDir config
+    // values are respected. Fall back to getSynthesizedDir for callers that don't set it.
+    const resolvedSynthesizedDir = context.synthesizedDir;
     const proposal = await this.synthesizer.designSpec(
       capabilityGap,
       synthesisProvider,
