@@ -395,43 +395,6 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // ── /helper — channel-parity dispatcher (same router as CLI) ──────
-    this.bot.command("helper", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      const parts = ctx.message?.text?.split(/\s+/) ?? [];
-      const verb = parts[1] ?? "list";
-      const args = parts.slice(2);
-      const workspacePath = this.gateway.getWorkspacePath();
-      const registry = this.gateway.getSpecializedRegistry();
-      if (registry) {
-        await registry.loadAll(workspacePath);
-      }
-      const { dispatchOwlCommand } = await import("../../gateway/commands/owl-router.js");
-      const { OwlCreationWizard } = await import("../../gateway/wizards/owl-creation.js");
-      const wizard = new OwlCreationWizard(workspacePath, undefined);
-      const userId = String(ctx.from?.id ?? "unknown");
-      const channelAdapter = {
-        ask: async (_uid: string, prompt: { text: string; choices?: string[] }) => {
-          // In Telegram we cannot interactively prompt mid-command; return empty string
-          // so the wizard falls back gracefully.
-          return prompt.choices?.[0] ?? "";
-        },
-      };
-      try {
-        const result = await dispatchOwlCommand(verb, args, {
-          registry: registry as any,
-          wizard: wizard as any,
-          userId,
-          channelAdapter: channelAdapter as any,
-          workspacePath,
-        });
-        await ctx.reply(result, { parse_mode: "Markdown" });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await ctx.reply(`❌ Helper error: <code>${msg}</code>`, { parse_mode: "HTML" });
-      }
-    });
-
     // ── /owl status — observable owl state ─────────────────────────────
     this.bot.command("owl", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
