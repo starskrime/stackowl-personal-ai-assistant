@@ -67,7 +67,7 @@ const cmdHelp: CommandFn = async (_args, ui) => {
     C("/skills".padEnd(20)) + D("List or install skills"),
     C("/learning".padEnd(20)) + D("Show learning report"),
     C("/memory".padEnd(20)) + D("Memory CRUD (list/search/stats/...)"),
-    C("/owl".padEnd(20)) + D("Show owl state and memory"),
+    C("/owl".padEnd(20)) + D("Manage owls (list/show/create/pin/delete)"),
     C("/onboarding".padEnd(20)) + D("Re-run setup wizard"),
     C("/quit".padEnd(20)) + D("Save session and exit"),
     "",
@@ -172,18 +172,42 @@ const cmdOnboarding: CommandFn = async (_args, ui) => {
   return true;
 };
 
-const cmdOwl: CommandFn = async (_args, ui, gateway) => {
-  const db = gateway.getDb();
-  const owl = gateway.getOwl();
-  if (!db) {
-    ui.printInfo("Database not available.");
-    return true;
+const cmdOwl: CommandFn = async (args, ui, gateway) => {
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  const verb = parts[0] || "list";
+  const verbArgs = parts.slice(1);
+  const registry = gateway.getSpecializedRegistry();
+  if (registry) {
+    await registry.loadAll(gateway.getWorkspacePath());
   }
-  const { OwlStateReporter } = await import("../intelligence/owl-state-reporter.js");
-  const reporter = new OwlStateReporter(db);
-  const dna = owl.dna.evolvedTraits as Record<string, unknown>;
-  const report = await reporter.report("local", owl.persona.name, dna);
-  ui.printLines(["", ...report.split("\n"), ""]);
+  const { dispatchOwlCommand } = await import("../gateway/commands/owl-command.js");
+  const adapter = {
+    ask: async (_userId: string, prompt: { text: string; choices?: string[]; defaultChoice?: string }) => {
+      const { default: readline } = await import("node:readline");
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const choices = prompt.choices ? `\n${prompt.choices.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}` : "";
+      const defaultHint = prompt.defaultChoice ? ` [${prompt.defaultChoice}]` : "";
+      return new Promise<string>((resolve) => {
+        rl.question(`${prompt.text}${choices}${defaultHint}\n> `, (ans) => {
+          rl.close();
+          if (!ans && prompt.defaultChoice) return resolve(prompt.defaultChoice);
+          if (prompt.choices) {
+            const idx = parseInt(ans) - 1;
+            return resolve(!isNaN(idx) && prompt.choices[idx] ? prompt.choices[idx] : ans);
+          }
+          resolve(ans);
+        });
+      });
+    },
+  };
+  const result = await dispatchOwlCommand(verb, verbArgs, {
+    registry: registry as any,
+    userId: "local",
+    workspacePath: gateway.getWorkspacePath(),
+    channelAdapter: adapter,
+    gateway: gateway as any,
+  });
+  ui.printLines(["", ...result.split("\n"), ""]);
   return true;
 };
 
@@ -253,7 +277,11 @@ const COMMANDS: Record<string, CommandDef> = {
     fn: cmdMemory,
     subcommands: ["list", "search", "stats", "history", "get", "invalidate", "export"],
   },
-  owl: { description: "Show owl state", fn: cmdOwl, subcommands: ["status"] },
+  owl: {
+    description: "Manage owls",
+    fn: cmdOwl,
+    subcommands: ["list", "show", "status", "create", "from-bmad", "edit", "delete", "pin", "unpin"],
+  },
 };
 
 export class CommandRegistry implements CompletionProvider {
