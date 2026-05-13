@@ -31,6 +31,15 @@ import {
   completeMcpServers,
 } from "./handlers/mcp.js";
 import { handleConfigList } from "./handlers/config.js";
+import {
+  handleOwlList,
+  handleOwlShow,
+  handleOwlCreate,
+  handleOwlFromBmad,
+  handleOwlDelete,
+  handleOwlPin,
+  handleOwlUnpin,
+} from "./handlers/owl.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -237,11 +246,18 @@ export const REGISTRY: CommandSpec[] = [
   },
   {
     name: "/owl",
-    description: "Show current owl status",
+    description: "Manage owls — list, show, create, pin, delete",
     subcommands: [
-      { name: "status", description: "Show owl state + memory stats", handler: handleOwlStatus },
+      { name: "list",      description: "List all owls (BMAD + custom + builtin)", handler: handleOwlList },
+      { name: "show",      description: "Show owl details",      args: [{ name: "<name>" }], handler: handleOwlShow },
+      { name: "status",    description: "Active owl DNA state",  handler: handleOwlStatus },
+      { name: "create",    description: "Create a custom owl (interactive)", handler: handleOwlCreate },
+      { name: "from-bmad", description: "Create owl from BMAD template", args: [{ name: "[name]" }], handler: handleOwlFromBmad },
+      { name: "delete",    description: "Delete a custom owl",   args: [{ name: "<name>" }], handler: handleOwlDelete },
+      { name: "pin",       description: "Pin owl for session",   args: [{ name: "<name>" }], handler: handleOwlPin },
+      { name: "unpin",     description: "Unpin active owl",      handler: handleOwlUnpin },
     ],
-    handler: handleOwlStatus,
+    handler: handleOwlList,
   },
   {
     name: "/status",
