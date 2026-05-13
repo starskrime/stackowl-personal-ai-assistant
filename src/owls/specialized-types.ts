@@ -42,6 +42,8 @@ export interface SpecializedOwlSpec {
   routingRules: SpecializedRoutingRules;
   skills: SpecializedSkills;
   additionalPrompt: string;
+  source?: "bmad" | "custom" | "builtin";
+  bmadSkillName?: string;
   folderPath?: string;
   credentialsPath?: string;
 }
