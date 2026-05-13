@@ -145,28 +145,26 @@ export class ParliamentOrchestrator {
     // Parliament now enters debates knowing its own track record on similar questions.
     if (this.db) {
       try {
-        const pastVerdicts = this.db.parliamentVerdicts.findRelated(config.topic, 5);
+        const pastVerdicts = this.db.parliamentVerdicts.findRelated(config.topic, 2);
         if (pastVerdicts.length > 0) {
-          const validatedVerdicts = pastVerdicts.filter((v) => v.validated);
-          if (validatedVerdicts.length > 0) {
-            const verdictBlock =
-              "\n[Past Parliament decisions on similar topics]:\n" +
-              validatedVerdicts
-                .map(
-                  (v) =>
-                    `  • "${v.topic.slice(0, 80)}" → ${v.verdict}` +
-                    (v.validationSignal ? ` → ${v.validationSignal.toUpperCase()}` : "") +
-                    (v.synthesis ? `: ${v.synthesis.slice(0, 100)}` : ""),
-                )
-                .join("\n") + "\n";
-            session.config.contextMessages = [
-              ...session.config.contextMessages,
-              { role: "system" as const, content: verdictBlock },
-            ];
-            log.engine.info(
-              `[Parliament] Injected ${validatedVerdicts.length} past verdict(s) for recall`,
-            );
-          }
+          const verdictBlock =
+            "\n[Past Parliament decisions on similar topics (highest confidence first)]:\n" +
+            pastVerdicts
+              .map(
+                (v) =>
+                  `  • "${v.topic.slice(0, 80)}" → ${v.verdict}` +
+                  ` (confidence: ${v.confidenceScore.toFixed(2)})` +
+                  (v.agentCitations ? ` | Cited: ${v.agentCitations.slice(0, 80)}` : "") +
+                  (v.synthesis ? `: ${v.synthesis.slice(0, 100)}` : ""),
+              )
+              .join("\n") + "\n";
+          session.config.contextMessages = [
+            ...session.config.contextMessages,
+            { role: "system" as const, content: verdictBlock },
+          ];
+          log.engine.info(
+            `[Parliament] Injected ${pastVerdicts.length} past verdict(s) for recall (top-2 by confidence)`,
+          );
         }
       } catch (err) {
         log.parliament.warn("parliament verdict recall failed", err);

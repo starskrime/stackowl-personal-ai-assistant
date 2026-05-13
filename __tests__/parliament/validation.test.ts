@@ -123,3 +123,24 @@ describe("parseValidatorResponse", () => {
     expect(r.signal).not.toBe("VALID");
   });
 });
+
+describe("recall context injection", () => {
+  it("findRelated returns at most 2 results ordered by confidence", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      for (let i = 0; i < 5; i++) {
+        const id = db.parliamentVerdicts.record(
+          `s${i}`, `Should we use GraphQL for our API?`, "PROCEED",
+          ["Mary"], `synthesis ${i}`,
+          { confidenceScore: i * 0.1 + 0.4 },
+        );
+        db.parliamentVerdicts.updateConfidence(id, i * 0.1 + 0.4, "reason");
+      }
+      const results = db.parliamentVerdicts.findRelated("GraphQL API", 2);
+      expect(results.length).toBeLessThanOrEqual(2);
+      if (results.length === 2) {
+        expect(results[0].confidenceScore).toBeGreaterThanOrEqual(results[1].confidenceScore);
+      }
+    } finally { cleanup(); }
+  });
+});
