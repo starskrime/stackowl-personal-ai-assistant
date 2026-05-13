@@ -374,7 +374,7 @@ export class ToolSynthesizer {
         ? (spec.dependencies as string[])
         : [],
       safetyNote: (spec.safetyNote as string | undefined) ?? "Unknown",
-      filePath: join(SYNTHESIZED_DIR, fileName),
+      filePath: join(getSynthesizedDir(config), fileName),
       owlName: owl.persona.name,
       owlEmoji: owl.persona.emoji,
     };
@@ -498,7 +498,7 @@ export class ToolSynthesizer {
     }
 
     // Write to synthesized directory
-    await mkdir(SYNTHESIZED_DIR, { recursive: true });
+    await mkdir(getSynthesizedDir(config), { recursive: true });
     await writeFile(proposal.filePath, code, "utf-8");
 
     return proposal.filePath;
