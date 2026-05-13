@@ -141,6 +141,7 @@ import {
   getDegradedCapabilities,
 } from "../infra/capability-registry.js";
 import { runPreDeliveryGate } from "./pre-delivery-gate.js";
+import { BmadAgentLoader } from "../owls/bmad-agent-loader.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -785,6 +786,17 @@ export class OwlGateway {
       log.engine.info(
         `[registry] SpecializedOwlRegistry loaded ${ctx.specializedRegistry!.listAll().length} specialized owls`,
       );
+      // Load BMAD agents dynamically from the installed bmad-method npm package
+      try {
+        const bmadLoader = new BmadAgentLoader();
+        const bmadSpecs = await bmadLoader.loadAll();
+        for (const spec of bmadSpecs) {
+          ctx.specializedRegistry!.registerSpec(spec);
+        }
+        log.engine.info(`[registry] BmadAgentLoader registered ${bmadSpecs.length} BMAD agents`);
+      } catch (err) {
+        log.engine.warn("[registry] BmadAgentLoader failed (non-fatal)", { err: String(err) });
+      }
       // Pre-load instincts for all known owls
       const owlsDir = join(workspacePath, "owls");
       await Promise.all(
