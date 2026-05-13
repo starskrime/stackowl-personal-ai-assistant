@@ -41,6 +41,48 @@ describe("SpecializedOwlSpec source fields", () => {
   });
 });
 
+import { BmadAgentLoader } from "../../src/owls/bmad-agent-loader.js";
+
+describe("BmadAgentLoader", () => {
+  it("loadAll returns at least 6 BMAD agents (bmad-method is installed)", async () => {
+    const loader = new BmadAgentLoader();
+    const specs = await loader.loadAll();
+    expect(specs.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("all returned specs have required SpecializedOwlSpec fields", async () => {
+    const loader = new BmadAgentLoader();
+    const specs = await loader.loadAll();
+    for (const spec of specs) {
+      expect(typeof spec.name).toBe("string");
+      expect(spec.name.length).toBeGreaterThan(0);
+      expect(typeof spec.role).toBe("string");
+      expect(typeof spec.emoji).toBe("string");
+      expect(spec.source).toBe("bmad");
+      expect(typeof spec.bmadSkillName).toBe("string");
+      expect(spec.type).toBe("specialist");
+      expect(Array.isArray(spec.expertise)).toBe(true);
+      expect(Array.isArray(spec.routingRules.keywords)).toBe(true);
+    }
+  });
+
+  it("Mary (Business Analyst) is loaded from bmad-agent-analyst", async () => {
+    const loader = new BmadAgentLoader();
+    const specs = await loader.loadAll();
+    const mary = specs.find((s) => s.name === "Mary");
+    expect(mary).toBeDefined();
+    expect(mary!.emoji).toBe("📊");
+    expect(mary!.bmadSkillName).toBe("bmad-agent-analyst");
+    expect(mary!.source).toBe("bmad");
+  });
+
+  it("loadAll returns empty array when bmad-method package name is wrong", async () => {
+    const loader = new BmadAgentLoader({ packageName: "bmad-method-nonexistent-xyz" });
+    const specs = await loader.loadAll();
+    expect(specs).toEqual([]);
+  });
+});
+
 import { SpecializedOwlRegistry } from "../../src/owls/specialized-registry.js";
 
 describe("SpecializedOwlRegistry.registerSpec", () => {
