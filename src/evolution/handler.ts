@@ -263,7 +263,7 @@ export class EvolutionHandler {
     askApproval?: ApprovalCallback,
   ): Promise<BuildResult> {
     const progress = async (msg: string) => {
-      log.evolution.info(msg);
+      log.synthesis.info(msg);
       if (onProgress) await onProgress(msg);
     };
 
@@ -473,7 +473,7 @@ export class EvolutionHandler {
             }
           } catch (err) {
             // Non-fatal — continue with synthesis if Parliament Lite fails
-            log.evolution.warn(`[E5] Parliament Lite gate failed, continuing: ${err}`);
+            log.synthesis.warn("buildAndRetry: Parliament Lite gate failed, continuing", err as Error);
           }
         }
       }
