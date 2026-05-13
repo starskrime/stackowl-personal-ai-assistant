@@ -21,7 +21,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type {
   OwlEngine,
@@ -45,6 +45,9 @@ import type { Skill } from "../skills/types.js";
 import type { ModelProvider } from "../providers/base.js";
 import { log } from "../logger.js";
 import { CriticalToolsGuard, type ApprovalChannel } from "./critical-tools-guard.js";
+import { PythonSynthesizer } from "./python-synthesizer.js";
+import { PythonAdapter } from "./python-adapter.js";
+import { PythonAnalyzer } from "./python-analyzer.js";
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -486,7 +489,25 @@ export class EvolutionHandler {
       );
     }
 
-    // ─── FALLBACK: TypeScript synthesis ───────────────────────────
+    // ─── FALLBACK: TypeScript or Python synthesis ────────────────
+    const lang = this.selectSynthesisLanguage({
+      description: proposal.description,
+      userRequest: originalMessage,
+    });
+
+    if (lang === "python") {
+      log.evolution.warn(
+        "No skills directory configured — falling back to Python synthesis (data-processing task detected)",
+      );
+      return this.buildWithPython(
+        proposal,
+        originalMessage,
+        context,
+        engine,
+        progress,
+      );
+    }
+
     log.evolution.warn(
       "No skills directory configured — falling back to TypeScript synthesis",
     );
@@ -740,6 +761,122 @@ export class EvolutionHandler {
 
     return this.retryWithTool(
       proposal,
+      originalMessage,
+      context,
+      engine,
+      progress,
+      filePath,
+    );
+  }
+
+  // ─── Language selection heuristic ────────────────────────────────
+
+  private selectSynthesisLanguage(gap: { description: string; userRequest: string }): "skill" | "typescript" | "python" {
+    const desc = (gap.description + " " + gap.userRequest).toLowerCase();
+    const pythonSignals = [
+      "csv", "pandas", "numpy", "excel", "xlsx", "json transform",
+      "data process", "parse file", "ml ", "machine learning",
+      "data analysis", "data transform", "statistics", "plot", "matplotlib",
+    ];
+    if (pythonSignals.some(s => desc.includes(s))) return "python";
+    return "typescript";
+  }
+
+  // ─── Python synthesis path ────────────────────────────────────────
+
+  private async buildWithPython(
+    proposal: ToolProposal,
+    originalMessage: string,
+    context: EngineContext,
+    engine: OwlEngine,
+    progress: ProgressCallback,
+  ): Promise<BuildResult> {
+    if (!context.toolRegistry) {
+      throw new Error("ToolRegistry is required for Python tool synthesis.");
+    }
+
+    const { provider: synthesisProvider, model: synthesisModel } = this.resolveSynthesisProvider(context);
+    const synthesizedDir = context.synthesizedDir ?? getSynthesizedDir(context.config);
+
+    const gap = {
+      type: "CAPABILITY_GAP" as const,
+      userRequest: originalMessage,
+      description: proposal.description,
+    };
+
+    await progress(`🐍 Synthesizing Python tool: "${proposal.toolName}"`);
+    log.synthesis.debug("handler.buildWithPython: entry", { toolName: proposal.toolName });
+
+    const pythonSynth = new PythonSynthesizer();
+    let { toolName, code } = await pythonSynth.generate(gap, synthesisProvider, synthesisModel);
+
+    // Static analysis — one retry if unsafe
+    let analysis = PythonAnalyzer.analyze(code);
+    if (!analysis.safe) {
+      await progress(`⚠️ Unsafe patterns detected [${analysis.patterns.join(", ")}] — regenerating...`);
+      const retryPrompt =
+        `The previous code contained forbidden patterns: ${analysis.patterns.join(", ")}. ` +
+        `Regenerate the tool without using any of these patterns.`;
+      const retry = await synthesisProvider.chat(
+        [{ role: "user", content: retryPrompt }],
+        synthesisModel,
+      );
+      code = retry.content.trim().replace(/^```python\n?|```$/gmu, "").trim();
+      analysis = PythonAnalyzer.analyze(code);
+      if (!analysis.safe) {
+        log.synthesis.error(
+          "handler.buildWithPython: still unsafe after retry",
+          new Error("unsafe"),
+          { patterns: analysis.patterns },
+        );
+        await progress(`❌ Python synthesis failed: still contains ${analysis.patterns.join(", ")}`);
+        const failResponse = await engine.run(originalMessage, { ...context, skipGapDetection: true });
+        failResponse.pendingCapabilityGap = undefined;
+        return {
+          filePath: "",
+          response: failResponse,
+          depsToInstall: [],
+          depsInstalled: false,
+        };
+      }
+    }
+
+    // Critical tools gate
+    if (this.approvalChannel) {
+      const permissionsFile = join(synthesizedDir, ".permissions.json");
+      const guard = new CriticalToolsGuard(permissionsFile, this.approvalChannel);
+      const approved = await guard.check(toolName, code);
+      if (!approved) {
+        await progress(`⛔ Python tool "${toolName}" was not approved.`);
+        const denyResponse = await engine.run(originalMessage, { ...context, skipGapDetection: true });
+        denyResponse.pendingCapabilityGap = undefined;
+        return {
+          filePath: "",
+          response: denyResponse,
+          depsToInstall: [],
+          depsInstalled: false,
+        };
+      }
+    }
+
+    // Write to disk
+    const toolsDir = join(synthesizedDir, "tools");
+    await mkdir(toolsDir, { recursive: true });
+    const filePath = join(toolsDir, `${toolName}.py`);
+    await writeFile(filePath, code, "utf-8");
+    await progress(`✅ ${toolName}.py written`);
+
+    // Register via adapter
+    const tool = PythonAdapter.wrap(filePath, code);
+    if (!context.toolRegistry.has(tool.definition.name)) {
+      context.toolRegistry.register(tool);
+    }
+    await progress(`✅ ${toolName} registered`);
+
+    log.synthesis.debug("handler.buildWithPython: exit", { toolName, filePath });
+
+    return this.retryWithTool(
+      { ...proposal, toolName },
       originalMessage,
       context,
       engine,
