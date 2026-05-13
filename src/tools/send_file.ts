@@ -15,6 +15,7 @@ import type { ToolImplementation, ToolContext } from "./registry.js";
 import { log } from "../logger.js";
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
+const VIDEO_EXTS = new Set([".mp4", ".mov", ".avi", ".mkv", ".webm"]);
 const DOC_EXTS = new Set([
   ".pdf",
   ".csv",
@@ -96,7 +97,7 @@ export const SendFileTool: ToolImplementation = {
     description:
       "Send a file or image to the user in the current chat. " +
       "Use this after creating, downloading, or capturing a file that the user should receive. " +
-      "Supports images (png, jpg, gif, webp) and documents (pdf, csv, json, txt, zip, etc). " +
+      "Supports images (png, jpg, gif, webp), videos (mp4, mov, avi, mkv, webm), and documents (pdf, csv, json, txt, zip, etc). " +
       "The path can be a local file path OR an HTTP/HTTPS URL — URLs will be downloaded automatically.",
     parameters: {
       type: "object",
@@ -163,7 +164,7 @@ export const SendFileTool: ToolImplementation = {
       return `File ready at: ${resolved} (${sizeKb} KB). No active delivery channel — file is saved locally.`;
     }
     pendingFiles.push({ path: resolved, caption: caption || undefined });
-    const kind = IMAGE_EXTS.has(ext) ? "image" : DOC_EXTS.has(ext) ? "document" : "file";
+    const kind = IMAGE_EXTS.has(ext) ? "image" : VIDEO_EXTS.has(ext) ? "video" : DOC_EXTS.has(ext) ? "document" : "file";
     log.tool.debug("send_file.execute: exit", { success: true, resolved, sizeKb, kind, queued: true });
     return `${kind} "${name}" (${sizeKb} KB) queued for delivery to the user.`;
   },

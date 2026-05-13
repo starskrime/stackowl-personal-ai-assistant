@@ -207,40 +207,41 @@ export class TelegramAdapter implements ChannelAdapter {
     filePath: string,
     caption?: string,
   ): Promise<void> {
+    log.telegram.debug("deliverFile: entry", { userId, filePath: filePath.slice(0, 200), hasCaption: !!caption });
+
     const chatId = this.userToChatId.get(userId) ?? [...this.activeChatIds][0];
     if (!chatId) {
       log.telegram.warn(`deliverFile: no chatId found for user ${userId}`);
-      return;
+      throw new Error(`No active chat found for user ${userId} — file not delivered.`);
     }
+
     const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
-    const isUrl =
-      filePath.startsWith("http://") || filePath.startsWith("https://");
-    const ext = extname(
-      isUrl ? new URL(filePath).pathname : filePath,
-    ).toLowerCase();
+    const VIDEO_EXTS = new Set([".mp4", ".mov", ".avi", ".mkv", ".webm"]);
+    const isUrl = filePath.startsWith("http://") || filePath.startsWith("https://");
+    const ext = extname(isUrl ? new URL(filePath).pathname : filePath).toLowerCase();
     const payload = isUrl ? filePath : new InputFile(filePath);
+    const kind = IMAGE_EXTS.has(ext) ? "photo" : VIDEO_EXTS.has(ext) ? "video" : "document";
+
+    log.telegram.debug("deliverFile: sending", { chatId, ext, kind, isUrl });
+
     try {
-      if (IMAGE_EXTS.has(ext)) {
-        await this.bot.api.sendPhoto(
-          chatId,
-          payload,
-          caption ? { caption } : {},
-        );
+      if (kind === "photo") {
+        await this.bot.api.sendPhoto(chatId, payload, caption ? { caption } : {});
+      } else if (kind === "video") {
+        await this.bot.api.sendVideo(chatId, payload, caption ? { caption } : {});
       } else {
-        await this.bot.api.sendDocument(
-          chatId,
-          payload,
-          caption ? { caption } : {},
-        );
+        await this.bot.api.sendDocument(chatId, payload, caption ? { caption } : {});
       }
+      log.telegram.debug("deliverFile: exit", { success: true, chatId, kind, ext });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      log.telegram.error("deliverFile: send failed", err as Error, { chatId, kind, ext, filePath: filePath.slice(0, 200) });
       if (msg.includes("401") || msg.toLowerCase().includes("unauthorized")) {
         throw new Error(
           `Telegram bot token is invalid or expired (401). Update 'telegram.botToken' in stackowl.config.json.`,
         );
       }
-      throw new Error(`Telegram file delivery failed: ${msg}`);
+      throw new Error(`Telegram file delivery failed (${kind}): ${msg}`);
     }
   }
 

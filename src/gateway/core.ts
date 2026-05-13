@@ -4140,6 +4140,7 @@ export class OwlGateway {
   /**
    * Deliver any files queued in pendingFiles by the send_file tool during a run.
    * Uses the adapter's deliverFile method if available — gracefully skips if not.
+   * On delivery failure, notifies the user directly so the failure is visible.
    */
   private async deliverPendingFiles(
     files: import("../engine/runtime.js").PendingFile[],
@@ -4149,13 +4150,30 @@ export class OwlGateway {
     if (!files.length) return;
     const adapter = this.adapters.get(channelId);
     if (!adapter?.deliverFile) return;
+    const owl = this.getOwl();
     for (const file of files) {
+      log.engine.debug(`[${channelId}] deliverPendingFiles: delivering`, { userId, path: file.path.slice(0, 200) });
       try {
         await adapter.deliverFile(userId, file.path, file.caption);
+        log.engine.debug(`[${channelId}] deliverPendingFiles: delivered`, { userId, path: file.path.slice(0, 200) });
       } catch (err) {
-        log.engine.warn(
-          `[${channelId}] File delivery to ${userId} failed: ${err instanceof Error ? err.message : String(err)}`,
+        const errMsg = err instanceof Error ? err.message : String(err);
+        log.engine.error(
+          `[${channelId}] File delivery to ${userId} failed`,
+          err as Error,
+          { path: file.path.slice(0, 200) },
         );
+        // Notify the user so the failure is visible — don't silently swallow it.
+        if (adapter.sendToUser) {
+          await adapter.sendToUser(userId, {
+            content: `⚠️ File delivery failed: ${errMsg}`,
+            owlName: owl.persona.name,
+            owlEmoji: owl.persona.emoji,
+            toolsUsed: [],
+          }).catch((notifyErr) => {
+            log.engine.warn(`[${channelId}] deliverPendingFiles: user notify also failed`, { err: (notifyErr as Error).message });
+          });
+        }
       }
     }
   }
