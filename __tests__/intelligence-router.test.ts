@@ -38,15 +38,15 @@ describe("IntelligenceRouter", () => {
     expect(result.tier).toBe("low");
   });
 
-  it("falls back to mid tier when task type not in defaults", () => {
+  it("falls back to low tier when task type not in defaults", () => {
     const router = new IntelligenceRouter(
       makeConfig({ defaults: {} }),
       "ollama",
       "llama3.2-fallback",
     );
     const result = router.resolve("evolution");
-    expect(result.tier).toBe("mid");
-    expect(result.model).toBe("claude-sonnet-4-6");
+    expect(result.tier).toBe("low");
+    expect(result.model).toBe("claude-haiku-4-5-20251001");
     expect(result.provider).toBe("anthropic");
   });
 
@@ -71,12 +71,12 @@ describe("IntelligenceRouter", () => {
     expect(result.model).toBe("claude-opus-4-7-custom");
   });
 
-  it("falls back to fallback provider/model when mid tier not configured", () => {
+  it("falls back to fallback provider/model when low tier not configured", () => {
     const config: IntelligenceConfig = {
       tiers: {
         high: { provider: "anthropic", model: "claude-opus-4-7" },
-        mid:  { provider: "", model: "" },
-        low:  { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
+        mid:  { provider: "anthropic", model: "claude-sonnet-4-6" },
+        low:  { provider: "", model: "" },
       },
       defaults: {},
     };

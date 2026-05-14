@@ -33,7 +33,7 @@ describe("IntelligenceRouter.resolveCapable()", () => {
   it("returns resolve() directly when required is empty", () => {
     const router = new IntelligenceRouter(makeConfig(), "anthropic", "claude-sonnet-4-6");
     const result = router.resolveCapable("parliament", []);
-    expect(result.tier).toBe("high"); // parliament defaults to high
+    expect(result.tier).toBe("low"); // parliament defaults to low
   });
 });
 

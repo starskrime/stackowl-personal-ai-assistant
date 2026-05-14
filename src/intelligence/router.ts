@@ -61,15 +61,15 @@ export interface ResolvedModel {
 }
 
 export const TASK_TYPE_DEFAULTS: Record<TaskType, Tier> = {
-  conversation:   "mid",
-  parliament:     "high",
-  evolution:      "mid",
+  conversation:   "low",
+  parliament:     "low",
+  evolution:      "low",
   extraction:     "low",
   episodic:       "low",
   classification: "low",
-  synthesis:      "high",
+  synthesis:      "low",
   summarization:  "low",
-  clarification:  "mid",
+  clarification:  "low",
 };
 
 export class IntelligenceRouter {
