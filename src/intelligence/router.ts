@@ -1,6 +1,8 @@
 import { log } from "../logger.js";
 import { estimateCost } from "../costs/pricing.js";
 
+export const TIER_ORDER: Tier[] = ["low", "mid", "high"];
+
 export type Tier = "high" | "mid" | "low";
 
 export type TaskType =
@@ -155,6 +157,28 @@ export class IntelligenceRouter {
       `[IntelligenceRouter] All tiers over daily budget ($${budget.dailyRemainingUsd.toFixed(4)} remaining) — routing to low tier anyway`,
     );
     return this.resolve(taskType);
+  }
+
+  /**
+   * Resolve model for taskType, but treat `floor` as the minimum tier.
+   * If the normal resolution would produce a lower tier, it is clamped up to floor.
+   * Uses cost-aware resolution as the base so budget downgrade still applies within the floor.
+   */
+  resolveWithFloor(taskType: TaskType, floor: Tier): ResolvedModel {
+    const base = this.resolveWithCostAwareness(taskType);
+    const baseIdx = TIER_ORDER.indexOf(base.tier);
+    const floorIdx = TIER_ORDER.indexOf(floor);
+    if (baseIdx >= floorIdx) return base; // already at or above floor
+
+    // Clamp up to floor tier
+    const cfg = this.config.tiers[floor];
+    if (!cfg?.provider || !cfg?.model) {
+      log.engine.warn(
+        `[IntelligenceRouter] Floor tier "${floor}" is not configured — using base tier "${base.tier}"`,
+      );
+      return base;
+    }
+    return { provider: cfg.provider, model: cfg.model, tier: floor };
   }
 
   /**

@@ -20,6 +20,7 @@ import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
 import { PromptOptimizer } from "../engine/prompt-optimizer.js";
 import { IntelligenceRouter } from "../intelligence/router.js";
+import { TierEscalationManager } from "../intelligence/escalation.js";
 import { FactInvalidator } from "../intelligence/fact-invalidator.js";
 import { SleepTimeConsolidator } from "../intelligence/sleep-time-consolidator.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
@@ -286,6 +287,12 @@ export class OwlGateway {
    */
   private stuckStreak: Map<string, number> = new Map();
   private static readonly STUCK_THRESHOLD = 3;
+
+  /**
+   * Per-session tier escalation managers.
+   * Tracks low→mid→high floor with 15-min auto-reset.
+   */
+  private escalationManagers: Map<string, TierEscalationManager> = new Map();
 
   /**
    * Cross-turn attempt logs — one per active session.
@@ -1696,6 +1703,20 @@ export class OwlGateway {
 
     log.engine.incoming(message.channelId, message.text);
 
+    // ─── Tier Escalation — detect correction signal + auto-reset ──────────
+    const escalationKey = message.sessionId ?? "default";
+    if (!this.escalationManagers.has(escalationKey)) {
+      this.escalationManagers.set(escalationKey, new TierEscalationManager());
+    }
+    const escalationManager = this.escalationManagers.get(escalationKey)!;
+    escalationManager.checkAutoReset();
+    if (escalationManager.detectCorrectionSignal(message.text)) {
+      const newFloor = escalationManager.escalate();
+      log.engine.info(
+        `[TierEscalation] User correction detected — escalating tier floor to ${newFloor}`,
+      );
+    }
+
     // Dynamic skill injection — uses BM25 + usage-weighted semantic routing
     let memoryContextPrefix = "";
     let dynamicSkillsContext = "";
@@ -2188,6 +2209,9 @@ export class OwlGateway {
       engineCtx.narrationPrefix = intentResult.interpretation;
     }
 
+    // ─── Tier Escalation floor — injected into EngineContext ─────────────
+    engineCtx.escalationFloor = escalationManager.currentFloor;
+
     // ─── G5: Opinion injection — surface relevant owl opinion (≥ 0.65 conf) ──
     if (this.ctx.innerLife) {
       const opinions = this.ctx.innerLife.getState()?.opinions ?? [];
@@ -2340,14 +2364,38 @@ export class OwlGateway {
     }
 
     const orchestrator = this.getOrchestrator();
-    const orchResult = await withSpan("orchestrator.execute", async () => {
-      return orchestrator.executeWithFallback(
-        strategy,
-        text,
-        engineCtx,
-        callbacks,
-      );
-    }, { strategy: strategy.strategy });
+
+    // ─── Tier escalation retry loop — low → mid → high on engine failure ──
+    // Attempts the current floor tier first. On failure escalates one step and
+    // retries (up to 3 attempts total). Each escalation persists for subsequent
+    // messages until the 15-min idle reset fires.
+    // eslint-disable-next-line prefer-const
+    let orchResult!: Awaited<ReturnType<typeof orchestrator.executeWithFallback>>;
+    let lastOrchErr: unknown;
+    const { TIER_ORDER: tierOrder } = await import("../intelligence/escalation.js");
+    for (let attempt = 0; attempt < tierOrder.length; attempt++) {
+      try {
+        orchResult = await withSpan("orchestrator.execute", async () => {
+          return orchestrator.executeWithFallback(strategy, text, engineCtx, callbacks);
+        }, { strategy: strategy.strategy, tier: engineCtx.escalationFloor });
+        lastOrchErr = undefined;
+        break;
+      } catch (err) {
+        lastOrchErr = err;
+        const currentFloor = engineCtx.escalationFloor ?? "low";
+        const currentIdx = tierOrder.indexOf(currentFloor);
+        if (currentIdx >= tierOrder.length - 1) {
+          log.engine.warn("[TierEscalation] Already at highest tier — propagating error");
+          break;
+        }
+        const nextFloor = escalationManager.escalate();
+        log.engine.warn(
+          `[TierEscalation] Engine failed at tier ${currentFloor} — retrying with ${nextFloor}`,
+        );
+        engineCtx.escalationFloor = nextFloor;
+      }
+    }
+    if (lastOrchErr !== undefined) throw lastOrchErr;
 
     // Convert OrchestrationResult to EngineResponse for standard post-processing
     const response: EngineResponse = {

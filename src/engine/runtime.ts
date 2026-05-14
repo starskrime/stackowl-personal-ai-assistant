@@ -162,6 +162,8 @@ export interface EngineContext {
   additionalSystemPrompt?: string;
   /** IntelligenceRouter for per-turn model-tier resolution. Wired from GatewayContext. */
   intelligence?: import("../intelligence/router.js").IntelligenceRouter;
+  /** Minimum tier floor set by TierEscalationManager. "low" when not escalated. */
+  escalationFloor?: import("../intelligence/router.js").Tier;
   /**
    * Optional cancellation signal. When aborted, the engine throws AbortError
    * at the next turn boundary. Propagated to provider call where supported.
@@ -818,8 +820,11 @@ export class OwlEngine {
     const toolResultsBuffer: string[] = [];
     let deeperExtended = false;
 
-    // 1. Determine optimal model via IntelligenceRouter
-    const resolved = context.intelligence?.resolveWithCostAwareness("conversation");
+    // 1. Determine optimal model via IntelligenceRouter (respects escalation floor)
+    const escalationFloor = context.escalationFloor ?? "low";
+    const resolved = context.intelligence
+      ? context.intelligence.resolveWithFloor("conversation", escalationFloor)
+      : undefined;
     let optimalModel = resolved?.model ?? config.defaultModel;
     attachToContext({ model: optimalModel });
 
