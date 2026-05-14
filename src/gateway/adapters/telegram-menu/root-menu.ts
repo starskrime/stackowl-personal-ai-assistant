@@ -86,7 +86,9 @@ export class TelegramRootMenu {
       this.navState.open(userId, chatId, msgId);
     }
 
-    try { await ctx.answerCallbackQuery(); } catch { /* expired — harmless */ }
+    try { await ctx.answerCallbackQuery(); } catch (err) {
+      log.telegram.debug("nav.handleCallback: answerCallbackQuery expired (harmless)", { err: (err as Error).message });
+    }
 
     // ── Delegation: AI Config ──────────────────────────────────
     if (data === "nav:cfg") {
@@ -257,7 +259,9 @@ export class TelegramRootMenu {
         try {
           const sessions = await sessionStore?.listAll?.();
           sessionCount = Array.isArray(sessions) ? sessions.length : 0;
-        } catch { /* session count is informational — ignore errors */ }
+        } catch (err) {
+          log.telegram.debug("nav.buildScreen: session count unavailable", { err: (err as Error).message });
+        }
         return renderStatus(config.defaultModel, owl.persona.emoji, owl.persona.name, sessionCount);
       }
 
@@ -275,7 +279,9 @@ export class TelegramRootMenu {
         const registry = (this.gateway as any).getSpecializedRegistry?.();
         if (registry) {
           const wp = (this.gateway as any).getWorkspacePath?.() ?? process.cwd();
-          await registry.loadAll(wp).catch(() => {});
+          await registry.loadAll(wp).catch((err: any) => {
+            log.telegram.debug("nav.buildScreen: registry.loadAll failed", { err: (err as Error).message });
+          });
         }
         const owls: { name: string; emoji: string; isPinned: boolean }[] =
           registry?.list?.() ?? [];
@@ -322,7 +328,9 @@ export class TelegramRootMenu {
     const mcpManager = this.gateway.getMcpManager();
     const toolRegistry = this.gateway.getToolRegistry();
     if (!mcpManager || !toolRegistry) {
-      try { await ctx.answerCallbackQuery({ text: "⚠️ MCP not available" }); } catch { /* expired */ }
+      try { await ctx.answerCallbackQuery({ text: "⚠️ MCP not available" }); } catch (err) {
+        log.telegram.debug("nav.handleMcpAction: answerCallbackQuery expired (harmless)", { err: (err as Error).message });
+      }
       return;
     }
 
@@ -335,11 +343,15 @@ export class TelegramRootMenu {
         basePath: (this.gateway as any).getWorkspacePath?.() ?? process.cwd(),
         saveConfig,
       });
-      try { await ctx.answerCallbackQuery({ text: `✅ ${mcpVerb}: ${serverName}` }); } catch { /* expired */ }
+      try { await ctx.answerCallbackQuery({ text: `✅ ${mcpVerb}: ${serverName}` }); } catch (err) {
+        log.telegram.debug("nav.handleMcpAction: answerCallbackQuery expired (harmless)", { err: (err as Error).message });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.telegram.warn("nav.handleMcpAction: dispatch failed", err as Error);
-      try { await ctx.answerCallbackQuery({ text: `❌ ${msg.slice(0, 100)}` }); } catch { /* expired */ }
+      try { await ctx.answerCallbackQuery({ text: `❌ ${msg.slice(0, 100)}` }); } catch (e) {
+        log.telegram.debug("nav.handleMcpAction: answerCallbackQuery expired (harmless)", { err: (e as Error).message });
+      }
     }
 
     // Refresh MCP list
@@ -356,11 +368,15 @@ export class TelegramRootMenu {
         workspacePath: (this.gateway as any).getWorkspacePath?.() ?? process.cwd(),
         gateway: this.gateway as any,
       });
-      try { await ctx.answerCallbackQuery({ text: `🦉 Switched to ${owlName}` }); } catch { /* expired */ }
+      try { await ctx.answerCallbackQuery({ text: `🦉 Switched to ${owlName}` }); } catch (err) {
+        log.telegram.debug("nav.handleOwlSwitch: answerCallbackQuery expired (harmless)", { err: (err as Error).message });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.telegram.warn("nav.handleOwlSwitch: failed", err as Error);
-      try { await ctx.answerCallbackQuery({ text: `❌ ${msg.slice(0, 100)}` }); } catch { /* expired */ }
+      try { await ctx.answerCallbackQuery({ text: `❌ ${msg.slice(0, 100)}` }); } catch (e) {
+        log.telegram.debug("nav.handleOwlSwitch: answerCallbackQuery expired (harmless)", { err: (e as Error).message });
+      }
     }
 
     await this.renderScreen(ctx, userId, "owl");
@@ -376,7 +392,9 @@ export class TelegramRootMenu {
     const loader = (this.gateway as any).getSkillsLoader?.();
     const registry = loader?.getRegistry?.();
     if (!registry) {
-      try { await ctx.answerCallbackQuery({ text: "⚠️ Skills registry unavailable" }); } catch { /* expired */ }
+      try { await ctx.answerCallbackQuery({ text: "⚠️ Skills registry unavailable" }); } catch (err) {
+        log.telegram.debug("nav.handleSkillToggle: answerCallbackQuery expired (harmless)", { err: (err as Error).message });
+      }
       return;
     }
 
@@ -388,11 +406,15 @@ export class TelegramRootMenu {
       }
       try {
         await ctx.answerCallbackQuery({ text: `${enable ? "✅ Enabled" : "⬜ Disabled"}: ${skillName}` });
-      } catch { /* expired */ }
+      } catch (err) {
+        log.telegram.debug("nav.handleSkillToggle: answerCallbackQuery expired (harmless)", { err: (err as Error).message });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.telegram.warn("nav.handleSkillToggle: failed", err as Error);
-      try { await ctx.answerCallbackQuery({ text: `❌ ${msg.slice(0, 100)}` }); } catch { /* expired */ }
+      try { await ctx.answerCallbackQuery({ text: `❌ ${msg.slice(0, 100)}` }); } catch (e) {
+        log.telegram.debug("nav.handleSkillToggle: answerCallbackQuery expired (harmless)", { err: (e as Error).message });
+      }
     }
 
     await this.renderScreen(ctx, userId, "skills");
