@@ -30,7 +30,7 @@ import {
   handleMcpReconnect,
   completeMcpServers,
 } from "./handlers/mcp.js";
-import { handleConfigList } from "./handlers/config.js";
+import { handleConfigList, handleConfigTiers, handleConfigSetTier } from "./handlers/config.js";
 import {
   handleOwlList,
   handleOwlShow,
@@ -245,6 +245,23 @@ export const REGISTRY: CommandSpec[] = [
     name: "/config",
     description: "View and edit runtime config",
     handler: handleConfigList,
+    subcommands: [
+      {
+        name: "tiers",
+        description: "Browse model tiers (low / mid / high)",
+        handler: handleConfigTiers,
+      },
+      {
+        name: "set-tier",
+        description: "Set provider and model for a tier",
+        args: [
+          { name: "tier",     description: "low | mid | high" },
+          { name: "provider", description: "provider name (e.g. anthropic, minimax)" },
+          { name: "model",    description: "model name (e.g. claude-haiku-4-5-20251001)" },
+        ],
+        handler: handleConfigSetTier,
+      },
+    ],
   },
   {
     name: "/capabilities",

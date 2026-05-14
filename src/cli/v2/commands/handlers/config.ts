@@ -25,6 +25,112 @@ import {
   type ConfigValueType,
 } from "./config-schema.js";
 
+// ─── Tier handlers ────────────────────────────────────────────────────────────
+
+const VALID_TIERS = ["low", "mid", "high"] as const;
+type Tier = (typeof VALID_TIERS)[number];
+
+function ensureIntelligenceBlock(config: Record<string, unknown>): void {
+  if (config.intelligence) return;
+  const defaultProvider = (config.defaultProvider as string | undefined) ?? "ollama";
+  const defaultModel   = (config.defaultModel   as string | undefined) ?? "llama3.2";
+  config.intelligence = {
+    tiers: {
+      low:  { provider: defaultProvider, model: defaultModel },
+      mid:  { provider: defaultProvider, model: defaultModel },
+      high: { provider: defaultProvider, model: defaultModel },
+    },
+    defaults: {
+      conversation:   "low",
+      parliament:     "low",
+      synthesis:      "low",
+      evolution:      "low",
+      clarification:  "low",
+      extraction:     "low",
+      episodic:       "low",
+      classification: "low",
+      summarization:  "low",
+    },
+  };
+}
+
+/** /config tiers — show all three tiers as a drillable panel */
+export const handleConfigTiers: CommandHandler = async (ctx) => {
+  const gateway  = ctx.getOwlGateway();
+  const config   = gateway.getConfig() as unknown as Record<string, unknown>;
+  const basePath = gateway.getWorkspacePath();
+
+  ensureIntelligenceBlock(config);
+  await saveConfig(basePath, config as unknown as Parameters<typeof saveConfig>[1]);
+
+  const tiers = (config.intelligence as Record<string, unknown>).tiers as Record<string, { provider: string; model: string }>;
+
+  const items: import("../../panels/Panel.js").PanelItem[] = VALID_TIERS.map((tier) => ({
+    id: `tier-${tier}`,
+    label: tier,
+    meta: `${tiers[tier]?.provider ?? "—"} / ${tiers[tier]?.model ?? "—"}`,
+    edit: {
+      kind: "drill" as const,
+      onEnter: () => {
+        const dotPath = `intelligence.tiers.${tier}`;
+        const items2 = buildItemsForValue(
+          tiers[tier],
+          dotPath,
+          ctx,
+          basePath,
+          () => handleConfigTiers(ctx, []),
+        );
+        ctx.bridge.openPanel(`config:${dotPath}`, {
+          title: `/config · intelligence · tiers · ${tier}`,
+          items: items2,
+          emptyText: "Empty.",
+        });
+      },
+    },
+  }));
+
+  return {
+    kind: "panel",
+    payload: { title: "/config · tiers", items, emptyText: "No tiers configured." },
+  };
+};
+
+/** /config set-tier <low|mid|high> <provider> <model> */
+export const handleConfigSetTier: CommandHandler = async (ctx, args) => {
+  const [tierArg, provider, model] = args;
+
+  if (!tierArg || !VALID_TIERS.includes(tierArg as Tier)) {
+    return { kind: "error", text: `Usage: /config set-tier <low|mid|high> <provider> <model>` };
+  }
+  if (!provider || !model) {
+    return { kind: "error", text: `Usage: /config set-tier ${tierArg} <provider> <model>` };
+  }
+
+  const tier     = tierArg as Tier;
+  const gateway  = ctx.getOwlGateway();
+  const config   = gateway.getConfig() as unknown as Record<string, unknown>;
+  const basePath = gateway.getWorkspacePath();
+
+  ensureIntelligenceBlock(config);
+
+  const intelligence = config.intelligence as Record<string, unknown>;
+  const tiers = intelligence.tiers as Record<string, unknown>;
+  tiers[tier] = { provider, model };
+
+  try {
+    await saveConfig(basePath, config as unknown as Parameters<typeof saveConfig>[1]);
+    ctx.bridge.emit({
+      kind: "notice",
+      source: "command",
+      text: `Tier ${tier} → ${provider} / ${model}`,
+      severity: "info",
+    });
+    return { kind: "action" };
+  } catch (e) {
+    return { kind: "error", text: `Failed to save: ${(e as Error).message}` };
+  }
+};
+
 // ─── Public handler (returned as CommandResult) ───────────────────────────────
 
 export const handleConfigList: CommandHandler = async (ctx) => {
