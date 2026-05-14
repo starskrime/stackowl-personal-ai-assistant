@@ -39,15 +39,6 @@ function makeOwlCtx(ctx: Parameters<CommandHandler>[0]): OwlCommandContext | nul
   return owlCtx;
 }
 
-// ─── Text → PanelItems helper ─────────────────────────────────────────────────
-
-function textToItems(text: string) {
-  return text
-    .split("\n")
-    .filter((l) => l.trim())
-    .map((line, i) => ({ id: `owl-${i}`, label: line }));
-}
-
 // ─── Bridge-based channel adapter ────────────────────────────────────────────
 // Uses bridge.prompt() so the TUI Composer captures the answer natively.
 // This prevents stdin conflicts with Ink's raw-mode input handler.
@@ -71,7 +62,7 @@ function buildBridgeAdapter(bridge: UiBridge): NonNullable<OwlCommandContext["ch
 }
 
 // ─── /owl list (and bare /owl) ────────────────────────────────────────────────
-// Returns structured panel items so Return switches the active owl.
+// Returns an inline system-message — no panel focus theft, no Esc required.
 
 export const handleOwlList: CommandHandler = async (ctx, _args) => {
   log.cli.debug("handleOwlList: entry");
@@ -81,27 +72,25 @@ export const handleOwlList: CommandHandler = async (ctx, _args) => {
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
   await owlCtx.registry.loadAll(owlCtx.workspacePath);
-  const specs = owlCtx.registry.listAll();
-  const items: PanelItem[] = specs.map((spec) => ({
-    id: spec.name,
-    label: `${spec.emoji} ${spec.name}`,
-    meta: `${spec.role}${spec.source ? ` [${spec.source}]` : ""}`,
-    data: { name: spec.name, emoji: spec.emoji },
-  }));
-  const actions = [
-    {
-      key: "return",
-      label: "switch",
-      handler: (item: PanelItem) => {
-        const owlData = item.data as { name: string; emoji: string } | undefined;
-        if (owlData) ctx.bridge.changeOwl(owlData.name, owlData.emoji);
-        else ctx.bridge.changeOwl(item.id, "🦉");
-        ctx.bridge.closePanel();
-      },
-    },
-  ];
-  log.cli.debug("handleOwlList: exit", { items: items.length });
-  return { kind: "panel", payload: { title: "/owl", items, actions, emptyText: "No owls registered." } };
+  const specs  = owlCtx.registry.listAll();
+  const active = ctx.getStore().activeOwlName.toLowerCase();
+  log.cli.debug("handleOwlList: exit", { count: specs.length });
+
+  if (specs.length === 0) {
+    return { kind: "system-message", text: "No owls registered. Use /owl create to add one." };
+  }
+
+  const lines = specs.map((s) => {
+    const marker = s.name.toLowerCase() === active ? "  ← active" : "";
+    const source = s.source ? `  [${s.source}]` : "";
+    return `  ${s.emoji} ${s.name.padEnd(14)} ${s.role}${source}${marker}`;
+  });
+  const text =
+    `🦉 Owls (${specs.length})\n\n` +
+    lines.join("\n") +
+    `\n\nSwitch with: /owl switch <name>`;
+
+  return { kind: "system-message", text };
 };
 
 // ─── /owl show <name> ─────────────────────────────────────────────────────────
@@ -114,7 +103,10 @@ export const handleOwlShow: CommandHandler = async (ctx, args) => {
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
   const text = await dispatchOwlCommand("show", args, owlCtx);
-  const items = textToItems(text);
+  const items: PanelItem[] = text
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((line, i) => ({ id: `owl-${i}`, label: line }));
   log.cli.debug("handleOwlShow: exit", { items: items.length });
   return {
     kind: "panel",
