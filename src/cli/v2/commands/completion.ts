@@ -17,20 +17,30 @@ export async function getCompletions(input: string, ctx: CommandContext): Promis
   const parts = input.trim().split(/\s+/).filter((p) => p.length > 0);
   const cmdPart = parts[0] ?? "";
 
-  // Mode 1: completing command name (only command word present, no trailing space)
-  if (parts.length === 1 && !hasTrailingSpace) {
-    return REGISTRY.flatMap((spec) => {
-      const names = [spec.name, ...(spec.aliases ?? [])];
-      return names
-        .filter((n) => n.startsWith(cmdPart))
-        .map((n) => ({ kind: "command" as const, value: n, description: spec.description }));
-    });
-  }
-
-  // Find the command spec
+  // Find the command spec (used by modes 1 exact-match and 2a/2b)
   const spec = REGISTRY.find(
     (s) => s.name === cmdPart || (s.aliases ?? []).includes(cmdPart),
   );
+
+  // Mode 1: completing command name (only command word present, no trailing space)
+  if (parts.length === 1 && !hasTrailingSpace) {
+    // Exact match on a command that has subcommands → show subcommands immediately
+    // (no need to add a space first)
+    if (spec?.subcommands && (spec.name === cmdPart || (spec.aliases ?? []).includes(cmdPart))) {
+      return spec.subcommands.map((sub) => ({
+        kind: "subcommand" as const,
+        value: sub.name,
+        description: sub.description,
+      }));
+    }
+    return REGISTRY.flatMap((s) => {
+      const names = [s.name, ...(s.aliases ?? [])];
+      return names
+        .filter((n) => n.startsWith(cmdPart))
+        .map((n) => ({ kind: "command" as const, value: n, description: s.description }));
+    });
+  }
+
   if (!spec || !spec.subcommands) return [];
 
   // Mode 2a: command typed with trailing space — list all subcommands
