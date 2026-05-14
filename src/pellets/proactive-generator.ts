@@ -98,6 +98,7 @@ export class ProactiveKnowledgeGenerator {
     const gaps = await this.evaluateKnowledgeGaps();
     if (gaps.length === 0) {
       log.engine.info("[ProactiveGenerator] No knowledge gaps found");
+      await this.activityGate?.markSeen("council");
       return [];
     }
 

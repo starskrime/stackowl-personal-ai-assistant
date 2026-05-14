@@ -235,7 +235,8 @@ export class EventBasedPelletGenerator {
       );
       const classification = JSON.parse(raw.trim());
       isSignificant = classification.isDecision || classification.isInsight || classification.isCorrection;
-    } catch {
+    } catch (err) {
+      log.engine.warn(`[EventBasedPelletGenerator] Classification parse failed: ${err instanceof Error ? err.message : String(err)}`);
       isSignificant = false;
     }
 
