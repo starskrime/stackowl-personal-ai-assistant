@@ -80,10 +80,12 @@ export const handleOwlList: CommandHandler = async (ctx, _args) => {
     return { kind: "system-message", text: "No owls registered. Use /owl create to add one." };
   }
 
+  // padEnd(14) aligns columns for typical owl names; longer names will shift the role column right.
   const lines = specs.map((s) => {
+    const role   = s.role ?? "";
     const marker = s.name.toLowerCase() === active ? "  ← active" : "";
     const source = s.source ? `  [${s.source}]` : "";
-    return `  ${s.emoji} ${s.name.padEnd(14)} ${s.role}${source}${marker}`;
+    return `  ${s.emoji} ${s.name.padEnd(14)} ${role}${source}${marker}`;
   });
   const text =
     `🦉 Owls (${specs.length})\n\n` +
