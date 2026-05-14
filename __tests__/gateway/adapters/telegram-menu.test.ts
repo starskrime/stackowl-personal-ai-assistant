@@ -144,3 +144,156 @@ describe("screens.ts — renderSkillsList", () => {
     expect(cbData).toContain("nav:sk:en:web-search");
   });
 });
+
+import { TelegramRootMenu } from "../../../src/gateway/adapters/telegram-menu/root-menu.js";
+import { vi } from "vitest";
+
+describe("TelegramRootMenu.handleCallback", () => {
+  function makeGateway(overrides: Record<string, unknown> = {}) {
+    return {
+      getConfig: () => ({ defaultModel: "claude-sonnet-4-6", providers: {} }),
+      getOwl: () => ({ persona: { name: "Aria", emoji: "🦉" } }),
+      getMcpManager: () => ({ listServers: () => [] }),
+      getToolRegistry: () => null,
+      getSkillsLoader: () => ({ getRegistry: () => ({ listEnabled: () => [] }) }),
+      getMemoryRepo: () => null,
+      getSessionStore: () => null,
+      getWorkspacePath: () => "/tmp",
+      getSpecializedRegistry: () => null,
+      ...overrides,
+    } as any;
+  }
+
+  function makeCtx(callbackData: string, userId = 1, chatId = 100, msgId = 42) {
+    const editMessageText = vi.fn().mockResolvedValue({});
+    const answerCallbackQuery = vi.fn().mockResolvedValue({});
+    const reply = vi.fn().mockResolvedValue({ message_id: 99 });
+    return {
+      from: { id: userId },
+      chat: { id: chatId },
+      callbackQuery: { data: callbackData, message: { chat: { id: chatId }, message_id: msgId } },
+      editMessageText,
+      answerCallbackQuery,
+      reply,
+      api: {
+        editMessageText,
+        sendMessage: vi.fn().mockResolvedValue({ message_id: 99 }),
+      },
+    } as any;
+  }
+
+  it("nav:st renders status screen (edits message in place)", async () => {
+    const menu = new TelegramRootMenu(makeGateway(), {} as any, {} as any);
+    const ctx = makeCtx("nav:st");
+    menu["navState"].open(1, 100, 42);
+    await menu.handleCallback(ctx, "nav:st");
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      100, 42,
+      expect.stringContaining("claude-sonnet-4-6"),
+      expect.objectContaining({ parse_mode: "HTML" }),
+    );
+  });
+
+  it("nav:bk at root stays at root screen", async () => {
+    const menu = new TelegramRootMenu(makeGateway(), {} as any, {} as any);
+    const ctx = makeCtx("nav:bk");
+    menu["navState"].open(1, 100, 42);
+    await menu.handleCallback(ctx, "nav:bk");
+    // Should edit to root panel (contains "Control Panel")
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      100, 42,
+      expect.stringContaining("Control Panel"),
+      expect.any(Object),
+    );
+  });
+
+  it("nav:st then nav:bk returns to root", async () => {
+    const menu = new TelegramRootMenu(makeGateway(), {} as any, {} as any);
+    const ctx1 = makeCtx("nav:st");
+    menu["navState"].open(1, 100, 42);
+    await menu.handleCallback(ctx1, "nav:st");
+
+    const ctx2 = makeCtx("nav:bk");
+    await menu.handleCallback(ctx2, "nav:bk");
+    expect(ctx2.api.editMessageText).toHaveBeenCalledWith(
+      100, 42,
+      expect.stringContaining("Control Panel"),
+      expect.any(Object),
+    );
+  });
+
+  it("nav:cfg delegates to configMenu.handleCommand", async () => {
+    const configMenu = { handleCommand: vi.fn().mockResolvedValue(undefined) };
+    const menu = new TelegramRootMenu(makeGateway(), configMenu as any, {} as any);
+    const ctx = makeCtx("nav:cfg");
+    menu["navState"].open(1, 100, 42);
+    await menu.handleCallback(ctx, "nav:cfg");
+    expect(configMenu.handleCommand).toHaveBeenCalledWith(ctx);
+  });
+
+  it("nav:vc delegates to voiceMenu.handleCommand", async () => {
+    const voiceMenu = { handleCommand: vi.fn().mockResolvedValue(undefined) };
+    const menu = new TelegramRootMenu(makeGateway(), {} as any, voiceMenu as any);
+    const ctx = makeCtx("nav:vc");
+    menu["navState"].open(1, 100, 42);
+    await menu.handleCallback(ctx, "nav:vc");
+    expect(voiceMenu.handleCommand).toHaveBeenCalledWith(ctx);
+  });
+
+  it("returns false for unknown nav data", async () => {
+    const menu = new TelegramRootMenu(makeGateway(), {} as any, {} as any);
+    const ctx = makeCtx("nav:unknown:action");
+    menu["navState"].open(1, 100, 42);
+    const result = await menu.handleCallback(ctx, "nav:unknown:action");
+    expect(result).toBe(false);
+  });
+});
+
+describe("TelegramRootMenu.handleTextInput", () => {
+  function makeMenuWithFakes() {
+    const configMenu = { handleCommand: vi.fn().mockResolvedValue(undefined) };
+    const gateway = {
+      getConfig: () => ({ defaultModel: "m", providers: {} }),
+      getOwl: () => ({ persona: { name: "X", emoji: "🦉" } }),
+      getMcpManager: () => null,
+      getToolRegistry: () => null,
+      getSkillsLoader: () => null,
+      getMemoryRepo: () => null,
+      getSessionStore: () => null,
+      getWorkspacePath: () => "/tmp",
+      getSpecializedRegistry: () => null,
+    } as any;
+    const reply = vi.fn().mockResolvedValue({ message_id: 7 });
+    return { menu: new TelegramRootMenu(gateway, configMenu as any, {} as any), configMenu, reply };
+  }
+
+  it("returns true and sends nav panel for '🎛 Menu'", async () => {
+    const { menu, reply } = makeMenuWithFakes();
+    const ctx = { from: { id: 1 }, chat: { id: 100 }, reply, api: { editMessageText: vi.fn() } } as any;
+    const consumed = await menu.handleTextInput(ctx, "🎛 Menu");
+    expect(consumed).toBe(true);
+    expect(reply).toHaveBeenCalled();
+  });
+
+  it("returns true for '📊 Status'", async () => {
+    const { menu, reply } = makeMenuWithFakes();
+    const ctx = { from: { id: 1 }, chat: { id: 100 }, reply, api: { editMessageText: vi.fn() } } as any;
+    const consumed = await menu.handleTextInput(ctx, "📊 Status");
+    expect(consumed).toBe(true);
+  });
+
+  it("returns false for regular chat text", async () => {
+    const { menu } = makeMenuWithFakes();
+    const ctx = { from: { id: 1 }, chat: { id: 100 } } as any;
+    const consumed = await menu.handleTextInput(ctx, "hello world");
+    expect(consumed).toBe(false);
+  });
+
+  it("returns true and calls configMenu for '⚙️ Settings'", async () => {
+    const { menu, configMenu, reply } = makeMenuWithFakes();
+    const ctx = { from: { id: 1 }, chat: { id: 100 }, reply } as any;
+    const consumed = await menu.handleTextInput(ctx, "⚙️ Settings");
+    expect(consumed).toBe(true);
+    expect(configMenu.handleCommand).toHaveBeenCalled();
+  });
+});
