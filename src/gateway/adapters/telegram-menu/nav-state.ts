@@ -59,6 +59,16 @@ export class NavStateManager {
     return s;
   }
 
+  /** Reset navigation to root — clears stack and pending text */
+  reset(userId: number): NavState | undefined {
+    const s = this.states.get(userId);
+    if (!s) return undefined;
+    s.stack = ["root"];
+    s.pendingText = undefined;
+    s.lastActivity = Date.now();
+    return s;
+  }
+
   /** Return current screen name */
   current(userId: number): string | undefined {
     const s = this.states.get(userId);

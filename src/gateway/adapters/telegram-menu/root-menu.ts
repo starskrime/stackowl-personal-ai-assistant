@@ -25,6 +25,7 @@ import {
 } from "./screens.js";
 import { McpCommandRouter } from "../../commands/mcp-router.js";
 import { dispatchMemoryCommand } from "../../commands/memory-router.js";
+import { dispatchOwlCommand } from "../../commands/owl-command.js";
 import { saveConfig } from "../../../config/loader.js";
 
 // ─── Keyboard button texts (must match persistent keyboard in telegram.ts) ────
@@ -115,8 +116,7 @@ export class TelegramRootMenu {
     // ── Root ───────────────────────────────────────────────────
     if (data === "nav:r" || data === "nav:root") {
       // Reset stack to root
-      const s = this.navState.get(userId);
-      if (s) s.stack = ["root"];
+      this.navState.reset(userId);
       await this.renderScreen(ctx, userId, "root");
       return true;
     }
@@ -196,28 +196,29 @@ export class TelegramRootMenu {
       return true;
     }
 
-    // Send a new nav panel message and navigate to target if needed
-    const content = renderRoot();
     try {
+      // Build the target screen content directly — skip the root→target flash
+      const content = target === "root"
+        ? renderRoot()
+        : await this.buildScreen(
+            target === "status" ? "status" :
+            target === "owl"    ? "owl"    :
+            target === "memory" ? "memory" :
+            target === "skills" ? "skills" : "root"
+          );
+
       const sent = await ctx.reply(content.text, {
         parse_mode: "HTML",
         reply_markup: content.keyboard,
       });
       this.navState.open(userId, chatId, sent.message_id);
-
       if (target !== "root") {
-        // Simulate navigating to the target screen
-        const navData = target === "status" ? "nav:st" :
-                        target === "owl"    ? "nav:owl" :
-                        target === "memory" ? "nav:mem" :
-                        target === "skills" ? "nav:sk"  : `nav:${target}`;
-        const fakeCtx = {
-          ...ctx,
-          callbackQuery: { message: { chat: { id: chatId }, message_id: sent.message_id } },
-          answerCallbackQuery: async () => {},
-          api: ctx.api,
-        } as any;
-        await this.handleCallback(fakeCtx, navData);
+        this.navState.push(userId,
+          target === "status" ? "status" :
+          target === "owl"    ? "owl"    :
+          target === "memory" ? "memory" :
+          target === "skills" ? "skills" : target
+        );
       }
     } catch (err) {
       log.telegram.error("nav.handleTextInput: failed", err as Error);
@@ -360,7 +361,6 @@ export class TelegramRootMenu {
 
   private async handleOwlSwitch(ctx: Context, userId: number, owlName: string): Promise<void> {
     try {
-      const { dispatchOwlCommand } = await import("../../commands/owl-command.js");
       const registry = (this.gateway as any).getSpecializedRegistry?.();
       await dispatchOwlCommand("pin", [owlName], {
         registry,
