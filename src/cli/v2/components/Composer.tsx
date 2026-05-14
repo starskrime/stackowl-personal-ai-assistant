@@ -125,14 +125,23 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
       if (key.return && !key.shift) {
         const trimmed = value.trim();
 
-        // Popup open + Enter → accept selected completion
+        // Popup open + Enter → accept selected completion (unless already exact match)
         if (showPopup && completions.length > 0) {
           const entry = completions[completionIdx];
           if (entry) {
-            if (entry.kind === "command") setValue(entry.value + " ");
-            else if (entry.kind === "subcommand") setValue(value.replace(/\S+$/, "").trimEnd() + " " + entry.value + " ");
+            const lastTypedWord = trimmed.split(/\s+/).pop() ?? "";
+            const alreadyExact =
+              (entry.kind === "command" && trimmed === entry.value) ||
+              (entry.kind === "subcommand" && lastTypedWord === entry.value);
+            if (!alreadyExact) {
+              if (entry.kind === "command") setValue(entry.value + " ");
+              else if (entry.kind === "subcommand") setValue(value.replace(/\S+$/, "").trimEnd() + " " + entry.value + " ");
+              return;
+            }
+            // exact match — fall through to prompt/dispatch below
+          } else {
+            return;
           }
-          return;
         }
 
         // Prompt mode — route Enter to the active prompt, not to the LLM
@@ -150,6 +159,8 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
 
         // Slash command → dispatch
         if (trimmed.startsWith("/")) {
+          // Close any open panel before dispatching — prevents layout conflicts.
+          if (uiStore.getState().activePanel) globalBridge.closePanel();
           dispatcher.dispatch(trimmed).then((result) => {
             if (result.kind === "error") {
               globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
