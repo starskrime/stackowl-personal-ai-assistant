@@ -26,7 +26,7 @@ import type { ChatMessage } from "../providers/base.js";
 import type { ModelProvider } from "../providers/base.js";
 
 // ─── Schema version — bump when adding columns/tables ───────────
-const SCHEMA_VERSION = 33;
+const SCHEMA_VERSION = 34;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -562,6 +562,24 @@ export class SkillUsageRepo {
   }
 }
 
+export class ActivityGateRepo {
+  constructor(private db: Database.Database) {}
+
+  getHash(jobId: string): string | null {
+    const row = this.db.prepare(
+      "SELECT last_seen_hash FROM activity_gate WHERE job_id = ?"
+    ).get(jobId) as { last_seen_hash: string | null } | undefined;
+    return row?.last_seen_hash ?? null;
+  }
+
+  setHash(jobId: string, hash: string): void {
+    this.db.prepare(
+      "INSERT INTO activity_gate (job_id, last_seen_hash) VALUES (?, ?) " +
+      "ON CONFLICT(job_id) DO UPDATE SET last_seen_hash = excluded.last_seen_hash"
+    ).run(jobId, hash);
+  }
+}
+
 // ─── MemoryDatabase ───────────────────────────────────────────────
 
 export class MemoryDatabase {
@@ -593,6 +611,7 @@ export class MemoryDatabase {
   readonly owlPins: OwlPinsRepo;
   readonly owlRecurringJobs: OwlRecurringJobsRepo;
   readonly skillUsage: SkillUsageRepo;
+  readonly activityGate: ActivityGateRepo;
 
   constructor(workspacePath: string) {
     const dbDir = join(workspacePath, "memory");
@@ -641,6 +660,7 @@ export class MemoryDatabase {
     this.owlPins           = new OwlPinsRepo(this.db);
     this.owlRecurringJobs  = new OwlRecurringJobsRepo(this.db);
     this.skillUsage        = new SkillUsageRepo(this.db);
+    this.activityGate      = new ActivityGateRepo(this.db);
 
     log.engine.info(`[MemoryDatabase] Opened: ${dbPath}`);
   }
@@ -1531,6 +1551,15 @@ export class MemoryDatabase {
         CREATE INDEX IF NOT EXISTS idx_pv_expires    ON parliament_verdicts(expires_at);
       `);
       this.db.pragma(`user_version = 33`);
+    }
+    if (current < 34) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS activity_gate (
+          job_id         TEXT PRIMARY KEY,
+          last_seen_hash TEXT
+        )
+      `);
+      this.db.pragma(`user_version = 34`);
     }
     // Update log if schema was upgraded
     if (current < SCHEMA_VERSION) {
