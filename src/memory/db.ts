@@ -562,6 +562,7 @@ export class SkillUsageRepo {
   }
 }
 
+// ─── ActivityGateRepo ─────────────────────────────────────────────────────────
 export class ActivityGateRepo {
   constructor(private db: Database.Database) {}
 
@@ -1556,7 +1557,7 @@ export class MemoryDatabase {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS activity_gate (
           job_id         TEXT PRIMARY KEY,
-          last_seen_hash TEXT
+          last_seen_hash TEXT NOT NULL
         )
       `);
       this.db.pragma(`user_version = 34`);
