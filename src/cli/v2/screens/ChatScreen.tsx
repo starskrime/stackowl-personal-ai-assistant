@@ -35,9 +35,11 @@ export interface ChatScreenProps {
 }
 
 /** Approximate header height: 2 rules + 6 logo lines + tagline = 9 rows. */
-const HEADER_ROWS = 9;
-/** Approximate composer + footer height: border-top + input + border-bottom + hint = 4 rows. */
-const CHROME_ROWS = HEADER_ROWS + 4;
+const HEADER_ROWS       = 9;
+/** Composer minimum: border-top + input row + border-bottom = 3 rows. */
+const COMPOSER_MIN_ROWS = 3;
+/** ShortcutsBar: one text line. */
+const SHORTCUTS_ROWS    = 1;
 
 export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const turns         = useUiStore((s) => s.turns);
@@ -62,7 +64,9 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   useEffect(() => { setViewportOffset(0); }, [turns.length]);
 
   // Estimate how many turns fit on screen. Each turn averages ~3 rows.
-  const windowSize = Math.max(1, Math.floor((rows - CHROME_ROWS) / 3));
+  const windowSize = Math.max(1, Math.floor(
+    (rows - HEADER_ROWS - COMPOSER_MIN_ROWS - SHORTCUTS_ROWS) / 3
+  ));
 
   const tailIdx  = turns.length - viewportOffset;
   const startIdx = Math.max(0, tailIdx - windowSize);
@@ -91,6 +95,9 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
     }
   });
 
+  // Explicit height for the middle region so Yoga cannot grow it past the terminal boundary.
+  const contentRows = Math.max(4, rows - HEADER_ROWS - COMPOSER_MIN_ROWS - SHORTCUTS_ROWS);
+
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
   const activeCalls      = Array.from(toolCalls.values());
@@ -105,8 +112,8 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
     <Box flexDirection="column" height={rows}>
       <Header />
 
-      {/* Middle region: grows to fill remaining space, clips overflow at bottom */}
-      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+      {/* Middle region: explicit height so Yoga cannot push Header off-screen */}
+      <Box flexDirection="column" height={contentRows} overflow="hidden">
         {/* Scroll indicator — shown when not at the bottom */}
         {hiddenAbove > 0 && (
           <Box justifyContent="center">
@@ -115,7 +122,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
         )}
 
         {/* Messaging area — 2-col gutter each side */}
-        <Box flexDirection="column" paddingX={2} flexGrow={1} flexShrink={1} overflow="hidden">
+        <Box flexDirection="column" paddingX={2} overflow="hidden">
           <Transcript turns={visibleTurns} />
           {unreadHeartbeats.map((msg) => (
             <HeartbeatBanner key={msg.id} msg={msg} />
