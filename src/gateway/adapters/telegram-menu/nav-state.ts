@@ -78,7 +78,7 @@ export class NavStateManager {
 
   clearPendingText(userId: number): void {
     const s = this.states.get(userId);
-    if (s) { s.pendingText = undefined; }
+    if (s) { s.pendingText = undefined; s.lastActivity = Date.now(); }
   }
 
   touch(userId: number): void {
