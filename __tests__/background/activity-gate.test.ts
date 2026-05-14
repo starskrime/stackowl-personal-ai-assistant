@@ -128,3 +128,17 @@ describe("BackgroundOrchestrator activityGate config", () => {
     )).not.toThrow();
   });
 });
+
+import { ProactiveKnowledgeGenerator } from "../../src/pellets/proactive-generator.js";
+
+describe("ProactiveKnowledgeGenerator activityGate config", () => {
+  it("accepts activityGate in config without throwing", () => {
+    const gate = new ActivityGate(db);
+    expect(() => new ProactiveKnowledgeGenerator(
+      {} as any,
+      {} as any,
+      { activityGate: gate },
+      db,
+    )).not.toThrow();
+  });
+});

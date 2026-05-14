@@ -18,6 +18,7 @@ export interface ProactiveGenerationConfig {
   dreamEnabled: boolean;
   evolveSkillsEnabled: boolean;
   minGapAgeDays: number;
+  activityGate?: import("../background/activity-gate.js").ActivityGate;
 }
 
 export const DEFAULT_CONFIG: ProactiveGenerationConfig = {
@@ -32,6 +33,7 @@ export const DEFAULT_CONFIG: ProactiveGenerationConfig = {
 export class ProactiveKnowledgeGenerator {
   private generator: PelletGenerator;
   private knowledgeBase: KnowledgeBase;
+  private activityGate?: import("../background/activity-gate.js").ActivityGate;
 
   constructor(
     private pelletStore: PelletStore,
@@ -42,6 +44,7 @@ export class ProactiveKnowledgeGenerator {
     this.generator = new PelletGenerator(this.router);
     this.knowledgeBase = new KnowledgeBase(pelletStore);
     this.generationConfig = { ...DEFAULT_CONFIG, ...generationConfig };
+    this.activityGate = generationConfig.activityGate;
   }
 
   /**
@@ -83,6 +86,11 @@ export class ProactiveKnowledgeGenerator {
       return [];
     }
 
+    if (this.activityGate && !(await this.activityGate.hasNewActivity("council"))) {
+      log.engine.debug("[ProactiveGenerator] council skipped — no new user activity");
+      return [];
+    }
+
     // Write timestamp before work to prevent concurrent re-entry; accepted risk: crash before completion skips next run
     if (this.db) await this.db.setPelletGenRun("council", now);
     log.engine.info("[ProactiveGenerator] Running knowledge council session...");
@@ -112,6 +120,7 @@ export class ProactiveKnowledgeGenerator {
       `[ProactiveGenerator] Knowledge council complete — ${pellets.length} pellets created`,
     );
 
+    await this.activityGate?.markSeen("council");
     return pellets;
   }
 
@@ -132,6 +141,11 @@ export class ProactiveKnowledgeGenerator {
 
     if (hoursSinceLastRun < 24) {
       log.engine.debug("[ProactiveGenerator] Skipping dream (ran recently)");
+      return [];
+    }
+
+    if (this.activityGate && !(await this.activityGate.hasNewActivity("dream"))) {
+      log.engine.debug("[ProactiveGenerator] dream skipped — no new user activity");
       return [];
     }
 
@@ -172,6 +186,7 @@ export class ProactiveKnowledgeGenerator {
       await this.pelletStore.save(pellet);
       log.engine.info(`[ProactiveGenerator] Dream reflexion complete — pellet "${pellet.id}" created`);
 
+      await this.activityGate?.markSeen("dream");
       return [pellet];
     } catch (err) {
       log.engine.warn(
@@ -198,6 +213,11 @@ export class ProactiveKnowledgeGenerator {
 
     if (hoursSinceLastRun < 24) {
       log.engine.debug("[ProactiveGenerator] Skipping skill evolution (ran recently)");
+      return [];
+    }
+
+    if (this.activityGate && !(await this.activityGate.hasNewActivity("evolve"))) {
+      log.engine.debug("[ProactiveGenerator] evolve skipped — no new user activity");
       return [];
     }
 
@@ -237,6 +257,7 @@ export class ProactiveKnowledgeGenerator {
       await this.pelletStore.save(pellet);
       log.engine.info(`[ProactiveGenerator] Skill evolution complete — pellet "${pellet.id}" created`);
 
+      await this.activityGate?.markSeen("evolve");
       return [pellet];
     } catch (err) {
       log.engine.warn(
