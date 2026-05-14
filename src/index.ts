@@ -257,6 +257,7 @@ import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
 import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { BackgroundOrchestrator } from "./background/orchestrator.js";
+import { ActivityGate } from "./background/activity-gate.js";
 import { CronService } from "./cron/service.js";
 import { IsolatedRunner } from "./cron/isolated-runner.js";
 import { DEFAULT_CRON_JOBS } from "./cron/default-jobs.js";
@@ -980,6 +981,9 @@ async function buildGateway(
 ): Promise<OwlGateway> {
   const provider = b.providerRegistry.getDefault();
 
+  // Shared ActivityGate — gates LLM background jobs to only run when new user activity exists.
+  const activityGate = new ActivityGate(b.memoryDb);
+
   // Legacy memory.md retired (Phase 3) — replaced by structured memory:
   // FactStore (semantic facts) + ConversationDigest (L1 session memory) +
   // MemoryRetriever (episodic + reflexion search). ContextBuilder queries these
@@ -1028,6 +1032,7 @@ async function buildGateway(
     eventBus,
     b.pelletStore,
     makeProviderRouter(provider),
+    { activityGate },
   );
   eventBasedGenerator.subscribe();
   log.engine.info("[Init] EventBasedPelletGenerator subscribed to event bus");
@@ -1042,6 +1047,7 @@ async function buildGateway(
   const proactiveGenerator = new ProactiveKnowledgeGenerator(
     b.pelletStore,
     makeProviderRouter(provider),
+    { activityGate },
   );
   // Schedule periodic knowledge council runs (every 12 hours by default)
   const councilIntervalMs = 12 * 60 * 60 * 1000;
@@ -1314,7 +1320,7 @@ async function buildGateway(
     undefined,        // DesireExecutor — not yet instantiated at top level
     undefined,        // FulfillmentTracker — not yet instantiated at top level
     undefined,        // onProactiveMessage — wired after Telegram/CLI adapters attach
-    undefined,        // config — use BackgroundOrchestrator defaults
+    { activityGate }, // config — gate LLM jobs behind activity check
     b.episodicMemory, // EpisodicMemory for runDecay() in memory-consolidation job
   );
   gateway.ctx.backgroundOrchestrator = backgroundOrchestrator;
