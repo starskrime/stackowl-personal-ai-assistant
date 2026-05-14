@@ -6,6 +6,7 @@
  */
 
 import type { CommandHandler } from "../registry.js";
+import type { PanelItem } from "../../panels/Panel.js";
 import { dispatchOwlCommand } from "../../../../gateway/commands/owl-command.js";
 import type { OwlCommandContext, GatewayMethods } from "../../../../gateway/commands/owl-command.js";
 import type { UiBridge } from "../../events/bridge.js";
@@ -69,7 +70,8 @@ function buildBridgeAdapter(bridge: UiBridge): NonNullable<OwlCommandContext["ch
   };
 }
 
-// ─── /owl list ────────────────────────────────────────────────────────────────
+// ─── /owl list (and bare /owl) ────────────────────────────────────────────────
+// Returns structured panel items so Return switches the active owl.
 
 export const handleOwlList: CommandHandler = async (ctx, _args) => {
   log.cli.debug("handleOwlList: entry");
@@ -79,10 +81,27 @@ export const handleOwlList: CommandHandler = async (ctx, _args) => {
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
   await owlCtx.registry.loadAll(owlCtx.workspacePath);
-  const text = await dispatchOwlCommand("list", [], owlCtx);
-  const items = textToItems(text);
+  const specs = owlCtx.registry.listAll();
+  const items: PanelItem[] = specs.map((spec) => ({
+    id: spec.name,
+    label: `${spec.emoji} ${spec.name}`,
+    meta: `${spec.role}${spec.source ? ` [${spec.source}]` : ""}`,
+    data: { name: spec.name, emoji: spec.emoji },
+  }));
+  const actions = [
+    {
+      key: "return",
+      label: "switch",
+      handler: (item: PanelItem) => {
+        const owlData = item.data as { name: string; emoji: string } | undefined;
+        if (owlData) ctx.bridge.changeOwl(owlData.name, owlData.emoji);
+        else ctx.bridge.changeOwl(item.id, "🦉");
+        ctx.bridge.closePanel();
+      },
+    },
+  ];
   log.cli.debug("handleOwlList: exit", { items: items.length });
-  return { kind: "panel", payload: { title: "/owl list", items, emptyText: "No owls registered." } };
+  return { kind: "panel", payload: { title: "/owl", items, actions, emptyText: "No owls registered." } };
 };
 
 // ─── /owl show <name> ─────────────────────────────────────────────────────────

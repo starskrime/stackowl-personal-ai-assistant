@@ -228,31 +228,7 @@ export const REGISTRY: CommandSpec[] = [
       { name: "pin",       description: "Pin owl for session",   args: [{ name: "<name>" }], handler: handleOwlPin },
       { name: "unpin",     description: "Unpin active owl",      handler: handleOwlUnpin },
     ],
-    handler: async (ctx) => {
-      const { availableOwls } = ctx.getStore();
-      const items = availableOwls.map((o) => ({
-        id: o.name,
-        label: `${o.emoji} ${o.name}`,
-        meta: o.isActive ? "active" : o.description.slice(0, 40),
-        data: o,
-      }));
-      const actions = [
-        {
-          key: "return",
-          label: "switch",
-          handler: (item: PanelItem) => {
-            const owlData = item.data as { name: string; emoji: string } | undefined;
-            if (owlData) ctx.bridge.changeOwl(owlData.name, owlData.emoji);
-            else ctx.bridge.changeOwl(item.id, "🦉");
-            ctx.bridge.closePanel();
-          },
-        },
-      ];
-      return {
-        kind: "panel",
-        payload: { title: "/owl", items, actions, emptyText: "No owls loaded." },
-      };
-    },
+    handler: handleOwlList,
   },
   {
     name: "/status",
