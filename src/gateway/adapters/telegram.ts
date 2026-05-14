@@ -297,15 +297,6 @@ export class TelegramAdapter implements ChannelAdapter {
       await ctx.reply(msg, { parse_mode: "MarkdownV2" });
     });
 
-    this.bot.command("owls", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      const registry = this.gateway.getOwlRegistry();
-      let msg = `🦉 *Available Owls*\n\n`;
-      for (const o of registry.listOwls()) {
-        msg += `${o.persona.emoji} *${this.esc(o.persona.name)}* — ${this.esc(o.persona.type)}\n`;
-      }
-      await ctx.reply(msg, { parse_mode: "MarkdownV2" });
-    });
 
     // ── /skills install — start the skill install wizard ────────
     this.bot.command("skills", async (ctx) => {

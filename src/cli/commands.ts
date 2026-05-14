@@ -31,7 +31,6 @@ interface CommandDef {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-const Y = chalk.yellow;
 const YB = chalk.yellow.bold;
 const D = chalk.dim;
 const C = chalk.cyan;
@@ -61,7 +60,6 @@ const cmdHelp: CommandFn = async (_args, ui) => {
     sep(),
     C("/help".padEnd(20)) + D("Show this list"),
     C("/status".padEnd(20)) + D("Provider, model, owl info"),
-    C("/owls".padEnd(20)) + D("List owl personas"),
     C("/clear".padEnd(20)) + D("Clear conversation context"),
     C("/capabilities".padEnd(20)) + D("List synthesized tools"),
     C("/skills".padEnd(20)) + D("List or install skills"),
@@ -92,23 +90,6 @@ const cmdStatus: CommandFn = async (_args, ui, gateway) => {
   return true;
 };
 
-const cmdOwls: CommandFn = async (_args, ui, gateway) => {
-  const registry = gateway.getOwlRegistry();
-  const owls = registry.listOwls();
-  const lines: string[] = ["", YB("Owls"), sep()];
-  for (const o of owls) {
-    lines.push(
-      Y(`${o.persona.emoji} `) +
-      W(o.persona.name.padEnd(16)) +
-      D(
-        `gen ${o.dna.generation}  challenge ${o.dna.evolvedTraits.challengeLevel}`,
-      ),
-    );
-  }
-  lines.push("");
-  ui.printLines(lines);
-  return true;
-};
 
 const cmdClear: CommandFn = async (_args, ui, gateway) => {
   const { makeMessageId, makeSessionId } = await import("../gateway/core.js");
@@ -253,7 +234,6 @@ const COMMANDS: Record<string, CommandDef> = {
   help: { description: "Show command list", fn: cmdHelp },
   "?": { description: "Show command list", fn: cmdHelp },
   status: { description: "Provider / model / owl info", fn: cmdStatus },
-  owls: { description: "List owl personas", fn: cmdOwls },
   skills: {
     description: "List or install skills",
     fn: async (_args, _ui, _gateway) => false,

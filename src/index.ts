@@ -1741,30 +1741,6 @@ async function parliamentCommand(topic?: string) {
   }
 }
 
-// ─── Owls Command ────────────────────────────────────────────────
-
-async function owlsCommand() {
-  const { owlRegistry } = await bootstrap();
-  const owls = owlRegistry.listOwls();
-
-  log.cli.info("🦉 StackOwl — Registered Owls");
-
-  if (owls.length === 0) {
-    log.cli.info("  No owls found. Check your workspace/owls/ directory.");
-    return;
-  }
-
-  for (const owl of owls) {
-    const p = owl.persona;
-    const d = owl.dna;
-    log.cli.info(`  ${p.emoji} ${p.name} — ${p.type}`);
-    log.cli.info(
-      `     Challenge: ${d.evolvedTraits.challengeLevel} | Gen: ${d.generation} | Convos: ${d.interactionStats.totalConversations}`,
-    );
-    log.cli.info(`     Specialties: ${p.specialties.join(", ")}`);
-    log.cli.info("");
-  }
-}
 
 // ─── Status Command ──────────────────────────────────────────────
 
@@ -2551,12 +2527,6 @@ program
     });
   });
 
-program
-  .command("owls")
-  .description("List available owl personas")
-  .action(async () => {
-    await owlsCommand();
-  });
 
 program
   .command("pellets")

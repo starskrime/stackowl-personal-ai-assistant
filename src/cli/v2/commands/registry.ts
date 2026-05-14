@@ -168,35 +168,6 @@ export const REGISTRY: CommandSpec[] = [
     },
   },
   {
-    name: "/owls",
-    description: "Browse and switch owl personas",
-    handler: async (ctx) => {
-      const { availableOwls } = ctx.getStore();
-      const items = availableOwls.map((o) => ({
-        id: o.name,
-        label: `${o.emoji} ${o.name}`,
-        meta: o.isActive ? "active" : o.description.slice(0, 40),
-        data: o,
-      }));
-      const actions = [
-        {
-          key: "return",
-          label: "switch",
-          handler: (item: PanelItem) => {
-            const owlData = item.data as { name: string; emoji: string } | undefined;
-            if (owlData) ctx.bridge.changeOwl(owlData.name, owlData.emoji);
-            else ctx.bridge.changeOwl(item.id, "🦉");
-            ctx.bridge.closePanel();
-          },
-        },
-      ];
-      return {
-        kind: "panel",
-        payload: { title: "/owls", items, actions, emptyText: "No owls loaded." },
-      };
-    },
-  },
-  {
     name: "/skills",
     description: "List installed skills",
     handler: async (ctx) => {
@@ -246,7 +217,7 @@ export const REGISTRY: CommandSpec[] = [
   },
   {
     name: "/owl",
-    description: "Manage owls — list, show, create, pin, delete",
+    description: "Manage owls — switch, list, show, create, pin, delete",
     subcommands: [
       { name: "list",      description: "List all owls (BMAD + custom + builtin)", handler: handleOwlList },
       { name: "show",      description: "Show owl details",      args: [{ name: "<name>" }], handler: handleOwlShow },
@@ -257,7 +228,31 @@ export const REGISTRY: CommandSpec[] = [
       { name: "pin",       description: "Pin owl for session",   args: [{ name: "<name>" }], handler: handleOwlPin },
       { name: "unpin",     description: "Unpin active owl",      handler: handleOwlUnpin },
     ],
-    handler: handleOwlList,
+    handler: async (ctx) => {
+      const { availableOwls } = ctx.getStore();
+      const items = availableOwls.map((o) => ({
+        id: o.name,
+        label: `${o.emoji} ${o.name}`,
+        meta: o.isActive ? "active" : o.description.slice(0, 40),
+        data: o,
+      }));
+      const actions = [
+        {
+          key: "return",
+          label: "switch",
+          handler: (item: PanelItem) => {
+            const owlData = item.data as { name: string; emoji: string } | undefined;
+            if (owlData) ctx.bridge.changeOwl(owlData.name, owlData.emoji);
+            else ctx.bridge.changeOwl(item.id, "🦉");
+            ctx.bridge.closePanel();
+          },
+        },
+      ];
+      return {
+        kind: "panel",
+        payload: { title: "/owl", items, actions, emptyText: "No owls loaded." },
+      };
+    },
   },
   {
     name: "/status",
