@@ -12,8 +12,9 @@
  *   medium   (~769 MB) — near cloud-quality, CPU-intensive
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { Logger } from "../logger.js";
@@ -162,44 +163,66 @@ export class WhisperSTT {
    * The WAV must be 16kHz, 16-bit, mono — exactly what MicrophoneRecorder produces.
    * Call ensureReady() first to avoid a long pause on first transcription.
    *
+   * Spawns whisper-cli directly with stdio:pipe so its diagnostic output
+   * (init timings, model info, system info) is routed through the structured
+   * logger at debug level instead of leaking to the terminal.
+   *
    * Returns the transcript string (may be empty if nothing was heard).
    */
   async transcribe(wavPath: string): Promise<string> {
-    let nodewhisper: typeof import("nodejs-whisper").nodewhisper;
+    const cppRoot = whisperCppRoot();
+    const binary  = cliBinaryPath(cppRoot);
+    const model   = modelPath(cppRoot, this.opts.model);
 
-    try {
-      const mod = await import("nodejs-whisper");
-      nodewhisper = mod.nodewhisper ?? (mod as unknown as { default: typeof mod }).default?.nodewhisper;
-      if (!nodewhisper) {
-        throw new Error("nodewhisper export not found in nodejs-whisper");
-      }
-    } catch (err) {
-      throw new Error(
-        `nodejs-whisper is not available: ${(err as Error).message}. Run: npm install nodejs-whisper`,
+    log.debug("stt.transcribe: entry", { wavPath, model: this.opts.model });
+
+    if (!existsSync(binary)) {
+      throw new Error(`whisper-cli not found at ${binary}. Call ensureReady() first.`);
+    }
+    if (!existsSync(model)) {
+      throw new Error(`Whisper model not found at ${model}. Call ensureReady() first.`);
+    }
+
+    const args = ["-l", this.opts.language, "-m", model, "-f", wavPath];
+    log.debug("stt.transcribe: spawning whisper-cli", { args: args.join(" ") });
+
+    // stdio: pipe on both stdout (transcript) and stderr (whisper diagnostics).
+    // stderr lines are forwarded to the structured logger at debug level — they
+    // never reach the terminal regardless of TUI mode or logger redirect state.
+    const raw = await new Promise<string>((resolve, reject) => {
+      const child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
+
+      const stdoutChunks: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => {
+        for (const line of chunk.toString().split("\n")) {
+          if (line.trim()) log.debug(`stt.transcribe: [whisper] ${line.trimEnd()}`);
+        }
+      });
+      child.on("error", (err) => {
+        log.error("stt.transcribe: spawn failed", err, { binary });
+        reject(new Error(`Failed to spawn whisper-cli: ${err.message}`));
+      });
+      child.on("close", (code) => {
+        if (code !== 0) {
+          log.error("stt.transcribe: non-zero exit", new Error(`exit ${code}`), { code });
+          reject(new Error(`whisper-cli exited with code ${code}`));
+          return;
+        }
+        resolve(Buffer.concat(stdoutChunks).toString());
+      });
+    });
+
+    const transcript = this.clean(raw);
+    log.debug("stt.transcribe: exit", { transcriptLen: transcript.length });
+
+    if (this.opts.removeWavAfter) {
+      unlink(wavPath).catch((err: Error) =>
+        log.error("stt.transcribe: wav cleanup failed", err, { wavPath }),
       );
     }
 
-    log.debug(`Transcribing ${wavPath} with model "${this.opts.model}"`);
-
-    try {
-      const raw = await nodewhisper(wavPath, {
-        modelName: this.opts.model,
-        autoDownloadModelName: this.opts.model,
-        removeWavFileAfterTranscription: this.opts.removeWavAfter,
-        withCuda: false,
-        whisperOptions: {
-          outputInText: true,
-          language: this.opts.language,
-          wordTimestamps: false,
-        },
-      });
-
-      const transcript = this.clean(raw);
-      log.debug(`Transcript: "${transcript}"`);
-      return transcript;
-    } catch (err) {
-      throw new Error(`Transcription failed: ${(err as Error).message}`);
-    }
+    return transcript;
   }
 
   /**
