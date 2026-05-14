@@ -943,8 +943,6 @@ export class MemoryDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_pv_topic       ON parliament_verdicts(topic);
       CREATE INDEX IF NOT EXISTS idx_pv_validated   ON parliament_verdicts(validated);
-      CREATE INDEX IF NOT EXISTS idx_pv_confidence  ON parliament_verdicts(confidence_score DESC);
-      CREATE INDEX IF NOT EXISTS idx_pv_expires     ON parliament_verdicts(expires_at);
 
       CREATE TABLE IF NOT EXISTS agent_goals (
         id                TEXT PRIMARY KEY,
