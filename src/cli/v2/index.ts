@@ -65,12 +65,20 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
   process.once("SIGTERM", () => { unmount(); cleanup(); process.exit(0); });
   process.once("uncaughtException", (err) => { unmount(); restoreScreen(); throw err; });
 
-  // Run adapter and Ink in parallel — both must resolve for a clean exit.
-  // The finally block guarantees terminal restoration even if either rejects.
+  // Run adapter and Ink in parallel. When Ink's exit() is called (e.g. dialog
+  // "Yes"), waitUntilExit() resolves. We immediately call adapter.stop() so its
+  // internal _quitPromise resolves too — otherwise Promise.all deadlocks waiting
+  // for adapter.start() while adapter.start() waits for cleanup() in the finally.
+  // process.exit(0) in finally guarantees termination: the gateway has long-lived
+  // components (Telegram, heartbeat) that survive startV2 returning on their own.
   try {
-    await Promise.all([adapter.start(), waitUntilExit()]);
+    await Promise.all([
+      adapter.start(),
+      waitUntilExit().then(() => adapter.stop()),
+    ]);
   } finally {
     unmount();
     cleanup();
+    process.exit(0);
   }
 }
