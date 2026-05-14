@@ -45,6 +45,8 @@ export interface BackgroundOrchestratorConfig {
   quietHours: { start: number; end: number };
   /** Master enable switch. Default: true */
   enabled: boolean;
+  /** When provided, LLM jobs are skipped if no new user interaction since last run */
+  activityGate?: import("./activity-gate.js").ActivityGate;
 }
 
 interface JobState {
@@ -66,6 +68,7 @@ const DEFAULT_CONFIG: BackgroundOrchestratorConfig = {
 
 export class BackgroundOrchestrator {
   private config: BackgroundOrchestratorConfig;
+  private activityGate?: import("./activity-gate.js").ActivityGate;
   private jobs: Record<string, JobState> = {
     "desire-execution":    { lastRunAt: 0, running: false, failCount: 0 },
     "memory-consolidation":{ lastRunAt: 0, running: false, failCount: 0 },
@@ -91,6 +94,7 @@ export class BackgroundOrchestrator {
     private episodicMemory?: EpisodicMemory,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.activityGate = config?.activityGate;
   }
 
   /** Start the background tick loop (every 5 minutes). */
@@ -186,7 +190,14 @@ export class BackgroundOrchestrator {
     await this.maybeRun(
       "desire-execution",
       this.config.desireIntervalMinutes * 60_000,
-      () => this.runDesireExecution(),
+      async () => {
+        if (this.activityGate && !(await this.activityGate.hasNewActivity("desire-execution"))) {
+          log.engine.debug("[BackgroundOrchestrator] desire-execution skipped — no new user activity");
+        } else {
+          await this.runDesireExecution();
+          await this.activityGate?.markSeen("desire-execution");
+        }
+      },
     );
 
     await this.maybeRun(
@@ -199,7 +210,14 @@ export class BackgroundOrchestrator {
       await this.maybeRun(
         "proactive-ping",
         this.config.proactiveIdleMinutes * 60_000,
-        () => this.runProactivePing(),
+        async () => {
+          if (this.activityGate && !(await this.activityGate.hasNewActivity("proactive-ping"))) {
+            log.engine.debug("[BackgroundOrchestrator] proactive-ping skipped — no new user activity");
+          } else {
+            await this.runProactivePing();
+            await this.activityGate?.markSeen("proactive-ping");
+          }
+        },
       );
     }
 
@@ -212,7 +230,14 @@ export class BackgroundOrchestrator {
       await this.maybeRun(
         "session-debrief",
         this.config.debriefIdleMinutes * 60_000,
-        () => this.runSessionDebrief(),
+        async () => {
+          if (this.activityGate && !(await this.activityGate.hasNewActivity("session-debrief"))) {
+            log.engine.debug("[BackgroundOrchestrator] session-debrief skipped — no new user activity");
+          } else {
+            await this.runSessionDebrief();
+            await this.activityGate?.markSeen("session-debrief");
+          }
+        },
       );
     }
   }

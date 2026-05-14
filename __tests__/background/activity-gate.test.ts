@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ActivityGate } from "../../src/background/activity-gate.js";
 import { randomUUID } from "node:crypto";
+import { BackgroundOrchestrator } from "../../src/background/orchestrator.js";
 
 let db: MemoryDatabase;
 let tmpDir: string;
@@ -110,5 +111,20 @@ describe("ActivityGate", () => {
 
     expect(await gate.hasNewActivity("dream")).toBe(true);
     expect(await gate.hasNewActivity("council")).toBe(false);
+  });
+});
+
+describe("BackgroundOrchestrator activityGate config", () => {
+  it("accepts an activityGate in config without throwing", () => {
+    const gate = new ActivityGate(db);
+    expect(() => new BackgroundOrchestrator(
+      {} as any,
+      {} as any,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { activityGate: gate },
+    )).not.toThrow();
   });
 });
