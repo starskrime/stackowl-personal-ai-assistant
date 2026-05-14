@@ -347,6 +347,25 @@ export class UiBridge {
     this.emit({ kind: "onboarding.view.dismissed" });
   }
 
+  // ─── Inline prompt ───────────────────────────────────────────────────────
+
+  /**
+   * Ask the user a question via the TUI Composer.
+   * Emits prompt.requested (Composer renders the question and hijacks Enter),
+   * then resolves when the Composer emits prompt.submitted.
+   */
+  prompt(question: string, options?: { choices?: string[]; defaultChoice?: string }): Promise<string> {
+    return new Promise<string>((resolve) => {
+      const unsub = this.subscribe((event) => {
+        if (event.kind === "prompt.submitted") {
+          unsub();
+          resolve(event.answer);
+        }
+      });
+      this.emit({ kind: "prompt.requested", question, choices: options?.choices, defaultChoice: options?.defaultChoice });
+    });
+  }
+
   /**
    * Build a DebateCallbacks object that routes all parliament events through this bridge.
    * Pass these callbacks into ParliamentSession.config.callbacks before runDebate().

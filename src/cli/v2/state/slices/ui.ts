@@ -20,6 +20,10 @@ export interface UiSliceState {
   contextWindowPct: number;
   /** Inline overlays shown above the Composer in ChatScreen. */
   showHelp: boolean;
+  /** When non-null, the Composer captures the next Enter as a prompt answer instead of sending to LLM. */
+  promptQuestion: string | null;
+  promptChoices?: string[];
+  promptDefault?: string;
 }
 
 export const initialUiSliceState: UiSliceState = {
@@ -33,6 +37,9 @@ export const initialUiSliceState: UiSliceState = {
   totalCostUsd: 0,
   contextWindowPct: 0,
   showHelp: false,
+  promptQuestion: null,
+  promptChoices: undefined,
+  promptDefault: undefined,
 };
 
 export function applyUiEvent(state: UiState, event: UiEvent): UiState {
@@ -102,6 +109,12 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
 
     case "help.view.dismissed":
       return { ...state, showHelp: false };
+
+    case "prompt.requested":
+      return { ...state, promptQuestion: event.question, promptChoices: event.choices, promptDefault: event.defaultChoice };
+
+    case "prompt.submitted":
+      return { ...state, promptQuestion: null, promptChoices: undefined, promptDefault: undefined };
 
     default:
       return state;

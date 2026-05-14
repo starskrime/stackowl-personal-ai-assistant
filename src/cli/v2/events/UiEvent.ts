@@ -291,6 +291,22 @@ export interface OnboardingViewDismissedEvent {
   kind: "onboarding.view.dismissed";
 }
 
+// ─── Inline prompt ────────────────────────────────────────────────────────────
+
+/** Emitted by bridge.prompt() — causes the Composer to capture next Enter as a prompt answer. */
+export interface PromptRequestedEvent {
+  kind: "prompt.requested";
+  question: string;
+  choices?: string[];
+  defaultChoice?: string;
+}
+
+/** Emitted by the Composer when the user submits an answer to an active prompt. */
+export interface PromptSubmittedEvent {
+  kind: "prompt.submitted";
+  answer: string;
+}
+
 // ─── Union ────────────────────────────────────────────────────────────────────
 
 export type UiEvent =
@@ -331,6 +347,8 @@ export type UiEvent =
   | PanelPoppedEvent
   | OnboardingViewRequestedEvent
   | OnboardingViewDismissedEvent
-  | MemoryWrittenEvent;
+  | MemoryWrittenEvent
+  | PromptRequestedEvent
+  | PromptSubmittedEvent;
 
 export type UiEventKind = UiEvent["kind"];

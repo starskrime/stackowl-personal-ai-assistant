@@ -41,11 +41,14 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
   const { colors } = useTheme();
   const dispatcher = useCommandDispatcher();
 
-  const mode          = useUiStore((s) => s.mode);
-  const generating    = useUiStore((s) => s.generating);
-  const panelFocus    = useUiStore((s) => s.panelFocus);
-  const activeOwlName = useUiStore((s) => s.activeOwlName);
+  const mode           = useUiStore((s) => s.mode);
+  const generating     = useUiStore((s) => s.generating);
+  const panelFocus     = useUiStore((s) => s.panelFocus);
+  const activeOwlName  = useUiStore((s) => s.activeOwlName);
   const activeOwlEmoji = useUiStore((s) => s.activeOwlEmoji);
+  const promptQuestion = useUiStore((s) => s.promptQuestion);
+  const promptChoices  = useUiStore((s) => s.promptChoices);
+  const promptDefault  = useUiStore((s) => s.promptDefault);
 
   // CommandContext shell for completions (bridge + store only)
   // Stable ref — globalBridge and uiStore are module-level singletons so this never changes
@@ -132,6 +135,19 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
           return;
         }
 
+        // Prompt mode — route Enter to the active prompt, not to the LLM
+        if (promptQuestion !== null) {
+          let answer = trimmed;
+          if (!answer && promptDefault) answer = promptDefault;
+          if (promptChoices && trimmed) {
+            const idx = parseInt(trimmed, 10) - 1;
+            if (!isNaN(idx) && promptChoices[idx] !== undefined) answer = promptChoices[idx]!;
+          }
+          globalBridge.emit({ kind: "prompt.submitted", answer });
+          setValue("");
+          return;
+        }
+
         // Slash command → dispatch
         if (trimmed.startsWith("/")) {
           dispatcher.dispatch(trimmed).then((result) => {
@@ -181,6 +197,17 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
               )}
             </Box>
           ))}
+        </Box>
+      )}
+
+      {/* Inline prompt — shown when a command wizard is asking a question */}
+      {promptQuestion !== null && (
+        <Box paddingLeft={1} flexDirection="column">
+          <Text color={colors.accent}>❓ {promptQuestion}</Text>
+          {promptChoices && promptChoices.map((c, i) => (
+            <Text key={i} dimColor>  {i + 1}. {c}</Text>
+          ))}
+          {promptDefault && <Text dimColor>  [default: {promptDefault}]</Text>}
         </Box>
       )}
 

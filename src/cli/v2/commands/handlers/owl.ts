@@ -8,6 +8,7 @@
 import type { CommandHandler } from "../registry.js";
 import { dispatchOwlCommand } from "../../../../gateway/commands/owl-command.js";
 import type { OwlCommandContext, GatewayMethods } from "../../../../gateway/commands/owl-command.js";
+import type { UiBridge } from "../../events/bridge.js";
 import { log } from "../../../../logger.js";
 
 // ─── Context builder ──────────────────────────────────────────────────────────
@@ -46,34 +47,24 @@ function textToItems(text: string) {
     .map((line, i) => ({ id: `owl-${i}`, label: line }));
 }
 
-// ─── CLI channel adapter (readline-based) ────────────────────────────────────
+// ─── Bridge-based channel adapter ────────────────────────────────────────────
+// Uses bridge.prompt() so the TUI Composer captures the answer natively.
+// This prevents stdin conflicts with Ink's raw-mode input handler.
 
-async function buildCliAdapter(): Promise<NonNullable<OwlCommandContext["channelAdapter"]>> {
-  log.cli.debug("owl.buildCliAdapter: creating readline adapter");
+function buildBridgeAdapter(bridge: UiBridge): NonNullable<OwlCommandContext["channelAdapter"]> {
+  log.cli.debug("owl.buildBridgeAdapter: creating bridge adapter");
   return {
     ask: async (
       _userId: string,
       prompt: { text: string; choices?: string[]; defaultChoice?: string },
     ): Promise<string> => {
-      log.cli.debug("owl.buildCliAdapter.ask: entry", { promptText: prompt.text.slice(0, 80) });
-      const readline = await import("node:readline");
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const choices = prompt.choices
-        ? `\n${prompt.choices.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}`
-        : "";
-      const defaultHint = prompt.defaultChoice ? ` [${prompt.defaultChoice}]` : "";
-      return new Promise<string>((resolve) => {
-        rl.question(`${prompt.text}${choices}${defaultHint}\n> `, (ans) => {
-          rl.close();
-          log.cli.debug("owl.buildCliAdapter.ask: received answer", { len: ans.length });
-          if (!ans && prompt.defaultChoice) return resolve(prompt.defaultChoice);
-          if (prompt.choices) {
-            const idx = parseInt(ans, 10) - 1;
-            return resolve(!isNaN(idx) && prompt.choices[idx] !== undefined ? prompt.choices[idx] : ans);
-          }
-          resolve(ans);
-        });
+      log.cli.debug("owl.buildBridgeAdapter.ask: entry", { promptText: prompt.text.slice(0, 80) });
+      const answer = await bridge.prompt(prompt.text, {
+        choices: prompt.choices,
+        defaultChoice: prompt.defaultChoice,
       });
+      log.cli.debug("owl.buildBridgeAdapter.ask: received answer", { len: answer.length });
+      return answer;
     },
   };
 }
@@ -135,7 +126,7 @@ export const handleOwlFromBmad: CommandHandler = async (ctx, args) => {
     log.cli.warn("handleOwlFromBmad: exit — no registry");
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
-  const adapter = await buildCliAdapter();
+  const adapter = buildBridgeAdapter(ctx.bridge);
   const text = await dispatchOwlCommand("from-bmad", args, { ...owlCtx, channelAdapter: adapter });
   log.cli.debug("handleOwlFromBmad: exit", { textLen: text.length });
   return { kind: "system-message", text };
@@ -150,7 +141,7 @@ export const handleOwlCreate: CommandHandler = async (ctx, _args) => {
     log.cli.warn("handleOwlCreate: exit — no registry");
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
-  const adapter = await buildCliAdapter();
+  const adapter = buildBridgeAdapter(ctx.bridge);
   const text = await dispatchOwlCommand("create", [], { ...owlCtx, channelAdapter: adapter });
   log.cli.debug("handleOwlCreate: exit", { textLen: text.length });
   return { kind: "system-message", text };
