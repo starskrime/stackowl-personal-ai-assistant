@@ -40,6 +40,76 @@ const DEGRADATION_TEMPLATES: Record<DegradationTier, (partial: string, gap: stri
   4: (_, gap, next) => ["I wasn't able to complete this with what I currently have access to.", gap ? `\nThe blocker was: ${gap}.` : "", next ? `\n\nHere's what you can do instead:\n${next}` : ""].join(""),
 };
 
+/**
+ * Classify a thrown LLM provider error and return a user-friendly message.
+ * Returns null if the error is not a recognized quota/limit/auth error.
+ */
+export function classifyLlmError(err: unknown): string | null {
+  const raw = err instanceof Error ? err.message : String(err);
+  const low = raw.toLowerCase();
+
+  // Token / credit quota exhaustion (weekly / monthly plan limits)
+  if (
+    low.includes("usage_limit_exceeded") ||
+    low.includes("usage limit") ||
+    low.includes("monthly token") ||
+    low.includes("weekly token") ||
+    low.includes("token quota") ||
+    low.includes("credit balance") ||
+    low.includes("insufficient_quota") ||
+    low.includes("out of credits")
+  ) {
+    return (
+      "Your Anthropic token quota is exhausted for this billing period. " +
+      "Visit console.anthropic.com to check your usage or upgrade your plan. " +
+      "Background jobs have been paused automatically."
+    );
+  }
+
+  // Context window exceeded
+  if (
+    low.includes("context_length_exceeded") ||
+    low.includes("context window") ||
+    low.includes("maximum context") ||
+    (low.includes("too long") && (low.includes("token") || low.includes("input")))
+  ) {
+    return (
+      "The conversation is too long for the model to process. " +
+      "Use /clear to start a fresh session — your memory and knowledge are preserved."
+    );
+  }
+
+  // Rate limit (per-minute / per-day)
+  if (
+    low.includes("rate_limit_error") ||
+    low.includes("rate limit") ||
+    low.includes("too many requests") ||
+    low.includes("429")
+  ) {
+    return (
+      "Rate limit reached — too many requests in a short window. " +
+      "Wait a moment, then try again. Background tasks have been paused automatically."
+    );
+  }
+
+  // Server overloaded
+  if (low.includes("overloaded_error") || low.includes("overloaded")) {
+    return "Anthropic's servers are currently overloaded. Please try again in a moment.";
+  }
+
+  // Auth / API key errors
+  if (
+    low.includes("authentication_error") ||
+    low.includes("invalid x-api-key") ||
+    low.includes("invalid api key") ||
+    (low.includes("401") && low.includes("http"))
+  ) {
+    return "The API key is invalid or expired. Check your ANTHROPIC_API_KEY environment variable.";
+  }
+
+  return null;
+}
+
 export class UserFacingStatusNarrator {
   postProcess(content: string, _qualityScore: number): string {
     let clean = content;

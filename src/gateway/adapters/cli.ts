@@ -26,6 +26,7 @@ import { ToolStream } from "../../cli/tool-stream.js";
 import type { StreamEvent } from "../../providers/base.js";
 import { GatewayEventBus, type GatewaySystemEvent } from "../event-bus.js";
 import { formatToolEvent } from "../narration-formatter.js";
+import { classifyLlmError } from "../../engine/user-facing-narrator.js";
 import type { ProactivePinger } from "../../heartbeat/proactive.js";
 
 export interface CLIAdapterConfig { userId?: string; workspacePath?: string; }
@@ -342,9 +343,9 @@ export class CLIAdapter implements ChannelAdapter {
       }
     } catch (err) {
       this.renderer.stopThinking();
-      const msg = err instanceof Error ? err.message : String(err);
-      log.cli.error(`Error: ${msg}`);
-      this.renderer.printError(msg);
+      const raw = err instanceof Error ? err.message : String(err);
+      log.cli.error(`Error: ${raw}`);
+      this.renderer.printError(classifyLlmError(err) ?? raw);
     }
   }
 
