@@ -297,3 +297,40 @@ describe("TelegramRootMenu.handleTextInput", () => {
     expect(configMenu.handleCommand).toHaveBeenCalled();
   });
 });
+
+describe("Persistent keyboard contract — button labels match KEYBOARD_BUTTON_MAP", () => {
+  it("all 4 keyboard button labels are consumed by handleTextInput", async () => {
+    const { TelegramRootMenu } = await import(
+      "../../../src/gateway/adapters/telegram-menu/root-menu.js"
+    );
+    const fakeGateway = {
+      getConfig: () => ({ defaultModel: "m", providers: {} }),
+      getOwl: () => ({ persona: { name: "X", emoji: "🦉" } }),
+      getMcpManager: () => null,
+      getToolRegistry: () => null,
+      getSkillsLoader: () => null,
+      getMemoryRepo: () => null,
+      getSessionStore: () => null,
+      getWorkspacePath: () => "/tmp",
+      getSpecializedRegistry: () => null,
+    } as any;
+    const configMenu = { handleCommand: vi.fn().mockResolvedValue(undefined) };
+    const menu = new TelegramRootMenu(fakeGateway, configMenu as any, {} as any);
+
+    const reply = vi.fn().mockResolvedValue({ message_id: 1 });
+    const api = { editMessageText: vi.fn().mockResolvedValue({}) };
+    const ctx = { from: { id: 1 }, chat: { id: 100 }, reply, api } as any;
+
+    const labels = ["🎛 Menu", "📊 Status", "🦉 Owls", "⚙️ Settings"];
+    for (const label of labels) {
+      // Reset mocks between calls
+      reply.mockClear();
+      const result = await menu.handleTextInput(ctx, label);
+      expect(result, `"${label}" should be consumed`).toBe(true);
+    }
+
+    // Regular text must NOT be consumed
+    const result = await menu.handleTextInput(ctx, "hello there");
+    expect(result).toBe(false);
+  });
+});

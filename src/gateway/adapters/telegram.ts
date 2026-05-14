@@ -25,6 +25,7 @@ import type { ChannelAdapter, GatewayResponse } from "../types.js";
 import { convertTables } from "../formatters/table-converter.js";
 import { TelegramConfigMenu } from "./telegram-config/menu.js";
 import { TelegramVoiceMenu } from "./telegram-config/voice-menu.js";
+import { TelegramRootMenu } from "./telegram-menu/index.js";
 import { saveConfig } from "../../config/loader.js";
 import { McpCommandRouter } from "../commands/mcp-router.js";
 import { dispatchMemoryCommand } from "../commands/memory-router.js";
@@ -71,6 +72,8 @@ export class TelegramAdapter implements ChannelAdapter {
   public configMenu: TelegramConfigMenu;
   /** Interactive /voice menu controller */
   private voiceMenu: TelegramVoiceMenu;
+  /** Unified nav control panel controller */
+  private rootMenu: TelegramRootMenu;
   /** Whisper STT engine for voice message transcription */
   private stt: WhisperSTT;
 
@@ -124,6 +127,9 @@ export class TelegramAdapter implements ChannelAdapter {
       },
     );
 
+    // ── Unified nav menu ─────────────────────────────────────────
+    this.rootMenu = new TelegramRootMenu(gateway, this.configMenu, this.voiceMenu);
+
     // ── STT engine for incoming Telegram voice messages ──────────
     const voiceCfg = gateway.getConfig().voice ?? {};
     this.stt = new WhisperSTT({
@@ -173,6 +179,22 @@ export class TelegramAdapter implements ChannelAdapter {
     log.telegram.info(
       `Owl: ${this.gateway.getOwl().persona.emoji} ${this.gateway.getOwl().persona.name}`,
     );
+
+    await this.bot.api.setMyCommands([
+      { command: "menu",   description: "Open control panel" },
+      { command: "status", description: "Current owl & model" },
+      { command: "config", description: "AI provider & model" },
+      { command: "voice",  description: "Voice settings" },
+      { command: "skills", description: "Manage skills" },
+      { command: "mcp",    description: "MCP servers" },
+      { command: "memory", description: "Memory management" },
+      { command: "owl",    description: "Owl personas" },
+      { command: "reset",  description: "Clear session" },
+    ]).catch(err => log.telegram.warn(`setMyCommands failed: ${err instanceof Error ? err.message : err}`));
+
+    await this.bot.api.setChatMenuButton({
+      menu_button: { type: "commands" },
+    }).catch(err => log.telegram.warn(`setChatMenuButton failed: ${err instanceof Error ? err.message : err}`));
 
     this.updateCleanupInterval = setInterval(() => {
       const now = Date.now();
@@ -253,10 +275,21 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.command("start", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
       this.trackChat(ctx.chat.id);
+      const { Keyboard } = await import("grammy");
+      const persistentKeyboard = new Keyboard()
+        .text("🎛 Menu").text("📊 Status")
+        .row()
+        .text("🦉 Owls").text("⚙️ Settings")
+        .resized()
+        .persistent();
       await ctx.reply(
         `${owl.persona.emoji} *${this.esc(owl.persona.name)}* reporting for duty\\!\n\n` +
-          `I'm your personal AI assistant\\. Talk to me naturally — I'll handle the rest\\. 🦉`,
-        { parse_mode: "MarkdownV2" },
+          `I'm your personal AI assistant\\. Talk to me naturally — I'll handle the rest\\. 🦉\n\n` +
+          `Use the buttons below or tap ☰ for all commands\\.`,
+        {
+          parse_mode: "MarkdownV2",
+          reply_markup: persistentKeyboard,
+        },
       );
     });
 
@@ -284,6 +317,13 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!this.isAllowed(ctx)) return;
       this.trackChat(ctx.chat.id);
       await this.voiceMenu.handleCommand(ctx);
+    });
+
+    // ── /menu — Unified inline control panel ─────────────────────
+    this.bot.command("menu", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      this.trackChat(ctx.chat.id);
+      await this.rootMenu.handleCommand(ctx);
     });
 
     this.bot.command("status", async (ctx) => {
@@ -457,6 +497,11 @@ export class TelegramAdapter implements ChannelAdapter {
       const configConsumed = await this.configMenu.handleTextInput(ctx, text);
       if (configConsumed) return;
       // ─────────────────────────────────────────────────────
+
+      // ─── Persistent keyboard button interception ──────────────
+      const navConsumed = await this.rootMenu.handleTextInput(ctx, text);
+      if (navConsumed) return;
+      // ─────────────────────────────────────────────────────────
 
       // Deduplicate Telegram retries — set key IMMEDIATELY before processing starts,
       // so that retries arriving while the first attempt is still streaming are blocked.
@@ -835,6 +880,16 @@ export class TelegramAdapter implements ChannelAdapter {
     // Routes cfg:* to the config menu and fb:* to the feedback handler.
     this.bot.on("callback_query:data", async (ctx) => {
       const data = ctx.callbackQuery.data ?? "";
+
+      // ── Unified nav menu callbacks ────────────────────────────
+      if (data.startsWith("nav:")) {
+        if (!this.isAllowed(ctx)) {
+          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
+          return;
+        }
+        await this.rootMenu.handleCallback(ctx, data);
+        return;
+      }
 
       // ── Skills wizard callbacks (menu:* and wiz:*) ───────
       if (data.startsWith("wiz:") || data.startsWith("menu:")) {
