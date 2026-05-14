@@ -40,6 +40,8 @@ const HEADER_ROWS       = 9;
 const COMPOSER_MIN_ROWS = 3;
 /** ShortcutsBar: one text line. */
 const SHORTCUTS_ROWS    = 1;
+/** Average rows per transcript turn — used to estimate visible window size. */
+const AVG_ROWS_PER_TURN = 3;
 
 export function ChatScreen({ onSubmit }: ChatScreenProps) {
   const turns         = useUiStore((s) => s.turns);
@@ -65,7 +67,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
 
   // Estimate how many turns fit on screen. Each turn averages ~3 rows.
   const windowSize = Math.max(1, Math.floor(
-    (rows - HEADER_ROWS - COMPOSER_MIN_ROWS - SHORTCUTS_ROWS) / 3
+    (rows - HEADER_ROWS - COMPOSER_MIN_ROWS - SHORTCUTS_ROWS) / AVG_ROWS_PER_TURN
   ));
 
   const tailIdx  = turns.length - viewportOffset;
@@ -96,7 +98,7 @@ export function ChatScreen({ onSubmit }: ChatScreenProps) {
   });
 
   // Explicit height for the middle region so Yoga cannot grow it past the terminal boundary.
-  const contentRows = Math.max(4, rows - HEADER_ROWS - COMPOSER_MIN_ROWS - SHORTCUTS_ROWS);
+  const contentRows = Math.max(1, rows - HEADER_ROWS - COMPOSER_MIN_ROWS - SHORTCUTS_ROWS);
 
   const unreadHeartbeats = heartbeats.filter((msg) => !msg.read).slice(-3);
   const recentNotices    = notices.slice(-3);
