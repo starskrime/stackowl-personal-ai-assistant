@@ -42,6 +42,19 @@ describe("getCompletions", () => {
   });
 });
 
+describe("exact command match shows subcommands for all commands with subcommands", () => {
+  it.each([
+    ["/mcp",    "list"],
+    ["/memory", "list"],
+    ["/owl",    "list"],
+    ["/config", "tiers"],
+  ])("%s without trailing space shows subcommands immediately", async (cmd, expectedSub) => {
+    const results = await getCompletions(cmd, ctx);
+    expect(results.every((r) => r.kind === "subcommand")).toBe(true);
+    expect(results.map((r) => r.value)).toContain(expectedSub);
+  });
+});
+
 describe("getCompletions — /owl specific cases", () => {
   // ── Mode 1: command name completion ────────────────────────────────────────
 
