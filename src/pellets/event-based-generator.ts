@@ -16,6 +16,7 @@ interface SignificanceConfig {
   minMessagesForSession: number;
   maxGapAgeDays: number;
   dedupSimilarityThreshold: number;
+  activityGate?: import("../background/activity-gate.js").ActivityGate;
 }
 
 // ─── Event Payload Extractors ────────────────────────────────────
@@ -86,6 +87,7 @@ function extractEvolutionData(payload: {
 export class EventBasedPelletGenerator {
   private generator: PelletGenerator;
   private recentErrors = new Set<string>();
+  private activityGate?: import("../background/activity-gate.js").ActivityGate;
 
   private handleSessionEndedBound = this.handleSessionEnded.bind(this);
   private handleToolResultBound = this.handleToolResult.bind(this);
@@ -100,6 +102,7 @@ export class EventBasedPelletGenerator {
     significanceConfig?: Partial<SignificanceConfig>,
   ) {
     this.generator = new PelletGenerator(this.router);
+    this.activityGate = significanceConfig?.activityGate;
     const _significanceConfig = {
       minMessagesForSession: 3,
       maxGapAgeDays: 30,
@@ -218,6 +221,11 @@ export class EventBasedPelletGenerator {
   }): Promise<void> {
     if (!payload.toolsUsed?.length) return;
 
+    if (this.activityGate && !(await this.activityGate.hasNewActivity("pellet-classification"))) {
+      log.engine.debug("[EventBasedPelletGenerator] message:responded classification skipped — no new user activity");
+      return;
+    }
+
     let isSignificant = false;
     try {
       const raw = await this.router.resolve(
@@ -235,7 +243,7 @@ export class EventBasedPelletGenerator {
 
     log.engine.info(`[EventBasedPelletGenerator] Decision/insight detected — generating pellet`);
 
-    await this.generateFromEvent(
+    const pellet = await this.generateFromEvent(
       {
         sourceName: `decision:${payload.sessionId}`,
         sourceMaterial: `Owl "${payload.owlName}" made a decision using tools [${payload.toolsUsed.join(", ")}]. Decision: ${payload.content.slice(0, 1000)}.`,
@@ -244,6 +252,10 @@ export class EventBasedPelletGenerator {
       },
       "decision-capture",
     );
+
+    if (pellet) {
+      await this.activityGate?.markSeen("pellet-classification");
+    }
   }
 
   /**

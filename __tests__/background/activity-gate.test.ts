@@ -142,3 +142,18 @@ describe("ProactiveKnowledgeGenerator activityGate config", () => {
     )).not.toThrow();
   });
 });
+
+import { EventBasedPelletGenerator } from "../../src/pellets/event-based-generator.js";
+
+describe("EventBasedPelletGenerator activityGate config", () => {
+  it("accepts activityGate in config without throwing", () => {
+    const gate = new ActivityGate(db);
+    const mockBus = { on: () => {} } as any;
+    expect(() => new EventBasedPelletGenerator(
+      mockBus,
+      {} as any,
+      {} as any,
+      { activityGate: gate },
+    )).not.toThrow();
+  });
+});
