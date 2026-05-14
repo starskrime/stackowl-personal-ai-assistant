@@ -43,8 +43,11 @@ const DEGRADATION_TEMPLATES: Record<DegradationTier, (partial: string, gap: stri
 /**
  * Classify a thrown LLM provider error and return a user-friendly message.
  * Returns null if the error is not a recognized quota/limit/auth error.
+ *
+ * @param err      The caught error
+ * @param provider Display name of the active provider (e.g. "Anthropic", "OpenAI")
  */
-export function classifyLlmError(err: unknown): string | null {
+export function classifyLlmError(err: unknown, provider = "the AI provider"): string | null {
   const raw = err instanceof Error ? err.message : String(err);
   const low = raw.toLowerCase();
 
@@ -60,8 +63,8 @@ export function classifyLlmError(err: unknown): string | null {
     low.includes("out of credits")
   ) {
     return (
-      "Your Anthropic token quota is exhausted for this billing period. " +
-      "Visit console.anthropic.com to check your usage or upgrade your plan. " +
+      `Your ${provider} token quota is exhausted for this billing period. ` +
+      `Check your ${provider} account to review usage or upgrade your plan. ` +
       "Background jobs have been paused automatically."
     );
   }
@@ -87,14 +90,14 @@ export function classifyLlmError(err: unknown): string | null {
     low.includes("429")
   ) {
     return (
-      "Rate limit reached — too many requests in a short window. " +
+      `Rate limit reached — ${provider} rejected the request due to too many calls in a short window. ` +
       "Wait a moment, then try again. Background tasks have been paused automatically."
     );
   }
 
   // Server overloaded
   if (low.includes("overloaded_error") || low.includes("overloaded")) {
-    return "Anthropic's servers are currently overloaded. Please try again in a moment.";
+    return `${provider}'s servers are currently overloaded. Please try again in a moment.`;
   }
 
   // Auth / API key errors
@@ -104,7 +107,7 @@ export function classifyLlmError(err: unknown): string | null {
     low.includes("invalid api key") ||
     (low.includes("401") && low.includes("http"))
   ) {
-    return "The API key is invalid or expired. Check your ANTHROPIC_API_KEY environment variable.";
+    return `The ${provider} API key is invalid or expired. Check your API key environment variable.`;
   }
 
   return null;

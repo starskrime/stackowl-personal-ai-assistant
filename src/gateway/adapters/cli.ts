@@ -345,7 +345,8 @@ export class CLIAdapter implements ChannelAdapter {
       this.renderer.stopThinking();
       const raw = err instanceof Error ? err.message : String(err);
       log.cli.error(`Error: ${raw}`);
-      this.renderer.printError(classifyLlmError(err) ?? raw);
+      const providerName = this.gateway.getProvider().name;
+      this.renderer.printError(classifyLlmError(err, providerName) ?? raw);
     }
   }
 
