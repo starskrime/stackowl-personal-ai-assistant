@@ -34,7 +34,11 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Truncate a string to fit within callback_data byte limit when prefixed */
+/**
+ * Truncate a key to fit within Telegram's 64-byte callback_data limit.
+ * Default budget is 40 bytes: 64 - 12 (longest prefix "nav:mcp:dis:") - 12 (safety margin).
+ * If prefixes grow beyond 12 bytes, reduce maxBytes accordingly.
+ */
 function truncKey(s: string, maxBytes = 40): string {
   const enc = new TextEncoder();
   if (enc.encode(s).length <= maxBytes) return s;
