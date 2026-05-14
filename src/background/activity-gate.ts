@@ -46,7 +46,7 @@ export class ActivityGate {
   }
 
   private currentHash(): string | null {
-    const row = (this.db as any)["db"].prepare(
+    const row = this.db.rawDb.prepare(
       "SELECT id, content FROM messages WHERE role = 'user' ORDER BY created_at DESC LIMIT 1"
     ).get() as { id: string; content: string } | undefined;
 
