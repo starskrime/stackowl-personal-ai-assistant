@@ -6,7 +6,6 @@
  */
 
 import type { CommandHandler } from "../registry.js";
-import type { PanelItem } from "../../panels/Panel.js";
 import { dispatchOwlCommand } from "../../../../gateway/commands/owl-command.js";
 import type { OwlCommandContext, GatewayMethods } from "../../../../gateway/commands/owl-command.js";
 import type { UiBridge } from "../../events/bridge.js";
@@ -105,15 +104,8 @@ export const handleOwlShow: CommandHandler = async (ctx, args) => {
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
   const text = await dispatchOwlCommand("show", args, owlCtx);
-  const items: PanelItem[] = text
-    .split("\n")
-    .filter((l) => l.trim())
-    .map((line, i) => ({ id: `owl-${i}`, label: line }));
-  log.cli.debug("handleOwlShow: exit", { items: items.length });
-  return {
-    kind: "panel",
-    payload: { title: `/owl show ${args[0] ?? ""}`, items, emptyText: "No details available." },
-  };
+  log.cli.debug("handleOwlShow: exit", { textLen: text.length });
+  return { kind: "system-message", text };
 };
 
 // ─── /owl delete <name> ───────────────────────────────────────────────────────

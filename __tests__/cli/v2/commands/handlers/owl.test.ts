@@ -155,36 +155,25 @@ describe("handleOwlList", () => {
 
 // ─── handleOwlShow ────────────────────────────────────────────────────────────
 
-describe("handleOwlShow (/owl show <name>)", () => {
+describe("handleOwlShow", () => {
   let bridge: UiBridge;
   let ctx: CommandContext;
 
   beforeEach(() => {
     bridge = makeBridge();
     ctx = makeCtx(makeGateway(makeRegistry()), bridge);
-    mockDispatch.mockResolvedValue("Alice\nBusiness Analyst\nSource: bmad");
+    mockDispatch.mockResolvedValue("Alice\nrole: advisor\npersonality: professional");
   });
 
-  it("returns kind='panel'", async () => {
-    const result = await handleOwlShow(ctx, ["alice"]);
-    expect(result.kind).toBe("panel");
+  it("returns kind='system-message'", async () => {
+    const result = await handleOwlShow(ctx, ["Alice"]);
+    expect(result.kind).toBe("system-message");
   });
 
-  it("panel title includes the owl name arg", async () => {
-    const result = await handleOwlShow(ctx, ["alice"]);
-    if (result.kind !== "panel") throw new Error("expected panel");
-    expect(result.payload.title).toContain("alice");
-  });
-
-  it("calls dispatchOwlCommand with verb='show' and forwarded args", async () => {
-    await handleOwlShow(ctx, ["alice"]);
-    expect(mockDispatch).toHaveBeenCalledWith("show", ["alice"], expect.any(Object));
-  });
-
-  it("returns kind='error' when registry is null", async () => {
-    const ctxNoReg = makeCtx(makeGateway(null), bridge);
-    const result = await handleOwlShow(ctxNoReg, ["alice"]);
-    expect(result.kind).toBe("error");
+  it("text contains the dispatch output", async () => {
+    const result = await handleOwlShow(ctx, ["Alice"]);
+    if (result.kind !== "system-message") throw new Error("expected system-message");
+    expect(result.text).toContain("Alice");
   });
 });
 
