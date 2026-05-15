@@ -9,7 +9,7 @@ interface Session {
 }
 
 // Minimal subset of grammY Api used here — avoids importing the full grammY type.
-interface TelegramApi {
+export interface TelegramApi {
   sendMessage(chatId: number, text: string, opts?: { parse_mode?: string }): Promise<{ message_id: number }>;
   sendChatAction(chatId: number, action: string): Promise<unknown>;
   editMessageText(chatId: number, messageId: number, text: string, opts?: { parse_mode?: string }): Promise<unknown>;
@@ -62,13 +62,14 @@ export class TelegramProgressNotifier implements ProgressNotifier {
   }
 
   async start(phrase: string, turnId: string): Promise<void> {
+    log.telegram.debug("telegram-progress-notifier: start: entry", { turnId });
     const session = this.sessions.get(turnId);
     if (!session) {
       log.telegram.warn("telegram-progress-notifier: start called without bindSession", undefined, { turnId });
       return;
     }
 
-    log.telegram.debug("telegram-progress-notifier: start: entry", { turnId, chatId: session.chatId });
+    log.telegram.debug("telegram-progress-notifier: start: session found", { turnId, chatId: session.chatId });
 
     // Send initial ACK message in the random language.
     try {
@@ -102,7 +103,10 @@ export class TelegramProgressNotifier implements ProgressNotifier {
   async update(text: string, turnId: string): Promise<void> {
     const session = this.sessions.get(turnId);
     if (!session?.messageId) return;
-    if (session.streamClaimed) return; // stream owns the message now
+    if (session.streamClaimed) {
+      log.telegram.debug("telegram-progress-notifier: update: skipped — stream claimed", { turnId });
+      return; // stream owns the message now
+    }
 
     log.telegram.debug("telegram-progress-notifier: update: entry", { turnId, textLen: text.length });
 
@@ -111,6 +115,15 @@ export class TelegramProgressNotifier implements ProgressNotifier {
         parse_mode: "HTML",
       });
       log.telegram.debug("telegram-progress-notifier: update: exit", { turnId });
+
+      // Reset the typing refresh interval so it restarts from now
+      clearInterval(session.timer!);
+      session.timer = setInterval(() => {
+        this.api.sendChatAction(session.chatId, "typing").catch((err) =>
+          log.telegram.warn("telegram-progress-notifier: sendChatAction failed", err, { turnId })
+        );
+      }, 4_000);
+      log.telegram.debug("telegram-progress-notifier: update: interval reset", { turnId });
     } catch (err) {
       log.telegram.warn("telegram-progress-notifier: update: editMessageText failed", err, { turnId });
     }

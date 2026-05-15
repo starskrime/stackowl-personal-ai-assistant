@@ -27,8 +27,7 @@ import { TelegramConfigMenu } from "./telegram-config/menu.js";
 import { TelegramVoiceMenu } from "./telegram-config/voice-menu.js";
 import { TelegramRootMenu } from "./telegram-menu/index.js";
 import { saveConfig } from "../../config/loader.js";
-import { v4 as uuidv4 } from "uuid";
-import { TelegramProgressNotifier } from "../../progress/notifiers/telegram.js";
+import { TelegramProgressNotifier, type TelegramApi } from "../../progress/notifiers/telegram.js";
 import { pickRandomPhrase } from "../../shared/progress.js";
 import { McpCommandRouter } from "../commands/mcp-router.js";
 import { dispatchMemoryCommand } from "../commands/memory-router.js";
@@ -94,7 +93,7 @@ export class TelegramAdapter implements ChannelAdapter {
     );
 
     // Progress notifier — registered on the shared ProgressManager
-    this._progressNotifier = new TelegramProgressNotifier(this.bot.api as never);
+    this._progressNotifier = new TelegramProgressNotifier(this.bot.api as unknown as TelegramApi);
     gateway.getProgressManager().register(this._progressNotifier);
     this.chatIdsPath =
       config.chatIdsPath ??
@@ -541,7 +540,8 @@ export class TelegramAdapter implements ChannelAdapter {
       // Immediate acknowledgment — lets the user know the message was received
       // before any LLM processing begins. The stream handler will edit this
       // same message with real content so no extra message is created.
-      const turnId = uuidv4();
+      // turnId matches the sessionId used by tool:start events in the registry.
+      const turnId = makeSessionId(this.id, String(userId));
       this._progressNotifier.bindSession(turnId, ctx.chat.id);
       await this.gateway.getProgressManager().notifyStart(pickRandomPhrase(), turnId);
       const ackMessageId = this._progressNotifier.getAckMessageId(turnId);
@@ -610,12 +610,6 @@ export class TelegramAdapter implements ChannelAdapter {
           `tools:[${response.toolsUsed.join(", ") || "none"}] ` +
             `usage:${response.usage ? `${response.usage.promptTokens}→${response.usage.completionTokens}` : "n/a"}`,
         );
-
-        try {
-          await this.gateway.getProgressManager().notifyStop(turnId);
-        } catch (err) {
-          log.telegram.warn("telegram: notifyStop failed", err, { turnId });
-        }
 
         // Determine if streaming already delivered the content to the user.
         // We check streamedContent (updated live in text_delta handler) and
@@ -736,6 +730,10 @@ export class TelegramAdapter implements ChannelAdapter {
         await ctx.reply(
           "Something went wrong. Please try again or use /reset to start fresh.",
         );
+      } finally {
+        await this.gateway.getProgressManager().notifyStop(turnId).catch((err) => {
+          log.telegram.warn("telegram: notifyStop failed in finally", err, { turnId });
+        });
       }
     });
 
