@@ -49,13 +49,18 @@ function buildBridgeAdapter(bridge: UiBridge): NonNullable<OwlCommandContext["ch
       _userId: string,
       prompt: { text: string; choices?: string[]; defaultChoice?: string },
     ): Promise<string> => {
-      log.cli.debug("owl.buildBridgeAdapter.ask: entry", { promptText: prompt.text.slice(0, 80) });
-      const answer = await bridge.prompt(prompt.text, {
-        choices: prompt.choices,
-        defaultChoice: prompt.defaultChoice,
-      });
-      log.cli.debug("owl.buildBridgeAdapter.ask: received answer", { len: answer.length });
-      return answer;
+      log.cli.debug("owl.bridgeAdapter.ask: entry", { promptText: prompt.text.slice(0, 60) });
+      try {
+        const answer = await bridge.prompt(prompt.text, {
+          choices: prompt.choices,
+          defaultChoice: prompt.defaultChoice,
+        });
+        log.cli.debug("owl.bridgeAdapter.ask: received answer", { len: answer.length });
+        return answer;
+      } catch (err) {
+        log.cli.error("owl.bridgeAdapter.ask: bridge.prompt threw", err as Error);
+        throw err;
+      }
     },
   };
 }
@@ -128,13 +133,19 @@ export const handleOwlFromBmad: CommandHandler = async (ctx, args) => {
   log.cli.debug("handleOwlFromBmad: entry", { args });
   const owlCtx = makeOwlCtx(ctx);
   if (!owlCtx) {
-    log.cli.warn("handleOwlFromBmad: exit — no registry");
+    log.cli.error("handleOwlFromBmad: no registry", new Error("registry null"));
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
+  log.cli.debug("handleOwlFromBmad: calling dispatchOwlCommand from-bmad");
   const adapter = buildBridgeAdapter(ctx.bridge);
-  const text = await dispatchOwlCommand("from-bmad", args, { ...owlCtx, channelAdapter: adapter });
-  log.cli.debug("handleOwlFromBmad: exit", { textLen: text.length });
-  return { kind: "system-message", text };
+  try {
+    const text = await dispatchOwlCommand("from-bmad", args, { ...owlCtx, channelAdapter: adapter });
+    log.cli.debug("handleOwlFromBmad: exit", { textLen: text.length });
+    return { kind: "system-message", text };
+  } catch (err) {
+    log.cli.error("handleOwlFromBmad: dispatchOwlCommand threw", err as Error);
+    return { kind: "error", text: `Owl creation from BMAD failed: ${(err as Error).message}` };
+  }
 };
 
 // ─── /owl create ─────────────────────────────────────────────────────────────
@@ -143,13 +154,19 @@ export const handleOwlCreate: CommandHandler = async (ctx, _args) => {
   log.cli.debug("handleOwlCreate: entry");
   const owlCtx = makeOwlCtx(ctx);
   if (!owlCtx) {
-    log.cli.warn("handleOwlCreate: exit — no registry");
+    log.cli.error("handleOwlCreate: no registry — cannot create owl", new Error("registry null"));
     return { kind: "error", text: "Specialized owl registry not initialized." };
   }
+  log.cli.debug("handleOwlCreate: calling dispatchOwlCommand create");
   const adapter = buildBridgeAdapter(ctx.bridge);
-  const text = await dispatchOwlCommand("create", [], { ...owlCtx, channelAdapter: adapter });
-  log.cli.debug("handleOwlCreate: exit", { textLen: text.length });
-  return { kind: "system-message", text };
+  try {
+    const text = await dispatchOwlCommand("create", [], { ...owlCtx, channelAdapter: adapter });
+    log.cli.debug("handleOwlCreate: exit", { textLen: text.length });
+    return { kind: "system-message", text };
+  } catch (err) {
+    log.cli.error("handleOwlCreate: dispatchOwlCommand threw", err as Error);
+    return { kind: "error", text: `Owl creation failed: ${(err as Error).message}` };
+  }
 };
 
 // ─── /owl pin <name> ──────────────────────────────────────────────────────────
