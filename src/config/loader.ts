@@ -40,6 +40,10 @@ export interface StackOwlConfig {
   heartbeat: {
     enabled: boolean;
     intervalMinutes: number;
+    /** Minimum minutes between proactive pings. Default: 60. */
+    minPingCooldownMinutes?: number;
+    /** Stop pinging after this many consecutive unanswered pings. Default: 1. */
+    maxUnansweredPings?: number;
   };
   owlDna: {
     enabled: boolean;
@@ -47,18 +51,32 @@ export interface StackOwlConfig {
     decayRatePerWeek: number;
   };
   engine?: {
-    /**
-     * Maximum number of tool-calling iterations per ReAct loop.
-     * Increase for complex multi-step tasks. Default: 15.
-     * Was previously hardcoded at 10 — too low for real workflows.
-     */
+    /** Max tool-calling iterations per ReAct loop. Default: 15. */
     maxToolIterations?: number;
+    /** Max iterations for deep-research mode. Default: 50. */
+    deepMaxToolIterations?: number;
     /** Max estimated tokens before context compression triggers. Default: 8000. */
     maxContextTokens?: number;
     /** Max chars per tool result before truncation. Default: 6000. */
     maxToolResultLength?: number;
-    /** Number of recent messages to keep verbatim during compression. Default: 10. */
+    /** Recent messages to keep verbatim during compression. Default: 10. */
     contextKeepRecent?: number;
+    /** Provider retry attempts on transient errors. Default: 3. */
+    maxRetries?: number;
+    /** Consecutive tool failures before injecting stop directive. Default: 50. */
+    maxToolFailStreak?: number;
+    /** Base retry backoff in ms (exponential from here). Default: 1500. */
+    baseRetryDelayMs?: number;
+    /** Message count that triggers context compression. Default: 20. */
+    contextWindowThreshold?: number;
+    /** Messages compressed per pass. Default: 10. */
+    contextCompressionBatch?: number;
+    /** Historical tool window size for loop detection. Default: 12. */
+    toolWindowSize?: number;
+    /** Base temperature for DNA mutation calls. Default: 0.7. */
+    dnaBaseTemp?: number;
+    /** Fraction of iteration budget consumed before early synthesis allowed. Default: 0.3. */
+    synthesizeEarlyThreshold?: number;
     /** Enable plan-then-execute mode for complex tasks. */
     planning?: {
       enabled: boolean;
@@ -82,6 +100,10 @@ export interface StackOwlConfig {
      * Default: <workspace>/synthesized
      */
     synthesizedDir?: string;
+    /** Reject synthesized tools below this quality score. Default: 0.6. */
+    minQualityThreshold?: number;
+    /** Accept synthesized tools above this quality score without retry. Default: 0.75. */
+    targetQualityThreshold?: number;
   };
   /** MCP server connections */
   mcp?: {
@@ -131,6 +153,8 @@ export interface StackOwlConfig {
      * Default: "nomic-embed-text" (768-dim, fast, accurate)
      */
     embeddingModel?: string;
+    /** LRU cache size for embeddings. Default: 1000. */
+    embeddingCacheSize?: number;
     dedup?: {
       enabled?: boolean;
       /** Cosine similarity threshold to trigger LLM check. Default: 0.65 */
@@ -809,3 +833,6 @@ export async function mutateConsent(
   consentMutex = next.catch(() => undefined);
   return next;
 }
+
+// patchConfig lives in ./patch.ts — re-exported here for convenience.
+export { patchConfig, type DeepPartial } from "./patch.js";

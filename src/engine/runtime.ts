@@ -524,8 +524,8 @@ function classifyToolError(result: string): "TRANSIENT" | "NON-RETRYABLE" {
   return "TRANSIENT"; // default: assume worth trying a different approach
 }
 
-const CONTEXT_WINDOW_THRESHOLD = 20;
-const CONTEXT_COMPRESSION_BATCH = 10;
+const CONTEXT_WINDOW_THRESHOLD = 20; // default; overridden per-run via config.engine
+const CONTEXT_COMPRESSION_BATCH = 10; // default; overridden per-run via config.engine
 
 /** Simple token estimator: ~4 chars per token */
 function estimateTokens(messages: ChatMessage[]): number {
@@ -660,9 +660,8 @@ function parseRetryAfterMs(err: unknown): number | undefined {
  * Calculate backoff with ±20% jitter.
  * Uses retryAfterMs if provided (from Retry-After header), otherwise exponential.
  */
-function backoffMs(attempt: number, retryAfterMs?: number): number {
-  const BASE_DELAY_MS = 1_500;
-  const base = retryAfterMs ?? BASE_DELAY_MS * Math.pow(2, attempt);
+function backoffMs(attempt: number, retryAfterMs?: number, baseDelayMs = 1_500): number {
+  const base = retryAfterMs ?? baseDelayMs * Math.pow(2, attempt);
   const jitter = base * 0.2 * (Math.random() * 2 - 1);
   return Math.max(100, Math.round(base + jitter));
 }
@@ -693,8 +692,10 @@ async function withProviderResilience(
   onStreamEvent?: (event: import("../providers/base.js").StreamEvent) => Promise<void>,
   providerRegistry?: ProviderRegistry,
   callSite?: string,   // for logging ("initial" | "loop")
+  maxRetries = 3,
+  baseRetryDelayMs = 1_500,
 ): Promise<ChatResponse> {
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = maxRetries;
   const site = callSite ?? "unknown";
 
   // Sanitize message history before sending to ANY provider — ensures every
@@ -745,7 +746,7 @@ async function withProviderResilience(
       if (isRateLimitError(err)) {
         providerRegistry?.recordProviderResult(provider.name, false);
         const retryAfterMs = parseRetryAfterMs(err);
-        const delay = backoffMs(attempt, retryAfterMs);
+        const delay = backoffMs(attempt, retryAfterMs, baseRetryDelayMs);
         if (attempt < MAX_RETRIES - 1) {
           log.engine.warn(
             `[Resilience/${site}] 429 rate-limit on "${provider.name}" (attempt ${attempt + 1}/${MAX_RETRIES}). ` +
@@ -762,7 +763,7 @@ async function withProviderResilience(
 
       if (isTransientStreamError(err) && attempt < MAX_RETRIES - 1) {
         providerRegistry?.recordProviderResult(provider.name, false);
-        const delay = backoffMs(attempt);
+        const delay = backoffMs(attempt, undefined, baseRetryDelayMs);
         log.engine.warn(
           `[Resilience/${site}] Transient error on "${provider.name}" (attempt ${attempt + 1}/${MAX_RETRIES}): ${errMsg}. Retrying in ${delay}ms…`,
         );
@@ -871,8 +872,8 @@ export class OwlEngine {
     let MAX_TOOL_ITERATIONS =
       context.maxIterations ??
       (context.depth === "deep"
-        ? (config.research?.maxIterations ?? 40)
-        : DEFAULT_MAX_TOOL_ITERATIONS);
+        ? (config.engine?.deepMaxToolIterations ?? config.research?.maxIterations ?? DEFAULT_DEEP_MAX_TOOL_ITERATIONS)
+        : (config.engine?.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS));
 
     // Track if a missing-tool gap was encountered during the ReAct loop
     let missingToolName: string | undefined;
@@ -1086,8 +1087,9 @@ export class OwlEngine {
       const maxTokens = config.engine?.maxContextTokens ?? 8000;
       const keepRecent = config.engine?.contextKeepRecent ?? 10;
       const estTokens = estimateTokens(sanitizedHistory);
+      const contextWindowThreshold = config.engine?.contextWindowThreshold ?? CONTEXT_WINDOW_THRESHOLD;
       const needsCompression =
-        sanitizedHistory.length > CONTEXT_WINDOW_THRESHOLD ||
+        sanitizedHistory.length > contextWindowThreshold ||
         estTokens > maxTokens;
 
       if (needsCompression) {
@@ -1104,6 +1106,7 @@ export class OwlEngine {
               olderMessages,
               currentProvider,
               optimalModel,
+              config.engine?.contextCompressionBatch ?? CONTEXT_COMPRESSION_BATCH,
             ).then((compressed) => [...compressed, ...recentMessages]),
             compressionFallback,
           ]);
@@ -1162,7 +1165,7 @@ ${userMessage}
 
     // DNA-driven chat options (token budget, temperature adjustment)
     // DNADecisionLayer computes these from the owl's evolved personality traits
-    const dnaBaseTemp = 0.7;
+    const dnaBaseTemp = config.engine?.dnaBaseTemp ?? 0.7;
     const chatOptions: {
       temperature: number;
       maxTokens: number;
@@ -1247,7 +1250,7 @@ ${userMessage}
     if (tools && tools.length > 0) {
       // Per-tool consecutive failure tracker for this ReAct session
       const toolFailStreak: Record<string, number> = {};
-      const MAX_TOOL_FAIL_STREAK = 50; // Inject stop directive after this many consecutive failures
+      const MAX_TOOL_FAIL_STREAK = config.engine?.maxToolFailStreak ?? 50;
 
       // Duplicate tool call guard: fingerprint = "toolName:argsJSON"
       // If the model calls the exact same tool with the exact same args a second time,
@@ -1261,7 +1264,7 @@ ${userMessage}
       // multi-source searches (e.g. flight tracking across 4–5 websites) need
       // room to breathe.
       const recentToolNames: string[] = [];
-      const TOOL_WINDOW_SIZE = 12;
+      const TOOL_WINDOW_SIZE = config.engine?.toolWindowSize ?? 12;
 
       // Tools that are legitimately called many times in sequence — exempt from
       // the sliding-window check. computer_use is inherently sequential:
@@ -1291,6 +1294,8 @@ ${userMessage}
         context.onStreamEvent,
         context.providerRegistry,
         "initial",
+        config.engine?.maxRetries ?? 3,
+        config.engine?.baseRetryDelayMs ?? 1_500,
       );
       log.engine.llmResponse(
         optimalModel,
@@ -1955,7 +1960,7 @@ ${userMessage}
                 config.research?.maxIterations ??
                 DEFAULT_DEEP_MAX_TOOL_ITERATIONS;
               const budgetConsumed = iterations / maxForTask;
-              const SYNTHESIZE_EARLY_THRESHOLD = 0.3;
+              const SYNTHESIZE_EARLY_THRESHOLD = config.engine?.synthesizeEarlyThreshold ?? 0.3;
 
               if (budgetConsumed < SYNTHESIZE_EARLY_THRESHOLD) {
                 log.engine.info(
@@ -2082,6 +2087,8 @@ ${userMessage}
           context.onStreamEvent,
           context.providerRegistry,
           "loop",
+          config.engine?.maxRetries ?? 3,
+          config.engine?.baseRetryDelayMs ?? 1_500,
         );
         log.engine.llmResponse(
           optimalModel,
@@ -2295,6 +2302,8 @@ ${userMessage}
           undefined,
           context.providerRegistry,
           "retry-compact",
+          config.engine?.maxRetries ?? 3,
+          config.engine?.baseRetryDelayMs ?? 1_500,
         );
         const stage1Content = (stage1Response.content ?? "").trim();
         if (stage1Content) {
@@ -2323,6 +2332,8 @@ ${userMessage}
             undefined,
             context.providerRegistry,
             "retry-minimal",
+            config.engine?.maxRetries ?? 3,
+            config.engine?.baseRetryDelayMs ?? 1_500,
           );
           const stage2Content = (stage2Response.content ?? "")
             .replace(/<\/?(think|reasoning)>/gi, "")
@@ -2469,11 +2480,12 @@ ${userMessage}
     history: ChatMessage[],
     provider: ModelProvider,
     model: string,
+    batchSize = CONTEXT_COMPRESSION_BATCH,
   ): Promise<ChatMessage[]> {
     if (history.length <= CONTEXT_WINDOW_THRESHOLD) return history;
 
-    const toCompress = history.slice(0, CONTEXT_COMPRESSION_BATCH);
-    const remaining = history.slice(CONTEXT_COMPRESSION_BATCH);
+    const toCompress = history.slice(0, batchSize);
+    const remaining = history.slice(batchSize);
 
     const transcript = toCompress
       .map(
