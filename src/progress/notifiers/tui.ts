@@ -19,22 +19,31 @@ export class TuiProgressNotifier implements ProgressNotifier {
   constructor(private bridge: UiBridge) {}
 
   async start(phrase: string, turnId: string): Promise<void> {
-    log.engine.debug("tui-progress-notifier: start", { turnId });
+    log.engine.debug("tui-progress-notifier: start: entry", { turnId, phraseLen: phrase.length });
     this.activeTurnIds.add(turnId);
     this.bridge.emit({ kind: "thinking.phrase", turnId, phrase });
+    log.engine.debug("tui-progress-notifier: start: exit", { turnId });
   }
 
   async update(text: string, turnId: string): Promise<void> {
-    if (!this.activeTurnIds.has(turnId)) return;
-    log.engine.debug("tui-progress-notifier: update", { turnId, text });
+    if (!this.activeTurnIds.has(turnId)) {
+      log.engine.debug("tui-progress-notifier: update: skipped — unknown turnId", { turnId });
+      return;
+    }
+    log.engine.debug("tui-progress-notifier: update: entry", { turnId, text });
     this.bridge.emit({ kind: "thinking.tool", turnId, text });
+    log.engine.debug("tui-progress-notifier: update: exit", { turnId });
   }
 
   async stop(turnId: string): Promise<void> {
-    if (!this.activeTurnIds.has(turnId)) return;
-    log.engine.debug("tui-progress-notifier: stop", { turnId });
+    if (!this.activeTurnIds.has(turnId)) {
+      log.engine.debug("tui-progress-notifier: stop: skipped — unknown turnId", { turnId });
+      return;
+    }
+    log.engine.debug("tui-progress-notifier: stop: entry", { turnId });
     this.activeTurnIds.delete(turnId);
     // Clear the phrase override so ThinkingIndicator reverts to random fallback next time.
     this.bridge.emit({ kind: "thinking.phrase", turnId, phrase: "" });
+    log.engine.debug("tui-progress-notifier: stop: exit", { turnId });
   }
 }

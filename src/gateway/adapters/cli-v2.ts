@@ -108,6 +108,7 @@ export class CliV2Adapter implements ChannelAdapter {
   }
 
   stop(): void {
+    this._gateway.getProgressManager().unregister(this._progressNotifier);
     this._quitResolve?.();
     this._quitResolve = null;
   }

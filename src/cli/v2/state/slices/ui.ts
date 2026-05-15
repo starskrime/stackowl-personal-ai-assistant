@@ -128,6 +128,9 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
     case "thinking.tool":
       return { ...state, thinkingTool: event.text };
 
+    case "session.changed":
+      return { ...state, thinkingPhrase: null, thinkingTool: null };
+
     default:
       return state;
   }
