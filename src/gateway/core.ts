@@ -59,6 +59,7 @@ import { GapLearner } from "../agent/gap-learner.js";
 import { InnerLifeDNABridge } from "../owls/inner-bridge.js";
 import { SpecializedOwlRegistry } from "../owls/specialized-registry.js";
 import { TaskQueue } from "../queue/task-queue.js";
+import { llmTaskQueue } from "../queue/llm-task-queue.js";
 import {
   computeTemporalContext,
   loadPreviousSession,
@@ -1299,7 +1300,7 @@ export class OwlGateway {
 
         // Structured skills — execute directly via executor
         if (this.skillInjector?.canExecuteStructured(skill)) {
-          const emoji = skill.metadata.openclaw?.emoji || "⚡";
+          const emoji = skill.metadata.stackowl?.emoji || "⚡";
           if (callbacks.onProgress) {
             await callbacks.onProgress(
               `${emoji} **Executing skill:** \`${skill.name}\``,
@@ -1621,10 +1622,8 @@ export class OwlGateway {
         messagesSinceLastExtraction >= 6);
 
     if (shouldExtract) {
-      this.runBackground(
-        "episode-extract",
-        (async () => {
-          try {
+      llmTaskQueue.enqueue("episode-extract", async () => {
+        try {
             const extractedUpTo =
               (session.metadata as any).episodicExtractedUpTo ?? 0;
             const segments = getUnextractedSegments(session, extractedUpTo);
@@ -1673,8 +1672,7 @@ export class OwlGateway {
               `[EpisodicMemory] Segment extraction failed: ${err instanceof Error ? err.message : err}`,
             );
           }
-        })(),
-      );
+      }, "low");
     }
 
     // Abandon stale intents (no activity in 30+ minutes)
@@ -1750,16 +1748,17 @@ export class OwlGateway {
         }
       }
 
-      // PreferenceRecognizer — inject recognized user preferences
+      // PreferenceRecognizer — inject preferences recognized from PREVIOUS messages.
+      // recognizeFromMessage (LLM call) is deferred to post-response via llmTaskQueue
+      // so it does not block the hot path. Recognized preferences apply to NEXT turn.
       if (this.preferenceRecognizer) {
         try {
-          await this.preferenceRecognizer.recognizeFromMessage(message.text);
           const prefCtx = this.preferenceRecognizer.buildContextString(0.5);
           if (prefCtx) {
             memoryContextParts.push(`\n${prefCtx}\n`);
           }
         } catch (err) {
-          log.engine.debug(`[Memory] Preference recognition failed: ${err instanceof Error ? err.message : String(err)}`);
+          log.engine.debug(`[Memory] Preference context build failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -1825,7 +1824,7 @@ export class OwlGateway {
         const topSkill = topMatch.skill;
         if (topMatch.method === "llm" && this.skillInjector!.canExecuteStructured(topSkill)) {
           log.engine.info(`Structured skill execution: ${topSkill.name}`);
-          const emoji = topSkill.metadata.openclaw?.emoji || "⚡";
+          const emoji = topSkill.metadata.stackowl?.emoji || "⚡";
           if (callbacks.onProgress) {
             await callbacks.onProgress!(
               `${emoji} **Executing skill:** \`${topSkill.name}\` — ${topSkill.description}`,
@@ -1867,7 +1866,7 @@ export class OwlGateway {
         // Notify user about skill usage (like tool history)
         if (callbacks.onProgress) {
           for (const s of relevantSkills) {
-            const emoji = s.metadata.openclaw?.emoji || "📋";
+            const emoji = s.metadata.stackowl?.emoji || "📋";
             await callbacks.onProgress(
               `${emoji} **Using skill:** \`${s.name}\` — ${s.description}`,
             );
@@ -2488,21 +2487,27 @@ export class OwlGateway {
     // 2. Infer implicit signals (message length, code questions, etc.).
     // 3. Enforce preferences on the response (e.g. trim if conciseness high-confidence).
     if (this.ctx.preferenceEnforcer && this.ctx.preferenceModel) {
-      this.runBackground(
-        "preference-capture",
-        this.ctx.preferenceEnforcer.captureExplicitPreferences(
-          message.text,
-          this.ctx.preferenceModel,
-        ),
-      );
-      this.runBackground(
-        "preference-infer",
-        this.ctx.preferenceEnforcer.inferImplicitSignals(
-          message.text,
-          response.content,
-          this.ctx.preferenceModel,
-        ),
-      );
+      llmTaskQueue.enqueue("preference-capture", async () => {
+        try {
+          await this.ctx.preferenceEnforcer!.captureExplicitPreferences(
+            message.text,
+            this.ctx.preferenceModel!,
+          );
+        } catch (err) {
+          log.engine.warn("preference-capture failed", err instanceof Error ? err : new Error(String(err)));
+        }
+      }, "low");
+      llmTaskQueue.enqueue("preference-infer", async () => {
+        try {
+          await this.ctx.preferenceEnforcer!.inferImplicitSignals(
+            message.text,
+            response.content,
+            this.ctx.preferenceModel!,
+          );
+        } catch (err) {
+          log.engine.warn("preference-infer failed", err instanceof Error ? err : new Error(String(err)));
+        }
+      }, "low");
       try {
         response.content = await this.ctx.preferenceEnforcer.enforceOnResponse(
           response.content,
@@ -2537,6 +2542,19 @@ export class OwlGateway {
 
     // Track intent state based on this exchange (fire-and-forget)
     this.trackIntent(message.sessionId, message.text, response.content);
+
+    // Defer preference recognition to post-response — runs asynchronously via llmTaskQueue
+    if (this.preferenceRecognizer) {
+      const pr = this.preferenceRecognizer;
+      const msgText = message.text;
+      llmTaskQueue.enqueue("pref-recognize", async () => {
+        try {
+          await pr.recognizeFromMessage(msgText);
+        } catch (err) {
+          log.engine.warn("pref-recognize deferred task failed", err instanceof Error ? err : new Error(String(err)));
+        }
+      }, "low");
+    }
 
     // Persist intent state (fire-and-forget)
     this.ctx.intentStateMachine?.save().catch((err) => { log.engine.warn("intentStateMachine save failed", err); });
@@ -2573,7 +2591,7 @@ export class OwlGateway {
     const userIntent = message.text;
 
     if (this.outcomeVerifier && this.falseDoneDetector && this.completionTracker) {
-      this.runBackground("verification", (async () => {
+      llmTaskQueue.enqueue("verification", async () => {
         try {
           const verification = await this.outcomeVerifier!.verify(
             taskId,
@@ -2615,7 +2633,7 @@ export class OwlGateway {
         } catch (err) {
           log.engine.warn(`[Verification] Wire failed: ${err instanceof Error ? err.message : err}`);
         }
-      })());
+      }, "low");
     }
 
     // ─── Epic 1: Learning Wire (recordOutcome) ─────────────────────
@@ -2644,7 +2662,7 @@ export class OwlGateway {
     // ─── Pellet flywheel hooks (fire-and-forget, non-fatal) ──────────────
     const _pelletIds = this.ctx.contextPipeline?.lastRetrievedPelletIds ?? [];
     if (_pelletIds.length > 0) {
-      this.runBackground("pellet-flywheel", (async () => {
+      llmTaskQueue.enqueue("pellet-flywheel", async () => {
         let _pelletVerdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
 
         if (this.goalVerifier && engineCtx.activeSubGoal) {
@@ -2676,7 +2694,7 @@ export class OwlGateway {
             await updatePelletGeneratorDNA(owlNames, topicCategory, this.ctx.owlRegistry);
           }
         }
-      })());
+      }, "low");
     }
 
     // ─── Pre-delivery gate (Defect 2 fix) ──────────────────────────────
