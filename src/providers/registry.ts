@@ -190,7 +190,9 @@ export class ProviderRegistry {
         );
       } catch (error) {
         log.engine.warn(
-          `[ProviderRegistry] Failed to initialize "${config.name}": ${(error as Error).message}`,
+          `[ProviderRegistry] Failed to initialize "${config.name}"`,
+          error as Error,
+          { provider: config.name },
         );
       }
       return;
@@ -221,7 +223,9 @@ export class ProviderRegistry {
       );
     } catch (error) {
       log.engine.warn(
-        `[ProviderRegistry] Failed to initialize "${config.name}": ${(error as Error).message}`,
+        `[ProviderRegistry] Failed to initialize "${config.name}"`,
+          error as Error,
+          { provider: config.name },
       );
     }
   }
@@ -305,27 +309,46 @@ export class ProviderRegistry {
   /**
    * Record the outcome of a provider API call.
    * Updates the circuit breaker state for the named provider.
+   * Uses getState() (pure read) rather than isOpen() to avoid the OPEN→HALF_OPEN
+   * side effect that would cause isOpen() to return false before recordResult() runs,
+   * masking the transition and preventing notifyCircuitClosed() from ever firing.
    */
   recordProviderResult(name: string, success: boolean): void {
+    log.engine.debug("provider-registry.recordProviderResult: entry", { name, success });
     const breaker = this.breakers.get(name);
-    if (!breaker) return;
-    const wasOpen = breaker.isOpen();
+    if (!breaker) {
+      log.engine.debug("provider-registry.recordProviderResult: no breaker", { name });
+      return;
+    }
+    const prevState = breaker.getState();
     breaker.recordResult(success);
-    const isNowOpen = breaker.isOpen();
-    if (isNowOpen && !wasOpen) {
+    const newState = breaker.getState();
+    if (newState === "OPEN" && prevState !== "OPEN") {
       log.engine.warn(`[ProviderRegistry] Circuit opened for "${name}" — notifying concurrency gate`);
       concurrencyGate.notifyCircuitOpen();
-    } else if (!isNowOpen && wasOpen) {
+    } else if (newState === "CLOSED" && prevState !== "CLOSED") {
       log.engine.debug(`[ProviderRegistry] Circuit closed for "${name}" — notifying concurrency gate`);
       concurrencyGate.notifyCircuitClosed();
     }
+    log.engine.debug("provider-registry.recordProviderResult: exit", { name, prevState, newState });
   }
 
   /**
    * Check whether a provider's circuit is currently open (failing).
+   * Detects the OPEN→HALF_OPEN transition (triggered by isOpen()'s side effect)
+   * and notifies the gate so the recovery probe can get through.
    */
   isProviderOpen(name: string): boolean {
-    return this.breakers.get(name)?.isOpen() ?? false;
+    const breaker = this.breakers.get(name);
+    if (!breaker) return false;
+    const prevState = breaker.getState();
+    const open = breaker.isOpen(); // may transition OPEN→HALF_OPEN as a side effect
+    const newState = breaker.getState();
+    if (prevState === "OPEN" && newState === "HALF_OPEN") {
+      log.engine.debug(`[ProviderRegistry] "${name}" circuit → HALF_OPEN — unblocking gate for recovery probe`);
+      concurrencyGate.notifyCircuitClosed();
+    }
+    return open;
   }
 
   listProviders(): string[] {
