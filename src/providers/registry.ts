@@ -28,6 +28,7 @@ import { GrokProtocolProvider } from "./protocols/grok.js";
 import type { ModelDefinition } from "../models/loader.js";
 import { ProviderCircuitBreaker } from "./circuit-breaker.js";
 import type { HealthPolicy } from "../intelligence/router.js";
+import { RateLimitedProvider, concurrencyGate, providerRateLimiter } from "../ratelimit/index.js";
 
 export type ProviderRole =
   | "chat-default"
@@ -172,7 +173,13 @@ export class ProviderRegistry {
       };
       factory = PROTOCOL_FACTORIES.openai;
       try {
-        const provider = factory(config, syntheticDef);
+        const rawProvider = factory(config, syntheticDef);
+        const provider = new RateLimitedProvider(
+          rawProvider,
+          providerRateLimiter,
+          config.name,
+          concurrencyGate,
+        );
         this.providers.set(config.name, provider);
         this.breakers.set(
           config.name,
@@ -196,14 +203,21 @@ export class ProviderRegistry {
     }
 
     try {
-      const provider = factory(config, modelDef!);
+      const rawProvider = factory(config, modelDef!);
+      const provider = new RateLimitedProvider(
+        rawProvider,
+        providerRateLimiter,
+        config.name,
+        concurrencyGate,
+      );
       this.providers.set(config.name, provider);
+      // Anthropic providers open the circuit after a single 429 — error 2062
+      // is a concurrent-request limit that retrying immediately makes worse.
+      const failureThreshold =
+        modelDef!.compatible === "anthropic" ? 1 : this.healthPolicy.failureThreshold;
       this.breakers.set(
         config.name,
-        new ProviderCircuitBreaker(
-          this.healthPolicy.failureThreshold,
-          this.healthPolicy.recoveryTimeoutMs,
-        ),
+        new ProviderCircuitBreaker(failureThreshold, this.healthPolicy.recoveryTimeoutMs),
       );
     } catch (error) {
       log.engine.warn(
@@ -293,7 +307,18 @@ export class ProviderRegistry {
    * Updates the circuit breaker state for the named provider.
    */
   recordProviderResult(name: string, success: boolean): void {
-    this.breakers.get(name)?.recordResult(success);
+    const breaker = this.breakers.get(name);
+    if (!breaker) return;
+    const wasOpen = breaker.isOpen();
+    breaker.recordResult(success);
+    const isNowOpen = breaker.isOpen();
+    if (isNowOpen && !wasOpen) {
+      log.engine.warn(`[ProviderRegistry] Circuit opened for "${name}" — notifying concurrency gate`);
+      concurrencyGate.notifyCircuitOpen();
+    } else if (!isNowOpen && wasOpen) {
+      log.engine.debug(`[ProviderRegistry] Circuit closed for "${name}" — notifying concurrency gate`);
+      concurrencyGate.notifyCircuitClosed();
+    }
   }
 
   /**
