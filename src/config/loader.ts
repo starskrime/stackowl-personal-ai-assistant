@@ -72,8 +72,11 @@ export interface StackOwlConfig {
   synthesis?: {
     /** Provider name to use for synthesis (must be registered in providers). Default: 'anthropic' */
     provider: string;
-    /** Model to use for synthesis. Default: 'claude-sonnet-4-5-20241022' */
-    model: string;
+    /**
+     * Model to use for synthesis. When omitted the provider's configured activeModel is used,
+     * which ensures synthesis always tracks whatever the user has set as their active model.
+     */
+    model?: string;
     /**
      * Directory where synthesized tools and skills are stored.
      * Default: <workspace>/synthesized
@@ -419,7 +422,7 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   },
   synthesis: {
     provider: "anthropic",
-    model: "claude-sonnet-4-5-20241022",
+    // model intentionally omitted — falls back to provider's activeModel at runtime
   },
   research: {
     autoDeep: true,
@@ -539,10 +542,13 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
         ...DEFAULT_CONFIG.engine,
         ...(userConfig.engine || {}),
       },
-      synthesis: {
-        ...DEFAULT_CONFIG.synthesis!,
-        ...(userConfig.synthesis || {}),
-      },
+      synthesis: (() => {
+        const merged = { ...DEFAULT_CONFIG.synthesis!, ...(userConfig.synthesis || {}) };
+        // Migration: strip the old hardcoded stale default so synthesis falls back to the
+        // provider's activeModel instead of staying frozen on an outdated model ID.
+        if (merged.model === "claude-sonnet-4-5-20241022") delete merged.model;
+        return merged;
+      })(),
       research: {
         ...DEFAULT_CONFIG.research!,
         ...(userConfig.research || {}),

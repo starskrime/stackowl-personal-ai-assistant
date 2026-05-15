@@ -100,7 +100,14 @@ export class EvolutionHandler {
   } {
     const synthesisConfig = context.config.synthesis;
     const providerName = synthesisConfig?.provider ?? "anthropic";
-    const model = synthesisConfig?.model ?? "claude-sonnet-4-5-20241022";
+    // Prefer explicit synthesis model override; otherwise use the provider's activeModel so
+    // synthesis tracks whatever the user has configured — never a stale hardcoded default.
+    const providerEntry = context.config.providers?.[providerName];
+    const model =
+      synthesisConfig?.model ??
+      providerEntry?.activeModel ??
+      providerEntry?.defaultModel ??
+      context.config.defaultModel;
 
     // Try to get the synthesis-specific provider from the registry
     if (context.providerRegistry) {
