@@ -224,8 +224,8 @@ export class ProviderRegistry {
     } catch (error) {
       log.engine.warn(
         `[ProviderRegistry] Failed to initialize "${config.name}"`,
-          error as Error,
-          { provider: config.name },
+        error as Error,
+        { provider: config.name },
       );
     }
   }
