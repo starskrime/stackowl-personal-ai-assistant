@@ -880,6 +880,82 @@ describe("CognitiveLoop", () => {
       loop.stop();
     });
   });
+
+  describe("circuit-breaker guard in _tickInner()", () => {
+    it("skips LLM call when primary provider circuit is open", async () => {
+      const mockRegistry = {
+        listProviders: vi.fn().mockReturnValue(["test-provider"]),
+        isProviderOpen: vi.fn().mockReturnValue(true),
+        recordProviderResult: vi.fn(),
+        // getDefault is intentionally omitted to verify we never call it
+      };
+
+      const chatSpy = vi.fn().mockResolvedValue({ content: "{}", toolCalls: [] });
+
+      const loop = new CognitiveLoop(
+        {
+          provider: { ...mockProvider, chat: chatSpy },
+          owl: mockOwl,
+          config: mockConfig,
+          providerRegistry: mockRegistry as any,
+        },
+        // Use a short idle time so the idleness check passes
+        { minIdleMinutes: 0 },
+      );
+
+      // _tickInner is private — call it via the public tick() wrapper
+      await (loop as any)._tickInner();
+
+      // Circuit is open → must exit before any LLM call
+      expect(chatSpy).not.toHaveBeenCalled();
+      // isProviderOpen must have been consulted
+      expect(mockRegistry.isProviderOpen).toHaveBeenCalledWith("test-provider");
+    });
+
+    it("proceeds normally when provider circuit is closed", async () => {
+      const mockRegistry = {
+        listProviders: vi.fn().mockReturnValue(["test-provider"]),
+        isProviderOpen: vi.fn().mockReturnValue(false),
+        recordProviderResult: vi.fn(),
+      };
+
+      const loop = new CognitiveLoop(
+        {
+          provider: mockProvider,
+          owl: mockOwl,
+          config: mockConfig,
+          providerRegistry: mockRegistry as any,
+        },
+        { minIdleMinutes: 0 },
+      );
+
+      // Should not throw — just passes the guard and proceeds to decide/idle
+      await expect((loop as any)._tickInner()).resolves.toBeUndefined();
+      expect(mockRegistry.isProviderOpen).toHaveBeenCalledWith("test-provider");
+    });
+
+    it("handles empty provider list without throwing", async () => {
+      const mockRegistry = {
+        listProviders: vi.fn().mockReturnValue([]),
+        isProviderOpen: vi.fn(),
+        recordProviderResult: vi.fn(),
+      };
+
+      const loop = new CognitiveLoop(
+        {
+          provider: mockProvider,
+          owl: mockOwl,
+          config: mockConfig,
+          providerRegistry: mockRegistry as any,
+        },
+        { minIdleMinutes: 0 },
+      );
+
+      // Empty list → guard is skipped, should not throw
+      await expect((loop as any)._tickInner()).resolves.toBeUndefined();
+      expect(mockRegistry.isProviderOpen).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // ─── isCapabilityDesire (tested via integration patterns) ─────────
