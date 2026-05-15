@@ -106,12 +106,11 @@ export class RateLimitedProvider implements ModelProvider {
     options?: ChatOptions,
   ): AsyncGenerator<StreamEvent> {
     log.engine.debug("rate-limited-provider.chatWithToolsStream: entry", { provider: this.providerKey });
-    this.checkLimit();
-    const release = await this.gate.acquire();
     if (!this.inner.chatWithToolsStream) {
-      release();
       throw new Error(`Provider ${this.name} does not support chatWithToolsStream`);
     }
+    this.checkLimit();
+    const release = await this.gate.acquire();
     try {
       yield* this.inner.chatWithToolsStream(messages, tools, model, options);
     } finally {

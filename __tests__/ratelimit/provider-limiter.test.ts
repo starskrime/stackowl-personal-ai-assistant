@@ -91,4 +91,61 @@ describe("RateLimitedProvider", () => {
     expect(inner.embed).toHaveBeenCalled();
     expect(gate.inflight).toBe(0);
   });
+
+  it("releases gate after chatStream completes", async () => {
+    const gate = makeGate(1);
+    const inner = makeProvider();
+    const wrapped = new RateLimitedProvider(inner, makeLimiter(), "test", gate);
+    const chunks: unknown[] = [];
+    for await (const chunk of wrapped.chatStream([], "model")) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(1);
+    expect(gate.inflight).toBe(0);
+  });
+
+  it("releases gate when chatStream consumer breaks early", async () => {
+    const gate = makeGate(1);
+    const inner = makeProvider();
+    (inner.chatStream as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+      yield { type: "text", text: "chunk1" };
+      yield { type: "text", text: "chunk2" };
+    });
+    const wrapped = new RateLimitedProvider(inner, makeLimiter(), "test", gate);
+    // break after first chunk — simulates consumer abort
+    for await (const _chunk of wrapped.chatStream([], "model")) {
+      break;
+    }
+    expect(gate.inflight).toBe(0);
+  });
+
+  it("chatWithToolsStream capability check fires before checkLimit and gate.acquire", async () => {
+    const gate = makeGate(1);
+    const limiter = new RateLimiter([{ name: "tight", maxRequests: 1, windowMs: 60_000 }]);
+    // Burn the single allowed token
+    limiter.consume("test");
+
+    const inner = makeProvider();
+    // Remove stream support
+    delete (inner as Partial<ModelProvider>).chatWithToolsStream;
+    const wrapped = new RateLimitedProvider(inner, limiter, "test", gate);
+
+    // Should throw capability error, NOT rate-limit error
+    const gen = wrapped.chatWithToolsStream([], [], "model");
+    await expect(gen.next()).rejects.toThrow("does not support chatWithToolsStream");
+    // Gate must not have been acquired
+    expect(gate.inflight).toBe(0);
+  });
+
+  it("does not acquire gate when rate limiter rejects", async () => {
+    const gate = makeGate(1);
+    // maxRequests=1: burn the single token, then next call is rate-limited
+    const limiter = new RateLimiter([{ name: "tight", maxRequests: 1, windowMs: 60_000 }]);
+    limiter.consume("test"); // exhaust the budget
+    const inner = makeProvider();
+    const wrapped = new RateLimitedProvider(inner, limiter, "test", gate);
+
+    await expect(wrapped.chat([], "model")).rejects.toThrow(/Rate limited/);
+    expect(gate.inflight).toBe(0);
+  });
 });
