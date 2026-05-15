@@ -307,6 +307,23 @@ export interface PromptSubmittedEvent {
   answer: string;
 }
 
+// ─── Progress notification ──────────────────────────────────────────────────
+
+/** Emitted by TuiProgressNotifier.start() to set the phrase in ThinkingIndicator. */
+export interface ThinkingPhraseEvent {
+  kind: "thinking.phrase";
+  turnId: string;
+  /** The random-language "Working on it…" phrase. Empty string clears the override. */
+  phrase: string;
+}
+
+/** Emitted by TuiProgressNotifier.update() to show tool status under the spinner. */
+export interface ThinkingToolEvent {
+  kind: "thinking.tool";
+  turnId: string;
+  text: string;
+}
+
 // ─── Union ────────────────────────────────────────────────────────────────────
 
 export type UiEvent =
@@ -349,6 +366,8 @@ export type UiEvent =
   | OnboardingViewDismissedEvent
   | MemoryWrittenEvent
   | PromptRequestedEvent
-  | PromptSubmittedEvent;
+  | PromptSubmittedEvent
+  | ThinkingPhraseEvent
+  | ThinkingToolEvent;
 
 export type UiEventKind = UiEvent["kind"];

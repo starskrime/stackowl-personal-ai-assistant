@@ -7,15 +7,17 @@ import {
   FADE_COLORS,
   THINKING_MESSAGES,
 } from "./spinner.js";
+import { useUiStore } from "../providers/UiStoreProvider.js";
 
 /**
  * Animated "Working on it..." indicator shown while the owl is thinking.
- * Spinner icon blinks on the left; text cycles through 30 languages with
- * a yellow→red→yellow colour fade.
+ * Spinner icon blinks on the left; text is sourced from the ProgressNotifier
+ * (via thinkingPhrase in the store) or falls back to a random language.
  */
 export function ThinkingIndicator() {
   const [spinFrame, setSpinFrame] = useState(0);
-  const [langIdx] = useState(() => Math.floor(Math.random() * THINKING_MESSAGES.length));
+  const [fallbackIdx] = useState(() => Math.floor(Math.random() * THINKING_MESSAGES.length));
+  const thinkingPhrase = useUiStore((s) => s.thinkingPhrase);
 
   useEffect(() => {
     const t = setInterval(
@@ -26,11 +28,12 @@ export function ThinkingIndicator() {
   }, []);
 
   const color = FADE_COLORS[spinFrame % FADE_COLORS.length];
+  const displayPhrase = thinkingPhrase ?? THINKING_MESSAGES[fallbackIdx]!;
 
   return (
     <Box>
       <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[spinFrame]} </Text>
-      <Text bold color={color}>{THINKING_MESSAGES[langIdx]}</Text>
+      <Text bold color={color}>{displayPhrase}</Text>
     </Box>
   );
 }

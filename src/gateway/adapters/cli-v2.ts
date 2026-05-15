@@ -19,6 +19,8 @@ import { OwlGateway, makeMessage, makeSessionId } from "../core.js";
 import { runWithContext } from "../../infra/observability/context.js";
 import { createCommandDispatcher } from "../../cli/v2/commands/dispatcher.js";
 import type { CommandDispatcher } from "../../cli/v2/commands/dispatcher.js";
+import { TuiProgressNotifier } from "../../progress/notifiers/tui.js";
+import { pickRandomPhrase } from "../../shared/progress.js";
 
 export interface CliV2AdapterConfig {
   userId?: string;
@@ -40,6 +42,7 @@ export class CliV2Adapter implements ChannelAdapter {
   private _commandDispatcher: CommandDispatcher | null = null;
   /** Active turn ID during assistant response; null between turns. */
   private _currentTurnId: string | null = null;
+  private _progressNotifier!: TuiProgressNotifier;
 
   constructor(gateway: OwlGateway, config: CliV2AdapterConfig = {}) {
     this._gateway = gateway;
@@ -50,6 +53,9 @@ export class CliV2Adapter implements ChannelAdapter {
     this._quitPromise = new Promise<void>((resolve) => {
       this._quitResolve = resolve;
     });
+
+    this._progressNotifier = new TuiProgressNotifier(globalBridge);
+    gateway.getProgressManager().register(this._progressNotifier);
   }
 
   // ─── ChannelAdapter ───────────────────────────────────────────────────────
@@ -173,6 +179,9 @@ export class CliV2Adapter implements ChannelAdapter {
     this._currentTurnId = turnId;
     globalBridge.translateOwlChange(turnId, owlMeta.owlEmoji, owlMeta.owlName, undefined, owlMeta.model);
 
+    // Announce progress — uses this._sessionId to match what tool:start events emit.
+    void this._gateway.getProgressManager().notifyStart(pickRandomPhrase(), this._sessionId);
+
     // Accumulate streamed text so we can supply fullText on "done".
     let accumulated = "";
     // Track whether the streaming path already emitted turn.committed via the
@@ -254,6 +263,7 @@ export class CliV2Adapter implements ChannelAdapter {
         severity: "error",
       });
     } finally {
+      void this._gateway.getProgressManager().notifyStop(this._sessionId);
       this._currentTurnId = null;
     }
   }
