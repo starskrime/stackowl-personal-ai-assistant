@@ -68,10 +68,10 @@ export const TASK_TYPE_DEFAULTS: Record<TaskType, Tier> = {
   evolution:      "low",
   extraction:     "low",
   episodic:       "low",
-  classification: "medium",
+  classification: "mid",
   synthesis:      "high",
   summarization:  "low",
-  clarification:  "medium",
+  clarification:  "mid",
 };
 
 export class IntelligenceRouter {
