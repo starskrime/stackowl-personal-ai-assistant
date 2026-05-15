@@ -189,6 +189,21 @@ export function renderProviderRemoveConfirm(providerKey: string): ScreenContent 
   return { text, keyboard };
 }
 
+// ─── Screen: Add Provider — Name Input ───────────────────────────
+
+export function renderAddProviderName(): ScreenContent {
+  const text =
+    `➕ <b>Add Provider — Step 1 of 3</b>\n\n` +
+    `Choose a unique name for this provider.\n` +
+    `Use lowercase letters, numbers, and hyphens.\n\n` +
+    `Examples: <code>my-openai</code>, <code>anthropic-prod</code>, <code>llama-corp</code>`;
+
+  const keyboard = new InlineKeyboard()
+    .text("← Cancel", "cfg:~");
+
+  return { text, keyboard };
+}
+
 // ─── Screen: Add Provider — Type Picker ──────────────────────────
 
 export function renderAddProviderType(): ScreenContent {

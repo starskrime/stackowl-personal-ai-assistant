@@ -25,6 +25,7 @@ import {
   renderProviders,
   renderProviderDetail,
   renderProviderRemoveConfirm,
+  renderAddProviderName,
   renderAddProviderType,
   renderAddProviderUrl,
   renderAddProviderKey,
@@ -39,6 +40,7 @@ import {
   PROVIDER_TYPE_META,
 } from "./screens.js";
 import type { ProviderConfigEntry } from "../../../config/loader.js";
+import type { ProviderManager } from "../../../providers/manager.js";
 
 // ─── One-time secure web form tokens ──────────────────────────────
 
@@ -67,6 +69,7 @@ export class TelegramConfigMenu {
       get(name: string): { healthCheck(): Promise<boolean>; listModels(): Promise<string[]> };
       listProviders(): string[];
     },
+    private providerManager?: ProviderManager,
   ) {}
 
   // ─── Entry points ─────────────────────────────────────────────
@@ -144,6 +147,11 @@ export class TelegramConfigMenu {
 
     const { field, contextKey } = state.pendingInput;
     state.pendingInput = undefined;
+
+    if (field === "name") {
+      await this.applyProviderName(ctx, state, text.trim());
+      return true;
+    }
 
     if (field === "apiKey") {
       // Option C path A: Delete the user's message immediately
@@ -246,8 +254,11 @@ export class TelegramConfigMenu {
 
     // ── Add Provider ─────────────────────────────────────────
     if (cmd === "pa") {
-      this.stateManager.navigate(state.userId, "provider_add_type");
-      await this.editScreen(ctx, state, renderAddProviderType());
+      this.stateManager.navigate(state.userId, "provider_add_name");
+      state.pendingEntry = undefined;
+      state.pendingName = undefined;
+      state.pendingInput = { field: "name", contextKey: "" };
+      await this.editScreen(ctx, state, renderAddProviderName());
       return;
     }
 
@@ -428,6 +439,9 @@ export class TelegramConfigMenu {
           state.pendingProviderKey ?? "", config, this.lastHealth,
         ));
         break;
+      case "provider_add_name":
+        await this.editScreen(ctx, state, renderAddProviderName());
+        break;
       case "provider_add_type":
         await this.editScreen(ctx, state, renderAddProviderType());
         break;
@@ -470,26 +484,38 @@ export class TelegramConfigMenu {
     state: MenuState,
     providerKey: string,
   ): Promise<void> {
-    const config = this.getConfig();
-    if (!config.providers[providerKey]) {
-      await this.editScreen(ctx, state, renderError(`Provider "${providerKey}" not found.`));
-      return;
-    }
+    log.telegram.debug("[ConfigMenu] removeProvider: entry", { providerKey });
 
-    if (providerKey === config.defaultProvider) {
+    try {
+      if (this.providerManager) {
+        await this.providerManager.deleteProvider(providerKey);
+      } else {
+        // Fallback: direct config mutation (no deregistration)
+        const config = this.getConfig();
+        if (!config.providers[providerKey]) {
+          await this.editScreen(ctx, state, renderError(`Provider "${providerKey}" not found.`));
+          return;
+        }
+        if (providerKey === config.defaultProvider) {
+          await this.editScreen(ctx, state, renderError(
+            `Cannot remove the default provider (<b>${providerKey}</b>). Set another as default first.`,
+          ));
+          return;
+        }
+        delete config.providers[providerKey];
+        await this.saveConfigFn(config);
+      }
+    } catch (err) {
+      log.telegram.warn("[ConfigMenu] removeProvider: deleteProvider failed", { providerKey, err: String(err) });
       await this.editScreen(ctx, state, renderError(
-        `Cannot remove the default provider (<b>${providerKey}</b>). Set another as default first.`,
+        err instanceof Error ? err.message : String(err),
       ));
       return;
     }
 
-    delete config.providers[providerKey];
-    await this.saveConfigFn(config);
     log.telegram.info(`[ConfigMenu] Removed provider "${providerKey}"`);
-
-    // Go back to providers list
     this.stateManager.back(state.userId);
-    await this.editScreen(ctx, state, renderProviders(config, this.lastHealth));
+    await this.editScreen(ctx, state, renderProviders(this.getConfig(), this.lastHealth));
   }
 
   private async testProvider(
@@ -522,6 +548,52 @@ export class TelegramConfigMenu {
   }
 
   // ─── Provider add flow ────────────────────────────────────────
+
+  private async applyProviderName(
+    ctx: Context,
+    state: MenuState,
+    name: string,
+  ): Promise<void> {
+    log.telegram.debug("[ConfigMenu] applyProviderName: entry", { name });
+
+    // Validate format
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$|^[a-z0-9]$/.test(name)) {
+      log.telegram.warn("[ConfigMenu] applyProviderName: invalid name format", { name });
+      await this.editScreen(ctx, state, renderError(
+        `Invalid name "<b>${name}</b>". Use lowercase letters, numbers, and hyphens only.\n` +
+        `Examples: <code>my-openai</code>, <code>anthropic-prod</code>`,
+      ));
+      state.pendingInput = { field: "name", contextKey: "" };
+      return;
+    }
+
+    const config = this.getConfig();
+
+    // Check reserved / duplicate via ProviderManager if available
+    if (this.providerManager && this.providerManager.isReservedOrDuplicate(name, config)) {
+      log.telegram.warn("[ConfigMenu] applyProviderName: reserved or duplicate", { name });
+      await this.editScreen(ctx, state, renderError(
+        `Name "<b>${name}</b>" is reserved or already in use. Choose a different name.`,
+      ));
+      state.pendingInput = { field: "name", contextKey: "" };
+      return;
+    }
+
+    // Fallback duplicate check without manager
+    if (!this.providerManager && config.providers[name]) {
+      log.telegram.warn("[ConfigMenu] applyProviderName: duplicate (fallback check)", { name });
+      await this.editScreen(ctx, state, renderError(
+        `Provider "<b>${name}</b>" already exists. Choose a different name.`,
+      ));
+      state.pendingInput = { field: "name", contextKey: "" };
+      return;
+    }
+
+    state.pendingName = name;
+    this.stateManager.navigate(state.userId, "provider_add_type");
+    log.telegram.debug("[ConfigMenu] applyProviderName: exit — advancing to type picker", { name });
+    await this.editScreen(ctx, state, renderAddProviderType());
+  }
 
   private async applyBaseUrl(
     ctx: Context,
@@ -747,29 +819,50 @@ export class TelegramConfigMenu {
     apiKey: string | undefined,
   ): Promise<void> {
     const entry  = state.pendingEntry ?? { providerType };
+    const name   = state.pendingName ?? providerType; // fallback to type for legacy flows
     const config = this.getConfig();
 
-    // Build the new ProviderConfigEntry
-    const newEntry: ProviderConfigEntry = {
-      baseUrl:      entry.baseUrl || undefined,
-      apiKey:       apiKey || undefined,
-      defaultModel: entry.defaultModel,
-    };
+    log.telegram.debug("[ConfigMenu] finalizeProviderAdd: entry", { name, providerType });
 
-    config.providers[providerType] = newEntry;
-    await this.saveConfigFn(config);
+    try {
+      if (this.providerManager) {
+        await this.providerManager.addProvider({
+          name,
+          profile:     providerType,
+          apiKey:      apiKey || undefined,
+          activeModel: entry.defaultModel,
+          baseUrl:     entry.baseUrl || undefined,
+        });
+      } else {
+        // Fallback: direct config mutation (no hot-registration)
+        const newEntry: ProviderConfigEntry = {
+          baseUrl:      entry.baseUrl || undefined,
+          apiKey:       apiKey || undefined,
+          defaultModel: entry.defaultModel,
+        };
+        config.providers[name] = newEntry;
+        await this.saveConfigFn(config);
+      }
+    } catch (err) {
+      log.telegram.warn("[ConfigMenu] finalizeProviderAdd: addProvider failed", { name, err: String(err) });
+      await this.editScreen(ctx, state, renderError(
+        err instanceof Error ? err.message : String(err),
+      ));
+      return;
+    }
 
     // Clear pending
-    state.pendingEntry      = undefined;
-    state.pendingProviderKey = providerType;
+    state.pendingEntry       = undefined;
+    state.pendingName        = undefined;
+    state.pendingProviderKey = name;
 
-    log.telegram.info(`[ConfigMenu] Provider added: "${providerType}"`);
+    log.telegram.info(`[ConfigMenu] Provider added: "${name}"`);
 
     // Go back to provider list with success context
     this.stateManager.set({ ...state, screen: "providers", breadcrumb: [] });
     await this.editScreen(ctx, state, renderSuccess(
-      `Provider <b>${providerType}</b> added!\n` +
-      `Model: <code>${entry.defaultModel ?? "—"}</code>`,
+      `Provider <b>${name}</b> added and active!\n` +
+      `Protocol: <code>${providerType}</code> · Model: <code>${entry.defaultModel ?? "—"}</code>`,
     ));
   }
 

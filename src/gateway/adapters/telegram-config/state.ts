@@ -11,6 +11,7 @@ export type MenuScreen =
   | "main"
   | "providers"
   | "provider_detail"
+  | "provider_add_name"
   | "provider_add_type"
   | "provider_add_url"
   | "provider_add_key"
@@ -24,7 +25,7 @@ export type MenuScreen =
 
 export interface PendingInput {
   /** What field the next plain-text message from the user fills */
-  field: "baseUrl" | "apiKey" | "modelSearch";
+  field: "baseUrl" | "apiKey" | "modelSearch" | "name";
   /** Context: which provider or role this input is for */
   contextKey: string;
 }
@@ -51,6 +52,8 @@ export interface MenuState {
     apiKey?: string;
     defaultModel?: string;
   };
+  /** User-chosen name for the provider being added (step 1 of add flow) */
+  pendingName?: string;
   /** Model role being assigned ("chat" | "synthesis" | "embedding" | ...) */
   pendingRole?: string;
   /** Provider selected for role assignment */

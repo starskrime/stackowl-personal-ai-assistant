@@ -114,6 +114,7 @@ export class TelegramAdapter implements ChannelAdapter {
           catch (err) { log.telegram.warn("providerRegistry.listProviders failed, using default", err); return [gwConfig.defaultProvider]; }
         },
       },
+      gateway.getProviderManager(),
     );
 
     // ── Voice menu (interactive /voice command) ──────────────────
