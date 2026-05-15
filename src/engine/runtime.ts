@@ -26,6 +26,7 @@ import { buildDegradationPrompt } from "../infra/capability-registry.js";
 import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
+import { RateLimitError, InternalServerError, APIError } from "@anthropic-ai/sdk";
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import { DNADecisionLayer } from "../owls/decision-layer.js";
 import { DiagnosticEngine } from "./diagnostic-engine.js";
@@ -613,8 +614,55 @@ async function consumeStream(
 
 // ─── Provider Resilience Layer ──────────────────────────────────
 
-/** HTTP status codes that should be retried after a backoff delay. */
-const RETRYABLE_STREAM_STATUSES = new Set([429, 500, 502, 503, 504]);
+/**
+ * True for 429 rate-limit errors from any provider.
+ * Uses SDK typed class first; falls back to .status for non-Anthropic providers.
+ */
+function isRateLimitError(err: unknown): boolean {
+  if (err instanceof RateLimitError) return true;
+  const status = (err as { status?: number }).status;
+  return status === 429;
+}
+
+/**
+ * True for transient 5xx / network errors (worth retrying with backoff).
+ * Does NOT include 429 — those are handled by isRateLimitError separately.
+ */
+function isTransientStreamError(err: unknown): boolean {
+  if (err instanceof InternalServerError) return true;
+  const status = (err as { status?: number }).status;
+  if (typeof status === "number" && status >= 500 && status < 600) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  const networkKeywords = ["fetch", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "timeout", "network"];
+  return networkKeywords.some((kw) => msg.toLowerCase().includes(kw.toLowerCase()));
+}
+
+/**
+ * Parse Retry-After from an Anthropic SDK error's Headers object.
+ * APIError.headers is a Fetch API Headers — use .get(), not bracket access.
+ * Returns milliseconds, or undefined if no header present.
+ */
+function parseRetryAfterMs(err: unknown): number | undefined {
+  if (err instanceof APIError && err.headers) {
+    const val = err.headers.get("retry-after");
+    if (val) {
+      const seconds = parseInt(val, 10);
+      if (!isNaN(seconds)) return seconds * 1000;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Calculate backoff with ±20% jitter.
+ * Uses retryAfterMs if provided (from Retry-After header), otherwise exponential.
+ */
+function backoffMs(attempt: number, retryAfterMs?: number): number {
+  const BASE_DELAY_MS = 1_500;
+  const base = retryAfterMs ?? BASE_DELAY_MS * Math.pow(2, attempt);
+  const jitter = base * 0.2 * (Math.random() * 2 - 1);
+  return Math.max(100, Math.round(base + jitter));
+}
 
 /** Tool names eligible for the quality-gate evaluator (information-retrieval tools only). */
 const QUALITY_GATE_TOOLS = new Set([
@@ -622,22 +670,6 @@ const QUALITY_GATE_TOOLS = new Set([
   "live_browser", "search_web", "fetch_url", "browser_navigate",
   "read_file", "search_files",
 ]);
-
-/**
- * Determine if an error thrown during a stream call is transient and safe to retry.
- * Uses the HTTP status embedded in the error message ("HTTP 429", "HTTP 503", etc)
- * as the source of truth since the provider has already consumed the Response body.
- */
-function isTransientStreamError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  const match = msg.match(/HTTP (\d{3})/);
-  if (!match) {
-    // Network-level failures (ECONNRESET, ETIMEDOUT, fetch failed) are transient
-    const networkKeywords = ["fetch", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "timeout", "network"];
-    return networkKeywords.some((kw) => msg.toLowerCase().includes(kw.toLowerCase()));
-  }
-  return RETRYABLE_STREAM_STATUSES.has(parseInt(match[1]!, 10));
-}
 
 /**
  * Execute a streaming LLM call with 3-layer resilience:
@@ -660,7 +692,6 @@ async function withProviderResilience(
   callSite?: string,   // for logging ("initial" | "loop")
 ): Promise<ChatResponse> {
   const MAX_RETRIES = 3;
-  const BASE_DELAY_MS = 1_500;
   const site = callSite ?? "unknown";
 
   // Sanitize message history before sending to ANY provider — ensures every
@@ -671,35 +702,66 @@ async function withProviderResilience(
   // ── Layer 1: retry transient failures on the same provider ───────
   let lastStreamError: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // Skip attempting an open provider immediately (fail-fast)
+    if (providerRegistry?.isProviderOpen(provider.name)) {
+      log.engine.warn(
+        `[Resilience/${site}] Provider "${provider.name}" circuit is OPEN — skipping attempt ${attempt + 1}`,
+      );
+      break;
+    }
+
     try {
+      let result: ChatResponse;
       if (provider.chatWithToolsStream && onStreamEvent) {
-        return await withSpan("provider.call", async () => {
+        result = await withSpan("provider.call", async () => {
           return consumeStream(
             provider.chatWithToolsStream!(messages, tools, model, chatOptions),
             onStreamEvent!,
           );
         }, { model, attempt });
+      } else {
+        result = await withSpan("provider.call", async () => {
+          return provider.chatWithTools(messages, tools, model, chatOptions);
+        }, { model, attempt });
       }
-      // Provider has no stream: fall through directly to non-stream
-      return await withSpan("provider.call", async () => {
-        return provider.chatWithTools(messages, tools, model, chatOptions);
-      }, { model, attempt });
+      // Success — signal breaker and return
+      providerRegistry?.recordProviderResult(provider.name, true);
+      return result;
     } catch (err) {
       lastStreamError = err;
       const errMsg = err instanceof Error ? err.message : String(err);
 
-      if (isTransientStreamError(err) && attempt < MAX_RETRIES - 1) {
-        const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+      if (isRateLimitError(err)) {
+        providerRegistry?.recordProviderResult(provider.name, false);
+        const retryAfterMs = parseRetryAfterMs(err);
+        const delay = backoffMs(attempt, retryAfterMs);
+        if (attempt < MAX_RETRIES - 1) {
+          log.engine.warn(
+            `[Resilience/${site}] 429 rate-limit on "${provider.name}" (attempt ${attempt + 1}/${MAX_RETRIES}). ` +
+            `Retrying in ${delay}ms${retryAfterMs ? ` (Retry-After: ${retryAfterMs}ms)` : ""}…`,
+          );
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
         log.engine.warn(
-          `[Resilience/${site}] Stream attempt ${attempt + 1}/${MAX_RETRIES} failed (transient): ${errMsg}. Retrying in ${delay}ms…`,
+          `[Resilience/${site}] 429 rate-limit — retries exhausted. Degrading to Layer 2.`,
+        );
+        break;
+      }
+
+      if (isTransientStreamError(err) && attempt < MAX_RETRIES - 1) {
+        providerRegistry?.recordProviderResult(provider.name, false);
+        const delay = backoffMs(attempt);
+        log.engine.warn(
+          `[Resilience/${site}] Transient error on "${provider.name}" (attempt ${attempt + 1}/${MAX_RETRIES}): ${errMsg}. Retrying in ${delay}ms…`,
         );
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
 
-      // Non-transient or final retry — break out to Layer 2
+      // Non-transient or final attempt — break to Layer 2
       log.engine.warn(
-        `[Resilience/${site}] Stream failed (non-retryable or retries exhausted): ${errMsg}. Degrading to non-stream…`,
+        `[Resilience/${site}] Non-retryable error on "${provider.name}": ${errMsg}. Degrading to Layer 2.`,
       );
       break;
     }
@@ -712,6 +774,7 @@ async function withProviderResilience(
       `[Resilience/${site}] Attempting non-stream fallback on provider "${provider.name}"…`,
     );
     const result = await provider.chatWithTools(messages, tools, model, chatOptions);
+    providerRegistry?.recordProviderResult(provider.name, true);
     log.engine.info(
       `[Resilience/${site}] Non-stream fallback succeeded on "${provider.name}".`,
     );
