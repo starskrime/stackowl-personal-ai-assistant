@@ -74,21 +74,31 @@ function parseModelFile(name: string, content: string): ModelDefinition | null {
 
 export class ModelLoader {
   private defs = new Map<string, ModelDefinition>();
+  private systemNames = new Set<string>();
 
-  constructor(modelsDir?: string) {
-    const dir =
-      modelsDir ??
-      join(dirname(fileURLToPath(import.meta.url)));
-    this._loadDir(dir);
+  constructor(extraDirs?: string[]) {
+    const systemDir = dirname(fileURLToPath(import.meta.url));
+    this._loadDir(systemDir);
+    // Record which names came from the system directory
+    for (const name of this.defs.keys()) {
+      this.systemNames.add(name);
+    }
+    if (extraDirs) {
+      for (const dir of extraDirs) {
+        this._loadDir(dir, /* skipSystemNames */ true);
+      }
+    }
   }
 
-  private _loadDir(dir: string): void {
+  private _loadDir(dir: string, skipSystemNames = false): void {
     try {
       const entries = readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isFile()) continue;
         // Skip compiled JS/TS files and source maps
         if (/\.(ts|js|map|json)$/.test(entry.name)) continue;
+        // Protect system names from user-directory overrides
+        if (skipSystemNames && this.systemNames.has(entry.name)) continue;
 
         try {
           const content = readFileSync(join(dir, entry.name), "utf-8");
@@ -99,7 +109,7 @@ export class ModelLoader {
         }
       }
     } catch {
-      // Directory may not exist in test environments
+      // Directory may not exist in test environments or user config
     }
   }
 
@@ -114,14 +124,31 @@ export class ModelLoader {
   has(name: string): boolean {
     return this.defs.has(name);
   }
+
+  isSystemName(name: string): boolean {
+    return this.systemNames.has(name);
+  }
 }
+
+// ─── Singleton ───────────────────────────────────────────────────
 
 /** Singleton instance — shared across the process */
 let _loaderInstance: ModelLoader | null = null;
+
+export function initModelLoader(workspaceModelsDir?: string): ModelLoader {
+  _loaderInstance = new ModelLoader(
+    workspaceModelsDir ? [workspaceModelsDir] : undefined,
+  );
+  return _loaderInstance;
+}
 
 export function getModelLoader(): ModelLoader {
   if (!_loaderInstance) {
     _loaderInstance = new ModelLoader();
   }
   return _loaderInstance;
+}
+
+export function resetModelLoader(): void {
+  _loaderInstance = null;
 }
