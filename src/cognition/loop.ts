@@ -418,16 +418,15 @@ export class CognitiveLoop {
     // When the main conversation path opens the breaker (after a 429), cognitive
     // ticks automatically pause without needing a separate per-loop state variable.
     //
-    // Use listProviders() instead of getDefault() to avoid throwing when no
-    // default is set (e.g. during startup or in tests with a partially-wired registry).
+    // Use getDefaultName() (non-throwing) to get the configured default provider —
+    // listProviders()[0] returns the first-registered provider which may differ from
+    // the configured default in multi-provider setups (e.g. {anthropic, openai} with
+    // defaultProvider: "openai" would incorrectly check anthropic's breaker).
     if (this.deps.providerRegistry) {
-      const providers = this.deps.providerRegistry.listProviders();
-      if (providers.length > 0) {
-        const name = providers[0]; // first registered = default
-        if (this.deps.providerRegistry.isProviderOpen(name)) {
-          log.cognition.debug("[CognitiveLoop] Primary provider circuit open — skipping tick");
-          return;
-        }
+      const providerNameForGuard = this.deps.providerRegistry.getDefaultName();
+      if (providerNameForGuard && this.deps.providerRegistry.isProviderOpen(providerNameForGuard)) {
+        log.cognition.debug("[CognitiveLoop] Primary provider circuit open — skipping tick");
+        return;
       }
     }
 
@@ -455,9 +454,10 @@ export class CognitiveLoop {
     if (decision.action === "idle") return;
 
     // Resolve the active provider name for circuit-breaker recording.
-    // Use listProviders() to avoid throwing when no default is set.
+    // Use getDefaultName() (non-throwing) to obtain the configured default — the
+    // same provider that was checked in the guard above so breaker state is consistent.
     const providerName =
-      this.deps.providerRegistry?.listProviders()[0] ?? "default";
+      this.deps.providerRegistry?.getDefaultName() ?? "default";
 
     // Execute with timeout (2 minutes max per action)
     const startTime = Date.now();
@@ -484,15 +484,19 @@ export class CognitiveLoop {
       // Always count failed actions toward the daily budget — prevents infinite
       // retry loop when every call returns 429 (failed actions kept budget at 0)
       this.actionsToday++;
-      // Rate limit detected — record failure so the circuit breaker opens and
-      // gates future cognitive ticks automatically.
-      const isRateLimit =
+      // Always record provider failure — timeouts and network errors are equally
+      // strong signals of provider unhealthiness as rate-limit responses.
+      // The rate-limit branch gets its own warn message; other errors get a
+      // generic one with the error attached for observability.
+      this.deps.providerRegistry?.recordProviderResult(providerName, false);
+      if (
         msg.includes("429") ||
         msg.toLowerCase().includes("rate_limit") ||
-        msg.toLowerCase().includes("usage limit");
-      if (isRateLimit) {
-        log.cognition.warn("[CognitiveLoop] Rate limit detected during cognitive tick — recording failure in circuit breaker");
-        this.deps.providerRegistry?.recordProviderResult(providerName, false);
+        msg.toLowerCase().includes("usage limit")
+      ) {
+        log.cognition.warn("[CognitiveLoop] Rate limit detected during cognitive tick — breaker will gate future calls");
+      } else {
+        log.cognition.warn("[CognitiveLoop] Execute failed during cognitive tick", err instanceof Error ? err : new Error(msg), { providerName });
       }
       result = {
         action: decision.action,

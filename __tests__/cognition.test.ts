@@ -885,9 +885,9 @@ describe("CognitiveLoop", () => {
     it("skips LLM call when primary provider circuit is open", async () => {
       const mockRegistry = {
         listProviders: vi.fn().mockReturnValue(["test-provider"]),
+        getDefaultName: vi.fn().mockReturnValue("test-provider"),
         isProviderOpen: vi.fn().mockReturnValue(true),
         recordProviderResult: vi.fn(),
-        // getDefault is intentionally omitted to verify we never call it
       };
 
       const chatSpy = vi.fn().mockResolvedValue({ content: "{}", toolCalls: [] });
@@ -908,13 +908,16 @@ describe("CognitiveLoop", () => {
 
       // Circuit is open → must exit before any LLM call
       expect(chatSpy).not.toHaveBeenCalled();
-      // isProviderOpen must have been consulted
+      // getDefaultName must have been consulted (not listProviders)
+      expect(mockRegistry.getDefaultName).toHaveBeenCalled();
+      // isProviderOpen must have been consulted with the correct name
       expect(mockRegistry.isProviderOpen).toHaveBeenCalledWith("test-provider");
     });
 
     it("proceeds normally when provider circuit is closed", async () => {
       const mockRegistry = {
         listProviders: vi.fn().mockReturnValue(["test-provider"]),
+        getDefaultName: vi.fn().mockReturnValue("test-provider"),
         isProviderOpen: vi.fn().mockReturnValue(false),
         recordProviderResult: vi.fn(),
       };
@@ -931,12 +934,14 @@ describe("CognitiveLoop", () => {
 
       // Should not throw — just passes the guard and proceeds to decide/idle
       await expect((loop as any)._tickInner()).resolves.toBeUndefined();
+      expect(mockRegistry.getDefaultName).toHaveBeenCalled();
       expect(mockRegistry.isProviderOpen).toHaveBeenCalledWith("test-provider");
     });
 
-    it("handles empty provider list without throwing", async () => {
+    it("handles null getDefaultName() without throwing", async () => {
       const mockRegistry = {
         listProviders: vi.fn().mockReturnValue([]),
+        getDefaultName: vi.fn().mockReturnValue(null),
         isProviderOpen: vi.fn(),
         recordProviderResult: vi.fn(),
       };
@@ -951,8 +956,9 @@ describe("CognitiveLoop", () => {
         { minIdleMinutes: 0 },
       );
 
-      // Empty list → guard is skipped, should not throw
+      // null default → guard is skipped, should not throw
       await expect((loop as any)._tickInner()).resolves.toBeUndefined();
+      expect(mockRegistry.getDefaultName).toHaveBeenCalled();
       expect(mockRegistry.isProviderOpen).not.toHaveBeenCalled();
     });
   });

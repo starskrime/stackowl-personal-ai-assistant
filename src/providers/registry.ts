@@ -351,6 +351,15 @@ export class ProviderRegistry {
     return open;
   }
 
+  /**
+   * Return the configured default provider name, or null when no default has
+   * been set yet (e.g. during startup or in tests with a partially-wired
+   * registry). Never throws.
+   */
+  getDefaultName(): string | null {
+    return this.defaultProviderName;
+  }
+
   listProviders(): string[] {
     return Array.from(this.providers.keys());
   }
