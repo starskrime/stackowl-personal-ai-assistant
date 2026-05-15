@@ -195,7 +195,6 @@ export class CognitiveLoop {
   private history: CognitiveTickResult[] = [];
   private capabilityScanner: CapabilityScanner | null = null;
   private _isTicking = false;
-  private _rateLimitedUntil = 0;
 
   /**
    * Persistent synthesis queue — targets discovered during conversations or
@@ -415,10 +414,15 @@ export class CognitiveLoop {
   }
 
   private async _tickInner(): Promise<void> {
-    // Rate-limit guard — stop all background LLM work when provider is 429
-    if (Date.now() < this._rateLimitedUntil) {
-      log.engine.debug(`[CognitiveLoop] Rate-limited — skipping tick until ${new Date(this._rateLimitedUntil).toISOString()}`);
-      return;
+    // Rate-limit guard — check shared circuit breaker instead of isolated backoff.
+    // When the main conversation path opens the breaker (after a 429), cognitive
+    // ticks automatically pause without needing a separate per-loop state variable.
+    if (this.deps.providerRegistry) {
+      const defaultName = this.deps.providerRegistry.getDefault().name;
+      if (this.deps.providerRegistry.isProviderOpen(defaultName)) {
+        log.cognition.debug("[CognitiveLoop] Primary provider circuit open — skipping tick");
+        return;
+      }
     }
 
     // Reset daily counters
@@ -467,10 +471,10 @@ export class CognitiveLoop {
       // Always count failed actions toward the daily budget — prevents infinite
       // retry loop when every call returns 429 (failed actions kept budget at 0)
       this.actionsToday++;
-      // Detect rate-limit errors — pause all background LLM work for 1 hour
+      // Rate limit detected — the circuit breaker in ProviderRegistry gates future calls.
+      // No per-loop backoff state needed.
       if (msg.includes("429") || msg.toLowerCase().includes("rate_limit") || msg.toLowerCase().includes("usage limit")) {
-        this._rateLimitedUntil = Date.now() + 60 * 60 * 1000;
-        log.engine.warn(`[CognitiveLoop] Rate limit detected — suspending background LLM calls for 1 hour (until ${new Date(this._rateLimitedUntil).toISOString()})`);
+        log.cognition.warn("[CognitiveLoop] Rate limit detected during cognitive tick — breaker will gate future calls");
       }
       result = {
         action: decision.action,
