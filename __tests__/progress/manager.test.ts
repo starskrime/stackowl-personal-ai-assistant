@@ -71,11 +71,21 @@ describe("ProgressManager", () => {
     expect(a.calls).toHaveLength(0);
   });
 
-  it("session isolation: tool:start with different turnId reaches all notifiers (they filter internally)", async () => {
+  it("tool:start events with any turnId are fanned out to all notifiers", async () => {
     const a = makeNotifier();
     manager.register(a);
     bus.trigger({ type: "tool:start", toolName: "web_fetch", args: {}, turnId: "turn-X" });
     await new Promise((r) => setImmediate(r));
     expect(a.calls.some((c) => c.includes("turn-X"))).toBe(true);
+  });
+
+  it("a throwing notifier does not prevent others from receiving events", async () => {
+    const bad = makeNotifier();
+    bad.start = async () => { throw new Error("boom"); };
+    const good = makeNotifier();
+    manager.register(bad);
+    manager.register(good);
+    await manager.notifyStart("phrase", "turn-1");
+    expect(good.calls).toEqual(["start:turn-1:phrase"]);
   });
 });

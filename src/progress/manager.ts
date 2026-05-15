@@ -30,11 +30,13 @@ export class ProgressManager {
   register(notifier: ProgressNotifier): void {
     log.engine.debug("progress-manager: register", { total: this.notifiers.size + 1 });
     this.notifiers.add(notifier);
+    log.engine.debug("progress-manager: register: exit", { total: this.notifiers.size });
   }
 
   unregister(notifier: ProgressNotifier): void {
     log.engine.debug("progress-manager: unregister", { total: this.notifiers.size - 1 });
     this.notifiers.delete(notifier);
+    log.engine.debug("progress-manager: unregister: exit", { total: this.notifiers.size });
   }
 
   async notifyStart(phrase: string, turnId: string): Promise<void> {
@@ -60,6 +62,7 @@ export class ProgressManager {
   }
 
   private async _fanOutUpdate(text: string, turnId: string): Promise<void> {
+    log.engine.debug("progress-manager: _fanOutUpdate: entry", { text, turnId, notifierCount: this.notifiers.size });
     await Promise.allSettled(
       [...this.notifiers].map((n) =>
         n.update(text, turnId).catch((err) => {
@@ -67,5 +70,6 @@ export class ProgressManager {
         }),
       ),
     );
+    log.engine.debug("progress-manager: _fanOutUpdate: exit", { turnId });
   }
 }
