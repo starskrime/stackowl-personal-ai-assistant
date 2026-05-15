@@ -116,6 +116,20 @@ describe("ProviderManager", () => {
     ).rejects.toThrow(/invalid.*name/i);
   });
 
+  it("addProvider: succeeds even when hot-register fails (config still saved)", async () => {
+    // Make registry.register throw
+    vi.spyOn(registry, "register").mockImplementationOnce(() => {
+      throw new Error("protocol not found");
+    });
+    // Should not throw — hot-register failure is non-fatal
+    await expect(
+      manager.addProvider({ name: "my-openai", profile: "openai", apiKey: "sk-123" }),
+    ).resolves.not.toThrow();
+    // Config was still saved
+    expect(config.providers["my-openai"]).toBeDefined();
+    expect(saveFn).toHaveBeenCalledOnce();
+  });
+
   // ── editProvider ─────────────────────────────────────────────────
 
   it("editProvider: updates apiKey in config and saves", async () => {
@@ -128,6 +142,18 @@ describe("ProviderManager", () => {
     await expect(
       manager.editProvider("no-such", { apiKey: "x" }),
     ).rejects.toThrow(/not found/i);
+  });
+
+  it("editProvider: deregisters before re-registering with new config", async () => {
+    const deregisterSpy = vi.spyOn(registry, "deregister");
+    const registerSpy = vi.spyOn(registry, "register");
+    await manager.editProvider("anthropic", { apiKey: "sk-ant-new-key" });
+    expect(deregisterSpy).toHaveBeenCalledWith("anthropic");
+    expect(registerSpy).toHaveBeenCalled();
+    // Deregister was called before register
+    expect(deregisterSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      registerSpy.mock.invocationCallOrder[0]!,
+    );
   });
 
   // ── deleteProvider ───────────────────────────────────────────────

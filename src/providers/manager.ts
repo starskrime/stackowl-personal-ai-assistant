@@ -227,7 +227,7 @@ export class ProviderManager {
         name,
       });
     } catch {
-      // Not a custom provider, or file already removed — that's fine
+      log.engine.debug("provider-manager.deleteProvider: no workspace model file to remove", { name });
     }
 
     log.engine.debug("provider-manager.deleteProvider: exit", { name });
@@ -254,19 +254,12 @@ export class ProviderManager {
           modelDef?.defaultModel ??
           "unknown";
 
-        // Derive circuit breaker health
-        let health: ProviderStatus["health"] = "unconfigured";
-        if (registeredNames.has(name)) {
-          const breaker = (this.registry as any).breakers?.get(name);
-          const breakerState: string | undefined = breaker?.getState?.();
-          if (breakerState === "OPEN") {
-            health = "OPEN";
-          } else if (breakerState === "HALF_OPEN") {
-            health = "HALF_OPEN";
-          } else {
-            health = "CLOSED";
-          }
-        }
+        // Derive circuit breaker health via the public registry API.
+        // getCircuitState returns "unconfigured" for unknown names; since we
+        // guard on registeredNames.has(name), we only get CLOSED/OPEN/HALF_OPEN here.
+        const health: ProviderStatus["health"] = registeredNames.has(name)
+          ? this.registry.getCircuitState(name)
+          : "unconfigured";
 
         return {
           name,

@@ -352,6 +352,20 @@ export class ProviderRegistry {
   }
 
   /**
+   * Returns the circuit breaker state for a provider, or "unconfigured" if no
+   * breaker exists (i.e. the provider was registered via _registerForTest or is
+   * simply unknown).
+   */
+  getCircuitState(name: string): "CLOSED" | "OPEN" | "HALF_OPEN" | "unconfigured" {
+    const breaker = this.breakers.get(name);
+    if (!breaker) return "unconfigured";
+    const state = breaker.getState();
+    if (state === "OPEN") return "OPEN";
+    if (state === "HALF_OPEN") return "HALF_OPEN";
+    return "CLOSED";
+  }
+
+  /**
    * Return the configured default provider name, or null when no default has
    * been set yet (e.g. during startup or in tests with a partially-wired
    * registry). Never throws.
