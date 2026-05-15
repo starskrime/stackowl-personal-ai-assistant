@@ -133,7 +133,7 @@ function toAnthropicTools(tools: ToolDefinition[]): Array<{
 // ─── Provider ───────────────────────────────────────────────────
 
 export class AnthropicNativeProvider implements ModelProvider {
-  readonly name = "anthropic";
+  readonly name: string;
   private client: Anthropic;
   private defaultModel: string;
 
@@ -143,6 +143,7 @@ export class AnthropicNativeProvider implements ModelProvider {
         "[Anthropic] No model configured. Set defaultModel in your provider config (e.g. \"claude-sonnet-4-6\").",
       );
     }
+    this.name = config.name ?? "anthropic";
     this.defaultModel = config.defaultModel;
     this.client = new Anthropic({
       apiKey: config.apiKey ?? process.env.ANTHROPIC_API_KEY,

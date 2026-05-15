@@ -27,6 +27,7 @@ import { GapDetector } from "../evolution/detector.js";
 import { RewardEngine } from "./reward-engine.js";
 import { log } from "../logger.js";
 import { RateLimitError, InternalServerError, APIError } from "@anthropic-ai/sdk";
+import { CircuitOpenError } from "../ratelimit/concurrency-gate.js";
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import { DNADecisionLayer } from "../owls/decision-layer.js";
 import { DiagnosticEngine } from "./diagnostic-engine.js";
@@ -633,7 +634,9 @@ function isTransientStreamError(err: unknown): boolean {
   const status = (err as { status?: number }).status;
   if (typeof status === "number" && status >= 500 && status < 600) return true;
   const msg = err instanceof Error ? err.message : String(err);
-  const networkKeywords = ["fetch", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "timeout", "network"];
+  // Use specific network-level keywords — avoid bare "timeout" / "network" which
+  // match unrelated errors (e.g. CircuitOpenError message contains "timeout").
+  const networkKeywords = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "fetch failed", "network error"];
   return networkKeywords.some((kw) => msg.toLowerCase().includes(kw.toLowerCase()));
 }
 
@@ -730,6 +733,14 @@ async function withProviderResilience(
     } catch (err) {
       lastStreamError = err;
       const errMsg = err instanceof Error ? err.message : String(err);
+
+      // Fast-fail: circuit is open — retrying is pointless and wastes time
+      if (err instanceof CircuitOpenError) {
+        log.engine.warn(
+          `[Resilience/${site}] Provider "${provider.name}" circuit open — aborting retries`,
+        );
+        break;
+      }
 
       if (isRateLimitError(err)) {
         providerRegistry?.recordProviderResult(provider.name, false);

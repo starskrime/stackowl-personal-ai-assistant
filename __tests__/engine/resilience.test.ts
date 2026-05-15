@@ -15,7 +15,9 @@ function isTransientStreamError(err: unknown): boolean {
   const status = (err as { status?: number }).status;
   if (typeof status === "number" && status >= 500 && status < 600) return true;
   const msg = err instanceof Error ? err.message : String(err);
-  return ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "timeout", "fetch", "network"].some((kw) =>
+  // Use specific network-level keywords — avoid bare "timeout" / "network" which
+  // match unrelated errors (e.g. CircuitOpenError message contains "timeout").
+  return ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "fetch failed", "network error"].some((kw) =>
     msg.toLowerCase().includes(kw.toLowerCase()),
   );
 }
@@ -67,6 +69,26 @@ describe("isTransientStreamError", () => {
 
   it("returns true for ECONNRESET", () => {
     expect(isTransientStreamError(new Error("ECONNRESET"))).toBe(true);
+  });
+
+  it("returns true for ETIMEDOUT", () => {
+    expect(isTransientStreamError(new Error("ETIMEDOUT"))).toBe(true);
+  });
+
+  it("returns true for fetch failed", () => {
+    expect(isTransientStreamError(new Error("fetch failed"))).toBe(true);
+  });
+
+  it("returns true for network error", () => {
+    expect(isTransientStreamError(new Error("network error occurred"))).toBe(true);
+  });
+
+  it("returns false for bare 'timeout' (CircuitOpenError message)", () => {
+    expect(isTransientStreamError(new Error("Provider circuit is open — call rejected fast"))).toBe(false);
+  });
+
+  it("returns false for bare 'timeout' keyword alone", () => {
+    expect(isTransientStreamError(new Error("Circuit is open — retry after recovery timeout"))).toBe(false);
   });
 
   it("returns false for RateLimitError", () => {

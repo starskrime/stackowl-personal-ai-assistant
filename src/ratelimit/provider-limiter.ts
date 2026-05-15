@@ -31,7 +31,7 @@ export class RateLimitedProvider implements ModelProvider {
     private providerKey: string,
     private gate: ConcurrencyGate,
   ) {
-    this.name = inner.name;
+    this.name = providerKey || inner.name;
   }
 
   private checkLimit(): void {
