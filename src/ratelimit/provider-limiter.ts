@@ -1,8 +1,11 @@
 /**
  * StackOwl — Rate-Limited Provider Wrapper
  *
- * Wraps a ModelProvider with rate limiting. Checks the limiter before
- * each API call and rejects with a clear error when rate limited.
+ * Wraps a ModelProvider with sliding-window rate limiting and a concurrency
+ * gate. Both checks fire on every non-embedding call.
+ *
+ *   1. checkLimit()  — sliding-window count (rejects if > N calls/minute)
+ *   2. gate.acquire() — semaphore (blocks if maxConcurrent in-flight)
  */
 
 import type {
@@ -16,6 +19,7 @@ import type {
   EmbeddingResponse,
 } from "../providers/base.js";
 import type { RateLimiter } from "./limiter.js";
+import type { ConcurrencyGate } from "./concurrency-gate.js";
 import { log } from "../logger.js";
 
 export class RateLimitedProvider implements ModelProvider {
@@ -25,6 +29,7 @@ export class RateLimitedProvider implements ModelProvider {
     private inner: ModelProvider,
     private limiter: RateLimiter,
     private providerKey: string,
+    private gate: ConcurrencyGate,
   ) {
     this.name = inner.name;
   }
@@ -45,8 +50,16 @@ export class RateLimitedProvider implements ModelProvider {
     model?: string,
     options?: ChatOptions,
   ): Promise<ChatResponse> {
+    log.engine.debug("rate-limited-provider.chat: entry", { provider: this.providerKey });
     this.checkLimit();
-    return this.inner.chat(messages, model, options);
+    const release = await this.gate.acquire();
+    try {
+      const result = await this.inner.chat(messages, model, options);
+      log.engine.debug("rate-limited-provider.chat: exit", { provider: this.providerKey });
+      return result;
+    } finally {
+      release();
+    }
   }
 
   async chatWithTools(
@@ -55,36 +68,60 @@ export class RateLimitedProvider implements ModelProvider {
     model?: string,
     options?: ChatOptions,
   ): Promise<ChatResponse> {
+    log.engine.debug("rate-limited-provider.chatWithTools: entry", { provider: this.providerKey });
     this.checkLimit();
-    return this.inner.chatWithTools(messages, tools, model, options);
+    const release = await this.gate.acquire();
+    try {
+      const result = await this.inner.chatWithTools(messages, tools, model, options);
+      log.engine.debug("rate-limited-provider.chatWithTools: exit", { provider: this.providerKey });
+      return result;
+    } finally {
+      release();
+    }
   }
 
-  chatStream(
+  // Stream methods must be async generators so `await` is legal inside them.
+  // The return type AsyncGenerator<T> is compatible with the ModelProvider interface.
+
+  async *chatStream(
     messages: ChatMessage[],
     model?: string,
     options?: ChatOptions,
   ): AsyncGenerator<StreamChunk> {
+    log.engine.debug("rate-limited-provider.chatStream: entry", { provider: this.providerKey });
     this.checkLimit();
-    return this.inner.chatStream(messages, model, options);
+    const release = await this.gate.acquire();
+    try {
+      yield* this.inner.chatStream(messages, model, options);
+    } finally {
+      release();
+      log.engine.debug("rate-limited-provider.chatStream: exit", { provider: this.providerKey });
+    }
   }
 
-  chatWithToolsStream(
+  async *chatWithToolsStream(
     messages: ChatMessage[],
     tools: ToolDefinition[],
     model?: string,
     options?: ChatOptions,
   ): AsyncGenerator<StreamEvent> {
+    log.engine.debug("rate-limited-provider.chatWithToolsStream: entry", { provider: this.providerKey });
     this.checkLimit();
+    const release = await this.gate.acquire();
     if (!this.inner.chatWithToolsStream) {
-      throw new Error(
-        `Provider ${this.name} does not support chatWithToolsStream`,
-      );
+      release();
+      throw new Error(`Provider ${this.name} does not support chatWithToolsStream`);
     }
-    return this.inner.chatWithToolsStream(messages, tools, model, options);
+    try {
+      yield* this.inner.chatWithToolsStream(messages, tools, model, options);
+    } finally {
+      release();
+      log.engine.debug("rate-limited-provider.chatWithToolsStream: exit", { provider: this.providerKey });
+    }
   }
 
   async embed(text: string, model?: string): Promise<EmbeddingResponse> {
-    // Embeddings are lightweight — don't rate limit them
+    // Embeddings are lightweight — skip rate limit and gate
     return this.inner.embed(text, model);
   }
 
