@@ -27,6 +27,9 @@ import { TelegramConfigMenu } from "./telegram-config/menu.js";
 import { TelegramVoiceMenu } from "./telegram-config/voice-menu.js";
 import { TelegramRootMenu } from "./telegram-menu/index.js";
 import { saveConfig } from "../../config/loader.js";
+import { v4 as uuidv4 } from "uuid";
+import { TelegramProgressNotifier } from "../../progress/notifiers/telegram.js";
+import { pickRandomPhrase } from "../../shared/progress.js";
 import { McpCommandRouter } from "../commands/mcp-router.js";
 import { dispatchMemoryCommand } from "../commands/memory-router.js";
 import { OggConverter } from "../../voice/ogg-converter.js";
@@ -58,6 +61,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
   private bot: Bot;
   private pinger: ProactivePinger | null = null;
+  private _progressNotifier!: TelegramProgressNotifier;
 
   /** Exposes the wired ProactivePinger so other adapters can share it. */
   getPinger(): ProactivePinger | null { return this.pinger; }
@@ -88,6 +92,10 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.api.config.use(
       autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 300 }),
     );
+
+    // Progress notifier — registered on the shared ProgressManager
+    this._progressNotifier = new TelegramProgressNotifier(this.bot.api as never);
+    gateway.getProgressManager().register(this._progressNotifier);
     this.chatIdsPath =
       config.chatIdsPath ??
       join(gateway.getWorkspacePath(), "known_chat_ids.json");
@@ -524,8 +532,6 @@ export class TelegramAdapter implements ChannelAdapter {
       }
       // ─────────────────────────────────────────────────────
 
-      await ctx.api.sendChatAction(ctx.chat.id, "typing");
-
       // Reset heartbeat suppression — user is active
       this.pinger?.notifyUserActivity();
       this.gateway.getCognitiveLoop()?.notifyUserActivity();
@@ -535,26 +541,10 @@ export class TelegramAdapter implements ChannelAdapter {
       // Immediate acknowledgment — lets the user know the message was received
       // before any LLM processing begins. The stream handler will edit this
       // same message with real content so no extra message is created.
-      const ACK_MESSAGES = [
-        "Got it, let me check...",
-        "On it...",
-        "Let me think about that...",
-        "Working on it...",
-        "Give me a sec...",
-      ];
-      const ackText =
-        ACK_MESSAGES[Math.floor(Math.random() * ACK_MESSAGES.length)]!;
-      let ackMessageId: number | undefined;
-      try {
-        const ackMsg = await ctx.api.sendMessage(
-          ctx.chat.id,
-          `<i>${this.escHtml(ackText)}</i>`,
-          { parse_mode: "HTML" },
-        );
-        ackMessageId = ackMsg.message_id;
-      } catch (err) {
-        log.telegram.warn("ack message send failed, proceeding without ack", err);
-      }
+      const turnId = uuidv4();
+      this._progressNotifier.bindSession(turnId, ctx.chat.id);
+      await this.gateway.getProgressManager().notifyStart(pickRandomPhrase(), turnId);
+      const ackMessageId = this._progressNotifier.getAckMessageId(turnId);
 
       try {
         const owl = this.gateway.getOwl();
@@ -563,6 +553,7 @@ export class TelegramAdapter implements ChannelAdapter {
           ctx,
           this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true,
           ackMessageId,
+          () => this._progressNotifier.markStreamClaimed(turnId),
         );
         const msg = makeMessage(this.id, String(userId), text);
         if (!msg) return;
@@ -619,6 +610,12 @@ export class TelegramAdapter implements ChannelAdapter {
           `tools:[${response.toolsUsed.join(", ") || "none"}] ` +
             `usage:${response.usage ? `${response.usage.promptTokens}→${response.usage.completionTokens}` : "n/a"}`,
         );
+
+        try {
+          await this.gateway.getProgressManager().notifyStop(turnId);
+        } catch (err) {
+          log.telegram.warn("telegram: notifyStop failed", err, { turnId });
+        }
 
         // Determine if streaming already delivered the content to the user.
         // We check streamedContent (updated live in text_delta handler) and
@@ -1104,6 +1101,7 @@ export class TelegramAdapter implements ChannelAdapter {
     ctx: Context,
     suppressThinking: boolean,
     initialMessageId?: number,
+    onStreamClaimed?: () => void,
   ): {
     handler: (event: StreamEvent) => Promise<void>;
     status: {
@@ -1143,6 +1141,7 @@ export class TelegramAdapter implements ChannelAdapter {
     let contentStarted = false; // Track if actual content has started
     let editFailures = 0; // Track consecutive edit failures
     let initialMessageDelivered = false; // Track if the first message was sent
+    let streamClaimedFired = false; // Track if onStreamClaimed has been called
     const MAX_EDIT_FAILURES = 3;
     const THROTTLE_MS = 1000;
 
@@ -1192,6 +1191,12 @@ export class TelegramAdapter implements ChannelAdapter {
           // the USER sees them — users should never see internal reasoning.
           chunk = this.stripInternalTags(chunk);
           if (!chunk) break;
+
+          // On first non-empty chunk, notify that the stream has claimed the ACK message.
+          if (chunk && !streamClaimedFired) {
+            streamClaimedFired = true;
+            onStreamClaimed?.();
+          }
 
           // Insert a separator between tool status and response content
           if (hasToolStatus && !contentStarted) {
