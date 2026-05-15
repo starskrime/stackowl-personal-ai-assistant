@@ -12,7 +12,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/stackowl.config.json"
+STACKOWL_DIR="${HOME}/.stackowl"
+mkdir -p "$STACKOWL_DIR"
+CONFIG_FILE="${STACKOWL_DIR}/stackowl.config.json"
 SESSION_FILE="$SCRIPT_DIR/session.tmp"
 
 LAUNCH_MODE=""
