@@ -32,6 +32,12 @@ import {
 } from "./handlers/mcp.js";
 import { handleConfigList, handleConfigTiers, handleConfigSetTier } from "./handlers/config.js";
 import {
+  handleProviderList,
+  handleProviderTest,
+  handleProviderDelete,
+  handleProviderEdit,
+} from "./handlers/provider.js";
+import {
   handleOwlList,
   handleOwlShow,
   handleOwlCreate,
@@ -231,6 +237,17 @@ export const REGISTRY: CommandSpec[] = [
       { name: "unpin",     description: "Unpin active owl",      handler: handleOwlUnpin },
     ],
     handler: handleOwlList,
+  },
+  {
+    name: "/provider",
+    description: "Manage AI providers — add, list, edit, delete, test",
+    subcommands: [
+      { name: "list",   description: "List all configured providers",                                                                                           handler: handleProviderList },
+      { name: "test",   description: "Test provider connection",         args: [{ name: "<name>" }],                                                            handler: handleProviderTest },
+      { name: "delete", description: "Delete a provider",                args: [{ name: "<name>" }],                                                            handler: handleProviderDelete },
+      { name: "edit",   description: "Edit provider field",              args: [{ name: "<name>" }, { name: "<key|model|url>" }, { name: "<value>" }],          handler: handleProviderEdit },
+    ],
+    handler: handleProviderList,
   },
   {
     name: "/status",
