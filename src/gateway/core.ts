@@ -3301,6 +3301,8 @@ export class OwlGateway {
       if (!registry) throw new Error("[OwlGateway] ProviderRegistry not initialized.");
       const workspacePath = this.getWorkspacePath();
       log.engine.debug("owl-gateway.getProviderManager: initialized", { workspacePath });
+      // ProviderManager receives a reference to ctx.config and mutates providers in place.
+      // All reads of ctx.config throughout OwlGateway will see provider changes immediately.
       this._providerManager = new ProviderManager(
         registry,
         this.ctx.config,

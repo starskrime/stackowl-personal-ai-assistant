@@ -160,6 +160,9 @@ export class ModelLoader {
 let _loaderInstance: ModelLoader | null = null;
 
 export function initModelLoader(workspaceModelsDir?: string): ModelLoader {
+  if (_loaderInstance) {
+    log.engine.warn("model-loader.initModelLoader: re-initializing existing singleton", new Error("re-init"), { workspaceModelsDir });
+  }
   _loaderInstance = new ModelLoader(
     workspaceModelsDir ? [workspaceModelsDir] : undefined,
   );
