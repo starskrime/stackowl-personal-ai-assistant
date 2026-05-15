@@ -305,6 +305,7 @@ export function renderModelPicker(
     keyboard.row().add(...pagRow.inline_keyboard.flat());
   }
 
+  keyboard.row().text("➕ Enter model ID", "cfg:mp_custom");
   keyboard.row().text("← Back", "cfg:bc");
   return { text, keyboard };
 }

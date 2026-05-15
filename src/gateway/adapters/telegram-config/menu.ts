@@ -174,6 +174,24 @@ export class TelegramConfigMenu {
       return true;
     }
 
+    if (field === "modelId") {
+      const modelId = text.trim();
+      if (!modelId) {
+        log.telegram.warn("[ConfigMenu] handleTextInput: empty modelId rejected");
+        return true;
+      }
+      log.telegram.debug("[ConfigMenu] handleTextInput: modelId entry", { providerKey: contextKey, modelId });
+      if (state.pendingEntry) {
+        // Inside the add-provider flow — set as default model and finalize
+        state.pendingEntry.defaultModel = modelId;
+        await this.finalizeProviderAdd(ctx, state, state.pendingEntry.providerType, state.pendingEntry.apiKey);
+      } else if (contextKey) {
+        await this.applyProviderModel(ctx, state, contextKey, modelId);
+      }
+      log.telegram.debug("[ConfigMenu] handleTextInput: modelId exit", { providerKey: contextKey, modelId });
+      return true;
+    }
+
     return false;
   }
 
@@ -361,6 +379,19 @@ export class TelegramConfigMenu {
       await this.editScreen(ctx, state, renderModelPicker(
         state.modelList ?? [], current, contextLabel, page,
       ));
+      return;
+    }
+
+    if (cmd === "mp_custom") {
+      const providerKey = state.pendingProviderKey ?? "";
+      state.pendingInput = { field: "modelId", contextKey: providerKey };
+      await this.editScreen(ctx, state, {
+        text:
+          `✏️ <b>Enter Model ID</b>\n\n` +
+          `Type the exact model ID you want to use for <b>${providerKey}</b>.\n\n` +
+          `Examples: <code>gpt-4o-mini</code>, <code>claude-opus-4-7</code>, <code>llama-3.1-70b</code>`,
+        keyboard: new (await import("grammy")).InlineKeyboard().text("← Cancel", "cfg:bc"),
+      });
       return;
     }
 

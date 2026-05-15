@@ -25,7 +25,7 @@ export type MenuScreen =
 
 export interface PendingInput {
   /** What field the next plain-text message from the user fills */
-  field: "baseUrl" | "apiKey" | "modelSearch" | "name";
+  field: "baseUrl" | "apiKey" | "modelSearch" | "name" | "modelId";
   /** Context: which provider or role this input is for */
   contextKey: string;
 }
