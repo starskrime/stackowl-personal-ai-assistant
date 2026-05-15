@@ -102,7 +102,10 @@ export class TelegramProgressNotifier implements ProgressNotifier {
 
   async update(text: string, turnId: string): Promise<void> {
     const session = this.sessions.get(turnId);
-    if (!session?.messageId) return;
+    if (!session?.messageId) {
+      log.telegram.debug("telegram-progress-notifier: update: no messageId yet, skipping", { turnId });
+      return;
+    }
     if (session.streamClaimed) {
       log.telegram.debug("telegram-progress-notifier: update: skipped — stream claimed", { turnId });
       return; // stream owns the message now

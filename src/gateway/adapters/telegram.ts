@@ -537,6 +537,13 @@ export class TelegramAdapter implements ChannelAdapter {
 
       log.telegram.incoming(`user:${userId}`, text);
 
+      // Guard: ensure message is constructable before sending ACK.
+      // makeMessage can return null for malformed inputs; checking here prevents
+      // an ACK being sent and immediately deleted when the early return fires in
+      // the try block before the finally can be bypassed.
+      const msg = makeMessage(this.id, String(userId), text);
+      if (!msg) return;
+
       // Immediate acknowledgment — lets the user know the message was received
       // before any LLM processing begins. The stream handler will edit this
       // same message with real content so no extra message is created.
@@ -555,8 +562,6 @@ export class TelegramAdapter implements ChannelAdapter {
           ackMessageId,
           () => this._progressNotifier.markStreamClaimed(turnId),
         );
-        const msg = makeMessage(this.id, String(userId), text);
-        if (!msg) return;
         const response = await runWithContext({
           channelId: "telegram",
           userId: String(userId),
@@ -803,9 +808,16 @@ export class TelegramAdapter implements ChannelAdapter {
       await ctx.reply(`🎤 <i>${this.escHtml(text)}</i>`, { parse_mode: "HTML" });
 
       // ── Step 4: Route through gateway ──────────────────────
-      await ctx.api.sendChatAction(ctx.chat.id, "typing");
       this.pinger?.notifyUserActivity();
       this.gateway.getCognitiveLoop()?.notifyUserActivity();
+
+      const voiceMsg = makeMessage(this.id, String(userId), text);
+      if (!voiceMsg) return;
+
+      const voiceTurnId = makeSessionId(this.id, String(userId));
+      this._progressNotifier.bindSession(voiceTurnId, ctx.chat.id);
+      await this.gateway.getProgressManager().notifyStart(pickRandomPhrase(), voiceTurnId);
+      const voiceAckMessageId = this._progressNotifier.getAckMessageId(voiceTurnId);
 
       try {
         const owl = this.gateway.getOwl();
@@ -813,11 +825,10 @@ export class TelegramAdapter implements ChannelAdapter {
         const streamCtx = this.createStreamHandler(
           ctx,
           this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true,
-          undefined,
+          voiceAckMessageId,
+          () => this._progressNotifier.markStreamClaimed(voiceTurnId),
         );
 
-        const voiceMsg = makeMessage(this.id, String(userId), text);
-        if (!voiceMsg) return;
         const response = await runWithContext({
           channelId: "telegram",
           userId: String(userId),
@@ -869,6 +880,10 @@ export class TelegramAdapter implements ChannelAdapter {
         const msg = error instanceof Error ? error.message : String(error);
         log.telegram.error(`Voice gateway error for user ${userId}: ${msg}`);
         await ctx.reply("Something went wrong processing your voice message. Please try again.");
+      } finally {
+        await this.gateway.getProgressManager().notifyStop(voiceTurnId).catch((err) => {
+          log.telegram.warn("telegram: notifyStop failed in finally (voice)", err, { voiceTurnId });
+        });
       }
     });
 
