@@ -63,6 +63,7 @@ export const handleProviderTest: CommandHandler = async (ctx, args) => {
     return { kind: "error", text: "Usage: /provider test <name>" };
   }
 
+  log.cli.debug("handleProviderTest: decision — delegating to testProvider", { name });
   const manager = ctx.getOwlGateway().getProviderManager();
   log.cli.debug("handleProviderTest: step — calling testProvider", { name });
   const result = await manager.testProvider(name);
@@ -85,6 +86,7 @@ export const handleProviderDelete: CommandHandler = async (ctx, args) => {
     return { kind: "error", text: "Usage: /provider delete <name>" };
   }
 
+  log.cli.debug("handleProviderDelete: decision — delegating to deleteProvider", { name });
   const manager = ctx.getOwlGateway().getProviderManager();
   log.cli.debug("handleProviderDelete: step — calling deleteProvider", { name });
   try {

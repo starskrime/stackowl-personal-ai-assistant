@@ -240,7 +240,7 @@ export const REGISTRY: CommandSpec[] = [
   },
   {
     name: "/provider",
-    description: "Manage AI providers — add, list, edit, delete, test",
+    description: "Manage AI providers — list, edit, delete, test",
     subcommands: [
       { name: "list",   description: "List all configured providers",                                                                                           handler: handleProviderList },
       { name: "test",   description: "Test provider connection",         args: [{ name: "<name>" }],                                                            handler: handleProviderTest },
