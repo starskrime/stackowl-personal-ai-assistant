@@ -2,7 +2,7 @@
  * StackOwl — /owl CLI v2 Handlers
  *
  * Wires the dispatchOwlCommand dispatcher into TUI v2 CommandHandlers.
- * Verbs: list, show, create, from-bmad, delete, pin, unpin
+ * Verbs: list, switch, show, create, from-bmad, delete, pin, unpin
  */
 
 import type { CommandHandler } from "../registry.js";
@@ -214,7 +214,9 @@ export const handleOwlSwitch: CommandHandler = async (ctx, args) => {
   }
 
   await owlCtx.registry.loadAll(owlCtx.workspacePath);
-  const spec = owlCtx.registry.listAll().find(
+  const specs = owlCtx.registry.listAll();
+  log.cli.debug("handleOwlSwitch: registry loaded", { count: specs.length, lookingFor: name });
+  const spec = specs.find(
     (s) => s.name.toLowerCase() === name.toLowerCase(),
   );
 
