@@ -26,10 +26,13 @@ describe("ProviderRegistry.deregister", () => {
   it("removes circuit breaker entry", () => {
     const reg = new ProviderRegistry();
     reg._registerForTest("prov-b", makeProvider());
+    // Manually add a breaker entry to simulate what register() does
+    (reg as any).breakers.set("prov-b", {});
+    expect((reg as any).breakers.has("prov-b")).toBe(true);
+
     reg.deregister("prov-b");
 
-    // isProviderOpen returns false (no breaker) — not true
-    expect(reg.isProviderOpen("prov-b")).toBe(false);
+    expect((reg as any).breakers.has("prov-b")).toBe(false);
   });
 
   it("clears role assignments for the deregistered provider", () => {
@@ -56,5 +59,16 @@ describe("ProviderRegistry.deregister", () => {
   it("is a no-op for unknown provider names", () => {
     const reg = new ProviderRegistry();
     expect(() => reg.deregister("does-not-exist")).not.toThrow();
+  });
+
+  it("clears all role assignments for the deregistered provider", () => {
+    const reg = new ProviderRegistry();
+    reg._registerForTest("prov-f", makeProvider());
+    reg.assignRole("synthesizer", "prov-f");
+    reg.assignRole("tool-judge", "prov-f");
+    reg.deregister("prov-f");
+
+    expect(() => reg.byRole("synthesizer")).toThrow();
+    expect(() => reg.byRole("tool-judge")).toThrow();
   });
 });

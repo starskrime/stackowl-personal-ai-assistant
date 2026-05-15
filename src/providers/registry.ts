@@ -371,7 +371,8 @@ export class ProviderRegistry {
    */
   deregister(name: string): void {
     log.engine.debug("provider-registry.deregister: entry", { name });
-    this.providers.delete(name);
+    const existed = this.providers.delete(name);
+    log.engine.debug("provider-registry.deregister: decision", { name, existed });
     this.breakers.delete(name);
     for (const [role, assigned] of this.roles) {
       if (assigned === name) this.roles.delete(role);
