@@ -15,6 +15,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "../logger.js";
 
 export type ProtocolId = "openai" | "anthropic" | "gemini" | "grok";
 
@@ -34,6 +35,8 @@ export interface ModelDefinition {
 }
 
 // ─── Parser ─────────────────────────────────────────────────────
+
+const VALID_PROTOCOLS = new Set<string>(["openai", "anthropic", "gemini", "grok"]);
 
 function parseModelFile(name: string, content: string): ModelDefinition | null {
   const result: Record<string, unknown> = { name };
@@ -57,6 +60,13 @@ function parseModelFile(name: string, content: string): ModelDefinition | null {
   }
 
   if (!result["compatible"] || !result["url"]) return null;
+
+  // Validate protocol — reject unknown ProtocolId values so downstream
+  // switch/exhaustive checks never encounter an invalid protocol silently
+  if (!VALID_PROTOCOLS.has(result["compatible"] as string)) {
+    // Caller's warn log will surface this via the unreadable-file path
+    return null;
+  }
 
   // Ensure array types
   if (!result["availableModels"]) {
@@ -91,6 +101,9 @@ export class ModelLoader {
   }
 
   private _loadDir(dir: string, skipSystemNames = false): void {
+    log.engine.debug("model-loader._loadDir: entry", { dir, skipSystemNames });
+    let loaded = 0;
+    let skipped = 0;
     try {
       const entries = readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
@@ -98,19 +111,30 @@ export class ModelLoader {
         // Skip compiled JS/TS files and source maps
         if (/\.(ts|js|map|json)$/.test(entry.name)) continue;
         // Protect system names from user-directory overrides
-        if (skipSystemNames && this.systemNames.has(entry.name)) continue;
+        if (skipSystemNames && this.systemNames.has(entry.name)) {
+          log.engine.debug("model-loader._loadDir: skipped reserved name", { name: entry.name });
+          skipped++;
+          continue;
+        }
 
         try {
           const content = readFileSync(join(dir, entry.name), "utf-8");
           const def = parseModelFile(entry.name, content);
-          if (def) this.defs.set(entry.name, def);
-        } catch {
-          // Skip unreadable files
+          if (def) {
+            this.defs.set(entry.name, def);
+            loaded++;
+          } else {
+            log.engine.warn("model-loader._loadDir: malformed model file skipped", new Error("parse returned null"), { file: entry.name, dir });
+          }
+        } catch (err) {
+          log.engine.warn("model-loader._loadDir: unreadable file skipped", err as Error, { file: entry.name, dir });
         }
       }
     } catch {
-      // Directory may not exist in test environments or user config
+      // Directory may not exist or is inaccessible — expected for user dirs
+      log.engine.debug("model-loader._loadDir: directory not accessible", { dir });
     }
+    log.engine.debug("model-loader._loadDir: exit", { dir, loaded, skipped });
   }
 
   get(name: string): ModelDefinition | null {
