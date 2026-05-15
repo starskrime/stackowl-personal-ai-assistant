@@ -364,6 +364,24 @@ export class ProviderRegistry {
     return Array.from(this.providers.keys());
   }
 
+  /**
+   * Remove a provider from the registry, clearing its circuit breaker, any role
+   * assignments, and the default pointer if it was the current default.
+   * Safe to call with an unknown name — silently does nothing.
+   */
+  deregister(name: string): void {
+    log.engine.debug("provider-registry.deregister: entry", { name });
+    this.providers.delete(name);
+    this.breakers.delete(name);
+    for (const [role, assigned] of this.roles) {
+      if (assigned === name) this.roles.delete(role);
+    }
+    if (this.defaultProviderName === name) {
+      this.defaultProviderName = null;
+    }
+    log.engine.debug("provider-registry.deregister: exit", { name });
+  }
+
   async healthCheckAll(): Promise<Record<string, boolean>> {
     const results: Record<string, boolean> = {};
     for (const [name, provider] of this.providers) {
