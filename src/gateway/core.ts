@@ -137,6 +137,7 @@ import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
 import { buildDefaultIntelligenceConfig, saveConfig } from "../config/loader.js";
 import { ProviderManager } from "../providers/manager.js";
+import { ProgressManager } from "../progress/manager.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
 import {
   registerCapability,
@@ -330,6 +331,9 @@ export class OwlGateway {
 
   // ─── Provider Manager (lazy singleton) ────────────────────────
   private _providerManager?: ProviderManager;
+
+  // ─── Progress Manager (lazy singleton) ────────────────────────
+  private _progressManager?: ProgressManager;
 
 // ─── Epic 1: Learning Modules ─────────────────────────────────
   private domainExpertise: DomainExpertiseTracker | null = null;
@@ -3311,6 +3315,14 @@ export class OwlGateway {
       );
     }
     return this._providerManager;
+  }
+
+  getProgressManager(): ProgressManager {
+    if (!this._progressManager) {
+      log.engine.debug("owl-gateway.getProgressManager: initialized");
+      this._progressManager = new ProgressManager(this.gatewayEventBus);
+    }
+    return this._progressManager;
   }
 
   getLearningOrchestrator() {
