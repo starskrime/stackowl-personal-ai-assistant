@@ -24,6 +24,7 @@ import {
   handleOwlUnpin,
   handleOwlCreate,
   handleOwlFromBmad,
+  handleOwlSwitch,
 } from "../../../../../src/cli/v2/commands/handlers/owl.js";
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
@@ -306,6 +307,55 @@ describe("handleOwlCreate (/owl create)", () => {
   it("returns kind='error' when registry is null", async () => {
     const ctxNoReg = makeCtx(makeGateway(null), bridge);
     const result = await handleOwlCreate(ctxNoReg, []);
+    expect(result.kind).toBe("error");
+  });
+});
+
+// ─── handleOwlSwitch ──────────────────────────────────────────────────────────
+
+describe("handleOwlSwitch", () => {
+  let bridge: UiBridge;
+  let ctx: CommandContext;
+
+  beforeEach(() => {
+    bridge = makeBridge();
+    ctx = makeCtx(makeGateway(makeRegistry()), bridge);
+  });
+
+  it("returns system-message with confirmation text on valid name", async () => {
+    const result = await handleOwlSwitch(ctx, ["Alice"]);
+    expect(result.kind).toBe("system-message");
+    if (result.kind !== "system-message") throw new Error();
+    expect(result.text).toContain("Alice");
+    expect(result.text).toContain("📊");
+  });
+
+  it("calls bridge.changeOwl with correct name and emoji", async () => {
+    await handleOwlSwitch(ctx, ["Alice"]);
+    expect(bridge.changeOwl).toHaveBeenCalledWith("Alice", "📊");
+  });
+
+  it("is case-insensitive — matches 'alice' to 'Alice'", async () => {
+    const result = await handleOwlSwitch(ctx, ["alice"]);
+    expect(result.kind).toBe("system-message");
+    expect(bridge.changeOwl).toHaveBeenCalledWith("Alice", "📊");
+  });
+
+  it("returns error for unknown name", async () => {
+    const result = await handleOwlSwitch(ctx, ["nobody"]);
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error();
+    expect(result.text).toContain("nobody");
+  });
+
+  it("returns error when no name arg provided", async () => {
+    const result = await handleOwlSwitch(ctx, []);
+    expect(result.kind).toBe("error");
+  });
+
+  it("returns error when registry is unavailable", async () => {
+    ctx = makeCtx(makeGateway(null), bridge);
+    const result = await handleOwlSwitch(ctx, ["Alice"]);
     expect(result.kind).toBe("error");
   });
 });

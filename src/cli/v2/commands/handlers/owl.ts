@@ -179,3 +179,34 @@ export const handleOwlUnpin: CommandHandler = async (ctx, _args) => {
   log.cli.debug("handleOwlUnpin: exit", { textLen: text.length });
   return { kind: "system-message", text };
 };
+
+// ─── /owl switch <name> ───────────────────────────────────────────────────────
+
+export const handleOwlSwitch: CommandHandler = async (ctx, args) => {
+  log.cli.debug("handleOwlSwitch: entry", { args });
+  const name = args[0];
+  if (!name) {
+    log.cli.warn("handleOwlSwitch: no name provided");
+    return { kind: "error", text: "Usage: /owl switch <name>" };
+  }
+
+  const owlCtx = makeOwlCtx(ctx);
+  if (!owlCtx) {
+    log.cli.warn("handleOwlSwitch: exit — no registry");
+    return { kind: "error", text: "Specialized owl registry not initialized." };
+  }
+
+  await owlCtx.registry.loadAll(owlCtx.workspacePath);
+  const spec = owlCtx.registry.listAll().find(
+    (s) => s.name.toLowerCase() === name.toLowerCase(),
+  );
+
+  if (!spec) {
+    log.cli.warn("handleOwlSwitch: owl not found", { name });
+    return { kind: "error", text: `Owl "${name}" not found. Use /owl list to see available owls.` };
+  }
+
+  ctx.bridge.changeOwl(spec.name, spec.emoji);
+  log.cli.debug("handleOwlSwitch: exit", { name: spec.name, emoji: spec.emoji });
+  return { kind: "system-message", text: `Switched to ${spec.emoji} ${spec.name}` };
+};

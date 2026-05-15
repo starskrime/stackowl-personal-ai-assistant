@@ -39,6 +39,7 @@ import {
   handleOwlDelete,
   handleOwlPin,
   handleOwlUnpin,
+  handleOwlSwitch,
 } from "./handlers/owl.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -220,6 +221,7 @@ export const REGISTRY: CommandSpec[] = [
     description: "Manage owls — switch, list, show, create, pin, delete",
     subcommands: [
       { name: "list",      description: "List all owls (BMAD + custom + builtin)", handler: handleOwlList },
+      { name: "switch",    description: "Switch to an owl by name", args: [{ name: "<name>" }], handler: handleOwlSwitch },
       { name: "show",      description: "Show owl details",      args: [{ name: "<name>" }], handler: handleOwlShow },
       { name: "status",    description: "Active owl DNA state",  handler: handleOwlStatus },
       { name: "create",    description: "Create a custom owl (interactive)", handler: handleOwlCreate },
