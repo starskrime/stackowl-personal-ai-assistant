@@ -273,6 +273,7 @@ import {
   FileSystemCollector,
 } from "./signals/collectors.js";
 import { GoalVerifier } from "./tools/goal-verifier.js";
+import { initModelLoader } from "./models/loader.js";
 
 // ─── Boot helpers ────────────────────────────────────────────────
 
@@ -367,6 +368,10 @@ async function bootstrap() {
       }
     }
   }
+
+  // Initialize model loader with workspace models dir so customer-added providers are visible
+  const workspaceModelsDir = join(workspacePath, "models");
+  initModelLoader(workspaceModelsDir);
 
   // Initialize provider registry
   const providerRegistry = new ProviderRegistry();
@@ -726,7 +731,7 @@ async function bootstrap() {
     log.engine.info(`[Init] Loaded ${synthesizedCount} synthesized tool(s) from previous sessions`);
   }
 
-  // Skills (OpenCLAW-compatible)
+  // Skills (StackOwl-compatible)
   // Always include built-in defaults + any user-configured directories
   const skillsLoader = new SkillsLoader();
   {
@@ -1376,7 +1381,7 @@ async function buildGateway(
   // Nightly fact-promotion job (deterministic SQL — no LLM call)
   // Bumps confidence on frequently-accessed Tier-0-category facts so they
   // graduate into always-injected context over time. StackOwl's equivalent
-  // of OpenClaw's "dreaming" consolidation, but free (no token cost).
+  // of StackOwl's "dreaming" consolidation, but free (no token cost).
   try {
     cronService.addJob({
       id: "tier0-fact-promotion",
@@ -1998,7 +2003,7 @@ async function skillsCommand(opts: {
   }
 
   for (const s of skills) {
-    const emoji = s.metadata.openclaw?.emoji || "🎯";
+    const emoji = s.metadata.stackowl?.emoji || "🎯";
     log.cli.info(`${emoji} ${s.name} ${s.enabled ? "" : "(disabled)"}`);
     log.cli.info(`   ${s.description}`);
     if (s.requiredEnv?.length || s.requiredBins?.length) {
@@ -2651,7 +2656,7 @@ program
 
 program
   .command("skills")
-  .description("Manage OpenCLAW-compatible skills")
+  .description("Manage StackOwl skills")
   .option("-l, --list", "List all loaded skills")
   .option("-s, --search <query>", "Search skills by name or description")
   .option("-r, --read <name>", "Show detailed info for a specific skill")

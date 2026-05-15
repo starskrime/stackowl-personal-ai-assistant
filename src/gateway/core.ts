@@ -135,7 +135,8 @@ import type { SubGoal } from "../engine/types.js";
 import { createInvokeSkillTool } from "../tools/invoke-skill.js"
 import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
-import { buildDefaultIntelligenceConfig } from "../config/loader.js";
+import { buildDefaultIntelligenceConfig, saveConfig } from "../config/loader.js";
+import { ProviderManager } from "../providers/manager.js";
 import { withSpan, attachToContext } from "../infra/observability/context.js";
 import {
   registerCapability,
@@ -326,6 +327,9 @@ export class OwlGateway {
   // ─── Instincts ────────────────────────────────────────────────
   private instinctRegistry: InstinctRegistry = new InstinctRegistry();
   private instinctEngine: InstinctEngine | null = null;
+
+  // ─── Provider Manager (lazy singleton) ────────────────────────
+  private _providerManager?: ProviderManager;
 
 // ─── Epic 1: Learning Modules ─────────────────────────────────
   private domainExpertise: DomainExpertiseTracker | null = null;
@@ -3286,6 +3290,27 @@ export class OwlGateway {
   getWorkspacePath(): string {
     return this.ctx.cwd ?? process.cwd();
   }
+
+  getProviderRegistry() {
+    return this.ctx.providerRegistry;
+  }
+
+  getProviderManager(): ProviderManager {
+    if (!this._providerManager) {
+      const registry = this.ctx.providerRegistry;
+      if (!registry) throw new Error("[OwlGateway] ProviderRegistry not initialized.");
+      const workspacePath = this.getWorkspacePath();
+      log.engine.debug("owl-gateway.getProviderManager: initialized", { workspacePath });
+      this._providerManager = new ProviderManager(
+        registry,
+        this.ctx.config,
+        workspacePath,
+        (cfg) => saveConfig(workspacePath, cfg),
+      );
+    }
+    return this._providerManager;
+  }
+
   getLearningOrchestrator() {
     return this.ctx.learningOrchestrator;
   }
