@@ -220,7 +220,7 @@ const DEFAULT_MAX_TOOL_ITERATIONS = 25;
 const DEFAULT_DEEP_MAX_TOOL_ITERATIONS = 50;
 
 /**
- * OpenCLAW-style completion signal.
+ * StackOwl-style completion signal.
  * The model is instructed to end its content with [DONE] when it has a complete
  * answer and does not need any further tool calls. The engine checks this BEFORE
  * executing tool calls in each iteration — if the signal is present, all pending
@@ -759,7 +759,11 @@ async function withProviderResilience(
         continue;
       }
 
-      // Non-transient or final attempt — break to Layer 2
+      // Non-transient or final attempt — break to Layer 2.
+      // We intentionally do NOT call recordProviderResult(false) here: errors
+      // reaching this branch are client-side (400 bad-request, auth, schema
+      // mismatch) rather than provider-side failures. Tripping the circuit on a
+      // misconfigured request would block all users on a healthy provider.
       log.engine.warn(
         `[Resilience/${site}] Non-retryable error on "${provider.name}": ${errMsg}. Degrading to Layer 2.`,
       );
@@ -780,6 +784,7 @@ async function withProviderResilience(
     );
     return result;
   } catch (nonStreamErr) {
+    providerRegistry?.recordProviderResult(provider.name, false);
     log.engine.warn(
       `[Resilience/${site}] Non-stream fallback also failed on "${provider.name}": ${
         nonStreamErr instanceof Error ? nonStreamErr.message : nonStreamErr
@@ -1295,7 +1300,7 @@ ${userMessage}
           throw new DOMException("Aborted", "AbortError");
         }
 
-        // ── OpenCLAW-style pre-execution completion check ──────────────
+        // ── StackOwl-style pre-execution completion check ──────────────
         // Check whether the model's content already constitutes a final answer
         // BEFORE executing any tool calls. If the [DONE] signal is present,
         // drop all pending tool calls and exit immediately. This prevents the
@@ -2530,8 +2535,7 @@ ${userMessage}
     prompt += `- **Acknowledge Failure Cleanly:** If you cannot find the answer after exhausting your tools, say exactly that: "I searched for X but could not find a verified answer." Never substitute a guess for a real answer.\n\n`;
 
     prompt += `## 3. Execution Discipline (Always Active)\n`;
-    prompt += `- **The Rule of 20 Approaches:** Always internally brainstorm at least 20 completely different, creative ways to fulfill the user's request using your available tools. Try them one by one until you succeed. If all 20 fail, do NOT ask the user what to do — use \`build_tool\` to synthesize a new capability, or use \`summon_parliament\` for collective brainstorming. Never present the user with a list of options and ask them to choose.\n`;
-    prompt += `- **Avoid Semantic Spinning:** Never execute the exact same approach with identical inputs twice in a row. If it failed once, pivot to your next brainstormed approach.\n`;
+    prompt += `- **Avoid Semantic Spinning:** Never execute the exact same approach with identical inputs twice in a row. If it failed once, pivot to a different approach.\n`;
     prompt += `- **Assumption Over Interruption (The Autonomous Decider):** If a user gives a vague request, do not halt execution to ask clarifying questions. Make an educated, opinionated guess based on context, execute it, and hand them the result. It is faster for them to tweak a finished artifact than to answer a survey.\n`;
     prompt += `- **NO MENUS — EVER:** Never present a numbered list of options and ask the user to pick. "Which works for you?", "Want me to: 1... 2... 3... Your call." are BANNED responses. You are the executive — you decide, execute, and deliver. If the user wanted to decide, they would not have hired an AI assistant.\n`;
     prompt += `- **Never Ask What To Do Next:** When you hit a wall, your only legal next moves are: (a) try a different tool, (b) call \`build_tool\` to create a missing capability on the spot, (c) call \`summon_parliament\` for brainstorming. Asking the user "what would you like me to do?" is not a legal move.\n`;
@@ -2568,7 +2572,7 @@ ${userMessage}
       prompt += `**\`summon_parliament\`** — structured multi-owl debate. HIGH-STAKES DECISIONS ONLY — never as a stuck fallback:\n`;
       prompt += `  ✅ Trigger for: architecture decisions, strategic tradeoffs, build-vs-buy dilemmas, decisions where reasonable people would disagree and the stakes justify 10 minutes of parallel analysis.\n`;
       prompt += `  ✅ Examples: "monolith vs microservices", "raise prices vs hold", "rewrite vs patch the auth system", "launch in EU now or wait for GDPR compliance"\n`;
-      prompt += `  ❌ Do NOT trigger for: tool failures, web searches, coding tasks, simple questions, anything solvable with 20 approaches\n`;
+      prompt += `  ❌ Do NOT trigger for: tool failures, web searches, coding tasks, simple questions, anything solvable with existing tools\n`;
       prompt += `\`\`\`\nsummon_parliament({ topic: "Should we adopt microservices? 3-engineer team, 10x traffic expected in 6 months. Trade-offs: operational complexity vs. scale." })\n\`\`\`\n\n`;
 
       // ── SECTION 6: Self-Evolution ────────────────────────────────────────

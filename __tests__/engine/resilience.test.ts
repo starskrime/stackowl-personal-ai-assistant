@@ -15,7 +15,7 @@ function isTransientStreamError(err: unknown): boolean {
   const status = (err as { status?: number }).status;
   if (typeof status === "number" && status >= 500 && status < 600) return true;
   const msg = err instanceof Error ? err.message : String(err);
-  return ["ECONNRESET", "ETIMEDOUT", "timeout", "fetch", "network"].some((kw) =>
+  return ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "timeout", "fetch", "network"].some((kw) =>
     msg.toLowerCase().includes(kw.toLowerCase()),
   );
 }
@@ -93,17 +93,31 @@ describe("parseRetryAfterMs", () => {
 });
 
 describe("backoffMs", () => {
-  it("uses retryAfterMs when provided", () => {
-    expect(backoffMs(0, 30_000)).toBe(30_000);
+  // The production backoffMs applies ±20% jitter, so we assert ranges rather
+  // than exact values. base * 0.8 ≤ result ≤ base * 1.2, floored at 100ms.
+
+  it("uses retryAfterMs when provided — result within ±20% of retryAfterMs", () => {
+    const result = backoffMs(0, 30_000);
+    expect(result).toBeGreaterThanOrEqual(24_000); // 30_000 * 0.8
+    expect(result).toBeLessThanOrEqual(36_000);    // 30_000 * 1.2
   });
 
-  it("uses exponential fallback when no retryAfterMs", () => {
-    expect(backoffMs(0)).toBe(1_500);
-    expect(backoffMs(1)).toBe(3_000);
-    expect(backoffMs(2)).toBe(6_000);
+  it("uses exponential fallback — attempt 0 within ±20% of 1500ms", () => {
+    const result = backoffMs(0);
+    expect(result).toBeGreaterThanOrEqual(1_200); // 1500 * 0.8
+    expect(result).toBeLessThanOrEqual(1_800);    // 1500 * 1.2
+  });
+
+  it("uses exponential fallback — attempt 1 within ±20% of 3000ms", () => {
+    const result = backoffMs(1);
+    expect(result).toBeGreaterThanOrEqual(2_400);
+    expect(result).toBeLessThanOrEqual(3_600);
   });
 
   it("never returns below 100ms", () => {
-    expect(backoffMs(0, 50)).toBe(100);
+    // Run multiple times to defeat jitter
+    for (let i = 0; i < 20; i++) {
+      expect(backoffMs(0, 50)).toBeGreaterThanOrEqual(100);
+    }
   });
 });
