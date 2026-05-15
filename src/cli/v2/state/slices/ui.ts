@@ -26,6 +26,8 @@ export interface UiSliceState {
   promptDefault?: string;
   /** Phrase override for ThinkingIndicator, supplied by TuiProgressNotifier. Null = use random fallback. */
   thinkingPhrase: string | null;
+  /** Current tool status text shown beneath the thinking spinner. Null = not shown. */
+  thinkingTool: string | null;
 }
 
 export const initialUiSliceState: UiSliceState = {
@@ -43,6 +45,7 @@ export const initialUiSliceState: UiSliceState = {
   promptChoices: undefined,
   promptDefault: undefined,
   thinkingPhrase: null,
+  thinkingTool: null,
 };
 
 export function applyUiEvent(state: UiState, event: UiEvent): UiState {
@@ -67,7 +70,7 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
       const contextWindowPct = ctxWindow && event.usage
         ? Math.round((event.usage.promptTokens / ctxWindow) * 100)
         : state.contextWindowPct;
-      return { ...state, generating: false, totalTokens: tokens, totalCostUsd: cost, contextWindowPct, thinkingPhrase: null };
+      return { ...state, generating: false, totalTokens: tokens, totalCostUsd: cost, contextWindowPct, thinkingPhrase: null, thinkingTool: null };
     }
 
     case "parliament.round.started":
@@ -120,10 +123,10 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, promptQuestion: null, promptChoices: undefined, promptDefault: undefined };
 
     case "thinking.phrase":
-      return { ...state, thinkingPhrase: event.phrase || null };
+      return { ...state, thinkingPhrase: event.phrase || null, thinkingTool: null };
 
     case "thinking.tool":
-      return { ...state, thinkingPhrase: event.text };
+      return { ...state, thinkingTool: event.text };
 
     default:
       return state;

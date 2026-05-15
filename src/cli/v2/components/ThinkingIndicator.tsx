@@ -18,6 +18,7 @@ export function ThinkingIndicator() {
   const [spinFrame, setSpinFrame] = useState(0);
   const [fallbackIdx] = useState(() => Math.floor(Math.random() * THINKING_MESSAGES.length));
   const thinkingPhrase = useUiStore((s) => s.thinkingPhrase);
+  const thinkingTool = useUiStore((s) => s.thinkingTool);
 
   useEffect(() => {
     const t = setInterval(
@@ -31,9 +32,16 @@ export function ThinkingIndicator() {
   const displayPhrase = thinkingPhrase ?? THINKING_MESSAGES[fallbackIdx]!;
 
   return (
-    <Box>
-      <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[spinFrame]} </Text>
-      <Text bold color={color}>{displayPhrase}</Text>
+    <Box flexDirection="column">
+      <Box>
+        <Text color={SPINNER_AMBER}>{STACKOWL_SPINNER[spinFrame]} </Text>
+        <Text bold color={color}>{displayPhrase}</Text>
+      </Box>
+      {thinkingTool && (
+        <Box marginLeft={2}>
+          <Text color="gray">{thinkingTool}</Text>
+        </Box>
+      )}
     </Box>
   );
 }
