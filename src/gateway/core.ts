@@ -52,6 +52,8 @@ import type {
 } from "./types.js";
 import { SessionManager } from "./session-manager.js";
 import type { ISessionManager } from "./session-manager.js";
+import { LifecycleCoordinator } from "./lifecycle-coordinator.js";
+import type { ILifecycleCoordinator } from "./lifecycle-coordinator.js";
 import type { GatewayMiddleware, MiddlewareContext } from "./middleware.js";
 import { RateLimitMiddleware, LoggingMiddleware } from "./middleware.js";
 import { getReadyMessages } from "../tools/utils/timer.js";
@@ -235,8 +237,8 @@ export class OwlGateway {
 
   /** Agent Watch — supervises external coding agent sessions */
   agentWatch: import("../agent-watch/index.js").AgentWatchManager | null = null;
-  /** Timer tick interval for scheduled message delivery */
-  private timerTickInterval: NodeJS.Timeout | null = null;
+  /** Lifecycle coordinator — owns all process signals, timers, and shutdown callbacks */
+  private readonly lifecycle: ILifecycleCoordinator;
 
   // ─── Phase 3: Relational Intelligence ────────────────────────
   private sessionBriefGenerator: SessionBriefGenerator | null = null;
@@ -360,6 +362,7 @@ export class OwlGateway {
   constructor(public ctx: GatewayContext) {
     this.engine = new OwlEngine();
     this.sessionManager = ctx.sessionManager ?? new SessionManager(ctx);
+    this.lifecycle = ctx.lifecycleCoordinator ?? new LifecycleCoordinator();
 
     // Initialize task queue (Improvement #2)
     this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
@@ -378,20 +381,13 @@ export class OwlGateway {
     // Ensure DNA is persisted on process exit.
     // Without this, any mutations from the current session are lost when the
     // process exits normally (ctrl-c, pm2 restart, etc.).
-    const saveDNAOnExit = () => {
+    this.lifecycle.register("dna-save", async () => {
       if (ctx.owlRegistry) {
         const owl = ctx.owlRegistry.getDefault?.() ?? ctx.owl;
-        ctx.owlRegistry.saveDNA(owl.persona.name).catch((err) => { log.engine.warn("saveDNA on exit failed", err); });
+        await ctx.owlRegistry.saveDNA(owl.persona.name).catch((err: Error) => {
+          log.gateway.error("LifecycleCoordinator: saveDNA on exit failed", err, {});
+        });
       }
-    };
-    process.once("exit", saveDNAOnExit);
-    process.once("SIGINT", () => {
-      saveDNAOnExit();
-      process.exit(0);
-    });
-    process.once("SIGTERM", () => {
-      saveDNAOnExit();
-      process.exit(0);
     });
 
     // Preference detector — created once if preference store is configured
@@ -3128,25 +3124,23 @@ export class OwlGateway {
     }
 
     // Scheduled message delivery tick — polls every 5 seconds for due timers
-    this.timerTickInterval = setInterval(() => {
+    this.lifecycle.startTimer("scheduled-delivery", 5_000, async () => {
       this.deliverScheduledMessages();
-    }, 5_000);
-    log.engine.info("[feature] Scheduled message delivery tick started (5s)");
+    });
+    log.gateway.info("LifecycleCoordinator.startTimer: scheduled-delivery tick started");
 
     // Persist new modules on process exit
-    const saveOnExit = () => {
-      if (this.timerTickInterval) clearInterval(this.timerTickInterval);
-      this.ctx.trustChain?.save?.().catch((err) => { log.engine.warn("trustChain save failed", err); });
-      this.ctx.knowledgeGraph?.save?.().catch((err) => { log.engine.warn("knowledgeGraph save failed", err); });
-      this.ctx.timelineManager?.save?.().catch((err) => { log.engine.warn("timelineManager shutdown save failed", err); });
-      this.ctx.patternAnalyzer?.save?.().catch((err) => { log.engine.warn("patternAnalyzer save failed", err); });
-      this.ctx.predictiveQueue?.save?.().catch((err) => { log.engine.warn("predictiveQueue save failed", err); });
-      this.ctx.skillArena?.save?.().catch((err) => { log.engine.warn("skillArena save failed", err); });
+    this.lifecycle.register("feature-modules-shutdown", async () => {
+      await this.ctx.trustChain?.save?.().catch((err: Error) => { log.gateway.error("trustChain save failed", err, {}); });
+      await this.ctx.knowledgeGraph?.save?.().catch((err: Error) => { log.gateway.error("knowledgeGraph save failed", err, {}); });
+      await this.ctx.timelineManager?.save?.().catch((err: Error) => { log.gateway.error("timelineManager save failed", err, {}); });
+      await this.ctx.patternAnalyzer?.save?.().catch((err: Error) => { log.gateway.error("patternAnalyzer save failed", err, {}); });
+      await this.ctx.predictiveQueue?.save?.().catch((err: Error) => { log.gateway.error("predictiveQueue save failed", err, {}); });
+      await this.ctx.skillArena?.save?.().catch((err: Error) => { log.gateway.error("skillArena save failed", err, {}); });
       this.ctx.signalPool?.stop?.();
       this.ctx.backgroundJobRunner?.stop();
       this.ctx.backgroundOrchestrator?.stop();
-    };
-    process.once("beforeExit", saveOnExit);
+    });
   }
 
   // ─── Proactive Messaging ─────────────────────────────────────
