@@ -4171,50 +4171,7 @@ export class OwlGateway {
    * Also prunes attempt logs so we don't accumulate memory for dead sessions.
    */
   private evictStaleSessions(): void {
-    const now = Date.now();
-    const SESSION_TIMEOUT = 2 * 60 * 60 * 1000; // mirrors SessionManager constant
-    const activeIds = new Set<string>();
-    const staleKeys: string[] = [];
-
-    for (const [key, cache] of (this.sessionManager as SessionManager).entries()) {
-      if (now - cache.lastActivity > SESSION_TIMEOUT) {
-        staleKeys.push(key);
-      } else {
-        activeIds.add(key);
-      }
-    }
-
-    for (const key of staleKeys) {
-      const cache = (this.sessionManager as SessionManager).getCached(key);
-      if (!cache) continue;
-      // Option B: fire endSession before evicting so episodic memory extraction,
-      // learning pipeline, and DNA evolution all run for sessions that end without
-      // an explicit /quit (e.g. Telegram users who just go silent).
-      // endSession() captures session.messages synchronously before its first await,
-      // so it's safe to invalidate the cache entry immediately after.
-      if (cache.session.messages.length >= 2) {
-        this.endSession(key).catch((err) => {
-          log.engine.warn(
-            `[session-evict] endSession failed for "${key}": ${err instanceof Error ? err.message : err}`,
-          );
-        });
-      }
-      this.sessionManager.invalidate(key);
-      this.ctx.sessionService?.evictFromCache(key);
-      this.stuckStreak.delete(key);
-      this.attemptLogs.delete(key);
-      log.engine.info(
-        `[session-evict] Evicted stale session "${key}" (endSession triggered)`,
-      );
-    }
-
-    this.attemptLogs.pruneStale(activeIds);
-
-    // Evict pending feedback older than 24 hours
-    const FEEDBACK_TTL = 24 * 60 * 60 * 1000;
-    for (const [id, fb] of this.pendingFeedback) {
-      if (now - fb.createdAt > FEEDBACK_TTL) this.pendingFeedback.delete(id);
-    }
+    this.sessionManager.evictStale();
   }
 
   // ─── Private: File Delivery ──────────────────────────────────

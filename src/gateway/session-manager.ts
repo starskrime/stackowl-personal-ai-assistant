@@ -132,6 +132,7 @@ export class SessionManager implements ISessionManager {
   invalidate(sessionId: string): void {
     log.gateway.debug("SessionManager.invalidate: entry", { sessionId });
     this.cache.delete(sessionId);
+    log.gateway.debug("SessionManager.invalidate: exit", { sessionId });
   }
 
   /**
@@ -140,6 +141,7 @@ export class SessionManager implements ISessionManager {
    * episodic memory extraction runs at the right time.
    */
   evictStale(): void {
+    log.gateway.debug("SessionManager.evictStale: entry", { cacheSize: this.cache.size });
     const now = Date.now();
     let evicted = 0;
     for (const [key, entry] of this.cache) {
@@ -148,14 +150,15 @@ export class SessionManager implements ISessionManager {
         evicted++;
       }
     }
-    if (evicted > 0) {
-      log.gateway.debug("SessionManager.evictStale: exit", { evicted });
-    }
+    log.gateway.debug("SessionManager.evictStale: exit", { evicted, cacheSize: this.cache.size });
   }
 
   /** Number of sessions currently held in the in-memory cache. */
   getActiveCount(): number {
-    return this.cache.size;
+    log.gateway.debug("SessionManager.getActiveCount: entry", {});
+    const count = this.cache.size;
+    log.gateway.debug("SessionManager.getActiveCount: exit", { count });
+    return count;
   }
 
   /**
