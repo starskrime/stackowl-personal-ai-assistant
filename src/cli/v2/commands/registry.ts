@@ -31,6 +31,20 @@ import {
   completeMcpServers,
 } from "./handlers/mcp.js";
 import { handleConfigList, handleConfigTiers, handleConfigSetTier } from "./handlers/config.js";
+import { handleConfigProvider } from "./handlers/config/provider.js";
+import { handleConfigTier }     from "./handlers/config/tier.js";
+import { handleConfigEngine }   from "./handlers/config/engine.js";
+import { handleConfigCost }     from "./handlers/config/cost.js";
+import { handleConfigChannel }  from "./handlers/config/channel.js";
+import { handleConfigGateway }  from "./handlers/config/gateway.js";
+import { handleConfigParliament } from "./handlers/config/parliament.js";
+import { handleConfigHeartbeat }  from "./handlers/config/heartbeat.js";
+import { handleConfigLogging }    from "./handlers/config/logging.js";
+import { handleConfigResearch }   from "./handlers/config/research.js";
+import { handleConfigPellets }    from "./handlers/config/pellets.js";
+import { handleConfigBrowser }    from "./handlers/config/browser.js";
+import { handleConfigMcp }        from "./handlers/config/mcp.js";
+import { handleConfigGlobal }     from "./handlers/config/global.js";
 import {
   handleProviderList,
   handleProviderTest,
@@ -262,9 +276,13 @@ export const REGISTRY: CommandSpec[] = [
   },
   {
     name: "/config",
-    description: "View and edit runtime config",
-    handler: handleConfigList,
+    description: "View and edit runtime config — /config <namespace> <verb> [args]",
+    handler: async (ctx, args) => {
+      if (args.length === 0) return handleConfigList(ctx, args);
+      return handleConfigGlobal(ctx, args);
+    },
     subcommands: [
+      // ── Legacy subcommands (kept for backward compatibility) ──────────────────
       {
         name: "tiers",
         description: "Browse model tiers (low / mid / high)",
@@ -279,6 +297,104 @@ export const REGISTRY: CommandSpec[] = [
           { name: "model",    description: "model name (e.g. claude-haiku-4-5-20251001)" },
         ],
         handler: handleConfigSetTier,
+      },
+      // ── Namespace subcommands ─────────────────────────────────────────────────
+      {
+        name: "provider",
+        description: "Manage AI providers — list, add, remove, set-key, set-model, set-url, test",
+        handler: handleConfigProvider,
+      },
+      {
+        name: "tier",
+        description: "Manage model tiers — list, set, set-default, reset",
+        handler: handleConfigTier,
+      },
+      {
+        name: "engine",
+        description: "Tune the ReAct engine — list, set <key> <value>, reset",
+        handler: handleConfigEngine,
+      },
+      {
+        name: "cost",
+        description: "Cost tracking and budget — list, enable, disable, set-budget, reset",
+        handler: handleConfigCost,
+      },
+      {
+        name: "channel",
+        description: "Communication channels — list, telegram, slack, discord, whatsapp",
+        handler: handleConfigChannel,
+      },
+      {
+        name: "gateway",
+        description: "HTTP gateway settings — list, set-port, set-host, set-output-mode, rate-limit",
+        handler: handleConfigGateway,
+      },
+      {
+        name: "parliament",
+        description: "Multi-owl debate settings — list, set-rounds, set-owls",
+        handler: handleConfigParliament,
+      },
+      {
+        name: "heartbeat",
+        description: "Proactive notifications — list, enable, disable, set-interval, set-cooldown",
+        handler: handleConfigHeartbeat,
+      },
+      {
+        name: "logging",
+        description: "Structured logging — list, set-level, set-retention, sink",
+        handler: handleConfigLogging,
+      },
+      {
+        name: "research",
+        description: "Deep-research behavior — list, set, enable-auto-deep, disable-auto-deep",
+        handler: handleConfigResearch,
+      },
+      {
+        name: "pellets",
+        description: "Knowledge pellet store — list, set-embedding-model, set-cache-size, dedup",
+        handler: handleConfigPellets,
+      },
+      {
+        name: "browser",
+        description: "Browser pool — list, enable, disable, set-pool-size, set-proxy, stealth",
+        handler: handleConfigBrowser,
+      },
+      {
+        name: "mcp",
+        description: "MCP server connections — list, add, remove, enable, disable",
+        handler: handleConfigMcp,
+      },
+      // ── Global operations ─────────────────────────────────────────────────────
+      {
+        name: "validate",
+        description: "Validate current config for consistency errors",
+        handler: async (ctx) => handleConfigGlobal(ctx, ["validate"]),
+      },
+      {
+        name: "show",
+        description: "Print full config (secrets masked)",
+        handler: async (ctx) => handleConfigGlobal(ctx, ["show"]),
+      },
+      {
+        name: "diff",
+        description: "Show differences between live config and on-disk config",
+        handler: async (ctx) => handleConfigGlobal(ctx, ["diff"]),
+      },
+      {
+        name: "reload",
+        description: "Hot-reload all reloadable sections from disk",
+        handler: async (ctx) => handleConfigGlobal(ctx, ["reload"]),
+      },
+      {
+        name: "export",
+        description: "Export config to a JSON file",
+        handler: async (ctx, args) => handleConfigGlobal(ctx, ["export", ...args]),
+      },
+      {
+        name: "import",
+        description: "Import config from a JSON file",
+        args: [{ name: "<path>", description: "Path to JSON config file" }],
+        handler: async (ctx, args) => handleConfigGlobal(ctx, ["import", ...args]),
       },
     ],
   },
