@@ -13,11 +13,9 @@ export class LifecycleCoordinator implements ILifecycleCoordinator {
   private shuttingDown = false;
 
   constructor() {
-    const onExit = () => void this.shutdown();
-    process.once("exit", onExit);
-    process.once("SIGINT", () => { void this.shutdown(); process.exit(0); });
-    process.once("SIGTERM", () => { void this.shutdown(); process.exit(0); });
-    process.once("beforeExit", onExit);
+    process.once("SIGINT", () => { this.shutdown().finally(() => process.exit(0)); });
+    process.once("SIGTERM", () => { this.shutdown().finally(() => process.exit(0)); });
+    process.once("beforeExit", () => void this.shutdown());
   }
 
   register(name: string, cb: () => Promise<void>): void {
@@ -53,6 +51,11 @@ export class LifecycleCoordinator implements ILifecycleCoordinator {
     const names = [...this.callbacks.keys()].reverse(); // LIFO
     log.gateway.info("LifecycleCoordinator.shutdown: entry", { callbackCount: names.length });
 
+    // Stop timers first — prevent new work from being scheduled during drain
+    for (const name of [...this.timers.keys()]) {
+      this.stopTimer(name);
+    }
+
     for (const name of names) {
       log.gateway.debug("LifecycleCoordinator.shutdown: running callback", { name });
       try {
@@ -60,10 +63,6 @@ export class LifecycleCoordinator implements ILifecycleCoordinator {
       } catch (err) {
         log.gateway.error("LifecycleCoordinator.shutdown: callback failed", err as Error, { name });
       }
-    }
-
-    for (const name of [...this.timers.keys()]) {
-      this.stopTimer(name);
     }
 
     log.gateway.info("LifecycleCoordinator.shutdown: complete");
