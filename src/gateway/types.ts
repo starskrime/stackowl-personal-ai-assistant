@@ -381,6 +381,8 @@ export interface GatewayContext {
   // ─── Session Service (Element 3 — unified session management) ────
   sessionService?: import("../session/service.js").SessionService;
   userMemoryStore?: import("../session/user-memory-store.js").UserMemoryStore;
+  /** Optional pre-constructed SessionManager — OwlGateway creates one if absent */
+  sessionManager?: import("./session-manager.js").ISessionManager;
 
   // ─── OwlBrain (Element 4 — routing coordinator) ───────────────
   owlBrain?: import("../routing/owl-brain.js").OwlBrain;

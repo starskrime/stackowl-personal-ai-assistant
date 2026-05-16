@@ -50,6 +50,8 @@ import type {
   ChannelAdapter,
   GatewayContext,
 } from "./types.js";
+import { SessionManager } from "./session-manager.js";
+import type { ISessionManager } from "./session-manager.js";
 import type { GatewayMiddleware, MiddlewareContext } from "./middleware.js";
 import { RateLimitMiddleware, LoggingMiddleware } from "./middleware.js";
 import { getReadyMessages } from "../tools/utils/timer.js";
@@ -208,12 +210,6 @@ async function isSkillInstallIntent(
 // ─── Constants ───────────────────────────────────────────────────
 
 const MAX_SESSION_HISTORY = 50;
-const SESSION_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
-
-interface SessionCache {
-  session: Session;
-  lastActivity: number;
-}
 
 // ─── Gateway ─────────────────────────────────────────────────────
 
@@ -223,7 +219,7 @@ export class OwlGateway {
   readonly channelRegistry: ChannelRegistry = new ChannelRegistry();
   readonly gatewayEventBus: GatewayEventBus = new GatewayEventBus();
   readonly deliveryRouter: DeliveryRouter = new DeliveryRouter(this.channelRegistry);
-  private sessions: Map<string, SessionCache> = new Map();
+  private sessionManager!: ISessionManager;
   private skillInjector: SkillContextInjector | null = null;
   /** Singleton PreferenceDetector — avoids re-constructing on every message */
   private preferenceDetector: PreferenceDetector | null = null;
@@ -363,6 +359,7 @@ export class OwlGateway {
 
   constructor(public ctx: GatewayContext) {
     this.engine = new OwlEngine();
+    this.sessionManager = ctx.sessionManager ?? new SessionManager(ctx);
 
     // Initialize task queue (Improvement #2)
     this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
@@ -1148,15 +1145,15 @@ export class OwlGateway {
     // Greeting-reset check: if user sends a lone greeting and session has history,
     // end and evict the old session so they start fresh.
     if (this.ctx.sessionService && SessionService.isGreetingPattern(message.text)) {
-      const existingCache = this.sessions.get(message.sessionId);
-      if (existingCache && existingCache.session.messages.length >= 4) {
+      const greetingSession = await this.sessionManager.getOrCreate(message);
+      if (greetingSession.messages.length >= 4) {
         await this.endSession(message.sessionId);
-        this.sessions.delete(message.sessionId);
+        this.sessionManager.invalidate(message.sessionId);
         this.ctx.sessionService.evictFromCache(message.sessionId);
       }
     }
 
-    const session = await this.getOrCreateSession(message);
+    const session = await this.sessionManager.getOrCreate(message);
 
     // Check if user is giving feedback on a recent gap-learning response
     this.postProcessor.absorbGapFeedback(session.messages, session.id);
@@ -2743,7 +2740,7 @@ export class OwlGateway {
    * Call this when a user explicitly ends their session (/quit in CLI).
    */
   async endSession(sessionId: string): Promise<void> {
-    const cache = this.sessions.get(sessionId);
+    const cache = (this.sessionManager as SessionManager).getCached(sessionId);
     if (!cache) return;
 
     const messages = cache.session.messages;
@@ -3438,7 +3435,7 @@ export class OwlGateway {
     // /fork [reason] — fork conversation from current point
     if (text.toLowerCase().startsWith("/fork") && this.ctx.timelineManager) {
       const reason = text.slice(5).trim() || undefined;
-      const session = await this.getOrCreateSession(message);
+      const session = await this.sessionManager.getOrCreate(message);
       const snapshot = this.ctx.timelineManager.createSnapshot(
         message.sessionId,
         session.messages,
@@ -4119,43 +4116,6 @@ export class OwlGateway {
     }
   }
 
-  // ─── Private: Session ────────────────────────────────────────
-
-  private async getOrCreateSession(message: GatewayMessage): Promise<Session> {
-    const key = message.sessionId;
-    const cached = this.sessions.get(key);
-
-    if (cached && Date.now() - cached.lastActivity <= SESSION_TIMEOUT_MS) {
-      cached.lastActivity = Date.now();
-      return cached.session;
-    }
-
-    // Delegate to SessionService (SQLite-backed) when available
-    if (this.ctx.sessionService) {
-      // Extract userId from sessionId (format: "channelId:userId" or "userId")
-      const parts = key.split(":");
-      const userId = message.userId ?? (parts.length >= 2 ? parts.slice(1).join(":") : key);
-      const session = await this.ctx.sessionService.getOrCreate(
-        key,
-        userId,
-        this.ctx.owl.persona.name,
-      );
-      this.sessions.set(key, { session, lastActivity: Date.now() });
-      return session;
-    }
-
-    // Load from disk or create fresh (JSON fallback)
-    let session = await this.ctx.sessionStore.loadSession(key);
-    if (!session) {
-      session = this.ctx.sessionStore.createSession(this.ctx.owl.persona.name);
-      session.id = key;
-      await this.ctx.sessionStore.saveSession(session);
-    }
-
-    this.sessions.set(key, { session, lastActivity: Date.now() });
-    return session;
-  }
-
   private async saveSession(
     session: Session,
     userText: string,
@@ -4188,17 +4148,11 @@ export class OwlGateway {
       // Delegate persistence to SessionService (SQLite) when available
       if (this.ctx.sessionService && addedMessages.length > 0) {
         await this.ctx.sessionService.addMessages(session.id, addedMessages);
-        const key = session.id;
-        const cached = this.sessions.get(key);
-        if (cached) cached.lastActivity = Date.now();
         return;
       }
 
-      // Fallback: persist to JSON session store
-      await this.ctx.sessionStore.saveSession(session);
-      const key = session.id;
-      const cached = this.sessions.get(key);
-      if (cached) cached.lastActivity = Date.now();
+      // Fallback: persist to JSON session store via SessionManager
+      await this.sessionManager.save(session);
     } catch (err) {
       session.messages = snapshot;
       log.engine.error(
@@ -4211,38 +4165,49 @@ export class OwlGateway {
   // ─── Private: Session Cache Eviction ─────────────────────────
 
   /**
-   * Remove sessions that haven't been active within SESSION_TIMEOUT_MS.
-   * Also prunes their attempt logs so we don't accumulate memory for dead sessions.
+   * Remove stale sessions: delegates cache eviction to SessionManager, but
+   * first fires endSession so episodic memory extraction and DNA evolution run
+   * for sessions that end without an explicit /quit.
+   * Also prunes attempt logs so we don't accumulate memory for dead sessions.
    */
   private evictStaleSessions(): void {
     const now = Date.now();
+    const SESSION_TIMEOUT = 2 * 60 * 60 * 1000; // mirrors SessionManager constant
     const activeIds = new Set<string>();
-    for (const [key, cache] of this.sessions) {
-      if (now - cache.lastActivity > SESSION_TIMEOUT_MS) {
-        // Option B: fire endSession before evicting so episodic memory extraction,
-        // learning pipeline, and DNA evolution all run for sessions that end without
-        // an explicit /quit (e.g. Telegram users who just go silent).
-        // endSession() captures session.messages synchronously before its first await,
-        // so it's safe to delete from the map immediately after — the messages reference
-        // is already captured by the time the async work begins.
-        if (cache.session.messages.length >= 2) {
-          this.endSession(key).catch((err) => {
-            log.engine.warn(
-              `[session-evict] endSession failed for "${key}": ${err instanceof Error ? err.message : err}`,
-            );
-          });
-        }
-        this.sessions.delete(key);
-        this.ctx.sessionService?.evictFromCache(key);
-        this.stuckStreak.delete(key);
-        this.attemptLogs.delete(key);
-        log.engine.info(
-          `[session-evict] Evicted stale session "${key}" (endSession triggered)`,
-        );
+    const staleKeys: string[] = [];
+
+    for (const [key, cache] of (this.sessionManager as SessionManager).entries()) {
+      if (now - cache.lastActivity > SESSION_TIMEOUT) {
+        staleKeys.push(key);
       } else {
         activeIds.add(key);
       }
     }
+
+    for (const key of staleKeys) {
+      const cache = (this.sessionManager as SessionManager).getCached(key);
+      if (!cache) continue;
+      // Option B: fire endSession before evicting so episodic memory extraction,
+      // learning pipeline, and DNA evolution all run for sessions that end without
+      // an explicit /quit (e.g. Telegram users who just go silent).
+      // endSession() captures session.messages synchronously before its first await,
+      // so it's safe to invalidate the cache entry immediately after.
+      if (cache.session.messages.length >= 2) {
+        this.endSession(key).catch((err) => {
+          log.engine.warn(
+            `[session-evict] endSession failed for "${key}": ${err instanceof Error ? err.message : err}`,
+          );
+        });
+      }
+      this.sessionManager.invalidate(key);
+      this.ctx.sessionService?.evictFromCache(key);
+      this.stuckStreak.delete(key);
+      this.attemptLogs.delete(key);
+      log.engine.info(
+        `[session-evict] Evicted stale session "${key}" (endSession triggered)`,
+      );
+    }
+
     this.attemptLogs.pruneStale(activeIds);
 
     // Evict pending feedback older than 24 hours
