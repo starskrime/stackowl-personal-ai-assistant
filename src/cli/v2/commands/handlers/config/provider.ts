@@ -71,7 +71,7 @@ async function providerAdd(
 
   const patch = { providers: { ...cfg.providers, [name]: entry } };
   log.cli.debug("config.provider.add: step — patching providers", { name });
-  const result = await applyPatch(ctx, "providers" as never, patch.providers as never, { restartRequired: true });
+  const result = await applyPatch(ctx, "providers", patch.providers, { restartRequired: true });
   log.cli.debug("config.provider.add: exit", { name });
   return result;
 }
@@ -97,7 +97,7 @@ async function providerRemove(
   delete updated[name];
 
   log.cli.debug("config.provider.remove: step — removing provider", { name });
-  const result = await applyPatch(ctx, "providers" as never, updated as never, { restartRequired: true });
+  const result = await applyPatch(ctx, "providers", updated, { restartRequired: true });
   log.cli.debug("config.provider.remove: exit", { name });
   return result;
 }
@@ -115,10 +115,10 @@ async function providerSetKey(
   const cfg = ctx.getOwlGateway().getConfig();
   if (!cfg.providers[name]) return { kind: "error", text: `Provider "${name}" not found. Run /config provider list.` };
 
-  const result = await applyPatch(ctx, "providers" as never, {
+  const result = await applyPatch(ctx, "providers", {
     ...cfg.providers,
     [name]: { ...cfg.providers[name], apiKey: key },
-  } as never, { restartRequired: true });
+  }, { restartRequired: true });
   log.cli.debug("config.provider.set-key: exit", { name, masked: maskKey(key) });
   return result;
 }
@@ -136,10 +136,10 @@ async function providerSetModel(
   const cfg = ctx.getOwlGateway().getConfig();
   if (!cfg.providers[name]) return { kind: "error", text: `Provider "${name}" not found.` };
 
-  const result = await applyPatch(ctx, "providers" as never, {
+  const result = await applyPatch(ctx, "providers", {
     ...cfg.providers,
     [name]: { ...cfg.providers[name], activeModel: model },
-  } as never, { restartRequired: true });
+  }, { restartRequired: true });
   log.cli.debug("config.provider.set-model: exit", { name, model });
   return result;
 }
@@ -158,10 +158,10 @@ async function providerSetUrl(
   const cfg = ctx.getOwlGateway().getConfig();
   if (!cfg.providers[name]) return { kind: "error", text: `Provider "${name}" not found.` };
 
-  const result = await applyPatch(ctx, "providers" as never, {
+  const result = await applyPatch(ctx, "providers", {
     ...cfg.providers,
     [name]: { ...cfg.providers[name], baseUrl: url },
-  } as never, { restartRequired: true });
+  }, { restartRequired: true });
   log.cli.debug("config.provider.set-url: exit", { name, url });
   return result;
 }

@@ -9,6 +9,7 @@ function getDeps(ctx: CommandContext) {
 // Dynamic completer for /memory get, /memory invalidate, /memory history
 export async function completeMemoryKeys(ctx: CommandContext, partial: string): Promise<string[]> {
   const deps = getDeps(ctx);
+  if (!deps.repo) return [];
   const records = await deps.repo.search("", { topK: 50 });
   return records.map((r: { id: string }) => r.id).filter((id: string) => id.startsWith(partial));
 }

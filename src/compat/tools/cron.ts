@@ -1,7 +1,7 @@
 /**
  * StackOwl — Cron Tool
  *
- * Provides scheduled task management similar to OpenCLAW.
+ * Provides scheduled task management StackOwl-style.
  */
 
 import type { ToolImplementation, ToolContext } from "../../tools/registry.js";
@@ -137,7 +137,7 @@ Examples:
     };
 
     this.jobs.set(id, job);
-    this.saveJobs().catch(console.error);
+    this.saveJobs().catch((err) => log.tool.warn("cron: saveJobs failed", err as Error));
 
     return JSON.stringify({
       status: "added",
@@ -156,7 +156,7 @@ Examples:
     }
 
     this.jobs.delete(jobId);
-    this.saveJobs().catch(console.error);
+    this.saveJobs().catch((err) => log.tool.warn("cron: saveJobs failed", err as Error));
 
     return JSON.stringify({ status: "removed", jobId });
   }
@@ -172,7 +172,7 @@ Examples:
     }
 
     job.lastRun = Date.now();
-    this.saveJobs().catch(console.error);
+    this.saveJobs().catch((err) => log.tool.warn("cron: saveJobs failed", err as Error));
 
     return JSON.stringify({
       status: "triggered",

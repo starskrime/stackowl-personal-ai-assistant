@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { IntelligenceConfig } from "../intelligence/router.js";
 import type { SignalSource, ConsentMap } from "../ambient/types.js";
+import { log } from "../logger.js";
 
 // ─── Config Types ────────────────────────────────────────────────
 
@@ -611,6 +612,11 @@ export async function loadConfig(basePath: string): Promise<StackOwlConfig> {
             `[Config] intelligence.tiers.${name} is missing provider or model.`,
           );
         }
+        if (config.providers && !config.providers[tier.provider]) {
+          throw new Error(
+            `[Config] intelligence.tiers.${name} references unknown provider "${tier.provider}"`,
+          );
+        }
       }
     }
 
@@ -830,7 +836,11 @@ export async function mutateConsent(
     consent[source] = granted;
     await saveConfig(basePath, config);
   });
-  consentMutex = next.catch(() => undefined);
+  consentMutex = next.catch((err) => {
+    log.engine.warn("mutateConsent: operation failed, advancing mutex chain", {
+      err: (err as Error).message,
+    });
+  });
   return next;
 }
 

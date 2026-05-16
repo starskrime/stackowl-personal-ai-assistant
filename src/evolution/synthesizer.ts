@@ -180,7 +180,7 @@ export class ToolSynthesizer {
       `---\n` +
       `name: short_generic_name\n` +
       `description: one sentence describing what this skill does\n` +
-      `openclaw:\n` +
+      `stackowl:\n` +
       `  emoji: 🔧\n` +
       `---\n\n` +
       `# How to [accomplish the task]\n\n` +
@@ -527,7 +527,8 @@ export class ToolSynthesizer {
     if (start !== -1 && end !== -1) str = str.slice(start, end + 1);
     try {
       return JSON.parse(str);
-    } catch {
+    } catch (err) {
+      log.evolution.warn("synthesizer: JSON parse failed", { err: (err as Error).message });
       return {};
     }
   }

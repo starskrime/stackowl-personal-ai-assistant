@@ -202,6 +202,10 @@ export class TelegramAdapter implements ChannelAdapter {
       menu_button: { type: "commands" },
     }).catch(err => log.telegram.warn(`setChatMenuButton failed: ${err instanceof Error ? err.message : err}`));
 
+    if (this.updateCleanupInterval) {
+      clearInterval(this.updateCleanupInterval);
+      this.updateCleanupInterval = null;
+    }
     this.updateCleanupInterval = setInterval(() => {
       const now = Date.now();
       const EXPIRY_MS = 60_000;
@@ -304,7 +308,9 @@ export class TelegramAdapter implements ChannelAdapter {
       // endSession will handle consolidation; just clear the in-memory session
       const userId = String(ctx.from?.id ?? ctx.chat.id);
       const sessionId = makeSessionId(this.id, userId);
-      await this.gateway.endSession(sessionId).catch(() => {});
+      await this.gateway.endSession(sessionId).catch((err) => {
+        log.telegram.warn("endSession failed", err as Error);
+      });
       await ctx.reply("🔄 Context reset. Starting fresh.");
     };
 
@@ -1056,7 +1062,9 @@ export class TelegramAdapter implements ChannelAdapter {
         });
         self._backgroundWorker = worker;
         self.pinger!.setBackgroundWorker(worker);
-      }).catch(() => {});
+      }).catch((err) => {
+        log.telegram.error("background worker import failed", err as Error);
+      });
     }
   }
 

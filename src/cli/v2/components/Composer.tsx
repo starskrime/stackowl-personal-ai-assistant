@@ -66,6 +66,9 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
     let cancelled = false;
     getCompletions(value, completionCtxRef.current).then((results) => {
       if (!cancelled) { setCompletions(results); setCompletionIdx(0); }
+    }).catch((err) => {
+      process.stderr.write(`[Composer] completion error: ${err}\n`);
+      setCompletions([]);
     });
     return () => { cancelled = true; };
   }, [value]);

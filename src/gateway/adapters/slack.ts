@@ -176,12 +176,18 @@ export class SlackAdapter implements ChannelAdapter {
         return;
       }
 
-      await this.app.client.files.uploadV2({
-        channel_id: channelId,
-        file: createReadStream(filePath),
-        filename: basename(filePath),
-        title: caption ?? basename(filePath),
-      });
+      const fileStream = createReadStream(filePath);
+      try {
+        await this.app.client.files.uploadV2({
+          channel_id: channelId,
+          file: fileStream,
+          filename: basename(filePath),
+          title: caption ?? basename(filePath),
+        });
+      } catch (err) {
+        fileStream.destroy();
+        throw err;
+      }
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       if (raw.includes("invalid_auth") || raw.includes("token_revoked")) {
@@ -455,6 +461,7 @@ export class SlackAdapter implements ChannelAdapter {
   } {
     const status = { streamedContent: "" };
     let messageTs: string | null = null;
+    let pendingMessageTs: Promise<string | null> | null = null;
     let displayText = "";
     let pureContent = "";
     let lastEditTime = 0;
@@ -542,17 +549,31 @@ export class SlackAdapter implements ChannelAdapter {
       hasToolStatus = true;
 
       if (!messageTs) {
-        client.chat
-          .postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: displayText || "...",
-          })
-          .then((sent) => {
-            messageTs = sent.ts ?? null;
-            lastEditTime = Date.now();
-          })
-          .catch(() => {});
+        if (!pendingMessageTs) {
+          pendingMessageTs = client.chat
+            .postMessage({
+              channel,
+              thread_ts: threadTs,
+              text: displayText || "...",
+            })
+            .then((sent) => {
+              const ts = sent.ts ?? null;
+              messageTs = ts;
+              pendingMessageTs = null;
+              lastEditTime = Date.now();
+              return ts;
+            })
+            .catch(() => {
+              pendingMessageTs = null;
+              return null;
+            });
+        } else {
+          pendingMessageTs
+            .then(() => {
+              flushEdit().catch(() => {});
+            })
+            .catch(() => {});
+        }
       } else {
         flushEdit().catch(() => {});
       }

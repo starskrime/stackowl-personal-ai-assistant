@@ -152,6 +152,7 @@ export class DiscordAdapter implements ChannelAdapter {
           const { result } = await dispatchCoreCommand(rawText, buildCoreCtx(gateway));
           const text = renderAsPlainText(result) || "✓";
           const chunks = this.chunkText(text);
+          if (!message.channel) return;
           const channel = message.channel as TextChannel | DMChannel;
           for (const chunk of chunks) await channel.send(chunk);
         } catch (err) {

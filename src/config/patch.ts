@@ -9,6 +9,7 @@
 import { saveConfig } from "./loader.js";
 import { configReloadBus } from "./reload-bus.js";
 import type { StackOwlConfig } from "./loader.js";
+import { log } from "../logger.js";
 
 export type DeepPartial<T> = T extends object
   ? { [K in keyof T]?: DeepPartial<T[K]> }
@@ -58,7 +59,14 @@ export async function patchConfig<K extends keyof StackOwlConfig>(
     return { hotReloaded: true, restartRequired: false };
   } catch (err) {
     liveConfig[section] = prev;
-    await saveConfig(basePath, liveConfig).catch(() => undefined);
+    try {
+      await saveConfig(basePath, liveConfig);
+    } catch (rollbackErr) {
+      log.engine.error(
+        "config patch rollback save failed — disk/memory inconsistent",
+        rollbackErr as Error,
+      );
+    }
     throw err;
   }
 }

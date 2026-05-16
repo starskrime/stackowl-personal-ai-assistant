@@ -26,6 +26,7 @@ function textToItems(text: string): Array<{ id: string; label: string }> {
 
 export async function completeMcpServers(ctx: CommandContext, partial: string): Promise<string[]> {
   const mcpManager = ctx.getMcpManager();
+  if (!mcpManager) return [];
   return mcpManager.listServers().map((s) => s.name).filter((n) => n.startsWith(partial));
 }
 

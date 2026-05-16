@@ -498,15 +498,15 @@ export class OwlEvolutionEngine {
 
             if (challengeStats.avg_challenge > 2 && currentIdx < challengeLevels.length - 1) {
               // Frequent corrections → user wants the owl to push back more
-              const newLevel = challengeLevels[currentIdx + 1]!;
+              const newLevel = challengeLevels[currentIdx + 1] ?? challengeLevels[currentIdx];
               logEntries.push(
                 `challengeLevel nudged up: ${currentLevel} → ${newLevel} (avg ${challengeStats.avg_challenge.toFixed(1)} corrections/session)`,
               );
               owl.dna.evolvedTraits.challengeLevel = newLevel;
               changed = true;
-            } else if (challengeStats.avg_challenge === 0 && currentIdx > 0) {
+            } else if (challengeStats.avg_challenge < 0.1 && currentIdx > 0) {
               // No corrections at all → owl may already be appropriately assertive; relax one step
-              const newLevel = challengeLevels[currentIdx - 1]!;
+              const newLevel = challengeLevels[currentIdx - 1] ?? challengeLevels[currentIdx];
               logEntries.push(
                 `challengeLevel nudged down: ${currentLevel} → ${newLevel} (0 corrections over ${challengeStats.session_count} sessions)`,
               );

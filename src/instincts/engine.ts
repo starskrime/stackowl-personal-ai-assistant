@@ -21,7 +21,7 @@ export class InstinctEngine {
     const prompt =
       `You are a classifier. Given a user message and a list of behavioral instincts, ` +
       `return a JSON array of the indices (numbers only) of instincts that apply.\n\n` +
-      `User message: "${userMessage}"\n\n` +
+      `User message: ${JSON.stringify(userMessage)}\n\n` +
       `Instincts:\n${descriptions}\n\n` +
       `Reply with ONLY a JSON array, e.g. [0,2]. Empty array [] if none apply.`;
 
@@ -47,7 +47,7 @@ export class InstinctEngine {
 
   static buildConstraintBlock(instincts: InstinctSpec[]): string {
     if (instincts.length === 0) return "";
-    const lines = instincts.map((i) => `- ${i.constraint}`).join("\n");
+    const lines = instincts.map((i) => `- ${i.constraint.replace(/\n/g, " ")}`).join("\n");
     return `\n\n[Active instincts]\n${lines}`;
   }
 }
@@ -64,6 +64,7 @@ export class InstinctEngineV2 {
     const matched = instincts.filter(inst =>
       inst.keywords?.some(kw => lower.includes(kw.toLowerCase()))
     );
+    if (this.cache.size >= 200) this.cache.delete(this.cache.keys().next().value!);
     this.cache.set(userMessage, matched);
     return matched;
   }

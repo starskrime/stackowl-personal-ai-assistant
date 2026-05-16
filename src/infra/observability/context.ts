@@ -76,8 +76,8 @@ export function runWithContext<T>(
 /**
  * Create a child span that wraps an async operation.
  *
- * - Inherits traceId from the current context (throws if none — always call
- *   inside runWithContext).
+ * - Inherits traceId from the current context (generates an orphan traceId if
+ *   called outside runWithContext — prefer always calling inside runWithContext).
  * - Mints a new spanId; sets parentSpanId = current spanId.
  * - The logger itself logs span.start / span.end records with durationMs.
  *

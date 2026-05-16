@@ -1056,7 +1056,7 @@ async function buildGateway(
   );
   // Schedule periodic knowledge council runs (every 12 hours by default)
   const councilIntervalMs = 12 * 60 * 60 * 1000;
-  setInterval(() => {
+  const councilInterval = setInterval(() => {
     proactiveGenerator.runKnowledgeCouncil().catch((err) =>
       log.engine.warn(`[ProactiveGenerator] Council run failed: ${err instanceof Error ? err.message : String(err)}`),
     );
@@ -1409,6 +1409,7 @@ async function buildGateway(
 
   // Ensure cron service stops on shutdown
   process.on("SIGINT", () => {
+    clearInterval(councilInterval);
     cronService.stop();
     b.scheduleRunner.stop();
     b.sessionRunner.stop();
@@ -1607,6 +1608,8 @@ async function chatCommand(owlName?: string) {
   // recorded as engagement signals (Element 12 — Task 6.5).
   if (telegramPinger) adapter.setPinger(telegramPinger);
 
+  process.removeAllListeners("SIGINT");
+  process.removeAllListeners("SIGTERM");
   process.on("SIGINT", async () => {
     adapter.stop();
     await b.browserPool?.shutdown();
@@ -1680,6 +1683,8 @@ async function voiceCommand(opts: {
   });
   gateway.register(adapter);
 
+  process.removeAllListeners("SIGINT");
+  process.removeAllListeners("SIGTERM");
   process.on("SIGINT", async () => {
     adapter.stop();
     await b.browserPool?.shutdown();
@@ -2208,6 +2213,8 @@ async function telegramCommand(opts: { owl?: string; withCli?: boolean }) {
     await b.puppeteerFetcher?.close();
     process.exit(0);
   };
+  process.removeAllListeners("SIGINT");
+  process.removeAllListeners("SIGTERM");
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
@@ -2268,6 +2275,8 @@ async function slackCommand(opts: { owl?: string; withCli?: boolean }) {
     await b.puppeteerFetcher?.close();
     process.exit(0);
   };
+  process.removeAllListeners("SIGINT");
+  process.removeAllListeners("SIGTERM");
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
@@ -2478,6 +2487,8 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     await b.puppeteerFetcher?.close();
     process.exit(0);
   };
+  process.removeAllListeners("SIGINT");
+  process.removeAllListeners("SIGTERM");
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 

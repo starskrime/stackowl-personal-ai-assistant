@@ -332,6 +332,9 @@ function shouldSkipSelfCheck(iterations: number, interval: number): boolean {
 
 export class TrajectoryStore {
   private loopHistory: Map<string, Array<{ footprint: number[]; action: string; result: string }>> = new Map();
+  private sessionAccessTimes: Map<string, number> = new Map();
+  private readonly EVICTION_PROBABILITY = 0.01;
+  private readonly EVICTION_TTL_MS = 4 * 60 * 60 * 1000;
 
   async validateLoop(
     sessionId: string,
@@ -344,6 +347,16 @@ export class TrajectoryStore {
       this.loopHistory.set(sessionId, []);
     }
     const history = this.loopHistory.get(sessionId)!;
+    this.sessionAccessTimes.set(sessionId, Date.now());
+    if (Math.random() < this.EVICTION_PROBABILITY) {
+      const now = Date.now();
+      for (const [sid, lastAccessMs] of this.sessionAccessTimes.entries()) {
+        if (now - lastAccessMs > this.EVICTION_TTL_MS) {
+          this.loopHistory.delete(sid);
+          this.sessionAccessTimes.delete(sid);
+        }
+      }
+    }
 
     // Compute semantic footprint
     let footprint: number[] = [];
@@ -379,6 +392,7 @@ export class TrajectoryStore {
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) log.engine.warn("cosineSimilarity: vector length mismatch", undefined, { aLen: a.length, bLen: b.length });
     let dot = 0; let nA = 0; let nB = 0;
     for (let i = 0; i < Math.min(a.length, b.length); i++) {
       dot += a[i] * b[i]; nA += a[i] * a[i]; nB += b[i] * b[i];
@@ -1382,7 +1396,7 @@ ${userMessage}
           | { kind: "execute"; toolCall: ToolCall };
 
         const actions: ToolAction[] = [];
-        for (const toolCall of response.toolCalls ?? []) {
+        for (const [i, toolCall] of (response.toolCalls ?? []).entries()) {
           log.tool.toolCall(toolCall.name, toolCall.arguments);
 
           // ── Duplicate tool call guard ──────────────────────────────
@@ -1414,9 +1428,7 @@ ${userMessage}
             // Mark this call and ALL remaining tool calls as loop-detected so every
             // tool_use in the assistant message gets a corresponding tool result.
             // A bare `break` here would leave trailing tool calls orphaned.
-            const remainingToolCalls = (response.toolCalls ?? []).slice(
-              (response.toolCalls ?? []).indexOf(toolCall),
-            );
+            const remainingToolCalls = (response.toolCalls ?? []).slice(i);
             for (const remaining of remainingToolCalls) {
               actions.push({ kind: "loop-detected", toolCall: remaining, repeatCount });
             }
@@ -1509,7 +1521,11 @@ ${userMessage}
             try {
               const verdictSink: { verdict?: string; reason?: string } = {};
               const result = await withSpan("tool.exec", async () => {
-                return toolRegistry!.execute(
+                if (!toolRegistry) {
+                  log.engine.error("runtime: toolRegistry null during tool execution", undefined, { tool: tc.name });
+                  throw new Error("toolRegistry unavailable during execution");
+                }
+                return toolRegistry.execute(
                   tc.name,
                   tc.arguments,
                   toolCtx,

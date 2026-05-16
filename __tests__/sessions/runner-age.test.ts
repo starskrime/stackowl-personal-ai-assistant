@@ -49,6 +49,7 @@ describe("SessionRunner age-based auto-terminate", () => {
       sessionMaxAgeDays: 7,
     });
     await runner.start();
+    // SessionRunner processes asynchronously; allow time for the tick to complete.
     await new Promise((r) => setTimeout(r, 100));
     const s = store.findOne("old");
     expect(s?.status).toBe("terminated");
@@ -72,6 +73,7 @@ describe("SessionRunner age-based auto-terminate", () => {
       sessionMaxAgeDays: 7,
     });
     await runner.start();
+    // SessionRunner processes asynchronously; allow time for the tick to complete.
     await new Promise((r) => setTimeout(r, 200));
     const s = store.findOne("recent");
     expect(s?.status).toBe("completed");
@@ -92,6 +94,7 @@ describe("SessionRunner age-based auto-terminate", () => {
     });
     const runner = new SessionRunner(store, stubEngineFactory, stubBaseContext);
     await runner.start();
+    // SessionRunner processes asynchronously; allow time for the tick to complete.
     await new Promise((r) => setTimeout(r, 100));
     const s = store.findOne("old-default");
     expect(s?.status).toBe("terminated");
@@ -114,6 +117,7 @@ describe("SessionRunner age-based auto-terminate", () => {
       sessionMaxAgeDays: 7,
     });
     await runner.start();
+    // SessionRunner processes asynchronously; allow time for the tick to complete.
     await new Promise((r) => setTimeout(r, 100));
     const s = store.findOne("old-pending");
     expect(s?.status).toBe("terminated");
@@ -136,6 +140,7 @@ describe("SessionRunner age-based auto-terminate", () => {
       sessionMaxAgeDays: 7,
     });
     await runner.start();
+    // SessionRunner processes asynchronously; allow time for the tick to complete.
     await new Promise((r) => setTimeout(r, 100));
     const s = store.findOne("old-awaiting");
     expect(s?.status).toBe("terminated");
@@ -159,6 +164,7 @@ describe("SessionRunner age-based auto-terminate", () => {
       sessionMaxAgeDays: 7,
     });
     await runner.start();
+    // SessionRunner processes asynchronously; allow time for the tick to complete.
     await new Promise((r) => setTimeout(r, 100));
     const s = store.findOne("old-completed");
     expect(s?.status).toBe("completed");
@@ -208,6 +214,7 @@ describe("SessionRunner age-based auto-terminate", () => {
       sessionMaxAgeDays: 7,
     });
     await runner.start();
+    // SessionRunner processes asynchronously; allow time for the tick to complete.
     await new Promise((r) => setTimeout(r, 300));
 
     expect(store.findOne("old-1")?.status).toBe("terminated");

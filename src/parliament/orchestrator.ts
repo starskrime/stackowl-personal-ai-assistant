@@ -257,19 +257,18 @@ export class ParliamentOrchestrator {
 
       // Automatically generate a Pellet from this session
       const mdTranscript = this.formatSessionMarkdown(session, perspectives);
-      try {
-        const pellet = await this.pelletGenerator.generate(
-          mdTranscript,
-          `Parliament Session: ${config.topic}`,
-        );
-        if (pellet) {
-          await this.pelletStore.save(pellet);
-          log.engine.info(`[Parliament] Saved Knowledge Pellet: ${pellet.id}.md`);
-        }
-      } catch (pelletError) {
-        log.engine.error(
-          `[Parliament] Failed to generate pellet: ${pelletError}`,
-        );
+      const pellet = await Promise.race([
+        this.pelletGenerator.generate(mdTranscript, `Parliament Session: ${config.topic}`),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error("pellet generation timeout")), 30_000),
+        ),
+      ]).catch((err) => {
+        log.parliament.warn("pellet generation failed or timed out", { err: (err as Error).message });
+        return null;
+      });
+      if (pellet) {
+        await this.pelletStore.save(pellet);
+        log.engine.info(`[Parliament] Saved Knowledge Pellet: ${pellet.id}.md`);
       }
 
       // ── E2: Record verdict in parliament_verdicts for recall + delayed validation ──

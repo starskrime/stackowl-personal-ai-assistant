@@ -44,6 +44,7 @@ export const handleOwlStatus: CommandHandler = async (ctx, _args) => {
   const gateway = ctx.getOwlGateway();
   const db = gateway.getDb();
   const owl = gateway.getOwl();
+  if (!owl) return { kind: "error", text: "Owl not available." };
   if (!db) {
     return { kind: "error", text: "Database not available." };
   }
