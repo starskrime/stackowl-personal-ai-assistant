@@ -110,7 +110,7 @@ import { TopicWorthinessEvaluator } from "../parliament/topic-worthiness.js";
 import { MultiRoundDebateManager } from "../parliament/multi-round-debate.js";
 import { DebatePelletGenerator } from "../parliament/debate-pellet-generator.js";
 import { RoutingWirer } from "../parliament/routing-wirer.js";
-import type { ParliamentSession } from "../parliament/protocol.js";
+// ParliamentSession import removed — now handled by ParliamentSubsystem
 import { InstinctRegistry } from "../instincts/registry.js";
 import { InstinctEngine } from "../instincts/engine.js";
 
@@ -137,11 +137,11 @@ import { ImprovementScheduler } from "../engine/improvement-scheduler.js";
 import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js";
 import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/reflexion-engine.js";
 import { ReflexionEngine } from "../evolution/reflexion.js";
-import { updateParliamentDNA, updatePelletGeneratorDNA } from "../owls/evolution.js";
+import { updatePelletGeneratorDNA } from "../owls/evolution.js";
 import { GoalVerifier } from "../tools/goal-verifier.js";
 import { formatSignalPromoted } from "./narration-formatter.js";
-import { TaskLedgerStore } from "../engine/task-ledger.js";
-import type { SubGoal } from "../engine/types.js";
+// TaskLedgerStore import removed — now handled by ParliamentSubsystem
+// SubGoal import removed — now handled by ParliamentSubsystem
 import { createInvokeSkillTool } from "../tools/invoke-skill.js"
 import { dispatchSkillCommand } from "./commands/skill-router.js";
 import { SkillCreationWizard } from "./wizards/skill-creation.js";
@@ -156,6 +156,8 @@ import {
 } from "../infra/capability-registry.js";
 import { runPreDeliveryGate } from "./pre-delivery-gate.js";
 import { BmadAgentLoader } from "../owls/bmad-agent-loader.js";
+import { ParliamentSubsystem } from "./parliament-subsystem.js";
+import type { IParliamentSubsystem } from "./parliament-subsystem.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -246,6 +248,7 @@ export class OwlGateway {
   /** Lifecycle coordinator — owns all process signals, timers, and shutdown callbacks */
   private readonly lifecycle: ILifecycleCoordinator;
   private readonly featureRouter: IFeatureCommandRouter;
+  private readonly parliamentSubsystem: IParliamentSubsystem;
 
   // ─── Phase 3: Relational Intelligence ────────────────────────
   private sessionBriefGenerator: SessionBriefGenerator | null = null;
@@ -380,6 +383,8 @@ export class OwlGateway {
       r.register(new MiscCommandHandler());
       return r;
     })();
+
+    this.parliamentSubsystem = ctx.parliamentSubsystem ?? new ParliamentSubsystem(ctx);
 
     // Initialize task queue (Improvement #2)
     this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
@@ -2116,114 +2121,12 @@ export class OwlGateway {
     // ─── Epic 6: Parliament Routing Check ────────────────────────
     // Check if this topic warrants Parliament before standard execution.
     // If autoTrigger fires, route to multi-round debate instead.
-    if (this.parliamentAutoTrigger && this.topicWorthiness && this.multiRoundDebate && this.debatePelletGenerator && this.ctx.pelletStore) {
-      const pelletStore = this.ctx.pelletStore;
-      try {
-        const parliamentCheck = await this.parliamentAutoTrigger.check(message.text, this.ctx.provider);
-        if (parliamentCheck.shouldTrigger) {
-          const worthiness = await this.topicWorthiness.evaluate(message.text);
-          if (worthiness.isWorthy) {
-            log.engine.info(
-              `[Parliament] Routing to multi-round debate for: "${message.text.slice(0, 60)}..."`,
-            );
-            if (callbacks.onProgress) {
-              await callbacks.onProgress(`🦉 **Parliament** — convening debate on: ${message.text.slice(0, 80)}`);
-            }
-            // Create a minimal ParliamentSession for the debate
-            const _debateParticipants = shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3);
-            const debateSession: ParliamentSession = {
-              id: `debate_${Date.now()}`,
-              config: {
-                topic: message.text.slice(0, 200),
-                participants: _debateParticipants,
-                contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
-                callbacks: callbacks.debateCallbacks,
-              },
-              phase: "setup",
-              positions: [],
-              challenges: [],
-              synthesis: "",
-              verdict: undefined,
-              startedAt: Date.now(),
-            };
-            await this.multiRoundDebate.runDebate(debateSession);
-            // Generate pellet from debate
-            if (this.debatePelletGenerator) {
-              await this.debatePelletGenerator.generateFromSession(debateSession, pelletStore);
-            }
-            // POST-SESSION: inject into ContextPipeline, verify with GoalVerifier, evolve DNA
-            const synthesis = debateSession.synthesis ?? "";
-            // Minority position = dissenting Round 1 position, NOT the Round 2 challenge text
-            const minorityContent = debateSession.positions.find(p => p.position === "AGAINST")?.argument
-              ?? debateSession.challenges[0]?.challengeContent
-              ?? "";
-            const formattedSynthesis =
-              `[Parliament concluded on "${debateSession.config.topic}"] Verdict: ${debateSession.verdict ?? "CONSENSUS_REACHED"}\n` +
-              `The council's synthesis: ${synthesis.slice(0, 300)}\n` +
-              (minorityContent ? `Key dissent: ${minorityContent.slice(0, 150)}\n` : "");
-            try {
-              this.ctx.contextPipeline?.setShortTermLayer(
-                "parliament_synthesis",
-                formattedSynthesis,
-                { priority: 117, ttlTurns: 3 },
-              );
-            } catch (err) {
-              log.engine.warn("parliament: context pipeline update failed", err);
-            }
-            let verifierVerdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
-            try {
-              if (this.goalVerifier) {
-                let activeSubGoal: SubGoal | undefined;
-                if (this.ctx.db) {
-                  const incomplete = await new TaskLedgerStore(this.ctx.db)
-                    .loadIncomplete(message.userId ?? "default").catch(() => null as null);
-                  if (incomplete) {
-                    activeSubGoal = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress", dependsOn: [] };
-                  }
-                }
-                if (activeSubGoal) {
-                  const vResult = await this.goalVerifier.verify({
-                    toolName: "parliament",
-                    toolArgs: {},
-                    toolResult: synthesis,
-                    subGoal: activeSubGoal,
-                    userMessage: message.text,
-                  });
-                  verifierVerdict = vResult.verdict;
-                }
-              }
-            } catch (err) {
-              log.engine.warn("parliament: goal verification failed", err);
-            }
-            try {
-              const participants = debateSession.config.participants;
-              const topicCategory = worthiness.category ?? "other";
-              // Identify synthesizer using same persona-search logic as MultiRoundDebateManager.runRound3()
-              const synthOwl = participants.find(p => (p.persona as any).mentorPersonality)
-                ?? participants.find(p => p.persona.name === 'Noctua')
-                ?? participants.find(p => (p.persona as any).specialty === 'architect')
-                ?? participants[0];
-              const challOwl = participants.find(p => p !== synthOwl);
-              await updateParliamentDNA(synthOwl, challOwl, participants, debateSession.verdict ?? "", topicCategory, this.ctx.db!, verifierVerdict);
-              if (verifierVerdict === "ADVANCES" && this.ctx.owlRegistry) {
-                for (const p of participants) {
-                  await this.ctx.owlRegistry.saveDNA(p.persona.name).catch((err) => { log.engine.warn("saveDNA failed", err); });
-                }
-              }
-            } catch (err) {
-              log.engine.warn("parliament: DNA update failed", err);
-            }
-            // Return the synthesis as the response
-            return {
-              content: synthesis || "Parliament concluded without synthesis.",
-              owlName: this.ctx.owl.persona.name,
-              owlEmoji: this.ctx.owl.persona.emoji,
-              toolsUsed: [],
-            };
-          }
-        }
-      } catch (err) {
-        log.engine.warn(`[Parliament] Routing check failed: ${err instanceof Error ? err.message : String(err)}`);
+    if (this.ctx.parliamentAutoTrigger) {
+      const shouldTrigger = await this.parliamentSubsystem.shouldAutoTrigger(message.text);
+      if (shouldTrigger) {
+        log.gateway.debug("handleCore: parliament auto-triggered", { sessionId: message.sessionId });
+        const parliamentResp = await this.parliamentSubsystem.run(message, this.ctx);
+        if (parliamentResp) return parliamentResp;
       }
     }
 
@@ -2279,106 +2182,8 @@ export class OwlGateway {
     }
 
     if (routingResult?.parliamentHandled) {
-        // ─── Secretary Router triggered Parliament ───────────────────
-        if (this.multiRoundDebate && this.ctx.owlRegistry && this.ctx.pelletStore) {
-          log.engine.info(
-            `[Gateway] SecretaryRouter convened Parliament for: "${text.slice(0, 50)}..."`,
-          );
-          if (callbacks.onProgress) {
-            await callbacks.onProgress(`🦉 **Parliament** — convening debate on: ${text.slice(0, 80)}`);
-          }
-          const _debateParticipantsB = shuffleArray([...this.ctx.owlRegistry.listOwls()]).slice(0, 3);
-          const debateSession: ParliamentSession = {
-            id: `debate_${Date.now()}`,
-            config: {
-              topic: text.slice(0, 200),
-              participants: _debateParticipantsB,
-              contextMessages: session.messages.slice(-10).map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
-              callbacks: callbacks.debateCallbacks,
-            },
-            phase: "setup",
-            positions: [],
-            challenges: [],
-            synthesis: "",
-            verdict: undefined,
-            startedAt: Date.now(),
-          };
-          await this.multiRoundDebate.runDebate(debateSession);
-          if (this.debatePelletGenerator) {
-            await this.debatePelletGenerator.generateFromSession(debateSession, this.ctx.pelletStore);
-          }
-          // POST-SESSION: inject into ContextPipeline, verify with GoalVerifier, evolve DNA
-          const synthesis = debateSession.synthesis ?? "";
-          // Block B: challenge first, then AGAINST position
-          const minorityContentB = debateSession.challenges[0]?.challengeContent
-            ?? debateSession.positions.find(p => p.position === "AGAINST")?.argument
-            ?? "";
-          const formattedSynthesisB =
-            `[Parliament concluded on "${debateSession.config.topic}"] Verdict: ${debateSession.verdict ?? "CONSENSUS_REACHED"}\n` +
-            `The council's synthesis: ${synthesis.slice(0, 300)}\n` +
-            (minorityContentB ? `Key dissent: ${minorityContentB.slice(0, 150)}\n` : "");
-          try {
-            this.ctx.contextPipeline?.setShortTermLayer(
-              "parliament_synthesis",
-              formattedSynthesisB,
-              { priority: 117, ttlTurns: 3 },
-            );
-          } catch (err) {
-            log.engine.warn("parliament: context pipeline update failed", err);
-          }
-          let verifierVerdictB: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
-          try {
-            if (this.goalVerifier) {
-              let activeSubGoalB: SubGoal | undefined;
-              if (this.ctx.db) {
-                const incomplete = await new TaskLedgerStore(this.ctx.db)
-                  .loadIncomplete(message.userId ?? "default").catch(() => null as null);
-                if (incomplete) {
-                  activeSubGoalB = { id: incomplete.id, description: incomplete.subgoalText, status: "in_progress", dependsOn: [] };
-                }
-              }
-              if (activeSubGoalB) {
-                const vResult = await this.goalVerifier.verify({
-                  toolName: "parliament",
-                  toolArgs: {},
-                  toolResult: synthesis,
-                  subGoal: activeSubGoalB,
-                  userMessage: text,
-                });
-                verifierVerdictB = vResult.verdict;
-              }
-            }
-          } catch (err) {
-            log.engine.warn("parliament: goal verification failed", err);
-          }
-          try {
-            const participantsB = debateSession.config.participants;
-            const topicCategoryB = "other";
-            // Identify synthesizer using same persona-search logic as MultiRoundDebateManager.runRound3()
-            const synthOwlB = participantsB.find(p => (p.persona as any).mentorPersonality)
-              ?? participantsB.find(p => p.persona.name === 'Noctua')
-              ?? participantsB.find(p => (p.persona as any).specialty === 'architect')
-              ?? participantsB[0];
-            const challOwlB = participantsB.find(p => p !== synthOwlB);
-            await updateParliamentDNA(synthOwlB, challOwlB, participantsB, debateSession.verdict ?? "", topicCategoryB, this.ctx.db!, verifierVerdictB);
-            if (verifierVerdictB === "ADVANCES" && this.ctx.owlRegistry) {
-              for (const p of participantsB) {
-                await this.ctx.owlRegistry.saveDNA(p.persona.name).catch((saveErr) => { log.engine.warn("saveDNA failed", saveErr); });
-              }
-            }
-          } catch (err) {
-            log.engine.warn("parliament: DNA update failed", err);
-          }
-          // Tag response with #Parliament
-          return {
-            content: `${synthesis || "Parliament concluded without synthesis."}\n\n#Parliament`,
-            owlName: this.ctx.owl.persona.name,
-            owlEmoji: this.ctx.owl.persona.emoji,
-            toolsUsed: [],
-          };
-        } else {
-          log.engine.warn("[Gateway] Parliament triggered but multiRoundDebate module is null — falling back to direct");
-        }
+      log.gateway.debug("handleCore: OwlBrain handled parliament internally", { sessionId: message.sessionId });
+      // result already in routingResult — fall through to normal response handling
     }
 
     // ─── Instinct injection ──────────────────────────────────────

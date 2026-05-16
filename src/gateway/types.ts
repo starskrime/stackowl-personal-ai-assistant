@@ -416,4 +416,6 @@ export interface GatewayContext {
 
   /** Optional pre-constructed FeatureCommandRouter — OwlGateway creates one if absent */
   featureCommandRouter?: import("./feature-command-router.js").IFeatureCommandRouter;
+  /** Optional pre-constructed ParliamentSubsystem — OwlGateway creates one if absent */
+  parliamentSubsystem?: import("./parliament-subsystem.js").IParliamentSubsystem;
 }
