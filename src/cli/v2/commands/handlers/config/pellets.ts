@@ -5,11 +5,11 @@
  * | dedup <enable|disable> | set-dedup-threshold <n>
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
-export const handleConfigPellets: CommandHandler = async (ctx, args) => {
+export const handleConfigPellets: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.pellets: entry", { args });
   const [verb, ...rest] = args;
 
@@ -27,7 +27,7 @@ export const handleConfigPellets: CommandHandler = async (ctx, args) => {
   }
 };
 
-async function pelletsList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function pelletsList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.pellets.list: entry");
   const p = ctx.getOwlGateway().getConfig().pellets ?? {};
   const lines = [
@@ -42,9 +42,9 @@ async function pelletsList(ctx: Parameters<CommandHandler>[0]): Promise<CommandR
 }
 
 async function pelletsSetModel(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.pellets.set-embedding-model: entry", { args });
   const model = args[0];
   if (!model) return { kind: "error", text: "Usage: /config pellets set-embedding-model <model>" };
@@ -55,9 +55,9 @@ async function pelletsSetModel(
 }
 
 async function pelletsSetCacheSize(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.pellets.set-cache-size: entry", { args });
   const parsed = parseInt(args[0] ?? "", 10);
   if (isNaN(parsed) || parsed < 1) {
@@ -70,9 +70,9 @@ async function pelletsSetCacheSize(
 }
 
 async function pelletsDedup(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.pellets.dedup: entry", { args });
   const state = args[0];
   if (state !== "enable" && state !== "disable") {
@@ -85,9 +85,9 @@ async function pelletsDedup(
 }
 
 async function pelletsSetDedupThreshold(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.pellets.set-dedup-threshold: entry", { args });
   const parsed = parseFloat(args[0] ?? "");
   if (isNaN(parsed) || parsed < 0 || parsed > 1) {

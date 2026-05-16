@@ -4,11 +4,11 @@
  * list | add | remove | set-key | set-model | set-url | set-default | test
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch, maskKey } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
-export const handleConfigProvider: CommandHandler = async (ctx, args) => {
+export const handleConfigProvider: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.provider: entry", { args });
   const [verb, ...rest] = args;
 
@@ -31,7 +31,7 @@ export const handleConfigProvider: CommandHandler = async (ctx, args) => {
 
 // ─── list ─────────────────────────────────────────────────────────
 
-async function providerList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function providerList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.list: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const lines = [`Default: ${cfg.defaultProvider} / ${cfg.defaultModel}`, ""];
@@ -49,9 +49,9 @@ async function providerList(ctx: Parameters<CommandHandler>[0]): Promise<Command
 // ─── add ──────────────────────────────────────────────────────────
 
 async function providerAdd(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.add: entry", { args });
   const name = args[0];
   if (!name) return { kind: "error", text: "Usage: /config provider add <name> [--type <t>] [--base-url <url>] [--api-key <key>] [--model <model>]" };
@@ -79,9 +79,9 @@ async function providerAdd(
 // ─── remove ───────────────────────────────────────────────────────
 
 async function providerRemove(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.remove: entry", { args });
   const [name, confirmFlag] = args;
   if (!name) return { kind: "error", text: "Usage: /config provider remove <name> --confirm" };
@@ -105,9 +105,9 @@ async function providerRemove(
 // ─── set-key ──────────────────────────────────────────────────────
 
 async function providerSetKey(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.set-key: entry", { name: args[0] });
   const [name, key] = args;
   if (!name || !key) return { kind: "error", text: "Usage: /config provider set-key <name> <api-key>" };
@@ -126,9 +126,9 @@ async function providerSetKey(
 // ─── set-model ────────────────────────────────────────────────────
 
 async function providerSetModel(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.set-model: entry", { args });
   const [name, model] = args;
   if (!name || !model) return { kind: "error", text: "Usage: /config provider set-model <name> <model>" };
@@ -147,9 +147,9 @@ async function providerSetModel(
 // ─── set-url ──────────────────────────────────────────────────────
 
 async function providerSetUrl(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.set-url: entry", { args });
   const [name, url] = args;
   if (!name || !url) return { kind: "error", text: "Usage: /config provider set-url <name> <url>" };
@@ -169,9 +169,9 @@ async function providerSetUrl(
 // ─── set-default ──────────────────────────────────────────────────
 
 async function providerSetDefault(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.set-default: entry", { args });
   const [name] = args;
   if (!name) return { kind: "error", text: "Usage: /config provider set-default <name>" };
@@ -199,9 +199,9 @@ async function providerSetDefault(
 // ─── test ─────────────────────────────────────────────────────────
 
 async function providerTest(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.provider.test: entry", { args });
   const [name] = args;
   if (!name) return { kind: "error", text: "Usage: /config provider test <name>" };

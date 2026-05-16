@@ -2,7 +2,7 @@
  * Shared utilities for /config namespace handlers.
  */
 
-import type { CommandContext, CommandResult } from "../../registry.js";
+import type { CoreCommandContext, CoreCommandResult } from "../../registry.js";
 import { patchConfig } from "../../../../../config/patch.js";
 import type { StackOwlConfig, DeepPartial } from "../../../../../config/loader.js";
 import { log } from "../../../../../logger.js";
@@ -14,13 +14,13 @@ export function savedText(hotReloaded: boolean, restartRequired: boolean): strin
   return "✓ Saved.";
 }
 
-/** Apply a config patch and return a CommandResult. */
+/** Apply a config patch and return a CoreCommandResult. */
 export async function applyPatch<K extends keyof StackOwlConfig>(
-  ctx: CommandContext,
+  ctx: CoreCommandContext,
   section: K,
   patch: DeepPartial<StackOwlConfig[K]>,
   opts?: { restartRequired?: boolean },
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   const live = ctx.getOwlGateway().getConfig();
   const basePath = ctx.getOwlGateway().getWorkspacePath();
   log.cli.debug(`config.${section}: applying patch`, { patch, restartRequired: opts?.restartRequired });

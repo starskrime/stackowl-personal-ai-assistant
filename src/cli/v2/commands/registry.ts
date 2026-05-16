@@ -77,20 +77,43 @@ export interface PanelPayload {
   emptyText?: string;
 }
 
-export type CommandResult =
-  | { kind: "panel"; payload: PanelPayload }
-  | { kind: "system-message"; text: string }
-  | { kind: "action" }
-  | { kind: "error"; text: string };
-
-export interface CommandContext {
-  getMemoryRepo: () => import("../../../memory/repository.js").MemoryRepository;
-  getMcpManager: () => import("../../../tools/mcp/manager.js").MCPManager;
+/**
+ * Channel-agnostic command context — every channel adapter can satisfy this.
+ * Deliberately excludes TUI-specific concerns (bridge, store).
+ */
+export interface CoreCommandContext {
   getOwlGateway: () => import("../../../gateway/core.js").OwlGateway;
-  bridge: UiBridge;
+  getMemoryRepo:  () => import("../../../memory/repository.js").MemoryRepository;
+  getMcpManager:  () => import("../../../tools/mcp/manager.js").MCPManager;
+}
+
+/**
+ * Channel-agnostic result types — every channel can render these.
+ * Panels are the only TUI-exclusive result and live in CommandResult below.
+ */
+export type CoreCommandResult =
+  | { kind: "system-message"; text: string }
+  | { kind: "error"; text: string }
+  | { kind: "action" };
+
+/** Full TUI result — superset of CoreCommandResult, adds panel support. */
+export type CommandResult =
+  | CoreCommandResult
+  | { kind: "panel"; payload: PanelPayload };
+
+/** Handler that works on any channel (uses only CoreCommandContext). */
+export type CoreCommandHandler = (ctx: CoreCommandContext, args: string[]) => Promise<CoreCommandResult>;
+
+/**
+ * TUI command context — extends CoreCommandContext with bridge + store.
+ * CLI handlers that produce panels must declare this type.
+ */
+export interface CommandContext extends CoreCommandContext {
+  bridge:   UiBridge;
   getStore: () => UiState;
 }
 
+/** Handler that may use TUI features (panels, bridge events). CLI-only. */
 export type CommandHandler = (ctx: CommandContext, args: string[]) => Promise<CommandResult>;
 
 export interface ArgSpec {
@@ -102,7 +125,13 @@ export interface SubcommandSpec {
   name: string;
   description: string;
   args?: ArgSpec[];
+  /** Tab-completion is TUI-only; completers may use the full CommandContext. */
   complete?: (ctx: CommandContext, partial: string) => Promise<string[]>;
+  /**
+   * CoreCommandHandler is a structural subtype of CommandHandler — any handler
+   * that only needs CoreCommandContext satisfies CommandHandler automatically
+   * because CommandContext extends CoreCommandContext.
+   */
   handler: CommandHandler;
 }
 

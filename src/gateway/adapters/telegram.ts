@@ -313,10 +313,38 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.command("reset", resetHandler);
     this.bot.command("clear", resetHandler);
 
-    // ── /config — Interactive provider & model configuration ────
+    // ── /config — namespace commands + interactive menu fallback ────
     this.bot.command("config", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
       this.trackChat(ctx.chat.id);
+
+      const rawArgs = ctx.match?.trim() ?? "";
+      if (rawArgs) {
+        // Route text args through the universal registry
+        const { dispatchCoreCommand } = await import("../commands/core-dispatcher.js");
+        const { renderForTelegram } = await import("../commands/channel-renderer.js");
+        const coreCtx = {
+          getOwlGateway: () => this.gateway,
+          getMemoryRepo:  () => this.gateway.getMemoryRepo()!,
+          getMcpManager:  () => this.gateway.getMcpManager()!,
+        };
+        try {
+          const { result, panelFallback } = await dispatchCoreCommand(`/config ${rawArgs}`, coreCtx);
+          if (panelFallback) {
+            // Fall through to interactive menu for panel-producing commands
+            await this.configMenu.handleCommand(ctx);
+            return;
+          }
+          const text = renderForTelegram(result);
+          if (text) await ctx.reply(text, { parse_mode: "MarkdownV2" }).catch(() => ctx.reply(text));
+        } catch (err) {
+          log.telegram.error("telegram.config: dispatch failed", err as Error);
+          await ctx.reply("❌ Config command failed. Check logs.").catch(() => {});
+        }
+        return;
+      }
+
+      // Bare /config — show interactive menu
       await this.configMenu.handleCommand(ctx);
     });
 

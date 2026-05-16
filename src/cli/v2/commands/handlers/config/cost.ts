@@ -4,7 +4,7 @@
  * list | enable | disable | set-budget <key> <value> | reset
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
@@ -17,7 +17,7 @@ const BUDGET_KEYS = new Set<BudgetKey>([
   "warnAtPercent",
 ]);
 
-export const handleConfigCost: CommandHandler = async (ctx, args) => {
+export const handleConfigCost: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.cost: entry", { args });
   const [verb, ...rest] = args;
 
@@ -37,7 +37,7 @@ export const handleConfigCost: CommandHandler = async (ctx, args) => {
 
 // ─── list ─────────────────────────────────────────────────────────
 
-async function costList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function costList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.cost.list: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const costs = cfg.costs;
@@ -59,9 +59,9 @@ async function costList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResu
 // ─── enable / disable ─────────────────────────────────────────────
 
 async function costEnable(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   enabled: boolean,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.cost.enable: entry", { enabled });
   const cfg = ctx.getOwlGateway().getConfig();
   const patch = { enabled, budget: cfg.costs?.budget };
@@ -73,9 +73,9 @@ async function costEnable(
 // ─── set-budget ───────────────────────────────────────────────────
 
 async function costSetBudget(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.cost.set-budget: entry", { args });
   const [keyArg, valueArg] = args;
 
@@ -108,9 +108,9 @@ async function costSetBudget(
 // ─── reset ────────────────────────────────────────────────────────
 
 async function costReset(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.cost.reset: entry", { args });
   if (!args.includes("--confirm")) {
     return {

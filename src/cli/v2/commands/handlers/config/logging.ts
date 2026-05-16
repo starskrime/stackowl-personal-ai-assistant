@@ -5,7 +5,7 @@
  * | set-buffer-size <n> | sink <file|ring-buffer|pretty-console> <on|off>
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
@@ -21,7 +21,7 @@ const SINK_FIELD_MAP: Record<SinkName, "file" | "ringBuffer" | "prettyConsole"> 
   "pretty-console": "prettyConsole",
 };
 
-export const handleConfigLogging: CommandHandler = async (ctx, args) => {
+export const handleConfigLogging: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.logging: entry", { args });
   const [verb, ...rest] = args;
 
@@ -39,7 +39,7 @@ export const handleConfigLogging: CommandHandler = async (ctx, args) => {
   }
 };
 
-async function loggingList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function loggingList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.logging.list: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const l = cfg.logging ?? {};
@@ -57,9 +57,9 @@ async function loggingList(ctx: Parameters<CommandHandler>[0]): Promise<CommandR
 }
 
 async function loggingSetLevel(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.logging.set-level: entry", { args });
   const level = args[0];
   if (!level || !VALID_LEVELS.includes(level as LogLevel)) {
@@ -72,11 +72,11 @@ async function loggingSetLevel(
 }
 
 async function loggingSetInt(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   field: "retentionDays" | "ringBufferSize",
   args: string[],
   min: number,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug(`config.logging.${field}: entry`, { args });
   const parsed = parseInt(args[0] ?? "", 10);
   if (isNaN(parsed) || parsed < min) {
@@ -89,9 +89,9 @@ async function loggingSetInt(
 }
 
 async function loggingSink(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.logging.sink: entry", { args });
   const [sinkArg, stateArg] = args;
 

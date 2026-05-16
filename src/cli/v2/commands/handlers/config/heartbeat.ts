@@ -5,11 +5,11 @@
  * | set-max-unanswered <n>
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
-export const handleConfigHeartbeat: CommandHandler = async (ctx, args) => {
+export const handleConfigHeartbeat: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.heartbeat: entry", { args });
   const [verb, ...rest] = args;
 
@@ -28,7 +28,7 @@ export const handleConfigHeartbeat: CommandHandler = async (ctx, args) => {
   }
 };
 
-async function heartbeatList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function heartbeatList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.heartbeat.list: entry");
   const { heartbeat } = ctx.getOwlGateway().getConfig();
   const lines = [
@@ -42,9 +42,9 @@ async function heartbeatList(ctx: Parameters<CommandHandler>[0]): Promise<Comman
 }
 
 async function heartbeatToggle(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   enabled: boolean,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.heartbeat.toggle: entry", { enabled });
   const { heartbeat } = ctx.getOwlGateway().getConfig();
   const result = await applyPatch(ctx, "heartbeat", { ...heartbeat, enabled });
@@ -53,11 +53,11 @@ async function heartbeatToggle(
 }
 
 async function heartbeatSetInt(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   field: "intervalMinutes" | "minPingCooldownMinutes" | "maxUnansweredPings",
   args: string[],
   min: number,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug(`config.heartbeat.${field}: entry`, { args });
   const parsed = parseInt(args[0] ?? "", 10);
   if (isNaN(parsed) || parsed < min) {

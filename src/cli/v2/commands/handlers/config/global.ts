@@ -4,12 +4,12 @@
  * validate | show | diff | reload | export [path] | import <path>
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { log } from "../../../../../logger.js";
 import { configReloadBus } from "../../../../../config/reload-bus.js";
 import type { StackOwlConfig } from "../../../../../config/loader.js";
 
-export const handleConfigGlobal: CommandHandler = async (ctx, args) => {
+export const handleConfigGlobal: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.global: entry", { args });
   const [verb, ...rest] = args;
 
@@ -30,7 +30,7 @@ export const handleConfigGlobal: CommandHandler = async (ctx, args) => {
 
 // ─── validate ─────────────────────────────────────────────────────
 
-async function configValidate(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function configValidate(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.validate: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const errors: string[] = [];
@@ -56,7 +56,7 @@ async function configValidate(ctx: Parameters<CommandHandler>[0]): Promise<Comma
 
 // ─── show ─────────────────────────────────────────────────────────
 
-async function configShow(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function configShow(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.show: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const sanitized = sanitizeConfig(cfg);
@@ -66,7 +66,7 @@ async function configShow(ctx: Parameters<CommandHandler>[0]): Promise<CommandRe
 
 // ─── diff ─────────────────────────────────────────────────────────
 
-async function configDiff(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function configDiff(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.diff: entry");
   const basePath = ctx.getOwlGateway().getWorkspacePath();
 
@@ -90,7 +90,7 @@ async function configDiff(ctx: Parameters<CommandHandler>[0]): Promise<CommandRe
 
 // ─── reload ───────────────────────────────────────────────────────
 
-async function configReload(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function configReload(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.reload: entry");
   const basePath = ctx.getOwlGateway().getWorkspacePath();
 
@@ -131,9 +131,9 @@ async function configReload(ctx: Parameters<CommandHandler>[0]): Promise<Command
 // ─── export ───────────────────────────────────────────────────────
 
 async function configExport(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.export: entry", { args });
   const { join } = await import("node:path");
   const { writeFile } = await import("node:fs/promises");
@@ -156,9 +156,9 @@ async function configExport(
 // ─── import ───────────────────────────────────────────────────────
 
 async function configImport(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.import: entry", { args });
   const filePath = args[0];
   if (!filePath) return { kind: "error", text: "Usage: /config import <path>" };

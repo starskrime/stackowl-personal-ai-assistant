@@ -4,7 +4,7 @@
  * list | set <low|mid|high> <provider> <model> | set-default <task> <tier> | reset
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 import type { IntelligenceConfig } from "../../../../../intelligence/router.js";
@@ -18,7 +18,7 @@ const VALID_TASKS = [
 ] as const;
 type TaskType = (typeof VALID_TASKS)[number];
 
-export const handleConfigTier: CommandHandler = async (ctx, args) => {
+export const handleConfigTier: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.tier: entry", { args });
   const [verb, ...rest] = args;
 
@@ -37,7 +37,7 @@ export const handleConfigTier: CommandHandler = async (ctx, args) => {
 
 // ─── list ─────────────────────────────────────────────────────────
 
-async function tierList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function tierList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.tier.list: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const intel = cfg.intelligence;
@@ -68,9 +68,9 @@ async function tierList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResu
 // ─── set ──────────────────────────────────────────────────────────
 
 async function tierSet(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.tier.set: entry", { args });
   const [tierArg, provider, model] = args;
 
@@ -98,9 +98,9 @@ async function tierSet(
 // ─── set-default ──────────────────────────────────────────────────
 
 async function tierSetDefault(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.tier.set-default: entry", { args });
   const [taskArg, tierArg] = args;
 
@@ -129,9 +129,9 @@ async function tierSetDefault(
 // ─── reset ────────────────────────────────────────────────────────
 
 async function tierReset(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.tier.reset: entry", { args });
   if (!args.includes("--confirm")) {
     return { kind: "error", text: "⚠ This resets all tiers and defaults. Re-run with --confirm to proceed." };

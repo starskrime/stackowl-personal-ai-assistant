@@ -5,11 +5,11 @@
  * | stealth <on|off>
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
-export const handleConfigBrowser: CommandHandler = async (ctx, args) => {
+export const handleConfigBrowser: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.browser: entry", { args });
   const [verb, ...rest] = args;
 
@@ -28,7 +28,7 @@ export const handleConfigBrowser: CommandHandler = async (ctx, args) => {
   }
 };
 
-async function browserList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function browserList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.browser.list: entry");
   const b = ctx.getOwlGateway().getConfig().browser ?? {};
   const lines = [
@@ -44,9 +44,9 @@ async function browserList(ctx: Parameters<CommandHandler>[0]): Promise<CommandR
 }
 
 async function browserToggle(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   enabled: boolean,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.browser.toggle: entry", { enabled });
   const b = ctx.getOwlGateway().getConfig().browser ?? {};
   const result = await applyPatch(ctx, "browser", { ...b, enabled });
@@ -55,9 +55,9 @@ async function browserToggle(
 }
 
 async function browserSetPoolSize(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.browser.set-pool-size: entry", { args });
   const parsed = parseInt(args[0] ?? "", 10);
   if (isNaN(parsed) || parsed < 1) {
@@ -70,9 +70,9 @@ async function browserSetPoolSize(
 }
 
 async function browserSetProxy(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.browser.set-proxy: entry", { args });
   const proxyArg = args[0];
   if (!proxyArg) return { kind: "error", text: "Usage: /config browser set-proxy <url|off>" };
@@ -87,9 +87,9 @@ async function browserSetProxy(
 }
 
 async function browserStealth(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.browser.stealth: entry", { args });
   const state = args[0];
   if (state !== "on" && state !== "off") {

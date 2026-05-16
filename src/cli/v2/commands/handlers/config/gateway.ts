@@ -5,11 +5,11 @@
  * | rate-limit <max-per-minute> <max-per-hour>
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
-export const handleConfigGateway: CommandHandler = async (ctx, args) => {
+export const handleConfigGateway: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.gateway: entry", { args });
   const [verb, ...rest] = args;
 
@@ -27,7 +27,7 @@ export const handleConfigGateway: CommandHandler = async (ctx, args) => {
   }
 };
 
-async function gatewayList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function gatewayList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.gateway.list: entry");
   const { gateway } = ctx.getOwlGateway().getConfig();
   const lines = [
@@ -41,9 +41,9 @@ async function gatewayList(ctx: Parameters<CommandHandler>[0]): Promise<CommandR
 }
 
 async function gatewaySetPort(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.gateway.set-port: entry", { args });
   const port = parseInt(args[0] ?? "", 10);
   if (isNaN(port) || port < 1 || port > 65535) {
@@ -56,9 +56,9 @@ async function gatewaySetPort(
 }
 
 async function gatewaySetHost(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.gateway.set-host: entry", { args });
   const host = args[0];
   if (!host) return { kind: "error", text: "Usage: /config gateway set-host <host>" };
@@ -69,9 +69,9 @@ async function gatewaySetHost(
 }
 
 async function gatewaySetOutputMode(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.gateway.set-output-mode: entry", { args });
   const mode = args[0];
   if (mode !== "normal" && mode !== "debug") {
@@ -84,9 +84,9 @@ async function gatewaySetOutputMode(
 }
 
 async function gatewayRateLimit(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.gateway.rate-limit: entry", { args });
   const [perMin, perHour] = args;
   const maxPerMinute = parseInt(perMin ?? "", 10);

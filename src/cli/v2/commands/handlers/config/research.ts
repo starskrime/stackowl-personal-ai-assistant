@@ -4,7 +4,7 @@
  * list | set <key> <value> | enable-auto-deep | disable-auto-deep
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
@@ -15,7 +15,7 @@ const INT_KEYS: ResearchIntKey[] = ["selfCheckInterval", "maxIterations", "cloud
 const FLOAT_KEYS: ResearchFloatKey[] = ["similarityThreshold"];
 const ALL_KEYS = [...INT_KEYS, ...FLOAT_KEYS] as const;
 
-export const handleConfigResearch: CommandHandler = async (ctx, args) => {
+export const handleConfigResearch: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.research: entry", { args });
   const [verb, ...rest] = args;
 
@@ -34,7 +34,7 @@ export const handleConfigResearch: CommandHandler = async (ctx, args) => {
   }
 };
 
-async function researchList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function researchList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.research.list: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const r = cfg.research ?? {};
@@ -51,9 +51,9 @@ async function researchList(ctx: Parameters<CommandHandler>[0]): Promise<Command
 }
 
 async function researchSet(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.research.set: entry", { args });
   const [keyArg, valueArg] = args;
 
@@ -83,9 +83,9 @@ async function researchSet(
 }
 
 async function researchToggleAuto(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   autoDeep: boolean,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.research.toggle-auto: entry", { autoDeep });
   const result = await applyPatch(ctx, "research", { autoDeep });
   log.cli.debug("config.research.toggle-auto: exit", { autoDeep });
@@ -93,9 +93,9 @@ async function researchToggleAuto(
 }
 
 async function researchToggleDiminishing(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   enabled: boolean,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.research.toggle-diminishing: entry", { enabled });
   const result = await applyPatch(ctx, "research", { enableDiminishingReturns: enabled });
   log.cli.debug("config.research.toggle-diminishing: exit", { enabled });

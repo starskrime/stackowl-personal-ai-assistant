@@ -7,11 +7,11 @@
  * All channel mutations require restart.
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch, maskKey } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
-export const handleConfigChannel: CommandHandler = async (ctx, args) => {
+export const handleConfigChannel: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.channel: entry", { args });
   const [verb, ...rest] = args;
 
@@ -31,7 +31,7 @@ export const handleConfigChannel: CommandHandler = async (ctx, args) => {
 
 // ─── list ─────────────────────────────────────────────────────────
 
-async function channelList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function channelList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.channel.list: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const lines: string[] = ["Configured channels:"];
@@ -63,9 +63,9 @@ async function channelList(ctx: Parameters<CommandHandler>[0]): Promise<CommandR
 // ─── telegram ─────────────────────────────────────────────────────
 
 async function channelTelegram(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.channel.telegram: entry", { args });
   const [subverb, ...rest] = args;
 
@@ -121,9 +121,9 @@ async function channelTelegram(
 // ─── slack ────────────────────────────────────────────────────────
 
 async function channelSlack(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.channel.slack: entry", { args });
   const [subverb, ...rest] = args;
 
@@ -163,9 +163,9 @@ async function channelSlack(
 // ─── discord ──────────────────────────────────────────────────────
 
 async function channelDiscord(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.channel.discord: entry", { args });
   const [subverb, ...rest] = args;
 
@@ -206,9 +206,9 @@ async function channelDiscord(
 // ─── whatsapp ─────────────────────────────────────────────────────
 
 async function channelWhatsapp(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.channel.whatsapp: entry", { args });
   const [subverb, ...rest] = args;
 

@@ -7,11 +7,11 @@
  * | enable <name> | disable <name>
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
-export const handleConfigMcp: CommandHandler = async (ctx, args) => {
+export const handleConfigMcp: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.mcp: entry", { args });
   const [verb, ...rest] = args;
 
@@ -29,7 +29,7 @@ export const handleConfigMcp: CommandHandler = async (ctx, args) => {
   }
 };
 
-async function mcpList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function mcpList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.mcp.list: entry");
   const servers = ctx.getOwlGateway().getConfig().mcp?.servers ?? [];
   if (servers.length === 0) {
@@ -45,9 +45,9 @@ async function mcpList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResul
 }
 
 async function mcpAdd(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.mcp.add: entry", { args });
   const name = args[0];
   if (!name) return { kind: "error", text: "Usage: /config mcp add <name> --transport <stdio|sse> [options]" };
@@ -81,9 +81,9 @@ async function mcpAdd(
 }
 
 async function mcpRemove(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.mcp.remove: entry", { args });
   const name = args[0];
   if (!name) return { kind: "error", text: "Usage: /config mcp remove <name> --confirm" };
@@ -104,10 +104,10 @@ async function mcpRemove(
 }
 
 async function mcpToggle(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
   enabled: boolean,
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.mcp.toggle: entry", { args, enabled });
   const name = args[0];
   if (!name) return { kind: "error", text: `Usage: /config mcp ${enabled ? "enable" : "disable"} <name>` };

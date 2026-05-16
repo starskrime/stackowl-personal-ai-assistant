@@ -4,7 +4,7 @@
  * list | set <key> <value> | reset
  */
 
-import type { CommandHandler, CommandResult } from "../../registry.js";
+import type { CoreCommandHandler, CoreCommandResult } from "../../registry.js";
 import { applyPatch } from "./shared.js";
 import { log } from "../../../../../logger.js";
 
@@ -41,7 +41,7 @@ const DEFAULTS: Record<EngineKey, number> = {
 
 const FLOAT_KEYS = new Set<EngineKey>(["dnaBaseTemp", "synthesizeEarlyThreshold"]);
 
-export const handleConfigEngine: CommandHandler = async (ctx, args) => {
+export const handleConfigEngine: CoreCommandHandler = async (ctx, args) => {
   log.cli.debug("config.engine: entry", { args });
   const [verb, ...rest] = args;
 
@@ -59,7 +59,7 @@ export const handleConfigEngine: CommandHandler = async (ctx, args) => {
 
 // ─── list ─────────────────────────────────────────────────────────
 
-async function engineList(ctx: Parameters<CommandHandler>[0]): Promise<CommandResult> {
+async function engineList(ctx: Parameters<CoreCommandHandler>[0]): Promise<CoreCommandResult> {
   log.cli.debug("config.engine.list: entry");
   const cfg = ctx.getOwlGateway().getConfig();
   const eng = cfg.engine ?? {};
@@ -79,9 +79,9 @@ async function engineList(ctx: Parameters<CommandHandler>[0]): Promise<CommandRe
 // ─── set ──────────────────────────────────────────────────────────
 
 async function engineSet(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.engine.set: entry", { args });
   const [keyArg, valueArg] = args;
 
@@ -114,9 +114,9 @@ async function engineSet(
 // ─── reset ────────────────────────────────────────────────────────
 
 async function engineReset(
-  ctx: Parameters<CommandHandler>[0],
+  ctx: Parameters<CoreCommandHandler>[0],
   args: string[],
-): Promise<CommandResult> {
+): Promise<CoreCommandResult> {
   log.cli.debug("config.engine.reset: entry", { args });
   if (!args.includes("--confirm")) {
     return {
