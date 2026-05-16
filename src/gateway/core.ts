@@ -54,6 +54,12 @@ import { SessionManager } from "./session-manager.js";
 import type { ISessionManager } from "./session-manager.js";
 import { LifecycleCoordinator } from "./lifecycle-coordinator.js";
 import type { ILifecycleCoordinator } from "./lifecycle-coordinator.js";
+import { FeatureCommandRouter } from "./feature-command-router.js";
+import type { IFeatureCommandRouter } from "./feature-command-router.js";
+import { TrustTimelineCommandHandler } from "./commands/trust-timeline-handler.js";
+import { CollabSessionCommandHandler } from "./commands/collab-session-handler.js";
+import { KnowledgeCommandHandler } from "./commands/knowledge-handler.js";
+import { MiscCommandHandler } from "./commands/misc-handler.js";
 import type { GatewayMiddleware, MiddlewareContext } from "./middleware.js";
 import { RateLimitMiddleware, LoggingMiddleware } from "./middleware.js";
 import { getReadyMessages } from "../tools/utils/timer.js";
@@ -239,6 +245,7 @@ export class OwlGateway {
   agentWatch: import("../agent-watch/index.js").AgentWatchManager | null = null;
   /** Lifecycle coordinator — owns all process signals, timers, and shutdown callbacks */
   private readonly lifecycle: ILifecycleCoordinator;
+  private readonly featureRouter: IFeatureCommandRouter;
 
   // ─── Phase 3: Relational Intelligence ────────────────────────
   private sessionBriefGenerator: SessionBriefGenerator | null = null;
@@ -363,6 +370,16 @@ export class OwlGateway {
     this.engine = new OwlEngine();
     this.sessionManager = ctx.sessionManager ?? new SessionManager(ctx);
     this.lifecycle = ctx.lifecycleCoordinator ?? new LifecycleCoordinator();
+
+    // ─── Feature Command Router ─────────────────────────────────
+    this.featureRouter = ctx.featureCommandRouter ?? (() => {
+      const r = new FeatureCommandRouter();
+      r.register(new TrustTimelineCommandHandler());
+      r.register(new CollabSessionCommandHandler());
+      r.register(new KnowledgeCommandHandler());
+      r.register(new MiscCommandHandler());
+      return r;
+    })();
 
     // Initialize task queue (Improvement #2)
     this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
@@ -1379,7 +1396,17 @@ export class OwlGateway {
     }
 
     // ─── New Feature Commands ──────────────────────────────────
-    const featureResult = await this.handleFeatureCommand(message, callbacks);
+    const featureCmdCtx: import("./feature-command-router.js").FeatureCommandContext = {
+      message,
+      session,
+      owlName: this.ctx.owl.persona.name,
+      owlEmoji: this.ctx.owl.persona.emoji,
+      gatewayCtx: this.ctx,
+      sessionManager: this.sessionManager,
+      agentWatch: this.agentWatch,
+      skillInjector: this.skillInjector,
+    };
+    const featureResult = await this.featureRouter.dispatch(message.text, featureCmdCtx);
     if (featureResult) return featureResult;
 
     // ─── Explicit learning request ──────────────────────────────
@@ -3379,432 +3406,6 @@ export class OwlGateway {
    */
   acknowledgeCommitment(commitmentId: string): void {
     this.ctx.commitmentTracker?.markAcknowledged(commitmentId);
-  }
-
-  // ─── Private: Feature Commands ──────────────────────────────
-
-  private async handleFeatureCommand(
-    message: GatewayMessage,
-    _callbacks: GatewayCallbacks,
-  ): Promise<GatewayResponse | null> {
-    const text = message.text.trim();
-    const owl = this.ctx.owl;
-    const mkResp = (content: string): GatewayResponse => ({
-      content,
-      owlName: owl.persona.name,
-      owlEmoji: owl.persona.emoji,
-      toolsUsed: [],
-    });
-
-    // /trust — show trust chain status
-    if (text.toLowerCase() === "/trust" && this.ctx.trustChain) {
-      return mkResp(this.ctx.trustChain.formatStatus());
-    }
-
-    // /timeline — show conversation timeline
-    if (text.toLowerCase() === "/timeline" && this.ctx.timelineManager) {
-      const timeline = this.ctx.timelineManager.getTimeline(message.sessionId);
-      if (!timeline) return mkResp("No timeline data for this session yet.");
-      const snapshotList = timeline.snapshots
-        .map(
-          (s) =>
-            `  • [${s.id.slice(0, 8)}] ${s.metadata.snapshotAt} — ${s.messageIndex} messages${s.metadata.description ? ` (${s.metadata.description})` : ""}`,
-        )
-        .join("\n");
-      const forkList =
-        timeline.forks.length > 0
-          ? "\n\n**Forks:**\n" +
-            timeline.forks
-              .map(
-                (f) =>
-                  `  • ${f.createdAt} — forked at message ${f.forkIndex}${f.forkReason ? ` (${f.forkReason})` : ""}`,
-              )
-              .join("\n")
-          : "";
-      return mkResp(
-        `**Timeline** (${timeline.totalMessages} messages)\n\n**Snapshots:**\n${snapshotList}${forkList}`,
-      );
-    }
-
-    // /fork [reason] — fork conversation from current point
-    if (text.toLowerCase().startsWith("/fork") && this.ctx.timelineManager) {
-      const reason = text.slice(5).trim() || undefined;
-      const session = await this.sessionManager.getOrCreate(message);
-      const snapshot = this.ctx.timelineManager.createSnapshot(
-        message.sessionId,
-        session.messages,
-        owl.persona.name,
-        "Pre-fork snapshot",
-      );
-      const newSessionId = `${message.sessionId}:fork:${Date.now()}`;
-      const fork = this.ctx.timelineManager.fork(
-        snapshot.id,
-        newSessionId,
-        reason,
-      );
-      await this.ctx.timelineManager.save();
-      return mkResp(
-        `🔀 **Conversation forked!**\n\n` +
-          `Fork ID: \`${fork.id.slice(0, 8)}\`\n` +
-          `Forked at message: ${fork.forkIndex}\n` +
-          (reason ? `Reason: ${reason}\n` : "") +
-          `New session: \`${newSessionId}\`\n\n` +
-          `You can continue here or switch to the fork.`,
-      );
-    }
-
-    // /collab create <name> — create a collaborative session
-    const collabCreate = text.match(/^\/collab\s+create\s+(.+)$/i);
-    if (collabCreate && this.ctx.collabManager) {
-      try {
-        const session = this.ctx.collabManager.createSession(
-          collabCreate[1],
-          owl.persona.name,
-          {
-            userId: message.userId,
-            displayName: message.userId,
-            channelId: message.channelId,
-          },
-        );
-        return mkResp(
-          `👥 **Collaborative session created!**\n\n` +
-            `Name: **${session.name}**\n` +
-            `Session ID: \`${session.id.slice(0, 8)}\`\n` +
-            `Others can join with: \`/collab join ${session.id.slice(0, 8)}\``,
-        );
-      } catch (err) {
-        return mkResp(
-          `Failed to create session: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-
-    // /collab list — list active collab sessions
-    if (text.toLowerCase() === "/collab list" && this.ctx.collabManager) {
-      const sessions = this.ctx.collabManager.listSessions();
-      if (sessions.length === 0)
-        return mkResp("No active collaborative sessions.");
-      const list = sessions
-        .map(
-          (s) =>
-            `  • **${s.name}** (\`${s.id.slice(0, 8)}\`) — ${s.participants.length} participants, ${s.messages.length} messages`,
-        )
-        .join("\n");
-      return mkResp(`**Active Collaborative Sessions:**\n${list}`);
-    }
-
-    // /forge start <name> — start recording a demonstration
-    const forgeStart = text.match(/^\/forge\s+start\s+(.+)$/i);
-    if (forgeStart && this.ctx.demoRecorder) {
-      const id = this.ctx.demoRecorder.startRecording(
-        forgeStart[1],
-        forgeStart[1],
-        this.ctx.cwd ?? process.cwd(),
-      );
-      return mkResp(
-        `🔨 **Skill Forge recording started!**\n\n` +
-          `Name: **${forgeStart[1]}**\n` +
-          `Recording ID: \`${id.slice(0, 8)}\`\n\n` +
-          `I'm now watching your actions. When done, use \`/forge stop\` to generate a skill.`,
-      );
-    }
-
-    // /forge stop — stop recording and generate skill
-    if (
-      text.toLowerCase() === "/forge stop" &&
-      this.ctx.demoRecorder &&
-      this.ctx.forgeSynthesizer
-    ) {
-      // Get the last active recording
-      const activeIds = [
-        ...((this.ctx.demoRecorder as any).activeRecordings?.keys?.() ?? []),
-      ];
-      if (activeIds.length === 0) return mkResp("No active recording to stop.");
-
-      const recording = this.ctx.demoRecorder.endRecording(
-        activeIds[activeIds.length - 1],
-      );
-      try {
-        const skillMd = await this.ctx.forgeSynthesizer.synthesize(recording);
-        const skillDir =
-          this.ctx.config.skills?.directories?.[0] || join(this.ctx.cwd ?? process.cwd(), "skills");
-        const filePath = await this.ctx.forgeSynthesizer.saveSkill(
-          skillMd,
-          skillDir,
-        );
-
-        // Reindex skills after new skill added
-        if (this.skillInjector) {
-          this.skillInjector.reindex();
-        }
-
-        return mkResp(
-          `✅ **Skill generated from demonstration!**\n\n` +
-            `Steps recorded: ${recording.steps.length}\n` +
-            `Skill saved to: \`${filePath}\`\n\n` +
-            `The skill is now available for use.`,
-        );
-      } catch (err) {
-        return mkResp(
-          `Skill generation failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-
-    // /swarm — show swarm status
-    if (text.toLowerCase() === "/swarm" && this.ctx.swarmCoordinator) {
-      const status = this.ctx.swarmCoordinator.getSwarmStatus();
-      const nodeList = status.nodes
-        .map(
-          (n) =>
-            `  • **${n.name}** (${n.platform}) — ${n.status}, load: ${(n.currentLoad * 100).toFixed(0)}%, capabilities: ${n.capabilities.join(", ")}`,
-        )
-        .join("\n");
-      return mkResp(
-        `**🐝 Swarm Status**\n\n` +
-          `Nodes: ${status.nodes.length}\n` +
-          `Active tasks: ${status.activeTasks.length}\n` +
-          `Total completed: ${status.totalCompleted}\n\n` +
-          `**Nodes:**\n${nodeList}`,
-      );
-    }
-
-    // /tournament <category> — run a skill tournament
-    const tournMatch = text.match(/^\/tournament\s+(.+)$/i);
-    if (tournMatch && this.ctx.skillArena) {
-      const category = tournMatch[1].trim();
-      return mkResp(
-        `🏆 Tournament for category "${category}" queued.\n` +
-          `Use during quiet hours or run manually with the skill arena.`,
-      );
-    }
-
-    // /voice [on|off] — toggle voice output
-    const voiceMatch = text.match(/^\/voice\s*(on|off)?$/i);
-    if (voiceMatch && this.ctx.voiceAdapter) {
-      const toggle = voiceMatch[1]?.toLowerCase();
-      if (toggle === "on") {
-        return mkResp(
-          "🔊 Voice output enabled. Responses will be spoken aloud.",
-        );
-      } else if (toggle === "off") {
-        return mkResp("🔇 Voice output disabled.");
-      }
-      const available = this.ctx.voiceAdapter.isAvailable();
-      return mkResp(
-        `🎤 Voice status: ${available ? "Available" : "Not configured"}`,
-      );
-    }
-
-    // /knowledge — show knowledge graph stats
-    if (text.toLowerCase() === "/knowledge" && this.ctx.knowledgeGraph) {
-      const stats = this.ctx.knowledgeGraph.getStats();
-      const topNodes = stats.topNodes
-        .slice(0, 5)
-        .map((n) => `  • **${n.title}** (accessed ${n.accessCount}x)`)
-        .join("\n");
-      return mkResp(
-        `**🧠 Knowledge Graph**\n\n` +
-          `Nodes: ${stats.totalNodes}\n` +
-          `Edges: ${stats.totalEdges}\n` +
-          `Domains: ${stats.domains.join(", ") || "none"}\n` +
-          `Avg confidence: ${(stats.avgConfidence * 100).toFixed(0)}%\n\n` +
-          `**Most accessed:**\n${topNodes || "  (none yet)"}`,
-      );
-    }
-
-    // /predict — show predicted tasks
-    if (text.toLowerCase() === "/predict" && this.ctx.predictiveQueue) {
-      const presentation = this.ctx.predictiveQueue.formatForPresentation();
-      return mkResp(
-        presentation ||
-          "No predictions ready yet. I need more interaction history to identify patterns.",
-      );
-    }
-
-    // /echo-check — run echo chamber analysis
-    if (text.toLowerCase() === "/echo-check" && this.ctx.echoChamberDetector) {
-      const analysis = await this.ctx.echoChamberDetector.analyze();
-      if (analysis.detections.length === 0) {
-        return mkResp(
-          `**Echo Chamber Check** (${analysis.sessionCount} sessions)\n\n${analysis.overallAssessment}`,
-        );
-      }
-      const detectionList = analysis.detections
-        .map(
-          (d) =>
-            `  - **${d.bias.replace(/_/g, " ")}** (${(d.confidence * 100).toFixed(0)}%): ${d.evidence}`,
-        )
-        .join("\n");
-      return mkResp(
-        `**Echo Chamber Check** (${analysis.sessionCount} sessions)\n\n` +
-          `${analysis.overallAssessment}\n\n**Patterns:**\n${detectionList}`,
-      );
-    }
-
-    // /journal [weekly|monthly] — generate or view growth journal
-    const journalMatch = text.match(/^\/journal(?:\s+(weekly|monthly))?$/i);
-    if (journalMatch && this.ctx.journalGenerator) {
-      const period = (journalMatch[1] as "weekly" | "monthly") || "weekly";
-      const entry = await this.ctx.journalGenerator.generate(period);
-      return mkResp(entry.narrative);
-    }
-
-    // /quests — list active quests
-    if (text.toLowerCase() === "/quests" && this.ctx.questManager) {
-      const quests = await this.ctx.questManager.list();
-      if (quests.length === 0)
-        return mkResp("No active quests. Ask me to create one on any topic!");
-      const list = quests
-        .map((q) => {
-          const done = q.milestones.filter((m) => m.completed).length;
-          return `  - **${q.title}** [${q.status}] — ${done}/${q.milestones.length} milestones`;
-        })
-        .join("\n");
-      return mkResp(`**Your Quests:**\n${list}`);
-    }
-
-    // /capsules — list time capsules
-    if (text.toLowerCase() === "/capsules" && this.ctx.capsuleManager) {
-      const capsules = await this.ctx.capsuleManager.list();
-      if (capsules.length === 0)
-        return mkResp("No time capsules. Ask me to create one!");
-      const list = capsules
-        .map((c) => {
-          const icon = c.status === "sealed" ? "\uD83D\uDD12" : "\uD83D\uDCEC";
-          return `  ${icon} **${c.id}** [${c.status}] — created ${new Date(c.createdAt).toLocaleDateString()}`;
-        })
-        .join("\n");
-      return mkResp(`**Time Capsules:**\n${list}`);
-    }
-
-    // /constellations — show discovered patterns
-    if (
-      text.toLowerCase() === "/constellations" &&
-      this.ctx.constellationMiner
-    ) {
-      const constellations = await this.ctx.constellationMiner.list();
-      if (constellations.length === 0)
-        return mkResp(
-          "No constellations discovered yet. I need more pellets to find patterns.",
-        );
-      const list = constellations
-        .slice(0, 5)
-        .map((c) => this.ctx.constellationMiner!.format(c))
-        .join("\n\n---\n\n");
-      return mkResp(`**Discovered Constellations:**\n\n${list}`);
-    }
-
-    // /socratic [mode|off] — toggle Socratic mode
-    const socraticMatch = text.match(
-      /^\/socratic(?:\s+(pure|guided|reflective|devils_advocate|off))?$/i,
-    );
-    if (socraticMatch && this.ctx.socraticEngine) {
-      const mode = socraticMatch[1]?.toLowerCase();
-      if (mode === "off") {
-        const ended = this.ctx.socraticEngine.deactivate(message.sessionId);
-        if (ended) {
-          return mkResp(
-            `Socratic mode **deactivated** after ${ended.exchangeCount} exchanges.`,
-          );
-        }
-        return mkResp("Socratic mode was not active.");
-      }
-      const subMode = (mode as any) || "guided";
-      this.ctx.socraticEngine.activate(message.sessionId, subMode);
-      return mkResp(
-        `Socratic mode **activated** (${subMode}).\n\n` +
-          `I will now respond primarily with questions to help you think deeper.\n` +
-          `Use \`/socratic off\` to return to normal mode.`,
-      );
-    }
-
-    // /council [topic1, topic2, ...] — convene a Knowledge Council
-    if (
-      text.toLowerCase().startsWith("/council") &&
-      this.ctx.knowledgeCouncil
-    ) {
-      const topicsArg = text.slice(8).trim();
-      const topics = topicsArg
-        ? topicsArg
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean)
-        : undefined;
-
-      try {
-        const session = await this.ctx.knowledgeCouncil.convene(
-          topics,
-          _callbacks.onProgress,
-        );
-        return mkResp(session.summary ?? "Knowledge Council session complete.");
-      } catch (err) {
-        return mkResp(
-          `Failed to convene Knowledge Council: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-
-    // /council-history — show past council sessions
-    if (
-      text.toLowerCase() === "/council-history" &&
-      this.ctx.knowledgeCouncil
-    ) {
-      return mkResp(this.ctx.knowledgeCouncil.getHistorySummary());
-    }
-
-    // ── Agent Watch commands ──────────────────────────────────
-    const mkHtml = (content: string): GatewayResponse => ({
-      content,
-      owlName: owl.persona.name,
-      owlEmoji: owl.persona.emoji,
-      toolsUsed: [],
-      preformatted: true,
-    });
-
-    // "watch my claude code" / "watch my opencode [port N]" / "watch" → register
-    if (/^(\/watch|watch(\s+(my\s+)?(claude[\s-]*(code)?|opencode|agent|coding\s+agent))?)(\s+port\s+\d+)?$/i.test(text)) {
-      if (!this.agentWatch) {
-        return mkResp("Agent Watch is not enabled. Start StackOwl with agent watch support.");
-      }
-      const isOpenCode = /opencode/i.test(text);
-      const agentType = isOpenCode ? "opencode" : "claude-code";
-      const portMatch = text.match(/port\s+(\d+)/i);
-      const port = portMatch ? parseInt(portMatch[1]!, 10) : undefined;
-      const reg = await this.agentWatch.registerUser(
-        message.userId,
-        message.channelId,
-        agentType as import("../agent-watch/formatters/telegram.js").AgentType,
-        port,
-      );
-      return mkHtml(reg.telegramMessage);
-    }
-
-    // "unwatch" / "/unwatch" → stop watching all sessions for this user
-    if (/^\/?(unwatch|stop watching|stop watch)$/i.test(text)) {
-      if (!this.agentWatch) return mkResp("Agent Watch is not enabled.");
-      const count = await this.agentWatch.unwatchUser(message.userId);
-      return mkResp(
-        count > 0
-          ? `👁 Stopped watching ${count} session(s).`
-          : "No active watch sessions for you.",
-      );
-    }
-
-    // "watch status" / "/watch status"
-    if (/^\/?(watch\s+status|agent\s+status)$/i.test(text)) {
-      if (!this.agentWatch) return mkResp("Agent Watch is not enabled.");
-      const st = this.agentWatch.getStatus();
-      return mkHtml(
-        [
-          `👁 <b>Agent Watch</b>`,
-          `Active sessions: ${st.activeSessions}`,
-          `Pending decisions: ${st.pendingQuestions}`,
-        ].join("\n"),
-      );
-    }
-
-    return null;
   }
 
   // ─── Private: Auto-Parliament ────────────────────────────────

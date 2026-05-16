@@ -413,4 +413,7 @@ export interface GatewayContext {
 
   /** Absolute path to the synthesized tools/skills directory. Pre-resolved at bootstrap. */
   synthesizedDir?: string;
+
+  /** Optional pre-constructed FeatureCommandRouter — OwlGateway creates one if absent */
+  featureCommandRouter?: import("./feature-command-router.js").IFeatureCommandRouter;
 }
