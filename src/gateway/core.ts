@@ -1395,6 +1395,12 @@ export class OwlGateway {
       }
     }
 
+    // ─── Natural-language watch commands ──────────────────────────
+    // These are not slash commands and will never be caught by the feature router's
+    // slash-only extractCommand(). Handle them here before router dispatch.
+    const natLangWatchResult = await this.handleNaturalLanguageWatchCommands(message);
+    if (natLangWatchResult) return natLangWatchResult;
+
     // ─── New Feature Commands ──────────────────────────────────
     const featureCmdCtx: import("./feature-command-router.js").FeatureCommandContext = {
       message,
@@ -1405,6 +1411,7 @@ export class OwlGateway {
       sessionManager: this.sessionManager,
       agentWatch: this.agentWatch,
       skillInjector: this.skillInjector,
+      callbacks,
     };
     const featureResult = await this.featureRouter.dispatch(message.text, featureCmdCtx);
     if (featureResult) return featureResult;
@@ -3409,6 +3416,97 @@ export class OwlGateway {
   }
 
   // ─── Private: Auto-Parliament ────────────────────────────────
+
+  // ─── Private: Natural-Language Watch Commands ─────────────────
+
+  /**
+   * Handle natural-language watch/unwatch commands that do not start with `/`
+   * and therefore cannot be dispatched by the slash-only FeatureCommandRouter.
+   *
+   * Patterns handled:
+   *   "watch my claude code"  / "watch"  / "watch my opencode [port N]"
+   *   "unwatch" / "stop watching" / "stop watch"
+   *   "watch status" / "agent status"
+   */
+  private async handleNaturalLanguageWatchCommands(
+    message: GatewayMessage,
+  ): Promise<GatewayResponse | null> {
+    const text = message.text.trim();
+    // Only handle inputs that do NOT start with `/` — slash versions are dispatched via MiscCommandHandler
+    if (text.startsWith("/")) return null;
+
+    const owl = this.ctx.owl;
+    const mkResp = (content: string): GatewayResponse => ({
+      content,
+      owlName: owl.persona.name,
+      owlEmoji: owl.persona.emoji,
+      toolsUsed: [],
+    });
+    const mkHtml = (content: string): GatewayResponse => ({
+      content,
+      owlName: owl.persona.name,
+      owlEmoji: owl.persona.emoji,
+      toolsUsed: [],
+      preformatted: true,
+    });
+
+    // "watch my claude code" / "watch my opencode [port N]" / "watch" → register
+    if (/^watch(\s+(my\s+)?(claude[\s-]*(code)?|opencode|agent|coding\s+agent))?(\s+port\s+\d+)?$/i.test(text)) {
+      log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: watch register", { text });
+      if (!this.agentWatch) {
+        log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: exit — agent watch not enabled");
+        return mkResp("Agent Watch is not enabled. Start StackOwl with agent watch support.");
+      }
+      const isOpenCode = /opencode/i.test(text);
+      const agentType = isOpenCode ? "opencode" : "claude-code";
+      const portMatch = text.match(/port\s+(\d+)/i);
+      const port = portMatch ? parseInt(portMatch[1]!, 10) : undefined;
+      const reg = await this.agentWatch.registerUser(
+        message.userId,
+        message.channelId,
+        agentType as import("../agent-watch/formatters/telegram.js").AgentType,
+        port,
+      );
+      log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: exit — watch registered");
+      return mkHtml(reg.telegramMessage);
+    }
+
+    // "unwatch" / "stop watching" / "stop watch" → unwatch all sessions for this user
+    if (/^(unwatch|stop watching|stop watch)$/i.test(text)) {
+      log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: unwatch", { text });
+      if (!this.agentWatch) {
+        log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: exit — agent watch not enabled");
+        return mkResp("Agent Watch is not enabled.");
+      }
+      const count = await this.agentWatch.unwatchUser(message.userId);
+      log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: exit — unwatched", { count });
+      return mkResp(
+        count > 0
+          ? `👁 Stopped watching ${count} session(s).`
+          : "No active watch sessions for you.",
+      );
+    }
+
+    // "watch status" / "agent status" → show watch status
+    if (/^(watch\s+status|agent\s+status)$/i.test(text)) {
+      log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: watch status", { text });
+      if (!this.agentWatch) {
+        log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: exit — agent watch not enabled");
+        return mkResp("Agent Watch is not enabled.");
+      }
+      const st = this.agentWatch.getStatus();
+      log.gateway.debug("GatewayCore.handleNaturalLanguageWatchCommands: exit — status returned");
+      return mkHtml(
+        [
+          `👁 <b>Agent Watch</b>`,
+          `Active sessions: ${st.activeSessions}`,
+          `Pending decisions: ${st.pendingQuestions}`,
+        ].join("\n"),
+      );
+    }
+
+    return null;
+  }
 
   // ─── Private: Explicit Learning Request ──────────────────────
 

@@ -1,5 +1,5 @@
 import { log } from "../logger.js";
-import type { GatewayResponse, GatewayMessage } from "./types.js";
+import type { GatewayResponse, GatewayMessage, GatewayCallbacks } from "./types.js";
 import type { Session } from "../memory/store.js";
 
 export interface FeatureCommandContext {
@@ -11,6 +11,7 @@ export interface FeatureCommandContext {
   sessionManager: import("./session-manager.js").ISessionManager;
   agentWatch: import("../agent-watch/index.js").AgentWatchManager | null;
   skillInjector: import("../skills/injector.js").SkillContextInjector | null;
+  callbacks: GatewayCallbacks;
 }
 
 export interface IFeatureCommandHandler {

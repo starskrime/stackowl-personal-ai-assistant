@@ -318,7 +318,7 @@ export class MiscCommandHandler implements IFeatureCommandHandler {
       try {
         const session = await ctx.gatewayCtx.knowledgeCouncil.convene(
           topics,
-          undefined,
+          ctx.callbacks.onProgress,
         );
         const result = mkResp(session.summary ?? "Knowledge Council session complete.");
         log.gateway.debug("MiscCommandHandler.handle: exit", { cmd });
@@ -342,8 +342,10 @@ export class MiscCommandHandler implements IFeatureCommandHandler {
       return result;
     }
 
-    // "watch my claude code" / "watch my opencode [port N]" / "watch" → register
-    if (/^(\/watch|watch(\s+(my\s+)?(claude[\s-]*(code)?|opencode|agent|coding\s+agent))?)(\s+port\s+\d+)?$/i.test(text)) {
+    // /watch [my claude code|my opencode [port N]] — register via slash command
+    // Natural-language variants ("watch my claude code", etc.) are handled by
+    // GatewayCore.handleNaturalLanguageWatchCommands() before router dispatch.
+    if (/^\/watch(\s+(my\s+)?(claude[\s-]*(code)?|opencode|agent|coding\s+agent))?(\s+port\s+\d+)?$/i.test(text)) {
       log.gateway.debug("MiscCommandHandler.handle: watch register", { cmd });
       if (!ctx.agentWatch) {
         log.gateway.debug("MiscCommandHandler.handle: exit — agent watch not enabled", { cmd });
@@ -364,8 +366,9 @@ export class MiscCommandHandler implements IFeatureCommandHandler {
       return result;
     }
 
-    // "unwatch" / "/unwatch" → stop watching all sessions for this user
-    if (/^\/?(unwatch|stop watching|stop watch)$/i.test(text)) {
+    // /unwatch — stop watching all sessions for this user (slash-command form only)
+    // Natural-language "unwatch" / "stop watching" / "stop watch" handled in core.ts.
+    if (/^\/unwatch$/i.test(text)) {
       log.gateway.debug("MiscCommandHandler.handle: unwatch", { cmd });
       if (!ctx.agentWatch) {
         log.gateway.debug("MiscCommandHandler.handle: exit — agent watch not enabled", { cmd });
@@ -381,8 +384,9 @@ export class MiscCommandHandler implements IFeatureCommandHandler {
       return result;
     }
 
-    // "watch status" / "/watch status"
-    if (/^\/?(watch\s+status|agent\s+status)$/i.test(text)) {
+    // /watch status — slash-command form only
+    // Natural-language "watch status" / "agent status" handled in core.ts.
+    if (/^\/watch\s+status$/i.test(text)) {
       log.gateway.debug("MiscCommandHandler.handle: watch status", { cmd });
       if (!ctx.agentWatch) {
         log.gateway.debug("MiscCommandHandler.handle: exit — agent watch not enabled", { cmd });
