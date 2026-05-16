@@ -29,8 +29,6 @@ import { TelegramRootMenu } from "./telegram-menu/index.js";
 import { saveConfig } from "../../config/loader.js";
 import { TelegramProgressNotifier, type TelegramApi } from "../../progress/notifiers/telegram.js";
 import { pickRandomPhrase } from "../../shared/progress.js";
-import { McpCommandRouter } from "../commands/mcp-router.js";
-import { dispatchMemoryCommand } from "../commands/memory-router.js";
 import { OggConverter } from "../../voice/ogg-converter.js";
 import { WhisperSTT } from "../../voice/stt.js";
 import { formatToolEvent } from "../narration-formatter.js";
@@ -317,35 +315,26 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.command("config", async (ctx) => {
       if (!this.isAllowed(ctx)) return;
       this.trackChat(ctx.chat.id);
-
       const rawArgs = ctx.match?.trim() ?? "";
       if (rawArgs) {
-        // Route text args through the universal registry
-        const { dispatchCoreCommand } = await import("../commands/core-dispatcher.js");
-        const { renderForTelegram } = await import("../commands/channel-renderer.js");
-        const coreCtx = {
-          getOwlGateway: () => this.gateway,
-          getMemoryRepo:  () => this.gateway.getMemoryRepo()!,
-          getMcpManager:  () => this.gateway.getMcpManager()!,
-        };
-        try {
-          const { result, panelFallback } = await dispatchCoreCommand(`/config ${rawArgs}`, coreCtx);
-          if (panelFallback) {
-            // Fall through to interactive menu for panel-producing commands
-            await this.configMenu.handleCommand(ctx);
-            return;
-          }
-          const text = renderForTelegram(result);
-          if (text) await ctx.reply(text, { parse_mode: "MarkdownV2" }).catch(() => ctx.reply(text));
-        } catch (err) {
-          log.telegram.error("telegram.config: dispatch failed", err as Error);
-          await ctx.reply("❌ Config command failed. Check logs.").catch(() => {});
-        }
+        await this.dispatchRegistryCommand(ctx, `/config ${rawArgs}`, () => this.configMenu.handleCommand(ctx));
         return;
       }
-
-      // Bare /config — show interactive menu
       await this.configMenu.handleCommand(ctx);
+    });
+
+    // ── /mcp — MCP server management via universal registry ─────────────────
+    this.bot.command("mcp", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      const rawArgs = ctx.match?.trim() ?? "";
+      await this.dispatchRegistryCommand(ctx, `/mcp${rawArgs ? ` ${rawArgs}` : " list"}`);
+    });
+
+    // ── /memory — memory management via universal registry ───────────────────
+    this.bot.command("memory", async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      const rawArgs = ctx.match?.trim() ?? "";
+      await this.dispatchRegistryCommand(ctx, `/memory${rawArgs ? ` ${rawArgs}` : " list"}`);
     });
 
     // ── /voice — Interactive voice settings ─────────────────────
@@ -405,62 +394,6 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // ── /mcp — MCP server management (delegated to McpCommandRouter) ─────
-    this.bot.command("mcp", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-
-      const mcpManager = this.gateway.getMcpManager();
-      const toolRegistry = this.gateway.getToolRegistry();
-
-      if (!mcpManager || !toolRegistry) {
-        await ctx.reply("⚠️ MCP manager is not available.");
-        return;
-      }
-
-      const rawArgs = ctx.match?.trim() ?? "";
-      const parts = rawArgs.split(/\s+/).filter(Boolean);
-      const verb = parts[0] || "status";
-      const verbArgs = parts.slice(1);
-
-      const config = this.gateway.getConfig();
-      const basePath = this.gateway.getWorkspacePath();
-
-      try {
-        const result = await McpCommandRouter.dispatch(verb, verbArgs, {
-          mcpManager,
-          toolRegistry,
-          config,
-          basePath,
-          saveConfig,
-        });
-        const escaped = result.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        await ctx.reply(escaped, { parse_mode: "HTML" });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await ctx.reply(`❌ MCP error: <code>${msg}</code>`, { parse_mode: "HTML" });
-      }
-    });
-
-    // ── /memory — channel-parity dispatcher (same router as CLI) ──────
-    this.bot.command("memory", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      const repo = this.gateway.getMemoryRepo();
-      if (!repo) {
-        await ctx.reply("⚠️ Memory repository is not available.");
-        return;
-      }
-      const rawArgs = ctx.match?.trim() ?? "";
-      const parts = rawArgs.split(/\s+/).filter(Boolean);
-      const verb = parts[0] || "list";
-      const verbArgs = parts.slice(1);
-      try {
-        const result = await dispatchMemoryCommand(verb, verbArgs, { repo });
-        await this.sendChunked(ctx.chat.id, result);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await ctx.reply(`❌ Memory error: <code>${msg}</code>`, { parse_mode: "HTML" });
-      }
-    });
 
     // ── /owl — full owl management (list/show/create/from-bmad/delete/pin/unpin/status) ──
     this.bot.command("owl", async (ctx) => {
@@ -1474,6 +1407,31 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   // ─── Helpers ─────────────────────────────────────────────────
+
+  /**
+   * Route a slash-command string through the universal registry.
+   * On panel fallback, calls panelFallback() if provided; otherwise replies with the fallback text.
+   */
+  private async dispatchRegistryCommand(
+    ctx: Context,
+    command: string,
+    panelFallback?: () => Promise<void>,
+  ): Promise<void> {
+    const { dispatchCoreCommand, buildCoreCtx } = await import("../commands/core-dispatcher.js");
+    const { renderForTelegram } = await import("../commands/channel-renderer.js");
+    try {
+      const { result, panelFallback: isPanel } = await dispatchCoreCommand(command, buildCoreCtx(this.gateway));
+      if (isPanel && panelFallback) {
+        await panelFallback();
+        return;
+      }
+      const text = renderForTelegram(result);
+      if (text) await ctx.reply(text, { parse_mode: "MarkdownV2" }).catch(() => ctx.reply(text));
+    } catch (err) {
+      log.telegram.error(`telegram.registry: dispatch failed for "${command}"`, err as Error);
+      await ctx.reply("❌ Command failed\\. Check logs\\.").catch(() => {});
+    }
+  }
 
   private isAllowed(ctx: Context): boolean {
     const userId = ctx.from?.id;

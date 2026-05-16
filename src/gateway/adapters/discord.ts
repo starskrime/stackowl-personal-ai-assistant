@@ -140,6 +140,28 @@ export class DiscordAdapter implements ChannelAdapter {
       // Ignore bot messages (including our own)
       if (message.author?.bot) return;
 
+      // ── Slash-command interception (registry commands) ────────────────────
+      const rawText = message.content?.trim() ?? "";
+      const REGISTRY_COMMANDS = ["/config", "/mcp", "/memory"];
+      const matchedCmd = REGISTRY_COMMANDS.find((c) => rawText === c || rawText.startsWith(`${c} `));
+      if (matchedCmd) {
+        log.discord.debug("messageCreate: registry command intercept", { cmd: matchedCmd });
+        const { dispatchCoreCommand, buildCoreCtx } = await import("../../gateway/commands/core-dispatcher.js");
+        const { renderAsPlainText } = await import("../../gateway/commands/channel-renderer.js");
+        try {
+          const { result } = await dispatchCoreCommand(rawText, buildCoreCtx(gateway));
+          const text = renderAsPlainText(result) || "✓";
+          const chunks = this.chunkText(text);
+          const channel = message.channel as TextChannel | DMChannel;
+          for (const chunk of chunks) await channel.send(chunk);
+        } catch (err) {
+          log.discord.error("messageCreate: registry command failed", err as Error, { cmd: matchedCmd });
+          const channel = message.channel as TextChannel | DMChannel;
+          await channel.send(`Error: ${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+        }
+        return;
+      }
+
       const normalized = this.normalizeMessage(message);
       if (!normalized) {
         log.discord.debug("messageCreate: normalizeMessage returned null — skipping");

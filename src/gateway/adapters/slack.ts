@@ -402,6 +402,44 @@ export class SlackAdapter implements ChannelAdapter {
       }
     });
 
+    // ── Universal registry commands ────────────────────────────────────────
+    const registryCommand = async (
+      cmd: string,
+      respond: (r: { text: string }) => Promise<void>,
+    ) => {
+      const { dispatchCoreCommand, buildCoreCtx } = await import("../../gateway/commands/core-dispatcher.js");
+      const { renderAsPlainText } = await import("../../gateway/commands/channel-renderer.js");
+      try {
+        const { result } = await dispatchCoreCommand(cmd, buildCoreCtx(this.gateway));
+        await respond({ text: renderAsPlainText(result) || "✓" });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.gateway.error(`slack.registry: dispatch failed for "${cmd}"`, err);
+        await respond({ text: `Error: ${msg}` });
+      }
+    };
+
+    this.app.command("/config", async ({ ack, respond, command }) => {
+      await ack();
+      log.gateway.debug("slack.config: entry", { text: command.text });
+      const text = command.text?.trim() ?? "";
+      await registryCommand(`/config${text ? ` ${text}` : " show"}`, respond);
+    });
+
+    this.app.command("/mcp", async ({ ack, respond, command }) => {
+      await ack();
+      log.gateway.debug("slack.mcp: entry", { text: command.text });
+      const text = command.text?.trim() ?? "";
+      await registryCommand(`/mcp${text ? ` ${text}` : " list"}`, respond);
+    });
+
+    this.app.command("/memory", async ({ ack, respond, command }) => {
+      await ack();
+      log.gateway.debug("slack.memory: entry", { text: command.text });
+      const text = command.text?.trim() ?? "";
+      await registryCommand(`/memory${text ? ` ${text}` : " list"}`, respond);
+    });
+
   }
 
   // ─── Streaming (edit-in-place) ──────────────────────────────────

@@ -1,5 +1,5 @@
 /**
- * Channel-agnostic command dispatcher.
+ * Channel-agnostic command dispatcher and context factory.
  *
  * Any channel adapter (Telegram, Slack, Discord, …) can use this to invoke
  * any registered command without needing a TUI CommandContext.  Handlers that
@@ -9,7 +9,21 @@
 
 import { resolveCommand } from "../../cli/v2/commands/registry.js";
 import type { CoreCommandContext, CoreCommandResult, CommandContext } from "../../cli/v2/commands/registry.js";
+import type { OwlGateway } from "../core.js";
 import { log } from "../../logger.js";
+
+/**
+ * Build a CoreCommandContext from an OwlGateway.
+ * Use this in every channel adapter — it's the single source of truth
+ * for creating a channel-agnostic context.
+ */
+export function buildCoreCtx(gateway: OwlGateway): CoreCommandContext {
+  return {
+    getOwlGateway: () => gateway,
+    getMemoryRepo:  () => gateway.getMemoryRepo()!,
+    getMcpManager:  () => gateway.getMcpManager()!,
+  };
+}
 
 /**
  * Build a CommandContext from a CoreCommandContext by attaching no-op TUI stubs.
