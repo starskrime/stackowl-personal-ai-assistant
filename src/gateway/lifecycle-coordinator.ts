@@ -23,6 +23,7 @@ export class LifecycleCoordinator implements ILifecycleCoordinator {
   register(name: string, cb: () => Promise<void>): void {
     log.gateway.debug("LifecycleCoordinator.register: entry", { name });
     this.callbacks.set(name, cb);
+    log.gateway.debug("LifecycleCoordinator.register: exit", { name, totalCallbacks: this.callbacks.size });
   }
 
   startTimer(name: string, intervalMs: number, fn: () => Promise<void>): void {
