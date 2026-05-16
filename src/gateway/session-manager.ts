@@ -30,6 +30,9 @@ export interface ISessionManager {
   invalidate(sessionId: string): void;
   evictStale(): void;
   getActiveCount(): number;
+  getStaleIds(now: number): string[];
+  getCached(sessionId: string): { session: Session; lastActivity: number } | undefined;
+  entries(): IterableIterator<[string, { session: Session; lastActivity: number }]>;
 }
 
 // ─── Implementation ──────────────────────────────────────────────
@@ -168,6 +171,23 @@ export class SessionManager implements ISessionManager {
    */
   getCached(sessionId: string): { session: Session; lastActivity: number } | undefined {
     return this.cache.get(sessionId);
+  }
+
+  /**
+   * Return the keys of sessions that would be evicted (are expired) without
+   * deleting them. Used by OwlGateway.evictStaleSessions() to run per-session
+   * side effects before handing off actual cache deletion to evictStale().
+   */
+  getStaleIds(now: number): string[] {
+    log.gateway.debug("SessionManager.getStaleIds: entry", { cacheSize: this.cache.size, now });
+    const stale: string[] = [];
+    for (const [key, entry] of this.cache) {
+      if (now - entry.lastActivity > SESSION_TIMEOUT_MS) {
+        stale.push(key);
+      }
+    }
+    log.gateway.debug("SessionManager.getStaleIds: exit", { staleCount: stale.length });
+    return stale;
   }
 
   /**

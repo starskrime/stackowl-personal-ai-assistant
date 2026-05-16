@@ -2740,7 +2740,7 @@ export class OwlGateway {
    * Call this when a user explicitly ends their session (/quit in CLI).
    */
   async endSession(sessionId: string): Promise<void> {
-    const cache = (this.sessionManager as SessionManager).getCached(sessionId);
+    const cache = this.sessionManager.getCached(sessionId);
     if (!cache) return;
 
     const messages = cache.session.messages;
@@ -4171,6 +4171,41 @@ export class OwlGateway {
    * Also prunes attempt logs so we don't accumulate memory for dead sessions.
    */
   private evictStaleSessions(): void {
+    const now = Date.now();
+    const staleIds = this.sessionManager.getStaleIds(now);
+    const activeIds = new Set<string>();
+
+    // Collect active ids for attemptLogs pruning
+    for (const [key] of this.sessionManager.entries()) {
+      if (!staleIds.includes(key)) activeIds.add(key);
+    }
+
+    for (const key of staleIds) {
+      const cached = this.sessionManager.getCached(key);
+      if (cached && cached.session.messages.length >= 2) {
+        this.endSession(key).catch((err) => {
+          log.engine.warn(
+            `[session-evict] endSession failed for "${key}": ${err instanceof Error ? err.message : err}`,
+          );
+        });
+      }
+      this.ctx.sessionService?.evictFromCache(key);
+      this.stuckStreak.delete(key);
+      this.attemptLogs.delete(key);
+      log.engine.info(
+        `[session-evict] Evicted stale session "${key}" (endSession triggered)`,
+      );
+    }
+
+    this.attemptLogs.pruneStale(activeIds);
+
+    // Evict pending feedback older than 24 hours
+    const FEEDBACK_TTL = 24 * 60 * 60 * 1000;
+    for (const [id, fb] of this.pendingFeedback) {
+      if (now - fb.createdAt > FEEDBACK_TTL) this.pendingFeedback.delete(id);
+    }
+
+    // Delete stale entries from the session cache
     this.sessionManager.evictStale();
   }
 
