@@ -47,6 +47,8 @@ export class CliAdapter implements ChannelAdapter {
   private _progressNotifier!: TuiProgressNotifier;
   /** Proactive pinger — records CLI engagement after heartbeat deliveries. */
   private _pinger: ProactivePinger | null = null;
+  /** Set by stop() to gate the onDeliver handler after the adapter is torn down. */
+  private _stopped = false;
   private _lastDeliveryId: string | null = null;
   private _lastDeliveryJobType: string = "";
   private _lastDeliveryAt: number = 0;
@@ -65,7 +67,9 @@ export class CliAdapter implements ChannelAdapter {
     gateway.getProgressManager().register(this._progressNotifier);
 
     // Track proactive deliveries so the next submitMessage() can record engagement.
+    // Note: GatewayEventBus has no offDeliver API, so we guard with _stopped instead.
     gateway.gatewayEventBus.onDeliver(async (env) => {
+      if (this._stopped) return;
       if (env.urgency === "proactive" && env.deliveryId) {
         this._lastDeliveryId = env.deliveryId;
         this._lastDeliveryJobType = env.jobType ?? "unknown";
@@ -135,6 +139,7 @@ export class CliAdapter implements ChannelAdapter {
   }
 
   stop(): void {
+    this._stopped = true;
     this._gateway.getProgressManager().unregister(this._progressNotifier);
     this._quitResolve?.();
     this._quitResolve = null;
