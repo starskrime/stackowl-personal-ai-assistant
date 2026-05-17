@@ -44,7 +44,7 @@ export class SignalPool {
   /** Tracks when each signal was last sent to the LLM verifier. */
   private _lastVerifiedAt = new Map<string, number>();
   /** Cooldown between re-verification of the same signal (10 minutes). */
-  private readonly VERIFY_COOLDOWN_MS = 10 * 60_000;
+  private static readonly VERIFY_COOLDOWN_MS = 10 * 60_000;
 
   constructor(private readonly deps: SignalPoolDeps) {}
 
@@ -192,6 +192,9 @@ export class SignalPool {
   }
 
   async heartbeatTick(): Promise<void> {
+    log.engine.debug("[SignalPool] heartbeatTick: entry", {
+      signalCount: this.signals.size,
+    });
     try {
       const now = Date.now();
       for (const [id, s] of this.signals) {
@@ -207,6 +210,7 @@ export class SignalPool {
       }
       const goal = this.deps.goalGraph.getTopPriority();
       if (!goal) return;
+      const poolSize = this.signals.size;
       const candidates = [...this.signals.values()]
         .filter(
           (s) =>
@@ -215,10 +219,20 @@ export class SignalPool {
         )
         .filter((s) => {
           const lastVerified = this._lastVerifiedAt.get(s.id) ?? 0;
-          return now - lastVerified >= this.VERIFY_COOLDOWN_MS;
+          return now - lastVerified >= SignalPool.VERIFY_COOLDOWN_MS;
         })
         .slice(0, 5);
+      log.engine.debug("[SignalPool] heartbeatTick: candidates selected", {
+        total: poolSize,
+        candidates: candidates.length,
+        skippedCooldown: poolSize - candidates.length,
+      });
       for (const s of candidates) {
+        log.engine.debug("[SignalPool] heartbeatTick: verifying signal", {
+          id: s.id,
+          source: s.source,
+          priority: s.priority,
+        });
         try {
           this._lastVerifiedAt.set(s.id, now);
           const result = await this.deps.verifier.verify(
@@ -235,8 +249,13 @@ export class SignalPool {
           log.engine.warn(
             `[SignalPool] heartbeat verify failed: ${(err as Error).message}`,
           );
+          // Roll back the timestamp so the signal can be retried on the next tick.
+          this._lastVerifiedAt.delete(s.id);
         }
       }
+      log.engine.debug("[SignalPool] heartbeatTick: exit", {
+        verified: candidates.length,
+      });
     } catch (err) {
       log.engine.warn(
         `[SignalPool] heartbeatTick uncaught: ${(err as Error).message}`,
@@ -291,6 +310,7 @@ export class SignalPool {
     while (sorted.length > max) {
       const evicted = sorted.shift()!;
       this.signals.delete(evicted.id);
+      this._lastVerifiedAt.delete(evicted.id);
       this.deps.bus.emit({
         type: "signal:expired",
         signal: evicted,
