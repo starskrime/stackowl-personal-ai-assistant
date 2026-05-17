@@ -193,13 +193,7 @@ export class TelegramCommandRouter implements ChannelCommandRouter {
 
     try {
       log.telegram.debug("TelegramCommandRouter.dispatchRegistryCommand: invoking dispatchCoreCommand", { command });
-      const { result, panelFallback } = await dispatchCoreCommand(command, buildCoreCtx(this.gateway));
-
-      if (panelFallback) {
-        log.telegram.debug("TelegramCommandRouter.dispatchRegistryCommand: panel fallback", { command });
-        await ctx.reply("ℹ️ This command requires the interactive TUI\\. Run StackOwl in CLI mode\\.").catch(() => {});
-        return;
-      }
+      const { result } = await dispatchCoreCommand(command, buildCoreCtx(this.gateway));
 
       const text = renderForTelegram(result);
       log.telegram.debug("TelegramCommandRouter.dispatchRegistryCommand: exit", {
