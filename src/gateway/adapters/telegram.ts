@@ -19,8 +19,7 @@ import { existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { ProactivePinger } from "../../heartbeat/proactive.js";
 import { log } from "../../logger.js";
-import { makeSessionId, makeMessageId, makeMessage, OwlGateway } from "../core.js";
-import type { StreamEvent } from "../../providers/base.js";
+import { makeSessionId, makeMessage, OwlGateway } from "../core.js";
 import type { ChannelAdapter, GatewayResponse } from "../types.js";
 import { convertTables } from "../formatters/table-converter.js";
 import { TelegramConfigMenu } from "./telegram-config/menu.js";
@@ -33,6 +32,10 @@ import { OggConverter } from "../../voice/ogg-converter.js";
 import { WhisperSTT } from "../../voice/stt.js";
 import { formatToolEvent } from "../narration-formatter.js";
 import type { GatewayEventBus, GatewaySystemEvent } from "../event-bus.js";
+import { TelegramCommandRouter } from "./telegram/command-router.js";
+import { TelegramCallbackRouter } from "./telegram/callback-router.js";
+import { TelegramStreamHandler } from "./telegram/stream-handler.js";
+import { SessionStore } from "./telegram/session-store.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -63,12 +66,15 @@ export class TelegramAdapter implements ChannelAdapter {
   /** Exposes the wired ProactivePinger so other adapters can share it. */
   getPinger(): ProactivePinger | null { return this.pinger; }
   private _backgroundWorker: import("../../agent/background-worker.js").BackgroundWorker | null = null;
-  private activeChatIds: Set<number> = new Set();
-  private userState: Map<number, UserState> = new Map();
+  private readonly activeChatIds: Set<number> = new Set();
+  /** Per-user state with 48h TTL — replaces the raw Map to fix the memory leak. */
+  private readonly userStateStore = new SessionStore<UserState>({ ttlMs: 48 * 60 * 60 * 1000, cleanupIntervalMs: 60 * 60 * 1000 });
   private chatIdsPath: string;
   private processedUpdates = new Map<string, number>();
   private updateCleanupInterval: ReturnType<typeof setInterval> | null = null;
-  private userToChatId: Map<string, number> = new Map();
+  private readonly userToChatId: Map<string, number> = new Map();
+  /** Command router — stored as field so start() can call updateBotMenu(). */
+  private commandRouter!: TelegramCommandRouter;
   /** Interactive /config menu controller (public for web form token delegation) */
   public configMenu: TelegramConfigMenu;
   /** Interactive /voice menu controller */
@@ -186,17 +192,10 @@ export class TelegramAdapter implements ChannelAdapter {
       `Owl: ${this.gateway.getOwl().persona.emoji} ${this.gateway.getOwl().persona.name}`,
     );
 
-    await this.bot.api.setMyCommands([
-      { command: "menu",   description: "Open control panel" },
-      { command: "status", description: "Current owl & model" },
-      { command: "config", description: "AI provider & model" },
-      { command: "voice",  description: "Voice settings" },
-      { command: "skills", description: "Manage skills" },
-      { command: "mcp",    description: "MCP servers" },
-      { command: "memory", description: "Memory management" },
-      { command: "owl",    description: "Owl personas" },
-      { command: "reset",  description: "Clear session" },
-    ]).catch(err => log.telegram.warn(`setMyCommands failed: ${err instanceof Error ? err.message : err}`));
+    // Bot menu is now driven by REGISTRY via TelegramCommandRouter.updateBotMenu().
+    // This replaces the hardcoded setMyCommands list — any new command added to
+    // REGISTRY automatically appears in Telegram's bot menu without adapter changes.
+    await this.commandRouter.updateBotMenu(this.bot);
 
     await this.bot.api.setChatMenuButton({
       menu_button: { type: "commands" },
@@ -227,6 +226,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
   stop(): void {
     this.pinger?.stop();
+    this.userStateStore.destroy();
     this.bot.stop();
     if (this.updateCleanupInterval) {
       clearInterval(this.updateCleanupInterval);
@@ -280,206 +280,93 @@ export class TelegramAdapter implements ChannelAdapter {
   // ─── Bot handlers ─────────────────────────────────────────────
 
   private setupHandlers(): void {
-    const owl = this.gateway.getOwl();
+    log.telegram.debug("telegram.setupHandlers: entry");
 
-    this.bot.command("start", async (ctx) => {
+    // ─── 1. Global auth middleware ──────────────────────────────
+    this.bot.use(async (ctx, next) => {
       if (!this.isAllowed(ctx)) return;
-      this.trackChat(ctx.chat.id);
-      const { Keyboard } = await import("grammy");
-      const persistentKeyboard = new Keyboard()
-        .text("🎛 Menu").text("📊 Status")
-        .row()
-        .text("🦉 Owls").text("⚙️ Settings")
-        .resized()
-        .persistent();
-      await ctx.reply(
-        `${owl.persona.emoji} *${this.esc(owl.persona.name)}* reporting for duty\\!\n\n` +
-          `I'm your personal AI assistant\\. Talk to me naturally — I'll handle the rest\\. 🦉\n\n` +
-          `Use the buttons below or tap ☰ for all commands\\.`,
-        {
-          parse_mode: "MarkdownV2",
-          reply_markup: persistentKeyboard,
+      return next();
+    });
+
+    // ─── 2. Command routing via REGISTRY + special-case handlers ─
+    this.commandRouter = new TelegramCommandRouter({
+      gateway: this.gateway,
+      specialCaseHandlers: {
+        start: async (ctx) => {
+          this.trackChat(ctx.chat!.id);
+          const owl = this.gateway.getOwl();
+          const { Keyboard } = await import("grammy");
+          const persistentKeyboard = new Keyboard()
+            .text("🎛 Menu").text("📊 Status")
+            .row()
+            .text("🦉 Owls").text("⚙️ Settings")
+            .resized()
+            .persistent();
+          await ctx.reply(
+            `${owl.persona.emoji} *${this.esc(owl.persona.name)}* reporting for duty\\!\n\n` +
+              `I'm your personal AI assistant\\. Talk to me naturally — I'll handle the rest\\. 🦉\n\n` +
+              `Use the buttons below or tap ☰ for all commands\\.`,
+            { parse_mode: "MarkdownV2", reply_markup: persistentKeyboard },
+          );
         },
-      );
-    });
-
-    const resetHandler = async (ctx: any) => {
-      if (!this.isAllowed(ctx)) return;
-      // endSession will handle consolidation; just clear the in-memory session
-      const userId = String(ctx.from?.id ?? ctx.chat.id);
-      const sessionId = makeSessionId(this.id, userId);
-      await this.gateway.endSession(sessionId).catch((err) => {
-        log.telegram.warn("endSession failed", err as Error);
-      });
-      await ctx.reply("🔄 Context reset. Starting fresh.");
-    };
-
-    this.bot.command("reset", resetHandler);
-    this.bot.command("clear", resetHandler);
-
-    // ── /config — namespace commands + interactive menu fallback ────
-    this.bot.command("config", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      this.trackChat(ctx.chat.id);
-      const rawArgs = ctx.match?.trim() ?? "";
-      if (rawArgs) {
-        await this.dispatchRegistryCommand(ctx, `/config ${rawArgs}`, () => this.configMenu.handleCommand(ctx));
-        return;
-      }
-      await this.configMenu.handleCommand(ctx);
-    });
-
-    // ── /mcp — MCP server management via universal registry ─────────────────
-    this.bot.command("mcp", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      const rawArgs = ctx.match?.trim() ?? "";
-      await this.dispatchRegistryCommand(ctx, `/mcp${rawArgs ? ` ${rawArgs}` : " list"}`);
-    });
-
-    // ── /memory — memory management via universal registry ───────────────────
-    this.bot.command("memory", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      const rawArgs = ctx.match?.trim() ?? "";
-      await this.dispatchRegistryCommand(ctx, `/memory${rawArgs ? ` ${rawArgs}` : " list"}`);
-    });
-
-    // ── /voice — Interactive voice settings ─────────────────────
-    this.bot.command("voice", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      this.trackChat(ctx.chat.id);
-      await this.voiceMenu.handleCommand(ctx);
-    });
-
-    // ── /menu — Unified inline control panel ─────────────────────
-    this.bot.command("menu", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      this.trackChat(ctx.chat.id);
-      await this.rootMenu.handleCommand(ctx);
-    });
-
-    this.bot.command("status", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      const config = this.gateway.getConfig();
-      const msg =
-        `🦉 *StackOwl Status*\n\n` +
-        `Model: ${this.esc(config.defaultModel)}\n` +
-        `Owl: ${owl.persona.emoji} ${this.esc(owl.persona.name)}\n` +
-        `Channel: Telegram`;
-      await ctx.reply(msg, { parse_mode: "MarkdownV2" });
-    });
-
-
-    // ── /skills install — start the skill install wizard ────────
-    this.bot.command("skills", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      this.trackChat(ctx.chat.id);
-      const userId = ctx.from?.id;
-      if (!userId) return;
-      try {
-        const skillsMsg = {
-          id: makeMessageId(),
-          channelId: this.id,
-          userId: String(userId),
-          sessionId: makeSessionId(this.id, String(userId)),
-          text: "/skills install",
-        };
-        const response = await runWithContext({
-          channelId: "telegram",
-          userId: String(userId),
-          sessionId: skillsMsg.sessionId,
-          messageId: skillsMsg.id,
-          spanName: "channel.telegram.handle",
-        }, () => this.gateway.handle(
-          skillsMsg,
-          { onProgress: async () => {}, askInstall: async () => false },
-        ));
-        await this.sendWizardResponse(ctx.chat.id, response);
-      } catch (err) {
-        log.telegram.error(`/skills wizard error: ${err instanceof Error ? err.message : err}`);
-        await ctx.reply("Failed to start the install wizard. Try again.").catch(() => {});
-      }
-    });
-
-
-    // ── /owl — full owl management (list/show/create/from-bmad/delete/pin/unpin/status) ──
-    this.bot.command("owl", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
-      log.telegram.debug("telegram.owl: entry", { from: ctx.from?.id });
-      const text = ctx.message?.text ?? "";
-      const parts = text.replace(/^\/owl\s*/, "").trim().split(/\s+/).filter(Boolean);
-      const verb = parts[0] || "list";
-      const args = parts.slice(1);
-      const userId = String(ctx.from?.id ?? "local");
-      const workspacePath = this.gateway.getWorkspacePath();
-      const registry = this.gateway.getSpecializedRegistry();
-      if (registry) await registry.loadAll(workspacePath);
-      log.telegram.debug("telegram.owl: dispatching", { verb, args });
-
-      const { dispatchOwlCommand } = await import("../../gateway/commands/owl-command.js");
-
-      // Build a simple adapter for interactive prompts (sequential reply-based)
-      const pendingAsks: Array<(answer: string) => void> = [];
-      const adapter = {
-        ask: async (_uid: string, prompt: { text: string; choices?: string[]; defaultChoice?: string }): Promise<string> => {
-          const choices = prompt.choices?.map((c, i) => `${i + 1}. ${c}`).join("\n") ?? "";
-          const defaultHint = prompt.defaultChoice ? `\n(default: ${prompt.defaultChoice})` : "";
-          const fullPrompt = [prompt.text, choices, defaultHint].filter(Boolean).join("\n");
-          await ctx.reply(fullPrompt).catch(() => {});
-          return new Promise<string>((resolve) => {
-            pendingAsks.push((answer: string) => {
-              if (!answer.trim() && prompt.defaultChoice) return resolve(prompt.defaultChoice);
-              if (prompt.choices) {
-                const idx = parseInt(answer) - 1;
-                return resolve(!isNaN(idx) && prompt.choices[idx] ? prompt.choices[idx] : answer);
-              }
-              resolve(answer);
-            });
+        reset: async (ctx) => {
+          const userId = String(ctx.from?.id ?? ctx.chat?.id);
+          const sessionId = makeSessionId(this.id, userId);
+          await this.gateway.endSession(sessionId).catch((err) => {
+            log.telegram.warn("endSession failed", err as Error);
           });
+          await ctx.reply("🔄 Context reset. Starting fresh.");
         },
-      };
+        clear: async (ctx) => {
+          const userId = String(ctx.from?.id ?? ctx.chat?.id);
+          const sessionId = makeSessionId(this.id, userId);
+          await this.gateway.endSession(sessionId).catch((err) => {
+            log.telegram.warn("endSession failed", err as Error);
+          });
+          await ctx.reply("🔄 Context reset. Starting fresh.");
+        },
+        config: async (ctx) => {
+          this.trackChat(ctx.chat!.id);
+          const rawArgs = (typeof ctx.match === "string" ? ctx.match : ctx.match?.[0] ?? "").trim();
+          if (rawArgs) {
+            await this.dispatchRegistryCommand(ctx, `/config ${rawArgs}`, () => this.configMenu.handleCommand(ctx));
+            return;
+          }
+          await this.configMenu.handleCommand(ctx);
+        },
+        voice: async (ctx) => {
+          this.trackChat(ctx.chat!.id);
+          await this.voiceMenu.handleCommand(ctx);
+        },
+        menu: async (ctx) => {
+          this.trackChat(ctx.chat!.id);
+          await this.rootMenu.handleCommand(ctx);
+        },
+      },
+    });
+    this.commandRouter.register(this.bot);
 
-      try {
-        const result = await dispatchOwlCommand(verb, args, {
-          registry: registry as any,
-          userId,
-          workspacePath,
-          channelAdapter: verb === "create" || verb === "from-bmad" ? adapter : undefined,
-          gateway: this.gateway as any,
-        });
-        log.telegram.debug("telegram.owl: exit", { result: result.slice(0, 50) });
-        await ctx.reply(result, { parse_mode: "Markdown" }).catch(() => ctx.reply(result));
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.telegram.error("telegram.owl: dispatch failed", err, { verb });
-        await ctx.reply(`Error: ${msg}`).catch(() => {});
-      }
+    // ─── 3. Menu interception (before main text handler) ──────────
+    this.bot.on("message:text", async (ctx, next) => {
+      const text = ctx.message.text;
+      if (!text || text.startsWith("/")) return next();
+      const configConsumed = await this.configMenu.handleTextInput(ctx, text);
+      if (configConsumed) return;
+      const navConsumed = await this.rootMenu.handleTextInput(ctx, text);
+      if (navConsumed) return;
+      return next();
     });
 
+    // ─── 4. Main message:text handler ──────────────────────────────
     this.bot.on("message:text", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
       const userId = ctx.from?.id;
       if (!userId) return;
-
       const text = ctx.message.text;
       if (!text || text.startsWith("/")) return;
 
       this.trackChat(ctx.chat.id);
       this.userToChatId.set(String(userId), ctx.chat.id);
 
-      // ─── Config menu — pending input (URL / API key) ──────
-      // Must intercept BEFORE dedup so the delete-immediately can fire
-      // before the message is recorded in processedUpdates.
-      const configConsumed = await this.configMenu.handleTextInput(ctx, text);
-      if (configConsumed) return;
-      // ─────────────────────────────────────────────────────
-
-      // ─── Persistent keyboard button interception ──────────────
-      const navConsumed = await this.rootMenu.handleTextInput(ctx, text);
-      if (navConsumed) return;
-      // ─────────────────────────────────────────────────────────
-
-      // Deduplicate Telegram retries — set key IMMEDIATELY before processing starts,
-      // so that retries arriving while the first attempt is still streaming are blocked.
       const msgKey = `${ctx.chat.id}|${ctx.msg.message_id}`;
       if (this.processedUpdates.has(msgKey)) {
         log.telegram.info(`Skipping duplicate message ${msgKey}`);
@@ -487,7 +374,6 @@ export class TelegramAdapter implements ChannelAdapter {
       }
       this.processedUpdates.set(msgKey, Date.now());
 
-      // ─── Pending npm install approval ────────────────────
       const state = this.getUserState(userId);
       if (state.pendingInstallResolve) {
         const resolve = state.pendingInstallResolve;
@@ -496,25 +382,14 @@ export class TelegramAdapter implements ChannelAdapter {
         resolve(answer === "yes" || answer === "y");
         return;
       }
-      // ─────────────────────────────────────────────────────
 
-      // Reset heartbeat suppression — user is active
       this.pinger?.notifyUserActivity();
       this.gateway.getCognitiveLoop()?.notifyUserActivity();
-
       log.telegram.incoming(`user:${userId}`, text);
 
-      // Guard: ensure message is constructable before sending ACK.
-      // makeMessage can return null for malformed inputs; checking here prevents
-      // an ACK being sent and immediately deleted when the early return fires in
-      // the try block before the finally can be bypassed.
       const msg = makeMessage(this.id, String(userId), text);
       if (!msg) return;
 
-      // Immediate acknowledgment — lets the user know the message was received
-      // before any LLM processing begins. The stream handler will edit this
-      // same message with real content so no extra message is created.
-      // turnId matches the sessionId used by tool:start events in the registry.
       const turnId = makeSessionId(this.id, String(userId));
       this._progressNotifier.bindSession(turnId, ctx.chat.id);
       await this.gateway.getProgressManager().notifyStart(pickRandomPhrase(), turnId);
@@ -523,12 +398,15 @@ export class TelegramAdapter implements ChannelAdapter {
       try {
         const owl = this.gateway.getOwl();
         const owlHeader = `${owl.persona.emoji} <b>${this.escHtml(owl.persona.name)}</b>`;
-        const streamCtx = this.createStreamHandler(
-          ctx,
-          this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true,
-          ackMessageId,
-          () => this._progressNotifier.markStreamClaimed(turnId),
-        );
+        const suppressThinking = this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true;
+        const streamHandler = new TelegramStreamHandler({
+          chatId: ctx.chat.id,
+          botApi: this.bot.api,
+          suppressThinking,
+          initialMessageId: ackMessageId,
+          onStreamClaimed: () => this._progressNotifier.markStreamClaimed(turnId),
+        });
+
         const response = await runWithContext({
           channelId: "telegram",
           userId: String(userId),
@@ -538,30 +416,21 @@ export class TelegramAdapter implements ChannelAdapter {
         }, () => this.gateway.handle(
           msg,
           {
-            onProgress: async (msg: string) => {
-              // Route tool status and skill usage into the stream message (edit-in-place)
-              // instead of sending separate messages for each event.
+            onProgress: async (progressMsg: string) => {
               const isToolStatus =
-                /^[⚙✅❌].*\b(?:Running|Tool finished|Tool failed)\b/.test(msg);
-              const isSkillUsage = /\bUsing skill:\b/.test(msg);
+                /^[⚙✅❌].*\b(?:Running|Tool finished|Tool failed)\b/.test(progressMsg);
+              const isSkillUsage = /\bUsing skill:\b/.test(progressMsg);
               if (isToolStatus || isSkillUsage) {
-                streamCtx.pushToolStatus(msg);
+                streamHandler.pushToolStatus(progressMsg);
                 return;
               }
-
-              // Strip thinking/internal tags — never send these to the user,
-              // regardless of suppressThinking setting.
-              const stripped = this.stripInternalTags(msg);
+              const stripped = this.stripInternalTags(progressMsg);
               if (!stripped) return;
-
               try {
-                const html = this.renderContent(stripped);
-                await ctx.reply(html, { parse_mode: "HTML" });
+                await ctx.reply(this.renderContent(stripped), { parse_mode: "HTML" });
                 await ctx.api.sendChatAction(ctx.chat.id, "typing");
               } catch (err) {
-                log.telegram.warn(
-                  `onProgress failed: ${err instanceof Error ? err.message : err}`,
-                );
+                log.telegram.warn(`onProgress failed: ${err instanceof Error ? err.message : err}`);
               }
             },
             askInstall: async (deps: string[]) => {
@@ -573,7 +442,7 @@ export class TelegramAdapter implements ChannelAdapter {
                 state.pendingInstallResolve = resolve;
               });
             },
-            onStreamEvent: streamCtx.handler,
+            onStreamEvent: (e) => streamHandler.handle(e),
           },
         ));
 
@@ -583,92 +452,48 @@ export class TelegramAdapter implements ChannelAdapter {
             `usage:${response.usage ? `${response.usage.promptTokens}→${response.usage.completionTokens}` : "n/a"}`,
         );
 
-        // Determine if streaming already delivered the content to the user.
-        // We check streamedContent (updated live in text_delta handler) and
-        // messageId (set when initial message was sent). We do NOT rely on
-        // finalResponseSent from the done handler because done may fire
-        // after handle() returns.
-        const streamed = streamCtx.status.streamedContent;
-        const msgId = streamCtx.status.messageId;
+        const streamed = streamHandler.status.streamedContent;
+        const msgId = streamHandler.status.messageId;
 
         if (msgId && streamed) {
-          // Streaming delivered content — replace with fully formatted version.
-          const fullHtml =
-            `${owlHeader}\n\n` + this.renderContent(response.content);
-
+          const fullHtml = `${owlHeader}\n\n` + this.renderContent(response.content);
           if (fullHtml.length <= 4096) {
-            // Short response: edit in place (single clean message)
             try {
-              await this.bot.api.editMessageText(ctx.chat.id, msgId, fullHtml, {
-                parse_mode: "HTML",
-              });
+              await this.bot.api.editMessageText(ctx.chat.id, msgId, fullHtml, { parse_mode: "HTML" });
             } catch (editErr) {
-              log.telegram.warn(
-                `[Telegram] Final edit failed: ${editErr instanceof Error ? editErr.message : editErr}`,
-              );
-              // Delete the raw streaming message so user doesn't see both versions
-              await this.bot.api
-                .deleteMessage(ctx.chat.id, msgId)
-                .catch(() => {});
+              log.telegram.warn(`[Telegram] Final edit failed: ${editErr instanceof Error ? editErr.message : editErr}`);
+              await this.bot.api.deleteMessage(ctx.chat.id, msgId).catch(() => {});
               await this.sendChunked(ctx.chat.id, fullHtml).catch(() => {
-                this.bot.api
-                  .sendMessage(
-                    ctx.chat.id,
-                    this.stripInternalTags(response.content),
-                  )
-                  .catch(() => {});
+                this.bot.api.sendMessage(ctx.chat.id, this.stripInternalTags(response.content)).catch(() => {});
               });
             }
           } else {
-            // Long response (> 4096 chars): split into chunks.
-            // Edit the streaming message with the first chunk, send the rest fresh.
             const chunks = this.splitMessage(fullHtml, 3800);
             try {
-              await this.bot.api.editMessageText(
-                ctx.chat.id,
-                msgId,
-                chunks[0]!,
-                { parse_mode: "HTML" },
-              );
+              await this.bot.api.editMessageText(ctx.chat.id, msgId, chunks[0]!, { parse_mode: "HTML" });
             } catch (err) {
-              // Edit failed — delete streaming message and start fresh
               log.telegram.warn("streaming message edit failed, retrying with fresh message", err);
-              await this.bot.api
-                .deleteMessage(ctx.chat.id, msgId)
-                .catch((deleteErr) => { log.telegram.warn("delete streaming message failed", deleteErr); });
-              await this.bot.api
-                .sendMessage(ctx.chat.id, chunks[0]!, { parse_mode: "HTML" })
-                .catch((sendErr) => { log.telegram.warn("fallback send after edit failure failed", sendErr); });
+              await this.bot.api.deleteMessage(ctx.chat.id, msgId)
+                .catch((e) => { log.telegram.warn("delete streaming message failed", e); });
+              await this.bot.api.sendMessage(ctx.chat.id, chunks[0]!, { parse_mode: "HTML" })
+                .catch((e) => { log.telegram.warn("fallback send after edit failure failed", e); });
             }
-            // Send remaining chunks
             for (let i = 1; i < Math.min(chunks.length, 5); i++) {
               await new Promise((r) => setTimeout(r, 400));
-              await this.bot.api
-                .sendMessage(ctx.chat.id, chunks[i]!, { parse_mode: "HTML" })
-                .catch(() => {});
+              await this.bot.api.sendMessage(ctx.chat.id, chunks[i]!, { parse_mode: "HTML" }).catch(() => {});
             }
             if (chunks.length > 5) {
               await this.bot.api
-                .sendMessage(
-                  ctx.chat.id,
-                  `<i>...${chunks.length - 5} more sections omitted...</i>`,
-                  { parse_mode: "HTML" },
-                )
+                .sendMessage(ctx.chat.id, `<i>...${chunks.length - 5} more sections omitted...</i>`, { parse_mode: "HTML" })
                 .catch(() => {});
             }
           }
-          streamCtx.status.finalResponseSent = true;
+          streamHandler.status.finalResponseSent = true;
         } else {
-          // No streaming content — send the full formatted response
-          const text = this.formatResponse(response);
-          await this.sendChunked(ctx.chat.id, text);
-          streamCtx.status.finalResponseSent = true;
+          await this.sendChunked(ctx.chat.id, this.formatResponse(response));
+          streamHandler.status.finalResponseSent = true;
         }
 
-        // ─── Feedback buttons ─────────────────────────────────
-        // Send 👍/👎 inline keyboard after each response so the user can
-        // signal whether the answer was helpful. The gateway uses this to
-        // boost or retire success-recipe facts in the FactStore.
         const feedbackId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         this.gateway.registerFeedback(feedbackId, {
           sessionId: makeSessionId(this.id, String(userId)),
@@ -680,15 +505,13 @@ export class TelegramAdapter implements ChannelAdapter {
         await this.bot.api
           .sendMessage(ctx.chat.id, "Was this helpful?", {
             reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "👍", callback_data: `fb:like:${feedbackId}` },
-                  { text: "👎", callback_data: `fb:dislike:${feedbackId}` },
-                ],
-              ],
+              inline_keyboard: [[
+                { text: "👍", callback_data: `fb:like:${feedbackId}` },
+                { text: "👎", callback_data: `fb:dislike:${feedbackId}` },
+              ]],
             },
           })
-          .catch(() => {}); // Non-fatal if delivery fails
+          .catch(() => {});
 
         if (response.usage) {
           await ctx.reply(
@@ -697,11 +520,9 @@ export class TelegramAdapter implements ChannelAdapter {
           );
         }
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.telegram.error(`Error for user ${userId}: ${msg}`);
-        await ctx.reply(
-          "Something went wrong. Please try again or use /reset to start fresh.",
-        );
+        const errMsg = error instanceof Error ? error.message : String(error);
+        log.telegram.error(`Error for user ${userId}: ${errMsg}`);
+        await ctx.reply("Something went wrong. Please try again or use /reset to start fresh.");
       } finally {
         await this.gateway.getProgressManager().notifyStop(turnId).catch((err) => {
           log.telegram.warn("telegram: notifyStop failed in finally", err, { turnId });
@@ -709,9 +530,8 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // ─── Telegram voice messages (OGG Opus → STT → gateway) ──────
+    // ─── 5. Voice message handler ───────────────────────────────
     this.bot.on("message:voice", async (ctx) => {
-      if (!this.isAllowed(ctx)) return;
       const userId = ctx.from?.id;
       if (!userId) return;
 
@@ -720,11 +540,8 @@ export class TelegramAdapter implements ChannelAdapter {
 
       const voice = ctx.message.voice;
       log.telegram.info(`Voice message from user:${userId}, duration: ${voice.duration}s`);
-
-      // Show "recording" indicator while we process
       await ctx.api.sendChatAction(ctx.chat.id, "typing");
 
-      // ── Step 1: Download OGG from Telegram ─────────────────
       let oggBuffer: Buffer;
       try {
         const fileInfo = await ctx.api.getFile(voice.file_id);
@@ -738,7 +555,6 @@ export class TelegramAdapter implements ChannelAdapter {
         return;
       }
 
-      // ── Step 2: OGG → WAV ──────────────────────────────────
       let wavPath: string;
       try {
         wavPath = await new OggConverter().convert(oggBuffer);
@@ -748,13 +564,10 @@ export class TelegramAdapter implements ChannelAdapter {
         return;
       }
 
-      // ── Step 3: Transcribe with Whisper ────────────────────
-      let text: string;
+      let voiceText: string;
       try {
-        const statusMsg = await ctx.reply("🎤 <i>Transcribing voice message…</i>", {
-          parse_mode: "HTML",
-        });
-        text = await this.stt.transcribe(wavPath);
+        const statusMsg = await ctx.reply("🎤 <i>Transcribing voice message…</i>", { parse_mode: "HTML" });
+        voiceText = await this.stt.transcribe(wavPath);
         await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
       } catch (err) {
         log.telegram.error(`STT failed: ${(err as Error).message}`);
@@ -762,23 +575,18 @@ export class TelegramAdapter implements ChannelAdapter {
         return;
       }
 
-      if (!text.trim()) {
-        await ctx.reply("🔇 <i>Could not hear anything in the voice message.</i>", {
-          parse_mode: "HTML",
-        });
+      if (!voiceText.trim()) {
+        await ctx.reply("🔇 <i>Could not hear anything in the voice message.</i>", { parse_mode: "HTML" });
         return;
       }
 
-      log.telegram.incoming(`user:${userId}`, `[voice] ${text}`);
+      log.telegram.incoming(`user:${userId}`, `[voice] ${voiceText}`);
+      await ctx.reply(`🎤 <i>${this.escHtml(voiceText)}</i>`, { parse_mode: "HTML" });
 
-      // Echo transcript back so the user sees what was heard
-      await ctx.reply(`🎤 <i>${this.escHtml(text)}</i>`, { parse_mode: "HTML" });
-
-      // ── Step 4: Route through gateway ──────────────────────
       this.pinger?.notifyUserActivity();
       this.gateway.getCognitiveLoop()?.notifyUserActivity();
 
-      const voiceMsg = makeMessage(this.id, String(userId), text);
+      const voiceMsg = makeMessage(this.id, String(userId), voiceText);
       if (!voiceMsg) return;
 
       const voiceTurnId = makeSessionId(this.id, String(userId));
@@ -789,12 +597,14 @@ export class TelegramAdapter implements ChannelAdapter {
       try {
         const owl = this.gateway.getOwl();
         const owlHeader = `${owl.persona.emoji} <b>${this.escHtml(owl.persona.name)}</b>`;
-        const streamCtx = this.createStreamHandler(
-          ctx,
-          this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true,
-          voiceAckMessageId,
-          () => this._progressNotifier.markStreamClaimed(voiceTurnId),
-        );
+        const suppressThinking = this.gateway.getConfig().gateway?.suppressThinkingMessages ?? true;
+        const streamHandler = new TelegramStreamHandler({
+          chatId: ctx.chat.id,
+          botApi: this.bot.api,
+          suppressThinking,
+          initialMessageId: voiceAckMessageId,
+          onStreamClaimed: () => this._progressNotifier.markStreamClaimed(voiceTurnId),
+        });
 
         const response = await runWithContext({
           channelId: "telegram",
@@ -805,8 +615,8 @@ export class TelegramAdapter implements ChannelAdapter {
         }, () => this.gateway.handle(
           voiceMsg,
           {
-            onProgress: async (msg: string) => {
-              const stripped = this.stripInternalTags(msg);
+            onProgress: async (progressMsg: string) => {
+              const stripped = this.stripInternalTags(progressMsg);
               if (!stripped) return;
               try {
                 await ctx.reply(this.renderContent(stripped), { parse_mode: "HTML" });
@@ -815,26 +625,22 @@ export class TelegramAdapter implements ChannelAdapter {
                 log.telegram.warn("progress reply failed", err);
               }
             },
-            onStreamEvent: streamCtx.handler,
+            onStreamEvent: (e) => streamHandler.handle(e),
           },
         ));
 
         log.telegram.outgoing(`user:${userId}`, response.content);
 
-        const streamed = streamCtx.status.streamedContent;
-        const msgId = streamCtx.status.messageId;
+        const streamed = streamHandler.status.streamedContent;
+        const msgId = streamHandler.status.messageId;
 
         if (msgId && streamed) {
           const fullHtml = `${owlHeader}\n\n` + this.renderContent(response.content);
           if (fullHtml.length <= 4096) {
-            await this.bot.api.editMessageText(ctx.chat.id, msgId, fullHtml, {
-              parse_mode: "HTML",
-            }).catch(() => {});
+            await this.bot.api.editMessageText(ctx.chat.id, msgId, fullHtml, { parse_mode: "HTML" }).catch(() => {});
           } else {
             const chunks = this.splitMessage(fullHtml, 3800);
-            await this.bot.api.editMessageText(ctx.chat.id, msgId, chunks[0]!, {
-              parse_mode: "HTML",
-            }).catch(() => {});
+            await this.bot.api.editMessageText(ctx.chat.id, msgId, chunks[0]!, { parse_mode: "HTML" }).catch(() => {});
             for (let i = 1; i < Math.min(chunks.length, 5); i++) {
               await new Promise((r) => setTimeout(r, 400));
               await this.bot.api.sendMessage(ctx.chat.id, chunks[i]!, { parse_mode: "HTML" }).catch(() => {});
@@ -844,8 +650,8 @@ export class TelegramAdapter implements ChannelAdapter {
           await this.sendChunked(ctx.chat.id, this.formatResponse(response));
         }
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.telegram.error(`Voice gateway error for user ${userId}: ${msg}`);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        log.telegram.error(`Voice gateway error for user ${userId}: ${errMsg}`);
         await ctx.reply("Something went wrong processing your voice message. Please try again.");
       } finally {
         await this.gateway.getProgressManager().notifyStop(voiceTurnId).catch((err) => {
@@ -854,133 +660,53 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // ─── Callback query router ─────────────────────────────────
-    // Routes cfg:* to the config menu and fb:* to the feedback handler.
-    this.bot.on("callback_query:data", async (ctx) => {
-      const data = ctx.callbackQuery.data ?? "";
-
-      // ── Unified nav menu callbacks ────────────────────────────
-      if (data.startsWith("nav:")) {
-        if (!this.isAllowed(ctx)) {
-          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
-          return;
-        }
-        await this.rootMenu.handleCallback(ctx, data);
-        return;
-      }
-
-      // ── Skills wizard callbacks (menu:* and wiz:*) ───────
-      if (data.startsWith("wiz:") || data.startsWith("menu:")) {
-        if (!this.isAllowed(ctx)) {
-          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
-          return;
-        }
-        try {
-          await ctx.answerCallbackQuery();
-        } catch (err) {
-          log.telegram.warn("answerCallbackQuery failed (query likely expired)", err);
-        }
-        const userId = ctx.from?.id;
-        if (!userId) return;
-        try {
-          const cbMsg = makeMessage(this.id, String(userId), data);
-          if (!cbMsg) return;
-          const response = await runWithContext({
-            channelId: "telegram",
-            userId: String(userId),
-            sessionId: makeSessionId(this.id, String(userId)),
-            messageId: cbMsg.id,
-            spanName: "channel.telegram.handle",
-          }, () => this.gateway.handle(
-            cbMsg,
-            { onProgress: async () => {}, askInstall: async () => false },
-          ));
-          const chatId = ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id;
-          if (chatId) await this.sendWizardResponse(chatId, response);
-        } catch (err) {
-          log.telegram.error(`Wizard callback error: ${err instanceof Error ? err.message : err}`);
-        }
-        return;
-      }
-
-      // ── Config menu callbacks ────────────────────────────
-      if (data.startsWith("cfg:")) {
-        if (!this.isAllowed(ctx)) {
-          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
-          return;
-        }
-        await this.configMenu.handleCallback(ctx, data);
-        return;
-      }
-
-      // ── Voice menu callbacks ─────────────────────────────
-      if (data.startsWith("vcfg:")) {
-        if (!this.isAllowed(ctx)) {
-          await ctx.answerCallbackQuery({ text: "⛔ Not authorised." });
-          return;
-        }
-        await this.voiceMenu.handleCallback(ctx, data);
-        return;
-      }
-
-      if (!data.startsWith("fb:")) return;
-
-      const parts = data.split(":");
-      const signal = parts[1] as "like" | "dislike";
-      const feedbackId = parts.slice(2).join(":"); // feedbackId may contain colons
-
-      if ((signal !== "like" && signal !== "dislike") || !feedbackId) {
-        try {
-          await ctx.answerCallbackQuery();
-        } catch (err) {
-          log.telegram.warn("answerCallbackQuery (invalid feedback) failed", err);
-        }
-        return;
-      }
-
-      // Dismiss loading spinner on the button
-      try {
-        await ctx.answerCallbackQuery({
-          text: signal === "like" ? "👍 Thanks!" : "👎 Got it, I'll improve.",
-        });
-      } catch (err) {
-        // "query is too old" — Telegram already timed out the client response.
-        // This is harmless; the feedback was still processed via recordFeedback().
-        log.telegram.debug(
-          `answerCallbackQuery expired (non-fatal): ${(err as Error).message}`,
-        );
-      }
-
-      // Replace the button message with a plain confirmation
-      try {
-        await ctx.editMessageText(
-          signal === "like" ? "👍 Helpful" : "👎 Not helpful",
-        );
-      } catch (err) {
-        log.telegram.warn("feedback message edit failed (message too old)", err);
-      }
-
-      // Forward to gateway for learning integration
-      await this.gateway.recordFeedback(feedbackId, signal).catch((err) => {
-        log.telegram.warn(
-          `recordFeedback failed: ${err instanceof Error ? err.message : err}`,
-        );
-      });
+    // ─── 6. Callback query router ──────────────────────────────
+    const callbackRouter = new TelegramCallbackRouter({
+      isAllowed: (ctx) => this.isAllowed(ctx),
+      handlers: {
+        onNav: async (ctx, data) => {
+          await this.rootMenu.handleCallback(ctx, data);
+        },
+        onWizard: async (ctx, data) => {
+          try { await ctx.answerCallbackQuery(); } catch (err) {
+            log.telegram.warn("answerCallbackQuery failed (query likely expired)", err);
+          }
+          const userId = ctx.from?.id;
+          if (!userId) return;
+          try {
+            const cbMsg = makeMessage(this.id, String(userId), data);
+            if (!cbMsg) return;
+            const response = await runWithContext({
+              channelId: "telegram",
+              userId: String(userId),
+              sessionId: makeSessionId(this.id, String(userId)),
+              messageId: cbMsg.id,
+              spanName: "channel.telegram.handle",
+            }, () => this.gateway.handle(cbMsg, { onProgress: async () => {}, askInstall: async () => false }));
+            const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+            if (chatId) await this.sendWizardResponse(chatId, response);
+          } catch (err) {
+            log.telegram.error(`Wizard callback error: ${err instanceof Error ? err.message : err}`);
+          }
+        },
+        onConfig: async (ctx, data) => { await this.configMenu.handleCallback(ctx, data); },
+        onVoice:  async (ctx, data) => { await this.voiceMenu.handleCallback(ctx, data); },
+        onFeedback: async (ctx, data) => { await this.handleFeedback(ctx, data); },
+      },
     });
+    callbackRouter.register(this.bot);
 
+    // ─── 7. Global error handler ────────────────────────────────
     this.bot.catch((err) => {
       const msg = (err as Error).message ?? String(err);
-      if (
-        msg.includes("query is too old") ||
-        msg.includes("query ID is invalid")
-      ) {
-        log.telegram.debug(
-          `Telegram callback query expired (non-fatal): ${msg}`,
-        );
+      if (msg.includes("query is too old") || msg.includes("query ID is invalid")) {
+        log.telegram.debug(`Telegram callback query expired (non-fatal): ${msg}`);
         return;
       }
       log.telegram.error(`Bot error: ${msg}`);
     });
+
+    log.telegram.debug("telegram.setupHandlers: exit");
   }
 
   // ─── Proactive Pinger ─────────────────────────────────────────
@@ -1066,230 +792,6 @@ export class TelegramAdapter implements ChannelAdapter {
         log.telegram.error("background worker import failed", err as Error);
       });
     }
-  }
-
-  // ─── Streaming (edit-in-place) ──────────────────────────────────
-
-  /**
-   * Creates a stream handler and returns both the handler function and a
-   * status object that tracks whether streaming successfully delivered content.
-   *
-   * `status.streamedContent` holds the text that was actually streamed to the
-   * user (text_delta only — tool status messages are NOT counted). After the
-   * gateway returns, the caller compares this against the final response to
-   * decide whether `sendResponse` is needed.
-   */
-  private createStreamHandler(
-    ctx: Context,
-    suppressThinking: boolean,
-    initialMessageId?: number,
-    onStreamClaimed?: () => void,
-  ): {
-    handler: (event: StreamEvent) => Promise<void>;
-    status: {
-      streamedContent: string;
-      streamedContentWithHeader: string;
-      messageId: number | null;
-      finalResponseSent: boolean;
-    };
-    /** Push a tool status line into the streaming message (edit-in-place). */
-    pushToolStatus: (msg: string) => void;
-    suppressThinking: boolean;
-  } {
-    const chatId = ctx.chat?.id;
-    const status = {
-      streamedContent: "",
-      streamedContentWithHeader: "",
-      messageId: null as number | null,
-      finalResponseSent: false,
-    };
-    if (!chatId)
-      return {
-        handler: async () => {},
-        status,
-        pushToolStatus: () => {},
-        suppressThinking,
-      };
-
-    let messageId: number | null = initialMessageId ?? null;
-    if (messageId) {
-      status.messageId = messageId;
-    }
-    let displayText = ""; // Full text shown in Telegram (includes tool status)
-    let pureContent = ""; // Only text_delta content (no tool noise)
-    let lastEditTime = 0;
-    let pendingEdit: ReturnType<typeof setTimeout> | null = null;
-    let hasToolStatus = false; // Track if we've shown tool status lines
-    let contentStarted = false; // Track if actual content has started
-    let editFailures = 0; // Track consecutive edit failures
-    let initialMessageDelivered = false; // Track if the first message was sent
-    let streamClaimedFired = false; // Track if onStreamClaimed has been called
-    const MAX_EDIT_FAILURES = 3;
-    const THROTTLE_MS = 1000;
-
-    // Convert a streaming chunk to HTML inline — used only for the initial
-    // message creation (first few chars). All throttled edits use renderContent
-    // on the full pureContent so tables/headings are always converted.
-    const chunkToHtml = (raw: string): string =>
-      this.escHtml(raw)
-        .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
-        .replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, "<i>$1</i>")
-        .replace(/`(.+?)`/g, "<code>$1</code>");
-
-    const flushEdit = async () => {
-      if (!messageId || !pureContent || editFailures >= MAX_EDIT_FAILURES)
-        return;
-      // Render the full accumulated content so every throttled edit shows
-      // properly converted tables, headings, blockquotes — not just inline markdown.
-      // This means the streaming display is always fully formatted, not just the final edit.
-      const rendered = hasToolStatus
-        ? displayText // tool status lines mixed in — keep as-is (already HTML)
-        : this.renderContent(pureContent);
-      try {
-        await this.bot.api.editMessageText(chatId, messageId, rendered, {
-          parse_mode: "HTML",
-        });
-        lastEditTime = Date.now();
-        editFailures = 0;
-      } catch (err) {
-        editFailures++;
-        if (editFailures >= MAX_EDIT_FAILURES) {
-          log.telegram.warn(
-            `[Telegram] Too many edit failures (${editFailures}), switching to non-streaming delivery`,
-          );
-        }
-      }
-    };
-
-    const handler = async (event: StreamEvent) => {
-      switch (event.type) {
-        case "text_delta": {
-          // Strip internal [DONE] signal — it's an engine marker, not user content
-          let chunk = event.content.replace(/\[DONE\]/g, "");
-          if (!chunk) break;
-
-          // Always strip thinking/internal content from chunks before sending to user.
-          // suppressThinking controls whether the MODEL sees thinking tags, not whether
-          // the USER sees them — users should never see internal reasoning.
-          chunk = this.stripInternalTags(chunk);
-          if (!chunk) break;
-
-          // On first non-empty chunk, notify that the stream has claimed the ACK message.
-          if (chunk && !streamClaimedFired) {
-            streamClaimedFired = true;
-            onStreamClaimed?.();
-          }
-
-          // Insert a separator between tool status and response content
-          if (hasToolStatus && !contentStarted) {
-            displayText += "\n\n";
-            contentStarted = true;
-          }
-          // displayText is HTML — convert inline markdown as we accumulate
-          displayText += chunkToHtml(chunk);
-          pureContent += chunk; // pureContent stays plain text for dedup detection
-          // Keep status in sync so the post-handle code can detect
-          // that streaming delivered content — the done event may
-          // fire after handle() returns.
-          status.streamedContent = pureContent;
-
-          if (!messageId) {
-            // Send initial message
-            try {
-              const sent = await this.bot.api.sendMessage(
-                chatId,
-                displayText || "...", // already HTML
-                { parse_mode: "HTML" },
-              );
-              messageId = sent.message_id;
-              status.messageId = sent.message_id;
-              status.streamedContentWithHeader = displayText;
-              lastEditTime = Date.now();
-              initialMessageDelivered = true;
-            } catch (err) {
-              log.telegram.warn("initial streaming message send failed, will fall back to final response", err);
-            }
-            return;
-          }
-
-          // Throttled edit
-          const elapsed = Date.now() - lastEditTime;
-          if (elapsed >= THROTTLE_MS) {
-            if (pendingEdit) {
-              clearTimeout(pendingEdit);
-              pendingEdit = null;
-            }
-            await flushEdit();
-          } else if (!pendingEdit) {
-            pendingEdit = setTimeout(() => {
-              pendingEdit = null;
-              flushEdit().catch(() => {});
-            }, THROTTLE_MS - elapsed);
-          }
-          break;
-        }
-        case "tool_start": {
-          // Skip — tool execution status is handled by onProgress
-          // via pushToolStatus to avoid duplicate lines.
-          break;
-        }
-        case "tool_end": {
-          // Skip — handled by onProgress via pushToolStatus.
-          break;
-        }
-        case "done": {
-          displayText = displayText.replace(/\[DONE\]/g, "").trimEnd();
-          pureContent = pureContent.replace(/\[DONE\]/g, "").trimEnd();
-          status.streamedContent = pureContent;
-          status.finalResponseSent = true;
-
-          // Cancel any pending throttled edit — the post-handle code
-          // will do the authoritative final edit with the owl header.
-          // Do NOT call flushEdit() here: it would overwrite the
-          // header that the post-handle code adds.
-          if (pendingEdit) {
-            clearTimeout(pendingEdit);
-            pendingEdit = null;
-          }
-          log.telegram.info(
-            `[Telegram] done fired: initialDelivered=${initialMessageDelivered} pureLen=${pureContent.length}`,
-          );
-          break;
-        }
-      }
-    };
-
-    /**
-     * Push a tool execution status line into the streaming message.
-     * Called from onProgress for tool events so they appear inline
-     * (edit-in-place) instead of as separate Telegram messages.
-     */
-    const pushToolStatus = (msg: string) => {
-      // Escape and convert tool status to HTML before appending
-      const html = this.escHtml(msg)
-        .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
-        .replace(/`(.+?)`/g, "<code>$1</code>");
-      displayText += `\n${html}`;
-      hasToolStatus = true;
-      flushEdit().catch(() => {});
-
-      // If no streaming message exists yet, create one
-      if (!messageId) {
-        this.bot.api
-          .sendMessage(chatId!, displayText || "...", {
-            // already HTML
-            parse_mode: "HTML",
-          })
-          .then((sent) => {
-            messageId = sent.message_id;
-            status.messageId = sent.message_id;
-            lastEditTime = Date.now();
-          })
-          .catch(() => {});
-      }
-    };
-
-    return { handler, status, pushToolStatus, suppressThinking };
   }
 
   // ─── Response formatting ──────────────────────────────────────
@@ -1451,8 +953,43 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   private getUserState(userId: number): UserState {
-    if (!this.userState.has(userId)) this.userState.set(userId, {});
-    return this.userState.get(userId)!;
+    const existing = this.userStateStore.get(userId);
+    if (existing) return existing;
+    const state: UserState = {};
+    this.userStateStore.set(userId, state);
+    return state;
+  }
+
+  private async handleFeedback(ctx: Context, data: string): Promise<void> {
+    log.telegram.debug("telegram.handleFeedback: entry", { data: data.slice(0, 30) });
+    const parts = data.split(":");
+    const signal = parts[1] as "like" | "dislike";
+    const feedbackId = parts.slice(2).join(":");
+
+    if ((signal !== "like" && signal !== "dislike") || !feedbackId) {
+      try { await ctx.answerCallbackQuery(); } catch (err) {
+        log.telegram.warn("answerCallbackQuery (invalid feedback) failed", err);
+      }
+      log.telegram.debug("telegram.handleFeedback: exit — invalid signal");
+      return;
+    }
+
+    try {
+      await ctx.answerCallbackQuery({ text: signal === "like" ? "👍 Thanks!" : "👎 Got it, I'll improve." });
+    } catch (err) {
+      log.telegram.debug(`answerCallbackQuery expired (non-fatal): ${(err as Error).message}`);
+    }
+
+    try {
+      await ctx.editMessageText(signal === "like" ? "👍 Helpful" : "👎 Not helpful");
+    } catch (err) {
+      log.telegram.warn("feedback message edit failed (message too old)", err);
+    }
+
+    await this.gateway.recordFeedback(feedbackId, signal).catch((err) => {
+      log.telegram.warn(`recordFeedback failed: ${err instanceof Error ? err.message : err}`);
+    });
+    log.telegram.debug("telegram.handleFeedback: exit", { signal });
   }
 
   private trackChat(chatId: number): void {
