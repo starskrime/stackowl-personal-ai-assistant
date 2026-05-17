@@ -11,7 +11,6 @@ export type {
 export { DEFAULT_CONSENT } from "./types.js";
 
 export {
-  GitStatusCollector,
   TimeContextCollector,
   SystemCollector,
   ActiveFileCollector,

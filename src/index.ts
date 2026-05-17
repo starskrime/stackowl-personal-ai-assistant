@@ -265,7 +265,6 @@ import { PlanLedger } from "./tasks/plan-ledger.js";
 import { SignalPool } from "./signals/pool.js";
 import { SignalClassifier } from "./signals/classifier.js";
 import {
-  GitStatusCollector,
   TimeContextCollector,
   SystemCollector,
   ActiveFileCollector,
@@ -1459,7 +1458,6 @@ async function buildGateway(
       memoryRepo,
       workspacePath: b.workspacePath,
     });
-    signalPool.addCollector(new GitStatusCollector(b.workspacePath));
     signalPool.addCollector(new TimeContextCollector());
     signalPool.addCollector(new SystemCollector());
     signalPool.addCollector(new ActiveFileCollector(b.workspacePath));

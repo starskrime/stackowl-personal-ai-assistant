@@ -1,4 +1,4 @@
-import { execSync, type ExecSyncOptions } from "node:child_process";
+import { execSync } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
 import {
   readdirSync,
@@ -33,67 +33,6 @@ function makeSignal(
     ttlMs,
     metadata,
   };
-}
-
-export class GitStatusCollector implements SignalCollector {
-  readonly source: SignalSource = "git";
-  readonly mode = "poll" as const;
-  readonly intervalMs = 60_000;
-  private _isGitRepo: boolean | null = null;
-  constructor(private workspacePath: string) {}
-
-  async collect(): Promise<ContextSignal[]> {
-    // Check once whether this path is inside a git repo; skip silently if not
-    if (this._isGitRepo === null) {
-      try {
-        execSync("git rev-parse --git-dir", {
-          cwd: this.workspacePath,
-          encoding: "utf-8",
-          timeout: 5_000,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        this._isGitRepo = true;
-      } catch {
-        this._isGitRepo = false;
-      }
-    }
-    if (!this._isGitRepo) return [];
-
-    const opts: ExecSyncOptions = {
-      cwd: this.workspacePath,
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    };
-    try {
-      const status = (
-        execSync("git status --porcelain", opts) as unknown as string
-      ).trim();
-      const logRaw = (
-        execSync("git log --oneline -3", opts) as unknown as string
-      ).trim();
-      const out: ContextSignal[] = [];
-      if (status) {
-        const files = status.split("\n").filter(Boolean);
-        out.push(
-          makeSignal(
-            "git",
-            `${files.length} uncommitted file${files.length === 1 ? "" : "s"}`,
-            files.slice(0, 10).join("\n"),
-            90_000,
-            { fileCount: files.length, files: files.slice(0, 20) },
-          ),
-        );
-      }
-      if (logRaw) {
-        out.push(makeSignal("git", "Recent commits", logRaw, 90_000));
-      }
-      return out;
-    } catch (err) {
-      log.engine.warn(`[GitStatusCollector] ${(err as Error).message}`);
-      return [];
-    }
-  }
 }
 
 export class TimeContextCollector implements SignalCollector {

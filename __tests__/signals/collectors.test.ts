@@ -21,40 +21,11 @@ vi.mock("node:fs", () => ({
 
 import { execSync } from "node:child_process";
 import {
-  GitStatusCollector,
   TimeContextCollector,
   SystemCollector,
   ActiveFileCollector,
   ClipboardCollector,
 } from "../../src/signals/collectors.js";
-
-describe("GitStatusCollector", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("emits at priority low regardless of file count (no hardcoded bump)", async () => {
-    (execSync as any).mockImplementation((cmd: string) => {
-      if (cmd.includes("status"))
-        return Array.from({ length: 20 }, (_, i) => ` M f${i}.ts`).join("\n");
-      return "";
-    });
-    const c = new GitStatusCollector("/tmp");
-    expect(c.mode).toBe("poll");
-    const signals = await c.collect!();
-    expect(signals.length).toBeGreaterThan(0);
-    for (const s of signals) {
-      expect(s.priority).toBe("low");
-    }
-  });
-
-  it("returns empty array when git command throws", async () => {
-    (execSync as any).mockImplementation(() => {
-      throw new Error("not a repo");
-    });
-    const c = new GitStatusCollector("/tmp");
-    const signals = await c.collect!();
-    expect(signals).toEqual([]);
-  });
-});
 
 describe("TimeContextCollector", () => {
   it("emits at priority low and source time_of_day", async () => {
