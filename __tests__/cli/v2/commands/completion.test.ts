@@ -118,6 +118,41 @@ describe("getCompletions — /owl specific cases", () => {
     expect(lastTypedWord).toBe(results[0]!.value); // "create" === "create" → should dispatch
   });
 
+  // ── Mode 3: verb list (namespace subcommands with verbs array) ────────────
+
+  it("'/config provider ' returns verb completions", async () => {
+    const results = await getCompletions("/config provider ", ctx);
+    expect(results.length).toBeGreaterThan(0);
+    const values = results.map((r) => r.value);
+    expect(values).toContain("list");
+    expect(values).toContain("add");
+    expect(values).toContain("remove");
+    expect(values).toContain("set-key");
+    expect(values).toContain("set-model");
+    expect(values).toContain("set-url");
+    expect(values).toContain("set-default");
+    expect(values).toContain("test");
+  });
+
+  it("'/config provider li' returns only verbs starting with 'li'", async () => {
+    const results = await getCompletions("/config provider li", ctx);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.value).toBe("list");
+  });
+
+  it("'/config tier ' returns verb completions", async () => {
+    const results = await getCompletions("/config tier ", ctx);
+    const values = results.map((r) => r.value);
+    expect(values).toContain("list");
+    expect(values).toContain("set");
+    expect(values).toContain("reset");
+  });
+
+  it("'/config provider list ' returns empty (no depth-4 completions)", async () => {
+    const results = await getCompletions("/config provider list ", ctx);
+    expect(results).toHaveLength(0);
+  });
+
   it("'/owl list' exact match also triggers popup interception", async () => {
     const value = "/owl list";
     const results = await getCompletions(value, ctx);

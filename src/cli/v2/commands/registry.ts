@@ -125,6 +125,13 @@ export interface SubcommandSpec {
   name: string;
   description: string;
   args?: ArgSpec[];
+  /**
+   * Static list of 3rd-level verbs for namespace-dispatcher subcommands
+   * (e.g. /config provider → list|add|remove|...). Used as a fallback when
+   * `complete` is not defined. Shown in the popup when the user has typed the
+   * subcommand name with a trailing space or a partial verb.
+   */
+  verbs?: string[];
   /** Tab-completion is TUI-only; completers may use the full CommandContext. */
   complete?: (ctx: CommandContext, partial: string) => Promise<string[]>;
   /**
@@ -330,67 +337,80 @@ export const REGISTRY: CommandSpec[] = [
       // ── Namespace subcommands ─────────────────────────────────────────────────
       {
         name: "provider",
-        description: "Manage AI providers — list, add, remove, set-key, set-model, set-url, test",
+        description: "Manage AI providers — list, add, remove, set-key, set-model, set-url, set-default, test",
+        verbs: ["list", "add", "remove", "set-key", "set-model", "set-url", "set-default", "test"],
         handler: handleConfigProvider,
       },
       {
         name: "tier",
         description: "Manage model tiers — list, set, set-default, reset",
+        verbs: ["list", "set", "set-default", "reset"],
         handler: handleConfigTier,
       },
       {
         name: "engine",
         description: "Tune the ReAct engine — list, set <key> <value>, reset",
+        verbs: ["list", "set", "reset"],
         handler: handleConfigEngine,
       },
       {
         name: "cost",
         description: "Cost tracking and budget — list, enable, disable, set-budget, reset",
+        verbs: ["list", "enable", "disable", "set-budget", "reset"],
         handler: handleConfigCost,
       },
       {
         name: "channel",
         description: "Communication channels — list, telegram, slack, discord, whatsapp",
+        verbs: ["list", "telegram", "slack", "discord", "whatsapp"],
         handler: handleConfigChannel,
       },
       {
         name: "gateway",
         description: "HTTP gateway settings — list, set-port, set-host, set-output-mode, rate-limit",
+        verbs: ["list", "set-port", "set-host", "set-output-mode", "rate-limit"],
         handler: handleConfigGateway,
       },
       {
         name: "parliament",
         description: "Multi-owl debate settings — list, set-rounds, set-owls",
+        verbs: ["list", "set-rounds", "set-owls"],
         handler: handleConfigParliament,
       },
       {
         name: "heartbeat",
-        description: "Proactive notifications — list, enable, disable, set-interval, set-cooldown",
+        description: "Proactive notifications — list, enable, disable, set-interval, set-cooldown, set-max-unanswered",
+        verbs: ["list", "enable", "disable", "set-interval", "set-cooldown", "set-max-unanswered"],
         handler: handleConfigHeartbeat,
       },
       {
         name: "logging",
-        description: "Structured logging — list, set-level, set-retention, sink",
+        description: "Structured logging — list, set-level, set-retention, set-buffer-size, sink",
+        verbs: ["list", "set-level", "set-retention", "set-buffer-size", "sink"],
         handler: handleConfigLogging,
       },
       {
         name: "research",
-        description: "Deep-research behavior — list, set, enable-auto-deep, disable-auto-deep",
+        description: "Deep-research behavior — list, set, enable-auto-deep, disable-auto-deep, enable-diminishing, disable-diminishing",
+        verbs: ["list", "set", "enable-auto-deep", "disable-auto-deep", "enable-diminishing", "disable-diminishing"],
         handler: handleConfigResearch,
       },
       {
         name: "pellets",
-        description: "Knowledge pellet store — list, set-embedding-model, set-cache-size, dedup",
+        description: "Knowledge pellet store — list, set-embedding-model, set-cache-size, dedup, set-dedup-threshold",
+        verbs: ["list", "set-embedding-model", "set-cache-size", "dedup", "set-dedup-threshold"],
         handler: handleConfigPellets,
       },
       {
         name: "browser",
         description: "Browser pool — list, enable, disable, set-pool-size, set-proxy, stealth",
+        verbs: ["list", "enable", "disable", "set-pool-size", "set-proxy", "stealth"],
         handler: handleConfigBrowser,
       },
       {
         name: "mcp",
         description: "MCP server connections — list, add, remove, enable, disable",
+        verbs: ["list", "add", "remove", "enable", "disable"],
         handler: handleConfigMcp,
       },
       // ── Global operations ─────────────────────────────────────────────────────

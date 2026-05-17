@@ -60,14 +60,29 @@ export async function getCompletions(input: string, ctx: CommandContext): Promis
       .map((sub) => ({ kind: "subcommand" as const, value: sub.name, description: sub.description }));
   }
 
-  // Mode 3: dynamic arg completion
+  // Mode 3: dynamic arg completion or static verb list
   if (parts.length >= 2) {
     const subcmdName = parts[1] ?? "";
     const sub = spec.subcommands.find((s) => s.name === subcmdName);
-    if (sub?.complete && (parts.length > 2 || hasTrailingSpace)) {
-      const partial = hasTrailingSpace ? "" : (parts[parts.length - 1] ?? "");
-      const values = await sub.complete(ctx, partial);
-      return values.map((v) => ({ kind: "arg" as const, value: v }));
+    if (sub) {
+      // Dynamic completer (e.g. server names, memory keys) — takes priority
+      if (sub.complete && (parts.length > 2 || hasTrailingSpace)) {
+        const partial = hasTrailingSpace ? "" : (parts[parts.length - 1] ?? "");
+        const values = await sub.complete(ctx, partial);
+        return values.map((v) => ({ kind: "arg" as const, value: v }));
+      }
+      // Static verb list (e.g. /config provider list|add|remove|...)
+      if (sub.verbs?.length) {
+        if (parts.length === 2 && hasTrailingSpace) {
+          return sub.verbs.map((v) => ({ kind: "arg" as const, value: v }));
+        }
+        if (parts.length === 3 && !hasTrailingSpace) {
+          const partial3 = parts[2] ?? "";
+          return sub.verbs
+            .filter((v) => v.startsWith(partial3))
+            .map((v) => ({ kind: "arg" as const, value: v }));
+        }
+      }
     }
   }
 
