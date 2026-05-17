@@ -21,7 +21,7 @@ export class InstinctRegistry {
     try {
       files = (await readdir(instinctsDir)).filter((f) => f.endsWith(".md"));
     } catch (err) {
-      log.engine.warn("[InstinctRegistry] loadForOwl: instincts dir not found or unreadable", { owlsDir, owlName });
+      log.engine.warn("[InstinctRegistry] loadForOwl: instincts dir not found or unreadable", { owlsDir, owlName, err });
       this.cache.set(owlName, []);
       return;
     }
