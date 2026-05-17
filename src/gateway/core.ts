@@ -2125,7 +2125,7 @@ export class OwlGateway {
       const shouldTrigger = await this.parliamentSubsystem.shouldAutoTrigger(message.text);
       if (shouldTrigger) {
         log.gateway.debug("handleCore: parliament auto-triggered", { sessionId: message.sessionId });
-        const parliamentResp = await this.parliamentSubsystem.run(message, this.ctx);
+        const parliamentResp = await this.parliamentSubsystem.run(message, this.ctx, callbacks, session);
         if (parliamentResp) return parliamentResp;
       }
     }
@@ -2182,8 +2182,12 @@ export class OwlGateway {
     }
 
     if (routingResult?.parliamentHandled) {
-      log.gateway.debug("handleCore: OwlBrain handled parliament internally", { sessionId: message.sessionId });
-      // result already in routingResult — fall through to normal response handling
+      // ─── Secretary Router triggered Parliament ───────────────────
+      // owlBrain signals intent; the subsystem runs the actual debate and returns.
+      log.gateway.info(`[Gateway] SecretaryRouter convened Parliament for: "${text.slice(0, 50)}..."`, { sessionId: message.sessionId });
+      const parliamentRespB = await this.parliamentSubsystem.run(message, this.ctx, callbacks, session);
+      if (parliamentRespB) return parliamentRespB;
+      log.engine.warn("[Gateway] Parliament triggered but run() returned null — falling back to direct", { sessionId: message.sessionId });
     }
 
     // ─── Instinct injection ──────────────────────────────────────

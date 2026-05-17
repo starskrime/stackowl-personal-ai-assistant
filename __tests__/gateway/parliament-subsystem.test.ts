@@ -6,18 +6,26 @@ const makeMsg = (): GatewayMessage => ({
   id: "m1", sessionId: "s1", userId: "u1", channelId: "cli", text: "hello",
 });
 
+/**
+ * makeOrchestrator builds a minimal GatewayContext-like object with just the
+ * parliament-related fields wired up.
+ *
+ * runDebate uses the real API: it mutates the passed ParliamentSession in place
+ * (returns void) and writes `synthesis` directly onto the session object.
+ */
 const makeOrchestrator = (shouldTrigger = true) => ({
   parliamentAutoTrigger: {
     check: vi.fn().mockResolvedValue({ shouldTrigger, reason: "complex" }),
   },
   topicWorthiness: { evaluate: vi.fn().mockResolvedValue({ worthy: true, score: 0.8 }) },
   multiRoundDebate: {
-    runDebate: vi.fn().mockResolvedValue({
-      synthesis: "Parliament says: yes",
-      rounds: [{ positions: [] }],
+    // Mutates session.synthesis in place — same contract as the real MultiRoundDebateManager
+    runDebate: vi.fn().mockImplementation(async (session: { synthesis?: string; verdict?: string }) => {
+      session.synthesis = "Parliament says: yes";
+      session.verdict = "CONSENSUS_REACHED";
     }),
   },
-  debatePelletGenerator: { generate: vi.fn().mockResolvedValue(undefined) },
+  debatePelletGenerator: { generateFromSession: vi.fn().mockResolvedValue(undefined) },
 });
 
 describe("ParliamentSubsystem", () => {
@@ -45,8 +53,10 @@ describe("ParliamentSubsystem", () => {
     } as any;
     const subsystem = new ParliamentSubsystem(ctx);
     const result = await subsystem.run(makeMsg(), ctx);
-    expect(result.content).toBe("Parliament says: yes");
-    expect(result.owlName).toBe("owl");
+    // synthesis is embedded in content along with #Parliament tag
+    expect(result!.content).toContain("Parliament says: yes");
+    expect(result!.content).toContain("#Parliament");
+    expect(result!.owlName).toBe("owl");
     expect(deps.multiRoundDebate.runDebate).toHaveBeenCalled();
   });
 
@@ -59,7 +69,7 @@ describe("ParliamentSubsystem", () => {
 
   it("pellet generation failure does not reject run()", async () => {
     const deps = makeOrchestrator();
-    deps.debatePelletGenerator.generate = vi.fn().mockRejectedValue(new Error("pellet fail"));
+    deps.debatePelletGenerator.generateFromSession = vi.fn().mockRejectedValue(new Error("pellet fail"));
     const ctx = {
       owl: { persona: { name: "owl", emoji: "🦉" } },
       provider: {},
