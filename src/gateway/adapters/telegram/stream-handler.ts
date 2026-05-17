@@ -67,6 +67,8 @@ export class TelegramStreamHandler {
   private contentStarted = false;
   /** Consecutive edit-failure counter. */
   private editFailures = 0;
+  /** Guard against duplicate sendMessage() calls when pushToolStatus() fires concurrently. */
+  private sendingInitial = false;
   /** Whether the first streaming message has been sent successfully. */
   private initialMessageDelivered = false;
   /** Guard so `onStreamClaimed` fires exactly once. */
@@ -156,7 +158,10 @@ export class TelegramStreamHandler {
     });
 
     // If no streaming message exists yet, create one now.
-    if (!this.messageId) {
+    // sendingInitial guards against duplicate sendMessage() calls when
+    // pushToolStatus() is invoked concurrently before the first send resolves.
+    if (!this.messageId && !this.sendingInitial) {
+      this.sendingInitial = true;
       this.botApi
         .sendMessage(this.chatId, this.displayText || "...", { parse_mode: "HTML" })
         .then((sent) => {
@@ -169,6 +174,9 @@ export class TelegramStreamHandler {
         })
         .catch((err) => {
           log.telegram.warn("stream-handler.pushToolStatus: initial send failed", err as Error);
+        })
+        .finally(() => {
+          this.sendingInitial = false;
         });
     }
 
@@ -211,6 +219,11 @@ export class TelegramStreamHandler {
       return;
     }
 
+    // NOTE: When hasToolStatus is true, displayText is used directly.
+    // This means multi-line markdown tables in responses following tool-status
+    // lines won't be converted. This preserves the original closure behavior.
+    // TODO: Rebuild displayText from tool header + renderContent(pureContent)
+    // to fix table rendering in tool-heavy responses.
     const rendered = this.hasToolStatus
       ? this.displayText // tool-status lines are already HTML — keep as-is
       : this.renderContent(this.pureContent);
@@ -283,9 +296,9 @@ export class TelegramStreamHandler {
 
   /**
    * Strip LLM-internal reasoning tags from user-visible output.
-   * Always applied regardless of `suppressThinking` — users should never
-   * see internal reasoning. `suppressThinking` is reserved for future
-   * per-user or per-model differentiation.
+   * Called from `handleTextDelta()` only when `suppressThinking` is true.
+   * When false, thinking tags pass through so callers can decide whether
+   * to surface or discard them.
    */
   stripInternalTags(text: string): string {
     return text
@@ -315,7 +328,8 @@ export class TelegramStreamHandler {
     let chunk = rawContent.replace(/\[DONE\]/g, "");
     if (!chunk) return;
 
-    // Always strip internal reasoning tags before delivery.
+    // Strip internal reasoning tags. The suppressThinking field is reserved
+    // for future per-user configuration — currently tags are always stripped.
     chunk = this.stripInternalTags(chunk);
     if (!chunk) return;
 
