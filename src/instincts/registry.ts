@@ -34,6 +34,9 @@ export class InstinctRegistry {
             description: String(data.description),
             constraint: String(data.constraint),
             owlName,
+            ...(Array.isArray(data.keywords)
+              ? { keywords: data.keywords.map(String) }
+              : {}),
           });
         }
       } catch (err) {
