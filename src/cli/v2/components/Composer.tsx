@@ -174,6 +174,8 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
           dispatcher.dispatch(trimmed).then((result) => {
             if (result.kind === "error") {
               globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
+            } else if (result.kind === "system-message") {
+              globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "info" });
             }
             if (trimmed === "/quit") uiStore.setState({ exitConfirmOpen: true });
           }).catch((e: unknown) => log.cli.error("Composer: command dispatch failed", e instanceof Error ? e : new Error(String(e)), { command: trimmed }));
