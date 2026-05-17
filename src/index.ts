@@ -1066,7 +1066,7 @@ async function buildGateway(
     proactiveGenerator.runKnowledgeCouncil().catch((err) =>
       log.engine.warn(`[ProactiveGenerator] Initial council run failed: ${err instanceof Error ? err.message : String(err)}`),
     );
-  }, 30_000);
+  }, 10 * 60_000);
   log.engine.info("[Init] ProactiveKnowledgeGenerator scheduled");
 
   // Self-Learning Coordinator — wires SignalBus, MutationTracker, and UserPreferenceModel
