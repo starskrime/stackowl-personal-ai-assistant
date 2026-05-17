@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TelegramCommandRouter } from "../../../src/gateway/adapters/telegram/command-router.js";
 import { TelegramCallbackRouter } from "../../../src/gateway/adapters/telegram/callback-router.js";
 import type { CommandSpec } from "../../../src/cli/v2/commands/registry.js";
+import type { ChannelCommandRouter } from "../../../src/gateway/adapters/channel-command-router.js";
 
 const makeSpec = (name: string, opts: Partial<CommandSpec> = {}): CommandSpec => ({
   name,
@@ -145,5 +146,18 @@ describe("TelegramVoiceHandler", () => {
       botToken: "test-token",
     });
     expect(handler).toBeDefined();
+  });
+});
+
+describe("ChannelCommandRouter interface", () => {
+  it("TelegramCommandRouter satisfies ChannelCommandRouter", () => {
+    // Type-level test: if this compiles, the interface is satisfied at runtime too
+    const router: ChannelCommandRouter = new TelegramCommandRouter({
+      gateway: makeGateway() as any,
+      registry: [],
+      specialCaseHandlers: {},
+    });
+    expect(typeof router.register).toBe("function");
+    expect(typeof router.updateMenu).toBe("function");
   });
 });

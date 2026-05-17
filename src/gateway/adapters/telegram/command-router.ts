@@ -16,6 +16,7 @@ import { REGISTRY } from "../../../cli/v2/commands/registry.js";
 import type { CommandSpec } from "../../../cli/v2/commands/registry.js";
 import type { OwlGateway } from "../../core.js";
 import type { Bot, Context } from "grammy";
+import type { ChannelCommandRouter } from "../channel-command-router.js";
 
 // ─── Exported interfaces ───────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ export interface TelegramCommandRouterOptions {
 
 // ─── TelegramCommandRouter ────────────────────────────────────────────────────
 
-export class TelegramCommandRouter {
+export class TelegramCommandRouter implements ChannelCommandRouter {
   private readonly gateway: OwlGateway;
   private readonly registry: CommandSpec[];
   private readonly specialCaseHandlers: SpecialCaseHandlers;
@@ -159,6 +160,11 @@ export class TelegramCommandRouter {
     } catch (err) {
       log.telegram.warn("TelegramCommandRouter.updateBotMenu: setMyCommands failed (non-fatal)", err);
     }
+  }
+
+  /** ChannelCommandRouter alias — delegates to updateBotMenu. */
+  async updateMenu(bot: unknown): Promise<void> {
+    return this.updateBotMenu(bot as Bot);
   }
 
   // ─── Private: dispatchRegistryCommand ────────────────────────────────────────
