@@ -158,6 +158,8 @@ import { runPreDeliveryGate } from "./pre-delivery-gate.js";
 import { BmadAgentLoader } from "../owls/bmad-agent-loader.js";
 import { ParliamentSubsystem } from "./parliament-subsystem.js";
 import type { IParliamentSubsystem } from "./parliament-subsystem.js";
+import { ProactiveDeliveryService } from "./proactive-delivery-service.js";
+import type { IProactiveDeliveryService } from "./proactive-delivery-service.js";
 
 // ─── Utility functions ───────────────────────────────────────────
 
@@ -239,16 +241,14 @@ export class OwlGateway {
   private anticipator: ProactiveAnticipator | null = null;
   /** Lazy-initialized task orchestrator for multi-strategy execution */
   private taskOrchestrator: TaskOrchestrator | null = null;
-  /** Track last active channel + user for scheduled message delivery */
-  private lastActiveChannel: string | null = null;
-  private lastActiveUserId: string | null = null;
-
   /** Agent Watch — supervises external coding agent sessions */
   agentWatch: import("../agent-watch/index.js").AgentWatchManager | null = null;
   /** Lifecycle coordinator — owns all process signals, timers, and shutdown callbacks */
   private readonly lifecycle: ILifecycleCoordinator;
   private readonly featureRouter: IFeatureCommandRouter;
   private readonly parliamentSubsystem: IParliamentSubsystem;
+  /** Proactive delivery service — per-session activity tracking and scheduled message routing */
+  private readonly proactiveSvc: IProactiveDeliveryService;
 
   // ─── Phase 3: Relational Intelligence ────────────────────────
   private sessionBriefGenerator: SessionBriefGenerator | null = null;
@@ -385,6 +385,9 @@ export class OwlGateway {
     })();
 
     this.parliamentSubsystem = ctx.parliamentSubsystem ?? new ParliamentSubsystem(ctx);
+
+    this.proactiveSvc = ctx.proactiveDeliveryService
+      ?? new ProactiveDeliveryService({ adapters: this.adapters, owl: ctx.owl });
 
     // Initialize task queue (Improvement #2)
     this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
@@ -1734,9 +1737,8 @@ export class OwlGateway {
 
     let text = message.text;
 
-    // Track last active channel/user for scheduled message delivery
-    this.lastActiveChannel = message.channelId;
-    this.lastActiveUserId = message.userId;
+    // Track per-session activity for proactive message routing
+    this.proactiveSvc.recordActivity(message.sessionId, message.channelId, message.userId);
     this.channelRegistry.markActive(message.channelId, message.userId);
 
     log.engine.incoming(message.channelId, message.text);
@@ -2968,7 +2970,7 @@ export class OwlGateway {
 
     // Scheduled message delivery tick — polls every 5 seconds for due timers
     this.lifecycle.startTimer("scheduled-delivery", 5_000, async () => {
-      this.deliverScheduledMessages();
+      await this.proactiveSvc.deliverScheduled(getReadyMessages);
     });
     log.gateway.info("LifecycleCoordinator.startTimer: scheduled-delivery tick started");
 
@@ -2997,16 +2999,7 @@ export class OwlGateway {
     text: string,
     preformatted = false,
   ): Promise<void> {
-    const adapter = this.adapters.get(channelId);
-    if (!adapter) return;
-    const response: GatewayResponse = {
-      content: text,
-      owlName: this.ctx.owl.persona.name,
-      owlEmoji: this.ctx.owl.persona.emoji,
-      toolsUsed: [],
-      preformatted,
-    };
-    await adapter.sendToUser(userId, response);
+    await this.proactiveSvc.deliver(channelId, userId, text, preformatted);
   }
 
   /**
@@ -3027,41 +3020,6 @@ export class OwlGateway {
             `Broadcast failed on ${adapter.id}: ${err instanceof Error ? err.message : err}`,
           ),
         );
-    }
-  }
-
-  // ─── Scheduled Message Delivery ─────────────────────────────
-
-  /**
-   * Poll for scheduled messages (from set_timer tool) and deliver them
-   * through the last active channel. Runs every 5 seconds.
-   */
-  private deliverScheduledMessages(): void {
-    const ready = getReadyMessages();
-    if (ready.length === 0) return;
-
-    for (const msg of ready) {
-      const channelId = msg.channelId || this.lastActiveChannel;
-      const userId = msg.userId || this.lastActiveUserId;
-
-      if (channelId && userId) {
-        this.sendProactive(channelId, userId, msg.message).catch((err) =>
-          log.engine.warn(
-            `[Timer] Failed to deliver scheduled message "${msg.id}": ${err instanceof Error ? err.message : err}`,
-          ),
-        );
-        log.engine.info(
-          `[Timer] Delivered "${msg.id}" to ${channelId}:${userId}`,
-        );
-      } else {
-        // No channel info — broadcast to all
-        this.broadcastProactive(msg.message).catch((err) =>
-          log.engine.warn(
-            `[Timer] Failed to broadcast scheduled message "${msg.id}": ${err instanceof Error ? err.message : err}`,
-          ),
-        );
-        log.engine.info(`[Timer] Broadcast "${msg.id}" to all channels`);
-      }
     }
   }
 
