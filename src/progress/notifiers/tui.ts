@@ -11,7 +11,7 @@ import type { ProgressNotifier } from "../types.js";
  *   - thinking.tool:  shows tool status text while a tool is running
  *
  * start/stop do NOT emit turn.started / turn.committed — those are handled
- * by the existing cli-v2 adapter path and must not be duplicated.
+ * by the existing cli adapter path and must not be duplicated.
  */
 export class TuiProgressNotifier implements ProgressNotifier {
   private activeTurnIds = new Set<string>();

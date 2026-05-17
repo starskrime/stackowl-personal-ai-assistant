@@ -221,7 +221,7 @@ export class UiBridge {
 
   /**
    * Emit sessions.loaded — populates the recentSessions list in the store.
-   * Called asynchronously from cli-v2.ts after listSessions() resolves.
+   * Called asynchronously from cli.ts after listSessions() resolves.
    */
   loadSessions(sessions: import("./UiEvent.js").SessionSummaryRecord[]): void {
     this.emit({ kind: "sessions.loaded", sessions });

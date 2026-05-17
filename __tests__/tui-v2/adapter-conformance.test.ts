@@ -157,14 +157,14 @@ const mockCliV1Adapter: ChannelAdapter = {
   // No emit, no capabilities — v1 contract
 };
 
-const mockCliV2Adapter: ChannelAdapter = {
-  id: "cli-v2",
-  name: "CLI v2",
+const mockCliAdapter: ChannelAdapter = {
+  id: "cli",
+  name: "CLI",
   start: async () => {},
   stop: () => {},
   sendToUser: async () => {},
   broadcast: async () => {},
-  // TUI v2 additions — these ARE present on the v2 adapter
+  // TUI additions — these ARE present on the main CLI adapter
   emit: (_event) => { /* noop — type-checks the UiEvent parameter */ },
   capabilities: (): ChannelCapabilities => ({
     tuiV2: true,
@@ -183,10 +183,10 @@ const _telegramCheck: ChannelAdapter = mockTelegramAdapter;
 const _slackCheck: ChannelAdapter = mockSlackAdapter;
 const _voiceCheck: ChannelAdapter = mockVoiceAdapter;
 const _cliV1Check: ChannelAdapter = mockCliV1Adapter;
-const _cliV2Check: ChannelAdapter = mockCliV2Adapter;
+const _cliCheck: ChannelAdapter = mockCliAdapter;
 
 // Suppress "unused variable" warnings — the point is compile-time checking.
-void _telegramCheck, _slackCheck, _voiceCheck, _cliV1Check, _cliV2Check;
+void _telegramCheck, _slackCheck, _voiceCheck, _cliV1Check, _cliCheck;
 
 // ─── Run conformance checks for every adapter ─────────────────────────────
 
@@ -195,7 +195,7 @@ describe("ChannelAdapter conformance suite (P4-B)", () => {
   testAdapterConformance("SlackAdapter (stub)", mockSlackAdapter);
   testAdapterConformance("VoiceChannelAdapter (stub)", mockVoiceAdapter);
   testAdapterConformance("CLIAdapter v1 (stub)", mockCliV1Adapter);
-  testAdapterConformance("CliV2Adapter (stub)", mockCliV2Adapter, {
+  testAdapterConformance("CliAdapter (stub)", mockCliAdapter, {
     expectsEmit: true,
     expectsCapabilities: true,
   });
@@ -207,7 +207,7 @@ describe("ChannelAdapter conformance suite (P4-B)", () => {
   //
   // We test this by simulating what gateway orchestration code does:
   //   for each registered adapter, call adapter.emit?.()
-  // This should be safe on ALL adapters, v1 or v2.
+  // This should be safe on ALL adapters, v1 or cli.
 
   describe("gateway emit-dispatch safety — optional chaining", () => {
     const allAdapters: ChannelAdapter[] = [
@@ -215,7 +215,7 @@ describe("ChannelAdapter conformance suite (P4-B)", () => {
       mockSlackAdapter,
       mockVoiceAdapter,
       mockCliV1Adapter,
-      mockCliV2Adapter,
+      mockCliAdapter,
     ];
 
     it("adapter.emit?.() is safe on ALL adapters (simulated gateway dispatch)", () => {
@@ -245,23 +245,23 @@ describe("ChannelAdapter conformance suite (P4-B)", () => {
       }).not.toThrow();
     });
 
-    it("only cli-v2 adapter reports tuiV2: true", () => {
+    it("only cli adapter reports tuiV2: true", () => {
       const tuiV2Adapters = allAdapters.filter(
         (a) => a.capabilities?.()?.tuiV2 === true,
       );
       expect(tuiV2Adapters).toHaveLength(1);
-      expect(tuiV2Adapters[0]!.id).toBe("cli-v2");
+      expect(tuiV2Adapters[0]!.id).toBe("cli");
     });
 
-    it("non-cli-v2 adapters do NOT have emit defined", () => {
-      const v1Adapters = allAdapters.filter((a) => a.id !== "cli-v2");
+    it("non-cli adapters do NOT have emit defined", () => {
+      const v1Adapters = allAdapters.filter((a) => a.id !== "cli");
       for (const adapter of v1Adapters) {
         expect(adapter.emit).toBeUndefined();
       }
     });
 
-    it("non-cli-v2 adapters do NOT have capabilities defined", () => {
-      const v1Adapters = allAdapters.filter((a) => a.id !== "cli-v2");
+    it("non-cli adapters do NOT have capabilities defined", () => {
+      const v1Adapters = allAdapters.filter((a) => a.id !== "cli");
       for (const adapter of v1Adapters) {
         expect(adapter.capabilities).toBeUndefined();
       }

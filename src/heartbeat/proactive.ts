@@ -883,7 +883,7 @@ export class ProactivePinger {
       db?.writeProactiveDelivery({
         id: deliveryId,
         jobId,
-        channel: "tui-v2",
+        channel: "tui",
         userId: userId ?? "local",
         messagePreview: message.slice(0, 100),
         verdict,

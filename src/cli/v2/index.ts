@@ -1,5 +1,5 @@
 /**
- * TUI v2 entrypoint — loaded when STACKOWL_TUI=v2.
+ * TUI entrypoint — loaded when STACKOWL_TUI is not set to v1.
  *
  * Phase 1: wires gateway adapter, bridge, and full ChatScreen.
  * Phase 3-B: onboarding is handled in chatCommand() (src/index.ts) BEFORE
@@ -14,7 +14,7 @@ import { uiStore } from "./state/store.js";
 import { installLoggerRedirect, uninstallLoggerRedirect } from "./io/logger.js";
 import { enableBracketedPaste, disableBracketedPaste } from "./input/paste.js";
 import { detectCapabilities } from "./io/capabilities.js";
-import { CliV2Adapter } from "../../gateway/adapters/cli-v2.js";
+import { CliAdapter } from "../../gateway/adapters/cli.js";
 import type { OwlGateway } from "../../gateway/core.js";
 
 export async function startV2(gateway: OwlGateway): Promise<void> {
@@ -23,7 +23,7 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
     throw new Error("TUI v2 requires a TTY. For non-TTY use, set STACKOWL_JSON=true.");
   }
 
-  const adapter = new CliV2Adapter(gateway);
+  const adapter = new CliAdapter(gateway);
   gateway.register(adapter);
 
   installLoggerRedirect();

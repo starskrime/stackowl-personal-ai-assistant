@@ -184,7 +184,7 @@ import { TelegramAdapter } from "./gateway/adapters/telegram.js";
 import { SlackAdapter } from "./gateway/adapters/slack.js";
 import { DiscordAdapter } from "./gateway/adapters/discord.js";
 import { WhatsAppAdapter } from "./gateway/adapters/whatsapp.js";
-import { CLIAdapter } from "./gateway/adapters/cli.js";
+import { CLIAdapter } from "./gateway/adapters/cli-v1.js";
 import { BootSplash } from "./cli/splash.js";
 import type { BootStep } from "./cli/splash.js";
 import { OnboardingWizard } from "./cli/onboarding.js";
@@ -1164,11 +1164,11 @@ async function buildGateway(
     b.config.skills?.watchDebounceMs ?? 250,
   );
 
-  // ─── ACP Router ────────────────────────────────────────────
-  const { ACPRouter } = await import("./acp/router.js");
-  const { SessionBridgeFactory } = await import("./acp/bridge.js");
-  const bridgeFactory = new SessionBridgeFactory(b.sessionStore);
-  const acpRouter = new ACPRouter(agentRegistry, eventBus, bridgeFactory);
+  // ─── A2A Registry ──────────────────────────────────────────
+  const { A2ARegistry } = await import("./a2a/index.js");
+  const { registerDefaultAgents } = await import("./a2a/bootstrap.js");
+  const a2aRegistry = new A2ARegistry(() => b.sessionStore);
+  registerDefaultAgents(a2aRegistry);
 
   // ─── New Feature Modules ──────────────────────────────────────
   const autoConfigDetector = new AutoConfigDetector(
@@ -1269,12 +1269,12 @@ async function buildGateway(
     agentRegistry,
     rateLimiter,
     selfLearningCoordinator,
-    // Plugin, Reload & ACP
+    // Plugin, Reload & A2A
     pluginRegistry,
     serviceRegistry,
     hookPipeline,
     hotReloadManager,
-    acpRouter,
+    a2aRegistry,
     // Feature modules
     infraProfile: b.infraProfile,
     infraDetector: b.infraDetector,

@@ -3,7 +3,7 @@ import type { CommandHandler } from "../registry.js";
 
 export const handleClear: CommandHandler = async (ctx, _args) => {
   const gateway = ctx.getOwlGateway();
-  const msg = makeMessage("cli-v2", "local", "/reset", "cli-v2:local");
+  const msg = makeMessage("cli", "local", "/reset", "cli:local");
   if (msg) {
     await gateway.handle(msg);
   }

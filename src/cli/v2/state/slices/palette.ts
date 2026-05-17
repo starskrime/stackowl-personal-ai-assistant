@@ -1,7 +1,7 @@
 /**
  * palette.ts — state for CommandPalette data (owls, skills, MCP servers).
  *
- * These lists are populated asynchronously by the CliV2Adapter on startup
+ * These lists are populated asynchronously by the CliAdapter on startup
  * and refreshed when the relevant slash command is opened.
  */
 
