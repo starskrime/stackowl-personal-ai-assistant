@@ -114,7 +114,6 @@ describe("EventBasedPelletGenerator message classification cooldown", () => {
   it("classifies the first tool-using response", async () => {
     const { eventBus, router } = makeGenerator();
 
-    await (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls; // flush
     await (eventBus as any).emit("message:responded", TOOL_PAYLOAD);
 
     // router.resolve should have been called at least once for classification
@@ -172,5 +171,29 @@ describe("EventBasedPelletGenerator message classification cooldown", () => {
       ([tier]: [string]) => tier === "classification",
     );
     expect(classificationCalls.length).toBe(0);
+  });
+
+  it("re-arms cooldown after second classification", async () => {
+    const { eventBus, router } = makeGenerator();
+
+    // First call — LLM is called (count = 1)
+    await (eventBus as any).emit("message:responded", TOOL_PAYLOAD);
+
+    // Advance past the 2-minute cooldown
+    vi.advanceTimersByTime(3 * 60_000);
+
+    // Second call — LLM is called again (count = 2), re-arms lastClassifiedAt
+    await (eventBus as any).emit("message:responded", TOOL_PAYLOAD);
+
+    // Advance only 1 minute — still within the new cooldown window
+    vi.advanceTimersByTime(60_000);
+
+    // Third call — should be skipped (cooldown still active)
+    await (eventBus as any).emit("message:responded", TOOL_PAYLOAD);
+
+    const classificationCalls = (router.resolve as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([tier]: [string]) => tier === "classification",
+    );
+    expect(classificationCalls.length).toBe(2);
   });
 });

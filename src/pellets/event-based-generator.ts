@@ -224,7 +224,12 @@ export class EventBasedPelletGenerator {
     owlName: string;
     toolsUsed: string[];
   }): Promise<void> {
-    if (!payload.toolsUsed?.length) return;
+    log.engine.debug("[EventBasedPelletGenerator] handleMessageResponded: entry", {
+      sessionId: payload.sessionId,
+      toolCount: payload.toolsUsed.length,
+    });
+
+    if (!payload.toolsUsed.length) return;
 
     const now = Date.now();
     if (now - this.lastClassifiedAt < this.classificationCooldownMs) {
@@ -252,7 +257,7 @@ export class EventBasedPelletGenerator {
       );
       const classification = JSON.parse(raw.trim());
       isSignificant = classification.isDecision || classification.isInsight || classification.isCorrection;
-      this.lastClassifiedAt = Date.now();
+      this.lastClassifiedAt = now;
     } catch (err) {
       log.engine.warn(`[EventBasedPelletGenerator] Classification parse failed: ${err instanceof Error ? err.message : String(err)}`);
       isSignificant = false;
@@ -275,6 +280,11 @@ export class EventBasedPelletGenerator {
     if (pellet) {
       await this.activityGate?.markSeen("pellet-classification");
     }
+
+    log.engine.debug("[EventBasedPelletGenerator] handleMessageResponded: exit", {
+      sessionId: payload.sessionId,
+      pelletGenerated: pellet !== null,
+    });
   }
 
   /**
