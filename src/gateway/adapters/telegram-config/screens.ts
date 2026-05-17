@@ -85,7 +85,9 @@ export function renderMain(config: StackOwlConfig): ScreenContent {
   const text =
     `⚙️ <b>StackOwl Configuration</b>\n\n` +
     `Active: <code>${defaultProv}</code> · <code>${defaultModel}</code>\n` +
-    `Providers configured: ${provCount}`;
+    `Providers configured: ${provCount}\n\n` +
+    `<i>Type /config &lt;subcommand&gt; for more:\n` +
+    `show · tiers · set-tier · engine · validate · reload · export · import · diff</i>`;
 
   const keyboard = new InlineKeyboard()
     .text("📡 Providers",      "cfg:pr").text("🎯 Model Roles",   "cfg:rl").row()
