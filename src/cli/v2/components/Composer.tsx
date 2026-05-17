@@ -138,7 +138,10 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
               (entry.kind === "subcommand" && lastTypedWord === entry.value);
             if (!alreadyExact) {
               if (entry.kind === "command") setValue(entry.value + " ");
-              else if (entry.kind === "subcommand") setValue(value.replace(/\S+$/, "").trimEnd() + " " + entry.value + " ");
+              else if (entry.kind === "subcommand") {
+                const cmdPart = value.trimEnd().split(/\s+/)[0] ?? "";
+                setValue(cmdPart + " " + entry.value + " ");
+              }
               return;
             }
             // exact match — fall through to prompt/dispatch below
