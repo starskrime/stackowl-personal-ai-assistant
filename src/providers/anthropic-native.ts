@@ -258,7 +258,7 @@ export class AnthropicNativeProvider implements ModelProvider {
       params.tools = toAnthropicTools(tools);
     }
 
-    const stream = this.client.messages.stream(params);
+    const stream = this.client.messages.stream(params, { signal: options?.signal });
 
     // Track current tool call being built
     let currentToolId = "";

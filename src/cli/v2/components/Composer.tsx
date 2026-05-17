@@ -79,9 +79,9 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
   // Escape during generation — active independently of the disabled prop so
   // the key is captured even while the main useInput is inactive.
   useInput(
-    (_input, key) => {
-      if (key.escape) {
-        log.cli.debug("Composer: Escape during generation — emitting cancel.requested", {});
+    (input, key) => {
+      if (key.escape || (key.ctrl && input === "c")) {
+        log.cli.debug("Composer: cancel key during generation — emitting cancel.requested", {});
         globalBridge.emit({ kind: "cancel.requested" });
       }
     },

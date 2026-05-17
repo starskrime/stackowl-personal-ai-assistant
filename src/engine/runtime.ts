@@ -571,6 +571,16 @@ async function consumeStream(
   onEvent?: (event: StreamEvent) => Promise<void>,
   signal?: AbortSignal,
 ): Promise<ChatResponse> {
+  // Pre-flight: don't start the iteration if already cancelled.
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+  // Abort listener: when the signal fires, immediately close the generator so
+  // the for-await unblocks without having to wait for the next network event.
+  // The Anthropic SDK's own abort handler (wired via chatOptions.signal) runs
+  // in parallel and cancels the underlying HTTP request.
+  const onAbort = () => { void stream.return(undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
   let content = "";
   const toolCalls: ToolCall[] = [];
   const toolCallMap = new Map<
@@ -582,46 +592,50 @@ async function consumeStream(
     | undefined;
   let model = "";
 
-  for await (const event of stream) {
-    if (signal?.aborted) {
-      stream.return?.(undefined);
-      throw new DOMException("Aborted", "AbortError");
-    }
-    // Emit to channel in real-time
-    if (onEvent) {
-      await onEvent(event).catch(() => { });
-    }
+  try {
+    for await (const event of stream) {
+      if (signal?.aborted) break;
+      // Emit to channel in real-time
+      if (onEvent) {
+        await onEvent(event).catch(() => { });
+      }
+      if (signal?.aborted) break;
 
-    switch (event.type) {
-      case "text_delta":
-        content += event.content;
-        break;
-      case "tool_start":
-        toolCallMap.set(event.toolCallId, {
-          id: event.toolCallId,
-          name: event.toolName,
-          argsStr: "",
-        });
-        break;
-      case "tool_args_delta": {
-        const tc = toolCallMap.get(event.toolCallId);
-        if (tc) tc.argsStr += event.argsDelta;
-        break;
+      switch (event.type) {
+        case "text_delta":
+          content += event.content;
+          break;
+        case "tool_start":
+          toolCallMap.set(event.toolCallId, {
+            id: event.toolCallId,
+            name: event.toolName,
+            argsStr: "",
+          });
+          break;
+        case "tool_args_delta": {
+          const tc = toolCallMap.get(event.toolCallId);
+          if (tc) tc.argsStr += event.argsDelta;
+          break;
+        }
+        case "tool_end": {
+          toolCalls.push({
+            id: event.toolCallId,
+            name: event.toolName,
+            arguments: event.arguments,
+          });
+          toolCallMap.delete(event.toolCallId);
+          break;
+        }
+        case "done":
+          if (event.usage) usage = event.usage;
+          break;
       }
-      case "tool_end": {
-        toolCalls.push({
-          id: event.toolCallId,
-          name: event.toolName,
-          arguments: event.arguments,
-        });
-        toolCallMap.delete(event.toolCallId);
-        break;
-      }
-      case "done":
-        if (event.usage) usage = event.usage;
-        break;
     }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
+
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
   return {
     content,
@@ -718,6 +732,9 @@ async function withProviderResilience(
   const MAX_RETRIES = maxRetries;
   const site = callSite ?? "unknown";
 
+  // Pre-flight: don't start any network call if already cancelled.
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
   // Sanitize message history before sending to ANY provider — ensures every
   // tool_use block in an assistant message has a matching tool_result.
   // This prevents HTTP 400 "tool call and result not match" errors.
@@ -755,6 +772,9 @@ async function withProviderResilience(
     } catch (err) {
       lastStreamError = err;
       const errMsg = err instanceof Error ? err.message : String(err);
+
+      // Fast-fail: user cancelled — never degrade to non-stream or alternate providers
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
 
       // Fast-fail: circuit is open — retrying is pointless and wastes time
       if (err instanceof CircuitOpenError) {
@@ -806,6 +826,7 @@ async function withProviderResilience(
 
   // ── Layer 2: degrade to non-stream on same provider ─────────────
   // This is safe: chatWithTools() uses the same model/messages, just no SSE.
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   try {
     log.engine.warn(
       `[Resilience/${site}] Attempting non-stream fallback on provider "${provider.name}"…`,
@@ -826,6 +847,7 @@ async function withProviderResilience(
   }
 
   // ── Layer 3: try alternate providers from registry ───────────────
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   if (providerRegistry) {
     const candidates = providerRegistry.listProviders().filter((n) => n !== provider.name);
     for (const candidateName of candidates) {
@@ -1195,12 +1217,14 @@ ${userMessage}
     const chatOptions: {
       temperature: number;
       maxTokens: number;
+      signal?: AbortSignal;
     } = {
       temperature: Math.max(
         0,
         Math.min(1, dnaBaseTemp + dnaDecisions.temperatureAdjustment),
       ),
       maxTokens: dnaDecisions.maxResponseTokens,
+      signal: context.signal,
     };
 
     // 5. ReAct loop — call model, handle tool calls iteratively
