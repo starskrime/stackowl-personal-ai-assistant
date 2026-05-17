@@ -41,6 +41,10 @@ export class SignalPool {
   private collectors: SignalCollector[] = [];
   private timers: ReturnType<typeof setInterval>[] = [];
   private started = false;
+  /** Tracks when each signal was last sent to the LLM verifier. */
+  private _lastVerifiedAt = new Map<string, number>();
+  /** Cooldown between re-verification of the same signal (10 minutes). */
+  private readonly VERIFY_COOLDOWN_MS = 10 * 60_000;
 
   constructor(private readonly deps: SignalPoolDeps) {}
 
@@ -193,6 +197,7 @@ export class SignalPool {
       for (const [id, s] of this.signals) {
         if (s.timestamp + s.ttlMs < now) {
           this.signals.delete(id);
+          this._lastVerifiedAt.delete(id);
           this.deps.bus.emit({
             type: "signal:expired",
             signal: s,
@@ -208,9 +213,14 @@ export class SignalPool {
             !s.userSurfaceable &&
             (s.priority === "medium" || s.priority === "high"),
         )
+        .filter((s) => {
+          const lastVerified = this._lastVerifiedAt.get(s.id) ?? 0;
+          return now - lastVerified >= this.VERIFY_COOLDOWN_MS;
+        })
         .slice(0, 5);
       for (const s of candidates) {
         try {
+          this._lastVerifiedAt.set(s.id, now);
           const result = await this.deps.verifier.verify(
             signalToVerifyArgs(s, goal),
           );
