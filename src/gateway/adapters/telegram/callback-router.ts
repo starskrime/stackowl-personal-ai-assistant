@@ -8,6 +8,7 @@ export interface CallbackHandlers {
   onConfig:   (ctx: Context, data: string) => Promise<void>;
   onVoice:    (ctx: Context, data: string) => Promise<void>;
   onFeedback: (ctx: Context, data: string) => Promise<void>;
+  onOwl:      (ctx: Context, data: string) => Promise<void>;
 }
 
 export interface TelegramCallbackRouterOptions {
@@ -69,6 +70,12 @@ export class TelegramCallbackRouter {
       if (data.startsWith(CALLBACK_PREFIX.FB)) {
         await this.handlers.onFeedback(ctx, data);
         log.telegram.debug("callback-router.dispatch: exit — feedback routed");
+        return;
+      }
+
+      if (data.startsWith(CALLBACK_PREFIX.OWL)) {
+        await this.handlers.onOwl(ctx, data);
+        log.telegram.debug("callback-router.dispatch: exit — owl routed");
         return;
       }
 

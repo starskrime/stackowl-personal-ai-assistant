@@ -4,6 +4,7 @@ export const CALLBACK_PREFIX = {
   VCFG: "vcfg:",
   WIZ:  "wiz:",
   FB:   "fb:",
+  OWL:  "owl:",
 } as const;
 
 export type CallbackPrefix = typeof CALLBACK_PREFIX[keyof typeof CALLBACK_PREFIX];

@@ -36,6 +36,7 @@ import { TelegramCommandRouter } from "./telegram/command-router.js";
 import { TelegramCallbackRouter } from "./telegram/callback-router.js";
 import { TelegramStreamHandler } from "./telegram/stream-handler.js";
 import { SessionStore } from "./telegram/session-store.js";
+import { TelegramOwlMenu } from "./telegram-owl/index.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -79,6 +80,8 @@ export class TelegramAdapter implements ChannelAdapter {
   public configMenu: TelegramConfigMenu;
   /** Interactive /voice menu controller */
   private voiceMenu: TelegramVoiceMenu;
+  /** Interactive /owl menu controller */
+  private owlMenu: TelegramOwlMenu;
   /** Unified nav control panel controller */
   private rootMenu: TelegramRootMenu;
   /** Whisper STT engine for voice message transcription */
@@ -142,6 +145,17 @@ export class TelegramAdapter implements ChannelAdapter {
         if (typeof (gateway as any).reloadConfig === "function") {
           await (gateway as any).reloadConfig(updated);
         }
+      },
+    );
+
+    // ── Owl menu (interactive /owl command) ──────────────────────
+    this.owlMenu = new TelegramOwlMenu(
+      gateway,
+      async (command: string) => {
+        const { dispatchCoreCommand, buildCoreCtx } = await import("../commands/core-dispatcher.js");
+        const { renderAsPlainText } = await import("../commands/channel-renderer.js");
+        const { result } = await dispatchCoreCommand(command, buildCoreCtx(gateway));
+        return renderAsPlainText(result);
       },
     );
 
@@ -352,6 +366,15 @@ export class TelegramAdapter implements ChannelAdapter {
         menu: async (ctx) => {
           this.trackChat(ctx.chat!.id);
           await this.rootMenu.handleCommand(ctx);
+        },
+        owl: async (ctx) => {
+          this.trackChat(ctx.chat!.id);
+          const rawArgs = (typeof ctx.match === "string" ? ctx.match : ctx.match?.[0] ?? "").trim();
+          if (rawArgs) {
+            await this.dispatchRegistryCommand(ctx, `/owl ${rawArgs}`, () => this.owlMenu.handleCommand(ctx));
+            return;
+          }
+          await this.owlMenu.handleCommand(ctx);
         },
       },
     });
@@ -702,6 +725,7 @@ export class TelegramAdapter implements ChannelAdapter {
         },
         onConfig: async (ctx, data) => { await this.configMenu.handleCallback(ctx, data); },
         onVoice:  async (ctx, data) => { await this.voiceMenu.handleCallback(ctx, data); },
+        onOwl:    async (ctx, data) => { await this.owlMenu.handleCallback(ctx, data); },
         onFeedback: async (ctx, data) => { await this.handleFeedback(ctx, data); },
       },
     });

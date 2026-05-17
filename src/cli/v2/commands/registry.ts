@@ -284,6 +284,7 @@ export const REGISTRY: CommandSpec[] = [
   {
     name: "/owl",
     description: "Manage owls — switch, list, show, create, pin, delete",
+    telegramSpecialCase: true,
     subcommands: [
       { name: "list",      description: "List all owls (BMAD + custom + builtin)", handler: handleOwlList },
       { name: "switch",    description: "Switch to an owl by name", args: [{ name: "<name>" }], handler: handleOwlSwitch },
