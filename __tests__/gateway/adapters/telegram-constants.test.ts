@@ -15,6 +15,7 @@ describe("TELEGRAM_LIMITS", () => {
   it("exports message length limits", () => {
     expect(TELEGRAM_LIMITS.MAX_MESSAGE_LENGTH).toBe(4096);
     expect(TELEGRAM_LIMITS.CHUNK_LENGTH).toBe(3800);
+    expect(TELEGRAM_LIMITS.MAX_CHUNKS).toBe(5);
     expect(TELEGRAM_LIMITS.BOT_MENU_DESCRIPTION_MAX).toBe(256);
     expect(TELEGRAM_LIMITS.BOT_MENU_DESCRIPTION_TRUNCATE).toBe(253);
     expect(TELEGRAM_LIMITS.STREAM_FLUSH_INTERVAL_MS).toBe(500);
