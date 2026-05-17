@@ -12,6 +12,7 @@ import type { StreamEvent } from "../../../providers/base.js";
 import type { OwlPosition, OwlChallenge, ParliamentPhase } from "../../../parliament/protocol.js";
 import type { UiEvent } from "./UiEvent.js";
 import { estimateCost } from "../../../costs/pricing.js";
+import { log } from "../../../logger.js";
 
 export type UiEventHandler = (event: UiEvent) => void;
 
@@ -280,7 +281,7 @@ export class UiBridge {
         items,
         emptyText: "No skills loaded. Check your skills directory.",
       });
-    }).catch((e) => process.stderr.write(`[bridge] requestSkillsView: ${e}\n`));
+    }).catch((e: unknown) => log.cli.error("bridge: requestSkillsView failed", e instanceof Error ? e : new Error(String(e))));
   }
 
   dismissSkillsView(): void {
@@ -306,7 +307,7 @@ export class UiBridge {
         items,
         emptyText: "No MCP servers configured.",
       });
-    }).catch((e) => process.stderr.write(`[bridge] requestMcpView: ${e}\n`));
+    }).catch((e: unknown) => log.cli.error("bridge: requestMcpView failed", e instanceof Error ? e : new Error(String(e))));
   }
 
   dismissMcpView(): void {

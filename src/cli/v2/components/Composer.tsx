@@ -27,6 +27,7 @@ import { getCompletions } from "../commands/completion.js";
 import type { CompletionEntry } from "../commands/completion.js";
 import type { CommandContext } from "../commands/registry.js";
 import { uiStore } from "../state/store.js";
+import { log } from "../../../logger.js";
 
 export interface ComposerProps {
   onSubmit: (text: string) => void;
@@ -66,8 +67,8 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
     let cancelled = false;
     getCompletions(value, completionCtxRef.current).then((results) => {
       if (!cancelled) { setCompletions(results); setCompletionIdx(0); }
-    }).catch((err) => {
-      process.stderr.write(`[Composer] completion error: ${err}\n`);
+    }).catch((err: unknown) => {
+      log.cli.error("Composer: completion lookup failed", err instanceof Error ? err : new Error(String(err)), { value });
       setCompletions([]);
     });
     return () => { cancelled = true; };
@@ -84,7 +85,7 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
           if (result.kind === "error") {
             globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
           }
-        }).catch((e) => process.stderr.write(`[Composer] /clear dispatch error: ${e}\n`));
+        }).catch((e: unknown) => log.cli.error("Composer: /clear dispatch failed", e instanceof Error ? e : new Error(String(e))));
         return;
       }
 
@@ -172,7 +173,7 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
               globalBridge.emit({ kind: "notice", source: "command", text: result.text, severity: "error" });
             }
             if (trimmed === "/quit") uiStore.setState({ exitConfirmOpen: true });
-          }).catch((e) => process.stderr.write(`[Composer] dispatch error: ${e}\n`));
+          }).catch((e: unknown) => log.cli.error("Composer: command dispatch failed", e instanceof Error ? e : new Error(String(e)), { command: trimmed }));
           historyRef.current.push(trimmed);
           setValue("");
           return;
