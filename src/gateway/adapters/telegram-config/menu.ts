@@ -34,6 +34,7 @@ import {
   renderRoleProviderPicker,
   renderHealthCheck,
   renderWebFormLink,
+  renderCommandResult,
   renderError,
   renderSuccess,
   ANTHROPIC_MODELS,
@@ -70,6 +71,8 @@ export class TelegramConfigMenu {
       listProviders(): string[];
     },
     private providerManager?: ProviderManager,
+    /** Optional: dispatch a /config subcommand and return its text output. */
+    private dispatchCommand?: (command: string) => Promise<string>,
   ) {}
 
   // ─── Entry points ─────────────────────────────────────────────
@@ -430,6 +433,13 @@ export class TelegramConfigMenu {
       return;
     }
 
+    // ── Subcommand dispatch buttons ───────────────────────────────
+    if (cmd.startsWith("cmd_")) {
+      const sub = cmd.slice(4); // e.g. "show", "tiers", "validate"
+      await this.dispatchSubcommand(ctx, state, sub);
+      return;
+    }
+
     log.telegram.warn(`[ConfigMenu] Unhandled cfg command: ${cmd}`);
   }
 
@@ -484,6 +494,24 @@ export class TelegramConfigMenu {
         break;
       default:
         await this.editScreen(ctx, state, renderMain(config));
+    }
+  }
+
+  // ─── Subcommand dispatch ──────────────────────────────────────
+
+  private async dispatchSubcommand(ctx: Context, state: MenuState, sub: string): Promise<void> {
+    log.telegram.debug("[ConfigMenu] dispatchSubcommand: entry", { sub });
+    if (!this.dispatchCommand) {
+      await this.editScreen(ctx, state, renderError("Command dispatch not available."));
+      return;
+    }
+    try {
+      const output = await this.dispatchCommand(`/config ${sub}`);
+      await this.editScreen(ctx, state, renderCommandResult(`/config ${sub}`, output || `(no output)`));
+      log.telegram.debug("[ConfigMenu] dispatchSubcommand: exit", { sub, outputLen: output.length });
+    } catch (err) {
+      log.telegram.error(`[ConfigMenu] dispatchSubcommand: failed for "${sub}"`, err as Error);
+      await this.editScreen(ctx, state, renderError(`/config ${sub} failed. Check logs.`));
     }
   }
 

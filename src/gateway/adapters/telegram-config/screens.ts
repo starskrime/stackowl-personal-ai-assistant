@@ -85,16 +85,29 @@ export function renderMain(config: StackOwlConfig): ScreenContent {
   const text =
     `⚙️ <b>StackOwl Configuration</b>\n\n` +
     `Active: <code>${defaultProv}</code> · <code>${defaultModel}</code>\n` +
-    `Providers configured: ${provCount}\n\n` +
-    `<i>Type /config &lt;subcommand&gt; for more:\n` +
-    `show · tiers · set-tier · engine · validate · reload · export · import · diff</i>`;
+    `Providers configured: ${provCount}`;
 
   const keyboard = new InlineKeyboard()
-    .text("📡 Providers",      "cfg:pr").text("🎯 Model Roles",   "cfg:rl").row()
-    .text("🏥 Health Check",   "cfg:hc").row()
-    .text("❌ Close",          "cfg:cl");
+    .text("📡 Providers",    "cfg:pr").text("🎯 Model Roles", "cfg:rl").row()
+    .text("🏥 Health Check", "cfg:hc").row()
+    .text("📄 Show Config",  "cfg:cmd_show").text("📊 Tiers",   "cfg:cmd_tiers").row()
+    .text("✅ Validate",     "cfg:cmd_validate").text("🔀 Diff", "cfg:cmd_diff").row()
+    .text("🔄 Reload",       "cfg:cmd_reload").text("📤 Export", "cfg:cmd_export").row()
+    .text("❌ Close",        "cfg:cl");
 
   return { text, keyboard };
+}
+
+// ─── Screen: Command Result ───────────────────────────────────────
+
+export function renderCommandResult(title: string, output: string): ScreenContent {
+  const MAX = 3800;
+  const body = output.length > MAX ? output.slice(0, MAX) + "\n…(truncated)" : output;
+  return {
+    text: `<b>${title}</b>\n\n<pre>${body}</pre>`,
+    keyboard: new InlineKeyboard()
+      .text("⚙️ Back to Menu", "cfg:~"),
+  };
 }
 
 // ─── Screen: Provider List ────────────────────────────────────────

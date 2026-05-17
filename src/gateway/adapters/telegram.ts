@@ -126,6 +126,12 @@ export class TelegramAdapter implements ChannelAdapter {
         },
       },
       gateway.getProviderManager(),
+      async (command: string) => {
+        const { dispatchCoreCommand, buildCoreCtx } = await import("../commands/core-dispatcher.js");
+        const { renderAsPlainText } = await import("../commands/channel-renderer.js");
+        const { result } = await dispatchCoreCommand(command, buildCoreCtx(gateway));
+        return renderAsPlainText(result);
+      },
     );
 
     // ── Voice menu (interactive /voice command) ──────────────────
