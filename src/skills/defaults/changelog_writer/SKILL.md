@@ -3,7 +3,7 @@ name: changelog_writer
 description: Generate a changelog from git commit history following the Keep a Changelog format
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📓"
 parameters:
   since:

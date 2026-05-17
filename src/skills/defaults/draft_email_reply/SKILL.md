@@ -3,7 +3,7 @@ name: draft_email_reply
 description: Draft a professional email reply based on context provided by the user
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✉️"
 parameters:
   original_email:

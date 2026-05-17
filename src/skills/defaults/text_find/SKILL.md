@@ -3,7 +3,7 @@ name: text_find
 description: Find text in any application - search within documents, browsers, code editors with match highlighting
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔎"
   os: [darwin]
 parameters:

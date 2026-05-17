@@ -3,7 +3,7 @@ name: system_update
 description: Check for available macOS system updates and Homebrew package updates
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔄"
   os: [darwin]
 parameters:

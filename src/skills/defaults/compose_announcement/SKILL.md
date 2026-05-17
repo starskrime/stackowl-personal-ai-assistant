@@ -3,7 +3,7 @@ name: compose_announcement
 description: Draft a formal announcement for teams, clients, or public communication with appropriate tone and structure
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📢"
 parameters:
   audience:

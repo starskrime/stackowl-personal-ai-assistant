@@ -3,7 +3,7 @@ name: qr_code_generate
 description: Generate QR codes from text, URLs, or contact information and save as image files
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "◻️"
 parameters:
   content:

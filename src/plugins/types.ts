@@ -28,7 +28,7 @@ export interface PluginManifest {
     skills?: string[];
     /** Named services other plugins can consume */
     services?: string[];
-    /** ACP channels this plugin listens on */
+    /** A2A channels this plugin listens on */
     channels?: string[];
     /** Middleware names this plugin registers */
     middleware?: string[];

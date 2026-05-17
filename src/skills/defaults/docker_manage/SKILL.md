@@ -3,7 +3,7 @@ name: docker_manage
 description: List, start, stop, and inspect Docker containers and images
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🐳"
 parameters:
   action:

@@ -3,7 +3,7 @@ name: trending_topics
 description: Discover what topics are currently trending on social media, news, and search engines
 command-dispatch: tool
 command-tool: web_search
-openclaw:
+stackowl:
   emoji: "📈"
 parameters:
   region:

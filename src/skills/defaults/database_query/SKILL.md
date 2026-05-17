@@ -3,7 +3,7 @@ name: database_query
 description: Execute SQL queries against SQLite, PostgreSQL, or MySQL databases and format the results
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🗄️"
 parameters:
   db_path:

@@ -3,7 +3,7 @@ name: screen_recording
 description: Record screen videos with audio, take screen recordings with selectable region, and manage recordings
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎬"
   os: [darwin]
 parameters:

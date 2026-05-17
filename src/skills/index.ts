@@ -1,7 +1,7 @@
 /**
  * StackOwl — Skills Module
  *
- * OpenCLAW-compatible skill system with semantic routing,
+ * StackOwl skill system with semantic routing,
  * usage tracking, and skill composition.
  */
 

@@ -1,7 +1,7 @@
 /**
  * StackOwl — Docker Sandbox
  *
- * Provides isolated container execution for tools, similar to OpenCLAW.
+ * Provides isolated container execution for tools, StackOwl-style.
  * Protects the host from malicious commands while allowing full network access.
  */
 

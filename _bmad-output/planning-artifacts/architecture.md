@@ -202,18 +202,27 @@ The codebase already has a well-organized structure:
 src/
 ├── engine/           # ReAct runtime, router
 ├── gateway/          # Message routing, channel adapters
+│   └── adapters/     # cli.ts (CliAdapter), telegram.ts, web, a2a
 ├── memory/           # Session, facts, episodes, digests
 ├── pellets/          # Knowledge generation and storage
 ├── owls/             # Persona, DNA, evolution
+│   └── noctua/
+│       └── instincts/ # 6 instinct definition files (frustration-recovery,
+│                      # returning-warmth, expertise-calibration,
+│                      # task-context-injection, preference-reminder,
+│                      # socratic-activation) — added sprint 2026-05-16
+├── instincts/        # InstinctEngine, InstinctRegistry, types
 ├── parliament/       # Multi-owl debate
 ├── tools/            # Tool registry and execution
-├── channels/         # CLI, Telegram adapters
+├── channels/         # Legacy CLI v1 adapter (CLIAdapter)
 ├── swarm/            # Multi-agent coordination
 ├── delegation/       # Sub-owl runner, task decomposer
 ├── triage/           # Message classification
-├── heartbeat/       # Proactive engine
+├── heartbeat/        # Proactive engine
 └── index.ts          # Entry point
 ```
+
+> **Note (2026-05-16):** The primary CLI channel adapter was renamed from `CliV2Adapter` (`adapters/cli-v2.ts`) to `CliAdapter` (`adapters/cli.ts`) as part of the v2 promotion refactor (commit `edda305`). The legacy v1 adapter (`CLIAdapter`) is preserved at `adapters/cli-v1.ts`. All references to `CliV2Adapter` or `cli-v2` in downstream docs should be read as `CliAdapter` / `cli.ts`.
 
 ### Enhancement Areas for 8 Behavioral Issues
 
@@ -226,6 +235,7 @@ src/
 | Gap detection router | `src/intent/` (new) | Route communicative gaps to questions |
 | Session persistence | `src/memory/` (enhance) | Survive CLI restarts |
 | Parliament auto-trigger | `src/parliament/` (enhance) | Wire `shouldConveneParliament()` |
+| Instinct library ✅ | `owls/noctua/instincts/` | 6 instinct definition files shipped (sprint 2026-05-16) |
 
 ### Integration Boundaries
 
@@ -261,3 +271,13 @@ src/
 ---
 
 *Architecture document complete. Next: Create epics and stories.*
+
+---
+
+## Sprint Updates (2026-05-16)
+
+| Change | Detail |
+|--------|--------|
+| `CliV2Adapter` → `CliAdapter` | Renamed in commit `edda305`; file moved from `adapters/cli-v2.ts` to `adapters/cli.ts`; v1 preserved as `cli-v1.ts` |
+| `CliAdapter` full adapter contract | `setPinger()` wired in commits `1e0b64f`/`53ed67f`; heartbeat pinger and `_stopped` guard now in place |
+| Instinct definition library | 6 files added to `owls/noctua/instincts/` (commit `7e8ea6d`); `InstinctRegistry` keywords field forwarding fixed in same commit |

@@ -3,7 +3,7 @@ name: code_review
 description: Review code files or git diffs for bugs, security issues, performance problems, and style violations
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔍"
 parameters:
   source:

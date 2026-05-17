@@ -3,7 +3,7 @@ name: language_practice
 description: Practice a foreign language with vocabulary drills, sentence construction, and conversation exercises
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🗣️"
 parameters:
   language:

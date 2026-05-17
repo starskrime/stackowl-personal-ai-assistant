@@ -3,7 +3,7 @@ name: wallpaper_set
 description: Set the macOS desktop wallpaper from a local file path or downloaded image URL
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🖥️"
   os: [darwin]
 parameters:

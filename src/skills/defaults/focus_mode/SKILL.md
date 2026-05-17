@@ -3,7 +3,7 @@ name: focus_mode
 description: Enable system-wide focus mode on macOS by activating Do Not Disturb and optionally blocking distracting apps
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧘"
   os: [darwin]
 parameters:

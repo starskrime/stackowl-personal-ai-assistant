@@ -3,7 +3,7 @@ name: battery_status
 description: Check battery charge level, health, cycle count, and power source on macOS laptops
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔋"
   os: [darwin]
 parameters: {}

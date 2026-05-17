@@ -3,7 +3,7 @@ name: network_check
 description: Quick network health check — tests connectivity, DNS, and reports public IP
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔍"
   requires:
     bins: ["ping", "curl"]

@@ -3,7 +3,7 @@ name: stock_price
 description: Check current stock prices, daily change, and basic market data for specified ticker symbols
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📈"
 parameters:
   ticker:

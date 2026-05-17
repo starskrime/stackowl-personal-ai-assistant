@@ -3,7 +3,7 @@ name: weekly_review
 description: Generate a weekly productivity review summarizing completed tasks, habits, and key accomplishments
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📋"
 parameters:
   todo_file:

@@ -3,7 +3,7 @@ name: cron_manager
 description: List, create, edit, and delete cron jobs for scheduled task automation
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⏲️"
 parameters:
   action:

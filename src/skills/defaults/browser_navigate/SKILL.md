@@ -3,7 +3,7 @@ name: browser_navigate
 description: Navigate web pages, fill forms, click elements, scroll, and interact with websites using AppleScript and CLI tools
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧭"
   os: [darwin]
 parameters:

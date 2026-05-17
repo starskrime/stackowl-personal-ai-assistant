@@ -3,7 +3,7 @@ name: encrypt_file
 description: Encrypt or decrypt files using AES-256 encryption via OpenSSL with a password
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🛡️"
 parameters:
   file:

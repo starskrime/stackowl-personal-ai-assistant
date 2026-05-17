@@ -3,7 +3,7 @@ name: travel_planner
 description: Create a detailed travel itinerary with flights, hotels, attractions, and daily schedules
 command-dispatch: tool
 command-tool: web_search
-openclaw:
+stackowl:
   emoji: "✈️"
 parameters:
   destination:

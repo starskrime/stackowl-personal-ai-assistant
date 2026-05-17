@@ -18,7 +18,7 @@ The SKILL.md format:
 ---
 name: snake_case_name
 description: One-line description
-openclaw:
+stackowl:
   emoji: "\uD83D\uDD27"
   version: "1.0"
   tags: [relevant, tags]

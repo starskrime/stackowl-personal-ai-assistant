@@ -3,7 +3,7 @@ name: browser_download_manager
 description: View, manage, and organize browser downloads - pause, resume, clear, and track download progress
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📥"
   os: [darwin]
 parameters:

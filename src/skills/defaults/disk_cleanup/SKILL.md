@@ -3,7 +3,7 @@ name: disk_cleanup
 description: Find and remove large unused files, caches, and temporary data to free up disk space on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧹"
   os: [darwin]
 parameters:

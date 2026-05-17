@@ -285,8 +285,8 @@ export class SkillsMenuWizard implements WizardSession {
     }
     const lines = skills
       .map((s) => {
-        const emoji = s.metadata.openclaw?.emoji ?? "◈";
-        const always = s.metadata.openclaw?.always ? " [always]" : "";
+        const emoji = s.metadata.stackowl?.emoji ?? "◈";
+        const always = s.metadata.stackowl?.always ? " [always]" : "";
         return `${emoji} **${s.name}**${always}\n   ${s.description}`;
       })
       .join("\n\n");

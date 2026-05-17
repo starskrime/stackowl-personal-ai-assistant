@@ -3,7 +3,7 @@ name: flashcard_create
 description: Create study flashcards from notes, documents, or topics and save them for spaced repetition review
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🃏"
 parameters:
   topic:

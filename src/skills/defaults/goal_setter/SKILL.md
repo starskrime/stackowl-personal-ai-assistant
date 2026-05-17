@@ -3,7 +3,7 @@ name: goal_setter
 description: Define personal or professional goals with milestones, deadlines, and progress tracking
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎯"
 parameters:
   title:

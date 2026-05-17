@@ -3,7 +3,7 @@ name: habit_tracker
 description: Track daily habits by logging completions to a CSV file and showing weekly streaks
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📊"
 parameters:
   action:

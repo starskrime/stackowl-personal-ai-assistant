@@ -3,7 +3,7 @@ name: hash_file
 description: Calculate and verify file checksums using MD5, SHA-256, or SHA-512 hash algorithms
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔏"
 parameters:
   file:

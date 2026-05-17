@@ -3,7 +3,7 @@ name: video_compress
 description: Compress video files to reduce file size while maintaining acceptable quality using ffmpeg
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎬"
 parameters:
   input:

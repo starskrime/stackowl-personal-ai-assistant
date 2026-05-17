@@ -3,7 +3,7 @@ name: wikipedia_summary
 description: Fetch and summarize a Wikipedia article on a given topic with key facts and context
 command-dispatch: tool
 command-tool: web_search
-openclaw:
+stackowl:
   emoji: "📚"
 parameters:
   topic:

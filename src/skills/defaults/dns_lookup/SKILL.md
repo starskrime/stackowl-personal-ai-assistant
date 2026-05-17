@@ -3,7 +3,7 @@ name: dns_lookup
 description: Perform DNS lookups to resolve domain names, check MX records, NS records, and TXT records
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🌐"
 parameters:
   domain:

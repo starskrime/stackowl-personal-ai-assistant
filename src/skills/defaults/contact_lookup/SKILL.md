@@ -3,7 +3,7 @@ name: contact_lookup
 description: Search macOS Contacts app for a person's email, phone number, or address
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "👤"
   os: [darwin]
 parameters:

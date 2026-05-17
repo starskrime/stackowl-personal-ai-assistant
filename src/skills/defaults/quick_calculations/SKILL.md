@@ -3,7 +3,7 @@ name: quick_calculations
 description: Perform quick calculations, conversions, and math operations with instant results
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧮"
 parameters:
   expression:

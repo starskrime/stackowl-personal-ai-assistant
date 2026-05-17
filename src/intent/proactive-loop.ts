@@ -15,7 +15,6 @@
 import type { CommitmentTracker } from "../intent/commitment-tracker.js";
 import type { IntentStateMachine } from "../intent/state-machine.js";
 import type { GoalGraph } from "../goals/graph.js";
-import type { SignalPool } from "../signals/pool.js";
 import { log } from "../logger.js";
 
 export type ProactiveItemType =
@@ -37,13 +36,7 @@ export class ProactiveIntentionLoop {
     private commitmentTracker: CommitmentTracker | undefined,
     private intentStateMachine: IntentStateMachine | undefined,
     private goalGraph: GoalGraph | undefined,
-    private signalPool: SignalPool | undefined,
   ) {}
-
-  /** Wire the signal pool after construction — called from index.ts after pool is started. */
-  setSignalPool(pool: SignalPool): void {
-    this.signalPool = pool;
-  }
 
   /**
    * Evaluate all proactive signals and return the highest priority item to send.
@@ -100,21 +93,6 @@ export class ProactiveIntentionLoop {
         log.engine.warn(
           `[ProactiveLoop] Stale goal check failed: ${err instanceof Error ? err.message : err}`,
         );
-      }
-    }
-
-    // 4. High-priority ambient signals
-    if (this.signalPool) {
-      const signals = this.signalPool.getState().signals;
-      for (const signal of signals.slice(0, 3)) {
-        if (signal.priority === "critical" || signal.priority === "high") {
-          items.push({
-            type: "ambient_signal",
-            priority: 50,
-            message: `I noticed: ${signal.title}. ${signal.content?.slice(0, 100) ?? ""}`,
-            metadata: { signalId: signal.id, source: signal.source },
-          });
-        }
       }
     }
 

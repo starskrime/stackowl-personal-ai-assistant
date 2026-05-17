@@ -3,7 +3,7 @@ name: browser_control
 description: Open browsers, manage tabs, take screenshots, and control browser actions on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🌐"
   os: [darwin]
 parameters:

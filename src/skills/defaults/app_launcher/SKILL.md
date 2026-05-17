@@ -3,7 +3,7 @@ name: app_launcher
 description: Launch, quit, or check if a macOS application is running
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🚀"
   os: [darwin]
 parameters:

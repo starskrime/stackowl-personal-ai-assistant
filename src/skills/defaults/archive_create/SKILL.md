@@ -3,7 +3,7 @@ name: archive_create
 description: Create compressed archives in zip, tar.gz, or tar.bz2 format from files or directories
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📦"
 parameters:
   source:

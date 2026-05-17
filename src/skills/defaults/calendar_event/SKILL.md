@@ -3,7 +3,7 @@ name: calendar_event
 description: Create, list, and manage calendar events in macOS Calendar app via AppleScript
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📅"
   os: [darwin]
 parameters:

@@ -3,7 +3,7 @@ name: manage_todo
 description: Create, list, complete, and delete items in a local todo list stored as a markdown file
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✅"
 parameters:
   action:

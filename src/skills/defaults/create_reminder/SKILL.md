@@ -3,7 +3,7 @@ name: create_reminder
 description: Set a timed reminder that triggers a macOS notification after a specified delay
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⏰"
   os: [darwin]
 parameters:

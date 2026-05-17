@@ -3,7 +3,7 @@ name: process_manager
 description: List running processes, find resource-heavy tasks, and kill unresponsive applications on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⚙️"
   os: [darwin]
 parameters:

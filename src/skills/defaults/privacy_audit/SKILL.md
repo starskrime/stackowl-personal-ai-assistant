@@ -3,7 +3,7 @@ name: privacy_audit
 description: Audit macOS privacy and security settings including firewall, FileVault, SIP, and app permissions
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🕵️"
   os: [darwin]
 parameters: {}

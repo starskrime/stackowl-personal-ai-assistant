@@ -3,7 +3,7 @@ name: daily_planner
 description: Generate a structured daily schedule with time blocks based on user priorities and calendar events
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📅"
   os: [darwin]
 parameters:

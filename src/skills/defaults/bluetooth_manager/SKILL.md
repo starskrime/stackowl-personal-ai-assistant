@@ -3,7 +3,7 @@ name: bluetooth_manager
 description: Check Bluetooth status, list paired devices, and toggle Bluetooth on or off on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔵"
   os: [darwin]
 parameters:

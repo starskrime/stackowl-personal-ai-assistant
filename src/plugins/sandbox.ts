@@ -3,7 +3,7 @@
  *
  * Scoped access layer for plugins. Instead of receiving the full GatewayContext
  * (50+ fields), plugins get a sandbox with namespaced tool registration,
- * auto-cleanup event subscriptions, ACP messaging, and service injection.
+ * auto-cleanup event subscriptions, A2A messaging, and service injection.
  */
 
 import type { ToolImplementation } from "../tools/registry.js";
@@ -19,7 +19,7 @@ export class PluginSandbox {
     handler: (...args: any[]) => any;
   }> = [];
   private providedServices: string[] = [];
-  private acpHandlers: Array<{
+  private a2aHandlers: Array<{
     channel: string;
     handler: (msg: unknown) => Promise<void>;
   }> = [];
@@ -86,24 +86,24 @@ export class PluginSandbox {
     this.eventBus.emit(type, payload);
   }
 
-  // ─── ACP Messaging ────────────────────────────────────────────
+  // ─── A2A Messaging ────────────────────────────────────────────
 
   /**
-   * Register a handler for incoming ACP messages on a channel.
-   * Actual routing is wired up by the ACP system when available.
+   * Register a handler for incoming A2A messages on a channel.
+   * Actual routing is wired up by the A2A system when available.
    */
   onMessage(channel: string, handler: (msg: unknown) => Promise<void>): void {
-    this.acpHandlers.push({ channel, handler });
+    this.a2aHandlers.push({ channel, handler });
   }
 
   /**
-   * Get registered ACP handlers (used by ACP router to wire up).
+   * Get registered A2A handlers (used by A2A registry to wire up).
    */
-  getACPHandlers(): Array<{
+  getA2AHandlers(): Array<{
     channel: string;
     handler: (msg: unknown) => Promise<void>;
   }> {
-    return [...this.acpHandlers];
+    return [...this.a2aHandlers];
   }
 
   // ─── Service Injection ────────────────────────────────────────
@@ -162,8 +162,8 @@ export class PluginSandbox {
     this.serviceRegistry.removeByProvider(this.pluginName);
     this.providedServices = [];
 
-    // Clear ACP handlers
-    this.acpHandlers = [];
+    // Clear A2A handlers
+    this.a2aHandlers = [];
 
     this.log.info("Sandbox teardown complete");
   }

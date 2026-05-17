@@ -1,7 +1,7 @@
 /**
  * StackOwl — Session Tools
  *
- * Provides inter-session communication similar to OpenCLAW.
+ * Provides inter-session communication StackOwl-style.
  * Allows querying other sessions, spawning sub-agents, etc.
  */
 

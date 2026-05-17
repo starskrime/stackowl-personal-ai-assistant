@@ -151,36 +151,6 @@ export interface EventPayloads {
     generatedAt?: string;
   };
 
-  // ─── ACP Events ─────────────────────────────────────────────
-  "acp:message:sent": {
-    messageId: string;
-    from: string;
-    to: string;
-    channel: string;
-  };
-  "acp:message:delivered": {
-    messageId: string;
-    from: string;
-    to: string;
-    channel: string;
-  };
-  "acp:message:failed": {
-    messageId: string;
-    from: string;
-    to: string;
-    error: string;
-  };
-  "acp:stream:opened": {
-    messageId: string;
-    to: string;
-    channel: string;
-  };
-  "acp:stream:closed": {
-    messageId: string;
-    to: string;
-    channel: string;
-  };
-
   // ─── Background Job Events ───────────────────────────────────
   "job:complete": {
     userId: string;

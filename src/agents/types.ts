@@ -69,10 +69,8 @@ export interface CodingAgent {
   /** Optional: stream intermediate progress messages */
   onProgress?(taskId: string, callback: (msg: string) => void): void;
 
-  /** ACP capabilities this agent advertises */
-  acpCapabilities?: import("../acp/types.js").ACPCapability[];
-  /** Handle an incoming ACP message */
-  onMessage?(message: import("../acp/types.js").ACPMessage): Promise<unknown>;
+  /** A2A agent interface for direct in-process messaging */
+  a2aAgent?: import('../a2a/index.js').A2AAgent;
 }
 
 // ─── Agent Registry ─────────────────────────────────────────────

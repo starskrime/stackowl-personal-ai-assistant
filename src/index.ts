@@ -262,16 +262,6 @@ import { CronService } from "./cron/service.js";
 import { IsolatedRunner } from "./cron/isolated-runner.js";
 import { DEFAULT_CRON_JOBS } from "./cron/default-jobs.js";
 import { PlanLedger } from "./tasks/plan-ledger.js";
-import { SignalPool } from "./signals/pool.js";
-import { SignalClassifier } from "./signals/classifier.js";
-import {
-  TimeContextCollector,
-  SystemCollector,
-  ActiveFileCollector,
-  ClipboardCollector,
-  FileSystemCollector,
-} from "./signals/collectors.js";
-import { GoalVerifier } from "./tools/goal-verifier.js";
 import { initModelLoader } from "./models/loader.js";
 
 // ─── Boot helpers ────────────────────────────────────────────────
@@ -1305,7 +1295,6 @@ async function buildGateway(
       b.commitmentTracker,
       b.intentStateMachine,
       b.goalGraph,
-      undefined,
     ),
     // ─── Epic 7: Knowledge Building Modules ─────────────────
     pelletRetriever,
@@ -1442,35 +1431,9 @@ async function buildGateway(
     memoryWriter.attachBusListeners();
     gateway.ctx.memoryWriter = memoryWriter;
 
-    // ─── Element 16b — SignalPool (ambient signal mesh) ──────────
+    // BlockingClassifier — LLM-based anti-bot detection for web tools
     const providerMap = new Map<string, import("./providers/base.js").ModelProvider>();
     providerMap.set(b.config.defaultProvider ?? "default", provider);
-    const signalPool = new SignalPool({
-      bus: gateway.gatewayEventBus,
-      classifier: SignalClassifier.create(gateway.ctx.intelligence, providerMap),
-      verifier: GoalVerifier.create(gateway.ctx.intelligence, providerMap),
-      goalGraph: b.goalGraph,
-      config: {
-        maxSignals: b.config.perches?.maxSignals ?? 32,
-        consent: b.config.perches?.consent ?? {},
-        enabledSources: b.config.perches?.enabledSources,
-      },
-      memoryRepo,
-      workspacePath: b.workspacePath,
-    });
-    signalPool.addCollector(new TimeContextCollector());
-    signalPool.addCollector(new SystemCollector());
-    signalPool.addCollector(new ActiveFileCollector(b.workspacePath));
-    signalPool.addCollector(new ClipboardCollector());
-    signalPool.addCollector(
-      new FileSystemCollector(b.workspacePath, b.config.perches?.watchPaths, b.config.perches?.fileWatchDebounceMs),
-    );
-    gateway.ctx.signalPool = signalPool;
-    gateway.ctx.proactiveLoop?.setSignalPool(signalPool);
-    gateway.ctx.contextPipeline?.wireSignalPool(signalPool);
-    signalPool.start();
-
-    // BlockingClassifier — LLM-based anti-bot detection for web tools
     const { BlockingClassifier } = await import("./browser/blocking-classifier.js");
     gateway.ctx.blockingClassifier = new BlockingClassifier(
       gateway.ctx.intelligence,

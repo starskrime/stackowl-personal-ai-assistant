@@ -3,7 +3,7 @@ name: key_sequence
 description: Type key sequences, key combinations, and special characters with precise timing control
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⌨️"
   os: [darwin]
 parameters:

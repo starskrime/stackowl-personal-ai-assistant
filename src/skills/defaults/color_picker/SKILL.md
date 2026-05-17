@@ -3,7 +3,7 @@ name: color_picker
 description: Pick colors from screen, get color values in HEX, RGB, HSL formats, and generate color palettes
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎨"
   os: [darwin]
 parameters:

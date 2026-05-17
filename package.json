@@ -21,7 +21,8 @@
     "test:heap": "node --expose-gc ./node_modules/.bin/vitest run __tests__/tui-v2/heap-canary.test.ts",
     "test:adapters": "vitest run __tests__/tui-v2/adapter-conformance.test.ts",
     "test:bench": "vitest bench __tests__/tui-v2/performance.bench.ts",
-    "test:platform": "vitest run __tests__/platform/"
+    "test:platform": "vitest run __tests__/platform/",
+    "atlas": "tsx _bmad-output/system-atlas/serve.ts"
   },
   "keywords": [
     "ai-assistant",

@@ -3,7 +3,7 @@ name: text_delete
 description: Delete text with precision - characters, words, lines, or all text with undo support
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⌫"
   os: [darwin]
 parameters:

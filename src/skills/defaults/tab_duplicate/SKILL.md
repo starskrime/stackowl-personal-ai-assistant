@@ -3,7 +3,7 @@ name: tab_duplicate
 description: Duplicate the current browser tab or specific tabs in Safari and Chrome
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📋"
   os: [darwin]
 parameters:

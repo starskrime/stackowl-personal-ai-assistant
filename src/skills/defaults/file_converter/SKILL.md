@@ -3,7 +3,7 @@ name: file_converter
 description: Convert files between formats including markdown to HTML, JSON to CSV, and document conversions
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔄"
 parameters:
   input:

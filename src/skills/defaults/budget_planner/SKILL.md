@@ -1,7 +1,7 @@
 ---
 name: budget_planner
 description: Create a monthly budget plan based on income, fixed expenses, and savings goals
-openclaw:
+stackowl:
   emoji: "💵"
 ---
 

@@ -3,7 +3,7 @@ name: invoice_generator
 description: Generate a professional invoice document with line items, totals, and payment details
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧾"
 parameters:
   invoice_number:

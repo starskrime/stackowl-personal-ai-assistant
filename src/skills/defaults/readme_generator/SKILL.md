@@ -3,7 +3,7 @@ name: readme_generator
 description: Generate a professional README.md for a project by analyzing its structure, dependencies, and code
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📖"
 parameters:
   project_path:

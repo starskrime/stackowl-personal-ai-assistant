@@ -3,7 +3,7 @@ name: menubar_control
 description: Control macOS menu bar items - show/hide icons, access menu extras, and manage status items
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🍎"
   os: [darwin]
 parameters:

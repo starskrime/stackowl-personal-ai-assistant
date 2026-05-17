@@ -3,7 +3,7 @@ name: competitor_analysis
 description: Research and analyze competitor products, features, pricing, and market positioning
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🏢"
 parameters:
   product:

@@ -3,7 +3,7 @@ name: log_analyzer
 description: Analyze log files to find errors, patterns, frequency distributions, and anomalies
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🪵"
 parameters:
   file:

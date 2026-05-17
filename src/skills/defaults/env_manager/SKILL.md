@@ -3,7 +3,7 @@ name: env_manager
 description: Manage environment variables by viewing, setting, and creating .env files for projects
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🌍"
 parameters:
   action:

@@ -3,7 +3,7 @@ name: audio_convert
 description: Convert audio files between formats like MP3, WAV, AAC, and FLAC using ffmpeg
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎵"
 parameters:
   input:

@@ -3,7 +3,7 @@ name: refactor_code
 description: Refactor code to improve readability, reduce duplication, and follow clean code principles
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "♻️"
 parameters:
   file_path:

@@ -3,7 +3,7 @@ name: meeting_notes
 description: Capture, structure, and save meeting notes with action items, decisions, and attendee tracking
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📝"
 parameters:
   title:

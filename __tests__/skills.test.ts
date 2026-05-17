@@ -155,7 +155,7 @@ describe("SkillsRegistry", () => {
         metadata: {
           name: "always_skill",
           description: "Always included",
-          openclaw: { always: true },
+          stackowl: { always: true },
         },
       });
       registry.register(alwaysSkill);
@@ -170,7 +170,7 @@ describe("SkillsRegistry", () => {
         metadata: {
           name: "mac_only",
           description: "macOS only",
-          openclaw: { os: ["darwin"] },
+          stackowl: { os: ["darwin"] },
         },
       });
       registry.register(osSkill);
@@ -185,7 +185,7 @@ describe("SkillsRegistry", () => {
         metadata: {
           name: "linux_only",
           description: "Linux only",
-          openclaw: { os: ["linux"] },
+          stackowl: { os: ["linux"] },
         },
       });
       registry.register(osSkill);
@@ -446,7 +446,7 @@ describe("meetsRequirements", () => {
       metadata: {
         name: "test",
         description: "test",
-        openclaw: { os: ["linux"] },
+        stackowl: { os: ["linux"] },
       },
     });
     const result = meetsRequirements(skill, { os: "darwin" });
@@ -459,7 +459,7 @@ describe("meetsRequirements", () => {
       metadata: {
         name: "test",
         description: "test",
-        openclaw: { requires: { bins: ["curl"] } },
+        stackowl: { requires: { bins: ["curl"] } },
       },
     });
     const result = meetsRequirements(skill, { bins: ["jq"] });
@@ -472,7 +472,7 @@ describe("meetsRequirements", () => {
       metadata: {
         name: "test",
         description: "test",
-        openclaw: { requires: { env: ["API_KEY"] } },
+        stackowl: { requires: { env: ["API_KEY"] } },
       },
     });
     const result = meetsRequirements(skill, { env: {} });
@@ -485,7 +485,7 @@ describe("meetsRequirements", () => {
       metadata: {
         name: "test",
         description: "test",
-        openclaw: { requires: { config: ["telegram.botToken"] } },
+        stackowl: { requires: { config: ["telegram.botToken"] } },
       },
     });
     const result = meetsRequirements(skill, { config: {} });

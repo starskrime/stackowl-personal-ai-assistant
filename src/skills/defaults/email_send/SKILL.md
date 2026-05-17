@@ -3,7 +3,7 @@ name: email_send
 description: Send emails via macOS Mail app using AppleScript with support for recipients, subject, body, and attachments
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✉️"
   os: [darwin]
 parameters:

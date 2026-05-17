@@ -3,8 +3,6 @@ import { ProactiveIntentionLoop } from "../src/intent/proactive-loop.js";
 import type { CommitmentTracker } from "../src/intent/commitment-tracker.js";
 import type { IntentStateMachine } from "../src/intent/state-machine.js";
 import type { GoalGraph } from "../src/goals/graph.js";
-import type { ContextMesh } from "../src/ambient/mesh.js";
-import type { SignalPool } from "../src/signals/pool.js";
 import type { TrackedCommitment } from "../src/intent/commitment-tracker.js";
 import type { Intent } from "../src/intent/types.js";
 
@@ -61,31 +59,6 @@ function makeMockGoal(
   };
 }
 
-function makeMockSignal(
-  overrides: Partial<{
-    id: string;
-    title: string;
-    content: string | undefined;
-    priority: string;
-    source: string;
-  }> = {},
-): {
-  id: string;
-  title: string;
-  content: string | undefined;
-  priority: string;
-  source: string;
-} {
-  return {
-    id: "sig_1",
-    title: "Important signal",
-    content: "Something happened",
-    priority: "high",
-    source: "test",
-    ...overrides,
-  };
-}
-
 function createMockTracker(
   overrides: Partial<{
     getDueValues: TrackedCommitment[];
@@ -128,19 +101,10 @@ function createMockGoals(
   } as unknown as GoalGraph;
 }
 
-function createMockMesh(
-  signals: ReturnType<typeof makeMockSignal>[] = [],
-): ContextMesh {
-  return {
-    getState: vi.fn().mockReturnValue({ signals }),
-  } as unknown as ContextMesh;
-}
-
 describe("ProactiveIntentionLoop", () => {
   describe("evaluate()", () => {
     it("returns null when no trackers are provided", () => {
       const loop = new ProactiveIntentionLoop(
-        undefined,
         undefined,
         undefined,
         undefined,
@@ -155,7 +119,6 @@ describe("ProactiveIntentionLoop", () => {
 
       const loop = new ProactiveIntentionLoop(
         mockTracker,
-        undefined,
         undefined,
         undefined,
       );
@@ -181,7 +144,6 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         mockISM,
         undefined,
-        undefined,
       );
       const result = loop.evaluate();
 
@@ -197,7 +159,6 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         undefined,
         mockGoals,
-        undefined,
       );
       const result = loop.evaluate();
 
@@ -206,23 +167,7 @@ describe("ProactiveIntentionLoop", () => {
       expect(result!.priority).toBe(60);
     });
 
-    it("returns ambient signal with priority 50", () => {
-      const mockMesh = createMockMesh([makeMockSignal({ priority: "high" })]);
-
-      const loop = new ProactiveIntentionLoop(
-        undefined,
-        undefined,
-        undefined,
-        mockMesh,
-      );
-      const result = loop.evaluate();
-
-      expect(result).not.toBeNull();
-      expect(result!.type).toBe("ambient_signal");
-      expect(result!.priority).toBe(50);
-    });
-
-    it("respects priority order: commitment > stale_intent > stale_goal > ambient", () => {
+    it("respects priority order: commitment > stale_intent > stale_goal", () => {
       const mockTracker = createMockTracker({
         getDueValues: [makeMockCommitment()],
       });
@@ -234,24 +179,11 @@ describe("ProactiveIntentionLoop", () => {
         mockTracker,
         mockISM,
         undefined,
-        undefined,
       );
       const result = loop.evaluate();
 
       expect(result!.type).toBe("commitment");
       expect(result!.priority).toBe(100);
-    });
-
-    it("only returns critical/high ambient signals", () => {
-      const mockMesh = createMockMesh([makeMockSignal({ priority: "low" })]);
-
-      const loop = new ProactiveIntentionLoop(
-        undefined,
-        undefined,
-        undefined,
-        mockMesh,
-      );
-      expect(loop.evaluate()).toBeNull();
     });
 
     it("handles goal graph errors gracefully", () => {
@@ -265,7 +197,6 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         undefined,
         brokenGoals,
-        undefined,
       );
       expect(loop.evaluate()).toBeNull();
     });
@@ -281,7 +212,6 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         undefined,
         mockGoals,
-        undefined,
       );
       const result = loop.evaluate();
 
@@ -300,7 +230,6 @@ describe("ProactiveIntentionLoop", () => {
         mockTracker,
         mockISM,
         mockGoals,
-        undefined,
       );
       expect(loop.getPendingSummary()).toBe("Proactive: nothing pending");
     });
@@ -312,7 +241,6 @@ describe("ProactiveIntentionLoop", () => {
 
       const loop = new ProactiveIntentionLoop(
         mockTracker,
-        undefined,
         undefined,
         undefined,
       );
@@ -327,7 +255,6 @@ describe("ProactiveIntentionLoop", () => {
       const loop = new ProactiveIntentionLoop(
         undefined,
         mockISM,
-        undefined,
         undefined,
       );
       expect(loop.getPendingSummary()).toContain("2 stale intent(s)");
@@ -344,48 +271,8 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         undefined,
         mockGoals,
-        undefined,
       );
       expect(loop.getPendingSummary()).toBeTruthy();
-    });
-  });
-
-  describe("setSignalPool()", () => {
-    it("setSignalPool() wires signal pool and evaluate() reads from it", () => {
-      const mockPool = {
-        getState: vi.fn().mockReturnValue({
-          signals: [
-            {
-              id: "sig_wired",
-              title: "Wired signal",
-              content: "Pool was wired correctly",
-              priority: "high",
-              source: "test",
-            },
-          ],
-        }),
-      } as unknown as SignalPool;
-
-      // Construct loop with undefined signalPool (as happens in index.ts before pool is started)
-      const loop = new ProactiveIntentionLoop(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-      );
-
-      // Pool not yet wired — evaluate returns null
-      expect(loop.evaluate()).toBeNull();
-
-      // Wire the pool after construction
-      loop.setSignalPool(mockPool);
-
-      // Now evaluate should call pool.getState() and surface the high-priority signal
-      const result = loop.evaluate();
-      expect(mockPool.getState).toHaveBeenCalled();
-      expect(result).not.toBeNull();
-      expect(result!.type).toBe("ambient_signal");
-      expect(result!.metadata).toEqual({ signalId: "sig_wired", source: "test" });
     });
   });
 
@@ -404,7 +291,6 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         mockISM,
         undefined,
-        undefined,
       );
       const result = loop.evaluate();
 
@@ -421,7 +307,6 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         undefined,
         mockGoals,
-        undefined,
       );
       const result = loop.evaluate();
 
@@ -436,7 +321,6 @@ describe("ProactiveIntentionLoop", () => {
 
       const loop = new ProactiveIntentionLoop(
         mockTracker,
-        undefined,
         undefined,
         undefined,
       );
@@ -457,29 +341,10 @@ describe("ProactiveIntentionLoop", () => {
         undefined,
         mockISM,
         undefined,
-        undefined,
       );
       const result = loop.evaluate();
 
       expect(result!.metadata).toEqual({ intentId: "intent_999" });
-    });
-
-    it("returns correct metadata for ambient_signal type", () => {
-      const signal = makeMockSignal({ id: "sig_888", source: "monitor" });
-      const mockMesh = createMockMesh([signal]);
-
-      const loop = new ProactiveIntentionLoop(
-        undefined,
-        undefined,
-        undefined,
-        mockMesh,
-      );
-      const result = loop.evaluate();
-
-      expect(result!.metadata).toEqual({
-        signalId: "sig_888",
-        source: "monitor",
-      });
     });
   });
 });

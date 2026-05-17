@@ -3,7 +3,7 @@ name: drag_drop
 description: Perform drag and drop operations - move files, drag UI elements, draw selections on screen
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✋"
   os: [darwin]
 parameters:

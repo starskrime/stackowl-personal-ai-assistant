@@ -3,7 +3,7 @@ name: summarize_document
 description: Create a concise summary of a long document extracting key points, themes, and conclusions
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📑"
 parameters:
   file_path:

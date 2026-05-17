@@ -3,7 +3,7 @@ name: csv_analyzer
 description: Analyze CSV files by showing statistics, column summaries, row counts, and data patterns
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📊"
 parameters:
   file_path:

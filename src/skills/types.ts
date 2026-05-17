@@ -1,7 +1,7 @@
 /**
  * StackOwl — Skill Types
  *
- * Type definitions for OpenCLAW-compatible skills.
+ * Type definitions for StackOwl skills.
  * Skills are instructions that teach the LLM how to accomplish tasks.
  */
 
@@ -10,8 +10,8 @@ export interface SkillMetadata {
   name: string;
   /** Human-readable description */
   description: string;
-  /** OpenCLAW-specific metadata */
-  openclaw?: {
+  /** StackOwl-specific metadata */
+  stackowl?: {
     /** OS requirements (darwin, linux, win32) */
     os?: string[];
     /** Required binary executables */

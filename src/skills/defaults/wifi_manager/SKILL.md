@@ -3,7 +3,7 @@ name: wifi_manager
 description: View current WiFi connection, scan available networks, and connect to a specified network on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📶"
   os: [darwin]
 parameters:

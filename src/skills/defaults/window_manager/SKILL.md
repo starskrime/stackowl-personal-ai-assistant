@@ -3,7 +3,7 @@ name: window_manager
 description: Manage macOS windows - arrange, resize, move, minimize, maximize, and focus windows
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🪟"
   os: [darwin]
 parameters:

@@ -3,7 +3,7 @@ name: pomodoro_timer
 description: Start a Pomodoro focus timer with configurable work and break intervals and macOS notifications
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🍅"
   os: [darwin]
 parameters:

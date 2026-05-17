@@ -3,7 +3,7 @@ name: generate_outline
 description: Create a detailed outline for documents, presentations, or books based on a topic and target audience
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🗂️"
 parameters:
   topic:

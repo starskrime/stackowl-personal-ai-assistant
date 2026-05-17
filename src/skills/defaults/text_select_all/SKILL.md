@@ -3,7 +3,7 @@ name: text_select_all
 description: Select all text, select specific text ranges, select lines, select words in any application
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📝"
   os: [darwin]
 parameters:

@@ -2109,7 +2109,7 @@ class FactsRepo {
    * access_count >= minAccess get their confidence raised by `boost` (capped at 0.95).
    * Returns count of facts promoted.
    *
-   * Intended for nightly cron — implements OpenClaw-style "dreaming" where
+   * Intended for nightly cron — implements StackOwl "dreaming" where
    * repeatedly-accessed facts graduate to always-injected status.
    */
   promoteFrequentlyAccessed(opts: {

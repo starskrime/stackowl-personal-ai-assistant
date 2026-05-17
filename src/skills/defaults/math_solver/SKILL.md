@@ -3,7 +3,7 @@ name: math_solver
 description: Solve mathematical problems including arithmetic, algebra, calculus, and unit conversions
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧮"
 parameters:
   expression:

@@ -3,7 +3,7 @@ name: finder_operations
 description: Perform file operations in macOS Finder - copy, move, delete, create folders, show in Finder, get info
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📁"
   os: [darwin]
 parameters:

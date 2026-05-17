@@ -23,7 +23,7 @@ import { UnifiedMemoryRetrievalLayer } from "./layers/memory-retrieval.js";
 import { KnowledgeGraphLayer, RelevantPelletsLayer } from "./layers/knowledge.js";
 import { PredictiveContextLayer } from "./layers/predictive.js";
 import { UserBehaviorProfileLayer, InferredPreferencesLayer, PredictedNeedsLayer } from "./layers/profile.js";
-import { CollabContextLayer, AmbientContextLayer } from "./layers/ambient.js";
+import { CollabContextLayer } from "./layers/ambient.js";
 import { DepthDirectiveLayer, OpinionInjectionLayer, UserMentalModelLayer, EchoChamberGuardLayer, GroundStateLayer } from "./layers/calibration.js";
 import { DAGPlanner } from "./dag-planner.js";
 import { ContextCache } from "./cache.js";
@@ -36,8 +36,6 @@ import { CritiqueRetriever } from "../intelligence/critique-retriever.js";
 import { ChallengeDirectiveLayer } from "../intelligence/challenge-directive.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { OwlRegistry } from "../owls/registry.js";
-import type { SignalPool } from "../signals/pool.js";
-
 export interface ContextPipelineDeps {
   userPersonaSynthesizer: UserPersonaSynthesizer;
   unifiedMemoryRetriever: UnifiedMemoryRetriever;
@@ -46,8 +44,6 @@ export interface ContextPipelineDeps {
   db?: MemoryDatabase;
   /** Optional OwlRegistry — enables ChallengeDirectiveLayer to read live DNA. */
   owlRegistry?: OwlRegistry;
-  /** Optional SignalPool — enables AmbientContextLayer when provided. */
-  signalPool?: SignalPool;
 }
 
 export function createContextPipeline(deps: ContextPipelineDeps): ContextPipeline {
@@ -78,7 +74,6 @@ export function createContextPipeline(deps: ContextPipelineDeps): ContextPipelin
     new InferredPreferencesLayer(),
     new PredictedNeedsLayer(),
     new CollabContextLayer(),
-    ...(deps.signalPool ? [new AmbientContextLayer(deps.signalPool)] : []),
     new DepthDirectiveLayer(),
     new OpinionInjectionLayer(),
     new UserMentalModelLayer(),

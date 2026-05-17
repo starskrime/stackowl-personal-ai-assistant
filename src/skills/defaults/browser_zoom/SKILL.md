@@ -3,7 +3,7 @@ name: browser_zoom
 description: Zoom in, zoom out, reset zoom, and manage browser zoom levels for pages and default settings
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔍"
   os: [darwin]
 parameters:

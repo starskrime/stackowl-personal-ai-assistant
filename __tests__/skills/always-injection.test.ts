@@ -13,7 +13,7 @@ function makeSkill(name: string, always = false): Skill {
     conditions: [],
     parameters: {},
     steps: [],
-    metadata: { name, description: `desc for ${name}`, openclaw: { always } },
+    metadata: { name, description: `desc for ${name}`, stackowl: { always } },
     usage: undefined,
   } as unknown as Skill
 }

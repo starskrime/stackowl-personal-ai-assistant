@@ -563,11 +563,11 @@ describe("PluginSandbox", () => {
   });
 
   describe("onMessage", () => {
-    it("should register ACP message handler", () => {
+    it("should register A2A message handler", () => {
       const handler = vi.fn();
       sandbox.onMessage("my-channel", handler);
 
-      const handlers = sandbox.getACPHandlers();
+      const handlers = sandbox.getA2AHandlers();
       expect(handlers).toContainEqual({ channel: "my-channel", handler });
     });
   });

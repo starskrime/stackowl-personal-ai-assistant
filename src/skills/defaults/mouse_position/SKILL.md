@@ -3,7 +3,7 @@ name: mouse_position
 description: Get current mouse position, move cursor smoothly, track mouse path, and convert coordinates between screens
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📍"
   os: [darwin]
 parameters:

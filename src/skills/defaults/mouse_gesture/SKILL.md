@@ -3,7 +3,7 @@ name: mouse_gesture
 description: Record and playback mouse gesture sequences - draw patterns that trigger actions
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✌️"
   os: [darwin]
 parameters:

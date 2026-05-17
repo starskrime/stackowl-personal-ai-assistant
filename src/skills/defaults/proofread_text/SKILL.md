@@ -3,7 +3,7 @@ name: proofread_text
 description: Check text for grammar, spelling, punctuation, and style errors with suggested corrections
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📝"
 parameters:
   file_path:

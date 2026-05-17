@@ -3,7 +3,7 @@ name: image_resize
 description: Resize, compress, or convert images using macOS built-in tools or ImageMagick
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🖼️"
   os: [darwin]
 parameters:

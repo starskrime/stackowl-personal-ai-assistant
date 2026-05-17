@@ -3,7 +3,7 @@ name: ssl_check
 description: Verify SSL/TLS certificate validity, expiration date, and chain for a given domain
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔒"
 parameters:
   domain:

@@ -3,7 +3,7 @@ name: generate_docs
 description: Generate API documentation or code documentation from source files with JSDoc or docstring analysis
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📖"
 parameters:
   source_file:

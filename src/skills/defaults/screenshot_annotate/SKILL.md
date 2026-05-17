@@ -3,7 +3,7 @@ name: screenshot_annotate
 description: Take screenshots and automatically annotate with arrows, boxes, text, and highlights using native macOS tools
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✏️"
   os: [darwin]
 parameters:

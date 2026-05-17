@@ -4,7 +4,6 @@ import { DAGPlanner } from "../../src/context/dag-planner.js";
 import { ContextCache } from "../../src/context/cache.js";
 import { LayerHealthMonitor } from "../../src/context/circuit-breaker.js";
 import type { ContextLayer, TriageSignals, ContextRequest, LayerResults } from "../../src/context/layer.js";
-import type { SignalPool } from "../../src/signals/pool.js";
 
 function mockTriage(): TriageSignals {
   return { userMessage: "hi", isConversational: true, hasFrustration: false,
@@ -69,39 +68,4 @@ describe("ContextPipeline", () => {
     expect(trace).toHaveLength(2);
   });
 
-  it("wireSignalPool — AmbientContextLayer fires after wiring", async () => {
-    const mockPool = {
-      hasHighPrioritySignals: () => true,
-      toContextBlock: (_max?: number) => "<ambient>workspace context</ambient>",
-    } as unknown as SignalPool;
-
-    const pipeline = new ContextPipeline([], new ContextCache(), new LayerHealthMonitor(), new DAGPlanner());
-    pipeline.wireSignalPool(mockPool);
-
-    // Non-conversational triage so AmbientContextLayer.shouldFire() returns true
-    const triage: TriageSignals = { ...mockTriage(), isConversational: false };
-    const { output, trace } = await pipeline.run(mockReq(), triage);
-
-    expect(output).toContain("workspace context");
-    const ambientEntry = trace.find((e) => e.layerName === "AmbientContextLayer");
-    expect(ambientEntry).toBeDefined();
-    expect(ambientEntry?.fired).toBe(true);
-  });
-
-  it("wireSignalPool — AmbientContextLayer absent when shouldFire returns false", async () => {
-    const mockPool = {
-      hasHighPrioritySignals: () => false,  // no high-priority signals
-      toContextBlock: (_max?: number) => "<ambient>should not appear</ambient>",
-    } as unknown as SignalPool;
-
-    const pipeline = new ContextPipeline([], new ContextCache(), new LayerHealthMonitor(), new DAGPlanner());
-    pipeline.wireSignalPool(mockPool);
-
-    // Conversational triage — shouldFire returns false
-    const { output, trace } = await pipeline.run(mockReq(), mockTriage());
-
-    expect(output).not.toContain("should not appear");
-    const ambientEntry = trace.find((e) => e.layerName === "AmbientContextLayer");
-    expect(ambientEntry?.fired).toBe(false);
-  });
 });

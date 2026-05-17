@@ -3,7 +3,7 @@ name: time_tracker
 description: Track time spent on tasks by starting and stopping a timer, with daily summaries logged to a file
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⏱️"
 parameters:
   action:

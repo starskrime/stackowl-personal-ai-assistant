@@ -3,7 +3,7 @@ name: summarize_thread
 description: Summarize a long email thread or chat conversation into key points, decisions, and action items
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📌"
 parameters:
   file_path:

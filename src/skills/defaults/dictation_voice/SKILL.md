@@ -3,7 +3,7 @@ name: dictation_voice
 description: Convert speech to text using macOS Dictation feature, with support for continuous dictation and commands
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎤"
   os: [darwin]
 parameters:

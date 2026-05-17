@@ -3,7 +3,7 @@ name: telegram_read
 description: Fetch and display recent messages from a Telegram chat using the Bot API
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📩"
 parameters:
   bot_token:

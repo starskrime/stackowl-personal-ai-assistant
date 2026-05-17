@@ -3,7 +3,7 @@ name: browser_passwords
 description: View and manage saved browser passwords for Safari and Chrome (requires authentication)
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔑"
   os: [darwin]
 parameters:

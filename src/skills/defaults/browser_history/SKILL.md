@@ -3,7 +3,7 @@ name: browser_history
 description: View, search, and manage browser history across Safari, Chrome, and Firefox on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📜"
   os: [darwin]
 parameters:

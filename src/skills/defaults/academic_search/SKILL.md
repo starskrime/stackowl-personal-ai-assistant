@@ -3,7 +3,7 @@ name: academic_search
 description: Search for academic papers, journals, and research publications on a given topic
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎓"
 parameters:
   topic:

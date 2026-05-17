@@ -3,7 +3,7 @@ name: port_scanner
 description: Network port scanning tool — use only when user explicitly asks to scan ports, check open TCP ports, or diagnose network service availability on a specific IP or hostname
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔌"
 parameters:
   host:

@@ -1,7 +1,7 @@
 /**
  * StackOwl — Skill Parser
  *
- * Parses OpenCLAW-compatible SKILL.md files.
+ * Parses StackOwl-compatible SKILL.md files.
  */
 
 import { readFile } from "node:fs/promises";
@@ -76,22 +76,22 @@ export class SkillParser {
       description: data.description as string,
     };
 
-    // Parse OpenCLAW metadata
+    // Parse stackowl metadata
     if (data.metadata) {
       const rawMetadata = data.metadata;
       if (typeof rawMetadata === "string") {
         try {
-          metadata.openclaw = JSON.parse(rawMetadata);
+          metadata.stackowl = JSON.parse(rawMetadata);
         } catch {
           // Try YAML parsing
           try {
-            metadata.openclaw = YAML.parse(rawMetadata);
+            metadata.stackowl = YAML.parse(rawMetadata);
           } catch {
             // Ignore parse errors
           }
         }
       } else if (typeof rawMetadata === "object" && rawMetadata !== null) {
-        metadata.openclaw = rawMetadata as SkillMetadata["openclaw"];
+        metadata.stackowl = rawMetadata as SkillMetadata["stackowl"];
       }
     }
 
@@ -233,13 +233,13 @@ export class SkillParser {
   private extractRequiredEnv(metadata: SkillMetadata): string[] {
     const envVars: string[] = [];
 
-    if (metadata.openclaw?.requires?.env) {
-      envVars.push(...metadata.openclaw.requires.env);
+    if (metadata.stackowl?.requires?.env) {
+      envVars.push(...metadata.stackowl.requires.env);
     }
 
-    if (metadata.openclaw?.primaryEnv) {
-      if (!envVars.includes(metadata.openclaw.primaryEnv)) {
-        envVars.push(metadata.openclaw.primaryEnv);
+    if (metadata.stackowl?.primaryEnv) {
+      if (!envVars.includes(metadata.stackowl.primaryEnv)) {
+        envVars.push(metadata.stackowl.primaryEnv);
       }
     }
 
@@ -252,12 +252,12 @@ export class SkillParser {
   private extractRequiredBins(metadata: SkillMetadata): string[] {
     const bins: string[] = [];
 
-    if (metadata.openclaw?.requires?.bins) {
-      bins.push(...metadata.openclaw.requires.bins);
+    if (metadata.stackowl?.requires?.bins) {
+      bins.push(...metadata.stackowl.requires.bins);
     }
 
-    if (metadata.openclaw?.requires?.anyBins) {
-      bins.push(...metadata.openclaw.requires.anyBins);
+    if (metadata.stackowl?.requires?.anyBins) {
+      bins.push(...metadata.stackowl.requires.anyBins);
     }
 
     return bins;
@@ -280,19 +280,19 @@ export function meetsRequirements(
   const metadata = skill.metadata;
 
   // Check OS requirement
-  if (metadata.openclaw?.os && metadata.openclaw.os.length > 0) {
-    if (!options.os || !metadata.openclaw.os.includes(options.os)) {
+  if (metadata.stackowl?.os && metadata.stackowl.os.length > 0) {
+    if (!options.os || !metadata.stackowl.os.includes(options.os)) {
       return {
         satisfied: false,
-        missing: [`OS ${options.os} not in ${metadata.openclaw.os.join(", ")}`],
+        missing: [`OS ${options.os} not in ${metadata.stackowl.os.join(", ")}`],
       };
     }
   }
 
   // Check binary requirements
-  if (metadata.openclaw?.requires?.bins) {
+  if (metadata.stackowl?.requires?.bins) {
     const availableBins = options.bins || [];
-    for (const bin of metadata.openclaw.requires.bins) {
+    for (const bin of metadata.stackowl.requires.bins) {
       if (!availableBins.includes(bin)) {
         missing.push(`binary: ${bin}`);
       }
@@ -300,9 +300,9 @@ export function meetsRequirements(
   }
 
   // Check environment variable requirements
-  if (metadata.openclaw?.requires?.env) {
+  if (metadata.stackowl?.requires?.env) {
     const availableEnv = options.env || {};
-    for (const envVar of metadata.openclaw.requires.env) {
+    for (const envVar of metadata.stackowl.requires.env) {
       if (!availableEnv[envVar] && !process.env[envVar]) {
         missing.push(`env: ${envVar}`);
       }
@@ -310,9 +310,9 @@ export function meetsRequirements(
   }
 
   // Check config requirements
-  if (metadata.openclaw?.requires?.config) {
+  if (metadata.stackowl?.requires?.config) {
     const availableConfig = options.config || {};
-    for (const configKey of metadata.openclaw.requires.config) {
+    for (const configKey of metadata.stackowl.requires.config) {
       if (!availableConfig[configKey]) {
         missing.push(`config: ${configKey}`);
       }

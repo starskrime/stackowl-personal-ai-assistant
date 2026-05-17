@@ -3,7 +3,7 @@ name: brightness_control
 description: Adjust the display brightness level on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔆"
   os: [darwin]
 parameters:

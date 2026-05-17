@@ -199,7 +199,6 @@ import type { PreferenceStore } from "../preferences/store.js";
 import type { SkillsLoader } from "../skills/index.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
 import type { ProviderRegistry } from "../providers/registry.js";
-import type { SignalPool } from "../signals/pool.js";
 import type { TrustChain } from "../trust/chain.js";
 import type { KnowledgeGraph } from "../knowledge/graph.js";
 import type { KnowledgeReasoner } from "../knowledge/reasoner.js";
@@ -265,7 +264,6 @@ export interface GatewayContext {
   providerRegistry?: ProviderRegistry;
 
   // ─── New Feature Modules ──────────────────────────────────────
-  signalPool?: SignalPool;
   trustChain?: TrustChain;
   knowledgeGraph?: KnowledgeGraph;
   knowledgeReasoner?: KnowledgeReasoner;

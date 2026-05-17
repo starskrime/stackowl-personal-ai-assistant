@@ -3,7 +3,7 @@ name: cover_letter
 description: Draft a personalized cover letter for a job application using the job description and user's experience
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💌"
 parameters:
   job_url:

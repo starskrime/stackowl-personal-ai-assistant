@@ -52,11 +52,6 @@ interface Substitution {
 const SUBSTITUTIONS: Substitution[] = [
   // Paths
   {
-    pattern: /~\/\.openclaw\//g,
-    replacement: "~/.stackowl/",
-    description: "openclaw home dir → stackowl",
-  },
-  {
     pattern: /~\/\.claude\//g,
     replacement: "~/.stackowl/",
     description: "claude home dir → stackowl",
@@ -68,11 +63,6 @@ const SUBSTITUTIONS: Substitution[] = [
   },
 
   // CLI commands — word-boundary aware, only when used as a command token
-  {
-    pattern: /\bopenclaw(?=\s|$)/g,
-    replacement: "stackowl",
-    description: "openclaw CLI command → stackowl",
-  },
   {
     pattern: /\bclawdbot(?=\s|$)/g,
     replacement: "stackowl",
@@ -98,11 +88,9 @@ const SUBSTITUTIONS: Substitution[] = [
 // We flag but don't auto-replace — too risky to guess.
 
 const FLAG_PATTERNS: { pattern: RegExp; label: string }[] = [
-  { pattern: /openclaw\.ai/gi, label: "vendor URL" },
   { pattern: /clawhub\.ai/gi, label: "vendor URL" },
   { pattern: /anthropic\.com/gi, label: "vendor URL" },
   { pattern: /\bclaude-code\b/gi, label: "claude-code reference" },
-  { pattern: /\/\.openclaw\b/gi, label: "openclaw path fragment" },
   { pattern: /\bclaw\s+(?:install|run|search|skill)/gi, label: "claw subcommand" },
 ];
 

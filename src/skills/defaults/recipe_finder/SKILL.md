@@ -3,7 +3,7 @@ name: recipe_finder
 description: Find recipes based on available ingredients, dietary restrictions, or cuisine preferences
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🍳"
 parameters:
   ingredients:

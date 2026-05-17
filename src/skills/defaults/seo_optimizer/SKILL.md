@@ -3,7 +3,7 @@ name: seo_optimizer
 description: Analyze and optimize web content for search engine rankings with keyword suggestions and meta tag improvements
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔎"
 parameters:
   file_path:

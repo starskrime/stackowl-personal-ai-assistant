@@ -3,7 +3,7 @@ name: screenshot_region
 description: Take screenshots of a specific screen region, window, or the entire screen on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📸"
   os: [darwin]
 parameters:

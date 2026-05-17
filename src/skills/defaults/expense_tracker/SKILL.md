@@ -3,7 +3,7 @@ name: expense_tracker
 description: Log and categorize personal expenses to a CSV file with monthly spending summaries
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💸"
 parameters:
   action:

@@ -3,7 +3,7 @@ name: slack_message
 description: Send a message to a Slack channel or user via the Slack API using curl
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💬"
 parameters:
   channel:

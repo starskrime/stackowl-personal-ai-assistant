@@ -3,7 +3,7 @@ name: pdf_extract
 description: Extract text content from PDF files for reading, summarizing, or processing
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📄"
 parameters:
   file_path:

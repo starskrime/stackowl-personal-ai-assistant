@@ -3,7 +3,7 @@ name: run_tests
 description: Detect the project's test framework and execute the test suite, reporting results clearly
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧪"
 parameters:
   test_path:

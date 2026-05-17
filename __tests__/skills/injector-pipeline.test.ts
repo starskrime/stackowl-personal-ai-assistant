@@ -115,7 +115,7 @@ describe('SkillContextInjector pipeline (G2 integration)', () => {
     alwaysSkill.metadata = {
       name: 'always-present',
       description: 'always present description',
-      openclaw: { always: true },
+      stackowl: { always: true },
     }
     const registry = makeRegistry(alwaysSkill)
 

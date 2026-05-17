@@ -1,7 +1,7 @@
 /**
  * StackOwl — Tool Profile Manager
  *
- * Manages tool access profiles similar to OpenCLAW.
+ * Manages tool access profiles StackOwl-style.
  * Profiles define which tools are allowed/denied for different contexts.
  */
 

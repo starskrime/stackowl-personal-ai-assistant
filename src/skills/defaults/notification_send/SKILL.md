@@ -3,7 +3,7 @@ name: notification_send
 description: Send native macOS notifications with title, body, and sound options
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔔"
   os: [darwin]
 parameters:

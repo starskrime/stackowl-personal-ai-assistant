@@ -3,7 +3,7 @@ name: job_search
 description: Search for job listings matching specified role, location, and experience level
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💼"
 parameters:
   role:

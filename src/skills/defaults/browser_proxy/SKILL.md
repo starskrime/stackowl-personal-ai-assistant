@@ -3,7 +3,7 @@ name: browser_proxy
 description: Configure, enable, disable, and manage system proxy settings and PAC files on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔄"
   os: [darwin]
 parameters:

@@ -139,7 +139,6 @@ import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/
 import { ReflexionEngine } from "../evolution/reflexion.js";
 import { updatePelletGeneratorDNA } from "../owls/evolution.js";
 import { GoalVerifier } from "../tools/goal-verifier.js";
-import { formatSignalPromoted } from "./narration-formatter.js";
 // TaskLedgerStore import removed — now handled by ParliamentSubsystem
 // SubGoal import removed — now handled by ParliamentSubsystem
 import { createInvokeSkillTool } from "../tools/invoke-skill.js"
@@ -2974,19 +2973,6 @@ export class OwlGateway {
   // ─── Feature Module Initialization ──────────────────────────
 
   private initFeatureModules(): void {
-    // SignalPool — start ambient signal collectors
-    if (this.ctx.signalPool) {
-      this.ctx.signalPool.start();
-      log.engine.info("[feature] SignalPool started");
-    }
-
-    // Channel-parity narration for promoted signals
-    this.gatewayEventBus.on("signal:promoted", (e) => {
-      const text = formatSignalPromoted(e);
-      log.engine.info(`[signal] ${text}`);
-      void this.broadcastProactive(text);
-    });
-
     // Trust Chain — load trust scores from disk
     if (this.ctx.trustChain) {
       this.ctx.trustChain
@@ -3067,7 +3053,6 @@ export class OwlGateway {
       await this.ctx.patternAnalyzer?.save?.().catch((err: Error) => { log.gateway.error("patternAnalyzer save failed", err, {}); });
       await this.ctx.predictiveQueue?.save?.().catch((err: Error) => { log.gateway.error("predictiveQueue save failed", err, {}); });
       await this.ctx.skillArena?.save?.().catch((err: Error) => { log.gateway.error("skillArena save failed", err, {}); });
-      this.ctx.signalPool?.stop?.();
       this.ctx.backgroundJobRunner?.stop();
       this.ctx.backgroundOrchestrator?.stop();
     });

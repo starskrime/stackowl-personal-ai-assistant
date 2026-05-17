@@ -3,7 +3,7 @@ name: browser_downloads
 description: View, pause, resume, cancel, and clear browser downloads for Safari, Chrome, and Firefox
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⬇️"
   os: [darwin]
 parameters:

@@ -3,7 +3,7 @@ name: blog_writer
 description: Draft a structured blog post with title, introduction, sections, conclusion, and SEO metadata
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✏️"
 parameters:
   topic:

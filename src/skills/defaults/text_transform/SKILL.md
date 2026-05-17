@@ -3,7 +3,7 @@ name: text_transform
 description: Transform text with advanced operations like base64 encode/decode, URL encode, hash, sort, reverse lines and more
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔡"
 parameters:
   action:

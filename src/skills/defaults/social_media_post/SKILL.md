@@ -3,7 +3,7 @@ name: social_media_post
 description: Create optimized social media posts for Twitter/X, LinkedIn, or Instagram with hashtags and engagement hooks
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📱"
 parameters:
   platform:

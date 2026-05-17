@@ -3,7 +3,7 @@ name: create_project
 description: Scaffold a new software project with proper directory structure, config files, and git initialization
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🏗️"
 parameters:
   project_name:

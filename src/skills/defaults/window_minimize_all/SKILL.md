@@ -3,7 +3,7 @@ name: window_minimize_all
 description: Minimize, maximize, cascade, tile, arrange all windows for desktop organization
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🗂️"
   os: [darwin]
 parameters:

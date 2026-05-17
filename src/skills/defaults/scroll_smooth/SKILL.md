@@ -3,7 +3,7 @@ name: scroll_smooth
 description: Smooth scrolling and panning in any application with configurable speed, direction, and distance
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🖱️"
   os: [darwin]
 parameters:

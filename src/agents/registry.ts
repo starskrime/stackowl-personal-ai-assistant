@@ -39,12 +39,4 @@ export class DefaultAgentRegistry implements AgentRegistry {
     );
   }
 
-  /**
-   * Find agents that listen on a specific ACP channel.
-   */
-  findByChannel(channel: string): CodingAgent[] {
-    return [...this.agents.values()].filter((agent) =>
-      agent.acpCapabilities?.some((cap) => cap.channels.includes(channel)),
-    );
-  }
 }

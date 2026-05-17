@@ -3,7 +3,7 @@ name: duplicate_finder
 description: Find duplicate files in a directory by comparing file sizes and checksums
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "👯"
 parameters:
   directory:

@@ -71,7 +71,7 @@ export class SkillsRegistry {
   getEligible(filter: SkillFilter): Skill[] {
     return this.listEnabled().filter((skill) => {
       // Always include if 'always' flag is set
-      if (skill.metadata.openclaw?.always) {
+      if (skill.metadata.stackowl?.always) {
         return true;
       }
 
@@ -93,7 +93,7 @@ export class SkillsRegistry {
     const result: { skill: Skill; missing: string[] }[] = [];
 
     for (const skill of this.listEnabled()) {
-      if (skill.metadata.openclaw?.always) {
+      if (skill.metadata.stackowl?.always) {
         continue;
       }
 

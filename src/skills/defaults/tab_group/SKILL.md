@@ -3,7 +3,7 @@ name: tab_group
 description: Organize browser tabs into groups, move tabs between groups, and manage tab collections
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📁"
   os: [darwin]
 parameters:

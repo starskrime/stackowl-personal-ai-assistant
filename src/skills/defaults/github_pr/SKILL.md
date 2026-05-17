@@ -3,7 +3,7 @@ name: github_pr
 description: Create GitHub pull requests with title, description, and labels using the GitHub CLI
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔀"
 parameters:
   action:

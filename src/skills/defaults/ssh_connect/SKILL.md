@@ -3,7 +3,7 @@ name: ssh_connect
 description: Connect to remote servers via SSH, manage SSH keys, and execute remote commands
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔑"
 parameters:
   host:

@@ -3,7 +3,7 @@ name: translate_text
 description: Translate text between languages using web-based translation services
 command-dispatch: tool
 command-tool: web_search
-openclaw:
+stackowl:
   emoji: "🌐"
 parameters:
   text:

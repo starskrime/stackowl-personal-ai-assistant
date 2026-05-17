@@ -3,7 +3,7 @@ name: app_install
 description: Install, uninstall, and manage macOS applications from App Store, Homebrew, or direct downloads
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📱"
   os: [darwin]
 parameters:

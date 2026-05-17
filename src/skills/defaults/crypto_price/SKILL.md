@@ -3,7 +3,7 @@ name: crypto_price
 description: Check current cryptocurrency prices, 24h change, and market cap for specified coins
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🪙"
 parameters:
   coin:

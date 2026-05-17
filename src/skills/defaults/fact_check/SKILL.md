@@ -3,7 +3,7 @@ name: fact_check
 description: Verify a claim or statement by searching multiple authoritative sources and presenting evidence
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✅"
 parameters:
   claim:

@@ -3,7 +3,7 @@ name: mouse_control
 description: "Control mouse cursor movement, clicks, and drags on macOS. Actions: status, move, click, double_click, right_click, drag, scroll"
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🖱️"
   os: [darwin]
 parameters:

@@ -3,7 +3,7 @@ name: server_monitor
 description: Monitor server health by checking HTTP endpoints, response times, and status codes
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📡"
 parameters:
   url:

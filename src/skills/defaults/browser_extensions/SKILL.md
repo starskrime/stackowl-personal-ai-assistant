@@ -3,7 +3,7 @@ name: browser_extensions
 description: List, enable, disable, and manage browser extensions and add-ons for Chrome and Firefox
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🧩"
   os: [darwin]
 parameters:

@@ -3,7 +3,7 @@ name: browser_tabs
 description: Advanced tab management - duplicate, close, pin, mute, move tabs between windows in Safari and Chrome
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📑"
   os: [darwin]
 parameters:

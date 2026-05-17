@@ -3,7 +3,7 @@ name: password_generate
 description: Generate cryptographically secure random passwords with configurable length and character requirements
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔐"
 parameters:
   length:

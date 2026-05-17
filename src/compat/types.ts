@@ -1,8 +1,8 @@
 /**
- * StackOWL — OpenCLAW Compatibility Types
+ * StackOWL — StackOwl Compatibility Types
  */
 
-export interface OpenCLAWTool {
+export interface StackOwlTool {
   name: string;
   description: string;
   parameters: {
@@ -18,7 +18,7 @@ export interface OpenCLAWTool {
     >;
     required?: string[];
   };
-  /** OpenCLAW group (fs, runtime, web, etc.) */
+  /** tool group (fs, runtime, web, etc.) */
   group?: string;
   /** Whether this tool requires sandbox */
   requiresSandbox?: boolean;
@@ -46,7 +46,7 @@ export interface SandboxConfig {
   maxCpu?: number;
 }
 
-export interface OpenCLAWConfig {
+export interface StackOwlConfig {
   tools: {
     allow?: string[];
     deny?: string[];

@@ -3,7 +3,7 @@ name: backup_files
 description: Create timestamped backups of important files or directories as compressed archives
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💾"
 parameters:
   source:

@@ -3,7 +3,7 @@ name: lint_fix
 description: Run code linters and automatically fix formatting and style issues in the project
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "✨"
 parameters:
   project_type:

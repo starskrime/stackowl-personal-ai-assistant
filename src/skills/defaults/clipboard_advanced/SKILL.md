@@ -3,7 +3,7 @@ name: clipboard_advanced
 description: Advanced clipboard operations - copy files, images, formats, clipboard history and management on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📎"
   os: [darwin]
 parameters:

@@ -3,7 +3,7 @@ name: network_diagnostics
 description: Diagnose network connectivity issues by testing DNS, ping, traceroute, and internet speed
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🌐"
   os: [darwin, linux]
 parameters:

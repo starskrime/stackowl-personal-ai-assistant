@@ -3,7 +3,7 @@ name: debug_error
 description: Diagnose and fix runtime errors by analyzing stack traces, error messages, and source code context
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🐛"
 parameters:
   error_message:

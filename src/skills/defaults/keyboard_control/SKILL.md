@@ -3,7 +3,7 @@ name: keyboard_control
 description: Type text, press key combinations, and execute keyboard shortcuts on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⌨️"
   os: [darwin]
 parameters:

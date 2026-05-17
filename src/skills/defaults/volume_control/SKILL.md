@@ -3,7 +3,7 @@ name: volume_control
 description: Get or set the system volume level and toggle mute on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔊"
   os: [darwin]
 parameters:

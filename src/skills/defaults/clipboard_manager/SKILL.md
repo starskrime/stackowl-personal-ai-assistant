@@ -3,7 +3,7 @@ name: clipboard_manager
 description: Read, write, or transform the contents of the macOS clipboard (pasteboard)
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📋"
   os: [darwin]
 parameters:

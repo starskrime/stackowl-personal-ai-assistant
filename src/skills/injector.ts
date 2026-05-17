@@ -225,7 +225,7 @@ export class SkillContextInjector {
     // Force-include skills with always:true (D4) — prepend before router results
     const alwaysSkills: IntentMatch[] = this.registry
       .listEnabled()
-      .filter(s => s.metadata?.openclaw?.always)
+      .filter(s => s.metadata?.stackowl?.always)
       .map(s => ({ skill: s, score: 1.0, method: "bm25" as const }));
 
     const routerMatches = await this.router.route(

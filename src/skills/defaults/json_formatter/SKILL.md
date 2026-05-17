@@ -3,7 +3,7 @@ name: json_formatter
 description: Format, validate, and pretty-print JSON data from files, clipboard, or inline input
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📐"
 parameters:
   source:

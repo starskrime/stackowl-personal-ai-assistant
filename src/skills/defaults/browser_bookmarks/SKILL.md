@@ -3,7 +3,7 @@ name: browser_bookmarks
 description: List, search, add, and manage browser bookmarks for Safari and Chrome on macOS
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔖"
   os: [darwin]
 parameters:

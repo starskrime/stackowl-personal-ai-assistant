@@ -3,7 +3,7 @@ name: app_switcher
 description: Switch between applications instantly, show running apps, launch recent apps, and manage app windows
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔄"
   os: [darwin]
 parameters:

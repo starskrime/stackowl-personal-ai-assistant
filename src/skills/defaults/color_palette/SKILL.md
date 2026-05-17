@@ -3,7 +3,7 @@ name: color_palette
 description: Generate harmonious color palettes from a base color with hex codes, RGB values, and CSS variables
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎨"
 parameters:
   base_color:

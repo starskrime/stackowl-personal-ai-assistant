@@ -3,7 +3,7 @@ name: price_compare
 description: Compare prices for a product across multiple online retailers using web search
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💰"
 parameters:
   product:

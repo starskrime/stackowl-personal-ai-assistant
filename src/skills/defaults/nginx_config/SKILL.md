@@ -3,7 +3,7 @@ name: nginx_config
 description: Generate Nginx configuration files for reverse proxy, static sites, or SSL termination
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "⚡"
 parameters:
   domain:

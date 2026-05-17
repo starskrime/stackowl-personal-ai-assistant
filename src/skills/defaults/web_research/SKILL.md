@@ -3,7 +3,7 @@ name: web_research
 description: Perform deep multi-source research on a topic using web search, article crawling, and synthesis
 command-dispatch: tool
 command-tool: web_search
-openclaw:
+stackowl:
   emoji: "🔬"
 parameters:
   topic:

@@ -3,7 +3,7 @@ name: git_branch
 description: Create, switch, list, or delete git branches with naming convention enforcement
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🌿"
 parameters:
   action:

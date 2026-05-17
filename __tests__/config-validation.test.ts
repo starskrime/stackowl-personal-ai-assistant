@@ -53,7 +53,10 @@ describe("Config Validation", () => {
       JSON.stringify({
         defaultProvider: 'ollama',
         defaultModel: 'llama3.2',
-        providers: { ollama: { baseUrl: 'http://localhost:11434' } },
+        providers: {
+          ollama: { baseUrl: 'http://localhost:11434' },
+          anthropic: { apiKey: 'sk-test', defaultModel: 'claude-sonnet-4-6' },
+        },
         intelligence: {
           tiers: {
             high: { provider: 'anthropic', model: 'claude-opus-4-7' },

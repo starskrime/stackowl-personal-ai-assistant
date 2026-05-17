@@ -8,8 +8,6 @@ import { readFile, writeFile, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { IntelligenceConfig } from "../intelligence/router.js";
-import type { SignalSource, ConsentMap } from "../ambient/types.js";
-import { log } from "../logger.js";
 
 // ─── Config Types ────────────────────────────────────────────────
 
@@ -74,6 +72,10 @@ export interface StackOwlConfig {
     contextCompressionBatch?: number;
     /** Historical tool window size for loop detection. Default: 12. */
     toolWindowSize?: number;
+    /** Compression fallback timeout in quick (user-facing) mode. Default: 2000ms. */
+    quickCompressionTimeoutMs?: number;
+    /** Max ms the ContextPipeline may run before slow layers are cut off. Default: 3500ms. */
+    contextPipelineTimeoutMs?: number;
     /** Base temperature for DNA mutation calls. Default: 0.7. */
     dnaBaseTemp?: number;
     /** Fraction of iteration budget consumed before early synthesis allowed. Default: 0.3. */
@@ -217,14 +219,10 @@ export interface StackOwlConfig {
   };
   /** Ambient signal mesh (Perches) configuration */
   perches?: {
-    /** Per-source consent overrides. Falls back to DEFAULT_CONSENT when absent. */
-    consent?: ConsentMap;
     /** Maximum signals retained in pool. Default: 32 */
     maxSignals?: number;
     /** FileSystemCollector debounce window (ms). Default: 5000 */
     fileWatchDebounceMs?: number;
-    /** If set, only these sources are registered as collectors. Default: all. */
-    enabledSources?: SignalSource[];
     /** Override watched paths for FileSystemCollector. Default: workspace src/ or root. */
     watchPaths?: string[];
   };
@@ -444,6 +442,8 @@ const DEFAULT_CONFIG: StackOwlConfig = {
   },
   engine: {
     maxToolIterations: 15,
+    quickCompressionTimeoutMs: 2000,
+    contextPipelineTimeoutMs: 3500,
   },
   synthesis: {
     provider: "anthropic",
@@ -816,32 +816,6 @@ export async function saveConfig(
   const json = JSON.stringify(config, null, 2);
   await writeFile(tmpPath, json, "utf-8");
   await rename(tmpPath, configPath);
-}
-
-let consentMutex: Promise<void> = Promise.resolve();
-
-/**
- * Atomically grant or revoke consent for an ambient signal source.
- * Serialized per-process via a mutex chain so concurrent calls don't race.
- */
-export async function mutateConsent(
-  basePath: string,
-  source: SignalSource,
-  granted: boolean,
-): Promise<void> {
-  const next = consentMutex.then(async () => {
-    const config = await loadConfig(basePath);
-    const perches = (config.perches ??= {});
-    const consent = (perches.consent ??= {});
-    consent[source] = granted;
-    await saveConfig(basePath, config);
-  });
-  consentMutex = next.catch((err) => {
-    log.engine.warn("mutateConsent: operation failed, advancing mutex chain", {
-      err: (err as Error).message,
-    });
-  });
-  return next;
 }
 
 // patchConfig lives in ./patch.ts — re-exported here for convenience.

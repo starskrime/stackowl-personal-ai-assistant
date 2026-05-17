@@ -62,13 +62,13 @@ export class SkillArena {
   }
 
   findCompetitors(skill: Skill): Skill[] {
-    const tags = (skill.metadata.openclaw as any)?.tags as string[] | undefined;
+    const tags = (skill.metadata.stackowl as any)?.tags as string[] | undefined;
     if (!tags || tags.length === 0) return [];
 
     const tagSet = new Set(tags);
     return this.skillsRegistry.listEnabled().filter((other) => {
       if (other.name === skill.name) return false;
-      const otherTags = (other.metadata.openclaw as any)?.tags as
+      const otherTags = (other.metadata.stackowl as any)?.tags as
         | string[]
         | undefined;
       if (!otherTags) return false;
@@ -182,7 +182,7 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
     challenges: string[],
   ): Promise<Tournament> {
     const allSkills = this.skillsRegistry.listEnabled().filter((s) => {
-      const tags = (s.metadata.openclaw as any)?.tags as string[] | undefined;
+      const tags = (s.metadata.stackowl as any)?.tags as string[] | undefined;
       return tags?.includes(category);
     });
 
@@ -234,7 +234,7 @@ Respond in JSON: {"scoreA": N, "scoreB": N, "winner": "A"|"B"|"draw", "reasoning
     const candidates = Object.values(this.data.entries).filter((e) => {
       const skill = this.skillsRegistry.get(e.skillName);
       if (!skill) return false;
-      const tags = (skill.metadata.openclaw as any)?.tags as
+      const tags = (skill.metadata.stackowl as any)?.tags as
         | string[]
         | undefined;
       return tags?.includes(category);

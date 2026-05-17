@@ -3,7 +3,7 @@ name: ascii_art
 description: Generate ASCII art text banners from input text using figlet or toilet commands
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔤"
 parameters:
   text:

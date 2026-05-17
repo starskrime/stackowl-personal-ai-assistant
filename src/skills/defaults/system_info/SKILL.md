@@ -3,7 +3,7 @@ name: system_info
 description: Display comprehensive macOS system information including CPU, RAM, disk, OS version, and uptime
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💻"
   os: [darwin]
 steps:

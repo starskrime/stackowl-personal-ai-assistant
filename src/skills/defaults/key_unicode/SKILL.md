@@ -3,7 +3,7 @@ name: key_unicode
 description: Type unicode characters, emoji, special symbols, and accented characters that aren't on keyboard
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔣"
 parameters:
   char:

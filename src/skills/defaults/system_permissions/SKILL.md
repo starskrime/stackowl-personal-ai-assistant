@@ -3,7 +3,7 @@ name: system_permissions
 description: Check and manage macOS permissions for Accessibility, Screen Recording, Automation, and Full Disk Access
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔐"
   os: [darwin]
 parameters:

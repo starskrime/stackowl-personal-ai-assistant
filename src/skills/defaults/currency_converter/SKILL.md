@@ -3,7 +3,7 @@ name: currency_converter
 description: Convert amounts between currencies using current exchange rates from web search
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "💱"
 parameters:
   amount:

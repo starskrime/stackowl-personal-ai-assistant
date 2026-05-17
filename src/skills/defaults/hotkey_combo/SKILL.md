@@ -3,7 +3,7 @@ name: hotkey_combo
 description: Execute powerful keyboard shortcut combinations for system control, app switching, and workflow automation
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎹"
   os: [darwin]
 parameters:

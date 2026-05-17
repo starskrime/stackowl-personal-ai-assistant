@@ -3,7 +3,7 @@ name: git_commit
 description: Stage changed files and create a git commit with a descriptive conventional commit message
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📦"
 parameters:
   files:

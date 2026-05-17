@@ -3,7 +3,7 @@ name: api_test
 description: Test REST API endpoints by sending HTTP requests and validating response status, headers, and body
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔌"
 parameters:
   url:

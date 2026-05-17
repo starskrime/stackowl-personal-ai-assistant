@@ -3,7 +3,7 @@ name: browser_cookies
 description: View, export, import, and delete browser cookies for Safari and Chrome
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🍪"
   os: [darwin]
 parameters:

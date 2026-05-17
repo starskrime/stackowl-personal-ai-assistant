@@ -3,7 +3,7 @@ name: deploy_app
 description: Deploy applications by running build commands, pushing to git remotes, or executing deployment scripts
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🚢"
 parameters:
   project_path:

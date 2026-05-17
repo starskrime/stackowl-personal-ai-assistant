@@ -3,7 +3,7 @@ name: click_precise
 description: Perform precise mouse clicks at exact screen coordinates with click types (single, double, right, triple)
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🎯"
   os: [darwin]
 parameters:

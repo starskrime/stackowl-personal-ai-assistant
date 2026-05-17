@@ -3,7 +3,7 @@ name: dependency_check
 description: Audit project dependencies for outdated packages, known vulnerabilities, and unused imports
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "🔎"
 parameters:
   project_path:

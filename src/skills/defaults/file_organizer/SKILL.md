@@ -3,7 +3,7 @@ name: file_organizer
 description: Organize files in a directory by sorting them into subfolders based on file type, date, or custom rules
 command-dispatch: tool
 command-tool: ShellTool
-openclaw:
+stackowl:
   emoji: "📂"
 parameters:
   directory:
