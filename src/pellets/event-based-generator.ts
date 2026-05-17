@@ -89,6 +89,11 @@ export class EventBasedPelletGenerator {
   private recentErrors = new Set<string>();
   private activityGate?: import("../background/activity-gate.js").ActivityGate;
 
+  /** Timestamp (ms) of the last successful message:responded LLM classification. */
+  private lastClassifiedAt = 0;
+  /** Minimum ms between message:responded classification LLM calls (2 minutes). */
+  private readonly classificationCooldownMs = 2 * 60_000;
+
   private handleSessionEndedBound = this.handleSessionEnded.bind(this);
   private handleToolResultBound = this.handleToolResult.bind(this);
   private handleCapabilityGapBound = this.handleCapabilityGap.bind(this);
@@ -221,10 +226,22 @@ export class EventBasedPelletGenerator {
   }): Promise<void> {
     if (!payload.toolsUsed?.length) return;
 
+    const now = Date.now();
+    if (now - this.lastClassifiedAt < this.classificationCooldownMs) {
+      log.engine.debug("[EventBasedPelletGenerator] message:responded classification skipped — cooldown active");
+      return;
+    }
+
     if (this.activityGate && !(await this.activityGate.hasNewActivity("pellet-classification"))) {
       log.engine.debug("[EventBasedPelletGenerator] message:responded classification skipped — no new user activity");
       return;
     }
+
+    log.engine.debug("[EventBasedPelletGenerator] message:responded classification proceeding", {
+      sessionId: payload.sessionId,
+      toolsUsed: payload.toolsUsed,
+      msSinceLastClassified: now - this.lastClassifiedAt,
+    });
 
     let isSignificant = false;
     try {
@@ -235,6 +252,7 @@ export class EventBasedPelletGenerator {
       );
       const classification = JSON.parse(raw.trim());
       isSignificant = classification.isDecision || classification.isInsight || classification.isCorrection;
+      this.lastClassifiedAt = Date.now();
     } catch (err) {
       log.engine.warn(`[EventBasedPelletGenerator] Classification parse failed: ${err instanceof Error ? err.message : String(err)}`);
       isSignificant = false;
