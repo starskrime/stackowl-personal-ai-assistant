@@ -314,6 +314,7 @@ export class LearningOrchestrator {
     if (!context) {
       const kgQueue = this.graphManager.getStudyQueue(1);
       if (kgQueue.length === 0) {
+        this._busy = false;
         const now = new Date().toISOString();
         return this.recordCycle({
           id: cycleId,
@@ -353,6 +354,7 @@ export class LearningOrchestrator {
     }
 
     if (topics.length === 0) {
+      this._busy = false;
       const now = new Date().toISOString();
       return this.recordCycle({
         id: cycleId,
@@ -390,7 +392,11 @@ export class LearningOrchestrator {
       this.stats.totalTopicsStudied += topics.length;
       cycle.success = true;
     } catch (err) {
-      log.evolution.warn(`[ProactiveSession] Failed: ${err}`);
+      log.evolution.error(
+        "[Orchestrator] Proactive session FAILED",
+        err,
+        { cycleId },
+      );
       cycle.error = String(err);
     }
 

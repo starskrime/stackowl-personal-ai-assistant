@@ -1,5 +1,6 @@
 // __tests__/learning/orchestrator-debounce.test.ts
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { tmpdir } from "node:os";
 import { LearningOrchestrator } from "../../src/learning/orchestrator.js";
 import type { ChatMessage } from "../../src/providers/base.js";
 
@@ -34,7 +35,7 @@ function makeMockOrchestrator() {
     mockOwl,
     {} as any,
     undefined as any,
-    "/tmp",
+    tmpdir(),
     undefined,
   );
 
