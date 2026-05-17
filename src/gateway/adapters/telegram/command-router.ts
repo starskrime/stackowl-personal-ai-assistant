@@ -36,6 +36,11 @@ export interface TelegramCommandRouterOptions {
   registry?: CommandSpec[];
   /** Optional per-command special-case overrides registered before the loop. */
   specialCaseHandlers?: SpecialCaseHandlers;
+  /**
+   * Extra commands to include in setMyCommands that are not in the registry
+   * (e.g. Telegram-specific commands like /voice, /menu, /reset).
+   */
+  additionalMenuCommands?: Array<{ command: string; description: string }>;
 }
 
 // ─── TelegramCommandRouter ────────────────────────────────────────────────────
@@ -44,11 +49,13 @@ export class TelegramCommandRouter implements ChannelCommandRouter {
   private readonly gateway: OwlGateway;
   private readonly registry: CommandSpec[];
   private readonly specialCaseHandlers: SpecialCaseHandlers;
+  private readonly additionalMenuCommands: Array<{ command: string; description: string }>;
 
   constructor(options: TelegramCommandRouterOptions) {
     this.gateway = options.gateway;
     this.registry = options.registry ?? REGISTRY;
     this.specialCaseHandlers = options.specialCaseHandlers ?? {};
+    this.additionalMenuCommands = options.additionalMenuCommands ?? [];
     log.telegram.debug("TelegramCommandRouter: constructed", {
       registrySize: this.registry.length,
       specialCases: Object.keys(this.specialCaseHandlers).length,
@@ -140,15 +147,17 @@ export class TelegramCommandRouter implements ChannelCommandRouter {
     log.telegram.debug("TelegramCommandRouter.updateBotMenu: entry");
 
     const visible = this.registry.filter(
-      (spec) => spec.telegramVisible !== false && !spec.telegramSpecialCase,
+      (spec) => spec.telegramVisible !== false,
     );
 
-    const commands = visible.map((spec) => {
+    const registryCommands = visible.map((spec) => {
       const rawDesc = spec.telegramDescription ?? spec.description;
       const description = rawDesc.length > 253 ? `${rawDesc.slice(0, 253)}...` : rawDesc;
       const command = spec.name.replace(/^\//, "");
       return { command, description };
     });
+
+    const commands = [...registryCommands, ...this.additionalMenuCommands];
 
     log.telegram.debug("TelegramCommandRouter.updateBotMenu: calling setMyCommands", {
       commandCount: commands.length,

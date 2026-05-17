@@ -64,7 +64,7 @@ describe("TelegramCommandRouter", () => {
     expect(bot._registered).not.toContain("config");
   });
 
-  it("updateBotMenu() calls setMyCommands with only visible non-special commands", async () => {
+  it("updateBotMenu() calls setMyCommands with all visible commands including special-case", async () => {
     const router = new TelegramCommandRouter({ gateway: gateway as any, registry, specialCaseHandlers: {} });
     await router.updateBotMenu(bot as any);
     expect(bot.api.setMyCommands).toHaveBeenCalledOnce();
@@ -72,8 +72,25 @@ describe("TelegramCommandRouter", () => {
     const names = commands.map(c => c.command);
     expect(names).toContain("help");
     expect(names).toContain("status");
-    expect(names).not.toContain("quit");
-    expect(names).not.toContain("config");
+    expect(names).toContain("config"); // special-case commands now appear in menu
+    expect(names).not.toContain("quit"); // telegramVisible: false still excluded
+  });
+
+  it("updateBotMenu() includes additionalMenuCommands", async () => {
+    const router = new TelegramCommandRouter({
+      gateway: gateway as any,
+      registry,
+      specialCaseHandlers: {},
+      additionalMenuCommands: [
+        { command: "voice", description: "Voice settings" },
+        { command: "menu",  description: "Open menu" },
+      ],
+    });
+    await router.updateBotMenu(bot as any);
+    const commands = bot.api.setMyCommands.mock.calls[0][0] as Array<{ command: string }>;
+    const names = commands.map(c => c.command);
+    expect(names).toContain("voice");
+    expect(names).toContain("menu");
   });
 
   it("updateBotMenu() truncates descriptions over 253 chars", async () => {

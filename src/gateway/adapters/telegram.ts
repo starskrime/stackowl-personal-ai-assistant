@@ -291,6 +291,11 @@ export class TelegramAdapter implements ChannelAdapter {
     // ─── 2. Command routing via REGISTRY + special-case handlers ─
     this.commandRouter = new TelegramCommandRouter({
       gateway: this.gateway,
+      additionalMenuCommands: [
+        { command: "menu",  description: "Open navigation menu" },
+        { command: "voice", description: "Voice settings & speech-to-text" },
+        { command: "reset", description: "Clear conversation context" },
+      ],
       specialCaseHandlers: {
         start: async (ctx) => {
           this.trackChat(ctx.chat!.id);
