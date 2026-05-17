@@ -152,6 +152,14 @@ export interface ChannelAdapter {
   emit?(event: import("../cli/v2/events/UiEvent.js").UiEvent): void;
 
   /**
+   * Drop the last user turn from the in-memory conversation context.
+   * Drops the full exchange: last user message + following assistant response + any tool blocks.
+   * v1: in-memory only — persistence (pellets, DB) is NOT affected.
+   * Called by adapters when the user requests edit/delete of their last message.
+   */
+  dropLastUserTurn?(sessionId: string): void;
+
+  /**
    * Declare which rendering capabilities this channel supports.
    * Used by heartbeat and parliament to choose delivery path.
    */

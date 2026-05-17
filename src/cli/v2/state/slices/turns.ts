@@ -100,6 +100,17 @@ export function applyTurnsEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, liveMemoryCount: state.liveMemoryCount + 1 };
     }
 
+    case "undo.requested": {
+      const turns = [...state.turns];
+      // Remove trailing assistant turns (may include tool blocks rendered as turns)
+      while (turns.length > 0 && turns[turns.length - 1]!.role !== "user") {
+        turns.pop();
+      }
+      // Remove the last user turn
+      if (turns.length > 0) turns.pop();
+      return { ...state, turns };
+    }
+
     default:
       return state;
   }

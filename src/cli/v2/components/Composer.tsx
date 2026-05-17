@@ -92,6 +92,11 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
     (input, key) => {
       if (key.ctrl && input === "c") { uiStore.setState({ exitConfirmOpen: true }); return; }
       if (key.ctrl && input === "d" && value === "") { uiStore.setState({ exitConfirmOpen: true }); return; }
+      if (key.ctrl && input === "z" && !generating) {
+        log.cli.debug("Composer: Ctrl+Z — emitting undo.requested", {});
+        globalBridge.emit({ kind: "undo.requested" });
+        return;
+      }
       if (key.ctrl && input === "l") {
         dispatcher.dispatch("/clear").then((result) => {
           if (result.kind === "error") {

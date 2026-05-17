@@ -329,6 +329,11 @@ export interface CancelRequestedEvent {
   kind: "cancel.requested";
 }
 
+/** User pressed Ctrl+Z when idle — Composer emits this; store drops last user+assistant turn pair from display. */
+export interface UndoRequestedEvent {
+  kind: "undo.requested";
+}
+
 /** Emitted by CliAdapter when the in-flight gateway.handle() throws AbortError. */
 export interface TurnCancelledEvent {
   kind: "turn.cancelled";
@@ -381,6 +386,7 @@ export type UiEvent =
   | ThinkingPhraseEvent
   | ThinkingToolEvent
   | CancelRequestedEvent
-  | TurnCancelledEvent;
+  | TurnCancelledEvent
+  | UndoRequestedEvent;
 
 export type UiEventKind = UiEvent["kind"];
