@@ -116,6 +116,7 @@ export class CliAdapter implements ChannelAdapter {
 
     // Subscribe to memory:written events — forward to TUI as memory.written UiEvents.
     this._gateway.gatewayEventBus.on("memory:written", (e) => {
+      if (this._stopped) return;
       globalBridge.emit({
         kind: "memory.written",
         turnId: this._currentTurnId ?? "unknown",

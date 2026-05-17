@@ -1,13 +1,20 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
 import { GatewayEventBus } from "../../../src/gateway/event-bus.js";
+import type { wireToolNarration as WireToolNarration } from "../../../src/gateway/adapters/cli-v1.js";
+
+// Import once at suite level — cli-v1 has a heavy module graph and the first
+// dynamic import can exceed the per-test timeout when loading cold.
+let wireToolNarration: typeof WireToolNarration;
+beforeAll(async () => {
+  ({ wireToolNarration } = await import("../../../src/gateway/adapters/cli-v1.js"));
+});
 
 describe("CLI narration wiring", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("wireToolNarration writes narration to stdout on tool:start event", async () => {
-    const { wireToolNarration } = await import("../../../src/gateway/adapters/cli.js");
+  it("wireToolNarration writes narration to stdout on tool:start event", () => {
     const bus = new GatewayEventBus();
     const writes: string[] = [];
     vi.spyOn(process.stdout, "write").mockImplementation((chunk: any) => {
@@ -21,8 +28,7 @@ describe("CLI narration wiring", () => {
     expect(writes.some(w => w.includes("Searching the web"))).toBe(true);
   });
 
-  it("wireToolNarration does not write to stdout for tool:goal_advance (silent)", async () => {
-    const { wireToolNarration } = await import("../../../src/gateway/adapters/cli.js");
+  it("wireToolNarration does not write to stdout for tool:goal_advance (silent)", () => {
     const bus = new GatewayEventBus();
     const writes: string[] = [];
     vi.spyOn(process.stdout, "write").mockImplementation((chunk: any) => {
@@ -36,8 +42,7 @@ describe("CLI narration wiring", () => {
     expect(writes.length).toBe(0);
   });
 
-  it("wireToolNarration formats narration with prefix ⟳", async () => {
-    const { wireToolNarration } = await import("../../../src/gateway/adapters/cli.js");
+  it("wireToolNarration formats narration with prefix ⟳", () => {
     const bus = new GatewayEventBus();
     const writes: string[] = [];
     vi.spyOn(process.stdout, "write").mockImplementation((chunk: any) => {
