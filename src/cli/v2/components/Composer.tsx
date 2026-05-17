@@ -136,12 +136,15 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
             const lastTypedWord = trimmed.split(/\s+/).pop() ?? "";
             const alreadyExact =
               (entry.kind === "command" && trimmed === entry.value) ||
-              (entry.kind === "subcommand" && lastTypedWord === entry.value);
+              (entry.kind === "subcommand" && lastTypedWord === entry.value) ||
+              (entry.kind === "arg" && lastTypedWord === entry.value);
             if (!alreadyExact) {
               if (entry.kind === "command") setValue(entry.value + " ");
               else if (entry.kind === "subcommand") {
                 const cmdPart = value.trimEnd().split(/\s+/)[0] ?? "";
                 setValue(cmdPart + " " + entry.value + " ");
+              } else if (entry.kind === "arg") {
+                setValue(value.replace(/\S*$/, entry.value) + " ");
               }
               return;
             }
