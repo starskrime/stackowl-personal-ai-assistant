@@ -76,6 +76,18 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
 
   const showPopup = completions.length > 0 && value !== (completions[0]?.value ?? "");
 
+  // Escape during generation — active independently of the disabled prop so
+  // the key is captured even while the main useInput is inactive.
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        log.cli.debug("Composer: Escape during generation — emitting cancel.requested", {});
+        globalBridge.emit({ kind: "cancel.requested" });
+      }
+    },
+    { isActive: generating },
+  );
+
   useInput(
     (input, key) => {
       if (key.ctrl && input === "c") { uiStore.setState({ exitConfirmOpen: true }); return; }
@@ -236,11 +248,14 @@ function ComposerImpl({ onSubmit, disabled }: ComposerProps) {
 
       {/* Main input row — dimmed while generating, no cursor */}
       <Box flexDirection="column">
-        <Box paddingLeft={1}>
-          <Text dimColor={generating}>{activeOwlEmoji} {activeOwlName} </Text>
-          <Text bold color={generating || panelFocus === "panel" ? colors.dim : colors.user}>❯ </Text>
-          <Text color={generating || panelFocus === "panel" ? colors.dim : undefined}>{value}</Text>
-          {!generating && panelFocus !== "panel" && <Text color={colors.accent}>▋</Text>}
+        <Box paddingLeft={1} justifyContent="space-between">
+          <Box>
+            <Text dimColor={generating}>{activeOwlEmoji} {activeOwlName} </Text>
+            <Text bold color={generating || panelFocus === "panel" ? colors.dim : colors.user}>❯ </Text>
+            <Text color={generating || panelFocus === "panel" ? colors.dim : undefined}>{value}</Text>
+            {!generating && panelFocus !== "panel" && <Text color={colors.accent}>▋</Text>}
+          </Box>
+          {generating && <Text dimColor>[Esc] cancel</Text>}
         </Box>
       </Box>
     </Box>

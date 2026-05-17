@@ -72,6 +72,11 @@ function TranscriptImpl({ turns }: TranscriptProps) {
                   <Text color="cyan" dimColor>[+{turn.memoryCount}m]</Text>
                 </Box>
               )}
+              {turn.cancelled && (
+                <Box paddingLeft={2}>
+                  <Text dimColor>↩ Cancelled</Text>
+                </Box>
+              )}
             </Box>
           )}
 

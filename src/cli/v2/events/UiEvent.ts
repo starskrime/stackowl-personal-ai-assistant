@@ -324,6 +324,17 @@ export interface ThinkingToolEvent {
   text: string;
 }
 
+/** User pressed Escape during generation — Composer emits this; bridge routes to adapter.cancelCurrentTurn(). */
+export interface CancelRequestedEvent {
+  kind: "cancel.requested";
+}
+
+/** Emitted by CliAdapter when the in-flight gateway.handle() throws AbortError. */
+export interface TurnCancelledEvent {
+  kind: "turn.cancelled";
+  turnId: string;
+}
+
 // ─── Union ────────────────────────────────────────────────────────────────────
 
 export type UiEvent =
@@ -368,6 +379,8 @@ export type UiEvent =
   | PromptRequestedEvent
   | PromptSubmittedEvent
   | ThinkingPhraseEvent
-  | ThinkingToolEvent;
+  | ThinkingToolEvent
+  | CancelRequestedEvent
+  | TurnCancelledEvent;
 
 export type UiEventKind = UiEvent["kind"];

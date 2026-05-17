@@ -569,6 +569,7 @@ export const EXHAUSTION_MARKER = "__STACKOWL_EXHAUSTED__";
 async function consumeStream(
   stream: AsyncGenerator<StreamEvent>,
   onEvent?: (event: StreamEvent) => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<ChatResponse> {
   let content = "";
   const toolCalls: ToolCall[] = [];
@@ -582,6 +583,10 @@ async function consumeStream(
   let model = "";
 
   for await (const event of stream) {
+    if (signal?.aborted) {
+      stream.return?.(undefined);
+      throw new DOMException("Aborted", "AbortError");
+    }
     // Emit to channel in real-time
     if (onEvent) {
       await onEvent(event).catch(() => { });
@@ -708,6 +713,7 @@ async function withProviderResilience(
   callSite?: string,   // for logging ("initial" | "loop")
   maxRetries = 3,
   baseRetryDelayMs = 1_500,
+  signal?: AbortSignal,
 ): Promise<ChatResponse> {
   const MAX_RETRIES = maxRetries;
   const site = callSite ?? "unknown";
@@ -735,6 +741,7 @@ async function withProviderResilience(
           return consumeStream(
             provider.chatWithToolsStream!(messages, tools, model, chatOptions),
             onStreamEvent!,
+            signal,
           );
         }, { model, attempt });
       } else {
@@ -834,6 +841,7 @@ async function withProviderResilience(
           return await consumeStream(
             alt.chatWithToolsStream(messages, tools, model, chatOptions),
             onStreamEvent,
+            signal,
           );
         }
         return await alt.chatWithTools(messages, tools, model, chatOptions);
@@ -1112,8 +1120,12 @@ export class OwlEngine {
         const olderMessages = sanitizedHistory.slice(0, -keepRecent);
 
         if (olderMessages.length > 0) {
+          const compressionTimeoutMs = context.depth === "deep"
+            ? 5000
+            : (config.engine?.quickCompressionTimeoutMs ?? 2000);
+          log.engine.debug("runtime: compression timeout", { mode: context.depth ?? "quick", compressionTimeoutMs });
           const compressionFallback = new Promise<ChatMessage[]>((resolve) =>
-            setTimeout(() => resolve(recentMessages), 5000),
+            setTimeout(() => resolve(recentMessages), compressionTimeoutMs),
           );
           historyToUse = await Promise.race([
             this.compressHistory(
@@ -1310,6 +1322,7 @@ ${userMessage}
         "initial",
         config.engine?.maxRetries ?? 3,
         config.engine?.baseRetryDelayMs ?? 1_500,
+        context.signal,
       );
       log.engine.llmResponse(
         optimalModel,
@@ -2105,6 +2118,7 @@ ${userMessage}
           "loop",
           config.engine?.maxRetries ?? 3,
           config.engine?.baseRetryDelayMs ?? 1_500,
+          context.signal,
         );
         log.engine.llmResponse(
           optimalModel,
@@ -2205,6 +2219,7 @@ ${userMessage}
             correctionResponse = await consumeStream(
               currentProvider.chatWithToolsStream(messages, tools, optimalModel, chatOptions),
               context.onStreamEvent,
+              context.signal,
             );
           } else if (currentProvider.chatWithTools && tools && tools.length > 0) {
             correctionResponse = await currentProvider.chatWithTools(
@@ -2320,6 +2335,7 @@ ${userMessage}
           "retry-compact",
           config.engine?.maxRetries ?? 3,
           config.engine?.baseRetryDelayMs ?? 1_500,
+          context.signal,
         );
         const stage1Content = (stage1Response.content ?? "").trim();
         if (stage1Content) {
@@ -2350,6 +2366,7 @@ ${userMessage}
             "retry-minimal",
             config.engine?.maxRetries ?? 3,
             config.engine?.baseRetryDelayMs ?? 1_500,
+            context.signal,
           );
           const stage2Content = (stage2Response.content ?? "")
             .replace(/<\/?(think|reasoning)>/gi, "")

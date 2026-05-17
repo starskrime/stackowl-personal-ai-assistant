@@ -44,6 +44,8 @@ export class CliAdapter implements ChannelAdapter {
   private _commandDispatcher: CommandDispatcher | null = null;
   /** Active turn ID during assistant response; null between turns. */
   private _currentTurnId: string | null = null;
+  /** AbortController for the in-flight gateway.handle() call; null between turns. */
+  private _currentTurnController: AbortController | null = null;
   private _progressNotifier!: TuiProgressNotifier;
   /** Proactive pinger — records CLI engagement after heartbeat deliveries. */
   private _pinger: ProactivePinger | null = null;
@@ -87,6 +89,21 @@ export class CliAdapter implements ChannelAdapter {
     log.cli.debug("cli-adapter.setPinger: entry", {});
     this._pinger = pinger;
     log.cli.debug("cli-adapter.setPinger: exit — pinger wired", {});
+  }
+
+  /**
+   * Cancel the in-flight gateway.handle() turn. No-op when no turn is active.
+   * Called by the UiBridge cancel.requested handler (wired in startV2).
+   */
+  cancelCurrentTurn(): void {
+    log.cli.debug("cli-adapter.cancelCurrentTurn: entry", {});
+    if (!this._currentTurnController) {
+      log.cli.debug("cli-adapter.cancelCurrentTurn: no active turn — no-op", {});
+      return;
+    }
+    this._currentTurnController.abort();
+    this._currentTurnController = null;
+    log.cli.debug("cli-adapter.cancelCurrentTurn: abort signal sent", {});
   }
 
   // ─── ChannelAdapter ───────────────────────────────────────────────────────
@@ -219,6 +236,8 @@ export class CliAdapter implements ChannelAdapter {
 
     const turnId = uuidv4();
     const debateId = uuidv4();
+    const controller = new AbortController();
+    this._currentTurnController = controller;
 
     // Resolve current owl meta for the bridge.
     const owl = this._gateway.getOwl();
@@ -261,6 +280,7 @@ export class CliAdapter implements ChannelAdapter {
         spanName: "channel.cli.handle",
       }, () => this._gateway.handle(msg, {
         suppressThinking: true,
+        signal: controller.signal,
 
         onStreamEvent: async (event) => {
           // Track accumulated text for the "done" event.
@@ -312,14 +332,24 @@ export class CliAdapter implements ChannelAdapter {
         });
       }
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      globalBridge.emit({
-        kind: "notice",
-        source: "error",
-        text: errMsg,
-        severity: "error",
-      });
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      if (isAbort) {
+        log.cli.info("cli-adapter.submitMessage: turn cancelled by user", { turnId });
+        if (!committedViaStream) {
+          globalBridge.emit({ kind: "turn.cancelled", turnId });
+        }
+        // If committedViaStream: stream already finished — cancel was a race no-op, stay silent.
+      } else {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        globalBridge.emit({
+          kind: "notice",
+          source: "error",
+          text: errMsg,
+          severity: "error",
+        });
+      }
     } finally {
+      this._currentTurnController = null;
       void this._gateway.getProgressManager().notifyStop(this._sessionId);
       this._currentTurnId = null;
     }

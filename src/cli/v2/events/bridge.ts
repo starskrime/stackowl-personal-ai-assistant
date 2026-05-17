@@ -27,6 +27,7 @@ export interface OwlMeta {
 export class UiBridge {
   private _handlers: UiEventHandler[] = [];
   private _toolStartTimes = new Map<string, number>();
+  private _cancelHandler: (() => void) | null = null;
 
   subscribe(handler: UiEventHandler): () => void {
     this._handlers.push(handler);
@@ -35,7 +36,17 @@ export class UiBridge {
     };
   }
 
+  /** Register the cancel callback. Called once at startup by startV2(). */
+  onCancelRequested(handler: () => void): void {
+    this._cancelHandler = handler;
+  }
+
   emit(event: UiEvent): void {
+    if (event.kind === "cancel.requested") {
+      log.cli.debug("bridge.emit: cancel.requested — routing to adapter", {});
+      this._cancelHandler?.();
+      return;
+    }
     for (const h of this._handlers) h(event);
   }
 

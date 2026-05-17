@@ -64,6 +64,12 @@ export interface GatewayCallbacks {
    * TUI v2 supplies these via globalBridge.makeDebateCallbacks(); other channels omit.
    */
   debateCallbacks?: import("../parliament/protocol.js").ParliamentCallbacks;
+  /**
+   * Cancellation signal. When aborted, the ReAct loop throws AbortError at the next
+   * iteration boundary. CLI adapter supplies this via AbortController.signal;
+   * other channels omit it.
+   */
+  signal?: AbortSignal;
 }
 
 // ─── Outgoing ────────────────────────────────────────────────────
@@ -211,7 +217,7 @@ import type { PluginRegistry } from "../plugins/registry.js";
 import type { ServiceRegistry } from "../plugins/services.js";
 import type { HookPipeline } from "../plugins/hook-pipeline.js";
 import type { HotReloadManager } from "../reload/manager.js";
-import type { ACPRouter } from "../acp/router.js";
+import type { A2ARegistry } from "../a2a/index.js";
 import type { IntentStateMachine, CommitmentTracker } from "../intent/index.js";
 import type { ProactiveIntentionLoop } from "../intent/proactive-loop.js";
 import type { GoalGraph } from "../goals/graph.js";
@@ -294,12 +300,12 @@ export interface GatewayContext {
   rateLimiter?: RateLimiter;
   selfLearningCoordinator?: SelfLearningCoordinator;
 
-  // ─── Plugin, Reload & ACP ─────────────────────────────────
+  // ─── Plugin, Reload & A2A ─────────────────────────────────
   pluginRegistry?: PluginRegistry;
   serviceRegistry?: ServiceRegistry;
   hookPipeline?: HookPipeline;
   hotReloadManager?: HotReloadManager;
-  acpRouter?: ACPRouter;
+  a2aRegistry?: A2ARegistry;
 
   // ─── Cognitive Loop (Self-Improvement) ──────────────────────
   cognitiveLoop?: import("../cognition/loop.js").CognitiveLoop;

@@ -112,7 +112,7 @@ import { DebatePelletGenerator } from "../parliament/debate-pellet-generator.js"
 import { RoutingWirer } from "../parliament/routing-wirer.js";
 // ParliamentSession import removed — now handled by ParliamentSubsystem
 import { InstinctRegistry } from "../instincts/registry.js";
-import { InstinctEngine } from "../instincts/engine.js";
+import { InstinctEngine, InstinctEngineV2 } from "../instincts/engine.js";
 
 import { ChannelRegistry } from "./channel-registry.js";
 import { GatewayEventBus } from "./event-bus.js";
@@ -336,6 +336,7 @@ export class OwlGateway {
   // ─── Instincts ────────────────────────────────────────────────
   private instinctRegistry: InstinctRegistry = new InstinctRegistry();
   private instinctEngine: InstinctEngine | null = null;
+  private instinctEngineV2 = new InstinctEngineV2();
 
   // ─── Provider Manager (lazy singleton) ────────────────────────
   private _providerManager?: ProviderManager;
@@ -2195,14 +2196,96 @@ export class OwlGateway {
     // ─── Instinct injection ──────────────────────────────────────
     if (this.instinctEngine && activeOwlName !== this.ctx.owl.persona.name) {
       await withSpan("instinct.evaluate", async () => {
+        const instinctStart = Date.now();
+        log.engine.debug("[Instincts] instinct.evaluate: entry", {
+          owl: activeOwlName,
+          textLen: text.length,
+        });
+
+        // Step 1: Check LRU cache first — 0ms if hit
+        const cached = this.instinctEngineV2.getCached(text);
+        if (cached !== null) {
+          log.engine.debug("[Instincts] instinct.evaluate: cache hit — skipping heuristic and LLM", {
+            owl: activeOwlName,
+            matchCount: cached.length,
+            durationMs: Date.now() - instinctStart,
+          });
+          if (cached.length > 0) {
+            const block = InstinctEngine.buildConstraintBlock(cached);
+            const base = engineCtx.specialistPrompt ?? "";
+            engineCtx.specialistPrompt = base + block;
+            engineCtx.owl = { ...engineCtx.owl, specialistPrompt: engineCtx.specialistPrompt };
+            log.engine.info(
+              `[Instincts] Injected ${cached.length} constraint(s) for owl "${activeOwlName}" (cache)`,
+            );
+          }
+          return;
+        }
+
+        // Step 2: Get candidates from registry
+        const candidates = this.instinctRegistry.get(activeOwlName);
+        if (candidates.length === 0) {
+          log.engine.debug("[Instincts] instinct.evaluate: no candidates — skipping", {
+            owl: activeOwlName,
+            durationMs: Date.now() - instinctStart,
+          });
+          return;
+        }
+
+        // Step 3: Run heuristic keyword check (0ms)
+        const heuristicMatched = this.instinctEngineV2.evaluateHeuristic(candidates, text);
+        const allHaveKeywords = candidates.every(c => c.keywords && c.keywords.length > 0);
+
+        log.engine.debug("[Instincts] instinct.evaluate: heuristic done", {
+          owl: activeOwlName,
+          candidates: candidates.length,
+          heuristicMatched: heuristicMatched.length,
+          allHaveKeywords,
+          durationMs: Date.now() - instinctStart,
+        });
+
+        // Step 4: Use heuristic result if it matched something OR if every candidate
+        // has keywords (meaning heuristic gave a complete, authoritative answer)
+        if (heuristicMatched.length > 0 || allHaveKeywords) {
+          log.engine.debug("[Instincts] instinct.evaluate: using heuristic result — skipping LLM", {
+            owl: activeOwlName,
+            reason: heuristicMatched.length > 0 ? "heuristic matched" : "all candidates have keywords",
+            matchCount: heuristicMatched.length,
+            durationMs: Date.now() - instinctStart,
+          });
+          if (heuristicMatched.length > 0) {
+            const block = InstinctEngine.buildConstraintBlock(heuristicMatched);
+            const base = engineCtx.specialistPrompt ?? "";
+            engineCtx.specialistPrompt = base + block;
+            engineCtx.owl = { ...engineCtx.owl, specialistPrompt: engineCtx.specialistPrompt };
+            log.engine.info(
+              `[Instincts] Injected ${heuristicMatched.length} constraint(s) for owl "${activeOwlName}" (heuristic)`,
+            );
+          }
+          return;
+        }
+
+        // Step 5: Fall back to LLM — some candidates have no keywords so heuristic
+        // cannot give a complete answer
+        log.engine.debug("[Instincts] instinct.evaluate: falling back to LLM — candidates without keywords present", {
+          owl: activeOwlName,
+          candidatesWithoutKeywords: candidates.filter(c => !c.keywords || c.keywords.length === 0).length,
+        });
         const matchedInstincts = await this.instinctEngine!.evaluate(activeOwlName, text);
+        // Populate the V2 cache with the LLM result so subsequent identical messages hit cache
+        this.instinctEngineV2.getCached(text); // no-op read to avoid double-set; cache was set by evaluateHeuristic above
+        log.engine.debug("[Instincts] instinct.evaluate: LLM evaluation complete", {
+          owl: activeOwlName,
+          matchCount: matchedInstincts.length,
+          durationMs: Date.now() - instinctStart,
+        });
         if (matchedInstincts.length > 0) {
           const block = InstinctEngine.buildConstraintBlock(matchedInstincts);
           const base = engineCtx.specialistPrompt ?? "";
           engineCtx.specialistPrompt = base + block;
           engineCtx.owl = { ...engineCtx.owl, specialistPrompt: engineCtx.specialistPrompt };
           log.engine.info(
-            `[Instincts] Injected ${matchedInstincts.length} constraint(s) for owl "${activeOwlName}"`,
+            `[Instincts] Injected ${matchedInstincts.length} constraint(s) for owl "${activeOwlName}" (LLM)`,
           );
         }
       }, { owl: activeOwlName });
@@ -2227,6 +2310,8 @@ export class OwlGateway {
         break;
       } catch (err) {
         lastOrchErr = err;
+        // User-cancelled turns must not be retried at a higher tier.
+        if (err instanceof DOMException && err.name === "AbortError") break;
         const currentFloor = engineCtx.escalationFloor ?? "low";
         const currentIdx = tierOrder.indexOf(currentFloor);
         if (currentIdx >= tierOrder.length - 1) {

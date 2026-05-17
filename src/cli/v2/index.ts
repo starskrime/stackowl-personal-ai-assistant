@@ -15,6 +15,7 @@ import { installLoggerRedirect, uninstallLoggerRedirect } from "./io/logger.js";
 import { enableBracketedPaste, disableBracketedPaste } from "./input/paste.js";
 import { detectCapabilities } from "./io/capabilities.js";
 import { CliAdapter } from "../../gateway/adapters/cli.js";
+import { globalBridge } from "./events/bridge.js";
 import type { OwlGateway } from "../../gateway/core.js";
 
 export interface StartV2Options {
@@ -30,6 +31,7 @@ export async function startV2(gateway: OwlGateway, options?: StartV2Options): Pr
 
   const adapter = new CliAdapter(gateway);
   gateway.register(adapter);
+  globalBridge.onCancelRequested(() => adapter.cancelCurrentTurn());
   options?.onAdapterCreated?.(adapter);
 
   installLoggerRedirect();

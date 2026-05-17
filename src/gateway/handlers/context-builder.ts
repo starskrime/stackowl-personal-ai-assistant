@@ -88,7 +88,10 @@ export class ContextBuilder {
         deps,
       },
       triage,
-      { globalTokenCeiling: (this.ctx.config as any).context?.globalTokenCeiling },
+      {
+        globalTokenCeiling: (this.ctx.config as any).context?.globalTokenCeiling,
+        timeoutMs: this.ctx.config.engine?.contextPipelineTimeoutMs ?? 3500,
+      },
     );
 
     log.engine.debug(
@@ -124,6 +127,7 @@ export class ContextBuilder {
       attemptLog,
       onProgress: callbacks.onProgress,
       onStreamEvent: callbacks.onStreamEvent,
+      signal: callbacks.signal,
       pendingFiles: [],
       channelName: channelId,
       providerRegistry: this.ctx.providerRegistry,

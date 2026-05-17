@@ -13,6 +13,8 @@ export interface Turn {
   timestamp: number;
   /** Number of memories written during this turn. */
   memoryCount?: number;
+  /** True when the user cancelled this turn mid-generation. */
+  cancelled?: boolean;
 }
 
 export interface TurnsState {
@@ -82,6 +84,15 @@ export function applyTurnsEvent(state: UiState, event: UiEvent): UiState {
             memoryCount: state.liveMemoryCount || undefined,
           };
       const turns = [...state.turns, committed].slice(-MAX_TURNS);
+      return { ...state, turns, liveTurn: null, liveMemoryCount: 0 };
+    }
+
+    case "turn.cancelled": {
+      // Commit whatever partial text was streamed so the user can still read it.
+      // If no live turn exists (cancelled before turn.started), silently no-op.
+      if (!state.liveTurn) return state;
+      const cancelled: Turn = { ...state.liveTurn, committed: true, cancelled: true };
+      const turns = [...state.turns, cancelled].slice(-MAX_TURNS);
       return { ...state, turns, liveTurn: null, liveMemoryCount: 0 };
     }
 

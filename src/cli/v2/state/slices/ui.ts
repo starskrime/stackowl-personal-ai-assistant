@@ -59,6 +59,9 @@ export function applyUiEvent(state: UiState, event: UiEvent): UiState {
         ...(event.model !== undefined ? { activeModel: event.model } : {}),
       };
 
+    case "turn.cancelled":
+      return { ...state, generating: false, thinkingPhrase: null, thinkingTool: null };
+
     case "turn.committed": {
       const tokens = event.usage
         ? state.totalTokens + event.usage.promptTokens + event.usage.completionTokens
