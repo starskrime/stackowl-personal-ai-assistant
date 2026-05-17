@@ -1595,9 +1595,21 @@ async function chatCommand(owlName?: string) {
 
   // ── TUI v2 (default) — gateway is ready, hand off to v2 stack ─────
   if (process.env.STACKOWL_TUI !== "v1") {
-    const { startV2 } = await import("./cli/v2/index.js");
-    await startV2(gateway);
-    return;
+    try {
+      const { startV2 } = await import("./cli/v2/index.js");
+      await startV2(gateway);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("requires a TTY")) {
+        process.stderr.write(
+          "✗ TUI v2 requires an interactive terminal. Run with STACKOWL_TUI=v1 for non-TTY mode.\n",
+        );
+      } else {
+        process.stderr.write(`✗ TUI v2 failed to start: ${msg}\n`);
+      }
+      // Fall through to v1 path
+    }
   }
 
   // ── Phase 2: v1 interactive session ───────────────────────────
