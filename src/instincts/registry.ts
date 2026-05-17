@@ -9,8 +9,10 @@ export class InstinctRegistry {
   private cache: Map<string, InstinctSpec[]> = new Map();
 
   async loadForOwl(owlsDir: string, owlName: string): Promise<void> {
+    log.engine.debug("[InstinctRegistry] loadForOwl: entry", { owlName });
     const instinctsDir = join(owlsDir, owlName, "instincts");
     if (!existsSync(instinctsDir)) {
+      log.engine.debug("[InstinctRegistry] loadForOwl: instincts dir not found, returning empty", { instinctsDir });
       this.cache.set(owlName, []);
       return;
     }
@@ -18,7 +20,8 @@ export class InstinctRegistry {
     let files: string[];
     try {
       files = (await readdir(instinctsDir)).filter((f) => f.endsWith(".md"));
-    } catch {
+    } catch (err) {
+      log.engine.warn("[InstinctRegistry] loadForOwl: instincts dir not found or unreadable", { owlsDir, owlName });
       this.cache.set(owlName, []);
       return;
     }
@@ -28,7 +31,9 @@ export class InstinctRegistry {
       try {
         const raw = await readFile(join(instinctsDir, file), "utf-8");
         const { data } = matter(raw);
-        if (data.name && data.description && data.constraint) {
+        if (!data.name || !data.description || !data.constraint) {
+          log.engine.debug("[InstinctRegistry] loadForOwl: skipping file missing required fields", { file });
+        } else {
           instincts.push({
             name: String(data.name),
             description: String(data.description),
