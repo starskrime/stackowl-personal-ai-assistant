@@ -47,4 +47,16 @@ describe("CommandSpec Telegram extensions", () => {
     expect(configSpec).toBeDefined();
     expect(configSpec!.telegramSpecialCase).toBe(true);
   });
+
+  it("REGISTRY /quit entry has telegramVisible: false", () => {
+    const quitSpec = REGISTRY.find(s => s.name === "/quit");
+    expect(quitSpec).toBeDefined();
+    expect(quitSpec!.telegramVisible).toBe(false);
+  });
+
+  it("REGISTRY /onboarding entry has telegramVisible: false", () => {
+    const onboardingSpec = REGISTRY.find(s => s.name === "/onboarding");
+    expect(onboardingSpec).toBeDefined();
+    expect(onboardingSpec!.telegramVisible).toBe(false);
+  });
 });
