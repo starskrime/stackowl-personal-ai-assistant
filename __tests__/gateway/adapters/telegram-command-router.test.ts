@@ -109,3 +109,41 @@ describe("TelegramCallbackRouter", () => {
     expect(router).toBeDefined();
   });
 });
+
+// ── TelegramTextHandler + TelegramVoiceHandler ────────────────────────────────
+import { TelegramTextHandler } from "../../../src/gateway/adapters/telegram/text-handler.js";
+import { TelegramVoiceHandler } from "../../../src/gateway/adapters/telegram/voice-handler.js";
+
+const makeGateway = () => ({
+  handle: vi.fn().mockResolvedValue({ content: "ok", owlEmoji: "🦉", owlName: "Owl" }),
+  getOwl: vi.fn().mockReturnValue({ persona: { emoji: "🦉", name: "Test" } }),
+  getConfig: vi.fn().mockReturnValue({}),
+  endSession: vi.fn().mockResolvedValue(undefined),
+  getCognitiveLoop: vi.fn().mockReturnValue(null),
+});
+
+describe("TelegramTextHandler", () => {
+  it("constructs without error", () => {
+    const handler = new TelegramTextHandler({
+      gateway: makeGateway() as any,
+      isAllowed: () => true,
+      trackChat: vi.fn(),
+      sessionStore: { get: vi.fn(), set: vi.fn(), has: vi.fn(), delete: vi.fn(), destroy: vi.fn() } as any,
+      pinger: null,
+    });
+    expect(handler).toBeDefined();
+  });
+});
+
+describe("TelegramVoiceHandler", () => {
+  it("constructs without error", () => {
+    const handler = new TelegramVoiceHandler({
+      gateway: makeGateway() as any,
+      isAllowed: () => true,
+      trackChat: vi.fn(),
+      stt: { transcribe: vi.fn() } as any,
+      botToken: "test-token",
+    });
+    expect(handler).toBeDefined();
+  });
+});
