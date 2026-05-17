@@ -51,11 +51,13 @@ export class SessionStore<T> {
 
   /** Clears the cleanup interval. Must be called in TelegramAdapter.stop(). */
   destroy(): void {
-    log.telegram.debug("session-store.destroy: clearing interval");
+    log.telegram.debug("session-store.destroy: entry");
     clearInterval(this.cleanupTimer);
+    log.telegram.debug("session-store.destroy: exit");
   }
 
   private cleanup(): void {
+    log.telegram.debug("session-store.cleanup: entry", { size: this.store.size });
     const now = Date.now();
     let evicted = 0;
     for (const [key, entry] of this.store) {
@@ -64,8 +66,6 @@ export class SessionStore<T> {
         evicted++;
       }
     }
-    if (evicted > 0) {
-      log.telegram.debug("session-store.cleanup: evicted stale entries", { evicted, remaining: this.store.size });
-    }
+    log.telegram.debug("session-store.cleanup: exit", { evicted, remaining: this.store.size });
   }
 }
