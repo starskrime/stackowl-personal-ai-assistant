@@ -1602,8 +1602,9 @@ async function chatCommand(owlName?: string) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("requires a TTY")) {
+        log.cli.error("chatCommand: TUI v2 startup failed — falling back to v1", err, { msg });
         process.stderr.write(
-          "✗ TUI v2 requires an interactive terminal. Run with STACKOWL_TUI=v1 for non-TTY mode.\n",
+          "✗ TUI v2 requires an interactive terminal. Set STACKOWL_JSON=true for non-TTY mode, or STACKOWL_TUI=v1 for the legacy CLI.\n",
         );
       } else {
         process.stderr.write(`✗ TUI v2 failed to start: ${msg}\n`);
