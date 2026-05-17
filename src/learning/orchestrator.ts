@@ -92,6 +92,11 @@ export class LearningOrchestrator {
   private onCapabilityGap?: (gap: string, description: string) => void;
   private _busy = false;
 
+  /** Counts calls to processConversation; runs the full pipeline every N calls. */
+  private processCallCount = 0;
+  /** Run learning cycle every N conversational messages. */
+  private readonly processEveryN = 5;
+
   private cycles: LearningCycle[] = [];
   private stats: LearningStats = {
     totalCycles: 0,
@@ -158,6 +163,27 @@ export class LearningOrchestrator {
   }
 
   async processConversation(messages: ChatMessage[]): Promise<LearningCycle> {
+    this.processCallCount++;
+    log.evolution.debug(
+      `[LearningOrchestrator] processConversation entry (call ${this.processCallCount})`,
+      { messageCount: messages.length },
+    );
+    if (this.processCallCount % this.processEveryN !== 0) {
+      log.evolution.debug(
+        `[LearningOrchestrator] processConversation debounced (call ${this.processCallCount}, runs every ${this.processEveryN})`,
+      );
+      return this.recordCycle({
+        id: `reactive_debounce_${Date.now()}`,
+        trigger: "reactive",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        insightsExtracted: 0,
+        topicsPrioritized: 0,
+        criticalTopics: 0,
+        durationMs: 0,
+        success: true,
+      });
+    }
     if (this._busy) {
       log.evolution.warn("[Orchestrator] processConversation skipped — already running");
       return this.recordCycle({ id: `reactive_skip_${Date.now()}`, trigger: "reactive", startedAt: new Date().toISOString(), insightsExtracted: 0, topicsPrioritized: 0, criticalTopics: 0, durationMs: 0, success: true });
@@ -186,6 +212,7 @@ export class LearningOrchestrator {
       if (cycle.insightsExtracted === 0) {
         cycle.success = true;
         cycle.durationMs = Date.now() - startTime;
+        this._busy = false;
         return this.recordCycle(cycle);
       }
 
