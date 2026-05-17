@@ -21,6 +21,8 @@ import { createCommandDispatcher } from "../../cli/v2/commands/dispatcher.js";
 import type { CommandDispatcher } from "../../cli/v2/commands/dispatcher.js";
 import { TuiProgressNotifier } from "../../progress/notifiers/tui.js";
 import { pickRandomPhrase } from "../../shared/progress.js";
+import { log } from "../../logger.js";
+import type { ProactivePinger } from "../../heartbeat/proactive.js";
 
 export interface CliAdapterConfig {
   userId?: string;
@@ -43,6 +45,11 @@ export class CliAdapter implements ChannelAdapter {
   /** Active turn ID during assistant response; null between turns. */
   private _currentTurnId: string | null = null;
   private _progressNotifier!: TuiProgressNotifier;
+  /** Proactive pinger — records CLI engagement after heartbeat deliveries. */
+  private _pinger: ProactivePinger | null = null;
+  private _lastDeliveryId: string | null = null;
+  private _lastDeliveryJobType: string = "";
+  private _lastDeliveryAt: number = 0;
 
   constructor(gateway: OwlGateway, config: CliAdapterConfig = {}) {
     this._gateway = gateway;
@@ -56,6 +63,26 @@ export class CliAdapter implements ChannelAdapter {
 
     this._progressNotifier = new TuiProgressNotifier(globalBridge);
     gateway.getProgressManager().register(this._progressNotifier);
+
+    // Track proactive deliveries so the next submitMessage() can record engagement.
+    gateway.gatewayEventBus.onDeliver(async (env) => {
+      if (env.urgency === "proactive" && env.deliveryId) {
+        this._lastDeliveryId = env.deliveryId;
+        this._lastDeliveryJobType = env.jobType ?? "unknown";
+        this._lastDeliveryAt = Date.now();
+      }
+    });
+  }
+
+  /**
+   * Wire a ProactivePinger so user messages that follow a proactive heartbeat
+   * delivery are recorded as engagement signals (Element 12).
+   * Mirrors the same contract in CLIAdapter (v1).
+   */
+  setPinger(pinger: ProactivePinger): void {
+    log.cli.debug("cli-adapter.setPinger: entry", {});
+    this._pinger = pinger;
+    log.cli.debug("cli-adapter.setPinger: exit — pinger wired", {});
   }
 
   // ─── ChannelAdapter ───────────────────────────────────────────────────────
@@ -157,6 +184,29 @@ export class CliAdapter implements ChannelAdapter {
   async submitMessage(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    // ─── Element 12: record reply-engagement on proactive deliveries ────────
+    if (this._pinger && this._lastDeliveryId && this._lastDeliveryAt > 0) {
+      const latencySeconds = Math.max(0, Math.round((Date.now() - this._lastDeliveryAt) / 1000));
+      log.cli.debug("cli-adapter.submitMessage: recording engagement", {
+        deliveryId: this._lastDeliveryId,
+        jobType: this._lastDeliveryJobType,
+        latencySeconds,
+      });
+      try {
+        this._pinger.recordEngagement(
+          this._lastDeliveryId,
+          this._lastDeliveryJobType,
+          true,
+          latencySeconds,
+        );
+      } catch (err) {
+        log.cli.error("cli-adapter.submitMessage: recordEngagement failed", err instanceof Error ? err : new Error(String(err)), {});
+      }
+      this._lastDeliveryId = null;
+      this._lastDeliveryJobType = "";
+      this._lastDeliveryAt = 0;
+    }
 
     const msg = makeMessage(this._channelId, this._userId, trimmed, this._sessionId);
     if (!msg) return;

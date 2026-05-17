@@ -1576,6 +1576,10 @@ async function chatCommand(owlName?: string) {
 
   // ── Auto-start Telegram regardless of TUI version ────────────────
   let telegramPinger: ReturnType<TelegramAdapter["getPinger"]> | undefined;
+  // Shared reference to the v2 CLI adapter — populated in onAdapterCreated below.
+  // Declared here so the Telegram .then() callback can reach it regardless of
+  // which resolves first (adapter creation vs Telegram startup).
+  let cliAdapterV2: import("./gateway/adapters/cli.js").CliAdapter | null = null;
   if (b.config.telegram?.botToken) {
     const telegramAdapter = new TelegramAdapter(gateway, {
       botToken: b.config.telegram.botToken,
@@ -1587,6 +1591,9 @@ async function chatCommand(owlName?: string) {
       .start()
       .then(() => {
         telegramPinger = telegramAdapter.getPinger() ?? undefined;
+        // Wire pinger to the v2 CLI adapter if it was already created (handles
+        // the race where Telegram resolves after startV2's onAdapterCreated).
+        if (telegramPinger && cliAdapterV2) cliAdapterV2.setPinger(telegramPinger);
       })
       .catch((err) => {
         process.stderr.write(`✗ Telegram failed: ${err instanceof Error ? err.message : err}\n`);
@@ -1597,7 +1604,16 @@ async function chatCommand(owlName?: string) {
   if (process.env.STACKOWL_TUI !== "v1") {
     try {
       const { startV2 } = await import("./cli/v2/index.js");
-      await startV2(gateway);
+      // Capture the adapter so we can wire the pinger once Telegram resolves.
+      // Both orderings are handled: if Telegram resolves first, telegramPinger
+      // is already set when onAdapterCreated fires; if the adapter is ready
+      // first, we cache it and the Telegram .then() below calls setPinger.
+      await startV2(gateway, {
+        onAdapterCreated: (adapter) => {
+          cliAdapterV2 = adapter;
+          if (telegramPinger) adapter.setPinger(telegramPinger);
+        },
+      });
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

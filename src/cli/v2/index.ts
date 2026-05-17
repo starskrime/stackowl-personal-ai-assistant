@@ -17,7 +17,12 @@ import { detectCapabilities } from "./io/capabilities.js";
 import { CliAdapter } from "../../gateway/adapters/cli.js";
 import type { OwlGateway } from "../../gateway/core.js";
 
-export async function startV2(gateway: OwlGateway): Promise<void> {
+export interface StartV2Options {
+  /** Called immediately after the CliAdapter is constructed, before the UI renders. */
+  onAdapterCreated?: (adapter: CliAdapter) => void;
+}
+
+export async function startV2(gateway: OwlGateway, options?: StartV2Options): Promise<void> {
   const caps = detectCapabilities();
   if (!caps.isTTY) {
     throw new Error("TUI v2 requires a TTY. For non-TTY use, set STACKOWL_JSON=true.");
@@ -25,6 +30,7 @@ export async function startV2(gateway: OwlGateway): Promise<void> {
 
   const adapter = new CliAdapter(gateway);
   gateway.register(adapter);
+  options?.onAdapterCreated?.(adapter);
 
   installLoggerRedirect();
   enableBracketedPaste();
