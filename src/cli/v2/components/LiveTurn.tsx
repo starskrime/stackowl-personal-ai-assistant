@@ -6,6 +6,7 @@
  * Cursor ▋ appears at the live streaming edge.
  */
 
+import { memo } from "react";
 import { Box, Text } from "ink";
 import type { Turn } from "../state/slices/turns.js";
 import type { ToolCall } from "../state/slices/tools.js";
@@ -21,7 +22,7 @@ export interface LiveTurnProps {
   memoryCount?: number;
 }
 
-export function LiveTurn({ turn, toolCalls, memoryCount = 0 }: LiveTurnProps) {
+function LiveTurnImpl({ turn, toolCalls, memoryCount = 0 }: LiveTurnProps) {
   const { colors }  = useTheme();
   const cols        = useTerminalCols();
   const contentWidth = Math.max(8, cols - 4);
@@ -58,3 +59,5 @@ export function LiveTurn({ turn, toolCalls, memoryCount = 0 }: LiveTurnProps) {
     </Box>
   );
 }
+
+export const LiveTurn = memo(LiveTurnImpl);
