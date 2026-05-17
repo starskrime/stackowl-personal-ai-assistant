@@ -39,6 +39,7 @@ export interface IProactiveDeliveryService {
   recordActivity(sessionId: string, channelId: string, userId: string): void;
   getLastActivity(sessionId: string): ActivityRecord | undefined;
   deliver(channelId: string, userId: string, text: string, preformatted?: boolean): Promise<void>;
+  broadcast(text: string): Promise<void>;
   deliverScheduled(getReadyMessages: () => ReadyMessage[]): Promise<void>;
 }
 
@@ -95,6 +96,27 @@ export class ProactiveDeliveryService implements IProactiveDeliveryService {
     }
   }
 
+  // ── Broadcast to all adapters ──────────────────────────────────
+
+  async broadcast(text: string): Promise<void> {
+    log.gateway.debug("ProactiveDeliveryService.broadcast: entry", { textLen: text.length, adapterCount: this.ctx.adapters.size });
+    const response: GatewayResponse = {
+      content: text,
+      owlName: this.ctx.owl.persona.name,
+      owlEmoji: this.ctx.owl.persona.emoji,
+      toolsUsed: [],
+    };
+    for (const [channelId, adapter] of this.ctx.adapters) {
+      try {
+        await adapter.broadcast?.(response);
+        log.gateway.debug("ProactiveDeliveryService.broadcast: sent to adapter", { channelId });
+      } catch (err) {
+        log.gateway.error("ProactiveDeliveryService.broadcast: adapter failed", err as Error, { channelId });
+      }
+    }
+    log.gateway.debug("ProactiveDeliveryService.broadcast: exit");
+  }
+
   // ── Scheduled batch delivery ───────────────────────────────────
 
   async deliverScheduled(getReadyMessages: () => ReadyMessage[]): Promise<void> {
@@ -112,15 +134,17 @@ export class ProactiveDeliveryService implements IProactiveDeliveryService {
     let skipped = 0;
 
     for (const msg of ready) {
-      // Prefer message-attached channel/user; fall back to global last-activity
+      // Timer-scheduled messages have null channelId/userId — they're created before any session is
+      // established. Fall back to lastGlobalActivity (most recent session); for a per-session fix,
+      // ScheduledMessage would need to carry a sessionId at creation time.
       const channelId = msg.channelId ?? this.lastGlobalActivity?.channelId ?? null;
       const userId = msg.userId ?? this.lastGlobalActivity?.userId ?? null;
 
       if (!channelId || !userId) {
-        log.gateway.warn("ProactiveDeliveryService.deliverScheduled: no channel/user for message — skipping", {
-          id: msg.id,
+        log.gateway.debug("ProactiveDeliveryService.deliverScheduled: no specific target, broadcasting", { id: msg.id });
+        await this.broadcast(msg.message).catch((err: Error) => {
+          log.gateway.error("ProactiveDeliveryService.deliverScheduled: broadcast failed", err, { id: msg.id });
         });
-        skipped++;
         continue;
       }
 
@@ -130,9 +154,7 @@ export class ProactiveDeliveryService implements IProactiveDeliveryService {
         userId,
       });
 
-      await this.deliver(channelId, userId, msg.message).catch((err: Error) => {
-        log.gateway.error("ProactiveDeliveryService.deliverScheduled: delivery failed", err, { id: msg.id });
-      });
+      await this.deliver(channelId, userId, msg.message);
 
       delivered++;
     }
