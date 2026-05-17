@@ -23,3 +23,28 @@ describe("TELEGRAM_LIMITS", () => {
     expect(TELEGRAM_LIMITS.STREAM_THROTTLE_MS).toBe(1000);
   });
 });
+
+import { REGISTRY } from "../../../src/cli/v2/commands/registry.js";
+import type { CommandSpec } from "../../../src/cli/v2/commands/registry.js";
+
+describe("CommandSpec Telegram extensions", () => {
+  it("CommandSpec accepts telegramVisible, telegramDescription, telegramSpecialCase", () => {
+    const spec: CommandSpec = {
+      name: "/test",
+      description: "test",
+      handler: async () => ({ kind: "action" }),
+      telegramVisible: false,
+      telegramDescription: "Short desc",
+      telegramSpecialCase: true,
+    };
+    expect(spec.telegramVisible).toBe(false);
+    expect(spec.telegramDescription).toBe("Short desc");
+    expect(spec.telegramSpecialCase).toBe(true);
+  });
+
+  it("REGISTRY /config entry has telegramSpecialCase set", () => {
+    const configSpec = REGISTRY.find(s => s.name === "/config");
+    expect(configSpec).toBeDefined();
+    expect(configSpec!.telegramSpecialCase).toBe(true);
+  });
+});

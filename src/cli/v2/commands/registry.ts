@@ -148,6 +148,15 @@ export interface CommandSpec {
   description: string;
   subcommands?: SubcommandSpec[];
   handler?: CommandHandler;
+  /** Override description shown in Telegram's bot menu (max 256 chars). Falls back to `description`. */
+  telegramDescription?: string;
+  /** Default: true. Set false to hide this command from Telegram's /setMyCommands menu. */
+  telegramVisible?: boolean;
+  /**
+   * Set true for commands needing custom Telegram UI: /config (grammY menu), /voice, /menu.
+   * TelegramCommandRouter loop skips these; they are registered by special-case handlers.
+   */
+  telegramSpecialCase?: boolean;
 }
 
 // ─── Resolve helper ───────────────────────────────────────────────────────────
@@ -317,6 +326,7 @@ export const REGISTRY: CommandSpec[] = [
       if (args.length === 0) return handleConfigList(ctx, args);
       return handleConfigGlobal(ctx, args);
     },
+    telegramSpecialCase: true,
     subcommands: [
       // ── Legacy subcommands (kept for backward compatibility) ──────────────────
       {
@@ -460,6 +470,7 @@ export const REGISTRY: CommandSpec[] = [
   {
     name: "/onboarding",
     description: "Re-run setup wizard",
+    telegramVisible: false,
     handler: async (ctx) => {
       ctx.bridge.requestOnboardingView();
       return { kind: "action" };
@@ -469,6 +480,7 @@ export const REGISTRY: CommandSpec[] = [
     name: "/quit",
     aliases: ["/exit"],
     description: "Save session and exit",
+    telegramVisible: false,
     handler: async (_ctx) => {
       return { kind: "action" };
     },
