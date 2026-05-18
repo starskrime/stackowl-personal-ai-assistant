@@ -1,3 +1,5 @@
+import { appendFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import type {
   ModelProvider,
   ChatMessage,
@@ -9,24 +11,71 @@ import type {
   ToolDefinition,
 } from "./base.js";
 import { log } from "../logger.js";
+import { currentTrace } from "../infra/observability/context.js";
+
+// ─── Prompt Trace File ───────────────────────────────────────────
+// Full untruncated prompt/response log. Separate from the main log
+// so the main log stays readable while this file holds everything.
+// Path: logs/prompt-trace-YYYY-MM-DD.log (JSONL)
+
+const TRACE_DIR = "logs";
+let _traceDirReady = false;
+
+async function ensureTraceDir(): Promise<void> {
+  if (_traceDirReady) return;
+  await mkdir(TRACE_DIR, { recursive: true });
+  _traceDirReady = true;
+}
+
+function traceFilePath(): string {
+  const date = new Date().toISOString().slice(0, 10);
+  return join(TRACE_DIR, `prompt-trace-${date}.log`);
+}
+
+function writeTrace(record: Record<string, unknown>): void {
+  const ctx = currentTrace();
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    traceId: ctx?.traceId,
+    spanId: ctx?.spanId,
+    sessionId: ctx?.sessionId,
+    userId: ctx?.userId,
+    channelId: ctx?.channelId,
+    owl: ctx?.owl,
+    ...record,
+  }) + "\n";
+
+  ensureTraceDir()
+    .then(() => appendFile(traceFilePath(), line))
+    .catch(() => { /* non-critical — never let trace failures break the call */ });
+}
+
+// ─── Short summary for the main log ─────────────────────────────
 
 function previewMessages(messages: ChatMessage[]): string {
   return messages
     .map((m) => {
       const tag = m.toolCallId ? `[${m.role}:${m.toolCallId}]` : `[${m.role}]`;
-      const body = (m.content ?? "").slice(0, 300);
+      const body = (m.content ?? "").slice(0, 200);
       return `${tag} ${body}`;
     })
-    .join("\n---\n");
+    .join(" | ");
 }
 
+// ─── Proxy ───────────────────────────────────────────────────────
+
 /**
- * Transparent decorator that logs every provider call (prompts + responses) via log.engine.
- * Applied at the outermost layer in ProviderRegistry so all traffic is captured
- * regardless of protocol (OpenAI / Anthropic / Gemini / Grok).
+ * Transparent decorator that logs every provider call at two levels:
  *
- * Prompt content: log.engine.debug (filterable)
- * Response summaries: log.engine.info
+ *   Main log  — summary lines (info level): method, provider, model,
+ *               message count, 200-char preview, usage, durationMs.
+ *
+ *   Trace file (logs/prompt-trace-YYYY-MM-DD.log) — full untruncated
+ *               JSONL: complete messages[], tools[], options on request;
+ *               complete content/toolCalls/usage on response.
+ *
+ * Applied at the outermost ProviderRegistry layer so ALL traffic is
+ * captured regardless of protocol (OpenAI / Anthropic / Gemini / Grok).
  */
 export class LoggingProviderProxy implements ModelProvider {
   readonly name: string;
@@ -48,31 +97,55 @@ export class LoggingProviderProxy implements ModelProvider {
 
       this.chatWithToolsStream = async function* (messages, tools, model, options) {
         const start = Date.now();
+        const resolvedModel = model ?? "(default)";
+
         log.engine.info("provider.chatWithToolsStream: entry", {
           provider: providerName,
-          model: model ?? "(default)",
+          model: resolvedModel,
           messageCount: messages.length,
           toolCount: tools.length,
           toolNames: tools.map((t) => t.name),
-          promptPreview: previewMessages(messages),
+          preview: previewMessages(messages),
+        });
+        writeTrace({
+          dir: "→",
+          provider: providerName,
+          model: resolvedModel,
+          method: "chatWithToolsStream",
+          messageCount: messages.length,
+          messages,
+          tools,
+          options,
         });
 
         let eventCount = 0;
+        const accumulatedContent: string[] = [];
         try {
           for await (const event of innerStream(messages, tools, model, options)) {
             eventCount++;
+            if (event.type === "text_delta") accumulatedContent.push(event.content);
             yield event;
           }
+          const durationMs = Date.now() - start;
           log.engine.info("provider.chatWithToolsStream: exit", {
             provider: providerName,
-            model: model ?? "(default)",
+            model: resolvedModel,
             eventCount,
-            durationMs: Date.now() - start,
+            durationMs,
+          });
+          writeTrace({
+            dir: "←",
+            provider: providerName,
+            model: resolvedModel,
+            method: "chatWithToolsStream",
+            eventCount,
+            content: accumulatedContent.join(""),
+            durationMs,
           });
         } catch (err) {
           log.engine.error("provider.chatWithToolsStream: failed", err as Error, {
             provider: providerName,
-            model: model ?? "(default)",
+            model: resolvedModel,
             eventCount,
             durationMs: Date.now() - start,
           });
@@ -88,30 +161,52 @@ export class LoggingProviderProxy implements ModelProvider {
     options?: ChatOptions,
   ): Promise<ChatResponse> {
     const start = Date.now();
+    const resolvedModel = model ?? "(default)";
+
     log.engine.info("provider.chat: entry", {
       provider: this.name,
-      model: model ?? "(default)",
+      model: resolvedModel,
       messageCount: messages.length,
       roles: messages.map((m) => m.role),
-      promptPreview: previewMessages(messages),
+      preview: previewMessages(messages),
+    });
+    writeTrace({
+      dir: "→",
+      provider: this.name,
+      model: resolvedModel,
+      method: "chat",
+      messageCount: messages.length,
+      messages,
+      options,
     });
 
     try {
       const response = await this.inner.chat(messages, model, options);
+      const durationMs = Date.now() - start;
       log.engine.info("provider.chat: exit", {
         provider: this.name,
         model: response.model,
         finishReason: response.finishReason,
         contentLen: response.content?.length ?? 0,
-        contentPreview: (response.content ?? "").slice(0, 400),
         usage: response.usage,
-        durationMs: Date.now() - start,
+        durationMs,
+      });
+      writeTrace({
+        dir: "←",
+        provider: this.name,
+        model: response.model,
+        method: "chat",
+        finishReason: response.finishReason,
+        content: response.content,
+        toolCalls: response.toolCalls,
+        usage: response.usage,
+        durationMs,
       });
       return response;
     } catch (err) {
       log.engine.error("provider.chat: failed", err as Error, {
         provider: this.name,
-        model: model ?? "(default)",
+        model: resolvedModel,
         durationMs: Date.now() - start,
       });
       throw err;
@@ -125,34 +220,57 @@ export class LoggingProviderProxy implements ModelProvider {
     options?: ChatOptions,
   ): Promise<ChatResponse> {
     const start = Date.now();
+    const resolvedModel = model ?? "(default)";
+
     log.engine.info("provider.chatWithTools: entry", {
       provider: this.name,
-      model: model ?? "(default)",
+      model: resolvedModel,
       messageCount: messages.length,
       toolCount: tools.length,
       toolNames: tools.map((t) => t.name),
       roles: messages.map((m) => m.role),
-      promptPreview: previewMessages(messages),
+      preview: previewMessages(messages),
+    });
+    writeTrace({
+      dir: "→",
+      provider: this.name,
+      model: resolvedModel,
+      method: "chatWithTools",
+      messageCount: messages.length,
+      messages,
+      tools,
+      options,
     });
 
     try {
       const response = await this.inner.chatWithTools(messages, tools, model, options);
+      const durationMs = Date.now() - start;
       log.engine.info("provider.chatWithTools: exit", {
         provider: this.name,
         model: response.model,
         finishReason: response.finishReason,
         contentLen: response.content?.length ?? 0,
-        contentPreview: (response.content ?? "").slice(0, 400),
         toolCallCount: response.toolCalls?.length ?? 0,
         toolCalls: response.toolCalls?.map((tc) => ({ name: tc.name, id: tc.id })),
         usage: response.usage,
-        durationMs: Date.now() - start,
+        durationMs,
+      });
+      writeTrace({
+        dir: "←",
+        provider: this.name,
+        model: response.model,
+        method: "chatWithTools",
+        finishReason: response.finishReason,
+        content: response.content,
+        toolCalls: response.toolCalls,
+        usage: response.usage,
+        durationMs,
       });
       return response;
     } catch (err) {
       log.engine.error("provider.chatWithTools: failed", err as Error, {
         provider: this.name,
-        model: model ?? "(default)",
+        model: resolvedModel,
         durationMs: Date.now() - start,
       });
       throw err;
@@ -165,33 +283,54 @@ export class LoggingProviderProxy implements ModelProvider {
     options?: ChatOptions,
   ): AsyncGenerator<StreamChunk> {
     const start = Date.now();
+    const resolvedModel = model ?? "(default)";
+
     log.engine.info("provider.chatStream: entry", {
       provider: this.name,
-      model: model ?? "(default)",
+      model: resolvedModel,
       messageCount: messages.length,
       roles: messages.map((m) => m.role),
-      promptPreview: previewMessages(messages),
+      preview: previewMessages(messages),
+    });
+    writeTrace({
+      dir: "→",
+      provider: this.name,
+      model: resolvedModel,
+      method: "chatStream",
+      messageCount: messages.length,
+      messages,
+      options,
     });
 
     let chunkCount = 0;
-    let totalContentLen = 0;
+    const accumulatedContent: string[] = [];
     try {
       for await (const chunk of this.inner.chatStream(messages, model, options)) {
         chunkCount++;
-        totalContentLen += chunk.content?.length ?? 0;
+        if (chunk.content) accumulatedContent.push(chunk.content);
         yield chunk;
       }
+      const durationMs = Date.now() - start;
       log.engine.info("provider.chatStream: exit", {
         provider: this.name,
-        model: model ?? "(default)",
+        model: resolvedModel,
         chunkCount,
-        totalContentLen,
-        durationMs: Date.now() - start,
+        totalContentLen: accumulatedContent.reduce((s, c) => s + c.length, 0),
+        durationMs,
+      });
+      writeTrace({
+        dir: "←",
+        provider: this.name,
+        model: resolvedModel,
+        method: "chatStream",
+        chunkCount,
+        content: accumulatedContent.join(""),
+        durationMs,
       });
     } catch (err) {
       log.engine.error("provider.chatStream: failed", err as Error, {
         provider: this.name,
-        model: model ?? "(default)",
+        model: resolvedModel,
         chunkCount,
         durationMs: Date.now() - start,
       });
@@ -205,7 +344,6 @@ export class LoggingProviderProxy implements ModelProvider {
       provider: this.name,
       model: model ?? "(default)",
       textLen: text.length,
-      textPreview: text.slice(0, 100),
     });
 
     try {
