@@ -12,12 +12,14 @@
  *   and returns full context so first turns are never degraded.
  */
 
+import { join } from "node:path";
 import type { ModelProvider } from "../providers/base.js";
 import type { SlotKey, SymbolTable } from "./symbol-table.js";
-import { symbolTableRegistry } from "./symbol-table.js";
+import { symbolTableRegistry, SymbolTable as SymbolTableClass } from "./symbol-table.js";
 import { CognitiveDispatch, type DispatchResult } from "./dispatch.js";
 import { CognitiveConsolidate, type ConsolidateTurn, type ConsolidateStores } from "./consolidate.js";
 import { SymbolTableSeeder, type SeederDependencies } from "./symbol-table-seeder.js";
+import { TurnJournal } from "./turn-journal.js";
 import { log } from "../logger.js";
 
 const WARMTH_THRESHOLD = 2; // warmth score ≥ 2 → use compiled pipeline
@@ -57,6 +59,8 @@ export interface CognitiveStores extends SeederDependencies {
   owlName: string;
   userId: string;
   channelId: string;
+  /** Workspace root — used to co-locate turn-journal.jsonl with the SQLite DB */
+  dataDir?: string;
 }
 
 export class CognitivePipeline {
@@ -64,6 +68,7 @@ export class CognitivePipeline {
   private readonly consolidate: CognitiveConsolidate;
   private readonly lastDispatch = new Map<string, DispatchResult>();
   private seeder: SymbolTableSeeder | null = null;
+  private journal: TurnJournal | null = null;
 
   constructor(provider: ModelProvider) {
     this.dispatch = new CognitiveDispatch(provider);
@@ -84,10 +89,65 @@ export class CognitivePipeline {
       userId: stores.userId,
       channelId: stores.channelId,
     } satisfies ConsolidateStores);
+
+    // ── WAL: create journal + replay crash-recovered turns ─────────────
+    if (stores.dataDir) {
+      const walDir = join(stores.dataDir, "memory");
+      this.journal = new TurnJournal(walDir);
+      this.consolidate.setJournal(this.journal);
+      this.replayIncomplete();
+    }
+
     log.cognition.info("cognitive-pipeline.stores.wired", {
       userId: stores.userId,
       owlName: stores.owlName,
+      walEnabled: !!this.journal,
     });
+  }
+
+  /** Replay any turns that were enqueued but not committed before last crash. */
+  private replayIncomplete(): void {
+    if (!this.journal) return;
+    const incomplete = this.journal.getIncomplete();
+    this.journal.prune(7);
+
+    if (incomplete.length === 0) return;
+
+    log.cognition.warn("cognitive-pipeline.replay: found incomplete turns", {
+      count: incomplete.length,
+    });
+
+    for (const entry of incomplete) {
+      if (!entry.assistantResponse) {
+        // Crash happened during Execute — no response to consolidate; just commit
+        this.journal.commit(entry.id);
+        log.cognition.info("cognitive-pipeline.replay: skipped (no response)", {
+          id: entry.id,
+          sessionId: entry.sessionId,
+        });
+        continue;
+      }
+
+      // Replay through Consolidate using a throwaway SymbolTable
+      // (session is gone; we only need the persistent write-back to fire)
+      const replayTable = new SymbolTableClass(`replay:${entry.id}`);
+      const turn: ConsolidateTurn = {
+        userMessage: entry.userMessage,
+        assistantResponse: entry.assistantResponse,
+        toolsUsed: entry.toolsUsed,
+        executionPlan: entry.executionPlan,
+        sessionId: entry.sessionId,
+        turnIndex: entry.turnIndex,
+        userId: entry.userId,
+        channelId: entry.channelId,
+      };
+      this.consolidate.enqueue(turn, replayTable);
+      log.cognition.info("cognitive-pipeline.replay: enqueued", {
+        id: entry.id,
+        sessionId: entry.sessionId,
+        turnIndex: entry.turnIndex,
+      });
+    }
   }
 
   // ─── Seed SymbolTable from ContextPipeline output ──────────────

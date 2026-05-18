@@ -702,6 +702,7 @@ export class OwlGateway {
         owlName: ctx.owl.persona.name,
         userId: "system",    // fallback only — per-request userId overrides in ConsolidateTurn
         channelId: "cli",    // fallback only — per-request channelId overrides in ConsolidateTurn
+        dataDir: ctx.cwd ?? process.cwd(),
       });
       log.engine.info("[CognitivePipeline] Persistent stores wired — seeding + write-back active");
     } else {

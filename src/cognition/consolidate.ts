@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import type { ModelProvider } from "../providers/base.js";
 import type { SymbolTable } from "./symbol-table.js";
 import type { ExecutionPlan } from "./dispatch.js";
+import type { TurnJournal } from "./turn-journal.js";
 import { AlwaysOnSignalExtractor } from "./signal-extractor.js";
 import { log } from "../logger.js";
 
@@ -20,6 +21,10 @@ import { log } from "../logger.js";
 
 export interface ConsolidateTurn {
   userMessage: string;
+  /**
+   * The assistant's full response for this turn. Stored in the WAL so that
+   * crash-recovered turns can be replayed through Consolidate on next startup.
+   */
   assistantResponse: string;
   toolsUsed: string[];
   executionPlan: ExecutionPlan;
@@ -106,6 +111,7 @@ export class CognitiveConsolidate {
   private readonly sessionQueues = new Map<string, Promise<void>>();
   private readonly extractor = new AlwaysOnSignalExtractor();
   private stores: ConsolidateStores | null = null;
+  private journal: TurnJournal | null = null;
 
   constructor(private readonly provider: ModelProvider) {}
 
@@ -118,15 +124,36 @@ export class CognitiveConsolidate {
     });
   }
 
+  /** Wire WAL journal. Call once after construction alongside setStores(). */
+  setJournal(journal: TurnJournal): void {
+    this.journal = journal;
+    log.cognition.info("consolidate.journal.wired");
+  }
+
   /**
    * Enqueue a consolidation job for this session. Returns immediately —
    * the job runs async after the caller yields. Jobs per session are
    * serialized (no concurrent writes to the same SymbolTable).
+   *
+   * WAL: appends a journal entry BEFORE queuing so a crash between enqueue
+   * and run completion can be detected and replayed on next startup.
    */
   enqueue(turn: ConsolidateTurn, symbolTable: SymbolTable): void {
+    // WAL: record before queuing — crash-gap protection
+    const journalId = this.journal?.append({
+      sessionId: turn.sessionId,
+      turnIndex: turn.turnIndex,
+      userId: turn.userId,
+      channelId: turn.channelId,
+      userMessage: turn.userMessage,
+      assistantResponse: turn.assistantResponse,
+      toolsUsed: turn.toolsUsed,
+      executionPlan: turn.executionPlan,
+    }) ?? null;
+
     const prev = this.sessionQueues.get(turn.sessionId) ?? Promise.resolve();
     const next = prev
-      .then(() => this.run(turn, symbolTable))
+      .then(() => this.run(turn, symbolTable, journalId))
       .catch((err) => {
         log.cognition.error("consolidate.queue.unhandled", err as Error, {
           sessionId: turn.sessionId,
@@ -138,7 +165,7 @@ export class CognitiveConsolidate {
 
   // ─── Core execution ──────────────────────────────────────────
 
-  private async run(turn: ConsolidateTurn, symbolTable: SymbolTable): Promise<void> {
+  private async run(turn: ConsolidateTurn, symbolTable: SymbolTable, journalId: string | null): Promise<void> {
     const start = Date.now();
     log.cognition.info("consolidate.entry", {
       sessionId: turn.sessionId,
@@ -155,6 +182,9 @@ export class CognitiveConsolidate {
 
     // ── Step 3: Apply output to Symbol Table ──────────────────────────
     this.applyToSymbolTable(output, turn, symbolTable);
+
+    // WAL: commit — Consolidate completed, no replay needed
+    if (journalId) this.journal?.commit(journalId);
 
     log.cognition.info("consolidate.exit", {
       sessionId: turn.sessionId,
