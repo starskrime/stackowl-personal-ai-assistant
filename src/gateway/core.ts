@@ -693,6 +693,20 @@ export class OwlGateway {
       ctx.cognitivePipeline = new CognitivePipeline(ctx.provider);
       log.engine.info("[CognitivePipeline] Initialized — 3-call cognitive pipeline active");
     }
+    // Wire persistent memory stores when all three are available
+    if (ctx.db && ctx.memoryManager && ctx.preferenceStore) {
+      ctx.cognitivePipeline.setStores({
+        db: ctx.db,
+        memoryManager: ctx.memoryManager,
+        preferenceStore: ctx.preferenceStore,
+        owlName: ctx.owl.persona.name,
+        userId: "default",      // updated per-request from session
+        channelId: "default",   // updated per-request from session
+      });
+      log.engine.info("[CognitivePipeline] Persistent stores wired — seeding + write-back active");
+    } else {
+      log.engine.info("[CognitivePipeline] Stores not available — in-memory Symbol Table only");
+    }
 
     // ─── OwlEngine v2 (Element 6a): OwlOrchestrator + ImprovementScheduler ─
     // ctx.db is always available here (auto-initialized above if not provided)

@@ -16,7 +16,8 @@ import type { ModelProvider } from "../providers/base.js";
 import type { SlotKey, SymbolTable } from "./symbol-table.js";
 import { symbolTableRegistry } from "./symbol-table.js";
 import { CognitiveDispatch, type DispatchResult } from "./dispatch.js";
-import { CognitiveConsolidate, type ConsolidateTurn } from "./consolidate.js";
+import { CognitiveConsolidate, type ConsolidateTurn, type ConsolidateStores } from "./consolidate.js";
+import { SymbolTableSeeder, type SeederDependencies } from "./symbol-table-seeder.js";
 import { log } from "../logger.js";
 
 const WARMTH_THRESHOLD = 2; // warmth score ≥ 2 → use compiled pipeline
@@ -44,14 +45,45 @@ export interface PostProcessInput {
 
 // ─── CognitivePipeline ────────────────────────────────────────────
 
+/**
+ * Persistent store references passed in from GatewayContext.
+ * Optional — pipeline degrades gracefully without them (in-memory only).
+ */
+export interface CognitiveStores extends SeederDependencies {
+  owlName: string;
+  userId: string;
+  channelId: string;
+}
+
 export class CognitivePipeline {
   private readonly dispatch: CognitiveDispatch;
   private readonly consolidate: CognitiveConsolidate;
   private readonly lastDispatch = new Map<string, DispatchResult>();
+  private seeder: SymbolTableSeeder | null = null;
 
   constructor(provider: ModelProvider) {
     this.dispatch = new CognitiveDispatch(provider);
     this.consolidate = new CognitiveConsolidate(provider);
+  }
+
+  /**
+   * Wire persistent memory stores. Call once after construction (in gateway init).
+   * After this, Symbol Tables are seeded from and written back to SQLite/LanceDB/Kuzu.
+   */
+  setStores(stores: CognitiveStores): void {
+    this.seeder = new SymbolTableSeeder(stores);
+    this.consolidate.setStores({
+      db: stores.db,
+      memoryManager: stores.memoryManager,
+      preferenceStore: stores.preferenceStore,
+      owlName: stores.owlName,
+      userId: stores.userId,
+      channelId: stores.channelId,
+    } satisfies ConsolidateStores);
+    log.cognition.info("cognitive-pipeline.stores.wired", {
+      userId: stores.userId,
+      owlName: stores.owlName,
+    });
   }
 
   // ─── Seed SymbolTable from ContextPipeline output ──────────────
@@ -60,8 +92,14 @@ export class CognitivePipeline {
    * Called by ContextBuilder after running the full ContextPipeline.
    * Caches the expensive pipeline output so subsequent turns skip it.
    */
-  seedFromPipelineOutput(sessionId: string, pipelineOutput: string): SymbolTable {
+  seedFromPipelineOutput(
+    sessionId: string,
+    pipelineOutput: string,
+    sessionContext?: { userId: string; owlName: string; channelId: string },
+  ): SymbolTable {
     const table = symbolTableRegistry.getOrCreate(sessionId);
+    const isNew = table.turnIndex === 0;
+
     if (pipelineOutput && table.isStale("contextOutput")) {
       table.set("contextOutput", pipelineOutput);
       log.cognition.info("cognitive-pipeline.seeded", {
@@ -70,6 +108,19 @@ export class CognitivePipeline {
         warmth: table.warmth(),
       });
     }
+
+    // Seed from persistent stores on first session creation
+    if (isNew && this.seeder && sessionContext) {
+      this.seeder.seed(
+        table,
+        sessionContext.userId,
+        sessionContext.owlName,
+        sessionContext.channelId,
+      ).catch((err) => {
+        log.cognition.error("cognitive-pipeline.seed.failed", err as Error, { sessionId });
+      });
+    }
+
     return table;
   }
 

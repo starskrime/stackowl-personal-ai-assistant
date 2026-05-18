@@ -137,6 +137,19 @@ export class MemoryManager {
     });
   }
 
+  /** Write a single fact through the MemoryWorker pipeline (embed → LanceDB → Kuzu → SQLite). */
+  writeFact(fact: Fact): void {
+    if (!this.memoryWorker) {
+      log.engine.warn("[MemoryManager] writeFact: worker not running — fact dropped", {
+        factType: (fact as any).type,
+      });
+      return;
+    }
+    const msg: DreamToMemory = { type: "write-fact", fact, requestId: randomUUID() };
+    this.memoryWorker.postMessage(msg);
+    log.engine.debug("[MemoryManager] writeFact: enqueued", { factId: (fact as any).fact_id });
+  }
+
   // ─── Extraction ────────────────────────────────────────────────
 
   private async _runExtraction(

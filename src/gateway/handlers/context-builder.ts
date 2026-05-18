@@ -119,9 +119,14 @@ export class ContextBuilder {
     );
 
     // Seed the Symbol Table with this fresh pipeline output so the next turn
-    // can skip the full build if nothing has changed.
+    // can skip the full build if nothing has changed. Pass session context so
+    // the seeder can load preferences/entities/history from persistent stores.
     if (cognitivePipeline && output) {
-      cognitivePipeline.seedFromPipelineOutput(session.id, output);
+      cognitivePipeline.seedFromPipelineOutput(session.id, output, {
+        userId: resolveUserId(userId, session.id),
+        owlName: this.ctx.owl.persona.name,
+        channelId: channelId ?? "cli",
+      });
     }
 
     return {

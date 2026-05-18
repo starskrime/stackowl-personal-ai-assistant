@@ -9,6 +9,7 @@
  * session to avoid lost-update races (version stampede failure mode).
  */
 
+import { randomUUID } from "node:crypto";
 import type { ModelProvider } from "../providers/base.js";
 import type { SymbolTable } from "./symbol-table.js";
 import type { ExecutionPlan } from "./dispatch.js";
@@ -32,6 +33,20 @@ export interface ConsolidateOutput {
   owlStateUpdate?: { mood?: string; focus?: string; energyLevel?: string };
   memoryPatch?: string;
   dnaMutationSignal: boolean;
+}
+
+/**
+ * Optional persistent stores for Consolidate write-back.
+ * When provided, extracted preferences and entities are durably persisted
+ * in addition to being written to the in-memory Symbol Table.
+ */
+export interface ConsolidateStores {
+  db: import("../memory/db.js").MemoryDatabase;
+  memoryManager: import("../memory/memory-manager.js").MemoryManager;
+  preferenceStore: import("../preferences/store.js").PreferenceStore;
+  owlName: string;
+  userId: string;
+  channelId: string;
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────
@@ -86,8 +101,18 @@ Output ONLY JSON:
 export class CognitiveConsolidate {
   private readonly sessionQueues = new Map<string, Promise<void>>();
   private readonly extractor = new AlwaysOnSignalExtractor();
+  private stores: ConsolidateStores | null = null;
 
   constructor(private readonly provider: ModelProvider) {}
+
+  /** Wire persistent stores for durable write-back. Call once after construction. */
+  setStores(stores: ConsolidateStores): void {
+    this.stores = stores;
+    log.cognition.info("consolidate.stores.wired", {
+      userId: stores.userId,
+      owlName: stores.owlName,
+    });
+  }
 
   /**
    * Enqueue a consolidation job for this session. Returns immediately —
@@ -208,6 +233,9 @@ export class CognitiveConsolidate {
         if (!lineSet.has(line)) { lineSet.add(line); lines.push(line); }
       }
       symbolTable.set("preferences", lines.join("\n"));
+
+      // Durable write: persist to PreferenceStore + SQLite facts
+      this.persistPreferences(output.preferenceUpdates, turn.sessionId);
     }
 
     // Owl state
@@ -229,6 +257,102 @@ export class CognitiveConsolidate {
       const updated = current ? `${current}\n${patch}`.slice(-MAX_LEN) : patch;
       symbolTable.set("memoryDigest", updated);
     }
+
+    // Durable write: pellet candidates → MemoryManager (LanceDB + Kuzu)
+    if (output.pelletCandidates.length > 0) {
+      this.persistPellets(output.pelletCandidates, turn.sessionId);
+    }
+  }
+
+  // ─── Durable write-back ──────────────────────────────────────
+
+  private persistPreferences(
+    updates: Array<{ raw: string; category: string }>,
+    sessionId: string,
+  ): void {
+    const stores = this.stores;
+    if (!stores) return;
+
+    for (const { raw, category } of updates) {
+      // 1. PreferenceStore (JSON file — for structured named preferences)
+      const prefKey = this.toPrefKey(raw, category);
+      if (prefKey) {
+        stores.preferenceStore.set(prefKey, raw, `cognitive-consolidate:${sessionId}`, stores.channelId)
+          .catch((err) => {
+            log.cognition.error("consolidate.pref.persist.failed", err as Error, { prefKey });
+          });
+      }
+
+      // 2. SQLite facts (category: "preference") — for FTS search
+      try {
+        stores.db.facts.add({
+          userId: stores.userId,
+          owlName: stores.owlName,
+          fact: raw,
+          category: "preference",
+          confidence: 0.8,
+          source: "inferred",
+        });
+      } catch (err) {
+        log.cognition.error("consolidate.pref.db.failed", err as Error, { raw });
+      }
+    }
+  }
+
+  private persistPellets(
+    candidates: Array<{ title: string; content: string }>,
+    sessionId: string,
+  ): void {
+    const stores = this.stores;
+    if (!stores) return;
+
+    for (const { title, content } of candidates) {
+      // Write to LanceDB + Kuzu via MemoryWorker (includes embedding generation)
+      const factRecord = {
+        fact_id: randomUUID(),
+        type: "project_context" as const,
+        content: `${title}: ${content}`.slice(0, 2000),
+        confidence: 0.75,
+        source: sessionId,
+        confirmation_count: 0,
+        contradictions: "[]",
+        owl_name: stores.owlName,
+        user_id: stores.userId,
+        created_at: new Date().toISOString(),
+        vector: [],   // MemoryWorker fills this in
+      };
+      stores.memoryManager.writeFact(factRecord as any);
+
+      // Also write to SQLite for FTS search
+      try {
+        stores.db.facts.add({
+          userId: stores.userId,
+          owlName: stores.owlName,
+          fact: `${title}: ${content}`.slice(0, 500),
+          entity: title,
+          category: "project_detail",
+          confidence: 0.75,
+          source: "inferred",
+        });
+      } catch (err) {
+        log.cognition.error("consolidate.pellet.db.failed", err as Error, { title });
+      }
+    }
+  }
+
+  private toPrefKey(raw: string, category: string): string | null {
+    // Map category + text to a PreferenceStore key when obvious
+    const lower = raw.toLowerCase();
+    if (category === "dietary" || lower.includes("vegan") || lower.includes("vegetarian")) {
+      return "dietary_restriction";
+    }
+    if (category === "style" || lower.includes("always respond") || lower.includes("format")) {
+      return "message_style";
+    }
+    if (category === "schedule" || lower.includes("timezone") || lower.includes("working hours")) {
+      return "schedule";
+    }
+    return null; // Generic preferences stay in facts DB only
   }
 
   // ─── Expose pellet candidates for the gateway to act on ──────────
