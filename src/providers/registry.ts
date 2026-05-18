@@ -96,6 +96,11 @@ export class ProviderRegistry {
     log.engine.debug("provider.role.assigned", { role, providerName });
   }
 
+  /** Returns true only when the role has an explicit assignment (never falls back). */
+  hasRole(role: ProviderRole): boolean {
+    return this.roles.has(role);
+  }
+
   /**
    * Get a provider by role.
    * Falls back to the default provider with a warn if no role mapping exists.

@@ -904,9 +904,15 @@ export class OwlEngine {
       );
     }
 
-    // Create tool result evaluator using tool-judge role provider
+    // Create tool result evaluator — only when tool-judge role is explicitly assigned.
+    // Falling back to the main conversational provider causes empty responses + timeouts
+    // on models not tuned for structured JSON generation (e.g. MiniMax, large chat models).
     const toolResultEvaluator: ToolResultEvaluator | null = (() => {
       if (!context.providerRegistry) return null;
+      if (!context.providerRegistry.hasRole("tool-judge")) {
+        log.engine.debug("tool.evaluator.skipped — no explicit tool-judge role assigned");
+        return null;
+      }
       try {
         return new ToolResultEvaluator(context.providerRegistry.byRole("tool-judge"));
       } catch (err) {

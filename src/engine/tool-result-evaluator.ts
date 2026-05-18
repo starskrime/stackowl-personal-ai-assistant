@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ModelProvider } from "../providers/base.js";
 import { log } from "../logger.js";
 
-const EVALUATOR_TIMEOUT_MS = 5000;
+const EVALUATOR_TIMEOUT_MS = 15_000;
 
 export interface QualityVerdict {
   satisfied: boolean;
@@ -36,7 +36,7 @@ export class ToolResultEvaluator {
       return cached;
     }
 
-    log.engine.debug("tool.evaluator.entry", { tool: toolName, intentLen: userIntent.length, resultLen: result.length });
+    log.engine.debug("tool.evaluator.entry", { tool: toolName, intentLen: userIntent.length, resultLen: result.length, timeoutMs: EVALUATOR_TIMEOUT_MS });
 
     const prompt = `You are a quality-gate evaluator. A tool was called to help answer a user request.
 
