@@ -27,17 +27,6 @@ const DISPATCH_TIMEOUT_MS = 800; // max wait for Dispatch LLM call; exceeded →
 
 // ─── Types ────────────────────────────────────────────────────────
 
-export interface PreparedContext {
-  /** Merged text from selected Symbol Table slots — replaces ContextPipeline output */
-  contextOutput: string;
-  /** Full Symbol Table for further slot access */
-  symbolTable: SymbolTable;
-  /** Dispatch result (intent, toolHints, executionPlan) — null in cold-start bypass */
-  dispatch: DispatchResult | null;
-  /** Whether we bypassed Dispatch (cold-start wide mode) */
-  coldStart: boolean;
-}
-
 export interface PostProcessInput {
   sessionId: string;
   userMessage: string;
@@ -233,67 +222,21 @@ export class CognitivePipeline {
     }
   }
 
-  // ─── Per-message context preparation ─────────────────────────
+  // ─── Context enrichment from Symbol Table slots ──────────────
 
   /**
-   * Called at the start of each message turn (before engine.run()).
+   * Enrich a base memoryContext string with supplementary Symbol Table slots
+   * selected by Dispatch. Called from the gateway after runDispatch() so the
+   * engine receives user preferences, named entities, and memory digest on
+   * turns where Dispatch identifies them as relevant.
    *
-   * Returns:
-   *   - contextOutput: what to pass as memoryContext to engine.run()
-   *   - dispatch: routing decision for tool filtering
-   *   - coldStart: whether we skipped Dispatch (no filtering)
+   * Returns the enriched context, or the original base if no slots are
+   * populated or selected (cold-start, timeout, empty slots).
    */
-  async prepareContext(
-    sessionId: string,
-    userMessage: string,
-    fallbackContext: string = "",
-  ): Promise<PreparedContext> {
-    const table = symbolTableRegistry.getOrCreate(sessionId);
-    table.onTurnStart();
-
-    const warm = table.warmth() >= WARMTH_THRESHOLD;
-
-    log.cognition.info("cognitive-pipeline.prepare", {
-      sessionId,
-      turn: table.turnIndex,
-      warmth: table.warmth(),
-      mode: warm ? "compiled" : "cold-start",
-      contextCached: !table.isStale("contextOutput"),
-    });
-
-    // Cold-start: new user — don't run Dispatch, use full context, all tools
-    if (!warm) {
-      const contextOutput = table.get("contextOutput") || fallbackContext;
-      return { contextOutput, symbolTable: table, dispatch: null, coldStart: true };
-    }
-
-    // Compiled path: run Dispatch to get routing decision (bounded by timeout)
-    let dispatchResult: DispatchResult | null = null;
-    try {
-      const timeout = new Promise<null>((resolve) =>
-        setTimeout(() => resolve(null), DISPATCH_TIMEOUT_MS),
-      );
-      dispatchResult = await Promise.race([
-        this.dispatch.dispatch(userMessage, table),
-        timeout,
-      ]);
-      if (!dispatchResult) {
-        log.cognition.warn("cognitive-pipeline.prepareContext.dispatch.timeout", {
-          sessionId, limitMs: DISPATCH_TIMEOUT_MS,
-        });
-      }
-    } catch (err) {
-      log.cognition.error("cognitive-pipeline.dispatch.failed", err as Error, { sessionId });
-    }
-
-    // Build context from selected slots (or fall back to full cached output)
-    const contextOutput = this.buildContextFromSlots(
-      table,
-      dispatchResult?.contextSlots ?? [],
-      fallbackContext,
-    );
-
-    return { contextOutput, symbolTable: table, dispatch: dispatchResult, coldStart: false };
+  enrichContext(sessionId: string, contextSlots: SlotKey[], baseContext: string): string {
+    const table = symbolTableRegistry.get(sessionId);
+    if (!table || contextSlots.length === 0) return baseContext;
+    return this.buildContextFromSlots(table, contextSlots, baseContext);
   }
 
   // ─── Post-response consolidation (fire-and-forget) ────────────

@@ -1906,7 +1906,31 @@ export class OwlGateway {
       continuityResult ?? null,
     );
 
-    // ─── Cognitive Dispatch — classify intent + narrow toolHints ─────────
+    // ─── DNA mutation early-trigger — check pending flag from last Consolidate ──
+    // When Consolidate detects strong personality feedback it sets owlState.
+    // dnaMutationPending = true. We check at turn start so evolution happens
+    // sooner than the default session-end trigger.
+    if (this.ctx.evolutionEngine) {
+      const stTable = this.ctx.cognitivePipeline?.getSymbolTable(message.sessionId);
+      const owlStateRaw = stTable?.get("owlState");
+      if (owlStateRaw) {
+        try {
+          const owlState = JSON.parse(owlStateRaw) as Record<string, unknown>;
+          if (owlState["dnaMutationPending"] === true) {
+            stTable!.set("owlState", JSON.stringify({ ...owlState, dnaMutationPending: false }));
+            this.runBackground(
+              "dna-evolve-early",
+              this.ctx.evolutionEngine.evolve(this.ctx.owl.persona.name),
+            );
+            log.engine.info("[CognitivePipeline] early DNA evolution triggered from consolidation signal", {
+              sessionId: message.sessionId,
+            });
+          }
+        } catch { /* malformed owlState — skip */ }
+      }
+    }
+
+    // ─── Cognitive Dispatch — classify intent + narrow toolHints + enrich context ─
     // Awaited so toolHints reach the engine before runtime.ts loads tools.
     // Cold-start (warmth < 2) returns null — engine falls back to full set.
     if (this.ctx.cognitivePipeline) {
@@ -1917,6 +1941,7 @@ export class OwlGateway {
         log.engine.warn("[CognitivePipeline] dispatch failed — continuing without hints", err);
         return null;
       });
+
       if (dispatchResult?.toolHints?.length) {
         engineCtx.toolHints = dispatchResult.toolHints;
         log.engine.debug("[CognitivePipeline] toolHints injected", {
@@ -1925,6 +1950,26 @@ export class OwlGateway {
           toolCount: dispatchResult.toolHints.length,
           tools: dispatchResult.toolHints,
         });
+      }
+
+      // Enrich memoryContext with Symbol Table slots selected by Dispatch.
+      // This is where seeder-populated data (SQLite preferences, LanceDB
+      // memory digest, session history, named entities) actually reaches the
+      // engine. Without this, those slots are populated but never consumed.
+      if (dispatchResult?.contextSlots?.length) {
+        const enriched = this.ctx.cognitivePipeline.enrichContext(
+          message.sessionId,
+          dispatchResult.contextSlots,
+          engineCtx.memoryContext ?? "",
+        );
+        if (enriched) {
+          engineCtx.memoryContext = enriched;
+          log.engine.debug("[CognitivePipeline] memoryContext enriched via contextSlots", {
+            sessionId: message.sessionId,
+            slots: dispatchResult.contextSlots,
+            enrichedLen: enriched.length,
+          });
+        }
       }
     }
 

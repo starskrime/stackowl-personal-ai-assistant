@@ -272,15 +272,24 @@ export class CognitiveConsolidate {
       this.persistPreferences(output.preferenceUpdates, turn);
     }
 
-    // Owl state
-    if (output.owlStateUpdate) {
+    // Owl state — merge update and stamp dnaMutationPending when signaled.
+    // dnaMutationPending is read by the gateway on the NEXT turn to trigger
+    // early DNA evolution rather than waiting until session end.
+    if (output.owlStateUpdate || output.dnaMutationSignal) {
       let current: Record<string, unknown> = {};
       try { if (symbolTable.get("owlState")) current = JSON.parse(symbolTable.get("owlState")); } catch { /* ok */ }
       symbolTable.set("owlState", JSON.stringify({
         ...current,
-        ...output.owlStateUpdate,
+        ...(output.owlStateUpdate ?? {}),
         lastUpdatedTurn: turn.turnIndex,
+        ...(output.dnaMutationSignal ? { dnaMutationPending: true } : {}),
       }));
+      if (output.dnaMutationSignal) {
+        log.cognition.info("consolidate.dnaMutationSignal: flagged", {
+          sessionId: turn.sessionId,
+          turnIndex: turn.turnIndex,
+        });
+      }
     }
 
     // Rolling memory digest
@@ -293,7 +302,10 @@ export class CognitiveConsolidate {
     }
 
     // Durable write: pellet candidates → MemoryManager (LanceDB + Kuzu)
-    if (output.pelletCandidates.length > 0) {
+    // Gated on executionPlan.needsPelletGen — Dispatch flags turns where the
+    // response contains reusable knowledge worth embedding. Skip otherwise to
+    // avoid storing ephemeral conversational content.
+    if (output.pelletCandidates.length > 0 && turn.executionPlan.needsPelletGen) {
       this.persistPellets(output.pelletCandidates, turn);
     }
   }
