@@ -41,6 +41,10 @@ export interface PostProcessInput {
   assistantResponse: string;
   toolsUsed: string[];
   dispatch: DispatchResult | null;
+  /** Per-request user identifier — passed through to Consolidate for correct write-back scoping */
+  userId?: string;
+  /** Per-request channel identifier — passed through to Consolidate for correct write-back scoping */
+  channelId?: string;
 }
 
 // ─── CognitivePipeline ────────────────────────────────────────────
@@ -233,6 +237,8 @@ export class CognitivePipeline {
       executionPlan,
       sessionId: input.sessionId,
       turnIndex: table.turnIndex,
+      userId: input.userId,
+      channelId: input.channelId,
     };
 
     this.consolidate.enqueue(turn, table);

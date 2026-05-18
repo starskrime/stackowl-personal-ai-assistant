@@ -25,6 +25,10 @@ export interface ConsolidateTurn {
   executionPlan: ExecutionPlan;
   sessionId: string;
   turnIndex: number;
+  /** Per-request user identifier — overrides ConsolidateStores.userId for write-back */
+  userId?: string;
+  /** Per-request channel identifier — overrides ConsolidateStores.channelId for write-back */
+  channelId?: string;
 }
 
 export interface ConsolidateOutput {
@@ -235,7 +239,7 @@ export class CognitiveConsolidate {
       symbolTable.set("preferences", lines.join("\n"));
 
       // Durable write: persist to PreferenceStore + SQLite facts
-      this.persistPreferences(output.preferenceUpdates, turn.sessionId);
+      this.persistPreferences(output.preferenceUpdates, turn);
     }
 
     // Owl state
@@ -260,7 +264,7 @@ export class CognitiveConsolidate {
 
     // Durable write: pellet candidates → MemoryManager (LanceDB + Kuzu)
     if (output.pelletCandidates.length > 0) {
-      this.persistPellets(output.pelletCandidates, turn.sessionId);
+      this.persistPellets(output.pelletCandidates, turn);
     }
   }
 
@@ -268,16 +272,19 @@ export class CognitiveConsolidate {
 
   private persistPreferences(
     updates: Array<{ raw: string; category: string }>,
-    sessionId: string,
+    turn: ConsolidateTurn,
   ): void {
     const stores = this.stores;
     if (!stores) return;
+
+    const userId = turn.userId ?? stores.userId;
+    const channelId = turn.channelId ?? stores.channelId;
 
     for (const { raw, category } of updates) {
       // 1. PreferenceStore (JSON file — for structured named preferences)
       const prefKey = this.toPrefKey(raw, category);
       if (prefKey) {
-        stores.preferenceStore.set(prefKey, raw, `cognitive-consolidate:${sessionId}`, stores.channelId)
+        stores.preferenceStore.set(prefKey, raw, `cognitive-consolidate:${turn.sessionId}`, channelId)
           .catch((err) => {
             log.cognition.error("consolidate.pref.persist.failed", err as Error, { prefKey });
           });
@@ -286,7 +293,7 @@ export class CognitiveConsolidate {
       // 2. SQLite facts (category: "preference") — for FTS search
       try {
         stores.db.facts.add({
-          userId: stores.userId,
+          userId,
           owlName: stores.owlName,
           fact: raw,
           category: "preference",
@@ -301,10 +308,12 @@ export class CognitiveConsolidate {
 
   private persistPellets(
     candidates: Array<{ title: string; content: string }>,
-    sessionId: string,
+    turn: ConsolidateTurn,
   ): void {
     const stores = this.stores;
     if (!stores) return;
+
+    const userId = turn.userId ?? stores.userId;
 
     for (const { title, content } of candidates) {
       // Write to LanceDB + Kuzu via MemoryWorker (includes embedding generation)
@@ -313,11 +322,11 @@ export class CognitiveConsolidate {
         type: "project_context" as const,
         content: `${title}: ${content}`.slice(0, 2000),
         confidence: 0.75,
-        source: sessionId,
+        source: turn.sessionId,
         confirmation_count: 0,
         contradictions: "[]",
         owl_name: stores.owlName,
-        user_id: stores.userId,
+        user_id: userId,
         created_at: new Date().toISOString(),
         vector: [],   // MemoryWorker fills this in
       };
@@ -326,7 +335,7 @@ export class CognitiveConsolidate {
       // Also write to SQLite for FTS search
       try {
         stores.db.facts.add({
-          userId: stores.userId,
+          userId,
           owlName: stores.owlName,
           fact: `${title}: ${content}`.slice(0, 500),
           entity: title,

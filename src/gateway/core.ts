@@ -700,8 +700,8 @@ export class OwlGateway {
         memoryManager: ctx.memoryManager,
         preferenceStore: ctx.preferenceStore,
         owlName: ctx.owl.persona.name,
-        userId: "default",      // updated per-request from session
-        channelId: "default",   // updated per-request from session
+        userId: "system",    // fallback only — per-request userId overrides in ConsolidateTurn
+        channelId: "cli",    // fallback only — per-request channelId overrides in ConsolidateTurn
       });
       log.engine.info("[CognitivePipeline] Persistent stores wired — seeding + write-back active");
     } else {
@@ -2233,6 +2233,8 @@ export class OwlGateway {
         assistantResponse: response.content,
         toolsUsed: response.toolsUsed ?? [],
         dispatch: null, // CognitivePipeline reads from its own lastDispatch store
+        userId: message.userId,
+        channelId: message.channelId,
       });
     } else {
       // Legacy path: still run per-message detectors if no cognitive pipeline
