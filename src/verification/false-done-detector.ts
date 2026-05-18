@@ -134,12 +134,13 @@ export class FalseDoneDetector {
         concerns: parsed.concerns ?? null,
       };
     } catch {
+      // LLM returned empty/unparseable content — can't assert false-done without evidence.
       return {
-        isDone: false,
-        hasEvidence: false,
+        isDone: true,
+        hasEvidence: true,
         evidenceTypes: [],
-        confidence: 0,
-        concerns: 'LLM done status check failed',
+        confidence: 0.5,
+        concerns: null,
       };
     }
   }

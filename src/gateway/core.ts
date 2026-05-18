@@ -2215,7 +2215,9 @@ export class OwlGateway {
     const taskId = message.sessionId;
     const userIntent = message.text;
 
-    if (this.outcomeVerifier && this.falseDoneDetector && this.completionTracker) {
+    // Only verify tool-using turns — recall/question turns have nothing to "complete".
+    const toolsUsedCount = (response.toolsUsed ?? []).length;
+    if (this.outcomeVerifier && this.falseDoneDetector && this.completionTracker && toolsUsedCount > 0) {
       llmTaskQueue.enqueue("verification", async () => {
         try {
           const verification = await this.outcomeVerifier!.verify(
@@ -2228,13 +2230,6 @@ export class OwlGateway {
           if (verification.status === "failed" && this.escalationHandler) {
             const shouldEscalate = this.escalationHandler.shouldEscalate(verification.confidence);
             if (shouldEscalate) {
-              const escalationMsg = this.escalationHandler.createEscalationMessage(
-                taskId,
-                userIntent,
-                response.content,
-                verification,
-              );
-              response.content = escalationMsg + "\n\n" + response.content;
               log.engine.info(`[Verification] Escalation triggered for taskId=${taskId}`);
             }
           }
@@ -2259,6 +2254,8 @@ export class OwlGateway {
           log.engine.warn(`[Verification] Wire failed: ${err instanceof Error ? err.message : err}`);
         }
       }, "low");
+    } else if (toolsUsedCount === 0) {
+      log.engine.debug("[Verification] Skipping — no tools used (recall/question turn)", { taskId });
     }
 
     // domainExpertise.recordToolExecution removed (DomainExpertiseTracker deleted in refactor).

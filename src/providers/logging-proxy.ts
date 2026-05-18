@@ -48,7 +48,7 @@ export class LoggingProviderProxy implements ModelProvider {
 
       this.chatWithToolsStream = async function* (messages, tools, model, options) {
         const start = Date.now();
-        log.engine.debug("provider.chatWithToolsStream: entry", {
+        log.engine.info("provider.chatWithToolsStream: entry", {
           provider: providerName,
           model: model ?? "(default)",
           messageCount: messages.length,
@@ -88,7 +88,7 @@ export class LoggingProviderProxy implements ModelProvider {
     options?: ChatOptions,
   ): Promise<ChatResponse> {
     const start = Date.now();
-    log.engine.debug("provider.chat: entry", {
+    log.engine.info("provider.chat: entry", {
       provider: this.name,
       model: model ?? "(default)",
       messageCount: messages.length,
@@ -125,7 +125,7 @@ export class LoggingProviderProxy implements ModelProvider {
     options?: ChatOptions,
   ): Promise<ChatResponse> {
     const start = Date.now();
-    log.engine.debug("provider.chatWithTools: entry", {
+    log.engine.info("provider.chatWithTools: entry", {
       provider: this.name,
       model: model ?? "(default)",
       messageCount: messages.length,
@@ -165,7 +165,7 @@ export class LoggingProviderProxy implements ModelProvider {
     options?: ChatOptions,
   ): AsyncGenerator<StreamChunk> {
     const start = Date.now();
-    log.engine.debug("provider.chatStream: entry", {
+    log.engine.info("provider.chatStream: entry", {
       provider: this.name,
       model: model ?? "(default)",
       messageCount: messages.length,

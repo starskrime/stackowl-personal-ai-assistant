@@ -113,8 +113,15 @@ export class OpenAIProtocolProvider implements ModelProvider {
     });
 
     const choice = completion.choices[0];
+    // Thinking/reasoning models (MiniMax-M2.7, DeepSeek-R1, etc.) put their chain-of-thought
+    // in `reasoning_content` and may return null/empty `content` for structured prompts.
+    // Fall back to reasoning_content so downstream JSON parsers always receive usable text.
+    const content =
+      choice.message.content ||
+      (choice.message as any).reasoning_content ||
+      "";
     return {
-      content: choice.message.content ?? "",
+      content,
       model: completion.model,
       finishReason: choice.finish_reason === "tool_calls" ? "tool_calls" : "stop",
       usage: completion.usage
@@ -158,8 +165,12 @@ export class OpenAIProtocolProvider implements ModelProvider {
       }),
     );
 
+    const content =
+      choice.message.content ||
+      (choice.message as any).reasoning_content ||
+      "";
     return {
-      content: choice.message.content ?? "",
+      content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       model: completion.model,
       finishReason: toolCalls.length > 0 ? "tool_calls" : "stop",

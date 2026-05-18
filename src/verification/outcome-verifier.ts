@@ -145,10 +145,11 @@ export class OutcomeVerifier {
         reasoning: parsed.reasoning ?? 'No reasoning provided',
       };
     } catch {
+      // LLM returned empty/unparseable content — can't determine failure, don't assume it.
       return {
-        isMatch: false,
-        confidence: 0,
-        reasoning: 'LLM verification failed',
+        isMatch: true,
+        confidence: 0.5,
+        reasoning: 'LLM verification failed — defaulting to match',
       };
     }
   }

@@ -372,10 +372,10 @@ ${Object.entries(dna.learnedPreferences)
 ## The User Just Said:
 "${userMessage}"
 
-## Recent Context:
+## Recent Conversation Log (last 4 exchanges — for context only, not this call):
 ${recentHistory
   .slice(-4)
-  .map((m) => `${m.role}: ${m.content?.slice(0, 200) ?? ""}`)
+  .map((m, i) => `[${i % 2 === 0 ? "human" : "owl"}]: ${m.content?.slice(0, 200) ?? ""}`)
   .join("\n")}
 
 ## Your Task
