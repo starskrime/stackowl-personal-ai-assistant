@@ -1906,12 +1906,25 @@ export class OwlGateway {
     );
 
     // ─── Cognitive Dispatch — classify intent + narrow toolHints ─────────
-    // Runs per-message on warm sessions (warmth ≥ 2). Cold-start bypasses and
-    // uses full tool set. Result is stored in CognitivePipeline for postProcess.
+    // Awaited so toolHints reach the engine before runtime.ts loads tools.
+    // Cold-start (warmth < 2) returns null — engine falls back to full set.
     if (this.ctx.cognitivePipeline) {
-      this.ctx.cognitivePipeline.runDispatch(message.sessionId, message.text).catch((err) => {
+      const dispatchResult = await this.ctx.cognitivePipeline.runDispatch(
+        message.sessionId,
+        message.text,
+      ).catch((err) => {
         log.engine.warn("[CognitivePipeline] dispatch failed — continuing without hints", err);
+        return null;
       });
+      if (dispatchResult?.toolHints?.length) {
+        engineCtx.toolHints = dispatchResult.toolHints;
+        log.engine.debug("[CognitivePipeline] toolHints injected", {
+          sessionId: message.sessionId,
+          intent: dispatchResult.intent,
+          toolCount: dispatchResult.toolHints.length,
+          tools: dispatchResult.toolHints,
+        });
+      }
     }
 
     // ─── Element 9: Wire narrationPrefix from intent classification ──────

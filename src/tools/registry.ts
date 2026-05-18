@@ -240,6 +240,33 @@ export class ToolRegistry {
   }
 
   /**
+   * Get tool definitions for a specific set of names (preserving hint order),
+   * then append any CORE_FLOOR tools not already included.
+   * Unknown names are silently skipped (they may be synthesized tools not yet loaded).
+   */
+  getByNames(names: string[], coreFloor: string[] = []): ToolDefinition[] {
+    const seen = new Set<string>();
+    const result: ToolDefinition[] = [];
+
+    for (const name of [...names, ...coreFloor]) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const impl = this.tools.get(name);
+      if (impl && this.checkPermission(impl) === "allowed" && !impl.definition.deprecated) {
+        result.push(impl.definition);
+      }
+    }
+
+    log.engine.debug("registry.getByNames", {
+      requested: names.length,
+      resolved: result.length,
+      names: result.map((t) => t.name),
+    });
+
+    return result;
+  }
+
+  /**
    * Get tool definitions grouped by category.
    */
   getDefinitionsByCategory(): Map<

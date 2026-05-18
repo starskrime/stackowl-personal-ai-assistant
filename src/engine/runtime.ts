@@ -171,6 +171,12 @@ export interface EngineContext {
   specializedRegistry?: import("../owls/specialized-registry.js").SpecializedOwlRegistry;
   /** Unified memory manager — triggers extraction + semantic search */
   memoryManager?: import("../memory/memory-manager.js").MemoryManager;
+  /**
+   * Tool names selected by CognitiveDispatch for this turn.
+   * When non-empty, the engine loads only these tools (plus CORE_TOOL_FLOOR)
+   * instead of running the full intent-routing pass over all 79 tools.
+   */
+  toolHints?: string[];
 }
 
 export interface PendingCapabilityGap {
@@ -1243,10 +1249,12 @@ ${userMessage}
     // ── DNA tool prioritization: reorder tools so the model sees the owl's
     // strongest domain tools first. Providers truncate long tool lists and
     // models attend more to early entries — so this bias is meaningful.
-    let tools = await toolRegistry?.getDefinitions({
-      maxTools: config.tools?.maxToolsRouting ?? 8,
-      userMessage: (config.tools?.enableIntentRouting !== false) ? userMessage : undefined,
-    });
+    let tools = context.toolHints?.length
+      ? toolRegistry?.getByNames(context.toolHints)
+      : await toolRegistry?.getDefinitions({
+          maxTools: config.tools?.maxToolsRouting ?? 8,
+          userMessage: (config.tools?.enableIntentRouting !== false) ? userMessage : undefined,
+        });
     if (tools && dnaDecisions.prioritizedTools.length > 0) {
       const prioritySet = new Set(dnaDecisions.prioritizedTools);
       const depriSet = new Set(dnaDecisions.deprioritizedTools ?? []);
