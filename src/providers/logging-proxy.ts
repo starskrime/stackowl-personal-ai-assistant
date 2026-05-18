@@ -1,5 +1,5 @@
 import { appendFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type {
   ModelProvider,
   ChatMessage,
@@ -12,28 +12,27 @@ import type {
 } from "./base.js";
 import { log } from "../logger.js";
 import { currentTrace } from "../infra/observability/context.js";
+import { currentLogFilePath } from "../infra/observability/sinks/jsonl-file.js";
 
 // ─── Prompt Trace File ───────────────────────────────────────────
-// Full untruncated prompt/response log. Separate from the main log
-// so the main log stays readable while this file holds everything.
-// Path: logs/prompt-trace-YYYY-MM-DD.log (JSONL)
-
-const TRACE_DIR = "logs";
-let _traceDirReady = false;
-
-async function ensureTraceDir(): Promise<void> {
-  if (_traceDirReady) return;
-  await mkdir(TRACE_DIR, { recursive: true });
-  _traceDirReady = true;
-}
+// Full untruncated prompt/response log, written to the same directory
+// as the main stackowl-YYYY-MM-DD.log so both files are co-located.
+// Path: <workspace>/logs/prompt-trace-YYYY-MM-DD.log (JSONL)
 
 function traceFilePath(): string {
+  const mainLog = currentLogFilePath();
+  const logsDir = mainLog ? dirname(mainLog) : "logs";
   const date = new Date().toISOString().slice(0, 10);
-  return join(TRACE_DIR, `prompt-trace-${date}.log`);
+  return join(logsDir, `prompt-trace-${date}.log`);
+}
+
+async function ensureTraceDir(filePath: string): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
 }
 
 function writeTrace(record: Record<string, unknown>): void {
   const ctx = currentTrace();
+  const filePath = traceFilePath();
   const line = JSON.stringify({
     ts: new Date().toISOString(),
     traceId: ctx?.traceId,
@@ -45,8 +44,8 @@ function writeTrace(record: Record<string, unknown>): void {
     ...record,
   }) + "\n";
 
-  ensureTraceDir()
-    .then(() => appendFile(traceFilePath(), line))
+  ensureTraceDir(filePath)
+    .then(() => appendFile(filePath, line))
     .catch(() => { /* non-critical — never let trace failures break the call */ });
 }
 
