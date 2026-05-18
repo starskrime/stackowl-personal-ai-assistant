@@ -29,6 +29,7 @@ import type { ModelDefinition } from "../models/loader.js";
 import { ProviderCircuitBreaker } from "./circuit-breaker.js";
 import type { HealthPolicy } from "../intelligence/router.js";
 import { RateLimitedProvider, concurrencyGate, providerRateLimiter } from "../ratelimit/index.js";
+import { LoggingProviderProxy } from "./logging-proxy.js";
 
 export type ProviderRole =
   | "chat-default"
@@ -179,11 +180,8 @@ export class ProviderRegistry {
       factory = PROTOCOL_FACTORIES.openai;
       try {
         const rawProvider = factory(config, syntheticDef);
-        const provider = new RateLimitedProvider(
-          rawProvider,
-          providerRateLimiter,
-          config.name,
-          concurrencyGate,
+        const provider = new LoggingProviderProxy(
+          new RateLimitedProvider(rawProvider, providerRateLimiter, config.name, concurrencyGate),
         );
         this.providers.set(config.name, provider);
         this.breakers.set(
@@ -211,11 +209,8 @@ export class ProviderRegistry {
 
     try {
       const rawProvider = factory(config, modelDef!);
-      const provider = new RateLimitedProvider(
-        rawProvider,
-        providerRateLimiter,
-        config.name,
-        concurrencyGate,
+      const provider = new LoggingProviderProxy(
+        new RateLimitedProvider(rawProvider, providerRateLimiter, config.name, concurrencyGate),
       );
       this.providers.set(config.name, provider);
       // Anthropic providers open the circuit after a single 429 — error 2062
