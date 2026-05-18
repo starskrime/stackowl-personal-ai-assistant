@@ -146,24 +146,44 @@ export class SymbolTableSeeder {
   private async seedMemoryDigest(
     table: SymbolTable,
     _owlName: string,
-    _userId: string,
+    userId: string,
   ): Promise<void> {
     try {
-      const facts: MemoryFact[] = await this.deps.memoryManager.search(
-        "recent activities context goals projects preferences approaches",
-      );
+      // Hybrid recall: embedding search (conceptual) + FTS search (proper nouns).
+      // Pure embedding similarity misses proper nouns (names, project names, tool
+      // names) whose vectors don't cluster near generic activity/context concepts.
+      const [embeddingFacts, ftsFacts] = await Promise.all([
+        this.deps.memoryManager.search(
+          "recent activities context goals projects preferences approaches",
+        ) as Promise<MemoryFact[]>,
+        Promise.resolve(
+          this.deps.db.facts.search("", userId, 15) as import("../memory/db.js").Fact[],
+        ),
+      ]);
 
-      if (facts.length === 0) return;
+      const seen = new Set<string>();
+      const lines: string[] = [];
 
-      const digest = facts
-        .map((f: MemoryFact) => `• ${f.fact ?? f.content ?? ""}`.slice(0, 200))
-        .join("\n");
+      const addFact = (text: string) => {
+        const key = text.slice(0, 60);
+        if (!seen.has(key) && text.trim()) {
+          seen.add(key);
+          lines.push(`• ${text}`.slice(0, 200));
+        }
+      };
 
-      table.set("memoryDigest", digest);
+      for (const f of embeddingFacts) addFact(f.fact ?? f.content ?? "");
+      // FTS results supplement with proper-noun–rich facts not surfaced by embeddings
+      for (const f of ftsFacts) addFact(f.fact ?? "");
+
+      if (lines.length === 0) return;
+
+      table.set("memoryDigest", lines.join("\n"));
       log.cognition.debug("seeder.memoryDigest: seeded", {
         sessionId: table.sessionId,
-        factCount: facts.length,
-        digestLen: digest.length,
+        embeddingCount: embeddingFacts.length,
+        ftsCount: ftsFacts.length,
+        mergedCount: lines.length,
       });
     } catch (err) {
       log.cognition.error("seeder.memoryDigest: failed", err as Error, { sessionId: table.sessionId });
