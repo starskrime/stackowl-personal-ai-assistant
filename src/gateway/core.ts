@@ -77,6 +77,7 @@ import {
   type ContinuityResult,
 } from "../cognition/continuity-engine.js";
 import { UserMentalModel } from "../cognition/user-mental-model.js";
+import { CognitivePipeline } from "../cognition/cognitive-pipeline.js";
 import { MemoryDatabase } from "../memory/db.js";
 import { FeedbackStore } from "../feedback/store.js";
 import { OutputFilter, resolveOutputMode } from "./output-filter.js";
@@ -685,6 +686,12 @@ export class OwlGateway {
       registerCapability("contextPipeline", "FULL");
     } else if (!ctx.contextPipeline) {
       registerCapability("contextPipeline", "OFFLINE", "missing db");
+    }
+
+    // ─── Cognitive Pipeline (Dispatch → Execute → Consolidate) ───────
+    if (!ctx.cognitivePipeline) {
+      ctx.cognitivePipeline = new CognitivePipeline(ctx.provider);
+      log.engine.info("[CognitivePipeline] Initialized — 3-call cognitive pipeline active");
     }
 
     // ─── OwlEngine v2 (Element 6a): OwlOrchestrator + ImprovementScheduler ─
@@ -1884,6 +1891,15 @@ export class OwlGateway {
       continuityResult ?? null,
     );
 
+    // ─── Cognitive Dispatch — classify intent + narrow toolHints ─────────
+    // Runs per-message on warm sessions (warmth ≥ 2). Cold-start bypasses and
+    // uses full tool set. Result is stored in CognitivePipeline for postProcess.
+    if (this.ctx.cognitivePipeline) {
+      this.ctx.cognitivePipeline.runDispatch(message.sessionId, message.text).catch((err) => {
+        log.engine.warn("[CognitivePipeline] dispatch failed — continuing without hints", err);
+      });
+    }
+
     // ─── Element 9: Wire narrationPrefix from intent classification ──────
     if (intentResult.verdict === 'NARRATE' && intentResult.interpretation) {
       engineCtx.narrationPrefix = intentResult.interpretation;
@@ -2173,9 +2189,6 @@ export class OwlGateway {
       }
     }
 
-    // Detect and persist preferences expressed in this message (fire-and-forget)
-    this.detectPreferences(message.text, message.channelId);
-
     // Track intent state based on this exchange (fire-and-forget)
     this.trackIntent(message.sessionId, message.text, response.content);
 
@@ -2184,22 +2197,29 @@ export class OwlGateway {
     // Persist intent state (fire-and-forget)
     this.ctx.intentStateMachine?.save().catch((err) => { log.engine.warn("intentStateMachine save failed", err); });
 
-    // Record behavioral signals for preference inference (fire-and-forget)
-    this.analyzeBehavior(message.text, message.channelId);
-
-    // Ground state refresh — every N turns, extract facts/decisions/questions (fire-and-forget)
-    if (this.ctx.groundState) {
-      const shouldRefresh = this.ctx.groundState.recordTurn();
-      if (shouldRefresh && session.messages.length >= 4) {
-        const userId = message.sessionId.split(":")[1] || message.sessionId;
-        this.runBackground(
-          "ground-state-refresh",
-          this.ctx.groundState.refresh(
-            session.messages,
-            userId,
-            message.sessionId,
-          ),
-        );
+    // ─── Cognitive Consolidate — replaces detectPreferences + analyzeBehavior ──
+    // + groundState.refresh in a single async structured extraction.
+    if (this.ctx.cognitivePipeline) {
+      this.ctx.cognitivePipeline.postProcess({
+        sessionId: message.sessionId,
+        userMessage: message.text,
+        assistantResponse: response.content,
+        toolsUsed: response.toolsUsed ?? [],
+        dispatch: null, // CognitivePipeline reads from its own lastDispatch store
+      });
+    } else {
+      // Legacy path: still run per-message detectors if no cognitive pipeline
+      this.detectPreferences(message.text, message.channelId);
+      this.analyzeBehavior(message.text, message.channelId);
+      if (this.ctx.groundState) {
+        const shouldRefresh = this.ctx.groundState.recordTurn();
+        if (shouldRefresh && session.messages.length >= 4) {
+          const userId = message.sessionId.split(":")[1] || message.sessionId;
+          this.runBackground(
+            "ground-state-refresh",
+            this.ctx.groundState.refresh(session.messages, userId, message.sessionId),
+          );
+        }
       }
     }
 

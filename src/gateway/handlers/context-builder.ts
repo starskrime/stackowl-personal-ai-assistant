@@ -75,6 +75,27 @@ export class ContextBuilder {
       predictiveQueue: this.ctx.predictiveQueue,
     };
 
+    // ── CognitivePipeline cache check ──────────────────────────────────
+    // If the Symbol Table has a warm, non-stale contextOutput, skip the
+    // expensive 30-layer pipeline run and use the cached output instead.
+    const cognitivePipeline = this.ctx.cognitivePipeline;
+    const symbolTable = cognitivePipeline?.getSymbolTable(session.id);
+    if (cognitivePipeline && symbolTable && !symbolTable.isStale("contextOutput")) {
+      const cachedOutput = symbolTable.get("contextOutput");
+      if (cachedOutput) {
+        log.engine.debug("[ContextBuilder] symbol-table cache hit — skipping pipeline run", {
+          sessionId: session.id,
+          version: symbolTable.version,
+          warmth: symbolTable.warmth(),
+        });
+        return {
+          ...this.baseContext(session, callbacks, isolatedTask, attemptLog, channelId, userId),
+          memoryContext: cachedOutput || undefined,
+          skillsContext: skillsContext || undefined,
+        };
+      }
+    }
+
     const { output, trace } = await pipeline.run(
       {
         // Cast to satisfy Session type — metadata is added at runtime by SessionService
@@ -96,6 +117,12 @@ export class ContextBuilder {
     log.engine.debug(
       `[ContextBuilder] pipeline trace: ${trace.length} layers, ${trace.filter((e) => e.fired).length} fired`,
     );
+
+    // Seed the Symbol Table with this fresh pipeline output so the next turn
+    // can skip the full build if nothing has changed.
+    if (cognitivePipeline && output) {
+      cognitivePipeline.seedFromPipelineOutput(session.id, output);
+    }
 
     return {
       ...this.baseContext(session, callbacks, isolatedTask, attemptLog, channelId, userId),

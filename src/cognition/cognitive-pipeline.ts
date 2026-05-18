@@ -1,0 +1,267 @@
+/**
+ * CognitivePipeline — orchestrates the 3-call Dispatch → Execute → Consolidate
+ * architecture, replacing the per-message classifier chain.
+ *
+ * Integration points:
+ *   - ContextBuilder.build() calls prepareContext() to get cached + filtered context
+ *   - Gateway calls postProcess() after delivering the response (fire-and-forget)
+ *   - GatewayContext holds one CognitivePipeline instance shared across sessions
+ *
+ * Cold-start bypass:
+ *   When warmth < 2 (new user, empty Symbol Table) the pipeline skips Dispatch
+ *   and returns full context so first turns are never degraded.
+ */
+
+import type { ModelProvider } from "../providers/base.js";
+import type { SlotKey, SymbolTable } from "./symbol-table.js";
+import { symbolTableRegistry } from "./symbol-table.js";
+import { CognitiveDispatch, type DispatchResult } from "./dispatch.js";
+import { CognitiveConsolidate, type ConsolidateTurn } from "./consolidate.js";
+import { log } from "../logger.js";
+
+const WARMTH_THRESHOLD = 2; // warmth score ≥ 2 → use compiled pipeline
+
+// ─── Types ────────────────────────────────────────────────────────
+
+export interface PreparedContext {
+  /** Merged text from selected Symbol Table slots — replaces ContextPipeline output */
+  contextOutput: string;
+  /** Full Symbol Table for further slot access */
+  symbolTable: SymbolTable;
+  /** Dispatch result (intent, toolHints, executionPlan) — null in cold-start bypass */
+  dispatch: DispatchResult | null;
+  /** Whether we bypassed Dispatch (cold-start wide mode) */
+  coldStart: boolean;
+}
+
+export interface PostProcessInput {
+  sessionId: string;
+  userMessage: string;
+  assistantResponse: string;
+  toolsUsed: string[];
+  dispatch: DispatchResult | null;
+}
+
+// ─── CognitivePipeline ────────────────────────────────────────────
+
+export class CognitivePipeline {
+  private readonly dispatch: CognitiveDispatch;
+  private readonly consolidate: CognitiveConsolidate;
+  private readonly lastDispatch = new Map<string, DispatchResult>();
+
+  constructor(provider: ModelProvider) {
+    this.dispatch = new CognitiveDispatch(provider);
+    this.consolidate = new CognitiveConsolidate(provider);
+  }
+
+  // ─── Seed SymbolTable from ContextPipeline output ──────────────
+
+  /**
+   * Called by ContextBuilder after running the full ContextPipeline.
+   * Caches the expensive pipeline output so subsequent turns skip it.
+   */
+  seedFromPipelineOutput(sessionId: string, pipelineOutput: string): SymbolTable {
+    const table = symbolTableRegistry.getOrCreate(sessionId);
+    if (pipelineOutput && table.isStale("contextOutput")) {
+      table.set("contextOutput", pipelineOutput);
+      log.cognition.info("cognitive-pipeline.seeded", {
+        sessionId,
+        outputLen: pipelineOutput.length,
+        warmth: table.warmth(),
+      });
+    }
+    return table;
+  }
+
+  // ─── Per-message Dispatch (intent + tool routing) ────────────
+
+  /**
+   * Runs CognitiveDispatch for this session turn and stores the result
+   * so postProcess() can use it without re-running. Returns null on cold-start
+   * (low warmth) so the gateway skips tool filtering.
+   */
+  async runDispatch(sessionId: string, userMessage: string): Promise<DispatchResult | null> {
+    const table = symbolTableRegistry.getOrCreate(sessionId);
+    table.onTurnStart();
+
+    if (table.warmth() < WARMTH_THRESHOLD) {
+      log.cognition.debug("cognitive-pipeline.dispatch.skipped — cold start", {
+        sessionId, warmth: table.warmth(),
+      });
+      this.lastDispatch.delete(sessionId);
+      return null;
+    }
+
+    try {
+      const result = await this.dispatch.dispatch(userMessage, table);
+      this.lastDispatch.set(sessionId, result);
+      return result;
+    } catch (err) {
+      log.cognition.error("cognitive-pipeline.runDispatch.failed", err as Error, { sessionId });
+      this.lastDispatch.delete(sessionId);
+      return null;
+    }
+  }
+
+  // ─── Per-message context preparation ─────────────────────────
+
+  /**
+   * Called at the start of each message turn (before engine.run()).
+   *
+   * Returns:
+   *   - contextOutput: what to pass as memoryContext to engine.run()
+   *   - dispatch: routing decision for tool filtering
+   *   - coldStart: whether we skipped Dispatch (no filtering)
+   */
+  async prepareContext(
+    sessionId: string,
+    userMessage: string,
+    fallbackContext: string = "",
+  ): Promise<PreparedContext> {
+    const table = symbolTableRegistry.getOrCreate(sessionId);
+    table.onTurnStart();
+
+    const warm = table.warmth() >= WARMTH_THRESHOLD;
+
+    log.cognition.info("cognitive-pipeline.prepare", {
+      sessionId,
+      turn: table.turnIndex,
+      warmth: table.warmth(),
+      mode: warm ? "compiled" : "cold-start",
+      contextCached: !table.isStale("contextOutput"),
+    });
+
+    // Cold-start: new user — don't run Dispatch, use full context, all tools
+    if (!warm) {
+      const contextOutput = table.get("contextOutput") || fallbackContext;
+      return { contextOutput, symbolTable: table, dispatch: null, coldStart: true };
+    }
+
+    // Compiled path: run Dispatch to get routing decision
+    let dispatchResult: DispatchResult | null = null;
+    try {
+      dispatchResult = await this.dispatch.dispatch(userMessage, table);
+    } catch (err) {
+      log.cognition.error("cognitive-pipeline.dispatch.failed", err as Error, { sessionId });
+    }
+
+    // Build context from selected slots (or fall back to full cached output)
+    const contextOutput = this.buildContextFromSlots(
+      table,
+      dispatchResult?.contextSlots ?? [],
+      fallbackContext,
+    );
+
+    return { contextOutput, symbolTable: table, dispatch: dispatchResult, coldStart: false };
+  }
+
+  // ─── Post-response consolidation (fire-and-forget) ────────────
+
+  postProcess(input: PostProcessInput): void {
+    const table = symbolTableRegistry.get(input.sessionId);
+    if (!table) {
+      log.cognition.warn("cognitive-pipeline.postProcess: no symbol table for session", {
+        sessionId: input.sessionId,
+      });
+      return;
+    }
+
+    // Use the stored dispatch result if not provided explicitly
+    const dispatch = input.dispatch ?? this.lastDispatch.get(input.sessionId) ?? null;
+    const executionPlan = dispatch?.executionPlan ?? {
+      consolidationDepth: "light" as const,
+      needsDnaMutation: false,
+      needsPelletGen: false,
+      skipInnerLife: true,
+    };
+
+    const turn: ConsolidateTurn = {
+      userMessage: input.userMessage,
+      assistantResponse: input.assistantResponse,
+      toolsUsed: input.toolsUsed,
+      executionPlan,
+      sessionId: input.sessionId,
+      turnIndex: table.turnIndex,
+    };
+
+    this.consolidate.enqueue(turn, table);
+    this.lastDispatch.delete(input.sessionId); // consumed — clear for next turn
+
+    log.cognition.debug("cognitive-pipeline.consolidate.enqueued", {
+      sessionId: input.sessionId,
+      depth: executionPlan.consolidationDepth,
+      toolsUsed: input.toolsUsed.length,
+    });
+  }
+
+  // ─── Invalidation bridge (call from gateway event handlers) ───
+
+  invalidate(sessionId: string, event: import("./symbol-table.js").InvalidationEvent): void {
+    const table = symbolTableRegistry.get(sessionId);
+    if (table) {
+      const affected = table.invalidate(event);
+      log.cognition.info("cognitive-pipeline.invalidated", { sessionId, event, affected });
+    }
+  }
+
+  // ─── Session lifecycle ────────────────────────────────────────
+
+  dropSession(sessionId: string): void {
+    symbolTableRegistry.drop(sessionId);
+  }
+
+  getSymbolTable(sessionId: string): SymbolTable | undefined {
+    return symbolTableRegistry.get(sessionId);
+  }
+
+  // ─── Context assembly from slots ─────────────────────────────
+
+  private buildContextFromSlots(
+    table: SymbolTable,
+    slots: SlotKey[],
+    fallback: string,
+  ): string {
+    // Always include the base context (full pipeline output if available)
+    const base = table.get("contextOutput") || fallback;
+
+    if (slots.length === 0) return base;
+
+    const extras: string[] = [];
+
+    if (slots.includes("preferences")) {
+      const prefs = table.get("preferences");
+      if (prefs) extras.push(`## User Preferences\n${prefs}`);
+    }
+    if (slots.includes("namedEntities")) {
+      const raw = table.get("namedEntities");
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as Record<string, string[]>;
+          const lines = Object.entries(parsed)
+            .filter(([, v]) => v.length > 0)
+            .map(([k, v]) => `${k}: ${v.join(", ")}`);
+          if (lines.length > 0) extras.push(`## Known People & Projects\n${lines.join("\n")}`);
+        } catch { /* skip malformed */ }
+      }
+    }
+    if (slots.includes("memoryDigest")) {
+      const digest = table.get("memoryDigest");
+      if (digest) extras.push(`## Recent Memory\n${digest}`);
+    }
+    if (slots.includes("histSummary")) {
+      const hist = table.get("histSummary");
+      if (hist) extras.push(`## Session History\n${hist}`);
+    }
+    if (slots.includes("owlState")) {
+      const raw = table.get("owlState");
+      if (raw) {
+        try {
+          const state = JSON.parse(raw) as Record<string, unknown>;
+          extras.push(`## Owl State\nmood: ${state["mood"] ?? "neutral"}, focus: ${state["focus"] ?? "general"}`);
+        } catch { /* skip */ }
+      }
+    }
+
+    return extras.length > 0 ? `${base}\n\n${extras.join("\n\n")}` : base;
+  }
+}
