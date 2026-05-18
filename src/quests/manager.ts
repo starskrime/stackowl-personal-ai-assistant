@@ -6,7 +6,6 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
-import type { PelletStore } from "../pellets/store.js";
 import type {
   Quest,
   QuestMilestone,
@@ -20,16 +19,14 @@ import { log } from "../logger.js";
 
 export class QuestManager {
   private provider: ModelProvider;
-  private pelletStore: PelletStore;
   private questDir: string;
 
   constructor(
     provider: ModelProvider,
-    pelletStore: PelletStore,
+    _pelletStore: unknown,
     workspacePath: string,
   ) {
     this.provider = provider;
-    this.pelletStore = pelletStore;
     this.questDir = join(workspacePath, "quests");
     if (!existsSync(this.questDir))
       mkdirSync(this.questDir, { recursive: true });
@@ -247,36 +244,8 @@ export class QuestManager {
   }
 
   private async checkMilestones(quest: Quest): Promise<void> {
-    const pellets = await this.pelletStore.search(quest.topic);
-    const topicPellets = pellets.slice(0, 20);
-
-    for (const milestone of quest.milestones) {
-      if (milestone.completed) continue;
-
-      // Check if any pellet matches this milestone's criteria
-      for (const pellet of topicPellets) {
-        const pelletText =
-          `${pellet.title} ${pellet.content} ${pellet.tags.join(" ")}`.toLowerCase();
-        const criteriaWords = milestone.completionCriteria
-          .toLowerCase()
-          .split(/\s+/)
-          .filter((w) => w.length > 3);
-        const matchCount = criteriaWords.filter((w) =>
-          pelletText.includes(w),
-        ).length;
-
-        if (
-          criteriaWords.length > 0 &&
-          matchCount / criteriaWords.length >= 0.4
-        ) {
-          milestone.completed = true;
-          milestone.completedAt = new Date().toISOString();
-          milestone.relatedPellets.push(pellet.id);
-          break;
-        }
-      }
-    }
-
+    // Pellet store removed — milestone auto-completion via pellets is unavailable.
+    // Milestones can still be completed manually via updateStatus().
     quest.updatedAt = new Date().toISOString();
     await this.save(quest);
   }

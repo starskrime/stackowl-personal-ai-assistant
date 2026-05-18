@@ -87,11 +87,11 @@ export class SummonParliamentTool implements ToolImplementation {
       );
     }
 
-    const { provider, config, pelletStore } = context.engineContext;
+    const { provider, config } = context.engineContext;
 
-    if (!provider || !config || !pelletStore) {
+    if (!provider || !config) {
       throw new Error(
-        "Tool execution failed: Missing required engine components (provider, config, or pelletStore).",
+        "Tool execution failed: Missing required engine components (provider or config).",
       );
     }
 
@@ -141,7 +141,6 @@ export class SummonParliamentTool implements ToolImplementation {
       const orchestrator = new ParliamentOrchestrator(
         provider,
         config,
-        pelletStore,
         context.engineContext.toolRegistry,
         (context.engineContext as any).db,
       );

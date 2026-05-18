@@ -6,7 +6,6 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { SessionStore } from "../memory/store.js";
 import type { MemoryThread, ThreadEntry, SessionIndex } from "./types.js";
 import { join } from "node:path";
@@ -15,19 +14,17 @@ import { existsSync } from "node:fs";
 import { log } from "../logger.js";
 
 export class MemorySearcher {
-  private pelletStore: PelletStore;
   private sessionStore: SessionStore;
   private workspacePath: string;
   private provider: ModelProvider;
   private sessionIndex: SessionIndex | null = null;
 
   constructor(
-    pelletStore: PelletStore,
+    _pelletStore: unknown,
     sessionStore: SessionStore,
     workspacePath: string,
     provider: ModelProvider,
   ) {
-    this.pelletStore = pelletStore;
     this.sessionStore = sessionStore;
     this.workspacePath = workspacePath;
     this.provider = provider;
@@ -44,24 +41,8 @@ export class MemorySearcher {
     const relatedPellets: string[] = [];
     const relatedSessions: string[] = [];
 
-    // 1. Search pellets via BM25
-    if (scope === "all" || scope === "pellets") {
-      try {
-        const pelletResults = await this.pelletStore.search(query);
-        for (const pellet of pelletResults.slice(0, 5)) {
-          relatedPellets.push(pellet.id);
-          entries.push({
-            timestamp: pellet.generatedAt || new Date().toISOString(),
-            source: "pellet",
-            sourceId: pellet.id,
-            excerpt: `**${pellet.title}** (tags: ${pellet.tags.join(", ")})\n${pellet.content.slice(0, 300)}`,
-            relevanceScore: 1.0,
-          });
-        }
-      } catch (err) {
-        log.engine.debug(`[MemorySearcher] Pellet search error: ${err}`);
-      }
-    }
+    // Pellet search removed — pellet store no longer available.
+    void relatedPellets; // kept for return shape
 
     // 2. Search sessions via keyword scan
     if (scope === "all" || scope === "sessions") {

@@ -9,7 +9,6 @@
 
 import type { ModelProvider } from "../providers/base.js";
 import type { SessionStore } from "../memory/store.js";
-import type { PelletStore } from "../pellets/store.js";
 import { log } from "../logger.js";
 
 export class ReflexionEngine {
@@ -23,7 +22,6 @@ export class ReflexionEngine {
   constructor(
     private provider: ModelProvider,
     private sessionStore: SessionStore,
-    private pelletStore: PelletStore,
   ) {}
 
   /**
@@ -110,20 +108,6 @@ Respond strictly in the following JSON format:
           `   🧬 Behavioral Patch Generated: "${parsed.heuristic}"`,
         );
 
-        await this.pelletStore.save({
-          id: `patch_${Date.now()}`,
-          title: `Reflection Patch: ${parsed.heuristic.slice(0, 30)}...`,
-          generatedAt: new Date().toISOString(),
-          source: "ReflexionEngine",
-          owls: ["system"],
-          tags: ["reflexion", "behavioral-patch", "rule"],
-          content: parsed.heuristic,
-          version: 1,
-          successCount: 0,
-          failureCount: 0,
-          provenance: [],
-        });
-
         // Mark this failure as processed so future dream() calls don't re-analyze
         // the same event and produce duplicate patches.
         this.processedFailures.add(failureKey);
@@ -183,19 +167,6 @@ Respond strictly in the following JSON format:
 
       const parsed = JSON.parse(match[0]);
       if (parsed.heuristic && parsed.heuristic.length > 5) {
-        await this.pelletStore.save({
-          id: `patch_${Date.now()}`,
-          title: `Reflexion: ${parsed.heuristic.slice(0, 40)}...`,
-          generatedAt: new Date().toISOString(),
-          source: "ReflexionEngine:immediate",
-          owls: ["system"],
-          tags: ["reflexion", "behavioral-patch", "rule", context.reason],
-          content: parsed.heuristic,
-          version: 1,
-          successCount: 0,
-          failureCount: 0,
-          provenance: [],
-        });
         log.evolution.info(
           `[Reflexion:immediate] Patch generated for ${context.reason}: "${parsed.heuristic.slice(0, 60)}"`,
         );
@@ -268,19 +239,6 @@ Respond strictly in the following JSON format:
         if (match) {
           const parsed = JSON.parse(match[0]);
           if (parsed.pattern && parsed.pattern.length > 10) {
-            await this.pelletStore.save({
-              id: `pattern_${Date.now()}`,
-              title: `Positive Pattern: ${parsed.pattern.slice(0, 40)}...`,
-              generatedAt: new Date().toISOString(),
-              source: "ReflexionEngine:positive",
-              owls: ["system"],
-              tags: ["reflexion", "positive-pattern", "best-practice"],
-              content: parsed.pattern,
-              version: 1,
-              successCount: 0,
-              failureCount: 0,
-              provenance: [],
-            });
             log.evolution.info(`   🌟 Positive Pattern: "${parsed.pattern}"`);
           }
         }

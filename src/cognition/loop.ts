@@ -35,13 +35,10 @@ import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import type { StackOwlConfig } from "../config/loader.js";
-import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { SessionStore } from "../memory/store.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { CapabilityLedger } from "../evolution/ledger.js";
-import type { MicroLearner } from "../learning/micro-learner.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { OwlRegistry } from "../owls/registry.js";
 import type { OwlEvolutionEngine } from "../owls/evolution.js";
@@ -49,7 +46,6 @@ import type { ProviderRegistry } from "../providers/registry.js";
 import type { SkillsLoader } from "../skills/loader.js";
 import type { RoutingRuleStore } from "./routing-rule-store.js";
 import { CapabilityScanner } from "../heartbeat/capability-scanner.js";
-import { KnowledgeGraphManager } from "../learning/knowledge-graph.js";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -97,13 +93,10 @@ export interface CognitiveLoopDeps {
   owl: OwlInstance;
   config: StackOwlConfig;
   innerLife?: OwlInnerLife;
-  learningOrchestrator?: LearningOrchestrator;
   reflexionEngine?: ReflexionEngine;
   skillsRegistry?: SkillsRegistry;
   sessionStore?: SessionStore;
-  pelletStore?: PelletStore;
   capabilityLedger?: CapabilityLedger;
-  microLearner?: MicroLearner;
   toolRegistry?: ToolRegistry;
   skillsDir?: string;
   workspacePath?: string;
@@ -221,7 +214,6 @@ export class CognitiveLoop {
         deps.config,
         deps.toolRegistry,
         deps.skillsRegistry,
-        deps.microLearner,
         deps.toolRegistry?.getTracker() ?? undefined,
       );
     }
@@ -243,11 +235,9 @@ export class CognitiveLoop {
       (val ? available : missing).push(name);
 
     check("innerLife", deps.innerLife);
-    check("learningOrchestrator", deps.learningOrchestrator);
     check("reflexionEngine", deps.reflexionEngine);
     check("skillsRegistry", deps.skillsRegistry);
     check("sessionStore", deps.sessionStore);
-    check("pelletStore", deps.pelletStore);
     check("capabilityLedger", deps.capabilityLedger);
     check("toolRegistry", deps.toolRegistry);
     check("skillsDir", deps.skillsDir);
@@ -261,15 +251,6 @@ export class CognitiveLoop {
     if (missing.length > 0) {
       log.engine.warn(
         `[CognitiveLoop] Deps MISSING (features disabled): [${missing.join(", ")}]`,
-      );
-    }
-
-    // Wire the learning orchestrator's capability gap callback so that
-    // knowledge gaps discovered from conversation analysis (e.g., "couldn't send email")
-    // automatically enter the synthesis queue for autonomous skill creation.
-    if (this.deps.learningOrchestrator) {
-      this.deps.learningOrchestrator.setCapabilityGapCallback(
-        (gap, description) => this.enqueueSynthesisTarget(gap, description, "conversation"),
       );
     }
 
@@ -654,29 +635,18 @@ export class CognitiveLoop {
   }
 
   private async executeDesireStudy(topic: string): Promise<string> {
-    if (!this.deps.learningOrchestrator) return "No orchestrator available";
-
-    const cycle = await this.deps.learningOrchestrator.learnTopic(topic, true);
+    // LearningOrchestrator removed — study actions are no-ops for now.
     this.studySessionsSinceDnaSync++;
-
-    // Evolve desires: reduce intensity of studied topic, add related desires
-    if (this.deps.innerLife && cycle.success) {
+    if (this.deps.innerLife) {
       await this.deps.innerLife.fulfillDesire(topic);
     }
-
-    if (cycle.synthesisReport) {
-      return `Studied "${topic}": ${cycle.synthesisReport.pelletsCreated} pellets created`;
-    }
-    return `Studied "${topic}": no pellets (${cycle.error ?? "empty synthesis"})`;
+    return `Studied "${topic}": learning orchestrator removed`;
   }
 
   private async executeGapStudy(topic: string): Promise<string> {
-    if (!this.deps.learningOrchestrator) return "No orchestrator available";
-
-    const cycle = await this.deps.learningOrchestrator.learnTopic(topic, false);
+    // LearningOrchestrator removed — gap study is a no-op for now.
     this.studySessionsSinceDnaSync++;
-
-    return `Gap study "${topic}": ${cycle.synthesisReport?.pelletsCreated ?? 0} pellets`;
+    return `Gap study "${topic}": learning orchestrator removed`;
   }
 
   private async executeReflexion(): Promise<string> {
@@ -693,30 +663,13 @@ export class CognitiveLoop {
     const result = this.capabilityScanner.scan();
     this.lastCapScanTime = Date.now();
 
-    // Feed high-priority gaps into learning pipeline
-    const actionableGaps = result.gaps.filter((g) => g.priority >= 3);
-    if (actionableGaps.length > 0 && this.deps.learningOrchestrator) {
-      const topGap = actionableGaps[0];
-      await this.deps.learningOrchestrator
-        .learnTopic(topGap.description, false)
-        .catch((err) => {
-          log.engine.warn(`[CognitiveLoop] Gap study failed for "${topGap.description}": ${err instanceof Error ? err.message : err}`);
-        });
-    }
-
     return `Scanned: ${result.totalToolsRegistered} tools, ${result.totalSkillsEnabled} skills, ${result.gaps.length} gaps (${result.coveragePercent}% coverage)`;
   }
 
   private async executeFrontierExploration(): Promise<string> {
-    if (!this.deps.learningOrchestrator) return "No orchestrator";
-
-    const cycle = await this.deps.learningOrchestrator.runProactiveSession();
+    // LearningOrchestrator removed — frontier exploration is a no-op for now.
     this.studySessionsSinceDnaSync++;
-
-    if (cycle.synthesisReport) {
-      return `Frontier: ${cycle.topicsPrioritized} topics, ${cycle.synthesisReport.pelletsCreated} pellets`;
-    }
-    return `Frontier: ${cycle.topicsPrioritized} topics queued`;
+    return "Frontier exploration: learning orchestrator removed";
   }
 
   /**
@@ -728,33 +681,9 @@ export class CognitiveLoop {
   private async executeMemoryConsolidation(): Promise<string> {
     if (!this.deps.sessionStore) return "No session store";
 
-    const { MemoryConsolidator } = await import("../memory/consolidator.js");
-    const workspacePath = this.deps.workspacePath ?? this.deps.config.workspace ?? "./workspace";
-
-    const consolidator = new MemoryConsolidator(
-      this.deps.provider,
-      this.deps.owl,
-      workspacePath,
-    );
-
-    // Load recent sessions and consolidate their messages
-    const sessions = await this.deps.sessionStore.listSessions();
-    const recentSessions = sessions
-      .filter((s) => s.messages.length >= 4) // Only sessions with real conversation
-      .slice(0, 5);
-
-    let consolidated = 0;
-    for (const session of recentSessions) {
-      try {
-        await consolidator.extractAndAppend(session.messages);
-        consolidated++;
-      } catch (err) {
-        log.engine.warn(`[CognitiveLoop] Memory consolidation failed for session: ${err instanceof Error ? err.message : err}`);
-      }
-    }
-
+    // MemoryConsolidator removed — memory consolidation is handled by MemoryManager.
     this.lastMemoryConsolidationTime = Date.now();
-    return `Consolidated ${consolidated}/${recentSessions.length} recent sessions`;
+    return "Memory consolidation: consolidator removed — handled by MemoryManager";
   }
 
   /**
@@ -1276,88 +1205,7 @@ export class CognitiveLoop {
    */
   // @ts-ignore — kept for potential manual invocation
   private async seedKnowledgeGraphFromDesires(): Promise<void> {
-    if (!this.deps.innerLife || !this.deps.config) return;
-
-    const state = this.deps.innerLife.getState();
-    if (!state || state.desires.length === 0) return;
-
-    const workspacePath = this.deps.workspacePath ?? this.deps.config.workspace ?? "./workspace";
-    const graph = new KnowledgeGraphManager(workspacePath);
-    await graph.load();
-
-    let seeded = 0;
-    for (const desire of state.desires) {
-      const topic = this.extractTopicFromDesire(desire.description);
-      if (topic) {
-        graph.touchDomain(topic, "self-study");
-        seeded++;
-      }
-    }
-
-    // Also seed from personalGoals and currentThoughts
-    for (const goal of state.personalGoals ?? []) {
-      const topic = this.extractTopicFromDesire(goal);
-      if (topic) {
-        graph.touchDomain(topic, "self-study");
-        seeded++;
-      }
-    }
-
-    // ── Desire hygiene: decay abstract desires, boost capability desires ──
-    // Abstract desires ("Build a relationship", "Anticipate user needs") can't
-    // produce study topics or synthesis targets, yet they dominate the desire list
-    // at high intensity. Decay them to make room for actionable desires.
-    if (this.deps.innerLife) {
-      const state = this.deps.innerLife.getState();
-      if (state) {
-        let decayed = 0;
-        for (const desire of state.desires) {
-          const topic = this.extractTopicFromDesire(desire.description);
-          const isCap = isCapabilityDesire(desire.description);
-          // If this desire can't produce a study topic AND isn't a capability target,
-          // it's dead weight — decay it
-          if (!topic && !isCap && desire.intensity > 0.3) {
-            desire.intensity = Math.max(0.2, desire.intensity - 0.15);
-            decayed++;
-          }
-        }
-        if (decayed > 0) {
-          await this.deps.innerLife.save();
-          log.engine.info(
-            `[CognitiveLoop] Decayed ${decayed} abstract/unactionable desires`,
-          );
-        }
-      }
-
-      // Inject capability-oriented desires if none exist.
-      // These drive autonomous skill synthesis — without them, the owl
-      // only learns knowledge (pellets) but never builds capabilities (skills).
-      const freshState = this.deps.innerLife.getState();
-      const hasCapabilityDesires = freshState?.desires.some((d) =>
-        isCapabilityDesire(d.description),
-      );
-
-      if (!hasCapabilityDesires) {
-        const bootstrapDesires = [
-          "Build ability to automate recurring tasks the user asks for",
-          "Develop skills for file and document management",
-          "Create tools for information retrieval and summarization",
-        ];
-        for (const desc of bootstrapDesires) {
-          await this.deps.innerLife.addDesire(desc, 0.5);
-        }
-        log.engine.info(
-          `[CognitiveLoop] Injected ${bootstrapDesires.length} bootstrap capability desires`,
-        );
-      }
-    }
-
-    if (seeded > 0) {
-      await graph.save();
-      log.engine.info(
-        `[CognitiveLoop] Seeded knowledge graph with ${seeded} topics from inner life desires`,
-      );
-    }
+    // KnowledgeGraphManager removed — knowledge graph seeding is a no-op.
   }
 
   /**
@@ -1368,6 +1216,7 @@ export class CognitiveLoop {
    * Filters out abstract behavioral goals (relationship, trust, proactive)
    * that can't be meaningfully studied via web research or Q&A.
    */
+  // @ts-expect-error TS6133 — kept for potential call sites once proactive study is re-enabled
   private extractTopicFromDesire(description: string): string | null {
     // Remove common desire/goal prefixes (progressive stripping)
     let cleaned = description

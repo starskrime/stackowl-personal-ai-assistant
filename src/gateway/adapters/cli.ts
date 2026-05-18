@@ -359,19 +359,7 @@ export class CliAdapter implements ChannelAdapter {
 
   /** Load recent sessions from the SessionStore and populate the TUI store. */
   private _loadSessionsAsync(): void {
-    const sessionStore = this._gateway.getSessionStore();
-    if (!sessionStore) return;
-
-    sessionStore.listSessions().then((sessions) => {
-      const summaries = sessions.slice(0, 20).map((s) => ({
-        sessionId: s.id,
-        title: s.metadata.title ?? s.metadata.owlName ?? s.id,
-        lastActiveAt: s.metadata.lastUpdatedAt,
-      }));
-      globalBridge.loadSessions(summaries);
-    }).catch(() => {
-      // Non-critical — silently ignore failures
-    });
+    // sessionStore removed — session list is loaded via SessionService (SQLite) if available.
   }
 
   /** Load available owls from the registry and populate the TUI store. */

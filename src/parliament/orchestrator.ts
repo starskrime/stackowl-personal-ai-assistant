@@ -13,8 +13,6 @@ import type {
   ParliamentConfig,
   ParliamentSession,
 } from "./protocol.js";
-import { PelletGenerator, makeProviderRouter } from "../pellets/generator.js";
-import type { PelletStore } from "../pellets/store.js";
 import { assignPerspectives } from "./perspectives.js";
 import type { PerspectiveOverlay } from "./perspectives.js";
 import type { MemoryDatabase } from "../memory/db.js";
@@ -42,8 +40,6 @@ export function parseValidatorResponse(content: string): ValidatorResult {
 }
 
 export class ParliamentOrchestrator {
-  private pelletGenerator: PelletGenerator;
-  private pelletStore: PelletStore;
   private db?: MemoryDatabase;
   private readonly multiRoundDebate: MultiRoundDebateManager;
   private readonly provider: ModelProvider;
@@ -52,15 +48,12 @@ export class ParliamentOrchestrator {
   constructor(
     provider: ModelProvider,
     config: StackOwlConfig,
-    pelletStore: PelletStore,
     _toolRegistry?: ToolRegistry,
     db?: MemoryDatabase,
   ) {
     this.provider = provider;
     this.config = config;
-    this.pelletStore = pelletStore;
     this.db = db;
-    this.pelletGenerator = new PelletGenerator(makeProviderRouter(provider));
     this.multiRoundDebate = new MultiRoundDebateManager(provider, config);
   }
 
@@ -131,8 +124,8 @@ export class ParliamentOrchestrator {
       throw new Error("A Parliament requires at least 2 owls.");
     }
 
-    // Assign perspective roles to owls
-    const perspectives = assignPerspectives(
+    // Assign perspective roles to owls (available for formatSessionMarkdown callers)
+    void assignPerspectives(
       config.participants,
       config.perspectiveRoles,
     );
@@ -253,22 +246,6 @@ export class ParliamentOrchestrator {
         // UNCERTAIN: keep warm start 0.6
       } catch (err) {
         log.parliament.warn("[Parliament] Validator pipeline error", err);
-      }
-
-      // Automatically generate a Pellet from this session
-      const mdTranscript = this.formatSessionMarkdown(session, perspectives);
-      const pellet = await Promise.race([
-        this.pelletGenerator.generate(mdTranscript, `Parliament Session: ${config.topic}`),
-        new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error("pellet generation timeout")), 30_000),
-        ),
-      ]).catch((err) => {
-        log.parliament.warn("pellet generation failed or timed out", { err: (err as Error).message });
-        return null;
-      });
-      if (pellet) {
-        await this.pelletStore.save(pellet);
-        log.engine.info(`[Parliament] Saved Knowledge Pellet: ${pellet.id}.md`);
       }
 
       // ── E2: Record verdict in parliament_verdicts for recall + delayed validation ──

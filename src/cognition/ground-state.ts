@@ -14,29 +14,27 @@
  *   Common ground accumulates through presentation + acceptance.
  */
 
-import type { FactStore, StoredFact, FactCategory } from "../memory/fact-store.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { ChatMessage } from "../providers/base.js";
 import { log } from "../logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────
 
-interface GroundState {
-  sharedFacts: StoredFact[];
-  decisions: StoredFact[];
-  openQuestions: StoredFact[];
-  activeGoals: StoredFact[];
-  subGoals: StoredFact[];
-  lastSummary: string | null;
+interface GroundStateFact {
+  id: string;
+  fact: string;
+  category: string;
+  confidence: number;
 }
 
-// Ground state categories map to FactStore categories
-const GROUND_CATEGORIES: FactCategory[] = [
-  "decision",
-  "open_question",
-  "active_goal",
-  "sub_goal",
-];
+interface GroundState {
+  sharedFacts: GroundStateFact[];
+  decisions: GroundStateFact[];
+  openQuestions: GroundStateFact[];
+  activeGoals: GroundStateFact[];
+  subGoals: GroundStateFact[];
+  lastSummary: string | null;
+}
 
 // ─── Ground State View ──────────────────────────────────────────
 
@@ -47,7 +45,6 @@ export class GroundStateView {
   private refreshInProgress = false;
 
   constructor(
-    private factStore: FactStore,
     private provider: ModelProvider,
     private refreshInterval = 5,
   ) {}
@@ -65,26 +62,15 @@ export class GroundStateView {
 
   /**
    * Get the current ground state for a session.
-   * Queries FactStore filtered by session-scoped ground categories.
+   * Returns empty state — FactStore removed; ground state rebuilt via MemoryManager.
    */
-  getState(userId: string): GroundState {
-    const allFacts = this.factStore.getActiveForUser(userId);
-
-    // Filter to ground state categories, scoped to current session
-    const sessionFacts = allFacts.filter(
-      (f) =>
-        GROUND_CATEGORIES.includes(f.category) &&
-        (!this.sessionId || f.entity === this.sessionId || !f.entity),
-    );
-
+  getState(_userId: string): GroundState {
     return {
-      sharedFacts: allFacts.filter(
-        (f) => f.category === "project_detail" || f.category === "context",
-      ).slice(0, 5),
-      decisions: sessionFacts.filter((f) => f.category === "decision"),
-      openQuestions: sessionFacts.filter((f) => f.category === "open_question"),
-      activeGoals: sessionFacts.filter((f) => f.category === "active_goal"),
-      subGoals: sessionFacts.filter((f) => f.category === "sub_goal"),
+      sharedFacts: [],
+      decisions: [],
+      openQuestions: [],
+      activeGoals: [],
+      subGoals: [],
       lastSummary: this.lastSummary,
     };
   }
@@ -105,7 +91,7 @@ export class GroundStateView {
    */
   async refresh(
     recentMessages: ChatMessage[],
-    userId: string,
+    _userId: string,
     sessionId: string,
   ): Promise<void> {
     if (this.refreshInProgress) return;
@@ -159,50 +145,17 @@ Only include items that were explicitly established in the messages. Return ONLY
         summary?: string;
       };
 
-      // Store extracted ground state as facts
-      const now = new Date();
-      const ttl24h = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-
-      const factsToAdd: Array<{
-        fact: string;
-        category: FactCategory;
-        expiresAt?: string;
-      }> = [];
-
-      for (const fact of parsed.facts ?? []) {
-        factsToAdd.push({ fact, category: "context" });
-      }
-      for (const decision of parsed.decisions ?? []) {
-        factsToAdd.push({ fact: decision, category: "decision" });
-      }
-      for (const question of parsed.open_questions ?? []) {
-        factsToAdd.push({
-          fact: question,
-          category: "open_question",
-          expiresAt: ttl24h,
-        });
-      }
-      if (parsed.goal) {
-        factsToAdd.push({ fact: parsed.goal, category: "active_goal" });
-      }
-
-      for (const item of factsToAdd) {
-        await this.factStore.add({
-          userId,
-          fact: item.fact,
-          entity: sessionId,
-          category: item.category,
-          confidence: 0.8,
-          source: "inferred",
-          expiresAt: item.expiresAt,
-        });
-      }
-
       this.lastSummary = parsed.summary ?? null;
       this.turnsSinceRefresh = 0;
 
+      const factCount =
+        (parsed.facts?.length ?? 0) +
+        (parsed.decisions?.length ?? 0) +
+        (parsed.open_questions?.length ?? 0) +
+        (parsed.goal ? 1 : 0);
+
       log.engine.info(
-        `[GroundState] Refreshed: ${factsToAdd.length} facts, summary="${(this.lastSummary ?? "").slice(0, 60)}"`,
+        `[GroundState] Refreshed: ${factCount} facts (in-memory only), summary="${(this.lastSummary ?? "").slice(0, 60)}"`,
       );
     } catch (err) {
       log.engine.warn(
@@ -216,24 +169,11 @@ Only include items that were explicitly established in the messages. Return ONLY
 
   /**
    * Archive the current ground state on topic switch.
-   * Sets TTL on session-scoped facts so they expire.
    */
-  async archive(userId: string): Promise<void> {
-    const state = this.getState(userId);
-    const ttl1h = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-
-    // Set short TTL on open questions (they're no longer relevant)
-    for (const fact of state.openQuestions) {
-      await this.factStore.update(fact.id, { expiresAt: ttl1h });
-    }
-
-    // Keep decisions and goals longer (they're still useful context)
+  async archive(_userId: string): Promise<void> {
     this.lastSummary = null;
     this.turnsSinceRefresh = 0;
-
-    log.engine.info(
-      `[GroundState] Archived: ${state.openQuestions.length} questions expired`,
-    );
+    log.engine.info(`[GroundState] Archived`);
   }
 
   /**

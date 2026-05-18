@@ -6,7 +6,6 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { SessionStore } from "../memory/store.js";
 import type { JournalEntry, GrowthMetrics } from "./types.js";
 import { join } from "node:path";
@@ -15,18 +14,16 @@ import { existsSync, mkdirSync } from "node:fs";
 import { log } from "../logger.js";
 
 export class JournalGenerator {
-  private pelletStore: PelletStore;
   private sessionStore: SessionStore;
   private provider: ModelProvider;
   private journalDir: string;
 
   constructor(
-    pelletStore: PelletStore,
+    _pelletStore: unknown,
     sessionStore: SessionStore,
     provider: ModelProvider,
     workspacePath: string,
   ) {
-    this.pelletStore = pelletStore;
     this.sessionStore = sessionStore;
     this.provider = provider;
     this.journalDir = join(workspacePath, "journal");
@@ -137,12 +134,6 @@ export class JournalGenerator {
   // ─── Private ─────────────────────────────────────────────
 
   private async getMetrics(start: Date, end: Date): Promise<GrowthMetrics> {
-    const allPellets = await this.pelletStore.listAll();
-    const pelletsInRange = allPellets.filter((p) => {
-      const d = new Date(p.generatedAt);
-      return d >= start && d <= end;
-    });
-
     const sessions = await this.sessionStore.listSessions();
     const sessionsInRange = sessions.filter(
       (s) =>
@@ -150,12 +141,7 @@ export class JournalGenerator {
         s.metadata.startedAt <= end.getTime(),
     );
 
-    const topics = new Set<string>();
     const tools = new Set<string>();
-
-    for (const p of pelletsInRange) {
-      p.tags.forEach((t) => topics.add(t));
-    }
 
     for (const s of sessionsInRange) {
       for (const m of s.messages) {
@@ -166,11 +152,6 @@ export class JournalGenerator {
       }
     }
 
-    const parliamentCount = pelletsInRange.filter(
-      (p) =>
-        p.source?.includes("Parliament") || p.source?.includes("parliament"),
-    ).length;
-
     const avgLength =
       sessionsInRange.length > 0
         ? sessionsInRange.reduce((sum, s) => sum + s.messages.length, 0) /
@@ -178,26 +159,21 @@ export class JournalGenerator {
         : 0;
 
     return {
-      pelletsCreated: pelletsInRange.length,
+      pelletsCreated: 0,
       sessionsCount: sessionsInRange.length,
-      topicsExplored: [...topics].slice(0, 10),
+      topicsExplored: [],
       toolsLearned: [...tools].slice(0, 10),
-      parliamentSessions: parliamentCount,
+      parliamentSessions: 0,
       averageSessionLength: Math.round(avgLength),
     };
   }
 
   private async getPelletsInRange(
-    start: Date,
-    end: Date,
+    _start: Date,
+    _end: Date,
   ): Promise<Array<{ title: string; tags: string[] }>> {
-    const all = await this.pelletStore.listAll();
-    return all
-      .filter((p) => {
-        const d = new Date(p.generatedAt);
-        return d >= start && d <= end;
-      })
-      .map((p) => ({ title: p.title, tags: p.tags }));
+    // Pellet store removed — pellet-based journal entries are unavailable.
+    return [];
   }
 
   private async getSessionsInRange(

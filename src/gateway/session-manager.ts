@@ -41,10 +41,7 @@ export class SessionManager implements ISessionManager {
   private readonly cache = new Map<string, SessionCache>();
 
   constructor(
-    private readonly ctx: Pick<
-      GatewayContext,
-      "sessionStore" | "sessionService" | "owl"
-    >,
+    private readonly ctx: Pick<GatewayContext, "sessionService" | "owl">,
   ) {}
 
   /**
@@ -87,23 +84,19 @@ export class SessionManager implements ISessionManager {
         this.ctx.owl?.persona.name ?? "owl",
       );
     } else {
-      // JSON store fallback
-      const existing = await this.ctx.sessionStore.loadSession(key);
-      if (existing) {
-        session = existing;
-        log.gateway.debug("SessionManager.getOrCreate: loaded from store", {
-          sessionId: key,
-        });
-      } else {
-        session = this.ctx.sessionStore.createSession(
-          this.ctx.owl?.persona.name ?? "owl",
-        );
-        session.id = key;
-        await this.ctx.sessionStore.saveSession(session);
-        log.gateway.debug("SessionManager.getOrCreate: created new session", {
-          sessionId: key,
-        });
-      }
+      // sessionStore removed — create in-memory session as fallback
+      session = {
+        id: key,
+        messages: [],
+        metadata: {
+          owlName: this.ctx.owl?.persona.name ?? "owl",
+          startedAt: Date.now(),
+          lastUpdatedAt: Date.now(),
+        },
+      };
+      log.gateway.debug("SessionManager.getOrCreate: created in-memory session (no store)", {
+        sessionId: key,
+      });
     }
 
     this.cache.set(key, { session, lastActivity: Date.now() });
@@ -115,20 +108,11 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Persist session to the JSON store. The SQLite path is handled by callers
-   * (via sessionService.addMessages) — this method only touches the JSON store.
+   * Persist session. SQLite path is handled by callers via sessionService.addMessages.
+   * JSON store (sessionStore) has been removed — this is now a no-op for the in-memory fallback.
    */
-  async save(session: Session): Promise<void> {
-    log.gateway.debug("SessionManager.save: entry", { sessionId: session.id });
-    try {
-      await this.ctx.sessionStore.saveSession(session);
-      log.gateway.debug("SessionManager.save: exit", { sessionId: session.id });
-    } catch (err) {
-      log.gateway.error("SessionManager.save: failed", err as Error, {
-        sessionId: session.id,
-      });
-      throw err;
-    }
+  async save(_session: Session): Promise<void> {
+    // sessionStore removed — persistence handled by SessionService (SQLite) in callers
   }
 
   /** Remove a session from the in-memory cache (does not delete from store). */

@@ -25,7 +25,6 @@ import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { ChatMessage } from "../providers/base.js";
 import { ActivityLog } from "./activity-log.js";
-import type { EpisodicMemory } from "../memory/episodic.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -91,7 +90,6 @@ export class BackgroundOrchestrator {
     private fulfillmentTracker: FulfillmentTracker | undefined,
     private onProactiveMessage?: (msg: string) => Promise<void>,
     config?: Partial<BackgroundOrchestratorConfig>,
-    private episodicMemory?: EpisodicMemory,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.activityGate = config?.activityGate;
@@ -289,8 +287,9 @@ export class BackgroundOrchestrator {
     const result = await this.desireExecutor.executeTop(prioritized, owlName);
 
     if (result) {
-      if (result.pelletSaved) {
-        this.activityLog.add("desire_executed", result.desire.description.slice(0, 80), result.pelletTitle);
+      const hasResearch = result.research.length > 0;
+      if (hasResearch) {
+        this.activityLog.add("desire_executed", result.desire.description.slice(0, 80));
         if (this.fulfillmentTracker) {
           await this.fulfillmentTracker.recordFulfillment(result, owlName);
         }
@@ -306,21 +305,7 @@ export class BackgroundOrchestrator {
   // ─── Job: Memory Consolidation ────────────────────────────────
 
   private async runMemoryConsolidation(): Promise<void> {
-    if (!this.episodicMemory) {
-      log.engine.debug("[BackgroundOrchestrator] Memory consolidation skipped — no episodic store");
-      return;
-    }
-
-    const { compressed, archived } = this.episodicMemory.runDecay();
-    await this.episodicMemory.save?.();
-
-    this.activityLog.add(
-      "memory_consolidated",
-      `Compressed ${compressed} episodes, archived ${archived}`,
-    );
-    log.engine.info(
-      `[BackgroundOrchestrator] Memory consolidation: compressed=${compressed} archived=${archived}`,
-    );
+    log.engine.debug("[BackgroundOrchestrator] Memory consolidation skipped — episodic store removed");
   }
 
   // ─── Job: Proactive Ping ──────────────────────────────────────

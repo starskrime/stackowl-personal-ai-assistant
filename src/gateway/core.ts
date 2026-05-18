@@ -15,7 +15,7 @@
 
 import { v4 as uuidv4 } from "uuid";
 import type { ChatMessage } from "../providers/base.js";
-import type { Session } from "../memory/store.js";
+
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import { OwlEngine, EXHAUSTION_MARKER } from "../engine/runtime.js";
 import { PromptOptimizer } from "../engine/prompt-optimizer.js";
@@ -24,7 +24,7 @@ import { TierEscalationManager } from "../intelligence/escalation.js";
 import { FactInvalidator } from "../intelligence/fact-invalidator.js";
 import { SleepTimeConsolidator } from "../intelligence/sleep-time-consolidator.js";
 import { AttemptLogRegistry } from "../memory/attempt-log.js";
-import { SessionSaver } from "../memory/session-saver.js";
+
 import { SkillContextInjector } from "../skills/injector.js";
 import { ClawHubClient } from "../skills/clawhub.js";
 import { SkillInstallWizard, SkillsMenuWizard, type WizardSession } from "../skills/wizard.js";
@@ -34,12 +34,9 @@ import { OutcomeVerifier } from "../verification/outcome-verifier.js";
 import { FalseDoneDetector } from "../verification/false-done-detector.js";
 import { CompletionTracker } from "../verification/completion-tracker.js";
 import { EscalationHandler } from "../verification/escalation-handler.js";
-import { DomainExpertiseTracker } from "../learning/domain-expertise.js";
-// MemoryConsolidator and MemoryReflexionEngine retired (Phase 3 L3 consolidation).
-// Replaced by FactStore + ConversationDigest. Imports removed to prevent dead-code warnings.
+// MemoryConsolidator, MemoryReflexionEngine, DomainExpertiseTracker, MicroLearner,
+// ProactiveAnticipator retired — all learning/ modules removed.
 import { PreferenceDetector } from "../preferences/detector.js";
-import { MicroLearner } from "../learning/micro-learner.js";
-import { ProactiveAnticipator } from "../learning/anticipator.js";
 import { classifyStrategy } from "../orchestrator/classifier.js";
 import { TaskOrchestrator } from "../orchestrator/orchestrator.js";
 import { SecretaryRouter } from "../routing/secretary.js";
@@ -52,6 +49,7 @@ import type {
 } from "./types.js";
 import { SessionManager } from "./session-manager.js";
 import type { ISessionManager } from "./session-manager.js";
+import type { Session } from "../memory/store.js";
 import { LifecycleCoordinator } from "./lifecycle-coordinator.js";
 import type { ILifecycleCoordinator } from "./lifecycle-coordinator.js";
 import { FeatureCommandRouter } from "./feature-command-router.js";
@@ -78,33 +76,21 @@ import {
   classifyContinuity,
   type ContinuityResult,
 } from "../cognition/continuity-engine.js";
-import {
-  getUnextractedSegments,
-  getSegmentMessages,
-} from "../memory/session-segmenter.js";
 import { UserMentalModel } from "../cognition/user-mental-model.js";
-import { ConversationDigestManager } from "../memory/conversation-digest.js";
 import { MemoryDatabase } from "../memory/db.js";
-import { UnifiedMemory } from "../memory/unified.js";
-import { MessageCompressor } from "../memory/compressor.js";
 import { FeedbackStore } from "../feedback/store.js";
 import { OutputFilter, resolveOutputMode } from "./output-filter.js";
 import { SessionBriefGenerator } from "../cognition/session-brief.js";
 import { LoopDetector } from "../cognition/loop-detector.js";
 import { IntentClarifier } from "../clarification/intent-clarifier.js";
-import { PreActionQuestioner } from "../clarification/pre-action-questioner.js";
 import { ClarificationCoordinator } from "../clarification/coordinator.js";
 import { SessionAutonomyBias } from "../clarification/session-autonomy-bias.js";
-import { ToolRiskGuard } from "../clarification/tool-risk-guard.js";
 import { join } from "node:path";
 import { ToolMastery } from "../tools/tool-mastery.js";
 import { FallbackSequencer } from "../tools/fallback-sequencer.js";
 import { DomainToolMap } from "../delegation/domain-tool-map.js";
 import { TaskDecomposer } from "../delegation/decomposer.js";
 import { ResultSynthesizer } from "../delegation/result-synthesizer.js";
-import { PriorContextRetriever } from "../memory/prior-context-retriever.js";
-import { CrossSessionStore } from "../memory/cross-session-store.js";
-import { PreferenceRecognizer } from "../memory/preference-recognizer.js";
 import { ParliamentAutoTrigger } from "../parliament/auto-trigger.js";
 import { TopicWorthinessEvaluator } from "../parliament/topic-worthiness.js";
 import { MultiRoundDebateManager } from "../parliament/multi-round-debate.js";
@@ -120,7 +106,7 @@ import { DeliveryRouter } from "./delivery-router.js";
 import { ChannelAdapterV1Shim, defaultCapsForV1 } from "./adapter-v1-shim.js";
 import { SessionService } from "../session/service.js";
 import { UserMemoryStore } from "../session/user-memory-store.js";
-import { migrateJsonSessionsToSQLite } from "../session/migrate.js";
+// migrateJsonSessionsToSQLite removed — sessionStore retired
 import { OwlBrain, type OwlBrainResult } from "../routing/owl-brain.js";
 import { UserProfileService } from "../routing/user-profile-service.js";
 import { TaskOwnershipManager } from "../routing/task-ownership-manager.js";
@@ -136,8 +122,8 @@ import { OwlOrchestrator as OwlOrchestratorV2 } from "../engine/orchestrator.js"
 import { ImprovementScheduler } from "../engine/improvement-scheduler.js";
 import { OutcomeJournal as OutcomeJournalV2 } from "../engine/outcome-journal.js";
 import { ReflexionEngine as IntelligenceReflexionEngine } from "../intelligence/reflexion-engine.js";
-import { ReflexionEngine } from "../evolution/reflexion.js";
-import { updatePelletGeneratorDNA } from "../owls/evolution.js";
+// ReflexionEngine from evolution/reflexion removed — no longer auto-initialized
+// updatePelletGeneratorDNA removed — pelletStore deleted in memory refactor
 import { GoalVerifier } from "../tools/goal-verifier.js";
 // TaskLedgerStore import removed — now handled by ParliamentSubsystem
 // SubGoal import removed — now handled by ParliamentSubsystem
@@ -234,10 +220,6 @@ export class OwlGateway {
   private skillInjector: SkillContextInjector | null = null;
   /** Singleton PreferenceDetector — avoids re-constructing on every message */
   private preferenceDetector: PreferenceDetector | null = null;
-  /** Per-message micro-learner for lightweight signal extraction */
-  private microLearner: MicroLearner | null = null;
-  /** Proactive anticipator for cross-system predictions */
-  private anticipator: ProactiveAnticipator | null = null;
   /** Lazy-initialized task orchestrator for multi-strategy execution */
   private taskOrchestrator: TaskOrchestrator | null = null;
   /** Agent Watch — supervises external coding agent sessions */
@@ -255,7 +237,6 @@ export class OwlGateway {
 
   // ─── Element 9: Clarification Modules ─────────────────────────────
   readonly intentClarifier: IntentClarifier;
-  readonly preActionQuestioner: PreActionQuestioner;
   private readonly clarificationCoordinator: ClarificationCoordinator;
 
   // ─── Epic 4: Tool Mastery Modules ─────────────────────────────
@@ -316,13 +297,7 @@ export class OwlGateway {
   /** User mental model — infers user state from behavioral signals */
   private userMentalModel: UserMentalModel | null = null;
 
-  // ─── Epic 3: Memory Module Instances (SessionSaver) ────────────────────────
-  private sessionSaver: SessionSaver = new SessionSaver();
-
-  // ─── Epic 5: Memory Module Instances ────────────────────────
-  private priorContextRetriever: PriorContextRetriever | null = null;
-  private crossSessionStore: CrossSessionStore | null = null;
-  private preferenceRecognizer: PreferenceRecognizer | null = null;
+  // Epic 5 memory modules (PriorContextRetriever, CrossSessionStore, PreferenceRecognizer) removed.
 
   // ─── Epic 6: Parliament Module Instances ──────────────────
   private parliamentAutoTrigger: ParliamentAutoTrigger | null = null;
@@ -343,8 +318,7 @@ export class OwlGateway {
   // ─── Progress Manager (lazy singleton) ────────────────────────
   private _progressManager?: ProgressManager;
 
-// ─── Epic 1: Learning Modules ─────────────────────────────────
-  private domainExpertise: DomainExpertiseTracker | null = null;
+// domainExpertise removed — DomainExpertiseTracker deleted in learning/ refactor.
 
 // ─── Epic 2: Verification Modules ──────────────────────────────
   private outcomeVerifier: OutcomeVerifier | null = null;
@@ -392,16 +366,8 @@ export class OwlGateway {
     // Initialize task queue (Improvement #2)
     this.taskQueue = ctx.taskQueue ?? new TaskQueue(ctx.config.queue);
 
-    // Initialize gap learner — runs when capability gaps are detected
-    if (ctx.pelletStore && ctx.toolRegistry) {
-      this.gapLearner = new GapLearner(
-        ctx.provider,
-        ctx.owl,
-        ctx.config,
-        ctx.toolRegistry,
-        ctx.pelletStore,
-      );
-    }
+    // Gap learner disabled — pelletStore removed; GapLearner requires refactoring
+    // this.gapLearner = null;
 
     // Ensure DNA is persisted on process exit.
     // Without this, any mutations from the current session are lost when the
@@ -420,32 +386,13 @@ export class OwlGateway {
       this.preferenceDetector = new PreferenceDetector(ctx.provider);
     }
 
-    // Micro-learner — lightweight per-message signal extraction
-    // Uses the provided instance or creates one automatically
-    if (ctx.microLearner) {
-      this.microLearner = ctx.microLearner;
-    } else {
-      const workspacePath = ctx.cwd ?? process.cwd();
-      this.microLearner = new MicroLearner(workspacePath);
-      this.microLearner.load().catch((err) => { log.engine.warn("microLearner load failed", err); });
-    }
+    // MicroLearner and ProactiveAnticipator retired — all learning/ modules removed.
 
     // SkillCreationWizard — channel-agnostic skill creation via ChannelAdapterV2.ask()
     this.skillCreationWizard = new SkillCreationWizard(
       ctx.cwd ?? process.cwd(),
       ctx.db,
     );
-
-    // Proactive anticipator — cross-system prediction engine
-    if (ctx.anticipator) {
-      this.anticipator = ctx.anticipator;
-    } else if (this.microLearner) {
-      this.anticipator = new ProactiveAnticipator(
-        this.microLearner,
-        ctx.patternAnalyzer ?? null,
-        ctx.provider,
-      );
-    }
 
     // Phase 3: Session Brief Generator — lazy, only needs provider
     this.sessionBriefGenerator = new SessionBriefGenerator(ctx.provider);
@@ -461,10 +408,6 @@ export class OwlGateway {
     );
     this.clarificationCoordinator = new ClarificationCoordinator();
     this.intentClarifier = new IntentClarifier(ctx.provider, _clarificationRouter, this.clarificationCoordinator);
-    this.preActionQuestioner = new PreActionQuestioner(ctx.provider, _clarificationRouter);
-    if (ctx.toolRegistry) {
-      ctx.toolRegistry.setRiskGuard(new ToolRiskGuard(this.preActionQuestioner));
-    }
 
     // ─── Epic 4: Initialize Tool Mastery Modules ──────────────
     this.toolMastery = new ToolMastery();
@@ -520,23 +463,21 @@ export class OwlGateway {
       intelligenceReflexion = new IntelligenceReflexionEngine(ctx.db, ctx.provider, embedFn);
     }
 
-    if (!ctx.reflexionEngine && ctx.pelletStore) {
-      ctx.reflexionEngine = new ReflexionEngine(ctx.provider, ctx.sessionStore, ctx.pelletStore);
-    }
+    // reflexionEngine no longer auto-created (pelletStore + sessionStore removed)
 
     this.postProcessor = new PostProcessor(
       ctx,
       this.taskQueue,
       ctx.eventBus ?? null,
-      ctx.selfLearningCoordinator ?? null,
-      this.anticipator,
+      null,
+      null,
       ctx.costTracker ?? null,
       innerLifeBridge,
       intelligenceReflexion,
     );
     this.contextBuilder = new ContextBuilder(
       ctx,
-      this.microLearner,
+      null,
       null,
       this.userMentalModel,
     );
@@ -632,22 +573,15 @@ export class OwlGateway {
     // FallbackSequencer needs MemoryDatabase — construct now that ctx.db exists
     this.fallbackSequencer = new FallbackSequencer(ctx.db);
 
-    // Auto-initialize MessageCompressor (Phase 2 — batch summarization every 20 msgs)
-    if (!ctx.compressor && ctx.db) {
-      ctx.compressor = new MessageCompressor(ctx.db, ctx.provider);
-      log.engine.info(
-        "[memory] MessageCompressor initialized (batch size: 20)",
-      );
-    }
+    // MessageCompressor removed — pending MemoryManager wiring for batch summarization
 
     // Auto-initialize SessionService + UserMemoryStore (SQLite-backed session management)
-    if (ctx.db && ctx.compressor && ctx.providerRegistry && !ctx.sessionService) {
+    if (ctx.db && ctx.providerRegistry && !ctx.sessionService) {
       const userMemoryStore = new UserMemoryStore(ctx.db, this.gatewayEventBus);
       ctx.userMemoryStore = userMemoryStore;
 
       ctx.sessionService = new SessionService(
         ctx.db,
-        ctx.compressor,
         userMemoryStore,
         ctx.intelligence,
         ctx.providerRegistry,
@@ -656,10 +590,7 @@ export class OwlGateway {
       );
       log.engine.info("[memory] SessionService initialized (SQLite-backed)");
 
-      // Fire-and-forget JSON→SQLite migration for existing sessions
-      migrateJsonSessionsToSQLite(ctx.sessionStore, ctx.db, ctx.owl.persona.name).catch((err) => {
-        log.engine.warn(`[Migration] JSON→SQLite migration failed: ${err instanceof Error ? err.message : err}`);
-      });
+      // JSON→SQLite migration skipped — sessionStore removed
     }
 
     // ─── OwlBrain (Element 4 — routing coordinator) ───────────────
@@ -667,7 +598,6 @@ export class OwlGateway {
       const userProfileSvc = new UserProfileService(
         ctx.db,
         ctx.goalGraph ?? undefined,
-        ctx.episodicMemory ?? undefined,
         ctx.userMemoryStore ?? undefined,
       );
       ctx.userProfileService = userProfileSvc;
@@ -678,8 +608,7 @@ export class OwlGateway {
         ctx.db,
         ctx.owl.persona.name,
         userProfileSvc,
-        ctx.pelletStore,
-        ctx.digestManager,
+        undefined, // digestManager removed from GatewayContext
       );
       this.owlBrain.setSecretaryRouterGetter(() => this.secretaryRouter);
       ctx.owlBrain = this.owlBrain;
@@ -711,20 +640,16 @@ export class OwlGateway {
       ctx.relationshipContext = new RelationshipContext(
         ctx.db,
         ctx.goalGraph ?? undefined,
-        ctx.episodicMemory ?? undefined,
+        undefined, // episodicMemory removed
         ctx.userMemoryStore ?? undefined,
       );
       log.engine.info("[BackgroundJobRunner + RelationshipContext] Initialized");
     }
 
     // ─── Element 5: ContextPipeline ───────────────────────────────
-    if (!ctx.contextPipeline && ctx.db && ctx.memoryBus && ctx.factStore && ctx.episodicMemory) {
+    if (!ctx.contextPipeline && ctx.db) {
       const userPersonaSynthesizer = new UserPersonaSynthesizer(ctx.provider, ctx.db);
-      const unifiedMemoryRetriever = new UnifiedMemoryRetriever(
-        ctx.memoryBus,
-        ctx.factStore,
-        ctx.episodicMemory,
-      );
+      const unifiedMemoryRetriever = new UnifiedMemoryRetriever(ctx.memoryManager);
       const contextCache = new ContextCache();
       ctx.contextPipeline = createContextPipeline({ userPersonaSynthesizer, unifiedMemoryRetriever, contextCache, db: ctx.db });
       ctx.contextCache = contextCache;
@@ -739,7 +664,6 @@ export class OwlGateway {
       }
 
       // Wire FactInvalidator — marks contradicted facts invalid on fact:extracted
-      // embedFn is injected in Task 15 (intelligence wiring); no-op until then.
       if (ctx.db) {
         const factInvalidator = new FactInvalidator(ctx.db);
         this.gatewayEventBus.on("fact:extracted", (e) => {
@@ -749,8 +673,8 @@ export class OwlGateway {
       }
 
       // Wire SleepTimeConsolidator — surfaces cross-session insights on session:ended
-      if (ctx.db && ctx.provider && ctx.pelletStore) {
-        const sleepConsolidator = new SleepTimeConsolidator(ctx.db, ctx.provider, ctx.pelletStore as any);
+      if (ctx.db && ctx.provider) {
+        const sleepConsolidator = new SleepTimeConsolidator(ctx.db, ctx.provider);
         this.gatewayEventBus.on("session:ended", (e) => {
           sleepConsolidator.onSessionEnded(e.userId, e.sessionId).catch((err) => { log.engine.warn("sleepConsolidator onSessionEnded failed", err); });
         });
@@ -760,7 +684,7 @@ export class OwlGateway {
       log.engine.info("[ContextPipeline] Element 5 pipeline initialized");
       registerCapability("contextPipeline", "FULL");
     } else if (!ctx.contextPipeline) {
-      registerCapability("contextPipeline", "OFFLINE", "missing db/memoryBus/factStore/episodicMemory");
+      registerCapability("contextPipeline", "OFFLINE", "missing db");
     }
 
     // ─── OwlEngine v2 (Element 6a): OwlOrchestrator + ImprovementScheduler ─
@@ -784,15 +708,7 @@ export class OwlGateway {
       log.engine.info("[OwlEngine v2] OwlOrchestrator + ImprovementScheduler initialized");
     }
 
-    // Auto-initialize ConversationDigestManager (L1 working memory) if not provided.
-    // Always enabled — requires no config, no external deps, writes to workspace/memory/digests/.
-    if (!ctx.digestManager) {
-      const workspacePath = ctx.cwd ?? process.cwd();
-      ctx.digestManager = new ConversationDigestManager(workspacePath);
-      log.engine.info(
-        "[memory] ConversationDigestManager initialized (L1 working memory)",
-      );
-    }
+    // ConversationDigestManager removed — digestManager no longer in GatewayContext
 
     // Auto-initialize FeedbackStore using the DB (Phase 3 — no more feedback.json)
     if (!ctx.feedbackStore && ctx.db) {
@@ -840,45 +756,10 @@ export class OwlGateway {
       );
     }).catch((err) => { log.engine.warn("instinct registry load failed", err); });
 
-    // Wire learning orchestrator → cognitive loop gap bridge.
-    // When the orchestrator discovers knowledge gaps from conversations,
-    // forward them to the cognitive loop's synthesis queue so skills get built.
-    if (ctx.learningOrchestrator && ctx.cognitiveLoop) {
-      ctx.learningOrchestrator.setCapabilityGapCallback((gap, description) => {
-        ctx.cognitiveLoop!.enqueueSynthesisTarget(
-          gap,
-          description,
-          "conversation",
-        );
-      });
-    }
+    // learningOrchestrator removed — cognitive loop gap bridge retired
 
     // ─── Epic 5: Memory Modules ─────────────────────────────────────
-    if (ctx.priorContextRetriever) {
-      this.priorContextRetriever = ctx.priorContextRetriever;
-    } else if (ctx.episodicMemory) {
-      this.priorContextRetriever = new PriorContextRetriever(ctx.episodicMemory, ctx.provider);
-    }
-    if (this.priorContextRetriever) {
-      log.engine.info("[memory] PriorContextRetriever initialized");
-    }
-
-    if (ctx.crossSessionStore) {
-      this.crossSessionStore = ctx.crossSessionStore;
-    } else {
-      this.crossSessionStore = new CrossSessionStore(workspacePath, ctx.factStore, ctx.sessionStore);
-      this.crossSessionStore.load().catch((err) => { log.engine.warn("crossSessionStore load failed", err); });
-    }
-    log.engine.info("[memory] CrossSessionStore initialized");
-
-    if (ctx.preferenceRecognizer) {
-      this.preferenceRecognizer = ctx.preferenceRecognizer;
-    } else if (ctx.factStore) {
-      this.preferenceRecognizer = new PreferenceRecognizer(ctx.factStore);
-    }
-    if (this.preferenceRecognizer) {
-      log.engine.info("[memory] PreferenceRecognizer initialized");
-    }
+    // PriorContextRetriever, CrossSessionStore, PreferenceRecognizer retired (modules deleted)
 
     // ─── Epic 6: Parliament Modules ─────────────────────────────────
     if (ctx.parliamentAutoTrigger) {
@@ -914,13 +795,8 @@ export class OwlGateway {
       this.debatePelletGenerator = new DebatePelletGenerator(ctx.provider);
     }
     if (this.debatePelletGenerator) {
-      // Compound debate synthesis into the always-retrieved fact store, not just the pellet archive.
-      if (ctx.factStore && ctx.factExtractor) {
-        this.debatePelletGenerator.attachFactPipeline(ctx.factStore, ctx.factExtractor);
-        log.engine.info("[parliament] DebatePelletGenerator initialized with fact pipeline");
-      } else {
-        log.engine.info("[parliament] DebatePelletGenerator initialized (no fact pipeline — pellet-only)");
-      }
+      // factStore removed — fact pipeline not available
+      log.engine.info("[parliament] DebatePelletGenerator initialized");
     }
 
     if (ctx.routingWirer) {
@@ -942,7 +818,7 @@ export class OwlGateway {
     }
 
     // ─── Epic 1: Learning Modules ─────────────────────────────────
-    this.domainExpertise = new DomainExpertiseTracker();
+    // DomainExpertiseTracker retired (learning/ modules removed)
 
     // ─── Epic 2: Verification Modules ──────────────────────────────
     this.outcomeVerifier = new OutcomeVerifier();
@@ -976,8 +852,7 @@ export class OwlGateway {
       log.engine.warn("[Gateway] specializedRegistry is null — @mention and specialist routing disabled");
     if (!this.multiRoundDebate)
       log.engine.warn("[Gateway] multiRoundDebate is null — Parliament feature disabled");
-    if (!this.ctx.pelletStore)
-      log.engine.warn("[Gateway] pelletStore is null — Pellet memory and Parliament disabled");
+    // pelletStore removed — no longer checked
     if (!this.ctx.owlRegistry)
       log.engine.warn("[Gateway] owlRegistry is null — Multi-owl features disabled");
   }
@@ -1010,7 +885,6 @@ export class OwlGateway {
         this.ctx.owlRegistry,
         this.ctx.provider,
         this.ctx.config,
-        this.ctx.pelletStore!,
         this.ctx.toolRegistry,
         this.ctx.planLedger,
       );
@@ -1176,8 +1050,7 @@ export class OwlGateway {
 
     const session = await this.sessionManager.getOrCreate(message);
 
-    // Check if user is giving feedback on a recent gap-learning response
-    this.postProcessor.absorbGapFeedback(session.messages, session.id);
+    // absorbGapFeedback removed — pelletStore retired
 
     // Check if this message is a YES/NO reply to a pending agent-watch question
     // Must be checked before the feature command handler and before the engine
@@ -1251,17 +1124,12 @@ export class OwlGateway {
 
     // Check for /reset command - clear session history
     if (message.text.trim().toLowerCase() === "/reset") {
-      // Save the current session before clearing
-      await this.sessionSaver.save(session.messages, message.sessionId);
-
       this.wizardSessions.delete(message.sessionId);
       session.messages = [];
       this.attemptLogs.delete(message.sessionId);
       if (this.ctx.sessionService && this.ctx.db) {
         this.ctx.db.messages.deleteSession(message.sessionId);
         this.ctx.sessionService.evictFromCache(message.sessionId);
-      } else {
-        await this.ctx.sessionStore.saveSession(session);
       }
       log.engine.info(`Session reset for ${message.sessionId}`);
       return {
@@ -1440,7 +1308,7 @@ export class OwlGateway {
         (this.ctx.config as any).timezone ??
         Intl.DateTimeFormat().resolvedOptions().timeZone;
       const previousSession = await loadPreviousSession(
-        this.ctx.sessionStore,
+        null as any, // sessionStore removed
         message.sessionId,
       );
       const temporalSnapshot = computeTemporalContext(
@@ -1477,7 +1345,7 @@ export class OwlGateway {
       this.userMentalModel?.update(message.text);
 
       // Act on classification
-      const wc = this.ctx.workingContextManager?.getOrCreate(message.sessionId);
+      const wc = (this.ctx as any).workingContextManager?.getOrCreate(message.sessionId);
       const intentSM = this.ctx.intentStateMachine;
       const activeIntent = intentSM?.getActiveForSession(message.sessionId);
 
@@ -1637,86 +1505,15 @@ export class OwlGateway {
         // Do NOT wipe session.messages — preserve history for back-references.
         // Only clear working context and attempt logs.
         this.attemptLogs.delete(message.sessionId);
-        if (this.ctx.workingContextManager) {
-          this.ctx.workingContextManager.getOrCreate(message.sessionId).clear();
+        if ((this.ctx as any).workingContextManager) {
+          (this.ctx as any).workingContextManager.getOrCreate(message.sessionId).clear();
         }
       }
     }
 
     // ─── Episodic Memory: Segment Extraction (Phase 3) ──────────
-    // When a gap or topic switch is detected, extract episodes from completed segments.
-    // Also trigger when session has grown significantly since last extraction (Step 4).
-    // Fire-and-forget — don't block the response.
-    const lastExtractedAt =
-      (session.metadata as any).episodicLastExtractedAt ?? 0;
-    const messagesSinceLastExtraction =
-      lastExtractedAt === 0
-        ? session.messages.length
-        : session.messages.length -
-          ((session.metadata as any).episodicExtractedUpTo ?? 0);
-
-    const shouldExtract =
-      this.ctx.episodicMemory &&
-      session.messages.length >= 4 &&
-      ((continuityResult &&
-        ["TOPIC_SWITCH", "FRESH_START"].includes(
-          continuityResult.classification,
-        )) ||
-        messagesSinceLastExtraction >= 6);
-
-    if (shouldExtract) {
-      llmTaskQueue.enqueue("episode-extract", async () => {
-        try {
-            const extractedUpTo =
-              (session.metadata as any).episodicExtractedUpTo ?? 0;
-            const segments = getUnextractedSegments(session, extractedUpTo);
-
-            // For short sessions with no completed segments, extract from recent messages
-            const doShortSessionExtract =
-              segments.length === 0 &&
-              lastExtractedAt === 0 &&
-              session.messages.length >= 4;
-
-            if (doShortSessionExtract) {
-              const recentMessages = session.messages.slice(
-                Math.max(0, session.messages.length - 8),
-              );
-              await this.ctx.episodicMemory!.extractFromMessages(
-                recentMessages,
-                session.id,
-                this.ctx.owl.persona.name,
-                this.ctx.provider,
-              );
-              (session.metadata as any).episodicLastExtractedAt = Date.now();
-            } else {
-              for (const segment of segments.slice(0, 2)) {
-                // Max 2 segments per trigger
-                const segMessages = getSegmentMessages(session, segment);
-                if (segMessages.length < 3) continue;
-
-                await this.ctx.episodicMemory!.extractFromMessages(
-                  segMessages,
-                  session.id,
-                  this.ctx.owl.persona.name,
-                  this.ctx.provider,
-                );
-
-                // Track extraction progress in session metadata
-                (session.metadata as any).episodicExtractedUpTo =
-                  segment.endIndex + 1;
-              }
-            }
-
-            if (segments.length > 0 || doShortSessionExtract) {
-              await this.ctx.sessionStore.saveSession(session);
-            }
-          } catch (err) {
-            log.engine.warn(
-              `[EpisodicMemory] Segment extraction failed: ${err instanceof Error ? err.message : err}`,
-            );
-          }
-      }, "low");
-    }
+    // Episodic memory extraction — removed (episodicMemory deleted in memory refactor).
+    // Sessions are persisted via SessionService (SQLite); episodic extraction is no-op.
 
     // Abandon stale intents (no activity in 30+ minutes)
     if (this.ctx.intentStateMachine) {
@@ -1730,8 +1527,8 @@ export class OwlGateway {
     }
 
     // Populate working context with current message
-    if (this.ctx.workingContextManager) {
-      const wc = this.ctx.workingContextManager.getOrCreate(message.sessionId);
+    if ((this.ctx as any).workingContextManager) {
+      const wc = (this.ctx as any).workingContextManager.getOrCreate(message.sessionId);
       wc.setLastUserMessage(message.text);
     }
 
@@ -1762,64 +1559,8 @@ export class OwlGateway {
     let dynamicSkillsContext = "";
     let injectedSkillNames: string[] = [];
 
-    // ─── Epic 5: Memory Module Pre-Engine Injection ─────────────
-    // Inject prior context, preferences, and cross-session data BEFORE engine runs.
-    if (this.priorContextRetriever || this.preferenceRecognizer || this.crossSessionStore) {
-      const memoryContextParts: string[] = [];
-
-      // PriorContextRetriever — inject context from past conversations on temporal references
-      if (this.priorContextRetriever && this.priorContextRetriever.hasTemporalReference(message.text)) {
-        try {
-          const priorCtx = await this.priorContextRetriever.retrieve({
-            currentMessage: message.text,
-            sessionId: session.id,
-            owlName: this.ctx.owl.persona.name,
-          });
-          if (priorCtx.hasRelevantContext) {
-            const ctxPrompt = await this.priorContextRetriever.buildContextPrompt({
-              currentMessage: message.text,
-              sessionId: session.id,
-              owlName: this.ctx.owl.persona.name,
-            });
-            if (ctxPrompt) {
-              memoryContextParts.push(`\n[PRIOR CONTEXT]\n${ctxPrompt}\n`);
-            }
-          }
-        } catch (err) {
-          log.engine.debug(`[Memory] PriorContext retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // PreferenceRecognizer — inject preferences recognized from PREVIOUS messages.
-      // recognizeFromMessage (LLM call) is deferred to post-response via llmTaskQueue
-      // so it does not block the hot path. Recognized preferences apply to NEXT turn.
-      if (this.preferenceRecognizer) {
-        try {
-          const prefCtx = this.preferenceRecognizer.buildContextString(0.5);
-          if (prefCtx) {
-            memoryContextParts.push(`\n${prefCtx}\n`);
-          }
-        } catch (err) {
-          log.engine.debug(`[Memory] Preference context build failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // CrossSessionStore — inject active commitments and critical facts
-      if (this.crossSessionStore) {
-        try {
-          const crossCtx = await this.crossSessionStore.buildContextString();
-          if (crossCtx) {
-            memoryContextParts.push(`\n[CROSS-SESSION STATE]\n${crossCtx}\n`);
-          }
-        } catch (err) {
-          log.engine.debug(`[Memory] CrossSessionStore build failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      if (memoryContextParts.length > 0) {
-        memoryContextPrefix = memoryContextParts.join("\n") + "\n";
-      }
-    }
+    // Epic 5 memory modules (PriorContextRetriever, PreferenceRecognizer, CrossSessionStore)
+    // removed in memory refactor — pre-engine injection is handled by ContextPipeline.
 
     // Skip skill routing on short or conversational messages.
     // The IntentRouter's 5-tier pipeline (BM25 + semantic re-rank + LLM call)
@@ -1948,7 +1689,7 @@ export class OwlGateway {
         try {
           const brief = await this.sessionBriefGenerator!.generate({
             owlName: this.ctx.owl.persona.name,
-            episodicMemory: this.ctx.episodicMemory,
+            episodicMemory: undefined,
             groundState: this.ctx.groundState,
             innerLife: this.ctx.innerLife,
             userId: message.userId,
@@ -2040,7 +1781,7 @@ export class OwlGateway {
     // If so, inject a root-cause-finding directive into the message text.
     const loopResult = await this.loopDetector.detect(
       message.text,
-      this.ctx.episodicMemory,
+      undefined,
       message.userId,
     );
     if (loopResult.isLoop && loopResult.systemPromptHint) {
@@ -2379,8 +2120,8 @@ export class OwlGateway {
     });
 
     // Update working context with owl's response
-    if (this.ctx.workingContextManager) {
-      const wc = this.ctx.workingContextManager.getOrCreate(message.sessionId);
+    if ((this.ctx as any).workingContextManager) {
+      const wc = (this.ctx as any).workingContextManager.getOrCreate(message.sessionId);
       wc.setLastOwlResponse(response.content.slice(0, 200));
     }
 
@@ -2412,42 +2153,7 @@ export class OwlGateway {
       }
     }
 
-    // ─── Phase 3: PreferenceEnforcer ──────────────────────────────
-    // 1. Capture explicit preference declarations from this user message.
-    // 2. Infer implicit signals (message length, code questions, etc.).
-    // 3. Enforce preferences on the response (e.g. trim if conciseness high-confidence).
-    if (this.ctx.preferenceEnforcer && this.ctx.preferenceModel) {
-      llmTaskQueue.enqueue("preference-capture", async () => {
-        try {
-          await this.ctx.preferenceEnforcer!.captureExplicitPreferences(
-            message.text,
-            this.ctx.preferenceModel!,
-          );
-        } catch (err) {
-          log.engine.warn("preference-capture failed", err instanceof Error ? err : new Error(String(err)));
-        }
-      }, "low");
-      llmTaskQueue.enqueue("preference-infer", async () => {
-        try {
-          await this.ctx.preferenceEnforcer!.inferImplicitSignals(
-            message.text,
-            response.content,
-            this.ctx.preferenceModel!,
-          );
-        } catch (err) {
-          log.engine.warn("preference-infer failed", err instanceof Error ? err : new Error(String(err)));
-        }
-      }, "low");
-      try {
-        response.content = await this.ctx.preferenceEnforcer.enforceOnResponse(
-          response.content,
-          message.text,
-          this.ctx.preferenceModel,
-        );
-      } catch (err) {
-        log.engine.warn("preference enforcement failed, using original response", err);
-      }
-    }
+    // PreferenceEnforcer removed in memory refactor — preference enforcement is a no-op.
 
     // Notify background orchestrator of user activity (delivers digest if returning after absence)
     if (this.ctx.backgroundOrchestrator) {
@@ -2473,18 +2179,7 @@ export class OwlGateway {
     // Track intent state based on this exchange (fire-and-forget)
     this.trackIntent(message.sessionId, message.text, response.content);
 
-    // Defer preference recognition to post-response — runs asynchronously via llmTaskQueue
-    if (this.preferenceRecognizer) {
-      const pr = this.preferenceRecognizer;
-      const msgText = message.text;
-      llmTaskQueue.enqueue("pref-recognize", async () => {
-        try {
-          await pr.recognizeFromMessage(msgText);
-        } catch (err) {
-          log.engine.warn("pref-recognize deferred task failed", err instanceof Error ? err : new Error(String(err)));
-        }
-      }, "low");
-    }
+    // preferenceRecognizer removed in memory refactor — no-op here.
 
     // Persist intent state (fire-and-forget)
     this.ctx.intentStateMachine?.save().catch((err) => { log.engine.warn("intentStateMachine save failed", err); });
@@ -2566,17 +2261,7 @@ export class OwlGateway {
       }, "low");
     }
 
-    // ─── Epic 1: Learning Wire (recordOutcome) ─────────────────────
-    // ApproachLibrary.recordOutcome is already called in runtime.ts via context.db.approachLibrary
-    // Record domain expertise on tool outcomes (fire-and-forget)
-    if (this.domainExpertise && response.toolsUsed?.length) {
-      const domain = message.text.toLowerCase().slice(0, 50);
-      this.runBackground("domain-expertise", (async () => {
-        for (const _tool of response.toolsUsed ?? []) {
-          this.domainExpertise!.recordToolExecution(domain, (response as any)?.success !== false);
-        }
-      })());
-    }
+    // domainExpertise.recordToolExecution removed (DomainExpertiseTracker deleted in refactor).
 
     // ─── Task commitment detection ──────────────────────────────
     // sync — detectAndCreate return value intentionally discarded
@@ -2589,42 +2274,25 @@ export class OwlGateway {
       );
     }
 
-    // ─── Pellet flywheel hooks (fire-and-forget, non-fatal) ──────────────
-    const _pelletIds = this.ctx.contextPipeline?.lastRetrievedPelletIds ?? [];
-    if (_pelletIds.length > 0) {
-      llmTaskQueue.enqueue("pellet-flywheel", async () => {
-        let _pelletVerdict: "ADVANCES" | "PARTIAL" | "BLOCKED" | "NEUTRAL" = "NEUTRAL";
-
-        if (this.goalVerifier && engineCtx.activeSubGoal) {
+    // Pellet flywheel hooks removed — pelletStore deleted in memory refactor.
+    // Goal verification still runs if goalVerifier is present.
+    if (this.goalVerifier && engineCtx.activeSubGoal) {
+      const _pelletIds = this.ctx.contextPipeline?.lastRetrievedPelletIds ?? [];
+      if (_pelletIds.length > 0) {
+        llmTaskQueue.enqueue("goal-verify", async () => {
           try {
-            const _vr = await this.goalVerifier.verify({
+            await this.goalVerifier!.verify({
               toolName: "context_retrieval",
               toolArgs: {},
               toolResult: response.content.slice(0, 500),
-              subGoal: engineCtx.activeSubGoal,
+              subGoal: engineCtx.activeSubGoal!,
               userMessage: message.text,
             });
-            _pelletVerdict = _vr?.verdict ?? "NEUTRAL";
           } catch (err) {
             log.engine.warn("pellet goal verification failed", err);
           }
-        }
-
-        // Hook 4: feed verdict back into retrieved pellets
-        if (_pelletVerdict !== "NEUTRAL" && this.ctx.pelletStore) {
-          await this.ctx.pelletStore.recordOutcome(_pelletIds, _pelletVerdict);
-        }
-
-        // Hook 5: reinforce DNA of owls who generated helpful pellets
-        if (_pelletVerdict === "ADVANCES" && this.ctx.owlRegistry && this.ctx.pelletStore) {
-          const retrieved = await Promise.all(_pelletIds.map((id) => this.ctx.pelletStore!.get(id)));
-          const owlNames = [...new Set(retrieved.flatMap((p) => p?.owls ?? []).filter(Boolean))];
-          const topicCategory = retrieved.find(Boolean)?.tags?.[0] ?? "general";
-          if (owlNames.length > 0) {
-            await updatePelletGeneratorDNA(owlNames, topicCategory, this.ctx.owlRegistry);
-          }
-        }
-      }, "low");
+        }, "low");
+      }
     }
 
     // ─── Pre-delivery gate (Defect 2 fix) ──────────────────────────────
@@ -2670,25 +2338,7 @@ export class OwlGateway {
 
     const messages = cache.session.messages;
 
-    // Clear L1 digest — session is ending, next session starts fresh
-    this.ctx.digestManager?.delete(sessionId).catch((err) => { log.engine.warn("digestManager delete failed", err); });
-
-    // Episodic memory extraction — extract episode from full session on explicit end
-    if (this.ctx.episodicMemory && messages.length >= 4) {
-      try {
-        await this.ctx.episodicMemory.extractFromMessages(
-          messages,
-          sessionId,
-          this.ctx.owl.persona.name,
-          this.ctx.provider,
-        );
-        log.engine.info("[endSession:episodic] Episode extracted");
-      } catch (err) {
-        log.engine.warn(
-          `[endSession:episodic] Extraction failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
+    // digestManager and episodicMemory removed in memory refactor — no-op here.
 
     // Async fact extraction → facts table (fire-and-forget)
     if (this.ctx.sessionService && messages.length >= 4) {
@@ -2709,21 +2359,7 @@ export class OwlGateway {
     // The MemoryConsolidator wrote raw text to memory.md which was injected unsearchably.
     // FactStore.add() + PostProcessor "victory lap" cover the same ground with structure.
 
-    // Reactive learning (new orchestrator if available, fallback to legacy)
-    if (this.ctx.learningOrchestrator) {
-      try {
-        const cycle =
-          await this.ctx.learningOrchestrator.processConversation(messages);
-        log.engine.info(
-          `[endSession:learning] ✓ orchestrator completed — ${cycle.topicsPrioritized} topics, ` +
-            `${cycle.synthesisReport?.pelletsCreated ?? 0} pellets`,
-        );
-      } catch (err) {
-        log.engine.warn(
-          `[endSession:learning] ✗ orchestrator failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
+    // learningOrchestrator removed in learning/ refactor — no-op here.
 
     // ReflexionEngine consolidation — retired (Phase 3 L3 consolidation).
     // MemoryReflexionEngine is a duplicate of FactStore: structured entries, keyword search,
@@ -2781,35 +2417,14 @@ export class OwlGateway {
       }
     }
 
-    // Pattern analysis — analyze full session for behavioral patterns
-    if (this.ctx.patternAnalyzer) {
-      try {
-        const sessions = await this.ctx.sessionStore.listSessions();
-        if (sessions.length > 0) {
-          await this.ctx.patternAnalyzer.analyzeHistory(sessions as any[]);
-          await this.ctx.patternAnalyzer.save();
-          log.engine.info("[endSession:patterns] ✓ analyzed");
-        }
-      } catch (err) {
-        log.engine.warn(
-          `[endSession:patterns] ✗ failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
+    // Pattern analysis — sessionStore removed; skip session listing here.
 
     // Update user mental model baseline on session end
     if (this.userMentalModel) {
       this.userMentalModel.endSession();
     }
 
-    // Save micro-learner profile on session end
-    if (this.microLearner) {
-      await this.microLearner.save().catch((err) => {
-        log.engine.warn(
-          `[endSession] Micro-learner save failed: ${err instanceof Error ? err.message : err}`,
-        );
-      });
-    }
+    // microLearner removed in learning/ refactor — no-op here.
 
     // Persist all feature module state
     const saveResults = await Promise.allSettled([
@@ -2923,40 +2538,10 @@ export class OwlGateway {
     }
 
     if (signal === "like") {
-      // User confirmed this worked — write a high-confidence skill fact
-      if (this.ctx.factStore && toolsUsed.length > 0) {
-        await this.ctx.factStore
-          .add({
-            userId,
-            fact: `User confirmed: I successfully handled "${userMessage}" using [${toolsUsed.join(", ")}]`,
-            entity: toolsUsed[0],
-            category: "skill",
-            confidence: 0.95,
-            source: "confirmed",
-            expiresAt: new Date(
-              Date.now() + 180 * 24 * 60 * 60 * 1000,
-            ).toISOString(), // 180 days
-          })
-          .catch((err) => { log.engine.warn("factStore add (like) failed", err); });
-      }
+      // factStore removed in memory refactor — like signal recorded in log only.
       log.engine.info(`[Feedback] 👍 confirmed for session ${sessionId}`);
     } else {
-      // User rejected this response — record it and queue for re-synthesis
-      if (this.ctx.factStore) {
-        await this.ctx.factStore
-          .add({
-            userId,
-            fact: `User rejected my response to: "${userMessage}". My approach did not satisfy them.`,
-            entity: toolsUsed[0] ?? "unknown",
-            category: "skill",
-            confidence: 0.9,
-            source: "confirmed",
-            expiresAt: new Date(
-              Date.now() + 90 * 24 * 60 * 60 * 1000,
-            ).toISOString(),
-          })
-          .catch((err) => { log.engine.warn("factStore add (dislike) failed", err); });
-      }
+      // factStore removed in memory refactor — dislike signal queued for re-synthesis only.
 
       // Queue the user's request for background synthesis — find a better approach
       this.ctx.cognitiveLoop?.enqueueSynthesisTarget(
@@ -3103,7 +2688,7 @@ export class OwlGateway {
     return this.ctx.db;
   }
   getPelletStore() {
-    return this.ctx.pelletStore;
+    return undefined;
   }
   getEventBus() {
     return this.ctx.eventBus;
@@ -3124,19 +2709,13 @@ export class OwlGateway {
     return this.ctx.mcpManager;
   }
   getMemoryRepo() {
-    return this.ctx.memoryRepo;
+    return undefined;
   }
-  getUnifiedMemory(): UnifiedMemory | undefined {
-    if (!this.ctx.unifiedMemory && this.ctx.memoryRepo) {
-      this.ctx.unifiedMemory = new UnifiedMemory(
-        this.ctx.memoryRepo,
-        this.ctx.db?.rawDb,
-      );
-    }
-    return this.ctx.unifiedMemory;
+  getUnifiedMemory() {
+    return undefined;
   }
   getMemoryWriter() {
-    return this.ctx.memoryWriter;
+    return undefined;
   }
   getEvolution() {
     return this.ctx.evolution;
@@ -3188,7 +2767,7 @@ export class OwlGateway {
   }
 
   getLearningOrchestrator() {
-    return this.ctx.learningOrchestrator;
+    return undefined;
   }
   getCapabilityLedger() {
     return this.ctx.capabilityLedger;
@@ -3212,10 +2791,10 @@ export class OwlGateway {
     return this.ctx.proactiveLoop;
   }
   getSessionStore() {
-    return this.ctx.sessionStore;
+    return undefined;
   }
   getEpisodicMemory() {
-    return this.ctx.episodicMemory;
+    return undefined;
   }
   getKnowledgeCouncil() {
     return this.ctx.knowledgeCouncil;
@@ -3361,159 +2940,11 @@ export class OwlGateway {
    * instead of letting the model answer the "how to" question.
    */
   private async handleLearnRequest(
-    message: GatewayMessage,
-    callbacks: GatewayCallbacks,
+    _message: GatewayMessage,
+    _callbacks: GatewayCallbacks,
   ): Promise<GatewayResponse | null> {
-    if (!this.ctx.learningOrchestrator) return null;
-
-    const text = message.text.trim();
-
-    // /learn <topic> — explicit command
-    const slashLearn = text.match(/^\/learn\s+(.+)$/i);
-    if (slashLearn) {
-      return this.executeLearnRequest(slashLearn[1].trim(), callbacks);
-    }
-
-    // Natural language patterns:
-    //   "can you learn how to X", "learn how to X", "learn to X",
-    //   "study X", "research X for me", "go learn about X",
-    //   "teach yourself X", "figure out how to X"
-    const nlPatterns = [
-      /^(?:can you |please |go )?\s*learn\s+(?:how\s+)?(?:to\s+)?(.+?)[\s?.!]*$/i,
-      /^(?:can you |please )?\s*study\s+(.+?)[\s?.!]*$/i,
-      /^(?:can you |please )?\s*research\s+(.+?)(?:\s+for me)?[\s?.!]*$/i,
-      /^(?:can you |please )?\s*teach yourself\s+(.+?)[\s?.!]*$/i,
-      /^(?:can you |please )?\s*figure out\s+(?:how to\s+)?(.+?)[\s?.!]*$/i,
-    ];
-
-    for (const pattern of nlPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1].length > 3) {
-        return this.executeLearnRequest(match[1].trim(), callbacks);
-      }
-    }
-
+    // learningOrchestrator and learning/ modules removed in refactor — /learn is a no-op.
     return null;
-  }
-
-  private async executeLearnRequest(
-    topic: string,
-    callbacks: GatewayCallbacks,
-  ): Promise<GatewayResponse> {
-    const owl = this.ctx.owl;
-
-    await callbacks.onProgress?.(`🧠 Starting self-study on: **${topic}**`);
-    await callbacks.onProgress?.(
-      `📚 Researching and creating knowledge pellets...`,
-    );
-
-    try {
-      // Use new LearningOrchestrator if available (TopicFusion + multi-pipeline synthesis)
-      if (this.ctx.learningOrchestrator) {
-        const cycle = await this.ctx.learningOrchestrator.learnTopic(
-          topic,
-          true,
-        );
-
-        if (
-          !cycle.success ||
-          (cycle.synthesisReport?.pelletsCreated ?? 0) === 0
-        ) {
-          return {
-            content:
-              `${owl.persona.emoji} I wasn't able to produce any useful knowledge about **${topic}**. ` +
-              `This might be because the topic is too broad or my research didn't yield actionable results.\n\n` +
-              `Try being more specific — e.g. instead of "emails", try "sending emails via SMTP in Node.js".`,
-            owlName: owl.persona.name,
-            owlEmoji: owl.persona.emoji,
-            toolsUsed: [],
-          };
-        }
-
-        const report = cycle.synthesisReport!;
-        const pipelineSummary = Object.entries(report.byPipeline)
-          .map(([p, n]) => `${p}: ${n}`)
-          .join(", ");
-
-        await callbacks.onProgress?.(`✅ Self-study complete!`);
-
-        return {
-          content:
-            `${owl.persona.emoji} I've studied **${topic}** and created ${report.pelletsCreated} knowledge pellet(s):\n\n` +
-            `  - Pipelines used: ${pipelineSummary}\n` +
-            `  - Duration: ${Math.round(report.durationMs / 1000)}s\n\n` +
-            `This knowledge is now saved and will be automatically used in future conversations about this topic.`,
-          owlName: owl.persona.name,
-          owlEmoji: owl.persona.emoji,
-          toolsUsed: [],
-        };
-      }
-
-      // Fallback to legacy KnowledgeResearcher
-      const { KnowledgeResearcher } = await import("../learning/researcher.js");
-      const { KnowledgeGraphManager } =
-        await import("../learning/knowledge-graph.js");
-
-      const graphManager = new KnowledgeGraphManager(
-        this.ctx.cwd ?? process.cwd(),
-      );
-      await graphManager.load();
-
-      const researcher = new KnowledgeResearcher(
-        this.ctx.provider,
-        owl,
-        this.ctx.config,
-        this.ctx.pelletStore!,
-        graphManager,
-      );
-
-      const result = await researcher.research(topic);
-      await graphManager.save();
-
-      if (result.pellets.length === 0) {
-        return {
-          content:
-            `${owl.persona.emoji} I wasn't able to produce any useful knowledge about **${topic}**. ` +
-            `This might be because the topic is too broad or my research didn't yield actionable results.\n\n` +
-            `Try being more specific — e.g. instead of "emails", try "sending emails via SMTP in Node.js".`,
-          owlName: owl.persona.name,
-          owlEmoji: owl.persona.emoji,
-          toolsUsed: [],
-        };
-      }
-
-      const pelletSummary = result.pellets
-        .map((p) => `  - **${p.title}**`)
-        .join("\n");
-
-      const relatedSummary =
-        result.relatedTopics.length > 0
-          ? `\n\n**Related topics discovered:** ${result.relatedTopics.join(", ")}`
-          : "";
-
-      await callbacks.onProgress?.(`✅ Self-study complete!`);
-
-      return {
-        content:
-          `${owl.persona.emoji} I've studied **${topic}** and created ${result.pellets.length} knowledge pellet(s):\n\n` +
-          `${pelletSummary}${relatedSummary}\n\n` +
-          `This knowledge is now saved and will be automatically used in future conversations about this topic.`,
-        owlName: owl.persona.name,
-        owlEmoji: owl.persona.emoji,
-        toolsUsed: [],
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.evolution.error(`Learn request failed: ${msg}`);
-      return {
-        content:
-          `${owl.persona.emoji} I tried to study **${topic}** but ran into an issue: ${msg}\n\n` +
-          `I'll add it to my study queue for later.`,
-        owlName: owl.persona.name,
-        owlEmoji: owl.persona.emoji,
-        toolsUsed: [],
-      };
-    }
   }
 
   // ─── Private: Capability Gap ─────────────────────────────────
@@ -3623,10 +3054,7 @@ export class OwlGateway {
         finalResponse.content = `${gapLearning.userFacingNote}\n\n---\n\n${finalResponse.content}`;
       }
 
-      // Register pellet ID so the next user message can be absorbed as feedback
-      if (gapLearning?.pelletId) {
-        this.postProcessor.setLastGapPelletId(gapLearning.pelletId);
-      }
+      // pelletId tracking removed (pelletStore deleted in memory refactor).
 
       return finalResponse;
     } catch (err) {
@@ -3751,23 +3179,29 @@ export class OwlGateway {
     channelId: string,
     userId: string,
   ): Promise<void> {
-    if (!files.length) return;
+    log.engine.debug("[deliverPendingFiles] entry", { fileCount: files.length, channelId, userId });
+    if (!files.length) {
+      log.engine.debug("[deliverPendingFiles] no files queued — skip");
+      return;
+    }
     const adapter = this.adapters.get(channelId);
-    if (!adapter?.deliverFile) return;
+    if (!adapter?.deliverFile) {
+      log.engine.warn("[deliverPendingFiles] adapter missing or no deliverFile support", { channelId, fileCount: files.length });
+      return;
+    }
     const owl = this.getOwl();
     for (const file of files) {
-      log.engine.debug(`[${channelId}] deliverPendingFiles: delivering`, { userId, path: file.path.slice(0, 200) });
+      log.engine.info("[deliverPendingFiles] delivering file", { userId, channelId, path: file.path.slice(0, 200), hasCaption: !!file.caption });
       try {
         await adapter.deliverFile(userId, file.path, file.caption);
-        log.engine.debug(`[${channelId}] deliverPendingFiles: delivered`, { userId, path: file.path.slice(0, 200) });
+        log.engine.info("[deliverPendingFiles] file delivered", { userId, channelId, path: file.path.slice(0, 200) });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         log.engine.error(
-          `[${channelId}] File delivery to ${userId} failed`,
+          "[deliverPendingFiles] file delivery failed",
           err as Error,
-          { path: file.path.slice(0, 200) },
+          { channelId, userId, path: file.path.slice(0, 200) },
         );
-        // Notify the user so the failure is visible — don't silently swallow it.
         if (adapter.sendToUser) {
           await adapter.sendToUser(userId, {
             content: `⚠️ File delivery failed: ${errMsg}`,
@@ -3775,11 +3209,12 @@ export class OwlGateway {
             owlEmoji: owl.persona.emoji,
             toolsUsed: [],
           }).catch((notifyErr) => {
-            log.engine.warn(`[${channelId}] deliverPendingFiles: user notify also failed`, { err: (notifyErr as Error).message });
+            log.engine.warn("[deliverPendingFiles] user notify also failed", { err: (notifyErr as Error).message });
           });
         }
       }
     }
+    log.engine.debug("[deliverPendingFiles] exit", { delivered: files.length });
   }
 
   // ─── Private: Post-processing ────────────────────────────────
@@ -3848,23 +3283,9 @@ export class OwlGateway {
         .find((m) => m.role === "user");
       if (lastUserMsg?.content) {
         const innerLifeRef = this.ctx.innerLife;
-        const digestRef = this.ctx.digestManager;
-        const sidRef = sessionId;
         const userMsgText =
           typeof lastUserMsg.content === "string" ? lastUserMsg.content : "";
         innerLifeRef.thinkInBackground(userMsgText, messages)
-          .then(async () => {
-            if (!digestRef || !sidRef) return;
-            const monologue = innerLifeRef.getLastMonologue?.();
-            if (monologue) {
-              await digestRef.setLastMonologue(sidRef, {
-                thoughts: monologue.thoughts,
-                responseIntent: monologue.responseIntent,
-                moodCurrent: monologue.moodShift?.current,
-                storedAt: new Date().toISOString(),
-              });
-            }
-          })
           .catch(() => { /* non-critical */ });
       }
     }

@@ -8,11 +8,10 @@
  * not broken.
  */
 
-import type { Session } from "../../memory/store.js";
 import type { GatewayContext, GatewayCallbacks } from "../types.js";
 import type { EngineContext } from "../../engine/runtime.js";
-import type { MicroLearner } from "../../learning/micro-learner.js";
 import type { SkillContextInjector } from "../../skills/injector.js";
+import type { ChatMessage } from "../../providers/base.js";
 import type { AttemptLog } from "../../memory/attempt-log.js";
 import type { UserMentalModel } from "../../cognition/user-mental-model.js";
 import { computeTriage } from "../../context/triage.js";
@@ -23,13 +22,13 @@ export class ContextBuilder {
   constructor(
     private ctx: GatewayContext,
     // Retained for API compatibility with core.ts — unused in thin adapter path
-    _microLearner: MicroLearner | null,
+    _microLearner: unknown,
     _skillInjector: SkillContextInjector | null,
     _userMentalModel: UserMentalModel | null = null,
   ) {}
 
   async build(
-    session: Session,
+    session: { id: string; messages: ChatMessage[] },
     callbacks: GatewayCallbacks,
     skillsContext: string = "",
     isolatedTask: boolean = false,
@@ -68,9 +67,8 @@ export class ContextBuilder {
 
     const deps = {
       intelligenceRouter: this.ctx.intelligence,
-      pelletStore: this.ctx.pelletStore,
-      memoryBus: this.ctx.memoryBus,
-      sessionStore: this.ctx.sessionStore,
+      // sessionStore removed — ContextPipeline layers that need it will receive undefined
+      sessionStore: undefined as any,
       eventBus: this.ctx.eventBus,
       config: this.ctx.config,
       knowledgeGraph: this.ctx.knowledgeGraph,
@@ -79,7 +77,8 @@ export class ContextBuilder {
 
     const { output, trace } = await pipeline.run(
       {
-        session,
+        // Cast to satisfy Session type — metadata is added at runtime by SessionService
+        session: session as any,
         callbacks,
         channelId,
         userId,
@@ -106,7 +105,7 @@ export class ContextBuilder {
   }
 
   private baseContext(
-    session: Session,
+    session: { id: string; messages: ChatMessage[] },
     callbacks: GatewayCallbacks,
     isolatedTask: boolean,
     attemptLog?: AttemptLog,
@@ -119,7 +118,6 @@ export class ContextBuilder {
       sessionHistory: session.messages,
       config: this.ctx.config,
       toolRegistry: this.ctx.toolRegistry,
-      pelletStore: this.ctx.pelletStore,
       capabilityLedger: this.ctx.capabilityLedger,
       cwd: this.ctx.cwd,
       skillsRegistry: this.ctx.skillsLoader?.getRegistry(),
@@ -137,10 +135,6 @@ export class ContextBuilder {
       questManager: this.ctx.questManager,
       capsuleManager: this.ctx.capsuleManager,
       innerLife: this.ctx.innerLife,
-      factStore: this.ctx.factStore,
-      memoryRepo: this.ctx.memoryRepo,
-      episodicMemory: this.ctx.episodicMemory,
-      unifiedMemory: this.ctx.unifiedMemory,
       userId,
       db: this.ctx.db,
       sessionId: session.id,
@@ -151,6 +145,7 @@ export class ContextBuilder {
       relationshipContext: this.ctx.relationshipContext,
       intelligence: this.ctx.intelligence,
       synthesizedDir: this.ctx.synthesizedDir,
+      memoryManager: this.ctx.memoryManager,
     };
   }
 }

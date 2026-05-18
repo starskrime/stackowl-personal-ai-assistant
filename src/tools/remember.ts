@@ -15,8 +15,6 @@
  */
 
 import type { ToolImplementation, ToolContext } from "./registry.js";
-import type { FactCategory } from "../memory/fact-store.js";
-import type { MemoryKind, MemoryDomain } from "../memory/unified.js";
 import { log } from "../logger.js";
 
 export class RememberTool implements ToolImplementation {
@@ -67,9 +65,9 @@ export class RememberTool implements ToolImplementation {
     const content = args.content as string;
     if (!content?.trim()) return "Error: content is required.";
 
-    const category = ((args.category as string) ?? "skill") as FactCategory;
+    const category = ((args.category as string) ?? "skill");
 
-    const kindMap: Record<string, MemoryKind> = {
+    const kindMap: Record<string, string> = {
       skill: "procedural",
       habit: "procedural",
       preference: "semantic",
@@ -92,7 +90,7 @@ export class RememberTool implements ToolImplementation {
         await unifiedMemory.remember({
           content,
           kind,
-          domain: category as MemoryDomain,
+          domain: category,
           scope: "user",
           source: "inferred",
           confidence: 0.9,

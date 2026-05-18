@@ -15,7 +15,6 @@ import type { StackOwlConfig } from "../config/loader.js";
 import { ToolPruner } from "../evolution/pruner.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { CapabilityLedger } from "../evolution/ledger.js";
-import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { PreferenceStore } from "../preferences/store.js";
 import type { ReflexionEngine } from "../evolution/reflexion.js";
 import type { SkillsRegistry } from "../skills/registry.js";
@@ -52,8 +51,6 @@ export interface PingContext {
   userId?: string;
   /** Persistent job queue — replaces the 8 independent setInterval timers */
   jobQueue?: import("./job-queue.js").ProactiveJobQueue;
-  /** Unified learning orchestrator (TopicFusion + Synthesis + Reflexion) */
-  learningOrchestrator?: LearningOrchestrator;
   /** User preference store — used to check dynamic quiet hours */
   preferenceStore?: PreferenceStore;
   /** Reflexion engine for extracting rules from past failures */
@@ -64,8 +61,6 @@ export interface PingContext {
   skillsDir?: string;
   /** Session store used to read conversation history */
   sessionStore?: SessionStore;
-  /** Episodic memory — used to give proactive messages cross-session context */
-  episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
   /** Knowledge Council for automated group learning sessions */
   knowledgeCouncil?: import("../parliament/knowledge-council.js").KnowledgeCouncil;
   /** Owl registry for council sessions */
@@ -130,8 +125,7 @@ export class ProactivePinger {
   private lastPingTime: number = 0;
   private lastMorningBriefDate: string = "";
   private lastConsolidationDate: string = "";
-  private lastSelfStudyDate: string = "";
-  // lastDreamTime and lastSkillEvolutionDate removed — proactive learning disabled
+  // lastSelfStudyDate, lastDreamTime, lastSkillEvolutionDate removed — proactive learning disabled
   private unansweredPings: number = 0;
   private lastDeliveryId: string = "";
   private currentJobId: string = "";
@@ -345,46 +339,8 @@ export class ProactivePinger {
         await this.sendCheckIn();
         break;
       case "memory_consolidation": {
-        // Step 1: Episodic decay sweep — compress/archive old memories (like NREM sleep)
-        if (this.context.episodicMemory) {
-          const decay = this.context.episodicMemory.runDecay();
-          log.engine.info(
-            `[ProactivePinger] memory_consolidation: decay sweep — compressed ${decay.compressed}, archived ${decay.archived}`,
-          );
-        }
-
-        // Step 2: Cross-session synthesis — feed top episodic themes into learning orchestrator
-        // so they become durable semantic pellets (hippocampal → cortical transfer)
-        if (this.context.learningOrchestrator && this.context.episodicMemory) {
-          const threadStrings = this.context.episodicMemory.getThematicThreads(5);
-          const themes = threadStrings
-            .map((t) => {
-              const m = t.match(/^\[Topic: ([^\]]+)\]/);
-              return m ? m[1].toLowerCase() : "";
-            })
-            .filter(Boolean);
-
-          if (themes.length > 0) {
-            try {
-              const cycle = await this.context.learningOrchestrator.runProactiveSession({
-                upcomingPatterns: themes,
-                maxTopics: 3,
-              });
-              log.engine.info(
-                `[ProactivePinger] memory_consolidation: synthesis — ` +
-                  `${cycle.topicsPrioritized} topics, ${cycle.synthesisReport?.pelletsCreated ?? 0} pellets`,
-              );
-            } catch (err) {
-              log.engine.warn(
-                `[ProactivePinger] memory_consolidation: synthesis failed: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          } else {
-            log.engine.debug("[ProactivePinger] memory_consolidation: no thematic threads — skipping synthesis");
-          }
-        } else {
-          log.engine.debug("[ProactivePinger] memory_consolidation: episodicMemory or learningOrchestrator unavailable — skipping");
-        }
+        // Memory consolidation: learning orchestrator removed — pending MemoryManager wiring
+        log.engine.debug("[ProactivePinger] memory_consolidation: no-op (MemoryManager wiring pending)");
         break;
       }
       case "tool_pruning":
@@ -664,27 +620,17 @@ export class ProactivePinger {
       }
     } catch (err) { log.heartbeat.warn(`[ProactivePinger] Goal context load failed: ${err instanceof Error ? err.message : err}`); }
 
-    // Use episodic memory to fetch semantic thematic clustering instead of raw text
+    // Use recent session history for context
     let historyContext = "";
-    if (this.context.episodicMemory) {
-      const threads = this.context.episodicMemory.getThematicThreads(3);
-      if (threads.length > 0) {
-        historyContext = `Top ongoing topics:\n` + threads.map(t => `- ${t}`).join("\n");
-      }
-    }
-    
-    // Fallback: if no episodes available, use recent session raw history
-    if (!historyContext) {
-      const recentHistory = this.context.getRecentHistory?.() ?? [];
-      const lastUserMessages = recentHistory
-        .filter((m) => m.role === "user")
-        .slice(-3)
-        .map((m) => (typeof m.content === "string" ? m.content.slice(0, 100) : ""))
-        .filter(Boolean);
-      historyContext = lastUserMessages.length > 0
-        ? `Recent activity: ${lastUserMessages.join(" | ")}.`
-        : "";
-    }
+    const recentHistory = this.context.getRecentHistory?.() ?? [];
+    const lastUserMessages = recentHistory
+      .filter((m) => m.role === "user")
+      .slice(-3)
+      .map((m) => (typeof m.content === "string" ? m.content.slice(0, 100) : ""))
+      .filter(Boolean);
+    historyContext = lastUserMessages.length > 0
+      ? `Recent activity: ${lastUserMessages.join(" | ")}.`
+      : "";
 
     // Skip morning brief if there's nothing real to say
     if (!goalContext && !historyContext) return;
@@ -729,40 +675,10 @@ export class ProactivePinger {
   }
 
   /**
-   * Proactive self-study session — runs at 2 AM.
-   * The owl quietly researches queued topics while the user is asleep.
-   * No message is sent to the user; knowledge is stored as Pellets.
+   * Proactive self-study session — stub pending MemoryManager wiring.
    */
   private async maybeSelfStudy(): Promise<void> {
-    if (!this.context.learningOrchestrator)
-      return;
-
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const dateKey = now.toISOString().split("T")[0];
-
-    // Run at 2 AM, once per day
-    if (hour !== 2 || minute !== 0) return;
-    if (this.lastSelfStudyDate === dateKey) return;
-
-    this.lastSelfStudyDate = dateKey;
-
-    try {
-      log.heartbeat.info("[ProactivePinger] Starting overnight self-study session...");
-
-      const cycle =
-        await this.context.learningOrchestrator.runProactiveSession();
-      if (cycle.synthesisReport) {
-        log.heartbeat.info(
-          `[ProactivePinger] Self-study (orchestrator) done: ` +
-            `${cycle.topicsPrioritized} topics, ` +
-            `${cycle.synthesisReport.pelletsCreated} pellets created`,
-        );
-      }
-    } catch (err) {
-      log.heartbeat.error("[ProactivePinger] Self-study session failed", err);
-    }
+    log.heartbeat.debug("[ProactivePinger] maybeSelfStudy: no-op (learning orchestrator removed — pending MemoryManager wiring)");
   }
 
   // ── Queue-compatible wrappers (called by job executor) ────────
@@ -1000,39 +916,8 @@ export class ProactivePinger {
     try {
       // ── Episodic context injection ──────────────────────────────────
       // When the proactive engine runs, it doesn't go through the ContextBuilder,
-      // so episodic memory is NOT automatically injected. We query it here and
-      // prepend it to the prompt so the model knows what actually happened recently.
-      let episodicPrefix = "";
-      if (this.context.episodicMemory) {
-        try {
-          const episodes = await Promise.race([
-            this.context.episodicMemory.searchWithScoring(
-              prompt.slice(0, 150), // use the prompt itself as query
-              3,
-              this.context.provider,
-              0.1, // low threshold — proactive messages need broad recall
-            ),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("timeout")), 2000),
-            ),
-          ]);
-          if (episodes.length > 0) {
-            episodicPrefix =
-              "<past_sessions>\n" +
-              episodes
-                .map(
-                  (ep) =>
-                    `  <session date="${new Date(ep.date).toLocaleDateString()}">${ep.summary}</session>`,
-                )
-                .join("\n") +
-              "\n</past_sessions>\n\n";
-          }
-        } catch (err) {
-          log.heartbeat.warn(`[ProactivePinger] Episodic memory search failed: ${err instanceof Error ? err.message : err}`);
-        }
-      }
-
-      const fullPrompt = episodicPrefix ? episodicPrefix + prompt : prompt;
+      // Episodic memory removed — pending MemoryManager wiring
+      const fullPrompt = prompt;
 
       if (this.context.eventBus) {
         // Dispatch to task queue instead of running synchronously

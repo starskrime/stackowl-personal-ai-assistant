@@ -1,7 +1,7 @@
 // src/routing/relationship-context.ts
 import type { MemoryDatabase } from "../memory/db.js";
 import type { GoalGraph } from "../goals/graph.js";
-import type { EpisodicMemory } from "../memory/episodic.js";
+import type { EpisodicSearchable } from "../cognition/loop-detector.js";
 import type { UserMemoryStore } from "../session/user-memory-store.js";
 
 export interface RelationshipSummary {
@@ -16,7 +16,7 @@ export class RelationshipContext {
   constructor(
     private db: Pick<MemoryDatabase, "userProfiles" | "owlTasks">,
     private goalGraph: GoalGraph | undefined,       // reserved for Task 11
-    private episodicMemory: EpisodicMemory | undefined, // reserved for Task 11
+    private episodicMemory: EpisodicSearchable | undefined, // reserved for Task 11
     private userMemoryStore: UserMemoryStore | undefined,
   ) {
     void this.goalGraph;

@@ -34,6 +34,8 @@ export type GatewaySystemEvent =
   | { type: "web:escalating"; fromTier: number; toTier: number; reason: string }
   | { type: "web:blocking_classified"; url: string; source: "cache" | "router" | "fallback"; latency: number; blocked: boolean; reason: string | null }
   | { type: "engine:turn_complete"; sessionId: string }
+  | { type: "context:compact"; sessionId: string; messages: Array<{ role: string; content: string }> }
+  | { type: "context:idle";   sessionId: string; messages: Array<{ role: string; content: string }> }
 
 const DELIVER_EVENT = "gateway:deliver"
 

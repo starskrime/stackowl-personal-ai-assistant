@@ -5,16 +5,41 @@
  * `/memory list` returns identical text on both surfaces (channel-parity rule).
  */
 
-import type {
-  MemoryRepository,
-  MemoryInvalidation,
-  MemoryContradiction,
-} from "../../memory/repository.js";
-import type { UnifiedMemory } from "../../memory/unified.js";
+interface MemoryInvalidation {
+  invalidated_at: string;
+  invalidated_by: string;
+  reason: string;
+}
+
+interface MemoryContradiction {
+  contradicts_id: string;
+  detected_at: string;
+}
 
 export interface MemoryRouterDeps {
-  repo: MemoryRepository;
-  unifiedMemory?: UnifiedMemory;
+  repo: {
+    search(q: string, opts: { topK: number }): Promise<Array<{ kind: string; id: string; content: string; importance: number }>>;
+    stats(): { total: number; invalidated: number; avgImportance: number; byKind: Record<string, number> };
+    history(id: string): { record: { kind: string; content: string } | null; invalidations: Array<{ invalidated_at: string; invalidated_by: string; reason: string }>; contradictions: Array<{ contradicts_id: string; detected_at: string }> };
+    getById(id: string): unknown;
+    invalidate(id: string, opts: { reason: string; invalidatedBy: string }): void;
+  };
+  unifiedMemory?: {
+    list(opts: { topK: number }): Promise<Array<{ kind: string; id: string; content: string }>>;
+    recall(opts: { query: string; topK: number }): Promise<Array<{ kind: string; content: string; importance: number }>>;
+    stats(): { total: number; invalidated: number; avgImportance: number; byKind: Record<string, number> };
+  };
+}
+
+interface MemoryInvalidation {
+  invalidated_at: string;
+  invalidated_by: string;
+  reason: string;
+}
+
+interface MemoryContradiction {
+  contradicts_id: string;
+  detected_at: string;
 }
 
 const HELP = `/memory commands:

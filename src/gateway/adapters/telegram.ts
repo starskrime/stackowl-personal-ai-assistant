@@ -778,14 +778,12 @@ export class TelegramAdapter implements ChannelAdapter {
       owl,
       config,
       capabilityLedger: self.gateway.getCapabilityLedger()!,
-      learningOrchestrator: self.gateway.getLearningOrchestrator(),
       preferenceStore: self.gateway.getPreferenceStore(),
       reflexionEngine: self.gateway.getReflexionEngine(),
       toolRegistry: self.gateway.getToolRegistry(),
       skillsRegistry: self.gateway.getSkillsLoader()?.getRegistry(),
       skillsDir,
-      sessionStore: self.gateway.getSessionStore(),
-      episodicMemory: self.gateway.getEpisodicMemory(),
+      sessionStore: self.gateway.getSessionStore() as any,
       knowledgeCouncil: self.gateway.getKnowledgeCouncil(),
       owlRegistry: self.gateway.getOwlRegistry(),
       goalGraph: self.gateway.getGoalGraph(),
@@ -807,13 +805,11 @@ export class TelegramAdapter implements ChannelAdapter {
 
     // Attach BackgroundWorker to pinger (Phase 2 — agentic loop)
     const db = self.gateway.getDb?.();
-    const pelletStore = self.gateway.getPelletStore?.();
     const toolRegistry = self.gateway.getToolRegistry();
-    if (db && pelletStore && toolRegistry && config) {
+    if (db && toolRegistry && config) {
       import("../../agent/background-worker.js").then(({ BackgroundWorker }) => {
         const worker = new BackgroundWorker({
           db,
-          pelletStore,
           provider: self.gateway.getProvider(),
           owl,
           toolRegistry,

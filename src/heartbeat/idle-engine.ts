@@ -1,5 +1,4 @@
 import type { StackOwlConfig } from "../config/loader.js";
-import type { LearningOrchestrator } from "../learning/orchestrator.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { ToolOutcomeStore } from "../tools/outcome-store.js";
 import type { CapabilityScanner, ScanResult } from "./capability-scanner.js";
@@ -41,7 +40,6 @@ export interface IdleActivityResult {
 export interface IdleEngineCallbacks {
   onResult: (result: IdleActivityResult) => void;
   capabilityScanner?: CapabilityScanner;
-  learningOrchestrator?: LearningOrchestrator;
   db?: MemoryDatabase;
   toolOutcomeStore?: ToolOutcomeStore;
 }
@@ -112,13 +110,10 @@ export class IdleActivityEngine {
     if (!this.isIdle()) return null;
 
     const { enabled } = this.config;
-    const { capabilityScanner, learningOrchestrator, toolOutcomeStore } =
-      this.callbacks;
+    const { capabilityScanner, toolOutcomeStore } = this.callbacks;
 
     if (enabled.capabilityExploration && capabilityScanner) return "capability_exploration";
-    if (enabled.anticipatoryResearch && learningOrchestrator) return "anticipatory_research";
     if (enabled.toolOutcomeReview && toolOutcomeStore) return "tool_outcome_review";
-    if (enabled.knowledgeRefresh && learningOrchestrator) return "knowledge_refresh";
 
     return null;
   }
@@ -129,12 +124,8 @@ export class IdleActivityEngine {
       switch (activity) {
         case "capability_exploration":
           return await this.runCapabilityExploration();
-        case "anticipatory_research":
-          return await this.runAnticipatoryResearch();
         case "tool_outcome_review":
           return await this.runToolOutcomeReview();
-        case "knowledge_refresh":
-          return await this.runKnowledgeRefresh();
         default:
           return { activity, success: false, durationMs: Date.now() - start };
       }
@@ -155,20 +146,6 @@ export class IdleActivityEngine {
     };
   }
 
-  private async runAnticipatoryResearch(): Promise<IdleActivityResult> {
-    if (!this.callbacks.learningOrchestrator) {
-      return { activity: "anticipatory_research", success: false };
-    }
-    const failureDensityTopics = this.callbacks.db
-      ? (this.callbacks.db.trajectories.getFailureDensityTopics(7, 2) ?? [])
-      : [];
-    await this.callbacks.learningOrchestrator.runProactiveSession({
-      failureDensityTopics,
-      maxTopics: 3,
-    });
-    return { activity: "anticipatory_research", success: true };
-  }
-
   private async runToolOutcomeReview(): Promise<IdleActivityResult> {
     if (!this.callbacks.toolOutcomeStore) {
       return { activity: "tool_outcome_review", success: false };
@@ -184,11 +161,4 @@ export class IdleActivityEngine {
     };
   }
 
-  private async runKnowledgeRefresh(): Promise<IdleActivityResult> {
-    if (!this.callbacks.learningOrchestrator) {
-      return { activity: "knowledge_refresh", success: false };
-    }
-    await this.callbacks.learningOrchestrator.runProactiveSession({ maxTopics: 1 });
-    return { activity: "knowledge_refresh", success: true };
-  }
 }

@@ -13,7 +13,6 @@ import type { OwlRegistry } from "../owls/registry.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { EngineContext, EngineResponse } from "../engine/runtime.js";
 import type { GatewayCallbacks } from "../gateway/types.js";
 import type { ParliamentCallbacks } from "../parliament/protocol.js";
@@ -77,7 +76,6 @@ export class TaskOrchestrator {
     private owlRegistry: OwlRegistry,
     private provider: ModelProvider,
     private config: StackOwlConfig,
-    private pelletStore: PelletStore,
     private toolRegistry?: ToolRegistry,
     private planLedger?: PlanLedger,
   ) {
@@ -194,28 +192,8 @@ export class TaskOrchestrator {
       );
     }
 
-    // ── Pre-inject relevant pellets ───────────────────────────
-    let pelletContext = "";
-    if (this.pelletStore) {
-      try {
-        const query = subtopics.length > 0 ? subtopics.join(" ") : userMessage;
-        const results = await this.pelletStore.searchWithGraph(query, 3);
-        if (results.length > 0) {
-          pelletContext = results
-            .map((r) => `## ${r.title}\n${r.content}\n`)
-            .join("\n");
-          if (callbacks.onProgress) {
-            await callbacks.onProgress(
-              `📚 Pre-injecting ${results.length} relevant pellet(s) from prior knowledge`,
-            );
-          }
-        }
-      } catch (err) {
-        log.engine.warn(`[DeepResearch] Pellet pre-injection failed: ${err}`);
-      }
-    }
-
     // ── Build research context ─────────────────────────────────
+    const pelletContext = "";
     const researchPrompt =
       (pelletContext
         ? `## Prior Knowledge (read-only, do not repeat)\n${pelletContext}\n\n`
@@ -833,7 +811,6 @@ export class TaskOrchestrator {
     const orchestrator = new ParliamentOrchestrator(
       this.provider,
       this.config,
-      this.pelletStore,
       this.toolRegistry,
       baseContext.db,
     );

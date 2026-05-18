@@ -1,7 +1,10 @@
 import { MemoryDatabase } from "../memory/db.js";
 import type { FactCategory } from "../memory/db.js";
-import { embed, isEmbedderReady } from "../pellets/embedder.js";
 import type { GatewayEventBus } from "../gateway/event-bus.js";
+
+// Stub: embedder removed with pellets subsystem
+function isEmbedderReady(): boolean { return false; }
+async function embed(_text: string): Promise<number[] | null> { return null; }
 
 export type { FactCategory };
 

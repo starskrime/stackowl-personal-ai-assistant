@@ -1,7 +1,6 @@
 // src/routing/user-profile-service.ts
 import type { MemoryDatabase } from "../memory/db.js";
 import type { GoalGraph } from "../goals/graph.js";
-import type { EpisodicMemory } from "../memory/episodic.js";
 import type { UserMemoryStore } from "../session/user-memory-store.js";
 import { log } from "../logger.js";
 
@@ -28,7 +27,6 @@ export class UserProfileService {
   constructor(
     private db: Pick<MemoryDatabase, "userProfiles">,
     private goalGraph: GoalGraph | undefined,
-    private episodicMemory: EpisodicMemory | undefined,
     private userMemoryStore: UserMemoryStore | undefined,
   ) {}
 
@@ -57,13 +55,7 @@ export class UserProfileService {
   }
 
   private async getEpisodes(): Promise<string[]> {
-    if (!this.episodicMemory) return [];
-    try {
-      return this.episodicMemory.getRecent(3).map((e) => e.summary ?? "");
-    } catch (err) {
-      log.engine.debug(`[UserProfileService] episode fetch failed: ${err}`);
-      return [];
-    }
+    return [];
   }
 
   private async getFacts(userId: string, query: string): Promise<string[]> {

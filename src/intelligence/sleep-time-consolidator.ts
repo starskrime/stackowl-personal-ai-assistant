@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { Database as BetterSqlite3 } from "better-sqlite3";
 import type { ModelProvider } from "../providers/base.js";
 import { log } from "../logger.js";
@@ -10,24 +9,13 @@ interface DbWithRaw {
   rawDb: BetterSqlite3;
 }
 
-export interface PelletStore {
-  store(pellet: {
-    id: string;
-    userId: string;
-    content: string;
-    tags: string[];
-    source: string;
-    confidence: number;
-    createdAt: string;
-  }): Promise<string>;
-}
-
 // ─── SleepTimeConsolidator ────────────────────────────────────────
 
 /**
  * Consolidates insights from recent session summaries after a session ends.
- * Uses an LLM to infer cross-session patterns about the user, then stores
- * them as knowledge pellets for future retrieval.
+ * Uses an LLM to infer cross-session patterns about the user and logs them.
+ *
+ * Note: pellet storage removed — pending MemoryManager wiring for persistence.
  *
  * Non-blocking: designed to run in the PostProcessor's background task queue.
  * Debounced per-user to avoid hammering the LLM when multiple sessions end
@@ -41,7 +29,6 @@ export class SleepTimeConsolidator {
   constructor(
     db: DbWithRaw | BetterSqlite3,
     private readonly provider: ModelProvider,
-    private readonly pelletStore: PelletStore,
   ) {
     // Accept either a MemoryDatabase wrapper (has .rawDb) or a raw db instance
     this.raw = (db as DbWithRaw).rawDb ?? (db as BetterSqlite3);
@@ -49,7 +36,7 @@ export class SleepTimeConsolidator {
 
   /**
    * Called when a session ends. Loads recent session summaries for this user,
-   * asks the LLM to infer new patterns, and stores them as pellets.
+   * asks the LLM to infer new patterns, and logs them.
    *
    * Skips silently when:
    *  - called again within DEBOUNCE_MS for the same user (per-user debounce)
@@ -114,22 +101,15 @@ export class SleepTimeConsolidator {
       return;
     }
 
-    // Parse lines, filter noise, cap at 3 pellets
+    // Parse lines, filter noise, cap at 3 insights
     const lines = insights
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 10);
 
     for (const line of lines.slice(0, 3)) {
-      await this.pelletStore.store({
-        id: randomUUID(),
-        userId,
-        content: line,
-        tags: ["sleep_consolidation", "pattern"],
-        source: "sleep_consolidation",
-        confidence: 0.7,
-        createdAt: new Date().toISOString(),
-      });
+      // TODO: store via MemoryManager once wired
+      log.memory.debug(`[SleepConsolidator] Insight for ${userId}: ${line}`);
     }
   }
 }

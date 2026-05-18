@@ -104,7 +104,7 @@ export class ContextPipeline {
       `ContextPipeline: ${trace.length} layers, ${trace.filter((t) => t.fired).length} fired`,
     );
 
-    this.lastRetrievedPelletIds = request.retrievedPelletIds ?? [];
+    this.lastRetrievedPelletIds = [];
 
     return { output, trace };
   }

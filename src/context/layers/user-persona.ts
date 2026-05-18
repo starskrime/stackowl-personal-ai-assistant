@@ -19,10 +19,9 @@ export class UserPersonaLayer implements ContextLayer {
 
   async build(req: ContextRequest, t: TriageSignals, _deps: LayerResults): Promise<string> {
     const facts = (req.session as any).userFacts ?? [];
-    const episodes = (req.session as any).userEpisodes ?? [];
     const prefs = (req.session as any).preferenceContext ?? "";
 
-    const persona = await this.synthesizer.getPersona(t.effectiveUserId, facts, episodes, prefs);
+    const persona = await this.synthesizer.getPersona(t.effectiveUserId, facts, prefs);
     if (!persona) return "";
 
     return [

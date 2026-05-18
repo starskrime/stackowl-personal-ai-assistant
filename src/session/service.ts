@@ -1,5 +1,4 @@
 import type { MemoryDatabase } from "../memory/db.js";
-import type { MessageCompressor } from "../memory/compressor.js";
 import type { UserMemoryStore } from "./user-memory-store.js";
 import type { IntelligenceRouter } from "../intelligence/router.js";
 import type { ProviderRegistry } from "../providers/registry.js";
@@ -32,7 +31,6 @@ export class SessionService {
 
   constructor(
     private db: MemoryDatabase,
-    private compressor: MessageCompressor,
     private userMemoryStore: UserMemoryStore,
     private intelligence: IntelligenceRouter | undefined,
     private providerRegistry: ProviderRegistry,
@@ -96,10 +94,7 @@ export class SessionService {
       summary.toSeq >= lastSeq;
 
     if (!covered) {
-      // Compress only the overflow batch (oldest messages), not the entire session.
-      const allMessages = this.db.messages.getSession(sessionId);
-      const oldestMessages = allMessages.slice(0, overflow);
-      await this.compressor.compress(sessionId, userId, owlName, oldestMessages);
+      // Compressor removed — pending MemoryManager wiring for compression
     }
 
     this.db.messages.deleteByIds(oldest.map((r) => r.id));
@@ -108,8 +103,8 @@ export class SessionService {
   async buildContext(sessionId: string, userId: string, lastUserText: string): Promise<SessionContext> {
     const recentMessages = this.db.messages.getRecent(sessionId, 50);
 
-    // Build summary block from compressor
-    const summaryBlock = this.compressor.buildContext(sessionId, recentMessages);
+    // Compressor removed — pending MemoryManager wiring for summary context
+    const summaryBlock = "";
 
     // Get semantic facts for this user/query
     const factStrings = await this.userMemoryStore.retrieve(userId, lastUserText, 3);

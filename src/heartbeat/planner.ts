@@ -68,7 +68,6 @@ const DEFAULT_CONFIG: PlannerConfig = {
 
 export interface PlannerDeps {
   goalGraph: GoalGraph;
-  learningOrchestrator?: import("../learning/orchestrator.js").LearningOrchestrator;
   preferenceStore?: PreferenceStore;
   skillsRegistry?: SkillsRegistry;
   taskStore?: TaskStore;
@@ -247,13 +246,7 @@ export class AutonomousPlanner {
     }
 
     // ── 4. Self-study (any idle period, not just quiet hours) ──
-    if (this.deps.learningOrchestrator && this.idleMinutes > 10) {
-      candidates.push({
-        type: "self_study",
-        priority: await this.learnedPriority("self_study", isQuiet ? 50 : 40),
-        description: "Proactive learning session — study queued topics",
-      });
-    }
+    // Disabled: learning orchestrator removed; will be wired to MemoryManager later
 
     // ── 5. Memory consolidation (during quiet hours) ──
     if (isQuiet && this.lastConsolidationDate !== dateKey) {
@@ -295,13 +288,7 @@ export class AutonomousPlanner {
     }
 
     // ── 10. Anticipatory research → pre-study likely topics ──
-    if (this.deps.learningOrchestrator && this.idleMinutes > 5) {
-      candidates.push({
-        type: "anticipatory_research",
-        priority: await this.learnedPriority("anticipatory_research", 35),
-        description: "Pre-research topics the user is likely to ask about next",
-      });
-    }
+    // Disabled: learning orchestrator removed; will be wired to MemoryManager later
 
     // ── 11. Tool outcome review → identify failing tool patterns ──
     if (this.idleMinutes > 20) {

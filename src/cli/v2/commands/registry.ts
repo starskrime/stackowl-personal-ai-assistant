@@ -83,7 +83,13 @@ export interface PanelPayload {
  */
 export interface CoreCommandContext {
   getOwlGateway: () => import("../../../gateway/core.js").OwlGateway;
-  getMemoryRepo:  () => import("../../../memory/repository.js").MemoryRepository;
+  getMemoryRepo:  () => {
+    search(q: string, opts: { topK: number }): Promise<Array<{ kind: string; id: string; content: string; importance: number }>>;
+    stats(): { total: number; invalidated: number; avgImportance: number; byKind: Record<string, number> };
+    history(id: string): { record: { kind: string; content: string } | null; invalidations: Array<{ invalidated_at: string; invalidated_by: string; reason: string }>; contradictions: Array<{ contradicts_id: string; detected_at: string }> };
+    getById(id: string): unknown;
+    invalidate(id: string, opts: { reason: string; invalidatedBy: string }): void;
+  };
   getMcpManager:  () => import("../../../tools/mcp/manager.js").MCPManager;
 }
 

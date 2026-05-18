@@ -16,10 +16,12 @@
  * avoid re-embedding the same `user_message` on every call.
  */
 import type { MemoryDatabase } from "../../memory/db.js";
-import { embed as defaultEmbed } from "../../pellets/embedder.js";
 import { log } from "../../logger.js";
 
 export type EmbedFn = (text: string) => Promise<number[] | null>;
+
+/** Default no-op embed — returns null (cold-start path) until a real embedder is wired. */
+const defaultEmbed: EmbedFn = async (_text: string) => null;
 
 export interface PersonalizedRouterOptions {
   topK?: number;

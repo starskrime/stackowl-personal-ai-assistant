@@ -185,12 +185,12 @@ import type { ModelProvider, StreamEvent } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { SessionStore } from "../memory/store.js";
-import type { PelletStore } from "../pellets/store.js";
+
+
 import type { CapabilityLedger } from "../evolution/ledger.js";
 import type { EvolutionHandler } from "../evolution/handler.js";
 import type { OwlEvolutionEngine } from "../owls/evolution.js";
-import type { LearningOrchestrator } from "../learning/orchestrator.js";
+
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import type { SkillsRegistry } from "../skills/registry.js";
 import type { OwlRegistry } from "../owls/registry.js";
@@ -213,8 +213,7 @@ import type { SkillArena } from "../tournaments/arena.js";
 import type { SwarmCoordinator } from "../swarm/coordinator.js";
 import type { VoicePersona } from "../voice/persona.js";
 import type { VoiceAdapter } from "../voice/adapter.js";
-import type { MicroLearner } from "../learning/micro-learner.js";
-import type { ProactiveAnticipator } from "../learning/anticipator.js";
+
 import type { EventBus } from "../events/bus.js";
 import type { TaskQueue } from "../queue/task-queue.js";
 import type { CostTracker } from "../costs/tracker.js";
@@ -229,17 +228,11 @@ import type { IntentStateMachine, CommitmentTracker } from "../intent/index.js";
 import type { ProactiveIntentionLoop } from "../intent/proactive-loop.js";
 import type { GoalGraph } from "../goals/graph.js";
 import type { UserPreferenceModel } from "../preferences/model.js";
-import type { WorkingContextManager } from "../memory/working-context.js";
-import type { EpisodicMemory } from "../memory/episodic.js";
-import type { SelfLearningCoordinator } from "../learning/coordinator.js";
-import type { FactStore } from "../memory/fact-store.js";
 import type { FactExtractor } from "../memory/fact-extractor.js";
-import type { MemoryRetriever } from "../memory/memory-retriever.js";
-import type { MemoryFeedback } from "../memory/memory-feedback.js";
 import type { FeedbackStore } from "../feedback/store.js";
-import type { ConversationDigestManager } from "../memory/conversation-digest.js";
 import type { MemoryDatabase } from "../memory/db.js";
-import type { MemoryBus } from "../memory/bus.js";
+import type { MemoryManager } from "../memory/memory-manager.js";
+
 
 export interface GatewayContext {
   provider: ModelProvider;
@@ -248,12 +241,9 @@ export interface GatewayContext {
   specializedRegistry?: SpecializedOwlRegistry;
   config: StackOwlConfig;
   toolRegistry?: ToolRegistry;
-  sessionStore: SessionStore;
-  pelletStore?: PelletStore;
   capabilityLedger?: CapabilityLedger;
   evolution?: EvolutionHandler;
   evolutionEngine?: OwlEvolutionEngine;
-  learningOrchestrator?: LearningOrchestrator;
   innerLife?: OwlInnerLife;
   skillsRegistry?: SkillsRegistry;
   memoryContext?: string;
@@ -278,8 +268,6 @@ export interface GatewayContext {
   swarmCoordinator?: SwarmCoordinator;
   voicePersona?: VoicePersona;
   voiceAdapter?: VoiceAdapter;
-  microLearner?: MicroLearner;
-  anticipator?: ProactiveAnticipator;
   memorySearcher?: import("../memory-threads/searcher.js").MemorySearcher;
   echoChamberDetector?: import("../echo-chamber/detector.js").EchoChamberDetector;
   journalGenerator?: import("../growth-journal/generator.js").JournalGenerator;
@@ -289,11 +277,7 @@ export interface GatewayContext {
   socraticEngine?: import("../socratic/engine.js").SocraticEngine;
 
   // ─── Mem0-Inspired Memory Layer (Phase M1-M6) ────────────────
-  factStore?: FactStore;
   factExtractor?: FactExtractor;
-  memoryRetriever?: MemoryRetriever;
-  memoryFeedback?: MemoryFeedback;
-  memoryBus?: MemoryBus;
 
   // ─── Response Feedback (👍/👎) ────────────────────────────────
   feedbackStore?: FeedbackStore;
@@ -304,7 +288,6 @@ export interface GatewayContext {
   costTracker?: CostTracker;
   agentRegistry?: AgentRegistry;
   rateLimiter?: RateLimiter;
-  selfLearningCoordinator?: SelfLearningCoordinator;
 
   // ─── Plugin, Reload & A2A ─────────────────────────────────
   pluginRegistry?: PluginRegistry;
@@ -332,24 +315,14 @@ export interface GatewayContext {
   intentStateMachine?: IntentStateMachine;
   commitmentTracker?: CommitmentTracker;
   preferenceModel?: UserPreferenceModel;
-  workingContextManager?: WorkingContextManager;
-  episodicMemory?: EpisodicMemory;
   goalGraph?: GoalGraph;
   proactiveLoop?: ProactiveIntentionLoop;
-
-  // ─── L1 Working Memory (Conversation Digest) ────────────────
-  digestManager?: ConversationDigestManager;
 
   // ─── SQLite Memory Database (replaces all JSON file stores) ──
   db?: MemoryDatabase;
 
-  // ─── Element 15 — Canonical memory surface ─────────────────
-  memoryRepo?: import("../memory/repository.js").MemoryRepository;
-  memoryWriter?: import("../memory/writer.js").MemoryWriter;
-  unifiedMemory?: import("../memory/unified.js").UnifiedMemory;
-
-  // ─── Message Compressor (Phase 2 — batch summarization) ──────
-  compressor?: import("../memory/compressor.js").MessageCompressor;
+  // ─── Unified Memory System ────────────────────────────────────
+  memoryManager?: MemoryManager;
 
   // ─── MCP Server Manager ─────────────────────────────────────
   mcpManager?: import("../tools/mcp/manager.js").MCPManager;
@@ -361,18 +334,8 @@ export interface GatewayContext {
   triageClassifier?: import("../triage/index.js").TriageClassifier;
   subOwlRunner?: import("../delegation/sub-owl-runner.js").SubOwlRunner;
 
-  // ─── Phase 3: Preference Enforcement ────────────────────────
-  preferenceEnforcer?: import("../memory/preference-enforcer.js").PreferenceEnforcer;
-
   // ─── Phase 3: Background Orchestrator ───────────────────────
   backgroundOrchestrator?: import("../background/orchestrator.js").BackgroundOrchestrator;
-
-  // ─── Epic 5: Memory Modules ───────────────────────────────
-  contextManager?: import("../memory/context-manager.js").ContextManager;
-  priorContextRetriever?: import("../memory/prior-context-retriever.js").PriorContextRetriever;
-  crossSessionStore?: import("../memory/cross-session-store.js").CrossSessionStore;
-  preferenceRecognizer?: import("../memory/preference-recognizer.js").PreferenceRecognizer;
-  truncationAlerter?: import("../memory/truncation-alerter.js").TruncationAlerter;
 
   // ─── Epic 6: Parliament Modules ──────────────────────────
   parliamentAutoTrigger?: import("../parliament/auto-trigger.js").ParliamentAutoTrigger;
@@ -380,12 +343,6 @@ export interface GatewayContext {
   multiRoundDebate?: import("../parliament/multi-round-debate.js").MultiRoundDebateManager;
   debatePelletGenerator?: import("../parliament/debate-pellet-generator.js").DebatePelletGenerator;
   routingWirer?: import("../parliament/routing-wirer.js").RoutingWirer;
-
-  // ─── Epic 7: Knowledge Building Modules ─────────────────
-  pelletRetriever?: import("../pellets/pellet-retriever.js").PelletRetriever;
-  knowledgeBase?: import("../pellets/knowledge-base.js").KnowledgeBase;
-  proactiveGenerator?: import("../pellets/proactive-generator.js").ProactiveKnowledgeGenerator;
-  eventBasedGenerator?: import("../pellets/event-based-generator.js").EventBasedPelletGenerator;
 
   // ─── Intelligence Router (tiered model routing) ───────────
   intelligence?: import("../intelligence/router.js").IntelligenceRouter;

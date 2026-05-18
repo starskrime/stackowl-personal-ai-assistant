@@ -210,6 +210,17 @@ export interface StackOwlConfig {
     /** Auto-discover new plugins on startup */
     autoDiscover: boolean;
   };
+  /** Unified memory system (MemoryWorker + DreamWorker) */
+  memory?: {
+    /** Emit context:compact when promptTokens exceeds this. Default: 50_000 */
+    compactionThreshold?: number;
+    /** Top-K facts injected into <memory> block per user message. Default: 5 */
+    topK?: number;
+    /** Path to bge-small-en-v1.5 Q8 GGUF file. Default: "models/bge-small-en-v1.5-q8_0.gguf" */
+    ggufPath?: string;
+    /** Cron expression for DreamWorker nightly run. Default: "0 3 * * *" */
+    dreamCron?: string;
+  };
   /** Knowledge Council configuration */
   council?: {
     /** Days between automated council sessions. Default: 7 */

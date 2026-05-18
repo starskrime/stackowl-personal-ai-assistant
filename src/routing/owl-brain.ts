@@ -7,7 +7,6 @@ import type { Session } from "../memory/store.js";
 import type { MemoryDatabase } from "../memory/db.js";
 import type { UserProfileService } from "./user-profile-service.js";
 import type { SecretaryRouter } from "./secretary.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { ConversationDigestManager } from "../memory/conversation-digest.js";
 import { log } from "../logger.js";
 
@@ -26,7 +25,6 @@ export class OwlBrain {
     private db: Pick<MemoryDatabase, "userProfiles" | "owlPins">,
     private defaultOwlName: string,
     private userProfileService: UserProfileService | undefined,
-    private pelletStore: PelletStore | undefined,
     private digestManager: ConversationDigestManager | undefined,
   ) {}
 
@@ -242,7 +240,8 @@ export class OwlBrain {
     callbacks?.onOwlChange?.(spec.emoji || "🦉", spec.name);
   }
 
-  private async injectMemoryContext(owlName: string, sessionId: string, userMessage: string, engineCtx: EngineContext): Promise<void> {
+  private async injectMemoryContext(owlName: string, sessionId: string, _userMessage: string, engineCtx: EngineContext): Promise<void> {
+    void owlName;
     const parts: string[] = [];
     if (this.digestManager) {
       try {
@@ -250,16 +249,6 @@ export class OwlBrain {
         if (digest?.task) {
           parts.push(`## Session Context\nTask: ${digest.task}`);
         }
-      } catch { /* non-critical */ }
-    }
-    if (this.pelletStore) {
-      try {
-        const pellets = await this.pelletStore.search(userMessage, 3);
-        const lines = pellets
-          .filter(p => p.owls.includes(owlName) || p.owls.length === 0)
-          .map(p => `- ${p.title}: ${p.content.slice(0, 120)}`)
-          .join("\n");
-        if (lines) parts.push(`## Related Memory\n${lines}`);
       } catch { /* non-critical */ }
     }
     if (parts.length > 0) {

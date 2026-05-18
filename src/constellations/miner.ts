@@ -6,7 +6,6 @@
  */
 
 import type { ModelProvider } from "../providers/base.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { Constellation, ConstellationType } from "./types.js";
 import { join } from "node:path";
 import { readFile, writeFile, readdir } from "node:fs/promises";
@@ -14,17 +13,13 @@ import { existsSync, mkdirSync } from "node:fs";
 import { log } from "../logger.js";
 
 export class ConstellationMiner {
-  private provider: ModelProvider;
-  private pelletStore: PelletStore;
   private constellationDir: string;
 
   constructor(
-    provider: ModelProvider,
-    pelletStore: PelletStore,
+    _provider: ModelProvider,
+    _pelletStore: unknown,
     workspacePath: string,
   ) {
-    this.provider = provider;
-    this.pelletStore = pelletStore;
     this.constellationDir = join(workspacePath, "constellations");
     if (!existsSync(this.constellationDir))
       mkdirSync(this.constellationDir, { recursive: true });
@@ -35,96 +30,8 @@ export class ConstellationMiner {
    * Returns newly discovered constellations.
    */
   async mine(): Promise<Constellation[]> {
-    const allPellets = await this.pelletStore.listAll();
-    if (allPellets.length < 3) return []; // Need enough data
-
-    // Build a condensed corpus for LLM analysis
-    const corpus = allPellets.slice(0, 50).map((p) => ({
-      id: p.id,
-      title: p.title,
-      tags: p.tags,
-      excerpt: p.content.slice(0, 200),
-    }));
-
-    const corpusText = corpus
-      .map(
-        (p) =>
-          `[${p.id}] "${p.title}" (tags: ${p.tags.join(", ")}): ${p.excerpt}`,
-      )
-      .join("\n\n");
-
-    const existingConstellations = await this.list();
-    const existingTitles = existingConstellations.map((c) => c.title);
-
-    try {
-      const resp = await this.provider.chat(
-        [
-          {
-            role: "user",
-            content:
-              `Analyze this knowledge base for cross-cutting patterns:\n\n${corpusText}\n\n` +
-              `Find patterns of these types:\n` +
-              `- "theme": Topics that span multiple pellets in unexpected ways\n` +
-              `- "contradiction": Pellets that contain conflicting viewpoints\n` +
-              `- "gap": Important topics referenced but never fully explored\n` +
-              `- "evolution": Topics where the user's understanding has changed over time\n\n` +
-              (existingTitles.length > 0
-                ? `Already discovered: ${existingTitles.join(", ")}. Find NEW patterns only.\n\n`
-                : "") +
-              `Respond with JSON:\n` +
-              `[{"type":"theme|contradiction|gap|evolution","title":"...","description":"...","insight":"...","linkedPelletIds":["id1","id2"]}]\n\n` +
-              `Find 1-3 patterns. Be specific and reference actual pellet IDs.`,
-          },
-        ],
-        undefined,
-        { temperature: 0.4, maxTokens: 800 },
-      );
-
-      const text = resp.content.trim();
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) return [];
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      const newConstellations: Constellation[] = [];
-
-      for (const raw of parsed) {
-        // Skip duplicates
-        if (existingTitles.includes(raw.title)) continue;
-
-        const links = (raw.linkedPelletIds || [])
-          .map((id: string) => {
-            const pellet = corpus.find((p) => p.id === id);
-            return pellet
-              ? {
-                  pelletId: pellet.id,
-                  pelletTitle: pellet.title,
-                  relevance: 1.0,
-                  excerpt: pellet.excerpt.slice(0, 100),
-                }
-              : null;
-          })
-          .filter(Boolean);
-
-        const constellation: Constellation = {
-          id: `constellation_${Date.now()}_${newConstellations.length}`,
-          type: (raw.type as ConstellationType) || "theme",
-          title: raw.title || "Untitled Pattern",
-          description: raw.description || "",
-          links,
-          insight: raw.insight || "",
-          discoveredAt: new Date().toISOString(),
-          notified: false,
-        };
-
-        newConstellations.push(constellation);
-        await this.save(constellation);
-      }
-
-      return newConstellations;
-    } catch (err) {
-      log.engine.debug(`[ConstellationMiner] Mining failed: ${err}`);
-      return [];
-    }
+    // No pellet store available — constellation mining is disabled in this configuration
+    return [];
   }
 
   /**

@@ -64,7 +64,6 @@ export class ToolRegistry {
   private _tracker: ToolTracker | null = null;
   private _eventBus: GatewayEventBus | null = null;
   private _goalVerifier: GoalVerifier | null = null;
-  private _riskGuard: import('../clarification/tool-risk-guard.js').ToolRiskGuard | null = null;
   private _toolGraph: import('./cortex/tool-graph.js').ToolGraph | null = null;
   private _edgeAccumulator: import('./cortex/edge-accumulator.js').EdgeAccumulator | null = null;
   private _semanticGate = new SemanticToolGate();
@@ -85,10 +84,6 @@ export class ToolRegistry {
 
   setGoalVerifier(verifier: GoalVerifier): void {
     this._goalVerifier = verifier;
-  }
-
-  setRiskGuard(guard: import('../clarification/tool-risk-guard.js').ToolRiskGuard): void {
-    this._riskGuard = guard;
   }
 
   setToolGraph(g: import('./cortex/tool-graph.js').ToolGraph): void {
@@ -347,14 +342,6 @@ export class ToolRegistry {
     );
     if (violations.length > 0) {
       throw new ToolValidationError(name, violations);
-    }
-
-    // Risk guard — Mode B pre-action check (fires after schema validation, before execution)
-    if (this._riskGuard) {
-      const riskResult = await this._riskGuard.check(name, args, (tool.definition.executionPolicy ?? {}) as Record<string, unknown>);
-      if (!riskResult.allowed) {
-        return riskResult.userFacingMessage;
-      }
     }
 
     const startTime = Date.now();

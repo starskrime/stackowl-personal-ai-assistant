@@ -142,7 +142,6 @@ import { ComputerUseTool } from "./tools/computer-use/index.js";
 import { ScraplingTool } from "./tools/web-scrapling.js";
 import { CamoFoxTool } from "./tools/camofox.js";
 // ── Unified Tool Facades (Phase 7a) ──
-import { createMemoryTool } from "./tools/memory-unified.js";
 import { createMacosCommsTool } from "./tools/macos/comms-unified.js";
 import { createMacosSystemTool } from "./tools/macos/system-unified.js";
 // ── Tool Cortex 7d — new capability tools ──
@@ -166,10 +165,7 @@ import {
 } from "./tools/live-browser/bootstrap.js";
 import { BrowserBridge } from "./tools/computer-use/browser/cdp.js";
 import { ParliamentOrchestrator } from "./parliament/orchestrator.js";
-import { PelletStore } from "./pellets/store.js";
 import { OwlEvolutionEngine } from "./owls/evolution.js";
-import { LearningOrchestrator } from "./learning/orchestrator.js";
-import { MemoryReflexionEngine } from "./memory/reflexion.js";
 import { OwlInnerLife } from "./owls/inner-life.js";
 import { KnowledgeCouncil } from "./parliament/knowledge-council.js";
 import { ToolSynthesizer, getSynthesizedDir } from "./evolution/synthesizer.js";
@@ -195,17 +191,13 @@ import { PreferenceStore } from "./preferences/store.js";
 import { ReflexionEngine } from "./evolution/reflexion.js";
 import { SkillsLoader } from "./skills/index.js";
 import { MCPManager } from "./tools/mcp/manager.js";
-import { MicroLearner } from "./learning/micro-learner.js";
 import { MutationTracker } from "./owls/mutation-tracker.js";
-import { SelfLearningCoordinator } from "./learning/coordinator.js";
 import { MemorySearcher } from "./memory-threads/searcher.js";
+// Removed: PelletStore, LearningOrchestrator, MicroLearner, SelfLearningCoordinator
 import { RecallMemoryTool } from "./tools/recall.js";
 import { RememberTool } from "./tools/remember.js";
 import { SkillInstallTool } from "./tools/skill-install.js";
 import { ReadLogsTool } from "./tools/read-logs.js";
-import { PelletRecallTool } from "./tools/pellet-recall.js";
-import { initEmbedder, setEmbedderCacheDir } from "./pellets/embedder.js";
-import { selfSeedIfEmpty } from "./pellets/self-seed.js";
 import { EchoChamberDetector } from "./echo-chamber/detector.js";
 import { EchoCheckTool } from "./tools/echo-check.js";
 import { JournalGenerator } from "./growth-journal/generator.js";
@@ -236,25 +228,13 @@ import { createMonitorTool } from "./tools/monitor.js";
 import { createConnectorTool } from "./tools/connector.js";
 import { IntentStateMachine, CommitmentTrackerImpl } from "./intent/index.js";
 import { UserPreferenceModel } from "./preferences/model.js";
-import { WorkingContextManager } from "./memory/working-context.js";
-import { EpisodicMemory } from "./memory/episodic.js";
-import { FactStore } from "./memory/fact-store.js";
 import { FactExtractor } from "./memory/fact-extractor.js";
 import { MemoryDatabase } from "./memory/db.js";
-import { MemoryRepository } from "./memory/repository.js";
-import { UnifiedMemory } from "./memory/unified.js";
+import { MemoryManager } from "./memory/memory-manager.js";
 import { WorkspaceGit } from "./workspace/git.js";
-import { MemoryWriter } from "./memory/writer.js";
-import { MemoryBus } from "./memory/bus.js";
-import { HitlCheckpointStore } from "./engine/hitl.js";
 import { KnowledgeGraph } from "./knowledge/index.js";
 import { GoalGraph } from "./goals/graph.js";
 // ── Epic 7: Knowledge Building ─────────────────────────────────────
-import { EventBasedPelletGenerator } from "./pellets/event-based-generator.js";
-import { PelletRetriever } from "./pellets/pellet-retriever.js";
-import { KnowledgeBase } from "./pellets/knowledge-base.js";
-import { ProactiveKnowledgeGenerator } from "./pellets/proactive-generator.js";
-import { makeProviderRouter } from "./pellets/generator.js";
 import { ProactiveIntentionLoop } from "./intent/proactive-loop.js";
 import { BackgroundOrchestrator } from "./background/orchestrator.js";
 import { ActivityGate } from "./background/activity-gate.js";
@@ -507,7 +487,6 @@ async function bootstrap() {
     // ── Memory & Recall ──
     new RecallMemoryTool(),
     new RememberTool(),
-    PelletRecallTool,
     // ── Growth & Wisdom ──
     new EchoCheckTool(),
     new GrowthJournalTool(),
@@ -518,45 +497,6 @@ async function bootstrap() {
   // Initialize session store
   const sessionStore = new ConversationSessionStore(workspacePath);
   await sessionStore.init();
-
-  // Initialize pellet store (with AI-powered deduplication)
-  // Initialize pellet embedder before PelletStore so vector search is available
-  // from the first save/search call. Model is cached inside workspace/memory/local_cache.
-  setEmbedderCacheDir(join(workspacePath, "memory", "local_cache"));
-  initEmbedder().catch((e) => log.engine.warn("[Init] Embedder: " + (e instanceof Error ? e.message : String(e))));
-
-  const pelletStore = new PelletStore(
-    workspacePath,
-    providerRegistry.getDefault(),
-    config.pellets?.dedup,
-  );
-  await pelletStore.init();
-
-  // Build/refresh knowledge graph in background (non-blocking)
-  pelletStore
-    .buildGraph()
-    .catch((err) =>
-      log.engine.warn(
-        `[PelletGraph] Build failed (non-fatal): ${err instanceof Error ? err.message : err}`,
-      ),
-    );
-
-  // Learning Orchestrator — new unified learning system (TopicFusion + Synthesis + Reflexion)
-  const learningOrchestratorFactory = (
-    owl: import("./owls/persona.js").OwlInstance,
-  ) =>
-    new LearningOrchestrator(
-      providerRegistry.getDefault(),
-      owl,
-      config,
-      pelletStore,
-      workspacePath,
-      providerRegistry,
-    );
-
-  // Micro-Learner — per-message lightweight signal extraction
-  const microLearner = new MicroLearner(workspacePath);
-  await microLearner.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
 
   // Platform layer — probes OS capabilities once at startup, caches the matrix
   // for every consumer (paths, sandbox, notifier, process, shell). Must run
@@ -576,13 +516,6 @@ async function bootstrap() {
 
   // Late-inject the MemoryDatabase into UpdateMemoryTool (created before memoryDb above).
   updateMemoryTool.setDb(memoryDb);
-
-  // One-shot MEMORY.md → facts table migration (idempotent)
-  const { migrateMemoryMd } = await import("./memory/memory-migration.js");
-  const memoryMdPath = join(homedir(), ".stackowl", "workspace", "MEMORY.md");
-  migrateMemoryMd(memoryDb, memoryMdPath).catch((err) =>
-    log.engine.warn(`[MemoryMigration] Migration failed: ${err}`),
-  );
 
   // Schedule runner — SQLite-backed durable reminders/repeats
   const scheduleStore = new ScheduleStore(memoryDb);
@@ -606,24 +539,29 @@ async function bootstrap() {
   const toolTracker = new ToolTracker(memoryDb);
   toolRegistry.setTracker(toolTracker);
 
-  // Episodic Memory — LLM-extracted session summaries for cross-session recall
-  const episodicMemory = new EpisodicMemory(workspacePath, undefined, memoryDb);
-  await episodicMemory.load();
-
-  // Fact Store — Mem0-inspired structured fact memory with conflict resolution
-  const factStore = new FactStore(workspacePath, {}, memoryDb);
-  await factStore.load();
-
   // Knowledge Graph — entity relationships with semantic search
   const knowledgeGraph = new KnowledgeGraph(workspacePath);
   await knowledgeGraph.load();
 
   // Fact Extractor — LLM-powered extraction from conversations
-  const factExtractor = new FactExtractor(providerRegistry.getDefault());
+  const factExtractor = new FactExtractor(providerRegistry);
+
+  // Unified Memory System — semantic fact store with nightly dream reflection
+  let memoryManager: MemoryManager | undefined;
+  try {
+    memoryManager = new MemoryManager(config, providerRegistry, workspacePath);
+    await memoryManager.start();
+    log.engine.info("[Init] MemoryManager started");
+  } catch (err) {
+    log.engine.warn("[Init] MemoryManager failed to start — running without unified memory", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    memoryManager = undefined;
+  }
 
   // Memory Searcher — cross-system recall for conversational threads
   const memorySearcher = new MemorySearcher(
-    pelletStore,
+    undefined,
     sessionStore,
     workspacePath,
     providerRegistry.getDefault(),
@@ -640,7 +578,7 @@ async function bootstrap() {
 
   // Growth Journal Generator
   const journalGenerator = new JournalGenerator(
-    pelletStore,
+    undefined,
     sessionStore,
     providerRegistry.getDefault(),
     workspacePath,
@@ -649,7 +587,7 @@ async function bootstrap() {
   // Quest Manager — gamified learning
   const questManager = new QuestManager(
     providerRegistry.getDefault(),
-    pelletStore,
+    undefined,
     workspacePath,
   );
 
@@ -662,7 +600,7 @@ async function bootstrap() {
   // Constellation Miner — cross-pellet pattern discovery
   const constellationMiner = new ConstellationMiner(
     providerRegistry.getDefault(),
-    pelletStore,
+    undefined,
     workspacePath,
   );
 
@@ -675,8 +613,6 @@ async function bootstrap() {
     config,
     sessionStore,
     owlRegistry,
-    () => microLearner.getProfile(),
-    episodicMemory,
     memoryDb,
   );
 
@@ -771,26 +707,9 @@ async function bootstrap() {
   const preferenceModel = new UserPreferenceModel(workspacePath);
   await preferenceModel.load();
 
-  // ── Mem0-Inspired Memory Layer ──
-  const { MemoryRetriever } = await import("./memory/memory-retriever.js");
-  const { MemoryFeedback } = await import("./memory/memory-feedback.js");
-  const memoryRetriever = new MemoryRetriever(
-    episodicMemory,
-    factStore,
-    knowledgeGraph,
-    preferenceModel,
-    pelletStore,
-    providerRegistry.getDefault(),
-  );
-  const memoryFeedback = new MemoryFeedback(factStore, knowledgeGraph);
-
-  // ── Memory Layers ──
-  const workingContextManager = new WorkingContextManager();
-
   // ── Ground State View (Phase 4) ──
   const { GroundStateView } = await import("./cognition/ground-state.js");
   const groundState = new GroundStateView(
-    factStore,
     providerRegistry.getDefault(),
   );
 
@@ -817,9 +736,6 @@ async function bootstrap() {
     createConnectorTool(connectorResolver),
     createNotificationSendTool(platform),
   ]);
-
-  // Element 15 — canonical `memory` tool is registered AFTER gateway construction
-  // (it depends on gateway-owned GatewayEventBus and HitlCheckpointStore).
 
   if (platform.systemInfo.current().platform === "darwin") {
     toolRegistry.register(createMacosCommsTool({
@@ -866,20 +782,6 @@ async function bootstrap() {
     }),
   );
 
-  // Self-seed foundational pellets on first startup (empty store)
-  // This gives the model self-knowledge (identity, tools, skills) immediately
-  // after a reset — prevents "acts like generic LLM" regression.
-  // NOTE: must run AFTER all unified tools are registered so the seed pellet
-  // reflects the consolidated catalog (web, memory, macos_comms, macos_system)
-  // rather than the deprecated individual tool names.
-  selfSeedIfEmpty(
-    pelletStore,
-    workspacePath,
-    toolRegistry.getAllDefinitions().map((t) => t.name),
-  ).catch((e) =>
-    log.engine.warn(`[SelfSeed] Failed (non-fatal): ${e instanceof Error ? e.message : e}`)
-  );
-
   // Load tool permissions from config
   if (config.tools?.permissions) {
     toolRegistry.loadPermissions(config.tools.permissions as any);
@@ -905,7 +807,6 @@ async function bootstrap() {
   const reflexionEngine = new ReflexionEngine(
     providerRegistry.getDefault(),
     sessionStore,
-    pelletStore,
   );
 
   return {
@@ -914,18 +815,15 @@ async function bootstrap() {
     owlRegistry,
     toolRegistry,
     sessionStore,
-    pelletStore,
     evolutionEngine,
     workspacePath,
     evolution,
     synthesizer,
     ledger,
     loader,
-    learningOrchestratorFactory,
     preferenceStore,
     reflexionEngine,
     skillsLoader,
-    microLearner,
     memorySearcher,
     echoChamberDetector,
     journalGenerator,
@@ -944,15 +842,11 @@ async function bootstrap() {
     commitmentTracker,
     preferenceModel,
     mutationTracker,
-    workingContextManager,
     memoryDb,
     scheduleRunner,
-    episodicMemory,
-    factStore,
     factExtractor,
+    memoryManager,
     knowledgeGraph,
-    memoryRetriever,
-    memoryFeedback,
     goalGraph,
     groundState,
     mcpManager,
@@ -978,25 +872,6 @@ async function buildGateway(
   // Shared ActivityGate — gates LLM background jobs to only run when new user activity exists.
   const activityGate = new ActivityGate(b.memoryDb);
 
-  // Legacy memory.md retired (Phase 3) — replaced by structured memory:
-  // FactStore (semantic facts) + ConversationDigest (L1 session memory) +
-  // MemoryRetriever (episodic + reflexion search). ContextBuilder queries these
-  // on every message. Do NOT load memory.md — it is unsearchable and obsolete.
-  // MemoryConsolidator.loadMemory() is no longer called.
-
-  // Load reflexion-based structured memory (Phase 3 replacement for memory.md)
-  let reflexionContext = "";
-  let owlReflexion: MemoryReflexionEngine | undefined;
-  try {
-    owlReflexion = new MemoryReflexionEngine(b.workspacePath, provider, owl);
-    reflexionContext = await owlReflexion.getForSystemPrompt();
-    if (reflexionContext) {
-      log.engine.info("[Init] Reflexion memory loaded");
-    }
-  } catch {
-    /* non-blocking — first run will have no reflexion data */
-  }
-
   // Owl Inner Life — persistent desires, mood, opinions, inner monologue
   const innerLife = new OwlInnerLife(provider, owl, b.workspacePath);
   await innerLife.load().catch((e) => log.engine.warn("[Init] " + (e instanceof Error ? e.message : String(e))));
@@ -1007,7 +882,6 @@ async function buildGateway(
     provider,
     b.owlRegistry,
     b.config,
-    b.pelletStore,
     b.workspacePath,
     b.providerRegistry,
   );
@@ -1016,55 +890,9 @@ async function buildGateway(
   const eventBus = new StackOwlEventBus();
   // Wire face state machine — translates EventBus events to face:state
   new FaceEmitter(eventBus).start();
-  // Give the pellet store an event bus so it fires pellet:created live
-  b.pelletStore.eventBus = eventBus;
   const taskQueue = new TaskQueue(b.config.queue);
-
-  // ─── Epic 7: Knowledge Building Modules ─────────────────────────
-  // EventBasedPelletGenerator — subscribes to event bus for pellet generation on events
-  const eventBasedGenerator = new EventBasedPelletGenerator(
-    eventBus,
-    b.pelletStore,
-    makeProviderRouter(provider),
-    { activityGate },
-  );
-  eventBasedGenerator.subscribe();
-  log.engine.info("[Init] EventBasedPelletGenerator subscribed to event bus");
-
-  // PelletRetriever — for relevant pellet retrieval pre-engine
-  const pelletRetriever = new PelletRetriever(b.pelletStore);
-
-  // KnowledgeBase — for knowledge base growth tracking
-  const knowledgeBase = new KnowledgeBase(b.pelletStore);
-
-  // ProactiveGenerator — for scheduled proactive knowledge generation
-  const proactiveGenerator = new ProactiveKnowledgeGenerator(
-    b.pelletStore,
-    makeProviderRouter(provider),
-    { activityGate },
-  );
-  // Schedule periodic knowledge council runs (every 12 hours by default)
-  const councilIntervalMs = 12 * 60 * 60 * 1000;
-  const councilInterval = setInterval(() => {
-    proactiveGenerator.runKnowledgeCouncil().catch((err) =>
-      log.engine.warn(`[ProactiveGenerator] Council run failed: ${err instanceof Error ? err.message : String(err)}`),
-    );
-  }, councilIntervalMs);
-  // Also run on startup after a short delay
-  setTimeout(() => {
-    proactiveGenerator.runKnowledgeCouncil().catch((err) =>
-      log.engine.warn(`[ProactiveGenerator] Initial council run failed: ${err instanceof Error ? err.message : String(err)}`),
-    );
-  }, 10 * 60_000);
-  log.engine.info("[Init] ProactiveKnowledgeGenerator scheduled");
-
-  // Self-Learning Coordinator — wires SignalBus, MutationTracker, and UserPreferenceModel
-  const selfLearningCoordinator = new SelfLearningCoordinator(
-    b.microLearner,
-    b.mutationTracker,
-    b.preferenceModel,
-    owl.persona.name,
-  );
+  // councilInterval placeholder — no proactive generator in this configuration
+  const councilInterval = undefined as ReturnType<typeof setInterval> | undefined;
 
   // Cost tracker
   let costTracker: CostTracker | undefined;
@@ -1202,13 +1030,10 @@ async function buildGateway(
       owl,
       config: b.config,
       innerLife,
-      learningOrchestrator: b.learningOrchestratorFactory(owl),
       reflexionEngine: b.reflexionEngine,
       skillsRegistry: b.skillsLoader?.getRegistry(),
       sessionStore: b.sessionStore,
-      pelletStore: b.pelletStore,
       capabilityLedger: b.ledger,
-      microLearner: b.microLearner,
       toolRegistry: b.toolRegistry,
       skillsDir,
       workspacePath: b.workspacePath,
@@ -1229,21 +1054,16 @@ async function buildGateway(
     owlRegistry: b.owlRegistry,
     config: b.config,
     toolRegistry: b.toolRegistry,
-    sessionStore: b.sessionStore,
-    pelletStore: b.pelletStore,
     capabilityLedger: b.ledger,
     evolution: b.evolution,
     evolutionEngine: b.evolutionEngine,
-    learningOrchestrator: b.learningOrchestratorFactory(owl),
     innerLife,
     preferenceStore: b.preferenceStore,
     reflexionEngine: b.reflexionEngine,
     skillsLoader: b.skillsLoader,
-    memoryContext: reflexionContext || undefined,
     cwd: b.workspacePath,
     synthesizedDir: b.synthesizedDir,
     providerRegistry: b.providerRegistry,
-    microLearner: b.microLearner,
     memorySearcher: b.memorySearcher,
     echoChamberDetector: b.echoChamberDetector,
     journalGenerator: b.journalGenerator,
@@ -1257,7 +1077,6 @@ async function buildGateway(
     costTracker,
     agentRegistry,
     rateLimiter,
-    selfLearningCoordinator,
     // Plugin, Reload & A2A
     pluginRegistry,
     serviceRegistry,
@@ -1278,15 +1097,10 @@ async function buildGateway(
     intentStateMachine: b.intentStateMachine,
     commitmentTracker: b.commitmentTracker,
     preferenceModel: b.preferenceModel,
-    workingContextManager: b.workingContextManager,
     db: b.memoryDb,
-    memoryBus: new MemoryBus(owlReflexion, b.pelletStore, b.microLearner, b.workspacePath),
-    episodicMemory: b.episodicMemory,
-    factStore: b.factStore,
     factExtractor: b.factExtractor,
+    memoryManager: b.memoryManager,
     knowledgeGraph: b.knowledgeGraph,
-    memoryRetriever: b.memoryRetriever,
-    memoryFeedback: b.memoryFeedback,
     goalGraph: b.goalGraph,
     groundState: b.groundState,
     mcpManager: b.mcpManager,
@@ -1296,11 +1110,6 @@ async function buildGateway(
       b.intentStateMachine,
       b.goalGraph,
     ),
-    // ─── Epic 7: Knowledge Building Modules ─────────────────
-    pelletRetriever,
-    knowledgeBase,
-    proactiveGenerator,
-    eventBasedGenerator,
   });
 
   // ─── Background Orchestrator ────────────────────────────────────
@@ -1314,7 +1123,6 @@ async function buildGateway(
     undefined,        // FulfillmentTracker — not yet instantiated at top level
     undefined,        // onProactiveMessage — wired after Telegram/CLI adapters attach
     { activityGate }, // config — gate LLM jobs behind activity check
-    b.episodicMemory, // EpisodicMemory for runDecay() in memory-consolidation job
   );
   gateway.ctx.backgroundOrchestrator = backgroundOrchestrator;
   backgroundOrchestrator.start();
@@ -1397,7 +1205,7 @@ async function buildGateway(
 
   // Ensure cron service stops on shutdown
   process.on("SIGINT", () => {
-    clearInterval(councilInterval);
+    if (councilInterval) clearInterval(councilInterval);
     cronService.stop();
     b.scheduleRunner.stop();
     b.sessionRunner.stop();
@@ -1408,29 +1216,11 @@ async function buildGateway(
     b.sessionRunner.stop();
   });
 
-  // ─── Element 15 — canonical memory surface ─────────────────────
-  // Repository owns all reads/writes against `memories`/`memory_invalidations`/
-  // `memory_contradictions`/`memory_access_log`. Writer ingests goal-conditioned
-  // extractions and listens for engine:turn_complete to expire working memories.
-  const hitlCheckpointStore = new HitlCheckpointStore(b.memoryDb);
-  const memoryRepo = new MemoryRepository(b.memoryDb.rawDb, gateway.gatewayEventBus);
-  gateway.ctx.memoryRepo = memoryRepo;
-  gateway.ctx.unifiedMemory = new UnifiedMemory(memoryRepo, b.memoryDb.rawDb, b.providerRegistry.getDefault());
-
   // Workspace git — local-only history for rollback
   const workspaceGit = new WorkspaceGit(b.workspacePath);
   workspaceGit.init().then(() => workspaceGit.subscribe(gateway.gatewayEventBus)).catch(() => {});
 
   if (gateway.ctx.intelligence) {
-    const memoryWriter = new MemoryWriter({
-      repo: memoryRepo,
-      bus: gateway.gatewayEventBus,
-      router: gateway.ctx.intelligence,
-      providerRegistry: b.providerRegistry,
-    });
-    memoryWriter.attachBusListeners();
-    gateway.ctx.memoryWriter = memoryWriter;
-
     // BlockingClassifier — LLM-based anti-bot detection for web tools
     const providerMap = new Map<string, import("./providers/base.js").ModelProvider>();
     providerMap.set(b.config.defaultProvider ?? "default", provider);
@@ -1455,14 +1245,6 @@ async function buildGateway(
       gateway.ctx.tavilyApiKey = tavilyApiKey;
     }
   }
-
-  // Register canonical `memory` tool (search/get/invalidate; importance ≥ 0.8
-  // invalidations route through HitlCheckpointStore for human approval).
-  b.toolRegistry.register(createMemoryTool({
-    repo: memoryRepo,
-    bus: gateway.gatewayEventBus,
-    hitl: hitlCheckpointStore,
-  }));
 
   return gateway;
 }
@@ -1604,6 +1386,7 @@ async function chatCommand(owlName?: string) {
     adapter.stop();
     await b.browserPool?.shutdown();
     await b.puppeteerFetcher?.close();
+    await b.memoryManager?.stop();
     process.exit(0);
   });
 
@@ -1679,6 +1462,7 @@ async function voiceCommand(opts: {
     adapter.stop();
     await b.browserPool?.shutdown();
     await b.puppeteerFetcher?.close();
+    await b.memoryManager?.stop();
     process.exit(0);
   });
 
@@ -1698,7 +1482,6 @@ async function parliamentCommand(topic?: string) {
     providerRegistry,
     owlRegistry,
     config,
-    pelletStore,
     toolRegistry,
     memoryDb,
   } = await bootstrap();
@@ -1728,7 +1511,6 @@ async function parliamentCommand(topic?: string) {
   const orchestrator = new ParliamentOrchestrator(
     provider,
     config,
-    pelletStore,
     toolRegistry,
     memoryDb,
   );
@@ -1765,106 +1547,6 @@ async function statusCommand() {
   log.cli.info(`\n  Default model: ${config.defaultModel}`);
   log.cli.info(`  Gateway: ws://${config.gateway.host}:${config.gateway.port}`);
   log.cli.info(`  Workspace: ${config.workspace}`);
-}
-
-// ─── Pellets Command ───────────────────────────────────────────────
-
-async function pelletsCommand(opts: {
-  search?: string;
-  read?: string;
-  dedup?: boolean;
-  dryRun?: boolean;
-  graph?: boolean;
-  related?: string;
-}) {
-  const { pelletStore } = await bootstrap();
-
-  // ─── Bulk Dedup ────────────────────────────────────────────────
-  if (opts.dedup) {
-    const { bulkDedup } = await import("./pellets/bulk-dedup.js");
-    log.cli.info(
-      opts.dryRun
-        ? "🔍 Running bulk dedup DRY RUN (no changes will be made)..."
-        : "🧹 Running bulk dedup (duplicates will be merged/removed)...",
-    );
-    const stats = await bulkDedup(pelletStore, pelletStore.getDeduplicator(), {
-      dryRun: opts.dryRun,
-    });
-    log.cli.info("Results:");
-    log.cli.info(`  Total pellets:  ${stats.total}`);
-    log.cli.info(`  Checked:        ${stats.checked}`);
-    log.cli.info(`  Kept:           ${stats.kept}`);
-    log.cli.info(`  Skipped:        ${stats.skipped}`);
-    log.cli.info(`  Merged:         ${stats.merged}`);
-    log.cli.info(`  Superseded:     ${stats.superseded}`);
-    if (stats.errors > 0)
-      log.cli.info(`  Errors:         ${stats.errors}`);
-    return;
-  }
-
-  // ─── Knowledge Graph ─────────────────────────────────────────
-  if (opts.graph) {
-    log.cli.info("🕸️  Building knowledge graph...");
-    await pelletStore.buildGraph();
-    const stats = await pelletStore.kuzuGraph.getStats();
-    log.cli.info("Graph Stats:");
-    log.cli.info(`  Nodes (pellets): ${stats.nodes}`);
-    log.cli.info(`  Edges (links):   ${stats.edges}`);
-    return;
-  }
-
-  // ─── Find Related ────────────────────────────────────────────
-  if (opts.related) {
-    log.cli.info(`🔗 Finding pellets related to "${opts.related}"...`);
-    const results = await pelletStore.searchWithGraph(opts.related as string, 10);
-    if (results.length === 0) {
-      log.cli.info("No related pellets found.");
-      return;
-    }
-    for (const r of results) {
-      log.cli.info(`${r.title} (${r.id}) — tags: ${r.tags.join(", ")}`);
-    }
-    return;
-  }
-
-  if (opts.read) {
-    // Read a specific pellet
-    const pellet = await pelletStore.get(opts.read);
-    if (!pellet) {
-      log.cli.error(`❌ Pellet "${opts.read}" not found.`);
-      process.exit(1);
-    }
-
-    log.cli.info(`📦 PELLET: ${pellet.title}`);
-    log.cli.info(`Generated: ${new Date(pellet.generatedAt).toLocaleString()}`);
-    log.cli.info(`Source: ${pellet.source}`);
-    log.cli.info(`Tags: ${pellet.tags.join(", ")}`);
-    log.cli.info(`Owls: ${pellet.owls.join(", ")}`);
-    log.cli.info("\n" + pellet.content);
-    return;
-  }
-
-  // List or search pellets
-  let pellets = await pelletStore.listAll();
-
-  if (opts.search) {
-    pellets = await pelletStore.search(opts.search);
-    log.cli.info(`🔍 Search results for "${opts.search}":`);
-  } else {
-    log.cli.info("📦 Knowledge Pellets:");
-  }
-
-  if (pellets.length === 0) {
-    log.cli.info("No pellets found. Trigger a Parliament session to generate some.");
-    return;
-  }
-
-  for (const p of pellets) {
-    log.cli.info(`${p.title} (ID: ${p.id})`);
-    log.cli.info(`  Tags: ${p.tags.join(", ")}`);
-    log.cli.info(`  Owls: ${p.owls.join(", ")}`);
-    log.cli.info("");
-  }
 }
 
 // ─── Skills Command ────────────────────────────────────────────────
@@ -2309,8 +1991,6 @@ async function webCommand(port?: string, owlName?: string) {
     b.config,
     gateway,
     b.owlRegistry,
-    b.pelletStore,
-    b.sessionStore,
     resolvedPort,
   );
 
@@ -2349,8 +2029,6 @@ async function allCommand(opts: { owl?: string; port?: string }) {
     b.config,
     gateway,
     b.owlRegistry,
-    b.pelletStore,
-    b.sessionStore,
     resolvedPort,
   );
   await server.start();
@@ -2539,28 +2217,6 @@ program
     });
   });
 
-
-program
-  .command("pellets")
-  .description("Manage and search Knowledge Pellets")
-  .option("-s, --search <query>", "Search pellets by keyword or tag")
-  .option("-r, --read <id>", "Read the full content of a specific pellet")
-  .option("--dedup", "Run bulk deduplication on all pellets")
-  .option(
-    "--dry-run",
-    "Preview dedup without making changes (use with --dedup)",
-  )
-  .option("--graph", "Build and display knowledge graph stats")
-  .option(
-    "--related <query>",
-    "Find pellets related to a topic via graph traversal",
-  )
-  .action((opts) => {
-    pelletsCommand(opts).catch((err) => {
-      log.cli.error(`Fatal error: ${err.message}`, err);
-      process.exit(1);
-    });
-  });
 
 program
   .command("evolve <owlName>")

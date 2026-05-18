@@ -18,8 +18,17 @@
  * Called on every message; must be fast (<100ms typical).
  */
 
-import type { EpisodicMemory } from "../memory/episodic.js";
 import { log } from "../logger.js";
+
+/** Minimal interface for episodic search — implemented by future MemoryManager adapter. */
+export interface EpisodicSearchable {
+  searchWithScoring(
+    query: string,
+    limit: number,
+    userId?: string,
+    minScore?: number,
+  ): Promise<Array<{ date: string | number; summary: string }>>;
+}
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -62,7 +71,7 @@ export class LoopDetector {
    */
   async detect(
     currentMessage: string,
-    episodicMemory: EpisodicMemory | undefined,
+    episodicMemory: EpisodicSearchable | undefined,
     _userId?: string,
   ): Promise<LoopDetectionResult> {
     if (!episodicMemory) return { isLoop: false };

@@ -1,6 +1,5 @@
 import type { ContextLayer, ContextRequest, TriageSignals, LayerResults } from "../layer.js";
 import { hash } from "../utils.js";
-import { log } from "../../logger.js";
 
 export class KnowledgeGraphLayer implements ContextLayer {
   name = "KnowledgeGraphLayer";
@@ -22,33 +21,3 @@ export class KnowledgeGraphLayer implements ContextLayer {
   }
 }
 
-export class RelevantPelletsLayer implements ContextLayer {
-  name = "RelevantPelletsLayer";
-  priority = 115;
-  maxTokens = 1_000;
-  produces = ["pellets"];
-  dependsOn = [];
-  getCacheKey(): string | null { return null; }
-  shouldFire(t: TriageSignals): boolean { return !t.isConversational; }
-
-  async build(req: ContextRequest, t: TriageSignals, _deps: LayerResults): Promise<string> {
-    const pelletStore = req.deps.pelletStore;
-    if (!pelletStore) return "";
-    try {
-      const scored = await pelletStore.searchWithGraphScored(t.userMessage, 5);
-      if (!scored.length) return "";
-
-      req.retrievedPelletIds = scored.map((s) => s.p.id);
-
-      const lines = ["<relevant_pellets>"];
-      for (const { p } of scored) {
-        lines.push(`  <pellet title="${p.title}">${p.content.slice(0, 500)}</pellet>`);
-      }
-      lines.push("</relevant_pellets>");
-      return lines.join("\n");
-    } catch (err) {
-      log.memory.warn("knowledge layer: pellet retrieval failed", err);
-      return "";
-    }
-  }
-}

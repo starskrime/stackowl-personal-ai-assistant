@@ -27,7 +27,6 @@ export class TelegramTextHandler {
   private readonly gateway: OwlGateway;
   private readonly isAllowed: (ctx: Context) => boolean;
   private readonly trackChat: (chatId: number, userId: string) => void;
-  private readonly sessionStore: SessionStore<UserState>;
   private readonly pinger: TelegramTextHandlerOptions["pinger"];
   private readonly progressNotifier: TelegramTextHandlerOptions["progressNotifier"];
   private readonly processor: TelegramMessageProcessor;
@@ -38,7 +37,6 @@ export class TelegramTextHandler {
     this.gateway = opts.gateway;
     this.isAllowed = opts.isAllowed;
     this.trackChat = opts.trackChat;
-    this.sessionStore = opts.sessionStore;
     this.pinger = opts.pinger;
     this.progressNotifier = opts.progressNotifier;
     this.processor = new TelegramMessageProcessor({

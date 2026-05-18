@@ -21,7 +21,6 @@ import type { DesireExecutionResult } from "./desire-executor.js";
 export interface FulfillmentRecord {
   desireDescription: string;
   fulfilledAt: string;       // ISO date
-  pelletTitle: string;
   impactScore: number;       // 0–1, how much this reinforced DNA
   owlName: string;
 }
@@ -62,7 +61,6 @@ export class FulfillmentTracker {
     const record: FulfillmentRecord = {
       desireDescription: result.desire.description,
       fulfilledAt: new Date().toISOString(),
-      pelletTitle: result.pelletTitle,
       impactScore: this.computeImpact(result),
       owlName,
     };
@@ -129,7 +127,6 @@ export class FulfillmentTracker {
 
   private computeImpact(result: DesireExecutionResult): number {
     let score = result.desire.intensity;
-    if (result.pelletSaved) score = Math.min(1, score + 0.2);
     if (result.research.length > 500) score = Math.min(1, score + 0.1);
     return score;
   }

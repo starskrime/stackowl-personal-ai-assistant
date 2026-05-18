@@ -17,7 +17,6 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { CapabilityLedger } from "../evolution/ledger.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { OwlRegistry } from "../owls/registry.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { AttemptLog } from "../memory/attempt-log.js";
 import { platform } from "../platform/index.js";
@@ -53,7 +52,6 @@ export interface EngineContext {
   config: StackOwlConfig;
   toolRegistry?: ToolRegistry;
   owlRegistry?: OwlRegistry;
-  pelletStore?: PelletStore;
   /** Ledger for recording tool usage after each synthesized tool call */
   capabilityLedger?: CapabilityLedger;
   cwd?: string;
@@ -122,14 +120,6 @@ export interface EngineContext {
    * operating in and can give accurate advice when channel-specific operations fail.
    */
   channelName?: string;
-  /** FactStore — for remember() tool write path and recall() tool read path */
-  factStore?: import("../memory/fact-store.js").FactStore;
-  /** MemoryRepository — canonical store read by /memory list; remember() must write here too */
-  memoryRepo?: import("../memory/repository.js").MemoryRepository;
-  /** EpisodicMemory — for recall() tool read path */
-  episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
-  /** UnifiedMemory — single interface over all memory stores (Phase 1 facade) */
-  unifiedMemory?: import("../memory/unified.js").UnifiedMemory;
   /** Active userId — used by remember/recall tools for per-user scoping */
   userId?: string;
   /** SQLite DB — gives tools direct write access to owl_learnings etc. */
@@ -179,6 +169,8 @@ export interface EngineContext {
   synthesizedDir?: string;
   /** Specialized owl registry — BMAD agents and custom specialists */
   specializedRegistry?: import("../owls/specialized-registry.js").SpecializedOwlRegistry;
+  /** Unified memory manager — triggers extraction + semantic search */
+  memoryManager?: import("../memory/memory-manager.js").MemoryManager;
 }
 
 export interface PendingCapabilityGap {
@@ -902,6 +894,16 @@ export class OwlEngine {
       context;
     const toolsUsed: string[] = [];
 
+    // Reset idle timer on every user message (30-min idle → extraction)
+    if (context.memoryManager && context.sessionId) {
+      context.memoryManager.onUserMessage(
+        context.sessionId,
+        sessionHistory,
+        owl.persona.name,
+        context.userId ?? "unknown",
+      );
+    }
+
     // Create tool result evaluator using tool-judge role provider
     const toolResultEvaluator: ToolResultEvaluator | null = (() => {
       if (!context.providerRegistry) return null;
@@ -984,7 +986,6 @@ export class OwlEngine {
     const systemPrompt = await this.buildSystemPrompt(
       owl,
       toolRegistry,
-      context.pelletStore,
       userMessage,
       context.memoryContext,
       context.preferencesContext,
@@ -2056,50 +2057,6 @@ ${userMessage}
           }
         }
 
-        // ── Per-iteration pellet injection ────────────────────────────────
-        // Re-query pellets after each tool observation so the model benefits
-        // from knowledge that only becomes relevant once tool results arrive.
-        // Example: user asks about laptops → tool fetches specs → pellets about
-        // "LLM hardware requirements" are now relevant and should be surfaced.
-        if (context.pelletStore) {
-          try {
-            // Build query from the most recent tool result(s) added this iteration
-            const recentToolMsgs = messages
-              .slice(-6)
-              .filter((m) => m.role === "tool")
-              .map((m) => (typeof m.content === "string" ? m.content : ""))
-              .filter(Boolean)
-              .join(" ")
-              .slice(0, 500);
-
-            if (recentToolMsgs.length > 20) {
-              const pelletResults = await context.pelletStore.search(
-                recentToolMsgs,
-                3,
-                0.45, // cosine similarity threshold
-              );
-              if (pelletResults.length > 0) {
-                const pelletBlock =
-                  "\n<iteration_knowledge>\n" +
-                  "Relevant knowledge surfaced by latest tool results:\n" +
-                  pelletResults
-                    .map(
-                      (p) =>
-                        `  [${p.tags[0] ?? "general"}] ${p.title}: ${p.content.slice(0, 300)}${p.content.length > 300 ? "..." : ""}`,
-                    )
-                    .join("\n") +
-                  "\n</iteration_knowledge>";
-                messages.push({ role: "system", content: pelletBlock });
-                log.engine.debug(
-                  `[PelletStore] Injected ${pelletResults.length} pellet(s) at iteration ${iterations}`,
-                );
-              }
-            }
-          } catch (err) {
-            log.engine.warn("pellet injection failed (supplementary, non-fatal)", err);
-          }
-        }
-
         // If we've failed multiple tool calls in a row, try IntelligenceRouter failover.
         if (globalConsecutiveFailures >= 2) {
           context.providerRegistry?.recordProviderResult(currentProvider.name, false);
@@ -2508,6 +2465,18 @@ ${userMessage}
       }
     }
 
+    // ── Memory compaction watermark ────────────────────────────────
+    // If promptTokens exceeded the threshold, fire extraction off-thread.
+    if (context.memoryManager && response.usage && context.sessionId) {
+      context.memoryManager.onResponseUsage(
+        response.usage.promptTokens,
+        context.sessionId,
+        context.sessionHistory,
+        owl.persona.name,
+        context.userId ?? "unknown",
+      );
+    }
+
     return {
       content: response.content,
       owlName: owl.persona.name,
@@ -2582,8 +2551,7 @@ ${userMessage}
   private async buildSystemPrompt(
     owl: OwlInstance,
     toolRegistry?: ToolRegistry,
-    pelletStore?: PelletStore,
-    userMessage?: string,
+    _userMessage?: string,
     memoryContext?: string,
     preferencesContext?: string,
     skillsContext?: string,
@@ -2912,27 +2880,6 @@ ${skillsContext}
     // that already failed in previous messages of this conversation.
     if (attemptLogBlock?.trim()) {
       prompt += `\n${attemptLogBlock}\n`;
-    }
-
-    // Relevant pellets — semantic search + graph expansion, top 5, 500 chars each.
-    // pelletStore.searchWithGraph() uses LanceDB cosine similarity + Kuzu graph traversal.
-    if (userMessage && pelletStore) {
-      try {
-        const results = await pelletStore.searchWithGraph(userMessage, 5);
-        if (results.length > 0) {
-          prompt += "\n## Relevant Past Knowledge\n";
-          for (const pellet of results) {
-            prompt += `\n**${pellet.title}**`;
-            if (pellet.tags.length > 0) prompt += ` [${pellet.tags.join(", ")}]`;
-            prompt += `\n${pellet.content.slice(0, 500)}`;
-            if (pellet.content.length > 500) prompt += "\n...[truncated]";
-            prompt += "\n";
-          }
-          prompt += "\n*Use `pellet_recall` to search for more specific knowledge.*\n";
-        }
-      } catch (err) {
-        log.engine.warn("pellet injection into system prompt failed", err);
-      }
     }
 
     // Tools — complete listing, grouped by platform category.

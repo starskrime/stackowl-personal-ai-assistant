@@ -12,10 +12,8 @@
  * FulfillmentTracker which updates DNA intensity scores.
  */
 
-import { randomUUID } from "node:crypto";
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
 import type { OwlDesire } from "../owls/inner-life.js";
-import type { PelletStore } from "../pellets/store.js";
 import { log } from "../logger.js";
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -23,8 +21,6 @@ import { log } from "../logger.js";
 export interface DesireExecutionResult {
   desire: OwlDesire;
   research: string;
-  pelletTitle: string;
-  pelletSaved: boolean;
   durationMs: number;
 }
 
@@ -35,7 +31,6 @@ export class DesireExecutor {
 
   constructor(
     private provider: ModelProvider,
-    private pelletStore?: PelletStore,
   ) {}
 
   /**
@@ -57,36 +52,10 @@ export class DesireExecutor {
 
     try {
       const research = await this.research(candidate.description, owlName);
-      const pelletTitle = `${owlName}'s Research: ${this.titleFromDesire(candidate.description)}`;
-
-      let pelletSaved = false;
-      if (this.pelletStore && research.length > 100) {
-        try {
-          await this.pelletStore.save({
-            id: randomUUID(),
-            title: pelletTitle,
-            content: research,
-            tags: ["desire-driven", "auto-research", owlName.toLowerCase()],
-            source: "desire_executor",
-            owls: [owlName],
-            generatedAt: new Date().toISOString(),
-            version: 1,
-            successCount: 0,
-            failureCount: 0,
-            provenance: [],
-          });
-          pelletSaved = true;
-          log.engine.info(`[DesireExecutor] Saved pellet: "${pelletTitle}"`);
-        } catch (err) {
-          log.engine.warn(`[DesireExecutor] Failed to save pellet: ${err instanceof Error ? err.message : err}`);
-        }
-      }
 
       return {
         desire: candidate,
         research,
-        pelletTitle,
-        pelletSaved,
         durationMs: Date.now() - start,
       };
     } catch (err) {
@@ -156,11 +125,4 @@ export class DesireExecutor {
     return result.content.trim();
   }
 
-  private titleFromDesire(description: string): string {
-    // Take first 50 chars, clean up
-    return description
-      .slice(0, 60)
-      .replace(/[^a-zA-Z0-9 ,]/g, "")
-      .trim();
-  }
 }

@@ -10,11 +10,9 @@
  * This turns "I can't do that" → "I didn't know that, I just learned it, here's the answer."
  */
 
-import { v4 as uuidv4 } from "uuid";
 import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { PendingCapabilityGap } from "../engine/runtime.js";
 import { OwlEngine } from "../engine/runtime.js";
@@ -27,8 +25,6 @@ export interface GapLearningResult {
   learned: boolean;
   /** 1-3 sentence summary of what was learned */
   summary: string;
-  /** Pellet ID if knowledge was saved to the store */
-  pelletId?: string;
   /**
    * Additional context block to inject into the retry's memoryContext.
    * Formatted as a readable block the LLM can use directly.
@@ -48,7 +44,6 @@ export class GapLearner {
     private owl: OwlInstance,
     private config: StackOwlConfig,
     private toolRegistry: ToolRegistry,
-    private pelletStore: PelletStore,
   ) {}
 
   /**
@@ -76,7 +71,6 @@ export class GapLearner {
         sessionHistory: [],
         skipGapDetection: true,
         isolatedTask: true,
-        pelletStore: this.pelletStore,
       });
 
       const rawSummary = response.content.trim();
@@ -86,19 +80,13 @@ export class GapLearner {
         return this.noLearning(topic);
       }
 
-      // Save as a pellet so this knowledge persists
-      const pelletId = await this.saveLearningPellet(topic, gap, rawSummary);
-
       const enrichedContext = this.buildEnrichedContext(topic, rawSummary);
 
-      log.engine.info(
-        `[GapLearner] Learned about "${topic}", pellet: ${pelletId ?? "not saved"}`,
-      );
+      log.engine.info(`[GapLearner] Learned about "${topic}"`);
 
       return {
         learned: true,
         summary: rawSummary,
-        pelletId,
         enrichedContext,
         userFacingNote: this.buildUserNote(topic, rawSummary),
       };
@@ -135,45 +123,6 @@ export class GapLearner {
       ``,
       `Output ONLY the summary — no preamble, no "[DONE]" suffix.`,
     ].join("\n");
-  }
-
-  private async saveLearningPellet(
-    topic: string,
-    gap: PendingCapabilityGap,
-    content: string,
-  ): Promise<string | undefined> {
-    try {
-      const pellet = {
-        id: uuidv4(),
-        title: `Gap Learning: ${topic.slice(0, 80)}`,
-        generatedAt: new Date().toISOString(),
-        source: "gap-learner",
-        owls: [this.owl.persona.name],
-        tags: ["gap_learning", "auto_learned"],
-        version: 1,
-        content: [
-          `## What Was Asked`,
-          gap.userRequest,
-          ``,
-          `## Gap Detected`,
-          gap.description,
-          ``,
-          `## What I Learned`,
-          content,
-        ].join("\n"),
-        successCount: 0,
-        failureCount: 0,
-        provenance: [],
-      };
-
-      await this.pelletStore.save(pellet, { skipDedup: true });
-      return pellet.id;
-    } catch (err) {
-      log.engine.warn(
-        `[GapLearner] Failed to save pellet: ${err instanceof Error ? err.message : err}`,
-      );
-      return undefined;
-    }
   }
 
   private buildEnrichedContext(topic: string, summary: string): string {

@@ -23,10 +23,6 @@ export class OwlEvolutionEngine {
   private config: StackOwlConfig;
   private sessionStore: SessionStore;
   private owlRegistry: OwlRegistry;
-  private userProfileProvider?: () =>
-    | import("../learning/micro-learner.js").UserProfile
-    | null;
-  private episodicMemory?: import("../memory/episodic.js").EpisodicMemory;
   private db?: MemoryDatabase;
 
   constructor(
@@ -34,18 +30,12 @@ export class OwlEvolutionEngine {
     config: StackOwlConfig,
     sessionStore: SessionStore,
     owlRegistry: OwlRegistry,
-    userProfileProvider?: () =>
-      | import("../learning/micro-learner.js").UserProfile
-      | null,
-    episodicMemory?: import("../memory/episodic.js").EpisodicMemory,
     db?: MemoryDatabase,
   ) {
     this.provider = provider;
     this.config = config;
     this.sessionStore = sessionStore;
     this.owlRegistry = owlRegistry;
-    this.userProfileProvider = userProfileProvider;
-    this.episodicMemory = episodicMemory;
     this.db = db;
   }
 
@@ -188,56 +178,8 @@ export class OwlEvolutionEngine {
       )
       .join("\n\n");
 
-    // If a user profile is available (from MicroLearner), include it
-    // to give the evolution LLM a holistic view of who this person is
-    let profileSection = "";
-    if (this.userProfileProvider) {
-      const profile = this.userProfileProvider();
-      if (profile && profile.totalMessages > 10) {
-        const topTopics = Object.entries(profile.topics)
-          .sort(([, a], [, b]) => b - a)
-          .slice(0, 5)
-          .map(([t, c]) => `${t}(${c}x)`)
-          .join(", ");
-        const topTools = Object.entries(profile.toolUsage)
-          .sort(([, a], [, b]) => b - a)
-          .slice(0, 5)
-          .map(([t, c]) => `${t}(${c}x)`)
-          .join(", ");
-        profileSection =
-          `\nUSER PROFILE (${profile.totalMessages} total messages):\n` +
-          `- Top topics: ${topTopics || "none"}\n` +
-          `- Most used tools: ${topTools || "none"}\n` +
-          `- Interaction style: ${profile.commandRate > 0.5 ? "command-oriented (prefers actions)" : profile.questionRate > 0.4 ? "question-oriented (prefers explanations)" : "conversational"}\n` +
-          `- Avg message length: ${Math.round(profile.avgMessageLength)} chars\n` +
-          `- Sentiment: ${profile.positiveSignals}+ / ${profile.negativeSignals}-\n\n`;
-      }
-    }
-
-    // Retrieve relevant episodic memories for context
-    // Prioritize memories related to the user's top topics
-    let memorySection = "";
-    if (this.episodicMemory) {
-      try {
-        // Build a query from top topics in the transcript
-        const topicWords = relevantMessages
-          .slice(-6) // last 3 turns
-          .map((m) => (m.content ?? "").toLowerCase())
-          .join(" ")
-          .split(/\s+/)
-          .filter((w) => w.length > 4)
-          .slice(0, 20);
-        const query = [...new Set(topicWords)].join(" ");
-        memorySection = await this.episodicMemory.toContextString(query, 3);
-        if (memorySection) {
-          memorySection = `\n## Relevant Past Episodes\n${memorySection}\n\n`;
-        }
-      } catch (err) {
-        log.evolution.warn(
-          `[Evolution] EpisodicMemory retrieval failed: ${err}`,
-        );
-      }
-    }
+    const profileSection = "";
+    const memorySection = "";
 
     // Build performance metrics section (Phase 5 — data-driven evolution)
     let performanceSection = "";

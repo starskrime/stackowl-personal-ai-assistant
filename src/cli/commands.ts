@@ -130,16 +130,9 @@ const cmdCapabilities: CommandFn = async (_args, ui, gateway) => {
   return true;
 };
 
-const cmdLearning: CommandFn = async (_args, ui, gateway) => {
-  const orchestrator = gateway.getLearningOrchestrator();
-  if (!orchestrator) {
-    ui.printInfo("Learning engine not available.");
-    return true;
-  }
-
-  const report = await orchestrator.getFullReport();
-  const lines = ["", YB("Learning Report"), sep(), ...report.split("\n"), ""];
-  ui.printLines(lines);
+const cmdLearning: CommandFn = async (_args, ui, _gateway) => {
+  // learningOrchestrator removed in learning/ refactor — /learning command is a no-op.
+  ui.printInfo("Learning engine not available.");
   return true;
 };
 

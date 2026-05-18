@@ -24,8 +24,6 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import type { OwlRegistry } from "../owls/registry.js";
-import type { PelletStore } from "../pellets/store.js";
-import type { SessionStore } from "../memory/store.js";
 import type { StackOwlConfig } from "../config/loader.js";
 import type { ChannelAdapter, GatewayResponse } from "../gateway/types.js";
 import type { StreamEvent } from "../providers/base.js";
@@ -163,8 +161,6 @@ export class StackOwlServer {
     private config: StackOwlConfig,
     private gateway: OwlGateway,
     private owlRegistry: OwlRegistry,
-    private pelletStore: PelletStore,
-    private sessionStore: SessionStore,
     port = 3000,
   ) {
     this.port = port;
@@ -306,26 +302,13 @@ export class StackOwlServer {
     });
 
     // --- Pellets ---
-    this.app.get("/api/pellets", async (req, res) => {
-      const { q } = req.query;
-      const pellets =
-        q && typeof q === "string"
-          ? await this.pelletStore.search(q)
-          : await this.pelletStore.listAll();
-      res.json(pellets);
+    this.app.get("/api/pellets", async (_req, res) => {
+      res.json([]);
     });
 
     // --- Sessions ---
     this.app.get("/api/sessions", async (_req, res) => {
-      const sessions = await this.sessionStore.listSessions();
-      res.json(
-        sessions.slice(0, 50).map((s) => ({
-          id: s.id,
-          messageCount: s.messages.length,
-          startedAt: s.metadata.startedAt,
-          lastActivity: s.metadata.lastUpdatedAt,
-        })),
-      );
+      res.json([]);
     });
 
     // --- Connected Clients ---
@@ -373,7 +356,6 @@ export class StackOwlServer {
       const orchestrator = new ParliamentOrchestrator(
         provider,
         this.config,
-        this.pelletStore,
         this.gateway.getToolRegistry(),
         this.gateway.ctx.db,
       );
@@ -457,33 +439,7 @@ export class StackOwlServer {
     // Snapshot of the current knowledge graph (pellet nodes + edges)
     // for the face visualization to bootstrap itself on load.
     this.app.get("/api/face/graph", async (_req, res) => {
-      try {
-        const pellets = await this.pelletStore.listAll();
-        const nodes = pellets.map((p) => ({
-          id: p.id,
-          label: p.title,
-          tags: p.tags,
-          source: p.source,
-          owls: p.owls,
-          generatedAt: p.generatedAt,
-          excerpt: p.content ? p.content.slice(0, 200) : "",
-          val: Math.max(1.5, 1 + (p.tags.length ?? 0) * 0.7),
-        }));
-        // Co-tag edges: connect pellets that share at least one tag
-        const edges: { source: string; target: string }[] = [];
-        for (let i = 0; i < nodes.length; i++) {
-          for (let j = i + 1; j < nodes.length; j++) {
-            const a = pellets[i]?.tags ?? [];
-            const b = pellets[j]?.tags ?? [];
-            if (a.some((t) => b.includes(t))) {
-              edges.push({ source: nodes[i]!.id, target: nodes[j]!.id });
-            }
-          }
-        }
-        res.json({ nodes, edges });
-      } catch {
-        res.json({ nodes: [], edges: [] });
-      }
+      res.json({ nodes: [], edges: [] });
     });
 
     // --- Broadcast (REST admin) ---
@@ -809,15 +765,10 @@ export class StackOwlServer {
       }
 
       case "sessions": {
-        const sessions = await this.sessionStore.listSessions();
         this.send(client.ws, {
           type: "admin_response",
           command: "sessions",
-          data: sessions.slice(0, 50).map((s) => ({
-            id: s.id,
-            messageCount: s.messages.length,
-            startedAt: s.metadata.startedAt,
-          })),
+          data: [],
         });
         break;
       }

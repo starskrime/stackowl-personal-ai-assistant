@@ -1,7 +1,7 @@
 import { log } from "../logger.js";
 import type { GatewayMessage, GatewayResponse, GatewayContext, GatewayCallbacks } from "./types.js";
 import type { ParliamentSession } from "../parliament/protocol.js";
-import type { Session } from "../memory/store.js";
+import type { ChatMessage } from "../providers/base.js";
 import { updateParliamentDNA } from "../owls/evolution.js";
 
 // ─── shuffleArray utility (same as core.ts) ───────────────────────────────
@@ -20,7 +20,7 @@ export interface IParliamentSubsystem {
     message: GatewayMessage,
     ctx: GatewayContext,
     callbacks?: GatewayCallbacks,
-    session?: Session,
+    session?: { id: string; messages: ChatMessage[] },
   ): Promise<GatewayResponse | null>;
 }
 
@@ -54,13 +54,13 @@ export class ParliamentSubsystem implements IParliamentSubsystem {
     message: GatewayMessage,
     ctx: GatewayContext,
     callbacks?: GatewayCallbacks,
-    session?: Session,
+    session?: { id: string; messages: ChatMessage[] },
   ): Promise<GatewayResponse | null> {
     log.parliament.debug("ParliamentSubsystem.run: entry", { sessionId: message.sessionId });
 
-    const { multiRoundDebate, debatePelletGenerator, pelletStore } = ctx;
+    const { multiRoundDebate, debatePelletGenerator } = ctx;
 
-    if (!multiRoundDebate || !debatePelletGenerator || !pelletStore) {
+    if (!multiRoundDebate || !debatePelletGenerator) {
       log.parliament.debug("ParliamentSubsystem.run: dependencies missing, skipping");
       return null;
     }
@@ -70,12 +70,11 @@ export class ParliamentSubsystem implements IParliamentSubsystem {
     let worthinessCategory = "other";
     if (topicWorthiness) {
       log.parliament.debug("ParliamentSubsystem.run: checking topic worthiness");
-      const worthiness = await topicWorthiness.evaluate(message.text, ctx.provider).catch((err: Error) => {
+      const worthiness = await topicWorthiness.evaluate(message.text).catch((err: Error) => {
         log.parliament.error("ParliamentSubsystem.run: topic worthiness failed", err, { sessionId: message.sessionId });
         return null;
       });
-      // Support both legacy isWorthy (real API) and worthy (test mock API)
-      const isWorthy = worthiness ? (worthiness.isWorthy ?? worthiness.worthy ?? true) : true;
+      const isWorthy = worthiness ? (worthiness.isWorthy ?? true) : true;
       if (worthiness && !isWorthy) {
         log.parliament.debug("ParliamentSubsystem.run: topic not worthy", { score: worthiness.score });
         return null;
@@ -126,7 +125,7 @@ export class ParliamentSubsystem implements IParliamentSubsystem {
     });
 
     // ─── Generate pellet — fire and forget, must not block response ────────
-    void debatePelletGenerator.generateFromSession(debateSession, pelletStore).catch((err: Error) => {
+    void debatePelletGenerator.generateFromSession(debateSession).catch((err: Error) => {
       log.parliament.error("ParliamentSubsystem.run: pellet generation failed", err, { sessionId: message.sessionId });
     });
 
@@ -157,9 +156,9 @@ export class ParliamentSubsystem implements IParliamentSubsystem {
     try {
       if (ctx.db && participants.length > 0) {
         const synthOwl =
-          participants.find(p => (p.persona as Record<string, unknown>).mentorPersonality)
+          participants.find(p => (p.persona as unknown as Record<string, unknown>).mentorPersonality)
           ?? participants.find(p => p.persona.name === "Noctua")
-          ?? participants.find(p => (p.persona as Record<string, unknown>).specialty === "architect")
+          ?? participants.find(p => (p.persona as unknown as Record<string, unknown>).specialty === "architect")
           ?? participants[0];
         const challOwl = participants.find(p => p !== synthOwl);
         await updateParliamentDNA(

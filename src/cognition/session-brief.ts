@@ -18,7 +18,7 @@
  */
 
 import type { ModelProvider, ChatMessage } from "../providers/base.js";
-import type { EpisodicMemory } from "../memory/episodic.js";
+import type { EpisodicSearchable } from "./loop-detector.js";
 import type { GroundStateView } from "./ground-state.js";
 import type { OwlInnerLife } from "../owls/inner-life.js";
 import { log } from "../logger.js";
@@ -46,7 +46,7 @@ export class SessionBriefGenerator {
    */
   async generate(opts: {
     owlName: string;
-    episodicMemory?: EpisodicMemory;
+    episodicMemory?: EpisodicSearchable;
     groundState?: GroundStateView;
     innerLife?: OwlInnerLife;
     userId?: string;
@@ -118,7 +118,7 @@ export class SessionBriefGenerator {
   // ─── Private ─────────────────────────────────────────────────
 
   private async fetchLastEpisode(
-    episodicMemory?: EpisodicMemory,
+    episodicMemory?: EpisodicSearchable,
   ) {
     if (!episodicMemory) return null;
     try {

@@ -1,7 +1,6 @@
 import type { ModelProvider } from "../providers/base.js";
 import type { MemoryDatabase } from "../memory/db.js";
-import type { StoredFact } from "../memory/fact-store.js";
-import type { Episode } from "../memory/episodic.js";
+import type { Fact } from "../memory/fact-schema.js";
 import { log } from "../logger.js";
 
 export interface UserPersona {
@@ -39,8 +38,7 @@ export class UserPersonaSynthesizer {
 
   async getPersona(
     userId: string,
-    facts: StoredFact[],
-    episodes: Episode[],
+    facts: Fact[],
     preferenceContext: string,
   ): Promise<UserPersona | null> {
     // Check cache first — return cached persona regardless of current fact count
@@ -57,7 +55,7 @@ export class UserPersonaSynthesizer {
           if (!this.pending.has(userId)) {
             this.pending.add(userId);
             setImmediate(() => {
-              this.synthesize(userId, facts, episodes, preferenceContext)
+              this.synthesize(userId, facts, preferenceContext)
                 .finally(() => this.pending.delete(userId));
             });
           }
@@ -71,33 +69,25 @@ export class UserPersonaSynthesizer {
     if (facts.length < MIN_FACTS_FOR_PERSONA) return null;
 
     // No cache — synthesize synchronously (first-time user)
-    return this.synthesize(userId, facts, episodes, preferenceContext);
+    return this.synthesize(userId, facts, preferenceContext);
   }
 
   async synthesize(
     userId: string,
-    facts: StoredFact[],
-    episodes: Episode[],
+    facts: Fact[],
     preferenceContext: string,
   ): Promise<UserPersona | null> {
     try {
       const topFacts = facts
         .toSorted((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
         .slice(0, 10)
-        .map((f) => `- ${f.fact}`)
-        .join("\n");
-      const topEpisodes = episodes
-        .slice(0, 3)
-        .map((e) => `- ${e.summary}`)
+        .map((f) => `- ${f.content}`)
         .join("\n");
 
       const prompt = `You are analyzing a user to create a persona profile.
 
 Facts about them:
 ${topFacts || "None yet"}
-
-Recent episodes:
-${topEpisodes || "None yet"}
 
 Preferences:
 ${preferenceContext || "None recorded"}

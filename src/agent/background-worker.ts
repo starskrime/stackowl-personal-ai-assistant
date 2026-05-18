@@ -16,7 +16,6 @@
  */
 
 import type { MemoryDatabase, AgentTask, AgentGoal } from "../memory/db.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -28,7 +27,6 @@ import { log } from "../logger.js";
 
 export interface WorkerContext {
   db: MemoryDatabase;
-  pelletStore: PelletStore;
   provider: ModelProvider;
   owl: OwlInstance;
   toolRegistry: ToolRegistry;
@@ -125,7 +123,6 @@ export class BackgroundWorker {
       provider: this.ctx.provider,
       owl: this.ctx.owl,
       config: this.ctx.config,
-      pelletStore: this.ctx.pelletStore,
       toolRegistry: this.ctx.toolRegistry,
       sessionHistory: [],
       skipGapDetection: true,

@@ -3,8 +3,6 @@ import type { GatewayCallbacks } from "../gateway/types.js";
 import type { ConversationDigest } from "../memory/conversation-digest.js";
 import type { ContinuityResult } from "../cognition/continuity-engine.js";
 import type { IntelligenceRouter } from "../intelligence/router.js";
-import type { PelletStore } from "../pellets/store.js";
-import type { MemoryBus } from "../memory/bus.js";
 import type { SessionStore } from "../memory/store.js";
 import type { EventBus } from "../events/bus.js";
 import type { StackOwlConfig } from "../config/loader.js";
@@ -16,8 +14,6 @@ export type { ContinuityClass };
 
 export interface ContextDependencies {
   intelligenceRouter?: IntelligenceRouter;
-  pelletStore?: PelletStore;
-  memoryBus?: MemoryBus;
   sessionStore: SessionStore;
   eventBus?: EventBus;
   config: StackOwlConfig;
@@ -46,7 +42,6 @@ export interface ContextRequest {
   readonly continuityResult: ContinuityResult | null;
   readonly digest: ConversationDigest | null;
   readonly deps: ContextDependencies;
-  retrievedPelletIds?: string[];
 }
 
 export type LayerResults = ReadonlyMap<string, string>;

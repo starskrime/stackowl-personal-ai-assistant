@@ -17,11 +17,9 @@ import { join } from "node:path";
 import type { ModelProvider } from "../providers/base.js";
 import type { OwlInstance } from "../owls/persona.js";
 import type { StackOwlConfig } from "../config/loader.js";
-import type { PelletStore } from "../pellets/store.js";
 import type { OwlRegistry } from "../owls/registry.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { OwlInnerLife } from "../owls/inner-life.js";
-import { PelletGenerator, makeProviderRouter } from "../pellets/generator.js";
 import { log } from "../logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -105,18 +103,15 @@ export interface CouncilHistory {
 export class KnowledgeCouncil {
   private history: CouncilHistory | null = null;
   private historyPath: string;
-  private pelletGenerator: PelletGenerator;
 
   constructor(
     private provider: ModelProvider,
     private owlRegistry: OwlRegistry,
     private config: StackOwlConfig,
-    private pelletStore: PelletStore,
     private workspacePath: string,
     _providerRegistry?: ProviderRegistry,
   ) {
     this.historyPath = join(workspacePath, "council_history.json");
-    this.pelletGenerator = new PelletGenerator(makeProviderRouter(provider));
   }
 
   /**
@@ -590,119 +585,12 @@ Respond as JSON:
   // ─── Phase 4: Create Validated Pellets ──────────────────────────
 
   private async phaseCreatePellets(
-    session: CouncilSession,
+    _session: CouncilSession,
     _owls: OwlInstance[],
     onProgress?: (msg: string) => Promise<void>,
   ): Promise<void> {
-    // Create pellets for learnings that passed peer review
-    for (const learning of session.learnings) {
-      const reviews = session.reviews.filter(
-        (r) => r.targetOwl === learning.owlName,
-      );
-      const avgTrust =
-        reviews.length > 0
-          ? reviews.reduce((sum, r) => sum + r.trustScore, 0) / reviews.length
-          : learning.confidence;
-
-      // Only create pellets for knowledge that peers trust (> 0.5 avg trust)
-      if (avgTrust < 0.4) {
-        log.engine.info(
-          `[KnowledgeCouncil] Skipping pellet for "${learning.topic}" — low peer trust (${(avgTrust * 100).toFixed(0)}%)`,
-        );
-        continue;
-      }
-
-      const challenges = reviews.filter((r) => r.type === "challenge");
-      const expansions = reviews.filter((r) => r.type === "expand");
-
-      // Build enriched content from learning + peer feedback
-      const enrichedContent = [
-        `# ${learning.topic}`,
-        ``,
-        `*Researched by ${learning.owlEmoji} ${learning.owlName} | Peer-reviewed by ${reviews.length} owl(s) | Trust: ${(avgTrust * 100).toFixed(0)}%*`,
-        ``,
-        `## Findings`,
-        learning.findings,
-        ``,
-        `## Key Insights`,
-        ...learning.keyInsights.map((i) => `- ${i}`),
-        ...(challenges.length > 0
-          ? [
-              ``,
-              `## Challenges Raised`,
-              ...challenges.map(
-                (c) => `- **${c.reviewerName}**: ${c.feedback}`,
-              ),
-            ]
-          : []),
-        ...(expansions.length > 0
-          ? [
-              ``,
-              `## Expansions`,
-              ...expansions.map(
-                (e) => `- **${e.reviewerName}**: ${e.feedback}`,
-              ),
-            ]
-          : []),
-        ...(learning.openQuestions.length > 0
-          ? [
-              ``,
-              `## Open Questions`,
-              ...learning.openQuestions.map((q) => `- ${q}`),
-            ]
-          : []),
-      ].join("\n");
-
-      try {
-        const pellet = await this.pelletGenerator.generate(
-          enrichedContent,
-          `Knowledge Council: ${learning.topic}`,
-        );
-        if (!pellet) {
-          log.engine.warn(`[KnowledgeCouncil] Generator returned null for "${learning.topic}"`);
-          continue;
-        }
-        await this.pelletStore.save(pellet);
-        session.pelletsCreated++;
-
-        log.engine.info(`[KnowledgeCouncil] Saved pellet: ${pellet.id}.md`);
-      } catch (err) {
-        log.engine.warn(
-          `[KnowledgeCouncil] Failed to create pellet for "${learning.topic}": ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-
-    // Create pellets for cross-pollination insights
-    for (const cp of session.crossPollinations) {
-      try {
-        const content = [
-          `# Cross-Domain Insight`,
-          ``,
-          `*Discovered during Knowledge Council by connecting ${cp.owls.join(" and ")}'s research*`,
-          ``,
-          `## Connection`,
-          cp.connection,
-          ``,
-          `## Emergent Insight`,
-          cp.emergentInsight,
-        ].join("\n");
-
-        const pellet = await this.pelletGenerator.generate(
-          content,
-          `Cross-Pollination: ${cp.connection.slice(0, 60)}`,
-        );
-        if (!pellet) continue;
-        await this.pelletStore.save(pellet);
-        session.pelletsCreated++;
-      } catch (err) {
-        log.parliament.warn("council cross-pollination pellet creation failed", err);
-      }
-    }
-
-    await onProgress?.(
-      `  📝 Created **${session.pelletsCreated}** validated knowledge pellets`,
-    );
+    // Pellet store removed — knowledge persistence handled by MemoryManager.
+    await onProgress?.(`  📝 Knowledge captured (pellet store removed)`);
   }
 
   // ─── Update Owl Inner Lives ──────────────────────────────────────

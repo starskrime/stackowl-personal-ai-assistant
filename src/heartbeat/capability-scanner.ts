@@ -14,7 +14,6 @@
 import type { StackOwlConfig } from "../config/loader.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { SkillsRegistry } from "../skills/registry.js";
-import type { MicroLearner } from "../learning/micro-learner.js";
 import type { ToolTracker } from "../tools/tracker.js";
 import { log } from "../logger.js";
 
@@ -50,7 +49,6 @@ export class CapabilityScanner {
     private config: StackOwlConfig,
     private toolRegistry?: ToolRegistry,
     private skillsRegistry?: SkillsRegistry,
-    private microLearner?: MicroLearner,
     private toolTracker?: ToolTracker,
   ) {}
 
@@ -123,36 +121,28 @@ export class CapabilityScanner {
     const gaps: CapabilityGap[] = [];
 
     // Check Telegram
-    if (this.config.telegram?.botToken && this.microLearner) {
-      const profile = this.microLearner.getProfile();
-      const telegramUsage = profile.toolUsage["send_telegram_message"] ?? 0;
-      if (telegramUsage === 0 && profile.totalMessages > 10) {
-        gaps.push({
-          type: "unused_adapter",
-          name: "telegram",
-          description:
-            "Telegram is configured but the user has never received a proactive message",
-          suggestion:
-            "Create a skill that sends daily summaries or reminders via Telegram",
-          priority: 75,
-        });
-      }
+    if (this.config.telegram?.botToken) {
+      gaps.push({
+        type: "unused_adapter",
+        name: "telegram",
+        description:
+          "Telegram is configured but the user has never received a proactive message",
+        suggestion:
+          "Create a skill that sends daily summaries or reminders via Telegram",
+        priority: 75,
+      });
     }
 
     // Check Slack
-    if (this.config.slack?.botToken && this.microLearner) {
-      const profile = this.microLearner.getProfile();
-      const slackUsage = profile.toolUsage["send_slack_message"] ?? 0;
-      if (slackUsage === 0 && profile.totalMessages > 10) {
-        gaps.push({
-          type: "unused_adapter",
-          name: "slack",
-          description: "Slack is configured but never used for messaging",
-          suggestion:
-            "Create a skill that posts status updates or alerts to Slack channels",
-          priority: 65,
-        });
-      }
+    if (this.config.slack?.botToken) {
+      gaps.push({
+        type: "unused_adapter",
+        name: "slack",
+        description: "Slack is configured but never used for messaging",
+        suggestion:
+          "Create a skill that posts status updates or alerts to Slack channels",
+        priority: 65,
+      });
     }
 
     return gaps;
@@ -202,47 +192,20 @@ export class CapabilityScanner {
 
     const gaps: CapabilityGap[] = [];
     for (const server of this.config.mcp.servers) {
-      // Check if any tool from this MCP server has been used
-      // (MCP tools are prefixed with the server name)
-      if (this.microLearner) {
-        const profile = this.microLearner.getProfile();
-        const serverTools = Object.keys(profile.toolUsage).filter((t) =>
-          t.toLowerCase().includes(server.name.toLowerCase()),
-        );
-        if (serverTools.length === 0 && profile.totalMessages > 10) {
-          gaps.push({
-            type: "unused_mcp",
-            name: server.name,
-            description: `MCP server "${server.name}" is configured but its tools have never been used`,
-            suggestion: `Research what "${server.name}" MCP server provides and create skills that leverage its capabilities`,
-            priority: 50,
-          });
-        }
-      }
+      gaps.push({
+        type: "unused_mcp",
+        name: server.name,
+        description: `MCP server "${server.name}" is configured but its tools have never been used`,
+        suggestion: `Research what "${server.name}" MCP server provides and create skills that leverage its capabilities`,
+        priority: 50,
+      });
     }
 
     return gaps;
   }
 
   private scanTopicGaps(): CapabilityGap[] {
-    if (!this.microLearner) return [];
-
-    const gaps: CapabilityGap[] = [];
-    const anticipated = this.microLearner.getAnticipatedNeeds();
-
-    for (const need of anticipated.slice(0, 3)) {
-      if (need.confidence > 0.5) {
-        gaps.push({
-          type: "topic_gap",
-          name: need.capability,
-          description: need.reason,
-          suggestion: `Research "${need.capability}" and create a skill or store knowledge pellets about it`,
-          priority: Math.round(need.confidence * 60),
-        });
-      }
-    }
-
-    return gaps;
+    return [];
   }
 
   private scanPermissionGaps(): CapabilityGap[] {

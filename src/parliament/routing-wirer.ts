@@ -97,7 +97,6 @@ export class RoutingWirer {
    */
   async prepareParliamentContext(
     _message: string,
-    _pelletStore: import("../pellets/store.js").PelletStore,
   ): Promise<ChatMessage[]> {
     // Deprecated: Parliament context injection is now handled inline by the orchestrator.
     return [];

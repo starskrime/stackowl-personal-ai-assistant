@@ -25,17 +25,8 @@ export const handleCapabilities: CommandHandler = async (ctx, _args) => {
 
 // ─── /learning ────────────────────────────────────────────────────────────────
 
-export const handleLearning: CommandHandler = async (ctx, _args) => {
-  const orchestrator = ctx.getOwlGateway().getLearningOrchestrator();
-  if (!orchestrator) {
-    return { kind: "error", text: "Learning engine not available." };
-  }
-  const report = await orchestrator.getFullReport();
-  const items = report
-    .split("\n")
-    .filter((l) => l.trim())
-    .map((line, i) => ({ id: `ln-${i}`, label: line }));
-  return { kind: "panel", payload: { title: "/learning", items } };
+export const handleLearning: CommandHandler = async (_ctx, _args) => {
+  return { kind: "error", text: "Learning engine removed — knowledge is now managed by MemoryManager." };
 };
 
 // ─── /owl status ──────────────────────────────────────────────────────────────
