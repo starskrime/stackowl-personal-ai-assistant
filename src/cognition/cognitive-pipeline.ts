@@ -22,7 +22,8 @@ import { SymbolTableSeeder, type SeederDependencies } from "./symbol-table-seede
 import { TurnJournal } from "./turn-journal.js";
 import { log } from "../logger.js";
 
-const WARMTH_THRESHOLD = 2; // warmth score ≥ 2 → use compiled pipeline
+const WARMTH_THRESHOLD = 2;   // warmth score ≥ 2 → use compiled pipeline
+const DISPATCH_TIMEOUT_MS = 800; // max wait for Dispatch LLM call; exceeded → cold-start fallback
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -208,7 +209,21 @@ export class CognitivePipeline {
     }
 
     try {
-      const result = await this.dispatch.dispatch(userMessage, table);
+      const timeout = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), DISPATCH_TIMEOUT_MS),
+      );
+      const result = await Promise.race([
+        this.dispatch.dispatch(userMessage, table),
+        timeout,
+      ]);
+      if (!result) {
+        log.cognition.warn("cognitive-pipeline.dispatch.timeout", {
+          sessionId,
+          limitMs: DISPATCH_TIMEOUT_MS,
+        });
+        this.lastDispatch.delete(sessionId);
+        return null;
+      }
       this.lastDispatch.set(sessionId, result);
       return result;
     } catch (err) {
@@ -252,10 +267,21 @@ export class CognitivePipeline {
       return { contextOutput, symbolTable: table, dispatch: null, coldStart: true };
     }
 
-    // Compiled path: run Dispatch to get routing decision
+    // Compiled path: run Dispatch to get routing decision (bounded by timeout)
     let dispatchResult: DispatchResult | null = null;
     try {
-      dispatchResult = await this.dispatch.dispatch(userMessage, table);
+      const timeout = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), DISPATCH_TIMEOUT_MS),
+      );
+      dispatchResult = await Promise.race([
+        this.dispatch.dispatch(userMessage, table),
+        timeout,
+      ]);
+      if (!dispatchResult) {
+        log.cognition.warn("cognitive-pipeline.prepareContext.dispatch.timeout", {
+          sessionId, limitMs: DISPATCH_TIMEOUT_MS,
+        });
+      }
     } catch (err) {
       log.cognition.error("cognitive-pipeline.dispatch.failed", err as Error, { sessionId });
     }
