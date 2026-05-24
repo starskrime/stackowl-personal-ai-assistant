@@ -1,0 +1,16 @@
+/* ConstellationView styles — design tokens only, no literal colors. */
+ConstellationView {
+    layer: base;
+    width: 24;
+    background: $color-bg-elevated;
+    border-right: solid $color-border;
+}
+ConstellationView OwlCard {
+    height: auto;
+    padding: 0 1;
+    color: $color-text-primary;
+    background: $color-bg-elevated;
+}
+ConstellationView OwlCard:focus {
+    border-left: solid $color-accent;
+}

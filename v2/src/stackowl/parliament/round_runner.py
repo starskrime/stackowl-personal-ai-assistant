@@ -1,0 +1,184 @@
+"""RoundRunner — single-round execution: fan-out across owls and aggregation."""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+
+from stackowl.exceptions import OwlConcurrencyError, OwlTimeoutError, OwlTokenLimitError
+from stackowl.infra.observability import log
+from stackowl.parliament.models import ParliamentRound, ParliamentSession
+from stackowl.pipeline.backends.base import OrchestratorBackend
+from stackowl.pipeline.state import PipelineState
+
+_TRUNCATION_CHARS = 500
+
+
+class RoundRunner:
+    """Executes a single Parliament round across all owls in parallel.
+
+    Encapsulates the per-owl backend invocation, the asyncio.gather fan-out,
+    timeout handling, and token-budget enforcement so the orchestrator stays
+    focused on session lifecycle.
+    """
+
+    def __init__(
+        self,
+        backend: OrchestratorBackend,
+        per_owl_timeout_s: float,
+        token_budget: int,
+    ) -> None:
+        self._backend = backend
+        self._per_owl_timeout_s = per_owl_timeout_s
+        self._token_budget = token_budget
+
+    async def run_round(
+        self,
+        session: ParliamentSession,
+        round_number: int,
+        prompts: dict[str, str],
+    ) -> ParliamentRound:
+        """Run one round and return the aggregated ParliamentRound."""
+        log.parliament.debug(
+            "[parliament] round_runner.run_round: entry",
+            extra={
+                "_fields": {
+                    "session_id": session.session_id,
+                    "round_number": round_number,
+                    "owl_count": len(prompts),
+                }
+            },
+        )
+        t0 = time.monotonic()
+        coros = [
+            self._run_owl(session, owl_name, prompts[owl_name], round_number)
+            for owl_name in session.owl_names
+        ]
+        results = await asyncio.gather(*coros, return_exceptions=True)
+
+        responses: dict[str, str] = {}
+        truncated: dict[str, bool] = {}
+        cumulative_chars = session.cumulative_token_estimate() * 4
+        for owl_name, result in zip(session.owl_names, results, strict=True):
+            if isinstance(result, BaseException):
+                log.parliament.warning(
+                    "[parliament] round_runner.run_round: owl raised",
+                    exc_info=result,
+                    extra={"_fields": {"owl_name": owl_name}},
+                )
+                responses[owl_name] = f"[error: {type(result).__name__}]"
+                truncated[owl_name] = True
+                continue
+            _name, text, was_truncated = result
+            cumulative_chars += len(text)
+            if cumulative_chars >= self._token_budget * 4:
+                log.parliament.warning(
+                    "[parliament] round_runner: token budget exceeded — truncating",
+                    extra={
+                        "_fields": {
+                            "owl_name": owl_name,
+                            "budget": self._token_budget,
+                            "estimated_tokens": cumulative_chars // 4,
+                        }
+                    },
+                )
+                text = text[:_TRUNCATION_CHARS]
+                was_truncated = True
+            responses[owl_name] = text
+            truncated[owl_name] = was_truncated
+
+        duration_ms = (time.monotonic() - t0) * 1000.0
+        round_ = ParliamentRound(
+            round_number=round_number,
+            responses=responses,
+            truncated=truncated,
+            duration_ms=duration_ms,
+        )
+        log.parliament.debug(
+            "[parliament] round_runner.run_round: exit",
+            extra={
+                "_fields": {
+                    "session_id": session.session_id,
+                    "round_number": round_number,
+                    "duration_ms": duration_ms,
+                }
+            },
+        )
+        return round_
+
+    async def _run_owl(
+        self,
+        session: ParliamentSession,
+        owl_name: str,
+        prompt: str,
+        round_number: int,
+    ) -> tuple[str, str, bool]:
+        """Run a single owl via the backend; return (name, text, truncated)."""
+        log.parliament.debug(
+            "[parliament] round_runner._run_owl: entry",
+            extra={
+                "_fields": {
+                    "session_id": session.session_id,
+                    "owl_name": owl_name,
+                    "round_number": round_number,
+                    "prompt_len": len(prompt),
+                }
+            },
+        )
+        state = PipelineState(
+            trace_id=str(uuid.uuid4()),
+            session_id=session.session_id,
+            input_text=prompt,
+            channel="parliament",
+            owl_name=owl_name,
+            pipeline_step="parliament_round",
+        )
+        t0 = time.monotonic()
+        try:
+            final_state = await asyncio.wait_for(
+                self._backend.run(state),
+                timeout=self._per_owl_timeout_s,
+            )
+        except TimeoutError:
+            log.parliament.warning(
+                "[parliament] round_runner._run_owl: timeout",
+                extra={
+                    "_fields": {
+                        "owl_name": owl_name,
+                        "timeout_s": self._per_owl_timeout_s,
+                    }
+                },
+            )
+            return (
+                owl_name,
+                f"[timed out after {self._per_owl_timeout_s:.0f}s]",
+                True,
+            )
+        except (OwlTimeoutError, OwlTokenLimitError, OwlConcurrencyError) as exc:
+            log.parliament.warning(
+                "[parliament] round_runner._run_owl: owl error",
+                exc_info=exc,
+                extra={"_fields": {"owl_name": owl_name}},
+            )
+            return owl_name, f"[error: {type(exc).__name__}]", True
+        except Exception as exc:
+            log.parliament.warning(
+                "[parliament] round_runner._run_owl: backend failed",
+                exc_info=exc,
+                extra={"_fields": {"owl_name": owl_name}},
+            )
+            return owl_name, f"[backend error: {type(exc).__name__}]", True
+
+        text = "".join(chunk.content for chunk in final_state.responses)
+        log.parliament.debug(
+            "[parliament] round_runner._run_owl: exit",
+            extra={
+                "_fields": {
+                    "owl_name": owl_name,
+                    "response_len": len(text),
+                    "duration_ms": (time.monotonic() - t0) * 1000.0,
+                }
+            },
+        )
+        return owl_name, text, False

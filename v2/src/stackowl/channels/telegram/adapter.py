@@ -1,0 +1,287 @@
+"""TelegramChannelAdapter — bridges the Telegram Bot API to the StackOwl gateway.
+
+The adapter consumes a :class:`TelegramSettings` injected by the caller,
+exposes the canonical :class:`ChannelAdapter` surface, and self-registers
+with :class:`ChannelRegistry` on ``start()``.
+
+Live I/O paths are guarded by :class:`TestModeGuard` so tests never open a
+long-poll connection. Message intake is mediated by an internal
+``asyncio.Queue`` that :meth:`_handle_update` populates from python-telegram-bot
+callbacks.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+from telegram import Update
+from telegram.ext import ContextTypes, MessageHandler, filters
+
+from stackowl.channels.base import ChannelAdapter
+from stackowl.channels.telegram._bot import build_inline_keyboard, start_bot, stop_bot
+from stackowl.channels.telegram.formatter import TelegramMarkdownFormatter
+from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention
+from stackowl.channels.telegram.settings import TelegramSettings
+from stackowl.channels.splitter import TelegramMessageSplitter
+from stackowl.config.test_mode import TestModeGuard
+from stackowl.gateway.scanner import IngressMessage
+from stackowl.health.status import HealthStatus
+from stackowl.infra.observability import log
+from stackowl.pipeline.streaming import ResponseChunk
+
+import asyncio
+
+if TYPE_CHECKING:
+    from stackowl.channels.registry import ChannelRegistry
+
+_UPDATE_DEGRADED_AFTER_S = 120.0
+
+
+class TelegramChannelAdapter(ChannelAdapter):
+    """Telegram I/O channel — DM + group support, allowlist-gated."""
+
+    def __init__(self, settings: TelegramSettings) -> None:
+        self._settings = settings
+        self._queue: asyncio.Queue[IngressMessage] = asyncio.Queue()
+        self._formatter = TelegramMarkdownFormatter()
+        self._splitter = TelegramMessageSplitter()
+        self._bot_app: Any = None
+        self._last_update_at: float | None = None
+        self._last_chat_id: int | None = None
+        self._bot_user_id: int = 0
+        self._bot_username: str = ""
+        log.telegram.debug(
+            "[telegram] adapter.init: ready",
+            extra={
+                "_fields": {
+                    "allowed_count": len(settings.allowed_user_ids),
+                    "webhook_mode": settings.webhook_url is not None,
+                }
+            },
+        )
+
+    @property
+    def channel_name(self) -> str:
+        return "telegram"
+
+    @property
+    def contributor_name(self) -> str:
+        return "telegram"
+
+    async def start(self) -> None:
+        """Open a Telegram session and register with the channel registry."""
+        log.telegram.debug("[telegram] adapter.start: entry")
+        TestModeGuard.assert_not_test_mode("telegram.start")
+
+        app, bot_id, bot_username = await start_bot(
+            self._settings.bot_token,
+            self._settings.webhook_url,
+            self._settings.webhook_secret,
+        )
+        self._bot_app = app
+        self._bot_user_id = bot_id
+        self._bot_username = bot_username
+
+        app.add_handler(MessageHandler(filters.TEXT, self._handle_update))
+        self.register_with_registry()
+        log.telegram.debug("[telegram] adapter.start: exit")
+
+    async def stop(self) -> None:
+        """Gracefully shut down the Telegram session."""
+        log.telegram.debug("[telegram] adapter.stop: entry")
+        await stop_bot(self._bot_app)
+        log.telegram.debug("[telegram] adapter.stop: exit")
+
+    async def receive(self) -> IngressMessage:
+        """Yield the next IngressMessage enqueued by ``_handle_update``."""
+        log.telegram.debug("[telegram] adapter.receive: entry")
+        msg = await self._queue.get()
+        log.telegram.debug(
+            "[telegram] adapter.receive: exit",
+            extra={"_fields": {"trace_id": msg.trace_id, "text_len": len(msg.text)}},
+        )
+        return msg
+
+    async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None:
+        """Collect streaming chunks, format, and dispatch to Telegram."""
+        log.telegram.debug("[telegram] adapter.send: entry")
+        TestModeGuard.assert_not_test_mode("telegram.send")
+        buffer = ""
+        async for chunk in chunks:
+            buffer += chunk.content
+        await self.send_text(self._formatter.format_response(buffer))
+        log.telegram.debug(
+            "[telegram] adapter.send: exit",
+            extra={"_fields": {"total_len": len(buffer)}},
+        )
+
+    async def send_text(self, text: str) -> None:
+        """Split ``text`` per Telegram's limit and send each part."""
+        log.telegram.debug(
+            "[telegram] adapter.send_text: entry",
+            extra={"_fields": {"text_len": len(text)}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.send_text")
+        if self._bot_app is None or self._last_chat_id is None:
+            log.telegram.warning(
+                "[telegram] adapter.send_text: no active chat — message dropped",
+                extra={"_fields": {"has_app": self._bot_app is not None}},
+            )
+            return
+        parts = self._splitter.split(text)
+        log.telegram.debug(
+            "[telegram] adapter.send_text: decision split",
+            extra={"_fields": {"part_count": len(parts)}},
+        )
+        for idx, part in enumerate(parts):
+            log.telegram.debug(
+                "[telegram] adapter.send_text: step part_dispatched",
+                extra={"_fields": {"idx": idx, "len": len(part)}},
+            )
+            await self._bot_app.bot.send_message(
+                chat_id=self._last_chat_id,
+                text=part,
+                parse_mode="MarkdownV2",
+            )
+        log.telegram.debug("[telegram] adapter.send_text: exit")
+
+    async def send_inline_keyboard(self, text: str, keyboard: dict[str, object]) -> None:
+        """Send a message with an inline keyboard attachment."""
+        log.telegram.debug(
+            "[telegram] adapter.send_inline_keyboard: entry",
+            extra={"_fields": {"text_len": len(text)}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.send_inline_keyboard")
+        if self._bot_app is None or self._last_chat_id is None:
+            log.telegram.warning("[telegram] adapter.send_inline_keyboard: no active chat")
+            return
+        markup = build_inline_keyboard(keyboard)
+        log.telegram.debug(
+            "[telegram] adapter.send_inline_keyboard: decision markup_built",
+            extra={"_fields": {"has_markup": markup is not None}},
+        )
+        await self._bot_app.bot.send_message(
+            chat_id=self._last_chat_id,
+            text=text,
+            parse_mode="MarkdownV2",
+            reply_markup=markup,
+        )
+        log.telegram.debug("[telegram] adapter.send_inline_keyboard: exit")
+
+    async def download_media(self, file_id: str) -> bytes:
+        """Download a media file by its Telegram file_id."""
+        log.telegram.debug(
+            "[telegram] adapter.download_media: entry",
+            extra={"_fields": {"file_id_len": len(file_id)}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.download_media")
+        if self._bot_app is None:
+            log.telegram.warning("[telegram] adapter.download_media: bot not initialised")
+            return b""
+        log.telegram.debug("[telegram] adapter.download_media: decision get_file")
+        tg_file = await self._bot_app.bot.get_file(file_id)
+        data = bytes(await tg_file.download_as_bytearray())
+        log.telegram.debug(
+            "[telegram] adapter.download_media: exit",
+            extra={"_fields": {"bytes_len": len(data)}},
+        )
+        return data
+
+    async def acknowledge_callback(self, callback_id: str, text: str = "") -> None:
+        """Answer a Telegram callback query (required within 15 seconds)."""
+        log.telegram.debug(
+            "[telegram] adapter.acknowledge_callback: entry",
+            extra={"_fields": {"callback_id_len": len(callback_id)}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.acknowledge_callback")
+        if self._bot_app is None:
+            log.telegram.warning("[telegram] adapter.acknowledge_callback: bot not initialised")
+            return
+        log.telegram.debug("[telegram] adapter.acknowledge_callback: decision answer_query")
+        await self._bot_app.bot.answer_callback_query(callback_id, text=text or None)
+        log.telegram.debug("[telegram] adapter.acknowledge_callback: exit")
+
+    async def _handle_update(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """python-telegram-bot callback — enqueue an IngressMessage (fail-closed)."""
+        log.telegram.debug("[telegram] adapter.handle_update: entry")
+        message = update.effective_message
+        if message is None:
+            log.telegram.debug("[telegram] adapter.handle_update: no effective_message — skip")
+            return
+        user = update.effective_user
+        user_id = int(user.id) if user is not None else 0
+        user_hash = hash_user_id(user_id)
+        if not is_authorized(user_id, self._settings.allowed_user_ids):
+            log.telegram.warning(
+                "[telegram] adapter.handle_update: unauthorized drop",
+                extra={"_fields": {"user_hash": user_hash}},
+            )
+            return
+        text_raw = message.text or ""
+        stripped = (
+            strip_bot_mention(text_raw, self._bot_username)
+            if self._bot_username
+            else text_raw.strip()
+        )
+        log.telegram.debug(
+            "[telegram] adapter.handle_update: decision strip_mention",
+            extra={"_fields": {"stripped_len": len(stripped)}},
+        )
+        if not stripped:
+            log.telegram.debug("[telegram] adapter.handle_update: empty after strip — skip")
+            return
+        chat = update.effective_chat
+        chat_id = int(chat.id) if chat is not None else 0
+        ingress = IngressMessage(
+            text=stripped,
+            session_id=str(user_id),
+            channel=self.channel_name,
+            trace_id=uuid4().hex,
+        )
+        self._queue.put_nowait(ingress)
+        self._last_update_at = time.monotonic()
+        self._last_chat_id = chat_id
+        log.telegram.debug(
+            "[telegram] adapter.handle_update: exit",
+            extra={"_fields": {"user_hash": user_hash, "trace_id": ingress.trace_id}},
+        )
+
+    async def health_check(self) -> HealthStatus:
+        """Report ok/degraded based on the last received update timestamp."""
+        log.telegram.debug("[telegram] adapter.health_check: entry")
+        now = time.monotonic()
+        if self._last_update_at is None:
+            status = HealthStatus(
+                name=self.channel_name, status="degraded",
+                message="no update received yet", latency_ms=0.0,
+            )
+        elif now - self._last_update_at > _UPDATE_DEGRADED_AFTER_S:
+            status = HealthStatus(
+                name=self.channel_name, status="degraded",
+                message="update stream stale",
+                latency_ms=(now - self._last_update_at) * 1000.0,
+            )
+        else:
+            status = HealthStatus(
+                name=self.channel_name, status="ok", message=None,
+                latency_ms=(now - self._last_update_at) * 1000.0,
+            )
+        log.telegram.debug(
+            "[telegram] adapter.health_check: exit",
+            extra={"_fields": {"status": status.status}},
+        )
+        return status
+
+    def register_with_registry(self) -> None:
+        """Self-register with the singleton :class:`ChannelRegistry`."""
+        log.telegram.debug("[telegram] adapter.register_with_registry: entry")
+        from stackowl.channels.registry import ChannelRegistry
+        ChannelRegistry.instance().register(self)
+        log.telegram.debug("[telegram] adapter.register_with_registry: exit")

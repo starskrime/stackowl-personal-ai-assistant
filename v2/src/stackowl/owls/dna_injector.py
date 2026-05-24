@@ -1,0 +1,87 @@
+"""DNAPromptInjector — modulates system prompts based on OwlDNA traits."""
+
+from __future__ import annotations
+
+from stackowl.infra.observability import log
+from stackowl.owls.dna import OwlDNA
+from stackowl.owls.manifest import OwlAgentManifest
+
+_HIGH_THRESHOLD = 0.7
+_LOW_THRESHOLD = 0.3
+
+# These are LLM-behaviour directives appended to the *system* prompt — they
+# steer how the model responds, not what surface language it uses, so they
+# stay neutral / register-only. The owl still mirrors the user's language at
+# runtime; only the *behaviour* is modulated.
+_HIGH_DIRECTIVES: tuple[tuple[str, str], ...] = (
+    (
+        "challenge_level",
+        "Respond with skepticism when claims are unsupported; press for evidence and push back on weak arguments.",
+    ),
+    (
+        "curiosity",
+        "Ask clarifying questions whenever intent or scope is ambiguous before producing the main answer.",
+    ),
+    (
+        "formality",
+        "Maintain a formal register and structured phrasing throughout the response.",
+    ),
+    (
+        "creativity",
+        "Explore unconventional approaches and surface non-obvious alternatives alongside the standard solution.",
+    ),
+    (
+        "precision",
+        "State specific, verifiable claims; cite sources, file paths, line numbers, or measurements whenever possible.",
+    ),
+)
+
+_LOW_DIRECTIVES: tuple[tuple[str, str], ...] = (
+    (
+        "verbosity",
+        "Keep responses concise — prefer short paragraphs and avoid restating the question.",
+    ),
+    (
+        "formality",
+        "Use a casual, conversational register.",
+    ),
+)
+
+
+class DNAPromptInjector:
+    """Append trait-modulated instructions to an owl's system prompt.
+
+    The injector is intentionally narrow — it only adds *behavioural*
+    directives, never user-facing copy. The owl continues to mirror the
+    user's language because nothing here forces a particular reply tongue.
+    Neutral DNA (every trait near 0.5) returns the system prompt unchanged.
+    """
+
+    def inject(self, manifest: OwlAgentManifest, dna: OwlDNA) -> str:
+        """Return ``manifest.system_prompt`` with DNA-driven directives appended."""
+        log.engine.debug(
+            "[dna] injector.inject: entry",
+            extra={"_fields": {"owl": manifest.name}},
+        )
+        directives: list[str] = []
+        for trait, directive in _HIGH_DIRECTIVES:
+            value = float(getattr(dna, trait))
+            if value > _HIGH_THRESHOLD:
+                directives.append(directive)
+        for trait, directive in _LOW_DIRECTIVES:
+            value = float(getattr(dna, trait))
+            if value < _LOW_THRESHOLD:
+                directives.append(directive)
+        if not directives:
+            log.engine.debug(
+                "[dna] injector.inject: exit — no modulation",
+                extra={"_fields": {"owl": manifest.name}},
+            )
+            return manifest.system_prompt
+        joined = "\n- ".join(directives)
+        result = f"{manifest.system_prompt}\n\nBehavioural modulation (from owl DNA):\n- {joined}"
+        log.engine.debug(
+            "[dna] injector.inject: exit — directives appended",
+            extra={"_fields": {"owl": manifest.name, "directive_count": len(directives)}},
+        )
+        return result

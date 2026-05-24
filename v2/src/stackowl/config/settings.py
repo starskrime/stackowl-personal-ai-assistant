@@ -1,0 +1,308 @@
+"""Settings — single source of truth for all StackOwl configuration."""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+from stackowl.channels.discord.settings import DiscordSettings
+from stackowl.channels.slack.settings import SlackSettings
+from stackowl.channels.telegram.settings import TelegramSettings
+from stackowl.channels.whatsapp.settings import WhatsAppSettings
+from stackowl.config.notification_settings import (
+    NotificationSettings,
+    QuietHoursSettings,
+)
+from stackowl.config.provider import ProviderConfig
+from stackowl.config.test_mode import TestModeGuard
+from stackowl.config.ui_settings import UISettings
+from stackowl.config.webhook_settings import (
+    WebhookSettings,
+    WebhookSourceConfig,
+)
+from stackowl.mcp.settings import McpClientSettings
+from stackowl.mcp.server_settings import McpServerSettings
+from stackowl.owls.manifest import OwlAgentManifest
+
+__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WhatsAppSettings"]  # noqa: E501
+
+log = logging.getLogger("stackowl.config")
+
+_DEFAULT_CONFIG_FILE = "stackowl.yaml"
+
+
+class _YamlSource(PydanticBaseSettingsSource):
+    """Loads settings from a YAML file (lower priority than env vars)."""
+
+    def __init__(self, settings_cls: type[BaseSettings], yaml_path: Path) -> None:
+        super().__init__(settings_cls)
+        self._path = yaml_path
+        self._data: dict[str, Any] = self._load()
+
+    def _load(self) -> dict[str, Any]:
+        if not self._path.exists():
+            return {}
+        try:
+            raw = yaml.safe_load(self._path.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else {}
+        except Exception as exc:
+            log.warning("[config] Failed to parse %s: %s", self._path, exc)
+            return {}
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        return self._data.get(field_name), field_name, self.field_is_complex(field)
+
+    def __call__(self) -> dict[str, Any]:
+        return {k: v for k, v in self._data.items() if v is not None}
+
+
+class BudgetSettings(BaseModel):
+    """Spending limits enforced by :class:`CostTracker`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    daily_limit_usd: float | None = Field(
+        default=None,
+        description="Daily spend cap in USD. None = unlimited.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class OrchestratorSettings(BaseModel):
+    """Pipeline orchestration backend selection."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    backend: Literal["langgraph", "asyncio"] = Field(
+        default="langgraph",
+        description="Pipeline orchestration backend.",
+        json_schema_extra={"hot_reload": False},
+    )
+
+
+class ParliamentSettings(BaseModel):
+    """Configuration for multi-owl Parliament debate sessions."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_rounds: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum debate rounds per Parliament session.",
+        json_schema_extra={"hot_reload": True},
+    )
+    session_timeout_s: float = Field(
+        default=90.0,
+        gt=0.0,
+        description="Hard wall-clock timeout for a full Parliament session.",
+        json_schema_extra={"hot_reload": True},
+    )
+    per_owl_timeout_s: float = Field(
+        default=30.0,
+        gt=0.0,
+        description="Per-owl timeout for a single round.",
+        json_schema_extra={"hot_reload": True},
+    )
+    token_budget: int = Field(
+        default=20_000,
+        ge=1_000,
+        description="Cumulative output-character budget per owl before truncation.",
+        json_schema_extra={"hot_reload": True},
+    )
+    convergence_threshold: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="Mean pairwise cosine-similarity threshold for early termination.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class MemorySettings(BaseModel):
+    """Configuration for the memory knowledge pipeline (Epic 6)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    semantic_search_enabled: bool = True
+    sensitive_categories: list[str] = Field(
+        default_factory=lambda: [
+            "password",
+            "ssn",
+            "credit_card",
+            "api_key",
+            "private_key",
+        ]
+    )
+    promotion_confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    reinforcement_required: int = Field(default=3, ge=1)
+    prune_after_days: int = Field(default=90, ge=1)
+    extraction_after_n_messages: int = Field(default=5, ge=1)
+    per_user_ceiling_bytes: int = Field(default=52_428_800, ge=1_000_000)
+
+
+class SchedulerSettings(BaseModel):
+    """Configuration for the JobScheduler (Story 7.1)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_concurrent_jobs: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum number of jobs allowed to run concurrently.",
+        json_schema_extra={"hot_reload": True},
+    )
+    replay_window_hours: int = Field(
+        default=24,
+        ge=0,
+        description="How many hours back to replay missed jobs on recovery.",
+        json_schema_extra={"hot_reload": True},
+    )
+    max_notifications_per_hour: int = Field(
+        default=10,
+        ge=0,
+        description="Cap on user notifications emitted per hour by background agents.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class BriefSettings(BaseModel):
+    """Configuration for the morning brief (Story 7.3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schedule: str = Field(
+        default="daily@08:00",
+        description="Default delivery cadence for the morning brief job.",
+        json_schema_extra={"hot_reload": False},
+    )
+    channels: list[str] = Field(
+        default_factory=lambda: ["cli"],
+        description="Channel identifiers that should receive the rendered brief.",
+        json_schema_extra={"hot_reload": True},
+    )
+    sections: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "date_and_priorities": True,
+            "memory_highlights": True,
+            "pending_staged": True,
+            "agent_status": True,
+        },
+        description="Per-section toggle map keyed by assembler key.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class SystemSettings(BaseModel):
+    """Process-level system parameters (locale, timezone)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    timezone: str = Field(
+        default="UTC",
+        description="IANA timezone identifier used for user-facing timestamps.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class GovernanceSettings(BaseModel):
+    """Audit and governance parameters (Story 12.4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    audit_retention_days: int = Field(
+        default=90,
+        ge=1,
+        description="Number of days to keep audit_log rows before pruning.",
+        json_schema_extra={"hot_reload": False},
+    )
+    audit_export_key: str = Field(
+        default="",
+        description="HMAC-SHA256 key used to sign audit log exports. Empty = unsigned.",
+        json_schema_extra={"hot_reload": False},
+    )
+    same_day_security_prs: bool = Field(
+        default=True,
+        description="Auto-merge Dependabot security PRs on the same day they open.",
+        json_schema_extra={"hot_reload": False},
+    )
+
+
+class Settings(BaseSettings):
+    """Application-wide settings.
+
+    Priority (highest to lowest): env vars (``STACKOWL_*``) → YAML file.
+    The YAML file path is read from ``STACKOWL_CONFIG_FILE`` (default:
+    ``stackowl.yaml`` relative to CWD).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="STACKOWL_",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
+
+    providers: list[ProviderConfig] = []
+    test_mode: bool = False
+    settings_watch: bool = False
+    budget: BudgetSettings = Field(default_factory=BudgetSettings)
+    orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
+    parliament: ParliamentSettings = Field(default_factory=ParliamentSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
+    scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
+    brief: BriefSettings = Field(default_factory=BriefSettings)
+    system: SystemSettings = Field(default_factory=SystemSettings)
+    ui: UISettings = Field(default_factory=UISettings)
+    notifications: NotificationSettings = Field(default_factory=NotificationSettings)
+    webhook: WebhookSettings = Field(default_factory=WebhookSettings)
+    discord_channel: DiscordSettings = Field(default_factory=DiscordSettings)
+    slack_channel: SlackSettings = Field(default_factory=SlackSettings)
+    telegram_channel: TelegramSettings = Field(default_factory=TelegramSettings)
+    whatsapp_channel: WhatsAppSettings = Field(default_factory=WhatsAppSettings)
+    mcp_client: McpClientSettings = Field(default_factory=McpClientSettings)
+    mcp_server: McpServerSettings = Field(default_factory=McpServerSettings)
+    owls: list[OwlAgentManifest] = Field(default_factory=list)
+    autonomy_level: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        description="Tool autonomy level for owls.",
+        json_schema_extra={"hot_reload": True},
+    )
+    governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        config_path = Path(os.environ.get("STACKOWL_CONFIG_FILE", _DEFAULT_CONFIG_FILE))
+        return (env_settings, _YamlSource(settings_cls, config_path))
+
+    @model_validator(mode="after")
+    def _post_init(self) -> Settings:
+        config_path = Path(os.environ.get("STACKOWL_CONFIG_FILE", _DEFAULT_CONFIG_FILE))
+
+        if not config_path.exists() and not self.providers:
+            log.warning(
+                "[config] WARNING — No providers configured; %s not found",
+                config_path,
+            )
+        else:
+            names = ", ".join(f"{p.name}[{p.tier}]" for p in self.providers if p.enabled)
+            log.info("[config] Loaded providers: %s", names or "(none enabled)")
+
+        if self.test_mode:
+            TestModeGuard.activate()
+
+        return self

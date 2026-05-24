@@ -1,0 +1,19 @@
+# Demo owl configuration — used by stackowl setup --demo
+# MockProvider responds with static strings so no API key is needed.
+owls:
+  - name: demo-owl
+    role: >
+      You are Demo Owl, a friendly StackOwl demo persona.
+      You answer questions helpfully and concisely.
+    provider: mock
+    model: mock-model
+    max_tokens: 512
+    temperature: 0.7
+    timeout_seconds: 30.0
+    max_concurrent_requests: 1
+    dna:
+      challenge_level: 0.3
+      verbosity: 0.5
+      creativity: 0.5
+      empathy: 0.7
+      technical_depth: 0.4

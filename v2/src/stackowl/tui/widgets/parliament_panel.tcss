@@ -1,0 +1,25 @@
+/* ParliamentPanel styles — design tokens only, no literal colors. */
+ParliamentPanel {
+    layer: overlay;
+    width: 80%;
+    height: 80%;
+    background: $color-bg-elevated;
+    border: double $color-parliament;
+    offset: 10% 10%;
+}
+ParliamentPanel RichLog {
+    background: $color-bg-elevated;
+    color: $color-text-primary;
+}
+OwlRoundPanel {
+    height: auto;
+    background: $color-surface;
+    border: solid $color-border;
+    color: $color-text-primary;
+}
+OwlRoundPanel.collapsed {
+    max-height: 3;
+}
+OwlRoundPanel:focus {
+    border: solid $color-accent;
+}

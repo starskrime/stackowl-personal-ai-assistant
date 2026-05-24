@@ -1,0 +1,13 @@
+/* EvolutionInspectionPanel styles — design tokens only, no literal colors. */
+EvolutionInspectionPanel {
+    layer: overlay;
+    width: 60%;
+    height: 50%;
+    background: $color-bg-elevated;
+    border: solid $color-accent;
+    offset: 20% 25%;
+}
+EvolutionInspectionPanel RichLog {
+    background: $color-bg-elevated;
+    color: $color-text-primary;
+}

@@ -1,0 +1,66 @@
+"""TraceContext — UUIDv4 trace/span IDs propagated automatically via contextvars."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from contextvars import ContextVar, Token
+from typing import Any, NamedTuple
+from uuid import uuid4
+
+
+class _TraceToken(NamedTuple):
+    trace: Token[str | None]
+    span: Token[str | None]
+    parent: Token[str | None]
+    session: Token[str | None]
+
+
+class TraceContext:
+    """Stores and propagates trace/span IDs across async hops via contextvars."""
+
+    _trace_id: ContextVar[str | None] = ContextVar("trace_id", default=None)
+    _span_id: ContextVar[str | None] = ContextVar("span_id", default=None)
+    _parent_span_id: ContextVar[str | None] = ContextVar("parent_span_id", default=None)
+    _session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
+
+    @classmethod
+    def start(cls, session_id: str | None = None) -> _TraceToken:
+        """Mint a new trace_id and span_id; return a token to reset context later."""
+        return _TraceToken(
+            trace=cls._trace_id.set(str(uuid4())),
+            span=cls._span_id.set(str(uuid4())),
+            parent=cls._parent_span_id.set(None),
+            session=cls._session_id.set(session_id),
+        )
+
+    @classmethod
+    def reset(cls, token: _TraceToken) -> None:
+        """Restore previous context from a token returned by start()."""
+        cls._trace_id.reset(token.trace)
+        cls._span_id.reset(token.span)
+        cls._parent_span_id.reset(token.parent)
+        cls._session_id.reset(token.session)
+
+    @classmethod
+    @asynccontextmanager
+    async def span(cls, name: str) -> AsyncIterator[None]:  # noqa: ARG003
+        """Create a child span; restores previous span_id on exit."""
+        old_span = cls._span_id.get()
+        new_span_token = cls._span_id.set(str(uuid4()))
+        parent_token = cls._parent_span_id.set(old_span)
+        try:
+            yield
+        finally:
+            cls._span_id.reset(new_span_token)
+            cls._parent_span_id.reset(parent_token)
+
+    @classmethod
+    def get(cls) -> dict[str, Any]:
+        """Return current trace context as a dict (safe to embed in log records)."""
+        return {
+            "trace_id": cls._trace_id.get(),
+            "span_id": cls._span_id.get(),
+            "parent_span_id": cls._parent_span_id.get(),
+            "session_id": cls._session_id.get(),
+        }

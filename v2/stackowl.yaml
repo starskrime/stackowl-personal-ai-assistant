@@ -1,0 +1,26 @@
+providers:
+  - name: anthropic
+    protocol: anthropic
+    default_model: claude-sonnet-4-6
+    tier: powerful
+    api_key: keychain:anthropic-key
+
+  - name: openai
+    protocol: openai
+    default_model: gpt-4o
+    tier: standard
+    api_key: keychain:openai-key
+
+  - name: groq
+    protocol: openai
+    base_url: https://api.groq.com/openai/v1
+    default_model: llama-3.3-70b-versatile
+    tier: fast
+    api_key: keychain:groq-key
+
+  - name: ollama
+    protocol: openai
+    base_url: http://localhost:11434/v1
+    default_model: llama3.2
+    tier: local
+    api_key: null

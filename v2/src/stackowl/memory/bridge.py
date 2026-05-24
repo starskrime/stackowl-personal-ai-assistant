@@ -1,0 +1,125 @@
+"""MemoryBridge ABC, NullMemoryBridge, and HealthReport — pluggable memory access."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
+
+from stackowl.infra.observability import log
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.memory.models import MemoryRecord, StagedFact
+
+
+@dataclass(frozen=True)
+class HealthReport:
+    """Result of a :meth:`MemoryBridge.health` probe."""
+
+    name: str
+    status: Literal["ok", "degraded", "down"]
+    details: dict[str, Any] = field(default_factory=dict)
+    latency_ms: float = 0.0
+
+
+class MemoryBridge(ABC):
+    """Abstract memory access layer.
+
+    The bridge serves two callers:
+
+    * **Pipeline** (:mod:`stackowl.pipeline.steps.classify`) calls
+      :meth:`retrieve` and :meth:`store` with raw strings — the legacy contract.
+    * **Knowledge pipeline** (Epic 6 staged → committed flow) uses
+      :meth:`stage`, :meth:`recall`, :meth:`delete`, and :meth:`list_staged`
+      with structured :class:`StagedFact` / :class:`MemoryRecord` objects.
+    """
+
+    # --- legacy pipeline contract ---------------------------------------------------
+
+    @abstractmethod
+    async def retrieve(self, query: str, session_id: str) -> str:
+        """Return relevant memory context as a string, or ``""`` if none."""
+        ...
+
+    @abstractmethod
+    async def store(self, content: str, session_id: str) -> None:
+        """Persist content for future retrieval."""
+        ...
+
+    # --- knowledge-pipeline contract -------------------------------------------------
+
+    @abstractmethod
+    async def stage(self, fact: StagedFact) -> None:
+        """Insert a fact into the staged queue (pre-promotion)."""
+        ...
+
+    @abstractmethod
+    async def recall(self, query: str, limit: int = 10) -> list[MemoryRecord]:
+        """Return committed facts matching ``query``, best first."""
+        ...
+
+    @abstractmethod
+    async def delete(self, fact_id: str) -> None:
+        """Delete a fact from staged and/or committed stores."""
+        ...
+
+    @abstractmethod
+    async def list_staged(
+        self, status: Literal["staged", "committed", "rejected"] = "staged"
+    ) -> list[StagedFact]:
+        """List staged facts filtered by status."""
+        ...
+
+    async def health(self) -> HealthReport:
+        """Probe bridge health. Concrete implementations override with real checks."""
+        return HealthReport(name="memory.null", status="ok", details={}, latency_ms=0.0)
+
+
+class NullMemoryBridge(MemoryBridge):
+    """No-op implementation — short-circuits all operations to safe defaults.
+
+    Used when memory is disabled or for unit-tests that don't exercise the
+    real SQLite-backed path.
+    """
+
+    async def retrieve(self, query: str, session_id: str) -> str:
+        log.memory.debug(
+            "[memory] NullMemoryBridge.retrieve: noop — returning empty context",
+            extra={"_fields": {"session_id": session_id, "query_len": len(query)}},
+        )
+        return ""
+
+    async def store(self, content: str, session_id: str) -> None:
+        log.memory.debug(
+            "[memory] NullMemoryBridge.store: noop",
+            extra={"_fields": {"session_id": session_id, "content_len": len(content)}},
+        )
+
+    async def stage(self, fact: StagedFact) -> None:
+        # 1. ENTRY
+        log.memory.info(
+            "[memory] NullMemoryBridge.stage: noop — fact discarded",
+            extra={"_fields": {"fact_id": fact.fact_id, "source_type": fact.source_type}},
+        )
+
+    async def recall(self, query: str, limit: int = 10) -> list[MemoryRecord]:
+        log.memory.debug(
+            "[memory] NullMemoryBridge.recall: noop — returning []",
+            extra={"_fields": {"query_len": len(query), "limit": limit}},
+        )
+        return []
+
+    async def delete(self, fact_id: str) -> None:
+        log.memory.debug(
+            "[memory] NullMemoryBridge.delete: noop",
+            extra={"_fields": {"fact_id": fact_id}},
+        )
+
+    async def list_staged(
+        self, status: Literal["staged", "committed", "rejected"] = "staged"
+    ) -> list[StagedFact]:
+        log.memory.debug(
+            "[memory] NullMemoryBridge.list_staged: noop — returning []",
+            extra={"_fields": {"status": status}},
+        )
+        return []

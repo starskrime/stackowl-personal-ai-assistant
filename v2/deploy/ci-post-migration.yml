@@ -1,0 +1,88 @@
+name: CI
+
+# Post-migration CI workflow — used after v2/ contents moved to repo root (Story 12.5).
+# Copy this file to .github/workflows/ci.yml and delete ci-v2.yml after the migration.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-boundaries:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: macos-13
+            platform: macos-x86_64
+          - os: macos-latest
+            platform: macos-arm64
+          - os: windows-latest
+            platform: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    # No working-directory override — pyproject.toml is now at repo root.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run pre-commit (ruff + mypy + check_file_length)
+        run: uv run pre-commit run --all-files --config .pre-commit-config.yaml
+
+      - name: B1 — no circular imports
+        run: uv run python scripts/boundaries/b1.py
+
+      - name: B2 — no file exceeds 300 lines
+        run: uv run python scripts/boundaries/b2.py
+
+      - name: B3 — no hardcoded English / ASCII-only regex
+        run: uv run python scripts/boundaries/b3.py
+
+      - name: B4 — cross-platform (no /tmp, pathlib, no shell=True)
+        run: uv run python scripts/boundaries/b4.py
+
+      - name: B5 — no silent catches
+        run: uv run python scripts/boundaries/b5.py
+
+      - name: B6 — mypy strict
+        run: uv run python scripts/boundaries/b6.py
+
+      - name: Run tests
+        run: uv run pytest --tb=short -q
+
+      - name: Smoke — stackowl --help
+        run: uv run python -m stackowl --help
+
+      - name: Smoke — stackowl --version
+        run: uv run python -m stackowl --version
+
+  docker:
+    name: Docker build (linux-x86_64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t stackowl .
+
+      - name: Smoke — stackowl --help in container
+        run: docker run --rm stackowl --help

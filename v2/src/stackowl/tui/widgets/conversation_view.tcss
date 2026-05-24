@@ -1,0 +1,14 @@
+/* ConversationView styles — design tokens only, no literal colors. */
+ConversationView {
+    layer: base;
+    background: $color-bg;
+    border: solid $color-border;
+    height: 1fr;
+}
+ConversationView RichLog {
+    background: $color-bg;
+    color: $color-text-primary;
+}
+ConversationView RichLog:focus {
+    border: solid $color-accent;
+}

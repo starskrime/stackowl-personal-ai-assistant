@@ -1,0 +1,17 @@
+/* ComposeArea styles — design tokens only, no literal colors. */
+ComposeArea {
+    height: 3;
+    background: $color-surface;
+    border-top: solid $color-border;
+}
+ComposeArea Input {
+    background: $color-bg-elevated;
+    color: $color-text-primary;
+}
+ComposeArea Input:focus {
+    border: solid $color-accent;
+}
+ComposeArea Input.-disabled {
+    color: $color-text-muted;
+    background: $color-bg;
+}

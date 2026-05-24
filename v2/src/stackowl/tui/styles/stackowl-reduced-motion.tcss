@@ -1,0 +1,6 @@
+/* Reduced-motion overrides — all transitions disabled */
+.fade-in { opacity: 1; }
+.slide-up { offset-y: 0; }
+.pulse { opacity: 1; }
+.collapse { height: 0; }
+.expand { height: auto; }

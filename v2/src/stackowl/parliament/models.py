@@ -1,0 +1,104 @@
+"""Parliament data models — ParliamentRound, ParliamentSession, CriticPersona."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from stackowl.owls.manifest import OwlAgentManifest
+
+
+class ParliamentRound(BaseModel):
+    """A single round of Parliament debate.
+
+    Captures every participating owl's response, whether that response was
+    truncated (timeout / token budget), and the wall-clock duration of the
+    round.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    round_number: int
+    responses: dict[str, str]
+    truncated: dict[str, bool]
+    duration_ms: float = 0.0
+
+
+class ParliamentSession(BaseModel):
+    """Full Parliament session lifecycle record — persisted to SQLite.
+
+    Instances are immutable; lifecycle transitions (``add_round``,
+    ``complete``, ``fail``, ``add_interjection``) return new instances.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    topic: str
+    owl_names: list[str]
+    rounds: list[ParliamentRound] = Field(default_factory=list)
+    synthesis: str | None = None
+    status: Literal["running", "completed", "failed"] = "running"
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    interjections: list[str] = Field(default_factory=list)
+
+    def add_round(self, round_: ParliamentRound) -> ParliamentSession:
+        """Return a new session with ``round_`` appended to ``rounds``."""
+        return self.model_copy(update={"rounds": [*self.rounds, round_]})
+
+    def add_interjection(self, msg: str) -> ParliamentSession:
+        """Return a new session with ``msg`` appended to ``interjections``."""
+        return self.model_copy(update={"interjections": [*self.interjections, msg]})
+
+    def complete(self, synthesis: str | None = None) -> ParliamentSession:
+        """Mark the session as completed, optionally storing the synthesis."""
+        return self.model_copy(
+            update={
+                "status": "completed",
+                "synthesis": synthesis,
+                "completed_at": datetime.now(UTC),
+            }
+        )
+
+    def fail(self) -> ParliamentSession:
+        """Mark the session as failed (timeout, hard error)."""
+        return self.model_copy(
+            update={
+                "status": "failed",
+                "completed_at": datetime.now(UTC),
+            }
+        )
+
+    def cumulative_token_estimate(self) -> int:
+        """Estimate total tokens across all rounds (4 chars ≈ 1 token)."""
+        total_chars = sum(
+            len(response)
+            for rnd in self.rounds
+            for response in rnd.responses.values()
+        )
+        return total_chars // 4
+
+
+def make_critic_persona() -> OwlAgentManifest:
+    """Built-in virtual owl for mini-parliament when < 2 registered owls.
+
+    The critic argues the counter-position, surfaces hidden assumptions,
+    and stress-tests the other participants' reasoning. The persona is
+    intentionally generic and language-neutral.
+    """
+    return OwlAgentManifest(
+        name="critic",
+        role="devil-advocate",
+        system_prompt=(
+            "You are a rigorous critical thinker. Your role in this "
+            "Parliament session is to challenge assumptions, surface flaws "
+            "in reasoning, and argue the counter-position to whatever the "
+            "other participants propose. Be analytical and constructive, "
+            "not contrarian for its own sake."
+        ),
+        model_tier="standard",
+    )

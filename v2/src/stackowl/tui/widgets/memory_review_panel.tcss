@@ -1,0 +1,13 @@
+/* MemoryReviewPanel styles — design tokens only, no literal colors. */
+MemoryReviewPanel {
+    layer: overlay;
+    width: 70%;
+    height: 60%;
+    background: $color-bg-elevated;
+    border: solid $color-accent;
+    offset: 15% 20%;
+}
+MemoryReviewPanel RichLog {
+    background: $color-bg-elevated;
+    color: $color-text-primary;
+}

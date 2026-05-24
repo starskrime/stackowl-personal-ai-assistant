@@ -1,0 +1,120 @@
+[project]
+name = "stackowl"
+version = "2.0.0"
+description = "StackOwl — Personal AI assistant framework with owl personas"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "shellingham>=1.5.0",
+    "pydantic-settings>=2.3.0",
+    "pyyaml>=6.0.0",
+    "keyring>=25.0.0",
+    "aiosqlite>=0.20.0",
+    "platformdirs>=4.0.0",
+    "httpx>=0.27.0",
+    "anthropic>=0.104.1",
+    "openai>=2.38.0",
+    "google-genai>=1.0.0",
+    "textual>=8.2.7",
+    "croniter>=3.0.0",
+    "langgraph>=1.2.1",
+    "langgraph-checkpoint-sqlite>=3.1.0",
+    "ruamel-yaml>=0.19.1",
+    "sentence-transformers>=5.5.1",
+    "numpy>=2.4.6",
+    "lancedb>=0.30.2",
+    "kuzu>=0.11.3",
+    "psutil>=7.2.2",
+    "jinja2>=3.1.6",
+    "aiohttp>=3.11",
+    "python-telegram-bot>=21.0",
+    "discord.py>=2.3",
+    "slack-bolt>=1.18",
+    "playwright>=1.43.0",
+    "openai-whisper>=20231117",
+    "mcp>=1.0.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth>=2.30.0",
+    "cryptography>=42.0.0",
+    "zstandard>=0.22.0",
+]
+
+[project.scripts]
+stackowl = "stackowl.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stackowl"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "types-PyYAML>=6.0.0",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["discord", "discord.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["slack_bolt", "slack_bolt.*", "slack_sdk", "slack_sdk.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["telegram", "telegram.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["playwright", "playwright.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["whisper", "whisper.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mcp", "mcp.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["starlette", "starlette.*", "uvicorn", "uvicorn.*", "anyio", "anyio.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["google.*", "google_auth_oauthlib.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["zstandard", "zstandard.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+src = ["src"]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "spike: marks tests as integration spike tests (deselect with '-m \"not spike\"')",
+    "integration: marks slower end-to-end tests touching real DBs/filesystem",
+    "tui: marks tests exercising the Textual TUI layer",
+]

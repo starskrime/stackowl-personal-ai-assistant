@@ -1,0 +1,1 @@
+"""Integration adapter contract tests."""

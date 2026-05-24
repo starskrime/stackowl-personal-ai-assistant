@@ -1,0 +1,43 @@
+/* Design tokens */
+$color-bg: #0d1117;
+$color-bg-elevated: #161b22;
+$color-surface: #21262d;
+$color-border: #30363d;
+$color-text-primary: #e6edf3;
+$color-text-secondary: #8b949e;
+$color-text-muted: #6e7681;
+$color-accent: #58a6ff;
+$color-accent-dim: #1f6feb;
+$color-success: #3fb950;
+$color-warning: #d29922;
+$color-error: #f85149;
+$color-parliament: #bc8cff;
+$font-mono: "Cascadia Code", "Fira Code", monospace;
+$radius-sm: 2;
+$radius-md: 4;
+
+/* Layers */
+Screen {
+    layers: base overlay top;
+}
+
+/* Motion vocabulary (Story 8.6) — only these 6 are permitted */
+.fade-in {
+    transition: opacity 200ms linear;
+    opacity: 1;
+}
+.slide-up {
+    transition: offset-y 250ms in_out_cubic;
+}
+.pulse {
+    transition: opacity 400ms linear;
+}
+.collapse {
+    transition: height 300ms in_out_cubic;
+    height: 0;
+}
+.expand {
+    transition: height 300ms in_out_cubic;
+    height: auto;
+}
+/* stagger-in: application-level via asyncio.sleep(0.15 * index) — no CSS class */

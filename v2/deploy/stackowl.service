@@ -1,0 +1,20 @@
+[Unit]
+Description=StackOwl Personal AI Assistant
+After=network.target
+Documentation=https://github.com/stackowl/stackowl
+
+[Service]
+Type=notify
+WatchdogSec=60
+Restart=on-failure
+RestartSec=5
+User=stackowl
+Group=stackowl
+Environment="STACKOWL_HOME=/var/lib/stackowl"
+ExecStart=/usr/local/bin/stackowl serve
+ExecStop=/usr/local/bin/stackowl stop
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

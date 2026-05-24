@@ -1,0 +1,58 @@
+{
+  "corpus": [
+    {"id": "f001", "text": "The quick brown fox jumps over the lazy dog in the meadow"},
+    {"id": "f002", "text": "Machine learning is a subset of artificial intelligence and statistics"},
+    {"id": "f003", "text": "Deep neural networks power modern computer vision and language models"},
+    {"id": "f004", "text": "Cheetahs are the fastest land animals running at speeds over 100 km/h"},
+    {"id": "f005", "text": "Honeybees pollinate flowers and play a crucial role in agriculture"},
+    {"id": "f006", "text": "Quantum computers leverage superposition and entanglement for parallel computation"},
+    {"id": "f007", "text": "Python is a popular programming language used in data science and web development"},
+    {"id": "f008", "text": "The Pacific Ocean covers about 30 percent of the Earth's surface"},
+    {"id": "f009", "text": "Photosynthesis converts sunlight, water, and carbon dioxide into glucose and oxygen"},
+    {"id": "f010", "text": "Cooking pasta requires boiling salted water and stirring occasionally"},
+    {"id": "f011", "text": "Climate change is driven primarily by greenhouse gas emissions from human activity"},
+    {"id": "f012", "text": "The Roman Empire collapsed in the fifth century after centuries of decline"},
+    {"id": "f013", "text": "Daily exercise improves cardiovascular health and mental wellbeing"},
+    {"id": "f014", "text": "Neural networks learn representations through gradient descent and backpropagation"},
+    {"id": "f015", "text": "Dolphins are intelligent marine mammals that communicate using clicks and whistles"},
+    {"id": "f016", "text": "Sourdough bread is made by fermenting flour and water with wild yeast"},
+    {"id": "f017", "text": "TypeScript adds static type checking on top of JavaScript for safer code"},
+    {"id": "f018", "text": "The Andromeda galaxy is approaching the Milky Way at half a million miles per hour"},
+    {"id": "f019", "text": "Mindfulness meditation reduces stress and improves attention over time"},
+    {"id": "f020", "text": "Renewable energy sources like solar and wind are replacing fossil fuels worldwide"}
+  ],
+  "queries": [
+    {
+      "query": "artificial intelligence",
+      "relevant_ids": ["f002", "f003", "f014"]
+    },
+    {
+      "query": "animals running fast",
+      "relevant_ids": ["f001", "f004"]
+    },
+    {
+      "query": "programming language",
+      "relevant_ids": ["f007", "f017"]
+    },
+    {
+      "query": "space galaxy stars",
+      "relevant_ids": ["f018"]
+    },
+    {
+      "query": "ocean marine life",
+      "relevant_ids": ["f008", "f015"]
+    },
+    {
+      "query": "healthy lifestyle exercise",
+      "relevant_ids": ["f013", "f019"]
+    },
+    {
+      "query": "renewable energy climate",
+      "relevant_ids": ["f011", "f020"]
+    },
+    {
+      "query": "cooking food recipe",
+      "relevant_ids": ["f010", "f016"]
+    }
+  ]
+}

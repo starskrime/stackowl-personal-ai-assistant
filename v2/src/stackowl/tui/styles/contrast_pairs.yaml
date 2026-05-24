@@ -1,0 +1,33 @@
+pairs:
+  - name: text_primary_on_bg
+    foreground: "#e6edf3"
+    background: "#0d1117"
+    text_type: normal
+  - name: text_secondary_on_bg
+    foreground: "#8b949e"
+    background: "#0d1117"
+    text_type: normal
+  - name: accent_on_bg
+    foreground: "#58a6ff"
+    background: "#0d1117"
+    text_type: normal
+  - name: success_on_surface
+    foreground: "#3fb950"
+    background: "#21262d"
+    text_type: normal
+  - name: warning_on_surface
+    foreground: "#d29922"
+    background: "#21262d"
+    text_type: normal
+  - name: error_on_bg
+    foreground: "#f85149"
+    background: "#0d1117"
+    text_type: normal
+  - name: parliament_on_bg
+    foreground: "#bc8cff"
+    background: "#0d1117"
+    text_type: normal
+  - name: muted_on_elevated
+    foreground: "#6e7681"
+    background: "#161b22"
+    text_type: large

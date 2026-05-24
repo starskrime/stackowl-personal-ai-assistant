@@ -1,0 +1,17 @@
+/* ToastNotification styles — design tokens only, no literal colors. */
+ToastNotification {
+    layer: overlay;
+    width: 40;
+    background: $color-surface;
+    border: solid $color-border;
+    color: $color-text-primary;
+    height: auto;
+}
+ToastNotification.-critical {
+    background: $color-error;
+    color: $color-text-primary;
+    border: solid $color-error;
+}
+ToastNotification.-low {
+    color: $color-text-muted;
+}

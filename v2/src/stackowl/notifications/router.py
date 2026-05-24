@@ -1,0 +1,291 @@
+"""NotificationRouter — focus-mode / quiet-hours aware dispatch (Story 7.4).
+
+Routes Notifications via a pure decision table to one of ``delivered`` /
+``batched`` / ``suppressed``. Every call writes a row to ``notification_log``;
+``batched`` additionally inserts into ``notification_queue``. The raw message
+content is never persisted — only ``sha256(message)[:16]`` (the message_hash).
+"""
+
+from __future__ import annotations
+
+import time as _time
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from stackowl.config.test_mode import TestModeGuard
+from stackowl.infra.observability import log
+from stackowl.memory.bridge import HealthReport
+from stackowl.notifications.router_helpers import (
+    compute_message_hash,
+    count_recent_deliveries,
+    in_quiet_hours,
+    next_scheduled_for,
+    write_log_row,
+)
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.config.settings import Settings
+    from stackowl.db.pool import DbPool
+
+
+DeliveryStatus = Literal["delivered", "batched", "suppressed"]
+FocusMode = Literal["off", "soft", "hard"]
+
+_QUEUE_DEGRADED_THRESHOLD = 100
+
+_INSERT_QUEUE_SQL = (
+    "INSERT INTO notification_queue "
+    "(notification_id, message_hash, urgency, category, channel, job_id, scheduled_for) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
+_COUNT_QUEUE_SQL = "SELECT COUNT(*) AS n FROM notification_queue"
+
+
+class Notification(BaseModel):
+    """A single notification request handed to :class:`NotificationRouter`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    message: str
+    urgency: Literal["critical", "normal", "low"]
+    category: str
+    channel_name: str | None = None
+    job_id: str | None = None
+    idempotency_key: str | None = None
+
+
+class NotificationRouter:
+    """Decides whether each notification is delivered, batched, or suppressed.
+
+    Driven by ``notification.urgency`` (critical always wins), the configured
+    quiet-hours window, and the in-memory focus mode (set via ``/focus``).
+    Never touches a channel adapter — real transport lands in Epic 8/9.
+    """
+
+    def __init__(
+        self,
+        db: DbPool,
+        settings: Settings,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._db = db
+        self._settings = settings
+        self._clock = clock
+        self._focus_mode: FocusMode = "off"
+
+    def set_focus_mode(self, mode: FocusMode) -> None:
+        """Update the in-memory focus mode. Persistence is intentionally out of scope."""
+        log.notifications.info(
+            "[notifications] router.set_focus_mode: mode updated",
+            extra={"_fields": {"mode": mode, "previous": self._focus_mode}},
+        )
+        self._focus_mode = mode
+
+    def get_focus_mode(self) -> FocusMode:
+        return self._focus_mode
+
+    async def deliver(self, notification: Notification) -> DeliveryStatus:
+        """Route ``notification`` to the appropriate sink."""
+        # 1. ENTRY
+        log.notifications.debug(
+            "[notifications] router.deliver: entry",
+            extra={
+                "_fields": {
+                    "urgency": notification.urgency,
+                    "category": notification.category,
+                    "channel": notification.channel_name,
+                }
+            },
+        )
+        TestModeGuard.assert_not_test_mode("notifications.router.deliver")
+        t0 = _time.monotonic()
+
+        message_hash = compute_message_hash(notification.message)
+        now = self._clock()
+        quiet = in_quiet_hours(self._settings.notifications.quiet_hours, now)
+
+        # 2. DECISION — table-driven routing
+        decision = self._decide(notification.urgency, quiet, self._focus_mode)
+        log.notifications.debug(
+            "[notifications] router.deliver: routing decision",
+            extra={
+                "_fields": {
+                    "decision": decision,
+                    "urgency": notification.urgency,
+                    "quiet_hours": quiet,
+                    "focus_mode": self._focus_mode,
+                }
+            },
+        )
+
+        channel = notification.channel_name or self._settings.notifications.default_channel
+        notification_id = notification.idempotency_key or uuid.uuid4().hex
+
+        # 2b. FREQUENCY CAP — outbound rate limit per (job_id, channel)
+        if decision == "delivered" and notification.job_id is not None:
+            decision = await self._apply_frequency_cap(
+                decision, notification.job_id, channel, now
+            )
+
+        # 3. STEP — perform the chosen action
+        await self._apply_decision(
+            decision, notification, channel, message_hash, notification_id, now
+        )
+
+        # 4. EXIT
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.notifications.debug(
+            "[notifications] router.deliver: exit",
+            extra={
+                "_fields": {
+                    "status": decision,
+                    "message_hash": message_hash,
+                    "duration_ms": duration_ms,
+                }
+            },
+        )
+        return decision
+
+    async def health(self) -> HealthReport:
+        """Probe the router by counting pending rows in ``notification_queue``."""
+        log.notifications.debug("[notifications] router.health: entry")
+        try:
+            rows = await self._db.fetch_all(_COUNT_QUEUE_SQL, ())
+        except Exception as exc:  # B5 — never silent
+            log.notifications.error(
+                "[notifications] router.health: queue count failed",
+                exc_info=exc,
+            )
+            return HealthReport(
+                name="notifications.router",
+                status="down",
+                details={"error": str(exc)},
+            )
+        depth = int(rows[0]["n"]) if rows else 0
+        status: Literal["ok", "degraded", "down"] = (
+            "degraded" if depth > _QUEUE_DEGRADED_THRESHOLD else "ok"
+        )
+        log.notifications.debug(
+            "[notifications] router.health: exit",
+            extra={"_fields": {"queue_depth": depth, "status": status}},
+        )
+        return HealthReport(
+            name="notifications.router",
+            status=status,
+            details={"queue_depth": depth, "focus_mode": self._focus_mode},
+        )
+
+    # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _decide(
+        urgency: Literal["critical", "normal", "low"],
+        quiet: bool,
+        focus_mode: FocusMode,
+    ) -> DeliveryStatus:
+        """Pure decision table (see Story 7.4 spec)."""
+        if urgency == "critical":
+            return "delivered"
+        if quiet:
+            return "batched"
+        if focus_mode == "soft":
+            return "batched"
+        if focus_mode == "hard":
+            return "suppressed" if urgency == "low" else "batched"
+        return "delivered"
+
+    async def _apply_decision(
+        self,
+        decision: DeliveryStatus,
+        notification: Notification,
+        channel: str,
+        message_hash: str,
+        notification_id: str,
+        now: datetime,
+    ) -> None:
+        """Execute the chosen routing decision: side-effects + log row."""
+        log_fields = {
+            "channel": channel,
+            "message_hash": message_hash,
+            "urgency": notification.urgency,
+            "category": notification.category,
+        }
+        delivered_at: datetime | None = None
+
+        if decision == "delivered":
+            log.notifications.info(
+                "[notifications] router.deliver: delivered",
+                extra={"_fields": log_fields},
+            )
+            delivered_at = now
+        elif decision == "batched":
+            scheduled = next_scheduled_for(self._settings.notifications.quiet_hours, now)
+            try:
+                await self._db.execute(
+                    _INSERT_QUEUE_SQL,
+                    (
+                        notification_id,
+                        message_hash,
+                        notification.urgency,
+                        notification.category,
+                        channel,
+                        notification.job_id,
+                        scheduled.isoformat(),
+                    ),
+                )
+            except Exception as exc:  # B5 — never silent
+                log.notifications.error(
+                    "[notifications] router._apply_decision: queue insert failed",
+                    exc_info=exc,
+                    extra={"_fields": {"notification_id": notification_id}},
+                )
+                raise
+            log.notifications.info(
+                "[notifications] router.deliver: batched",
+                extra={"_fields": {**log_fields, "scheduled_for": scheduled.isoformat()}},
+            )
+        else:  # suppressed
+            log.notifications.debug(
+                "[notifications] router.deliver: suppressed",
+                extra={"_fields": log_fields},
+            )
+
+        await write_log_row(
+            self._db,
+            notification_id=notification_id,
+            urgency=notification.urgency,
+            category=notification.category,
+            channel=channel,
+            job_id=notification.job_id,
+            status=decision,
+            created_at=now,
+            delivered_at=delivered_at,
+            message_hash=message_hash,
+        )
+
+    async def _apply_frequency_cap(
+        self,
+        decision: DeliveryStatus,
+        job_id: str,
+        channel: str,
+        now: datetime,
+    ) -> DeliveryStatus:
+        """Downgrade ``delivered`` → ``batched`` once the per-hour cap is hit."""
+        cap = self._settings.notifications.max_notifications_per_hour
+        if cap <= 0:
+            return decision
+        since = now - timedelta(hours=1)
+        sent = await count_recent_deliveries(
+            self._db, job_id=job_id, channel=channel, since=since
+        )
+        if sent >= cap:
+            log.notifications.warning(
+                "[notifications] router.deliver: per-hour cap hit — batching",
+                extra={"_fields": {"job_id": job_id, "channel": channel, "sent": sent, "cap": cap}},
+            )
+            return "batched"
+        return decision

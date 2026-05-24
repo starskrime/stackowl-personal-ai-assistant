@@ -1,0 +1,27 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: local
+    hooks:
+      - id: mypy-strict
+        name: mypy strict (src/stackowl)
+        # Hooks run from git root; cd into v2/ so mypy resolves config and src correctly.
+        entry: bash -c 'cd v2 && uv run mypy --strict src/stackowl/'
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
+      - id: check-file-length
+        name: check file length (300-line limit)
+        entry: bash v2/scripts/boundaries/check_file_length.sh
+        language: system
+        pass_filenames: false
+        always_run: true

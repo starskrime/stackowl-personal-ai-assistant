@@ -1,0 +1,208 @@
+"""ConfigCommand — /config slash command for runtime settings management.
+
+Subcommands: ``list``, ``get <key>``, ``set <key> <value>``, ``reset <key>``,
+``export``.  Writes use :mod:`ruamel.yaml` to preserve comments and key order.
+
+SECURITY NFR33: any field marked ``sensitive=True`` in its Pydantic
+``json_schema_extra`` cannot be set via ``/config set`` — the user is
+redirected to :class:`SecretResolver` syntax.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from stackowl.commands.base import SlashCommand
+from stackowl.commands.config_helpers import (
+    coerce_scalar,
+    collect_sensitive,
+    config_path,
+    delete_nested,
+    flatten,
+    load_yaml,
+    resolve_field,
+    save_yaml,
+    set_nested,
+    stringify,
+)
+from stackowl.commands.registry import register_command
+from stackowl.config.settings import Settings
+from stackowl.events.bus import EventBus
+from stackowl.infra.observability import log
+from stackowl.pipeline.state import PipelineState
+
+_USAGE = (
+    "Usage: /config <list|get|set|reset|export> [args]\n"
+    "  /config list                — show all settings (dot notation)\n"
+    "  /config get <key>           — read one setting\n"
+    "  /config set <key> <value>   — write one setting\n"
+    "  /config reset <key>         — revert to default\n"
+    "  /config export              — dump full settings as YAML"
+)
+
+_NO_FILE = "No stackowl.yaml found — run stackowl init first"
+
+
+class ConfigCommand(SlashCommand):
+    """Implements /config list|get|set|reset|export."""
+
+    def __init__(self, event_bus: EventBus | None = None) -> None:
+        self._bus = event_bus
+
+    @property
+    def command(self) -> str:
+        return "config"
+
+    @property
+    def description(self) -> str:
+        return "Read and write StackOwl settings at runtime."
+
+    async def handle(self, args: str, state: PipelineState) -> str:
+        log.config.debug(
+            "[commands] config.handle: entry",
+            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+        )
+        parts = args.strip().split(maxsplit=1)
+        if not parts:
+            log.config.debug("[commands] config.handle: no subcommand — returning usage")
+            return _USAGE
+        sub = parts[0].lower()
+        rest = parts[1] if len(parts) > 1 else ""
+        try:
+            if sub == "list":
+                result = self._list()
+            elif sub == "get":
+                result = self._get(rest)
+            elif sub == "set":
+                result = self._set(rest)
+            elif sub == "reset":
+                result = self._reset(rest)
+            elif sub == "export":
+                result = self._export()
+            else:
+                log.config.debug(
+                    "[commands] config.handle: unknown subcommand",
+                    extra={"_fields": {"sub": sub}},
+                )
+                return _USAGE
+        except Exception as exc:
+            log.config.error(
+                "[commands] config.handle: subcommand failed",
+                exc_info=exc,
+                extra={"_fields": {"sub": sub}},
+            )
+            return f"✗ /config {sub}: {exc}"
+        log.config.debug("[commands] config.handle: exit", extra={"_fields": {"sub": sub}})
+        return result
+
+    def _list(self) -> str:
+        log.config.debug("[commands] config.list: entry")
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        sensitive: set[str] = set()
+        collect_sensitive(Settings, "", sensitive)
+        pairs: list[tuple[str, str]] = []
+        flatten("", data, sensitive, pairs)
+        pairs.sort(key=lambda kv: kv[0])
+        if not pairs:
+            return "(no settings)"
+        log.config.debug("[commands] config.list: exit", extra={"_fields": {"count": len(pairs)}})
+        return "\n".join(f"{k}: {v}" for k, v in pairs)
+
+    def _get(self, key: str) -> str:
+        log.config.debug("[commands] config.get: entry", extra={"_fields": {"key": key}})
+        if not key:
+            return "Usage: /config get <key>"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        sensitive: set[str] = set()
+        collect_sensitive(Settings, "", sensitive)
+        cursor: Any = data
+        for part in key.split("."):
+            if not isinstance(cursor, dict) or part not in cursor:
+                return f"{key}: (not set)"
+            cursor = cursor[part]
+        rendered = "***" if key in sensitive else stringify(cursor)
+        return f"{key}: {rendered}"
+
+    def _set(self, raw: str) -> str:
+        log.config.debug("[commands] config.set: entry", extra={"_fields": {"raw_len": len(raw)}})
+        bits = raw.split(maxsplit=1)
+        if len(bits) < 2:
+            return "Usage: /config set <key> <value>"
+        key, value_raw = bits[0], bits[1]
+        owner, _leaf, _default, extra = resolve_field(Settings, key)
+        if owner is None:
+            return f"✗ Unknown setting: {key}"
+        if extra.get("sensitive"):
+            log.config.warning(
+                "[commands] config.set: rejected sensitive field",
+                extra={"_fields": {"key": key}},
+            )
+            return (
+                f"✗ {key} is sensitive — set it via SecretResolver syntax in "
+                "stackowl.yaml: 'keychain:<service>', 'file:<path>', or "
+                "'<ENV_VAR_NAME>'."
+            )
+        coerced = coerce_scalar(value_raw)
+        path = config_path()
+        data = load_yaml(path)
+        set_nested(data, key.split("."), coerced)
+        try:
+            Settings.model_validate(data)
+        except Exception as exc:
+            log.config.warning(
+                "[commands] config.set: validation failed",
+                extra={"_fields": {"key": key, "error": str(exc)}},
+            )
+            return f"✗ Validation failed: {exc}"
+        save_yaml(path, data)
+        if self._bus is not None:
+            self._bus.emit("settings_reloaded", {"key": key})
+        hot = extra.get("hot_reload", True)
+        suffix = "" if hot else " — restart required"
+        log.config.info(
+            "[commands] config.set: exit",
+            extra={"_fields": {"key": key, "hot_reload": hot}},
+        )
+        return f"✓ {key} = {stringify(coerced)}{suffix}"
+
+    def _reset(self, key: str) -> str:
+        log.config.debug("[commands] config.reset: entry", extra={"_fields": {"key": key}})
+        if not key:
+            return "Usage: /config reset <key>"
+        owner, _leaf, _default, _extra = resolve_field(Settings, key)
+        if owner is None:
+            return f"✗ Unknown setting: {key}"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        removed = delete_nested(data, key.split("."))
+        if not removed:
+            return f"{key}: (already at default)"
+        save_yaml(path, data)
+        if self._bus is not None:
+            self._bus.emit("settings_reloaded", {"key": key, "reset": True})
+        log.config.info("[commands] config.reset: exit", extra={"_fields": {"key": key}})
+        return f"✓ {key} reverted to default"
+
+    def _export(self) -> str:
+        log.config.debug("[commands] config.export: entry")
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        with path.open("r", encoding="utf-8") as fh:
+            text = fh.read()
+        log.config.debug(
+            "[commands] config.export: exit",
+            extra={"_fields": {"bytes": len(text)}},
+        )
+        return text
+
+
+_CMD = register_command(ConfigCommand())

@@ -1,0 +1,44 @@
+# Pricing in USD per 1M tokens.
+# Open-source/static data — no external API. Edit and reload (ConfigWatcher)
+# to refresh prices. If a model is missing the CostTracker falls back to
+# `_local_default` (free).
+models:
+  # Anthropic
+  claude-opus-4-7:
+    input_per_1m: 15.0
+    output_per_1m: 75.0
+  claude-sonnet-4-6:
+    input_per_1m: 3.0
+    output_per_1m: 15.0
+  claude-haiku-4-5-20251001:
+    input_per_1m: 0.8
+    output_per_1m: 4.0
+
+  # OpenAI
+  gpt-4o:
+    input_per_1m: 5.0
+    output_per_1m: 15.0
+  gpt-4o-mini:
+    input_per_1m: 0.15
+    output_per_1m: 0.60
+  gpt-4-turbo:
+    input_per_1m: 10.0
+    output_per_1m: 30.0
+
+  # Google Gemini
+  gemini-2.0-flash:
+    input_per_1m: 0.10
+    output_per_1m: 0.40
+  gemini-2.0-pro:
+    input_per_1m: 3.50
+    output_per_1m: 10.50
+
+  # Groq (hosted open-weights models)
+  llama-3.3-70b-versatile:
+    input_per_1m: 0.59
+    output_per_1m: 0.79
+
+  # Local / Ollama (free)
+  _local_default:
+    input_per_1m: 0.0
+    output_per_1m: 0.0

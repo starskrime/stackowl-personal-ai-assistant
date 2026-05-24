@@ -2,28 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Commands
+## Commands (v2 Python — from repo root after migration, or from `v2/` during development)
 
 ```bash
-npm run dev          # Run in watch mode (tsx watch) — uses TUI v2 by default
-npm run build        # Compile TypeScript to dist/
-npm run start        # Run compiled output
-npm run test         # Run all tests (vitest)
-npm run test:watch   # Vitest in watch mode
-npm run lint         # ESLint on src/
-npm run format       # Prettier formatting
-./start.sh           # Interactive setup (provider, API keys, channels)
+uv run python -m stackowl --help     # Show all CLI commands
+uv run python -m stackowl setup --minimal  # Interactive 3-step onboarding
+uv run python -m stackowl serve      # Start the StackOwl server
+uv run python -m stackowl health     # Check system health
+uv run python -m stackowl db migrate # Apply pending schema migrations
+uv run python -m stackowl db backup --output <path>  # Hot backup
+uv run pytest                        # Run all tests
+uv run pytest tests/path/to/test.py  # Run a single test file
+uv run ruff check src/               # Lint
+uv run mypy src/                     # Type-check (strict)
 ```
 
-TUI version control:
+Development (pre-migration, from `v2/` directory):
 ```bash
-npm run dev                    # TUI v2 (default)
-STACKOWL_TUI=v1 npm run dev    # TUI v1 (explicit opt-out / escape hatch)
-```
-
-Run a single test file:
-```bash
-npx vitest run __tests__/filename.test.ts
+cd v2/
+uv sync                              # Install dependencies
+uv run python -m stackowl --version  # Smoke test
 ```
 
 ## Architecture Overview

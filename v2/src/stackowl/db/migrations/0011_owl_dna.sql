@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS owl_dna (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owl_name TEXT NOT NULL UNIQUE,
+    challenge_level REAL NOT NULL DEFAULT 0.5,
+    verbosity REAL NOT NULL DEFAULT 0.5,
+    curiosity REAL NOT NULL DEFAULT 0.5,
+    formality REAL NOT NULL DEFAULT 0.5,
+    creativity REAL NOT NULL DEFAULT 0.5,
+    precision REAL NOT NULL DEFAULT 0.5,
+    updated_at TEXT NOT NULL
+);
