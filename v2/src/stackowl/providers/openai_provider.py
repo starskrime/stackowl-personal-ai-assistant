@@ -7,8 +7,8 @@ Adding a new compatible provider requires only a new stackowl.yaml entry — zer
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
-from typing import Literal
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, Literal
 
 import openai
 
@@ -76,6 +76,82 @@ class OpenAIProvider(ModelProvider):
             )
             raise ProviderError(self._name, exc) from exc
         log.engine.debug("[openai] stream: exit", extra={"_fields": {"provider": self._name}})
+
+    async def complete_with_tools(
+        self,
+        user_text: str,
+        system_text: str | None,
+        tool_schemas: list[dict[str, Any]],
+        tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
+        max_iterations: int = 8,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """OpenAI function-calling tool-use loop."""
+        import json
+
+        TestModeGuard.assert_not_test_mode("openai.complete_with_tools")
+        resolved_iterations = max_iterations if max_iterations != 8 else self._config.tool_max_iterations
+        log.engine.debug(
+            "[openai] complete_with_tools: entry",
+            extra={"_fields": {"provider": self._name, "tool_count": len(tool_schemas), "max_iterations": resolved_iterations}},
+        )
+        messages: list[dict[str, Any]] = []
+        if system_text:
+            messages.append({"role": "system", "content": system_text})
+        messages.append({"role": "user", "content": user_text})
+        resolved_model = self._config.default_model
+        all_calls: list[dict[str, Any]] = []
+
+        for _ in range(resolved_iterations):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=resolved_model,
+                    messages=messages,  # type: ignore[arg-type]
+                    max_tokens=self._config.max_output_tokens,
+                    tools=tool_schemas,  # type: ignore[arg-type]
+                )
+            except openai.APIError as exc:
+                log.engine.error(
+                    "[openai] complete_with_tools: API error",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._name}},
+                )
+                raise ProviderError(self._name, exc) from exc
+
+            choice = response.choices[0]
+            if not choice.message.tool_calls:
+                text = choice.message.content or ""
+                log.engine.debug(
+                    "[openai] complete_with_tools: exit",
+                    extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
+                )
+                return text, all_calls
+
+            # Append assistant turn with tool_calls
+            messages.append({
+                "role": "assistant",
+                "content": choice.message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in choice.message.tool_calls
+                ],
+            })
+
+            # Dispatch and append tool results
+            for tc in choice.message.tool_calls:
+                args = json.loads(tc.function.arguments)
+                result_text = await tool_dispatcher(tc.function.name, args)
+                all_calls.append({"id": tc.id, "name": tc.function.name, "args": args, "result": result_text})
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_text})
+
+        log.engine.warning(
+            "[openai] complete_with_tools: max_iterations reached",
+            extra={"_fields": {"provider": self._name}},
+        )
+        return "", all_calls
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("openai.complete")

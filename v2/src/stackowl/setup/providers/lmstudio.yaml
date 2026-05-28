@@ -1,0 +1,9 @@
+name: lmstudio
+label: LM Studio (local)
+protocol: openai
+base_url: http://localhost:1234/v1
+default_model: ""
+models: []
+tier: fast
+needs_api_key: false
+is_local: true

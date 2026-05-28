@@ -69,3 +69,35 @@ def register_command(cmd: SlashCommand) -> SlashCommand:
     """Decorator-style helper: register a SlashCommand at import time."""
     CommandRegistry.instance().register(cmd)
     return cmd
+
+
+def load_builtin_commands() -> int:
+    """Import every ``*_command.py`` module so they self-register.
+
+    Returns the number of commands now in the registry. Safe to call multiple
+    times — re-importing modules is a no-op and ``register`` simply overwrites.
+    """
+    import importlib
+    import pkgutil
+
+    import stackowl.commands as pkg
+
+    before = len(CommandRegistry.instance().list())
+    for mod_info in pkgutil.iter_modules(pkg.__path__):
+        if not mod_info.name.endswith("_command"):
+            continue
+        full = f"stackowl.commands.{mod_info.name}"
+        try:
+            importlib.import_module(full)
+        except Exception as exc:
+            log.gateway.warning(
+                "[commands] registry.load_builtin_commands: import failed",
+                exc_info=exc,
+                extra={"_fields": {"module": full}},
+            )
+    after = len(CommandRegistry.instance().list())
+    log.gateway.info(
+        "[commands] registry.load_builtin_commands: discovered",
+        extra={"_fields": {"before": before, "after": after, "added": after - before}},
+    )
+    return after

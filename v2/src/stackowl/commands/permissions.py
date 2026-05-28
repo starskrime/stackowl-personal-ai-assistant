@@ -62,13 +62,20 @@ class PermissionsCommand(SlashCommand):
             lines.append("")
 
             # Owl tool allowlists
+            from stackowl.mcp.tool_exposure import DEFAULT_MCP_BROWSER_DENYLIST
+
+            def _decorate(name: str) -> str:
+                # Mark consequential browser tools with '!' so users see at a glance
+                # which entries warrant scrutiny.
+                return f"!{name}" if name in DEFAULT_MCP_BROWSER_DENYLIST else name
+
             owls = getattr(self._settings, "owls", [])
             if owls:
                 lines.append("Owl tool allowlists:")
+                lines.append("  (consequential tools prefixed with '!')")
                 for owl in owls:
-                    dna = getattr(owl, "dna", None)
                     tools: list[str] = getattr(owl, "tools", [])
-                    tool_str = ", ".join(tools) if tools else "(none)"
+                    tool_str = ", ".join(_decorate(t) for t in tools) if tools else "(none)"
                     lines.append(f"  {owl.name}: {tool_str}")
             else:
                 lines.append("Owl tool allowlists: (no owls configured)")

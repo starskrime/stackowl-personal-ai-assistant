@@ -6,7 +6,6 @@ and helpers can be unit-tested in isolation.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +13,12 @@ from pydantic import BaseModel
 from ruamel.yaml import YAML
 
 from stackowl.infra.observability import log
+from stackowl.paths import StackowlHome
 
 
 def config_path() -> Path:
-    """Resolve the YAML config path honouring ``STACKOWL_CONFIG_FILE``."""
-    return Path(os.environ.get("STACKOWL_CONFIG_FILE", "stackowl.yaml"))
+    """Resolve the YAML config path."""
+    return StackowlHome.config_file()
 
 
 def _yaml() -> YAML:

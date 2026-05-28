@@ -19,7 +19,13 @@ from typing import Any
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.owls.dna import OwlDNA
+from stackowl.owls.dna_attribution import (
+    AttributionReport,
+    DnaAttributor,
+    lookback_epoch,
+)
 from stackowl.owls.dna_storage import DNACheckpointer
 from stackowl.owls.evolution_prompt import EvolutionPromptBuilder
 from stackowl.owls.manifest import OwlAgentManifest
@@ -140,6 +146,7 @@ class EvolutionCoordinator(JobHandler):
         provider_registry: ProviderRegistry,
         owl_registry: OwlRegistry,
         evolution_batch_size: int = 10,
+        attributor: DnaAttributor | None = None,
     ) -> None:
         self._db = db
         self._provider_registry = provider_registry
@@ -148,6 +155,11 @@ class EvolutionCoordinator(JobHandler):
         self._prompt_builder = EvolutionPromptBuilder()
         self._validator = DeltaValidator()
         self._checkpointer = DNACheckpointer(db)
+        # Learning Commit 4 — attribution-based evolution. Injectable so tests
+        # can supply a deterministic RNG; production gets the default
+        # (10% explore margin, 20-sample threshold per operator vote).
+        self._attributor = attributor or DnaAttributor()
+        self._outcome_store = TaskOutcomeStore(db)
 
     @property
     def handler_name(self) -> str:
@@ -204,55 +216,181 @@ class EvolutionCoordinator(JobHandler):
         )
 
     async def _evolve_one(self, manifest: OwlAgentManifest) -> bool:
-        """Evolve a single owl. Returns ``True`` if any mutation was applied."""
-        excerpts = await self._fetch_excerpts(manifest.name)
-        if len(excerpts) < self._batch_size:
-            log.engine.debug(
-                "[dna] coordinator.evolve: not enough excerpts — skip",
-                extra={"_fields": {"owl": manifest.name, "available": len(excerpts)}},
+        """Evolve a single owl. Returns ``True`` if any mutation was applied.
+
+        Two-stage decision per Learning Commit 4 (operator vote):
+        1. Try the attribution path first — query scored outcomes for this owl,
+           bucket by trait band, propose deltas toward winning bands.
+        2. If attribution returns no deltas (cold-start or no signal gap), fall
+           through to the LLM path with a stats summary embedded in the prompt.
+        """
+        # 1. ENTRY
+        log.engine.debug(
+            "[dna] coordinator.evolve_one: entry",
+            extra={"_fields": {"owl": manifest.name}},
+        )
+        # 2. DECISION — attribution path
+        attribution = await self._try_attribution(manifest)
+        deltas: dict[str, float]
+        evolution_source: str
+        if attribution.deltas:
+            deltas = attribution.deltas
+            evolution_source = (
+                "attribution+explore" if attribution.explore_fired else "attribution"
             )
-            return False
-        messages = self._prompt_builder.build(manifest.name, manifest, excerpts)
-        TestModeGuard.assert_not_test_mode(f"evolution.complete[{manifest.name}]")
-        provider = self._provider_registry.get_by_tier("fast")
-        result = await provider.complete(messages, model="", max_tokens=512)
-        deltas = self._validator.validate(result.content)
+            log.engine.info(
+                "[dna] coordinator.evolve_one: using attribution deltas",
+                extra={"_fields": {
+                    "owl": manifest.name, "source": evolution_source,
+                    "n_scored": attribution.n_scored_outcomes,
+                    "deltas": deltas,
+                }},
+            )
+        else:
+            # 2. DECISION — fallback to LLM path with stats summary
+            log.engine.debug(
+                "[dna] coordinator.evolve_one: attribution silent — LLM fallback",
+                extra={"_fields": {
+                    "owl": manifest.name,
+                    "fallback_reason": attribution.fallback_reason,
+                }},
+            )
+            deltas = await self._llm_fallback(manifest, attribution)
+            evolution_source = "llm_fallback"
         if not deltas:
             log.engine.warning(
-                "[dna] coordinator.evolve: no valid deltas — skip",
+                "[dna] coordinator.evolve_one: no deltas from any path — skip",
                 extra={"_fields": {"owl": manifest.name}},
             )
             return False
+        # 3. STEP — checkpoint + apply mutations
         checkpoint_id = await self._checkpointer.checkpoint(manifest.name, manifest.dna)
         new_dna = manifest.dna
         for trait, delta in deltas.items():
             previous = float(getattr(new_dna, trait))
-            new_dna = new_dna.mutate(trait, delta)
+            try:
+                new_dna = new_dna.mutate(trait, delta)
+            except Exception as exc:  # B5
+                log.engine.warning(
+                    "[dna] coordinator.evolve_one: mutate rejected — skipping trait",
+                    exc_info=exc,
+                    extra={"_fields": {
+                        "owl": manifest.name, "trait": trait, "delta": delta,
+                    }},
+                )
+                continue
             current = float(getattr(new_dna, trait))
             log.engine.info(
-                "[dna] %s: %s %.3f → %.3f (delta %+.3f)",
-                manifest.name,
-                trait,
-                previous,
-                current,
-                delta,
+                "[dna] %s: %s %.3f → %.3f (delta %+.3f, src=%s)",
+                manifest.name, trait, previous, current, delta, evolution_source,
             )
         await self._persist_dna(manifest.name, new_dna)
+        # 4. EXIT
         log.engine.info(
-            "[dna] coordinator.evolve: mutations applied",
-            extra={
-                "_fields": {
-                    "owl": manifest.name,
-                    "checkpoint_id": checkpoint_id,
-                    "mutated_traits": list(deltas.keys()),
-                }
-            },
+            "[dna] coordinator.evolve_one: mutations applied",
+            extra={"_fields": {
+                "owl": manifest.name, "source": evolution_source,
+                "checkpoint_id": checkpoint_id,
+                "mutated_traits": list(deltas.keys()),
+                "explore_fired": attribution.explore_fired,
+            }},
         )
         return True
 
+    async def _try_attribution(self, manifest: OwlAgentManifest) -> AttributionReport:
+        """Pull scored outcomes for this owl and run the attributor.
+
+        Returns the report unchanged so callers can read ``fallback_reason``
+        and ``per_trait`` for downstream prompt construction.
+        """
+        log.engine.debug(
+            "[dna] coordinator._try_attribution: entry",
+            extra={"_fields": {"owl": manifest.name}},
+        )
+        try:
+            outcomes = await self._outcome_store.list_scored_for_owl(
+                manifest.name, since_epoch=lookback_epoch(),
+            )
+        except Exception as exc:  # B5
+            log.engine.warning(
+                "[dna] coordinator._try_attribution: list_scored_for_owl failed",
+                exc_info=exc, extra={"_fields": {"owl": manifest.name}},
+            )
+            return AttributionReport(
+                owl_name=manifest.name, n_scored_outcomes=0,
+                deltas={}, per_trait=(),
+                explore_fired=False, explore_trait=None,
+                fallback_reason=f"outcome query failed: {exc}",
+            )
+        report = self._attributor.attribute(
+            owl_name=manifest.name, current_dna=manifest.dna, outcomes=outcomes,
+        )
+        log.engine.debug(
+            "[dna] coordinator._try_attribution: exit",
+            extra={"_fields": {
+                "owl": manifest.name,
+                "n_outcomes": len(outcomes),
+                "n_deltas": len(report.deltas),
+            }},
+        )
+        return report
+
+    async def _llm_fallback(
+        self, manifest: OwlAgentManifest, attribution: AttributionReport,
+    ) -> dict[str, float]:
+        """LLM-driven evolution path with stats summary (post-Commit 4).
+
+        Always called when attribution is silent. Now the prompt embeds the
+        per-trait band rationale so the LLM has evidence to reason from rather
+        than guessing on raw messages alone.
+        """
+        log.engine.debug(
+            "[dna] coordinator._llm_fallback: entry",
+            extra={"_fields": {"owl": manifest.name}},
+        )
+        excerpts = await self._fetch_excerpts(manifest.name)
+        # 2. DECISION — also need enough conversation material; honor the old
+        # batch_size gate so we don't burn LLM calls on brand-new owls.
+        if len(excerpts) < self._batch_size and attribution.n_scored_outcomes == 0:
+            log.engine.debug(
+                "[dna] coordinator._llm_fallback: exit — no excerpts AND no outcomes",
+                extra={"_fields": {"owl": manifest.name}},
+            )
+            return {}
+        stats_summary = _attribution_to_stats_summary(attribution)
+        messages = self._prompt_builder.build(
+            manifest.name, manifest, excerpts, stats_summary=stats_summary,
+        )
+        TestModeGuard.assert_not_test_mode(f"evolution.complete[{manifest.name}]")
+        try:
+            provider = self._provider_registry.get_by_tier("fast")
+            result = await provider.complete(messages, model="", max_tokens=512)
+        except Exception as exc:  # B5
+            log.engine.warning(
+                "[dna] coordinator._llm_fallback: provider call failed — skipping",
+                exc_info=exc, extra={"_fields": {"owl": manifest.name}},
+            )
+            return {}
+        deltas = self._validator.validate(result.content)
+        log.engine.debug(
+            "[dna] coordinator._llm_fallback: exit",
+            extra={"_fields": {
+                "owl": manifest.name, "n_deltas": len(deltas),
+            }},
+        )
+        return deltas
+
     async def _fetch_excerpts(self, owl_name: str) -> list[str]:
-        rows = await self._db.fetch_all(_FETCH_EXCERPTS_SQL, (owl_name, self._batch_size))
+        try:
+            rows = await self._db.fetch_all(_FETCH_EXCERPTS_SQL, (owl_name, self._batch_size))
+        except Exception as exc:  # B5 — messages table may be absent in some deployments
+            log.engine.debug(
+                "[dna] coordinator._fetch_excerpts: query failed — returning []",
+                exc_info=exc, extra={"_fields": {"owl_name": owl_name}},
+            )
+            return []
         return [str(row["content"]) for row in rows if row.get("content")]
+
 
     async def _persist_dna(self, owl_name: str, dna: OwlDNA) -> None:
         await self._db.execute(
@@ -268,3 +406,27 @@ class EvolutionCoordinator(JobHandler):
                 datetime.now(UTC).isoformat(),
             ),
         )
+
+
+def _attribution_to_stats_summary(report: AttributionReport) -> dict[str, object]:
+    """Serialize an :class:`AttributionReport` into the prompt-stats shape.
+
+    Kept module-level so :class:`EvolutionPromptBuilder` stays decoupled from
+    the AttributionReport dataclass.
+    """
+    return {
+        "n_scored_outcomes": report.n_scored_outcomes,
+        "per_trait": [
+            {
+                "trait": tr.trait,
+                "rationale": tr.rationale,
+                "bands": [
+                    {"band": b.band, "n": b.n_samples,
+                     "mean_quality": round(b.mean_quality, 3)}
+                    for b in tr.bands
+                ],
+            }
+            for tr in report.per_trait
+        ],
+        "fallback_reason": report.fallback_reason,
+    }

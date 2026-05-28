@@ -81,6 +81,69 @@ class FilesystemContributor:
         return HealthStatus(name="filesystem", status="ok", message=None, latency_ms=latency_ms)
 
 
+class BrowserContributor:
+    """Health contributor: Camoufox runtime status + RSS.
+
+    Reports cold-start time and active-session counts. Does not perform a
+    navigation — that would be too expensive for a health probe. Use the
+    /browser sessions / settings commands for live drill-down.
+    """
+
+    def __init__(self, runtime: object | None, sessions: object | None) -> None:
+        self._runtime = runtime
+        self._sessions = sessions
+
+    @property
+    def contributor_name(self) -> str:
+        return "browser"
+
+    async def health_check(self) -> HealthStatus:
+        t0 = time.monotonic()
+        runtime = self._runtime
+        if runtime is None:
+            return HealthStatus(
+                name="browser", status="degraded",
+                message="runtime not constructed",
+                latency_ms=(time.monotonic() - t0) * 1000,
+            )
+        if not getattr(runtime, "available", False):
+            reason = getattr(runtime, "unavailable_reason", None) or "unknown"
+            return HealthStatus(
+                name="browser", status="down",
+                message=f"unavailable: {reason}",
+                latency_ms=(time.monotonic() - t0) * 1000,
+            )
+        cold = getattr(runtime, "cold_start_ms", None)
+        # Best-effort session count (no async call needed — read internal dict).
+        session_count = 0
+        if self._sessions is not None:
+            sessions_dict = getattr(self._sessions, "_sessions", {})
+            try:
+                session_count = len(sessions_dict)
+            except Exception:
+                session_count = 0
+        rss_mb = _process_rss_mb()
+        msg = f"cold_start_ms={int(cold) if cold else '?'} sessions={session_count} rss_mb={rss_mb}"
+        return HealthStatus(
+            name="browser", status="ok", message=msg,
+            latency_ms=(time.monotonic() - t0) * 1000,
+        )
+
+
+def _process_rss_mb() -> int:
+    """Best-effort RSS in MB. Returns 0 on platforms without /proc."""
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        return int(parts[1]) // 1024
+    except OSError:
+        pass
+    return 0
+
+
 class ProviderContributor:
     """Health contributor: provider HTTP connectivity."""
 
@@ -102,4 +165,46 @@ class ProviderContributor:
             status=status,  # type: ignore[arg-type]
             message=result.reason,
             latency_ms=result.latency_ms,
+        )
+
+
+class ResilienceContributor:
+    """Health contributor: per-subsystem recycle counts for HealableResources.
+
+    Reports availability and recycle metadata across all registered resources
+    (browser runtime, db pool, providers, memory adapters, etc.) so operators
+    can spot flapping subsystems in one place.
+    """
+
+    def __init__(self, resources: dict[str, object]) -> None:
+        """``resources`` maps a short label ('browser', 'db_pool') to the resource instance."""
+        self._resources = resources
+
+    @property
+    def contributor_name(self) -> str:
+        return "resilience"
+
+    async def health_check(self) -> HealthStatus:
+        t0 = time.monotonic()
+        log.debug("[health] resilience_contributor: entry")
+        parts: list[str] = []
+        any_unavailable = False
+        for label, res in self._resources.items():
+            available = bool(getattr(res, "available", True))
+            recycle_count = int(getattr(res, "recycle_count", 0))
+            reason = getattr(res, "unavailable_reason", None)
+            if not available:
+                any_unavailable = True
+                parts.append(f"{label}:DOWN({reason or 'unknown'})")
+            else:
+                if recycle_count > 0:
+                    parts.append(f"{label}:ok(recycles={recycle_count})")
+                else:
+                    parts.append(f"{label}:ok")
+        latency_ms = (time.monotonic() - t0) * 1000
+        return HealthStatus(
+            name="resilience",
+            status="degraded" if any_unavailable else "ok",
+            message=" ".join(parts) if parts else "no healable resources registered",
+            latency_ms=latency_ms,
         )

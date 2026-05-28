@@ -1,0 +1,12 @@
+name: deepseek
+label: DeepSeek
+protocol: openai
+base_url: https://api.deepseek.com/v1
+default_model: deepseek-chat
+models:
+  - deepseek-chat
+  - deepseek-reasoner
+  - deepseek-coder
+tier: powerful
+needs_api_key: true
+key_url: https://platform.deepseek.com/api_keys

@@ -1,0 +1,13 @@
+name: xai
+label: xAI Grok
+protocol: grok
+base_url: https://api.x.ai/v1
+default_model: grok-3
+models:
+  - grok-3
+  - grok-3-mini
+  - grok-2-1212
+  - grok-2-vision-1212
+tier: powerful
+needs_api_key: true
+key_url: https://console.x.ai/

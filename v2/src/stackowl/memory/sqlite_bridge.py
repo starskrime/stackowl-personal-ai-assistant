@@ -255,6 +255,36 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return results
 
+    async def recent_conversation_turns(
+        self, session_id: str, limit: int = 6,
+    ) -> list[StagedFact]:
+        """Return last ``limit`` conversation staged facts for ``session_id``, oldest-first.
+
+        Provides short-term memory inside the current session — the agent sees
+        recent turns even before the dream worker promotes them to committed_facts.
+        """
+        log.memory.debug(
+            "[memory] sqlite_bridge.recent_conversation_turns: entry",
+            extra={"_fields": {"session_id": session_id, "limit": limit}},
+        )
+        rows = await self._db.fetch_all(
+            """SELECT fact_id, content, source_type, source_ref, confidence,
+                      staged_at, reinforcement_count, status, embedding, embedding_model
+               FROM staged_facts
+               WHERE source_type = 'conversation' AND source_ref = ?
+               ORDER BY staged_at DESC
+               LIMIT ?""",
+            (session_id, limit),
+        )
+        results = [row_to_staged(row) for row in rows]
+        # Reverse so the prompt reads oldest-first (chronological).
+        results.reverse()
+        log.memory.debug(
+            "[memory] sqlite_bridge.recent_conversation_turns: exit",
+            extra={"_fields": {"session_id": session_id, "n_results": len(results)}},
+        )
+        return results
+
     async def health(self) -> HealthReport:
         """Probe SQLite connectivity and report staged/committed row counts."""
         # 1. ENTRY

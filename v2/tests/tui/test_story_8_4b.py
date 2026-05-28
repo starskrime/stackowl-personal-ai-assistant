@@ -243,7 +243,7 @@ def test_migration_0021_onboarding_exists() -> None:
 
 def test_migration_count_is_21() -> None:
     files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
-    assert len(files) == 25
+    assert len(files) == 35
 
 
 # E. Onboarding store + check_onboarding -----------------------------------

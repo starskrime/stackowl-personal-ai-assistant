@@ -7,5 +7,9 @@ from stackowl.pipeline.state import PipelineState
 
 
 async def run(state: PipelineState) -> PipelineState:
-    log.engine.debug("[pipeline] synthesize: pass-through (not yet implemented)")
+    log.engine.info(
+        "[pipeline] synthesize: entry",
+        extra={"_fields": {"trace_id": state.trace_id, "responses": len(state.responses)}},
+    )
+    log.engine.info("[pipeline] synthesize: exit", extra={"_fields": {"trace_id": state.trace_id}})
     return state

@@ -1,0 +1,13 @@
+name: fireworks
+label: Fireworks AI
+protocol: openai
+base_url: https://api.fireworks.ai/inference/v1
+default_model: accounts/fireworks/models/llama-v3p3-70b-instruct
+models:
+  - accounts/fireworks/models/llama-v3p3-70b-instruct
+  - accounts/fireworks/models/qwen2p5-72b-instruct
+  - accounts/fireworks/models/deepseek-r1
+  - accounts/fireworks/models/mixtral-8x7b-instruct-hf
+tier: powerful
+needs_api_key: true
+key_url: https://fireworks.ai/account/api-keys

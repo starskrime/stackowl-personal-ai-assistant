@@ -39,6 +39,9 @@ dependencies = [
     "google-auth>=2.30.0",
     "cryptography>=42.0.0",
     "zstandard>=0.22.0",
+    "camoufox[geoip]>=0.4.0",
+    "trafilatura>=2.0.0",
+    "pyvirtualdisplay>=3.0",
 ]
 
 [project.scripts]
@@ -99,6 +102,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["zstandard", "zstandard.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["camoufox", "camoufox.*", "trafilatura", "trafilatura.*", "pyvirtualdisplay", "pyvirtualdisplay.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

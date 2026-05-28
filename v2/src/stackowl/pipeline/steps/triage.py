@@ -20,7 +20,7 @@ _FALLBACK_OWL = "secretary"
 
 async def run(state: PipelineState) -> PipelineState:
     """Route incoming request to the target owl."""
-    log.engine.debug(
+    log.engine.info(
         "[pipeline] triage: entry",
         extra={
             "_fields": {

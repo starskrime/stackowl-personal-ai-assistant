@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import tarfile
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-import platformdirs
 
 from stackowl.export.sanitizer import ExportSanitizer
 from stackowl.infra.observability import log
@@ -59,7 +56,6 @@ class Exporter:
 
     async def export(self, output_path: Path | None = None) -> Path:
         """Export StackOwl state to a portable archive."""
-        import asyncio
 
         # 1. ENTRY
         log.infra.debug(
@@ -70,9 +66,9 @@ class Exporter:
         # 2. DECISION — compute output path
         ts = _utc_ts()
         if output_path is None:
-            docs_dir = Path(platformdirs.user_documents_dir())
+            from stackowl.paths import StackowlHome
             ext = "tar.zst" if _HAS_ZSTD else "tar.gz"
-            output_path = docs_dir / f"stackowl-export-{ts}.{ext}"
+            output_path = StackowlHome.knowledge_dir() / f"stackowl-export-{ts}.{ext}"
 
         log.infra.debug(
             "[export] exporter.export: output path resolved",
@@ -166,8 +162,8 @@ class Exporter:
 
     def _read_config_sanitized(self) -> dict:  # type: ignore[type-arg]
         """Read stackowl.yaml and replace sensitive values with keychain refs."""
-        config_dir = Path(platformdirs.user_config_dir("stackowl"))
-        config_file = config_dir / "stackowl.yaml"
+        from stackowl.paths import StackowlHome
+        config_file = StackowlHome.config_file()
         if not config_file.exists():
             return {}
         try:
@@ -212,13 +208,12 @@ class Exporter:
             import zstandard as zstd  # type: ignore[import-untyped,no-redef]
 
             cctx = zstd.ZstdCompressor(level=3)
-            with output.open("wb") as fh:
-                with cctx.stream_writer(fh, closefd=False) as compressor:
-                    with tarfile.open(fileobj=compressor, mode="w|") as tar:  # type: ignore[arg-type]
-                        for name in set(names):
-                            member_path = tmp / name
-                            if member_path.exists():
-                                tar.add(member_path, arcname=name)
+            with output.open("wb") as fh, cctx.stream_writer(fh, closefd=False) as compressor:
+                with tarfile.open(fileobj=compressor, mode="w|") as tar:  # type: ignore[arg-type]
+                    for name in set(names):
+                        member_path = tmp / name
+                        if member_path.exists():
+                            tar.add(member_path, arcname=name)
         else:
             with tarfile.open(output, "w:gz") as tar:
                 for name in set(names):

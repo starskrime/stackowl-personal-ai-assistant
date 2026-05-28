@@ -14,7 +14,7 @@ class ProviderConfig(BaseModel):
     """
 
     name: str
-    protocol: Literal["openai", "anthropic", "gemini"]
+    protocol: Literal["openai", "anthropic", "gemini", "grok"]
     enabled: bool = True
     api_key: str | None = None
     base_url: str | None = None
@@ -23,3 +23,5 @@ class ProviderConfig(BaseModel):
     max_retries: int = 3
     timeout_seconds: float = 30.0
     rate_limit_rpm: int | None = None  # Requests per minute; None = no limit
+    max_output_tokens: int = 4096
+    tool_max_iterations: int = 8

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
-from typing import Literal
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, Literal
 
 import anthropic
 
@@ -69,6 +69,75 @@ class AnthropicProvider(ModelProvider):
             )
             raise ProviderError(self._name, exc) from exc
         log.engine.debug("[anthropic] stream: exit", extra={"_fields": {"provider": self._name}})
+
+    async def complete_with_tools(
+        self,
+        user_text: str,
+        system_text: str | None,
+        tool_schemas: list[dict[str, Any]],
+        tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
+        max_iterations: int = 8,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Anthropic native tool-use loop using content blocks."""
+        TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
+        resolved_iterations = max_iterations if max_iterations != 8 else self._config.tool_max_iterations
+        log.engine.debug(
+            "[anthropic] complete_with_tools: entry",
+            extra={"_fields": {"provider": self._name, "tool_count": len(tool_schemas), "max_iterations": resolved_iterations}},
+        )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": user_text}]
+        system_kwargs: dict[str, Any] = {"system": system_text} if system_text else {}
+        all_calls: list[dict[str, Any]] = []
+
+        for _ in range(resolved_iterations):
+            try:
+                response = await self._client.messages.create(
+                    model=self._config.default_model,
+                    messages=messages,  # type: ignore[arg-type]
+                    max_tokens=self._config.max_output_tokens,
+                    tools=tool_schemas,  # type: ignore[arg-type]
+                    **system_kwargs,  # type: ignore[arg-type]
+                )
+            except anthropic.APIError as exc:
+                log.engine.error(
+                    "[anthropic] complete_with_tools: API error",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._name}},
+                )
+                raise ProviderError(self._name, exc) from exc
+
+            if response.stop_reason != "tool_use":
+                text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                log.engine.debug(
+                    "[anthropic] complete_with_tools: exit",
+                    extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
+                )
+                return text, all_calls
+
+            # Build assistant turn with all content blocks
+            assistant_content: list[dict[str, Any]] = []
+            for b in response.content:
+                if b.type == "text":
+                    assistant_content.append({"type": "text", "text": b.text})
+                elif b.type == "tool_use":
+                    assistant_content.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            # Dispatch each tool call and append results as a user turn
+            tool_results: list[dict[str, Any]] = []
+            for b in response.content:
+                if b.type != "tool_use":
+                    continue
+                result_text = await tool_dispatcher(b.name, dict(b.input))
+                all_calls.append({"id": b.id, "name": b.name, "args": b.input, "result": result_text})
+                tool_results.append({"type": "tool_result", "tool_use_id": b.id, "content": result_text})
+            messages.append({"role": "user", "content": tool_results})
+
+        log.engine.warning(
+            "[anthropic] complete_with_tools: max_iterations reached",
+            extra={"_fields": {"provider": self._name}},
+        )
+        return "", all_calls
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("anthropic.complete")

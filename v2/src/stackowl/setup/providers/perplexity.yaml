@@ -1,0 +1,13 @@
+name: perplexity
+label: Perplexity
+protocol: openai
+base_url: https://api.perplexity.ai
+default_model: sonar-pro
+models:
+  - sonar-pro
+  - sonar
+  - sonar-reasoning
+  - sonar-reasoning-pro
+tier: powerful
+needs_api_key: true
+key_url: https://www.perplexity.ai/settings/api

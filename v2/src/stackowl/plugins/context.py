@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from stackowl.commands.registry import CommandRegistry
     from stackowl.owls.registry import OwlRegistry
     from stackowl.scheduler.base import HandlerRegistry
+    from stackowl.tools.browser.runtime import CamoufoxRuntime
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
     from stackowl.tools.registry import ToolRegistry
 
 log = logging.getLogger("stackowl.plugins")
@@ -33,6 +35,8 @@ class PluginContext:
         memory_bridge: Any = None,
         event_bus: Any = None,
         audit_logger: Any = None,
+        browser_runtime: CamoufoxRuntime | None = None,
+        browser_sessions: BrowserSessionRegistry | None = None,
     ) -> None:
         log.debug(
             "plugins.context.__init__: entry",
@@ -48,6 +52,8 @@ class PluginContext:
         self._memory_bridge = memory_bridge
         self._event_bus = event_bus
         self._audit_logger = audit_logger
+        self._browser_runtime = browser_runtime
+        self._browser_sessions = browser_sessions
         log.debug(
             "plugins.context.__init__: exit",
             extra={"_fields": {"plugin": plugin_name}},
@@ -95,3 +101,13 @@ class PluginContext:
     @property
     def audit_logger(self) -> Any:
         return self._require(caps.AUDIT_LOGGER, self._audit_logger)
+
+    @property
+    def browser_runtime(self) -> CamoufoxRuntime:
+        """Live Camoufox runtime. Sessions vended via :attr:`browser_sessions`."""
+        return self._require(caps.BROWSER_RUNTIME, self._browser_runtime)
+
+    @property
+    def browser_sessions(self) -> BrowserSessionRegistry:
+        """Per-owner browser session registry. Requires BROWSER_RUNTIME capability."""
+        return self._require(caps.BROWSER_RUNTIME, self._browser_sessions)

@@ -1,0 +1,119 @@
+"""StackOwlApp — the 4-zone Textual application class.
+
+Mounts the four headline TUI widgets:
+
+* :class:`ParliamentPanel` — overlay shown during parliament sessions
+* :class:`ConversationView` — primary streaming response surface
+* :class:`PipelineStrip` — live pipeline-step status indicator
+* :class:`ComposeArea` — bottom input area with autocomplete
+
+Output flows in via EventBus → :class:`UIStateCoordinator` → Textual
+``post_message``; the widgets handle their own messages. Input flows out
+via :class:`ComposeSubmittedMessage` (Textual message bubble) → captured
+here and published to EventBus under ``compose_submitted`` so the
+:class:`CLIAdapter` can build an :class:`IngressMessage` from it.
+
+Per the wiring plan (gleaming-finding-puppy.md, Commit D), this class
+replaces the raw-RichLog-and-Input ``_StackOwlApp`` previously embedded
+in ``channels/cli_adapter.py``. The legacy class stays in that file for
+back-compat in tests; this is the production app.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+from textual.app import App, ComposeResult
+
+from stackowl.infra.observability import log
+from stackowl.tui.messages import ComposeSubmittedMessage
+from stackowl.tui.widgets.compose_area import ComposeArea
+from stackowl.tui.widgets.conversation_view import ConversationView
+from stackowl.tui.widgets.parliament_panel import ParliamentPanel
+from stackowl.tui.widgets.pipeline_strip import PipelineStrip
+
+# StackOwl design tokens, mirrored from tui/styles/stackowl.tcss. These get
+# merged into the Textual variable table via App.get_css_variables() so they
+# are in scope when every widget's DEFAULT_CSS is parsed. CSS_PATH does NOT
+# work for this — variables defined in a loaded stylesheet are not visible
+# to DEFAULT_CSS at the time it's parsed.
+_DESIGN_TOKENS: dict[str, str] = {
+    "color-bg": "#0d1117",
+    "color-bg-elevated": "#161b22",
+    "color-surface": "#21262d",
+    "color-border": "#30363d",
+    "color-text-primary": "#e6edf3",
+    "color-text-secondary": "#8b949e",
+    "color-text-muted": "#6e7681",
+    "color-accent": "#58a6ff",
+    "color-accent-dim": "#1f6feb",
+    "color-success": "#3fb950",
+    "color-warning": "#d29922",
+    "color-error": "#f85149",
+    "color-parliament": "#bc8cff",
+}
+
+if TYPE_CHECKING:
+    from stackowl.events.bus import EventBus
+
+
+_COMPOSE_EVENT = "compose_submitted"
+
+
+class StackOwlApp(App[None]):
+    """4-zone Textual app: parliament overlay + conversation + pipeline + compose."""
+
+    def get_css_variables(self) -> dict[str, str]:
+        """Merge our design tokens into Textual's variable table.
+
+        Textual calls this before parsing widget DEFAULT_CSS, so the
+        ``$color-bg-elevated``, ``$color-parliament``, etc. references in
+        every widget's stylesheet resolve cleanly. Variables defined via
+        ``CSS_PATH`` are NOT visible to DEFAULT_CSS — this is the only
+        Textual-supported injection point.
+        """
+        base = super().get_css_variables()
+        return {**base, **_DESIGN_TOKENS}
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        *,
+        command_names: Iterable[str] | None = None,
+        owl_names: Iterable[str] | None = None,
+    ) -> None:
+        super().__init__()
+        self._event_bus = event_bus
+        self._command_names: list[str] = list(command_names or [])
+        self._owl_names: list[str] = list(owl_names or [])
+        log.tui.debug(
+            "[tui] StackOwlApp.__init__",
+            extra={"_fields": {
+                "command_count": len(self._command_names),
+                "owl_count": len(self._owl_names),
+            }},
+        )
+
+    def compose(self) -> ComposeResult:
+        """Yield the 4 widgets in display order (top → bottom)."""
+        yield ParliamentPanel()
+        yield ConversationView()
+        yield PipelineStrip()
+        yield ComposeArea(
+            command_names=self._command_names,
+            owl_names=self._owl_names,
+        )
+
+    def on_compose_submitted_message(self, message: ComposeSubmittedMessage) -> None:
+        """ComposeArea bubble — republish on the EventBus for CLIAdapter to pick up.
+
+        Going through the EventBus (rather than a direct queue) keeps the
+        widget → CLIAdapter boundary clean and uniform with how every other
+        UI event already flows.
+        """
+        log.tui.debug(
+            "[tui] StackOwlApp.on_compose_submitted_message: republishing",
+            extra={"_fields": {"text_len": len(message.text)}},
+        )
+        self._event_bus.emit(_COMPOSE_EVENT, {"text": message.text})

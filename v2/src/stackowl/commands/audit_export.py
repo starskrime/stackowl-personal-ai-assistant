@@ -11,8 +11,6 @@ import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import platformdirs
-
 from stackowl.commands.base import SlashCommand
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -63,7 +61,8 @@ class AuditExportCommand(SlashCommand):
                     extra={"_fields": {"path": str(out_path)}},
                 )
             else:
-                out_path = Path(platformdirs.user_documents_dir()) / "audit-export.json"
+                from stackowl.paths import StackowlHome
+                out_path = StackowlHome.knowledge_dir() / "audit-export.json"
                 log.debug(
                     "[commands] audit_export.handle: decision — default output path",
                     extra={"_fields": {"path": str(out_path)}},

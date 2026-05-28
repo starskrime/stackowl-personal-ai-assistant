@@ -6,8 +6,6 @@ import os
 import sys
 from pathlib import Path
 
-import platformdirs
-
 from stackowl.exceptions import PidFileExistsError
 from stackowl.infra.observability import log
 
@@ -20,31 +18,14 @@ class PidManager:
     dead process) are silently overwritten.
     """
 
-    _APP_NAME = "stackowl"
-
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 
     @property
     def pid_path(self) -> Path:
-        """Return the platform-appropriate path for the PID file.
-
-        Preference order:
-        1. ``platformdirs.user_runtime_dir`` if the directory is writable.
-        2. ``platformdirs.user_state_dir`` as fallback.
-        """
-        runtime_dir = Path(platformdirs.user_runtime_dir(self._APP_NAME))
-        try:
-            runtime_dir.mkdir(parents=True, exist_ok=True)
-            if os.access(runtime_dir, os.W_OK):
-                return runtime_dir / "stackowl.pid"
-        except OSError:
-            pass
-
-        state_dir = Path(platformdirs.user_state_dir(self._APP_NAME))
-        state_dir.mkdir(parents=True, exist_ok=True)
-        return state_dir / "stackowl.pid"
+        from stackowl.paths import StackowlHome
+        return StackowlHome.pid_file()
 
     # ------------------------------------------------------------------
     # Public API

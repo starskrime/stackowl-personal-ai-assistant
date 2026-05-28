@@ -9,7 +9,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-import platformdirs
+from stackowl.paths import StackowlHome
 
 from stackowl.infra.observability import log
 from stackowl.version import VERSION
@@ -47,8 +47,7 @@ class BackupManager:
         # 2. DECISION — compute output directory
         ts = _utc_ts()
         if output_dir is None:
-            docs_dir = Path(platformdirs.user_documents_dir())
-            output_dir = docs_dir / "stackowl-backups" / f"backup-{ts}"
+            output_dir = StackowlHome.knowledge_dir() / "backups" / f"backup-{ts}"
 
         output_dir.mkdir(parents=True, exist_ok=True)
         log.infra.debug(
@@ -150,7 +149,7 @@ class BackupManager:
         log.infra.debug("[export] backup.restore: hash verified")
 
         # 3. STEP — take pre-restore snapshot
-        pre_restore_dir = Path(platformdirs.user_state_dir("stackowl")) / "pre-restore-snapshot"
+        pre_restore_dir = StackowlHome.workspace() / "pre-restore-snapshot"
         try:
             self.backup(pre_restore_dir)
             log.infra.debug(

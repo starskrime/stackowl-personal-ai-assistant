@@ -9,14 +9,12 @@ flows through LangGraph's mutable graph-state contract.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any, TypedDict
 
 import aiosqlite
-import platformdirs
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -92,6 +90,7 @@ class LangGraphBackend(OrchestratorBackend):
         )
         t0 = time.monotonic()
         token = set_services(self._services)
+        trace_token = TraceContext.start(state.session_id, trace_id=state.trace_id)
         try:
             compiled = await self._ensure_compiled()
             config: dict[str, Any] = {
@@ -119,6 +118,7 @@ class LangGraphBackend(OrchestratorBackend):
             )
             raise InfrastructureError(f"LangGraph backend invocation failed: {type(exc).__name__}: {exc}") from exc
         finally:
+            TraceContext.reset(trace_token)
             reset_services(token)
 
         total_ms = (time.monotonic() - t0) * 1000
@@ -132,6 +132,14 @@ class LangGraphBackend(OrchestratorBackend):
                 }
             },
         )
+        # Parity with AsyncioBackend — Learning Commit 1 outcome capture.
+        # Same best-effort contract: telemetry write failures never block return.
+        # NOTE: LangGraph backend doesn't populate state.step_durations the way
+        # AsyncioBackend does (its step boundaries are inside the compiled graph),
+        # so step_durations may be empty here. quality_score still works.
+        from stackowl.pipeline.backends.asyncio_backend import _capture_outcome
+
+        await _capture_outcome(final, total_ms, self._services)
         return final
 
     async def shutdown(self) -> None:
@@ -275,6 +283,5 @@ class LangGraphBackend(OrchestratorBackend):
 
     @staticmethod
     def _default_db_path() -> Path:
-        data_dir = os.environ.get("STACKOWL_DATA_DIR")
-        base = Path(data_dir) if data_dir else Path(platformdirs.user_data_dir("stackowl"))
-        return base / "stackowl.db"
+        from stackowl.paths import StackowlHome
+        return StackowlHome.db_path()

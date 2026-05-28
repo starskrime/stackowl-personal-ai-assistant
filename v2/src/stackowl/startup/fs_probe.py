@@ -7,9 +7,8 @@ import os
 import shutil
 from pathlib import Path
 
-import platformdirs
-
 from stackowl.exceptions import FilesystemProbeError
+from stackowl.paths import StackowlHome
 
 log = logging.getLogger("stackowl.startup")
 
@@ -17,13 +16,11 @@ _MIN_FREE_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
 def _data_dir() -> Path:
-    raw = os.environ.get("STACKOWL_DATA_DIR")
-    return Path(raw) if raw else Path(platformdirs.user_data_dir("stackowl"))
+    return StackowlHome.workspace()
 
 
 def _log_dir() -> Path:
-    raw = os.environ.get("STACKOWL_LOG_DIR")
-    return Path(raw) if raw else Path(platformdirs.user_log_dir("stackowl"))
+    return StackowlHome.logs_dir()
 
 
 class FilesystemProbe:

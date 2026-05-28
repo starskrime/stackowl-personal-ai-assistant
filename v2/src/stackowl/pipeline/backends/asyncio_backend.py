@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
+from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -24,7 +26,7 @@ class AsyncioBackend(OrchestratorBackend):
         self._services = services or StepServices()
 
     async def run(self, state: PipelineState) -> PipelineState:
-        log.engine.debug(
+        log.engine.info(
             "[asyncio_backend] run: entry",
             extra={
                 "_fields": {
@@ -36,7 +38,9 @@ class AsyncioBackend(OrchestratorBackend):
         )
         t0 = time.monotonic()
         token = set_services(self._services)
+        trace_token = TraceContext.start(state.session_id, trace_id=state.trace_id)
         current = state
+        step_durations: list[tuple[str, float]] = []
         try:
             for step_name, step_fn in PIPELINE_STEPS:
                 current = current.evolve(pipeline_step=step_name)
@@ -44,12 +48,14 @@ class AsyncioBackend(OrchestratorBackend):
                 try:
                     current = await step_fn(current)
                     duration_ms = (time.monotonic() - step_t0) * 1000
-                    log.engine.debug(
+                    step_durations.append((step_name, duration_ms))
+                    log.engine.info(
                         "[asyncio_backend] run: step ok",
                         extra={"_fields": {"step": step_name, "trace_id": state.trace_id, "duration_ms": duration_ms}},
                     )
                 except Exception as exc:
                     duration_ms = (time.monotonic() - step_t0) * 1000
+                    step_durations.append((step_name, duration_ms))
                     error_msg = f"{step_name}: {type(exc).__name__}: {exc}"
                     log.engine.error(
                         "[asyncio_backend] run: step failed — %s",
@@ -64,12 +70,14 @@ class AsyncioBackend(OrchestratorBackend):
             try:
                 current = await deliver.run(current)
                 deliver_ms = (time.monotonic() - deliver_t0) * 1000
-                log.engine.debug(
+                step_durations.append(("deliver", deliver_ms))
+                log.engine.info(
                     "[asyncio_backend] run: step ok",
                     extra={"_fields": {"step": "deliver", "trace_id": state.trace_id, "duration_ms": deliver_ms}},
                 )
             except Exception as exc:
                 deliver_ms = (time.monotonic() - deliver_t0) * 1000
+                step_durations.append(("deliver", deliver_ms))
                 error_msg = f"deliver: {type(exc).__name__}: {exc}"
                 log.engine.error(
                     "[asyncio_backend] run: deliver failed — %s",
@@ -79,11 +87,108 @@ class AsyncioBackend(OrchestratorBackend):
                 )
                 current = current.evolve(errors=(*current.errors, error_msg))
         finally:
+            TraceContext.reset(trace_token)
             reset_services(token)
 
+        # Persist the measured step durations onto the final state for the
+        # outcome-capture helper to read.
+        current = current.evolve(step_durations=tuple(step_durations))
+
         total_ms = (time.monotonic() - t0) * 1000
-        log.engine.debug(
+        log.engine.info(
             "[asyncio_backend] run: exit",
             extra={"_fields": {"trace_id": state.trace_id, "total_ms": total_ms, "error_count": len(current.errors)}},
         )
+        # Outcome capture — best-effort; never block the response on a
+        # telemetry write failure. Helper logs its own warning on error.
+        await _capture_outcome(current, total_ms, self._services)
         return current
+
+
+async def _capture_outcome(
+    state: PipelineState, total_ms: float, services: StepServices,
+) -> None:
+    """Persist a row in task_outcomes for this run. Best-effort — logs on failure.
+
+    Captures: success (no errors), latency_ms, tool_call_count, failure_class
+    (from state.errors via classify_failure), step_durations, input_text,
+    response_text. quality_score / scored_at start NULL — the CriticScorerHandler
+    fills them in asynchronously later.
+    """
+    # 1. ENTRY
+    log.engine.debug(
+        "[outcomes] capture: entry",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "total_ms": total_ms,
+            "error_count": len(state.errors),
+            "tool_call_count": len(state.tool_calls),
+        }},
+    )
+    # 2. DECISION — services may not have a db pool (tests / dry-run / degraded)
+    db = services.db_pool
+    if db is None:
+        log.engine.debug(
+            "[outcomes] capture: exit — no db_pool, skipped",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return
+    # 3. STEP — derive payload and persist
+    try:
+        store = TaskOutcomeStore(db)
+        response_text = "\n".join(c.content for c in state.responses if c.content)
+        failure_class = classify_failure(state.errors)
+        # Snapshot DNA from the owl registry so attribution-based evolution
+        # (Learning Commit 4) can correlate trait values with outcome quality.
+        # Best-effort — owl may not be registered (system commands, parliament).
+        dna_snapshot: dict[str, float] | None = None
+        if services.owl_registry is not None:
+            try:
+                manifest = services.owl_registry.get(state.owl_name)
+                dna = manifest.dna
+                dna_snapshot = {
+                    "challenge_level": float(dna.challenge_level),
+                    "verbosity": float(dna.verbosity),
+                    "curiosity": float(dna.curiosity),
+                    "formality": float(dna.formality),
+                    "creativity": float(dna.creativity),
+                    "precision": float(dna.precision),
+                }
+            except Exception as exc:  # B5
+                log.engine.debug(
+                    "[outcomes] capture: owl_registry.get failed — dna_snapshot omitted",
+                    exc_info=exc,
+                    extra={"_fields": {"owl_name": state.owl_name}},
+                )
+        await store.record(
+            trace_id=state.trace_id,
+            session_id=state.session_id,
+            owl_name=state.owl_name,
+            channel=state.channel,
+            success=len(state.errors) == 0,
+            latency_ms=total_ms,
+            tool_call_count=len(state.tool_calls),
+            failure_class=failure_class,
+            step_durations=dict(state.step_durations),
+            input_text=state.input_text,
+            response_text=response_text,
+            tool_sequence=tuple(tc.tool_name for tc in state.tool_calls),
+            dna_snapshot=dna_snapshot,
+        )
+    except Exception as exc:  # B5 — log, never raise from telemetry
+        log.engine.warning(
+            "[outcomes] capture: write failed — telemetry lost for this turn",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return
+    # 4. EXIT
+    log.engine.info(
+        "[outcomes] capture: exit",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "success": len(state.errors) == 0,
+            "failure_class": failure_class,
+            "latency_ms": int(total_ms),
+        }},
+    )

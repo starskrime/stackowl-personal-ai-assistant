@@ -1,0 +1,14 @@
+name: anthropic
+label: Anthropic
+protocol: anthropic
+base_url: https://api.anthropic.com/v1
+default_model: claude-sonnet-4-6
+models:
+  - claude-opus-4-5
+  - claude-sonnet-4-6
+  - claude-sonnet-4-5
+  - claude-haiku-4-5
+  - claude-haiku-3-5-20241022
+tier: powerful
+needs_api_key: true
+key_url: https://console.anthropic.com/settings/keys

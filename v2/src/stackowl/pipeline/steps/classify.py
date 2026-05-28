@@ -39,7 +39,7 @@ def _candidate_entity_ids(query: str, limit: int = 5) -> list[str]:
     for token in tokens[:limit]:
         for ent_type in candidate_types:
             digest = hashlib.sha256(
-                f"{ent_type}|{token}".encode("utf-8")
+                f"{ent_type}|{token}".encode()
             ).hexdigest()[:16]
             entity_id = f"ent_{digest}"
             if entity_id in seen:
@@ -83,6 +83,256 @@ async def _gather_graph_context(query: str) -> str:
     return "\n".join(lines)
 
 
+async def _gather_preferences(session_id: str) -> str:
+    """Best-effort: load persisted preferences for the owner and format for the prompt.
+
+    Failures (store missing, DB error) return ``""`` — preferences are
+    enhancement, not gating. Never blocks the pipeline.
+    """
+    services = get_services()
+    store = services.preference_store
+    if store is None:
+        return ""
+    try:
+        # owner_key currently maps to session_id; will become channel-prefixed
+        # when per-channel threading lands. Both paths read from the same store.
+        prefs = await store.list_for_owner(session_id)
+    except Exception as exc:
+        log.engine.warning(
+            "[pipeline] classify: preference load failed — skipping",
+            exc_info=exc, extra={"_fields": {"session_id": session_id}},
+        )
+        return ""
+    if not prefs:
+        return ""
+    lines = ["## Learned Preferences"]
+    lines.extend(f"- {k}: {v}" for k, v in sorted(prefs.items()))
+    return "\n".join(lines)
+
+
+async def _gather_recent_reflections(owl_name: str, limit: int = 3) -> str:
+    """Best-effort: surface the agent's most recent reflections for this owl.
+
+    Reflexion-style — what went wrong recently and what the agent suggested
+    doing differently. Reads from the ``reflections`` table (Commit 2). When
+    the table is empty or the DB pool isn't wired (tests, dry-run), returns
+    "" and the rest of classify proceeds normally.
+
+    Note: this is a recency-based fallback. Semantic recall over the
+    embedding column lands in Commit 5 (lessons_index) which lets us surface
+    reflections matching the CURRENT query's failure pattern, not just the
+    most-recent-N.
+    """
+    # 1. ENTRY
+    log.engine.debug(
+        "[pipeline] classify._gather_recent_reflections: entry",
+        extra={"_fields": {"owl_name": owl_name, "limit": limit}},
+    )
+    services = get_services()
+    db = services.db_pool
+    # 2. DECISION — db not wired (tests / dry-run)
+    if db is None or limit <= 0:
+        log.engine.debug(
+            "[pipeline] classify._gather_recent_reflections: exit — no db_pool",
+        )
+        return ""
+    # 3. STEP — pull recent reflections
+    try:
+        from stackowl.memory.reflection_store import ReflectionStore
+
+        store = ReflectionStore(db)
+        reflections = await store.recent_for_owl(owl_name, limit=limit)
+    except Exception as exc:  # B5
+        log.engine.warning(
+            "[pipeline] classify._gather_recent_reflections: lookup failed — skipping",
+            exc_info=exc, extra={"_fields": {"owl_name": owl_name}},
+        )
+        return ""
+    # 2. DECISION — nothing to surface
+    if not reflections:
+        log.engine.debug(
+            "[pipeline] classify._gather_recent_reflections: exit — no reflections",
+            extra={"_fields": {"owl_name": owl_name}},
+        )
+        return ""
+    lines = ["## Recent Reflections"]
+    for r in reflections:
+        tag = f" [{r.failure_class}]" if r.failure_class else ""
+        lines.append(f"- {r.summary}{tag}")
+        if r.suggested_strategy:
+            lines.append(f"  → strategy: {r.suggested_strategy}")
+    result = "\n".join(lines)
+    # 4. EXIT
+    log.engine.debug(
+        "[pipeline] classify._gather_recent_reflections: exit",
+        extra={"_fields": {
+            "owl_name": owl_name, "n_reflections": len(reflections),
+            "block_len": len(result),
+        }},
+    )
+    return result
+
+
+async def _gather_relevant_skills(query: str, limit: int = 3) -> str:
+    """Best-effort: surface up to K skills semantically relevant to ``query``.
+
+    Per the Commit 3 sub-phase 3d operator vote:
+    * K=3 surfaced max (token-bloat ceiling)
+    * Description + when_to_use only — body NOT included (agent can read full
+      playbook via ``/skill show <name>`` when it wants it)
+
+    Returns ``""`` when skill_store or embedding_registry isn't wired (tests,
+    dry-run, early boot before SkillsAssembly is built) or when nothing scores
+    above the threshold. The rest of classify proceeds normally.
+    """
+    # 1. ENTRY
+    log.engine.debug(
+        "[pipeline] classify._gather_relevant_skills: entry",
+        extra={"_fields": {"query_len": len(query), "limit": limit}},
+    )
+    services = get_services()
+    skill_store = services.skill_store
+    embedding_registry = services.embedding_registry
+    # 2. DECISION — wires absent (tests / dry-run)
+    if skill_store is None or embedding_registry is None or limit <= 0:
+        log.engine.debug(
+            "[pipeline] classify._gather_relevant_skills: exit — wires absent",
+        )
+        return ""
+    # 3. STEP — embed the user query
+    try:
+        vectors = await embedding_registry.get().embed([query])
+    except Exception as exc:  # B5
+        log.engine.warning(
+            "[pipeline] classify._gather_relevant_skills: embed failed — skipping",
+            exc_info=exc, extra={"_fields": {"query_len": len(query)}},
+        )
+        return ""
+    if not vectors or not vectors[0]:
+        log.engine.debug(
+            "[pipeline] classify._gather_relevant_skills: exit — empty embedding",
+        )
+        return ""
+    # 3. STEP — semantic recall over the SQLite skills index
+    try:
+        hits = await skill_store.semantic_recall(list(vectors[0]), limit=limit)
+    except Exception as exc:  # B5
+        log.engine.warning(
+            "[pipeline] classify._gather_relevant_skills: recall failed — skipping",
+            exc_info=exc,
+        )
+        return ""
+    if not hits:
+        log.engine.debug(
+            "[pipeline] classify._gather_relevant_skills: exit — no matches",
+        )
+        return ""
+    # 4. EXIT — format the prompt block
+    lines = ["## Relevant Skills"]
+    for sk, sim in hits:
+        desc = sk.description[:160]
+        line = f"- **{sk.name}** ({sim:.2f}): {desc}"
+        if sk.when_to_use:
+            line += f" — _{sk.when_to_use[:160]}_"
+        lines.append(line)
+    lines.append("(Use `/skill show <name>` for the full playbook.)")
+    result = "\n".join(lines)
+    log.engine.debug(
+        "[pipeline] classify._gather_relevant_skills: exit",
+        extra={"_fields": {
+            "n_hits": len(hits), "block_len": len(result),
+            "top_sim": hits[0][1],
+        }},
+    )
+    return result
+
+
+async def _gather_lessons(query: str, limit: int = 3) -> str:
+    """Best-effort: surface up to K cross-source lessons (Learning Commit 5).
+
+    Queries the unified LessonsIndex (LanceDB) which holds reflections + tool
+    heuristics + skills + pellets in one table. Returns the matched lessons
+    grouped by source_type so the LLM sees the relevant slice of each.
+    Distinct from ``_gather_relevant_skills`` which retrieves ONLY skills
+    via SQLite cosine — this surfaces reflections+heuristics+pellets that
+    don't have a SQLite recall path of their own.
+    """
+    # 1. ENTRY
+    log.engine.debug(
+        "[pipeline] classify._gather_lessons: entry",
+        extra={"_fields": {"query_len": len(query), "limit": limit}},
+    )
+    services = get_services()
+    lessons_index = services.lessons_index
+    if lessons_index is None or limit <= 0:
+        log.engine.debug(
+            "[pipeline] classify._gather_lessons: exit — no lessons_index wired",
+        )
+        return ""
+    # 3. STEP — single ANN query across all source_types
+    try:
+        hits = await lessons_index.search(query, limit=limit)
+    except Exception as exc:  # B5
+        log.engine.warning(
+            "[pipeline] classify._gather_lessons: lessons.search failed — skipping",
+            exc_info=exc,
+        )
+        return ""
+    # Filter out skill source — those already come through _gather_relevant_skills.
+    # Lessons surface adds the OTHER sources (reflections/heuristics/pellets).
+    non_skill_hits = [h for h in hits if h.source_type != "skill"]
+    if not non_skill_hits:
+        log.engine.debug(
+            "[pipeline] classify._gather_lessons: exit — only-skill or no hits",
+        )
+        return ""
+    # 4. EXIT — format as a system-prompt block
+    lines = ["## Cross-Source Lessons"]
+    for h in non_skill_hits:
+        snippet = h.content[:300]
+        lines.append(
+            f"- **[{h.source_type}]** ({h.similarity:.2f}) {snippet}",
+        )
+    result = "\n".join(lines)
+    log.engine.debug(
+        "[pipeline] classify._gather_lessons: exit",
+        extra={"_fields": {
+            "n_hits": len(non_skill_hits),
+            "block_len": len(result),
+            "top_sim": non_skill_hits[0].similarity if non_skill_hits else None,
+        }},
+    )
+    return result
+
+
+async def _gather_recent_session_turns(session_id: str, limit: int) -> str:
+    """Best-effort: fetch the last ``limit`` staged conversation turns for the session.
+
+    Provides short-term memory of the current session so the agent can follow
+    multi-turn references without waiting for the dream worker to promote them.
+    """
+    services = get_services()
+    bridge = services.memory_bridge
+    if bridge is None or limit <= 0:
+        return ""
+    try:
+        turns = await bridge.recent_conversation_turns(session_id=session_id, limit=limit)
+    except Exception as exc:
+        log.engine.warning(
+            "[pipeline] classify: recent_conversation_turns failed — skipping",
+            exc_info=exc, extra={"_fields": {"session_id": session_id}},
+        )
+        return ""
+    if not turns:
+        return ""
+    lines = ["Recent conversation:"]
+    for turn in turns:
+        # Keep each turn compact to control token bloat.
+        snippet = turn.content[:500]
+        lines.append(f"- {snippet}")
+    return "\n".join(lines)
+
+
 async def run(state: PipelineState) -> PipelineState:
     log.engine.debug(
         "[pipeline] classify: entry", extra={"_fields": {"trace_id": state.trace_id}}
@@ -92,18 +342,51 @@ async def run(state: PipelineState) -> PipelineState:
     if bridge is None:
         log.engine.debug("[pipeline] classify: no memory_bridge — pass-through")
         return state
+    # Long-term committed-fact context (FTS or semantic).
     context = await bridge.retrieve(state.input_text, state.session_id)
+    # Short-term: last N turns of the current session.
+    try:
+        from stackowl.config.settings import Settings
+
+        short_term_window = Settings().memory.short_term_window
+    except Exception:
+        short_term_window = 6
+    recent_block = await _gather_recent_session_turns(state.session_id, short_term_window)
+    # Long-term graph context.
     graph_context = await _gather_graph_context(state.input_text)
-    if graph_context:
-        context = f"{context}\n\n{graph_context}" if context else graph_context
+    # Persisted user preferences (high priority — pin to top).
+    prefs_block = await _gather_preferences(state.session_id)
+    # Reflexion-style learnings from past failures (Commit 2).
+    reflections_block = await _gather_recent_reflections(state.owl_name, limit=3)
+    # Voyager-style skills relevant to this query (Commit 3 sub-phase 3d).
+    skills_block = await _gather_relevant_skills(state.input_text, limit=3)
+    # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
+    # pellets from the unified LanceDB lessons index.
+    lessons_block = await _gather_lessons(state.input_text, limit=3)
+    # Combine: prefs first (always in view), then skills (what tactics apply),
+    # then lessons (cross-source learnings), then reflections (what went wrong
+    # before), then recent conversation (most temporally relevant), then
+    # long-term context, then graph.
+    parts = [
+        p for p in (
+            prefs_block, skills_block, lessons_block, reflections_block,
+            recent_block, context, graph_context,
+        ) if p
+    ]
+    combined = "\n\n".join(parts)
     log.engine.debug(
         "[pipeline] classify: exit",
         extra={
             "_fields": {
                 "trace_id": state.trace_id,
-                "context_len": len(context),
+                "context_len": len(combined),
+                "prefs_len": len(prefs_block),
+                "skills_len": len(skills_block),
+                "lessons_len": len(lessons_block),
+                "reflections_len": len(reflections_block),
+                "recent_len": len(recent_block),
                 "graph_context_len": len(graph_context),
             }
         },
     )
-    return state.evolve(memory_context=context or None)
+    return state.evolve(memory_context=combined or None)

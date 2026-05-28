@@ -68,7 +68,7 @@ class ProviderRegistry:
                 "[registry] constructing provider",
                 extra={"_fields": {"name": config.name, "protocol": config.protocol}},
             )
-            api_key = SecretResolver.resolve(config.api_key or "")
+            api_key = SecretResolver.resolve(config.api_key) if config.api_key else ""
             provider = _build_provider(config, api_key)
             registry._providers[config.name] = provider
             if hasattr(config, "tier") and config.tier:

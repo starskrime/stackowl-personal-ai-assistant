@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +15,7 @@ from stackowl.channels.discord.settings import DiscordSettings
 from stackowl.channels.slack.settings import SlackSettings
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.channels.whatsapp.settings import WhatsAppSettings
+from stackowl.config.browser import BrowserSettings
 from stackowl.config.notification_settings import (
     NotificationSettings,
     QuietHoursSettings,
@@ -27,9 +27,10 @@ from stackowl.config.webhook_settings import (
     WebhookSettings,
     WebhookSourceConfig,
 )
-from stackowl.mcp.settings import McpClientSettings
 from stackowl.mcp.server_settings import McpServerSettings
+from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.paths import StackowlHome
 
 __all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WhatsAppSettings"]  # noqa: E501
 
@@ -147,6 +148,7 @@ class MemorySettings(BaseModel):
     prune_after_days: int = Field(default=90, ge=1)
     extraction_after_n_messages: int = Field(default=5, ge=1)
     per_user_ceiling_bytes: int = Field(default=52_428_800, ge=1_000_000)
+    short_term_window: int = Field(default=6, ge=0)
 
 
 class SchedulerSettings(BaseModel):
@@ -269,6 +271,7 @@ class Settings(BaseSettings):
     whatsapp_channel: WhatsAppSettings = Field(default_factory=WhatsAppSettings)
     mcp_client: McpClientSettings = Field(default_factory=McpClientSettings)
     mcp_server: McpServerSettings = Field(default_factory=McpServerSettings)
+    browser: BrowserSettings = Field(default_factory=BrowserSettings)
     owls: list[OwlAgentManifest] = Field(default_factory=list)
     autonomy_level: Literal["low", "medium", "high"] = Field(
         default="medium",
@@ -286,12 +289,12 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        config_path = Path(os.environ.get("STACKOWL_CONFIG_FILE", _DEFAULT_CONFIG_FILE))
+        config_path = StackowlHome.config_file()
         return (env_settings, _YamlSource(settings_cls, config_path))
 
     @model_validator(mode="after")
     def _post_init(self) -> Settings:
-        config_path = Path(os.environ.get("STACKOWL_CONFIG_FILE", _DEFAULT_CONFIG_FILE))
+        config_path = StackowlHome.config_file()
 
         if not config_path.exists() and not self.providers:
             log.warning(

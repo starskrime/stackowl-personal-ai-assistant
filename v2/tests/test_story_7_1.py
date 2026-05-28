@@ -257,7 +257,7 @@ class TestMigration0018:
             Path(__file__).resolve().parent.parent / "src/stackowl/db/migrations"
         )
         sql_files = sorted(migrations_dir.glob("*.sql"))
-        assert len(sql_files) == 25
+        assert len(sql_files) == 35
 
 
 # ---------------------------------------------------------------------------

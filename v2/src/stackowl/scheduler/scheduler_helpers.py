@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import uuid
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,8 +12,8 @@ from stackowl.infra.observability import log
 from stackowl.scheduler.job import Job
 
 _INSERT_AUDIT_SQL = (
-    "INSERT INTO audit_log (audit_id, event_type, actor, target, timestamp, details) "
-    "VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO audit_log (event_type, actor, target, timestamp, details) "
+    "VALUES (?, ?, ?, ?, ?)"
 )
 
 _INSERT_JOB_SQL = (
@@ -42,11 +42,10 @@ async def write_audit(
         await db.execute(
             _INSERT_AUDIT_SQL,
             (
-                str(uuid.uuid4()),
                 event_type,
                 actor,
                 target,
-                datetime.now(UTC).isoformat(),
+                time.time(),
                 payload,
             ),
         )

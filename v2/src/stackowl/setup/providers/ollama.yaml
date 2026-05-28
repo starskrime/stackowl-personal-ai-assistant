@@ -1,0 +1,16 @@
+name: ollama
+label: Ollama (local)
+protocol: openai
+base_url: http://localhost:11434/v1
+default_model: llama3.2
+models:
+  - llama3.2
+  - llama3.1
+  - qwen2.5
+  - phi4
+  - mistral
+  - gemma2
+  - deepseek-r1
+tier: fast
+needs_api_key: false
+is_local: true

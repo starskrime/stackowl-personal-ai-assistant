@@ -427,6 +427,6 @@ class TestExporter:
 def test_migration_count(migration_runner: Any) -> None:
     """Ensure migration count stays in sync with test_week1_fixtures expectation."""
     results = migration_runner.run()
-    # 25 SQL migrations (0001..0025)
-    assert len(results) == 25
+    # 27 SQL migrations (0001..0027)
+    assert len(results) == 35
     assert all(r.action == "applied" for r in results)

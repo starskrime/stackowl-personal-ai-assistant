@@ -15,7 +15,7 @@ async def run(state: PipelineState) -> PipelineState:
     """
     services = get_services()
     registry = services.stream_registry
-    log.gateway.debug(
+    log.gateway.info(
         "[pipeline] deliver: entry",
         extra={"_fields": {"session_id": state.session_id, "chunk_count": len(state.responses)}},
     )
@@ -38,7 +38,7 @@ async def run(state: PipelineState) -> PipelineState:
         await writer.write(chunk)
     await writer.close()
 
-    log.gateway.debug(
+    log.gateway.info(
         "[pipeline] deliver: exit",
         extra={"_fields": {"session_id": state.session_id, "chunks_written": len(state.responses)}},
     )

@@ -14,7 +14,7 @@ from stackowl.infra.trace import TraceContext
 
 def test_migration_runner_fixture(migration_runner: Any) -> None:
     results = migration_runner.run()
-    assert len(results) == 25
+    assert len(results) == 35
     assert all(r.action == "applied" for r in results)
 
 

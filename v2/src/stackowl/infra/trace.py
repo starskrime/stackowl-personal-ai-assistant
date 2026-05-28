@@ -25,10 +25,21 @@ class TraceContext:
     _session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
 
     @classmethod
-    def start(cls, session_id: str | None = None) -> _TraceToken:
-        """Mint a new trace_id and span_id; return a token to reset context later."""
+    def start(
+        cls,
+        session_id: str | None = None,
+        *,
+        trace_id: str | None = None,
+    ) -> _TraceToken:
+        """Set trace context for the current async task; return a token to reset later.
+
+        ``trace_id`` is used verbatim when provided (the typical case: the channel
+        adapter already minted one and we propagate it through the pipeline).
+        When ``trace_id`` is None we mint a fresh UUID — useful for background
+        jobs/scheduler handlers that start their own root trace.
+        """
         return _TraceToken(
-            trace=cls._trace_id.set(str(uuid4())),
+            trace=cls._trace_id.set(trace_id or str(uuid4())),
             span=cls._span_id.set(str(uuid4())),
             parent=cls._parent_span_id.set(None),
             session=cls._session_id.set(session_id),

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.mcp.server_settings import McpServerSettings
 from stackowl.mcp.sse_encoder import McpSseEncoder
+from stackowl.mcp.tool_exposure import McpToolExposurePolicy
 
 if TYPE_CHECKING:
     from stackowl.tools.base import Tool
@@ -41,7 +42,18 @@ class McpServer:
         self._encoder = McpSseEncoder()
         self._mcp_server: Any = None
         self._extra_capabilities: dict[str, Any] = {}
+        self._exposure = McpToolExposurePolicy(
+            allow_browser_writes=self._settings.allow_browser_writes,
+        )
         self._setup_handlers()
+        # Advertise the browser capability so MCP clients can detect support.
+        self._extra_capabilities["browser"] = {
+            "engines": ["camoufox"],
+            "stealth": True,
+            "downloads": self._settings.allow_browser_writes,
+            "profiles": True,
+            "writes_allowed": self._settings.allow_browser_writes,
+        }
         log.debug(
             "mcp.server.__init__: exit",
             extra={"_fields": {"name": self._settings.server_name, "transport": self._settings.transport}},
@@ -53,7 +65,7 @@ class McpServer:
         try:
             from mcp.server import Server  # type: ignore[import]
             self._mcp_server = Server(self._settings.server_name)
-            _wire_handlers(self._mcp_server, self._registry)
+            _wire_handlers(self._mcp_server, self._registry, self._exposure)
             log.debug("mcp.server._setup_handlers: handlers registered")
         except ImportError as exc:
             log.warning(
@@ -134,7 +146,7 @@ class McpServer:
         log.debug("mcp.server.negotiate: entry", extra={"_fields": {"client_caps": list(client_capabilities)}})
         tools_list = [
             {"name": t.name, "description": t.description}
-            for t in self._registry.all()
+            for t in self._exposure.filter_tools(self._registry.all())
         ]
         log.debug("mcp.server.negotiate: decision — building capability dict", extra={"_fields": {"tool_count": len(tools_list)}})
         caps: dict[str, Any] = {
@@ -229,11 +241,13 @@ class McpServer:
         """Return the tool manifest as a list of dicts (for testing without live MCP)."""
         return [
             {"name": t.name, "description": t.description, "inputSchema": t.parameters}
-            for t in self._registry.all()
+            for t in self._exposure.filter_tools(self._registry.all())
         ]
 
 
-def _wire_handlers(mcp_server: Any, registry: ToolRegistry) -> None:
+def _wire_handlers(
+    mcp_server: Any, registry: ToolRegistry, exposure: McpToolExposurePolicy,
+) -> None:
     """Register list_tools and call_tool handlers on the mcp.Server."""
     from mcp.types import TextContent, Tool as McpSdkTool  # type: ignore[import]
 
@@ -241,7 +255,7 @@ def _wire_handlers(mcp_server: Any, registry: ToolRegistry) -> None:
     async def _list_tools() -> list[McpSdkTool]:
         return [
             McpSdkTool(name=t.name, description=t.description, inputSchema=t.parameters)
-            for t in registry.all()
+            for t in exposure.filter_tools(registry.all())
         ]
 
     @mcp_server.call_tool()  # type: ignore[misc]
@@ -250,5 +264,11 @@ def _wire_handlers(mcp_server: Any, registry: ToolRegistry) -> None:
         if tool is None:
             log.warning("mcp.server.call_tool: unknown tool", extra={"_fields": {"tool": name}})
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
+        if not exposure.is_exposed(tool):
+            log.warning(
+                "mcp.server.call_tool: tool denied by exposure policy",
+                extra={"_fields": {"tool": name}},
+            )
+            return [TextContent(type="text", text=exposure.denial_message(name))]
         result = await tool.execute(**arguments)
         return [TextContent(type="text", text=result.output if result.success else (result.error or ""))]

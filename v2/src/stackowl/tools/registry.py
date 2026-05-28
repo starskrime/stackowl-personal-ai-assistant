@@ -119,10 +119,29 @@ class ToolRegistry:
     def all(self) -> list[Tool]:
         return list(self._tools.values())
 
+    def to_provider_schema(self, protocol: str) -> list[dict[str, object]]:
+        """Emit tool schemas in the format expected by the given provider protocol."""
+        tools = self.all()
+        if protocol == "anthropic":
+            return [
+                {"name": t.name, "description": t.description, "input_schema": t.parameters}
+                for t in tools
+            ]
+        return [
+            {
+                "type": "function",
+                "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+            }
+            for t in tools
+        ]
+
     @classmethod
     def with_defaults(cls) -> ToolRegistry:
-        """Bootstrap the registry with the three foundation tools."""
+        """Bootstrap the registry with the foundation tools + browser family."""
+        from stackowl.tools.browser.browse import BrowserBrowseTool
+        from stackowl.tools.browser.tools import ATOMIC_BROWSER_TOOLS
         from stackowl.tools.io.read_file import ReadFileTool
+        from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
         from stackowl.tools.system.shell import ShellTool
 
@@ -130,4 +149,8 @@ class ToolRegistry:
         registry.register(ReadFileTool())
         registry.register(WriteFileTool())
         registry.register(ShellTool())
+        registry.register(WebFetchTool())
+        for tool_cls in ATOMIC_BROWSER_TOOLS:
+            registry.register(tool_cls())
+        registry.register(BrowserBrowseTool())
         return registry

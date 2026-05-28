@@ -1,0 +1,14 @@
+name: mistral
+label: Mistral
+protocol: openai
+base_url: https://api.mistral.ai/v1
+default_model: mistral-large-latest
+models:
+  - mistral-large-latest
+  - mistral-small-latest
+  - codestral-latest
+  - pixtral-large-latest
+  - open-mistral-nemo
+tier: powerful
+needs_api_key: true
+key_url: https://console.mistral.ai/api-keys/

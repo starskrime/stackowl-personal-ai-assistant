@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-import platformdirs
-
 from stackowl.infra.trace import TraceContext
 
 _SENSITIVE_PATTERNS = (
@@ -77,8 +75,8 @@ class JsonlFormatter(logging.Formatter):
 
 
 def _log_dir() -> Path:
-    raw = os.environ.get("STACKOWL_LOG_DIR")
-    return Path(raw) if raw else Path(platformdirs.user_log_dir("stackowl"))
+    from stackowl.paths import StackowlHome
+    return StackowlHome.logs_dir()
 
 
 def setup_logging() -> logging.Handler:
@@ -139,6 +137,7 @@ class _Loggers:
     whatsapp = logging.getLogger("stackowl.whatsapp")
     mcp = logging.getLogger("stackowl.mcp")
     plugins = logging.getLogger("stackowl.plugins")
+    skills = logging.getLogger("stackowl.skills")
     integrations = logging.getLogger("stackowl.integrations")
     infra = logging.getLogger("stackowl.infra")
     setup = logging.getLogger("stackowl.setup")

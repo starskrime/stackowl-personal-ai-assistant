@@ -1,0 +1,14 @@
+name: gemini
+label: Google Gemini
+protocol: gemini
+base_url: https://generativelanguage.googleapis.com/v1beta
+default_model: gemini-2.5-pro
+models:
+  - gemini-2.5-pro
+  - gemini-2.5-flash
+  - gemini-2.0-flash
+  - gemini-1.5-pro
+  - gemini-1.5-flash
+tier: powerful
+needs_api_key: true
+key_url: https://aistudio.google.com/app/apikey

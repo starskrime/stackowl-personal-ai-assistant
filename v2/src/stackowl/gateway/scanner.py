@@ -164,7 +164,7 @@ class GatewayScanner:
         return "secretary", (f"Owl '@{requested}' is not registered — routing to @secretary.")
 
     def scan(self, msg: IngressMessage) -> RouteDecision:
-        log.gateway.debug(
+        log.gateway.info(
             "[gateway] scanner.scan: entry",
             extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
         )
@@ -202,7 +202,7 @@ class GatewayScanner:
             requested_name = m.group(1)
             stripped = _strip_at_prefix(text, m)
             target, suggestion = self._resolve_owl(requested_name)
-            log.gateway.debug(
+            log.gateway.info(
                 "[gateway] scanner.scan: owl route",
                 extra={
                     "_fields": {
@@ -223,13 +223,13 @@ class GatewayScanner:
         m2 = _SLASH_CMD_RE.match(text)
         if m2:
             cmd = m2.group(1)
-            log.gateway.debug(
+            log.gateway.info(
                 "[gateway] scanner.scan: command route",
                 extra={"_fields": {"session_id": msg.session_id, "cmd": cmd}},
             )
             return RouteDecision(route="command", target=cmd)
 
-        log.gateway.debug(
+        log.gateway.info(
             "[gateway] scanner.scan: default secretary route",
             extra={"_fields": {"session_id": msg.session_id}},
         )

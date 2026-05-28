@@ -1,0 +1,8 @@
+name: custom
+label: Custom OpenAI-compatible
+protocol: openai
+base_url: ""
+default_model: ""
+models: []
+tier: powerful
+needs_api_key: true

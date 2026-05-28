@@ -97,9 +97,9 @@ class TelegramChannelAdapter(ChannelAdapter):
 
     async def receive(self) -> IngressMessage:
         """Yield the next IngressMessage enqueued by ``_handle_update``."""
-        log.telegram.debug("[telegram] adapter.receive: entry")
+        log.telegram.info("[telegram] adapter.receive: entry")
         msg = await self._queue.get()
-        log.telegram.debug(
+        log.telegram.info(
             "[telegram] adapter.receive: exit",
             extra={"_fields": {"trace_id": msg.trace_id, "text_len": len(msg.text)}},
         )
@@ -107,13 +107,13 @@ class TelegramChannelAdapter(ChannelAdapter):
 
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None:
         """Collect streaming chunks, format, and dispatch to Telegram."""
-        log.telegram.debug("[telegram] adapter.send: entry")
+        log.telegram.info("[telegram] adapter.send: entry")
         TestModeGuard.assert_not_test_mode("telegram.send")
         buffer = ""
         async for chunk in chunks:
             buffer += chunk.content
         await self.send_text(self._formatter.format_response(buffer))
-        log.telegram.debug(
+        log.telegram.info(
             "[telegram] adapter.send: exit",
             extra={"_fields": {"total_len": len(buffer)}},
         )
@@ -210,7 +210,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """python-telegram-bot callback — enqueue an IngressMessage (fail-closed)."""
-        log.telegram.debug("[telegram] adapter.handle_update: entry")
+        log.telegram.info("[telegram] adapter.handle_update: entry")
         message = update.effective_message
         if message is None:
             log.telegram.debug("[telegram] adapter.handle_update: no effective_message — skip")
@@ -248,7 +248,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         self._queue.put_nowait(ingress)
         self._last_update_at = time.monotonic()
         self._last_chat_id = chat_id
-        log.telegram.debug(
+        log.telegram.info(
             "[telegram] adapter.handle_update: exit",
             extra={"_fields": {"user_hash": user_hash, "trace_id": ingress.trace_id}},
         )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
@@ -11,12 +10,8 @@ from stackowl.tools.base import Tool, ToolResult
 
 
 def _data_root() -> Path:
-    data_dir = os.environ.get("STACKOWL_DATA_DIR")
-    if data_dir:
-        return Path(data_dir).resolve()
-    import platformdirs
-
-    return Path(platformdirs.user_data_dir("stackowl")).resolve()
+    from stackowl.paths import StackowlHome
+    return StackowlHome.workspace().resolve()
 
 
 def _guard(path: Path) -> bool:

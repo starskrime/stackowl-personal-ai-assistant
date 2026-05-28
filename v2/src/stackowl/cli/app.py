@@ -100,6 +100,97 @@ def init() -> None:
     typer.echo("init: not yet implemented")
 
 
+@app.command()
+def start(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate boot without starting the server."),
+    skip_setup: bool = typer.Option(False, "--skip-setup", help="Boot without running first-run onboarding."),
+) -> None:
+    """Boot StackOwl — ensures ~/.stackowl/ exists, runs onboarding if needed, then serves."""
+    import asyncio
+    import sys
+
+    from stackowl.config.secret_resolver import SecretResolver
+    from stackowl.config.settings import Settings
+    from stackowl.db.migrations.runner import MigrationRunner
+    from stackowl.db.pool import DbPool
+    from stackowl.exceptions import ConfigurationError, StartupError
+    from stackowl.infra.observability import setup_logging
+    from stackowl.paths import StackowlHome
+    from stackowl.setup.minimal import MinimalSetup
+    from stackowl.setup.onboarding_table import OnboardingTable
+    from stackowl.startup.orchestrator import StartupOrchestrator
+
+    setup_logging()
+
+    # Phase 0 — HOME: ensure ~/.stackowl/ tree exists
+    log.debug("[cli] start: phase 0 — ensure home tree")
+    StackowlHome.ensure_exists()
+    typer.echo(f"StackOwl home: {StackowlHome.home()}")
+
+    # Phase 1 — MIGRATE: apply any pending migrations
+    log.debug("[cli] start: phase 1 — migrations")
+    MigrationRunner(db_path=StackowlHome.db_path()).run()
+
+    # Phase 2 — DETECT FIRST RUN
+    log.debug("[cli] start: phase 2 — first-run detection")
+
+    async def _check_first_run() -> bool:
+        pool = DbPool(StackowlHome.db_path())
+        await pool.open()
+        try:
+            return not await OnboardingTable.has_event(pool, "minimal_setup_complete")
+        finally:
+            await pool.close()
+
+    first_run = asyncio.run(_check_first_run())
+
+    # Phase 3 — ONBOARD (only if first run and not --skip-setup)
+    if first_run and not skip_setup:
+        log.debug("[cli] start: phase 3 — onboarding")
+        typer.echo("Welcome to StackOwl. Let's get you set up.")
+        asyncio.run(MinimalSetup().run())
+    else:
+        log.debug(
+            "[cli] start: phase 3 — skipped (first_run=%s skip_setup=%s)",
+            first_run,
+            skip_setup,
+        )
+
+    # Phase 4 — VALIDATE CONFIG
+    log.debug("[cli] start: phase 4 — validate config")
+    try:
+        settings = Settings()
+    except Exception as exc:
+        typer.echo(f"✗ Config invalid: {exc}", err=True)
+        typer.echo("  Run `stackowl setup --minimal` to configure.", err=True)
+        raise typer.Exit(1) from exc
+
+    if settings.providers:
+        all_ok = True
+        for provider in settings.providers:
+            if provider.api_key is None:
+                continue
+            try:
+                SecretResolver.resolve(provider.api_key)
+            except ConfigurationError as exc:
+                typer.echo(f"✗ Config invalid: {provider.name} — {exc}", err=True)
+                typer.echo("  Run `stackowl setup --minimal` to (re)configure.", err=True)
+                all_ok = False
+        if not all_ok:
+            raise typer.Exit(1)
+
+    # Phase 5 — SERVE
+    log.debug("[cli] start: phase 5 — serve")
+    try:
+        asyncio.run(StartupOrchestrator(dry_run=dry_run).run())
+    except StartupError as exc:
+        typer.echo(f"✗ Startup failed: {exc}", err=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        log.debug("[cli] start: interrupted")
+        sys.exit(0)
+
+
 @serve_app.callback(invoke_without_command=True)
 def serve(
     ctx: typer.Context,
@@ -142,16 +233,30 @@ def health(
     from stackowl.config.settings import Settings
     from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
-    from stackowl.health.contributors import DbContributor, FilesystemContributor, ProviderContributor
+    from stackowl.health.contributors import (
+        BrowserContributor,
+        DbContributor,
+        FilesystemContributor,
+        ProviderContributor,
+    )
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
     settings = Settings()
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
+    # Browser contributor — no live runtime in CLI context (different process),
+    # so it always reports 'degraded — runtime not constructed' from here.
+    # /browser settings inside the serve process gives live status.
+    agg.register(BrowserContributor(runtime=None, sessions=None))
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))
+    # ResilienceContributor needs live HealableResource refs from inside
+    # `stackowl serve` (browser runtime, db pool, providers, etc.) — the
+    # out-of-process CLI doesn't have those. It's available for use by a
+    # future in-process /health slash command. Wiring here would just
+    # report "no resources registered". See plan Commit E.
 
     statuses = asyncio.run(agg.collect())
 
@@ -401,7 +506,7 @@ def plugins_update_index(
     """Update the local plugin index from the configured source."""
     import sys
 
-    from stackowl.plugins.index import PluginIndex, _CONFIG_BASE
+    from stackowl.plugins.index import _CONFIG_BASE, PluginIndex
 
     # 1. ENTRY
     log.debug("[plugins] plugins_update_index: entry — url=%s", url)

@@ -8,3 +8,5 @@ __pycache__/
 *.egg-info/
 dist/
 .ruff_cache/
+stackowl.yaml
+.dev-home/

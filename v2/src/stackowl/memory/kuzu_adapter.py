@@ -19,8 +19,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import platformdirs
-
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.memory.bridge import HealthReport
@@ -42,8 +40,8 @@ __all__ = ["KuzuAdapter"]
 
 
 def _default_data_dir() -> Path:
-    """Resolve the default kuzu data directory under platformdirs."""
-    return Path(platformdirs.user_data_dir("stackowl")) / "kuzu"
+    from stackowl.paths import StackowlHome
+    return StackowlHome.kuzu_dir()
 
 
 class KuzuAdapter:

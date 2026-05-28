@@ -8,14 +8,11 @@ from pathlib import Path
 
 import yaml
 
+from stackowl.paths import StackowlHome
+
 log = logging.getLogger("stackowl.plugins")
 
-try:
-    from platformdirs import user_config_dir  # type: ignore[import]
-
-    _CONFIG_BASE = Path(user_config_dir("stackowl"))
-except ImportError:
-    _CONFIG_BASE = Path.home() / ".stackowl"
+_CONFIG_BASE = StackowlHome.plugins_dir()
 
 
 @dataclass(frozen=True)

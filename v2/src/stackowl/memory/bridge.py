@@ -70,6 +70,17 @@ class MemoryBridge(ABC):
         """List staged facts filtered by status."""
         ...
 
+    async def recent_conversation_turns(
+        self, session_id: str, limit: int = 6,
+    ) -> list[StagedFact]:
+        """Return last *limit* conversation staged facts for *session_id*, oldest-first.
+
+        Used by ``classify`` to give the LLM short-term memory of the in-progress
+        session even before the dream worker promotes facts to ``committed_facts``.
+        Default implementation returns ``[]``; concrete bridges override.
+        """
+        return []
+
     async def health(self) -> HealthReport:
         """Probe bridge health. Concrete implementations override with real checks."""
         return HealthReport(name="memory.null", status="ok", details={}, latency_ms=0.0)

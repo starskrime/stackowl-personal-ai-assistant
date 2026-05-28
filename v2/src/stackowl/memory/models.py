@@ -21,7 +21,7 @@ class StagedFact(BaseModel):
 
     fact_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     content: str
-    source_type: Literal["conversation", "parliament", "manual"]
+    source_type: Literal["conversation", "parliament", "manual", "webpage", "screenshot"]
     source_ref: str
     confidence: float = Field(ge=0.0, le=1.0)
     staged_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

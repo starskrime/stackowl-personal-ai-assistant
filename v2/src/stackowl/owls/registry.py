@@ -27,7 +27,69 @@ def _make_default_secretary() -> OwlAgentManifest:
             "On the first message of a session, briefly state that you are an AI assistant."
         ),
         model_tier="powerful",
+        tools=["web_fetch", "browser_extract", "browser_recall_url"],
     )
+
+
+def _make_default_scout() -> OwlAgentManifest:
+    """Roving research persona — full browser surface for multi-step web work."""
+    return OwlAgentManifest(
+        name="scout",
+        role="research-scout",
+        system_prompt=(
+            "You are Scout, the research owl. You drive the browser to investigate "
+            "questions that need fresh information from the open web. Use atomic "
+            "browser tools to navigate, click, type, extract, and screenshot. "
+            "Prefer concrete extracted quotes over summaries when the user asks for facts. "
+            "Always cite the source URL path you read from."
+        ),
+        model_tier="powerful",
+        tools=[
+            "web_fetch",
+            "browser_navigate", "browser_extract", "browser_click", "browser_type",
+            "browser_screenshot", "browser_scroll", "browser_wait_for",
+            "browser_tab_open", "browser_tab_list", "browser_tab_close",
+            "browser_cookies_get", "browser_close", "browser_recall_url",
+        ],
+    )
+
+
+def _make_default_librarian() -> OwlAgentManifest:
+    """Knowledge curation persona — read-only browse + screenshot for archives."""
+    return OwlAgentManifest(
+        name="librarian",
+        role="knowledge-curator",
+        system_prompt=(
+            "You are Librarian, the knowledge owl. You curate long-term knowledge "
+            "from sources the user trusts. You read pages, extract structured notes, "
+            "and archive screenshots. You do not click, type, or submit forms — "
+            "your role is observation and curation, not interaction."
+        ),
+        model_tier="standard",
+        tools=["web_fetch", "browser_extract", "browser_screenshot", "browser_recall_url"],
+    )
+
+
+def _make_default_archivist() -> OwlAgentManifest:
+    """Long-term preservation persona — screenshots + recall, minimal nav."""
+    return OwlAgentManifest(
+        name="archivist",
+        role="long-term-preservation",
+        system_prompt=(
+            "You are Archivist, the preservation owl. You capture and recall "
+            "long-term snapshots of pages that may change or disappear. You focus "
+            "on screenshot-and-store flows; you do not interact with sites."
+        ),
+        model_tier="fast",
+        tools=["web_fetch", "browser_screenshot", "browser_recall_url"],
+    )
+
+
+_BUILTIN_PERSONA_FACTORIES = (
+    _make_default_scout,
+    _make_default_librarian,
+    _make_default_archivist,
+)
 
 
 class OwlRegistry:
@@ -186,6 +248,25 @@ class OwlRegistry:
         registry = cls()
         registry.register(_make_default_secretary())
         return registry
+
+    def register_builtin_personas(self) -> int:
+        """Layer in scout, librarian, archivist if not already present.
+
+        Returns the number of personas newly added. Existing user-configured
+        owls with the same name are preserved (no override).
+        """
+        added = 0
+        for factory in _BUILTIN_PERSONA_FACTORIES:
+            manifest = factory()
+            if manifest.name in self._owls:
+                continue
+            self.register(manifest)
+            added += 1
+        log.startup.info(
+            "[owls] registry.register_builtin_personas: layered defaults",
+            extra={"_fields": {"added": added, "total": len(self._owls)}},
+        )
+        return added
 
     @classmethod
     def from_settings(cls, settings: Settings) -> OwlRegistry:

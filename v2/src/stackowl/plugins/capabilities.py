@@ -12,6 +12,7 @@ OWL_REGISTRY: Final = "owl_registry"
 MEMORY_BRIDGE: Final = "memory_bridge"
 EVENT_BUS: Final = "event_bus"
 AUDIT_LOGGER: Final = "audit_logger"
+BROWSER_RUNTIME: Final = "browser_runtime"
 
 ALL_CAPABILITIES: Final = frozenset({
     TOOL_REGISTRY,
@@ -22,4 +23,5 @@ ALL_CAPABILITIES: Final = frozenset({
     MEMORY_BRIDGE,
     EVENT_BUS,
     AUDIT_LOGGER,
+    BROWSER_RUNTIME,
 })

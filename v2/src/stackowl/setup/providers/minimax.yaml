@@ -1,0 +1,12 @@
+name: minimax
+label: MiniMax
+protocol: anthropic
+base_url: https://api.minimax.io/anthropic
+default_model: MiniMax-M2.7
+models:
+  - MiniMax-M2.7
+  - MiniMax-M1
+  - MiniMax-Text-01
+tier: powerful
+needs_api_key: true
+key_url: https://platform.minimaxi.com/user-center/basic-information/interface-key

@@ -35,6 +35,11 @@ class PipelineState(BaseModel, frozen=True):
     tool_calls: tuple[ToolCall, ...] = ()
     memory_context: str | None = None
     errors: tuple[str, ...] = ()
+    # Per-pipeline-step elapsed time in milliseconds, keyed by step name.
+    # Populated by the backend's step loop; consumed by the outcome-capture
+    # helper at end-of-run. Frozen tuple-of-tuples to keep PipelineState
+    # immutable (pydantic frozen=True forbids mutable dicts).
+    step_durations: tuple[tuple[str, float], ...] = ()
 
     def evolve(self, **kwargs: Any) -> PipelineState:
         """Return a new PipelineState with the given fields updated."""

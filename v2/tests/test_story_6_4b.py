@@ -234,7 +234,7 @@ def test_migration_count_is_15(migration_runner: Any) -> None:
     # Migration 0020 (Story 7.5 webhook_events_log) raised it to 20;
     # this fixture's name is kept historical for log searchability.
     results = migration_runner.run()
-    assert len(results) == 25
+    assert len(results) == 35
 
 
 async def test_reindex_queue_table_present(tmp_path: Path) -> None:

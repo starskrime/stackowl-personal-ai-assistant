@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from collections.abc import AsyncIterator
 
@@ -21,7 +20,6 @@ from stackowl.exceptions import PluginCapabilityDeniedError, PluginValidationErr
 from stackowl.plugins import capabilities as caps
 from stackowl.plugins.capabilities import ALL_CAPABILITIES
 from stackowl.plugins.context import PluginContext
-from stackowl.plugins.skill_pack_loader import SkillPackLoader
 from stackowl.plugins.local_loader import LocalPluginLoader
 from stackowl.scheduler.base import HandlerRegistry, JobHandler
 from stackowl.scheduler.job import Job, JobResult
@@ -91,13 +89,10 @@ class _FakeAdapter(ChannelAdapter):
         pass
 
 
-_VALID_SKILL_YAML: dict[str, object] = {
-    "name": "my-skill",
-    "version": "1.0.0",
-    "type": "skill_pack",
-    "entry_point": "my_skill",
-    "description": "A test skill pack",
-}
+# NOTE: SkillPackLoader has been removed in Learning Commit 3 sub-phase 3a.
+# Its responsibilities are now owned by stackowl.skills.SkillLoader (uses the
+# Anthropic-standard SKILL.md format instead of skill.yaml). Equivalent test
+# coverage lives under tests/skills/test_skill_loader.py.
 
 _VALID_PLUGIN_YAML: dict[str, object] = {
     "name": "my-plugin",
@@ -224,7 +219,7 @@ class TestPluginContextDeniesDeniedCapability:
 
 class TestAllCapabilitiesConstant:
     def test_expected_strings_present(self) -> None:
-        """ALL_CAPABILITIES contains all 8 expected capability names."""
+        """ALL_CAPABILITIES contains all expected capability names."""
         expected = {
             "tool_registry",
             "command_registry",
@@ -234,6 +229,7 @@ class TestAllCapabilitiesConstant:
             "memory_bridge",
             "event_bus",
             "audit_logger",
+            "browser_runtime",
         }
         assert ALL_CAPABILITIES == expected
 
@@ -265,99 +261,8 @@ class TestPluginContextMultipleCapabilities:
 
 
 # ===========================================================================
-# Group 3: SkillPackLoader / LocalPluginLoader
+# Group 3: LocalPluginLoader (SkillPackLoader removed — see new tests/skills/)
 # ===========================================================================
-
-
-class TestSkillPackLoaderMissingSkillYaml:
-    def test_raises_plugin_validation_error(self, tmp_path: Path) -> None:
-        """SkillPackLoader.load() without skill.yaml raises PluginValidationError."""
-        skill_pack_dir = tmp_path / "my-skill"
-        skill_pack_dir.mkdir()
-        tool_reg = ToolRegistry()
-        loader = SkillPackLoader(tool_registry=tool_reg)
-
-        with pytest.raises(PluginValidationError) as exc_info:
-            loader.load(skill_pack_dir)
-        assert "missing skill.yaml" in exc_info.value.reason
-
-
-class TestSkillPackLoaderInvalidYaml:
-    def test_raises_plugin_validation_error(self, tmp_path: Path) -> None:
-        """SkillPackLoader.load() with malformed YAML raises PluginValidationError."""
-        skill_pack_dir = tmp_path / "bad-skill"
-        skill_pack_dir.mkdir()
-        (skill_pack_dir / "skill.yaml").write_text(
-            "name: [unclosed bracket\n", encoding="utf-8"
-        )
-        tool_reg = ToolRegistry()
-        loader = SkillPackLoader(tool_registry=tool_reg)
-
-        with pytest.raises(PluginValidationError):
-            loader.load(skill_pack_dir)
-
-
-class TestSkillPackLoaderLoadsValidManifest:
-    def test_returns_plugin_manifest(self, tmp_path: Path) -> None:
-        """SkillPackLoader.load() with minimal skill.yaml returns a PluginManifest."""
-        from stackowl.plugins.manifest import PluginManifest
-
-        skill_pack_dir = tmp_path / "good-skill"
-        skill_pack_dir.mkdir()
-        (skill_pack_dir / "skill.yaml").write_text(
-            yaml.dump(_VALID_SKILL_YAML), encoding="utf-8"
-        )
-        tool_reg = ToolRegistry()
-        loader = SkillPackLoader(tool_registry=tool_reg)
-
-        manifest = loader.load(skill_pack_dir)
-
-        assert isinstance(manifest, PluginManifest)
-        assert manifest.name == "my-skill"
-        assert manifest.version == "1.0.0"
-
-
-class TestSkillPackLoaderRegistersToolClass:
-    def test_tool_class_registered_in_registry(self, tmp_path: Path) -> None:
-        """Skill pack with a Tool subclass in tools/ registers it in ToolRegistry."""
-        skill_pack_dir = tmp_path / "tool-skill"
-        skill_pack_dir.mkdir()
-        (skill_pack_dir / "skill.yaml").write_text(
-            yaml.dump(_VALID_SKILL_YAML), encoding="utf-8"
-        )
-        tools_dir = skill_pack_dir / "tools"
-        tools_dir.mkdir()
-        (tools_dir / "my_tool.py").write_text(
-            """\
-from __future__ import annotations
-from stackowl.tools.base import Tool, ToolResult
-
-class MyPackTool(Tool):
-    @property
-    def name(self) -> str:
-        return "my-pack-tool"
-
-    @property
-    def description(self) -> str:
-        return "A skill pack tool"
-
-    @property
-    def parameters(self) -> dict:
-        return {}
-
-    async def execute(self, **kwargs) -> ToolResult:
-        return ToolResult(success=True, output="hi", duration_ms=0.0)
-""",
-            encoding="utf-8",
-        )
-
-        tool_reg = ToolRegistry()
-        loader = SkillPackLoader(tool_registry=tool_reg)
-        loader.load(skill_pack_dir)
-
-        registered = tool_reg.get("my-pack-tool")
-        assert registered is not None
-        assert registered.name == "my-pack-tool"
 
 
 class TestLocalLoaderMissingPluginYaml:

@@ -75,10 +75,32 @@ def row_to_record(row: dict[str, Any]) -> MemoryRecord:
     )
 
 
+def _sanitize_fts_query(query: str) -> str:
+    """Convert a free-text query into a safe FTS5 MATCH expression.
+
+    FTS5 treats ``,`` ``:`` ``(`` ``)`` ``*`` ``-`` ``+`` ``"`` and other
+    punctuation as operators; passing raw user text causes parse errors.
+    We extract Unicode word tokens (``\\p{L}\\p{N}``-equivalent via
+    ``str.isalnum``) and join them as a quoted disjunction:
+    ``"foo" OR "bar" OR "baz"``. Empty input returns an empty string —
+    the caller short-circuits before querying.
+    """
+    import re
+    tokens = re.findall(r"[^\W_]+", query, flags=re.UNICODE)
+    if not tokens:
+        return ""
+    # Quote each token to neutralize any remaining FTS5 metasyntax; cap at 16
+    # terms so a giant prompt doesn't blow the query parser.
+    return " OR ".join(f'"{t}"' for t in tokens[:16])
+
+
 async def fts_recall(
     db: DbPool, query: str, limit: int
 ) -> list[MemoryRecord]:
     """FTS5 BM25 recall over ``committed_facts``. Returns ``[]`` on parse error."""
+    fts_query = _sanitize_fts_query(query)
+    if not fts_query:
+        return []
     try:
         rows = await db.fetch_all(
             """SELECT cf.fact_id, cf.content, cf.embedding, cf.embedding_model,
@@ -88,14 +110,14 @@ async def fts_recall(
                WHERE committed_facts_fts MATCH ?
                ORDER BY bm25(committed_facts_fts)
                LIMIT ?""",
-            (query, limit),
+            (fts_query, limit),
         )
     except Exception as exc:
-        # B5 — malformed FTS5 query (unbalanced quote, etc.)
+        # FTS5 still rejected the sanitized query (rare) — fail soft.
         log.memory.warning(
             "[memory] sqlite_helpers.fts_recall: FTS5 query failed — returning empty",
             exc_info=exc,
-            extra={"_fields": {"query_len": len(query)}},
+            extra={"_fields": {"query_len": len(query), "fts_query_len": len(fts_query)}},
         )
         return []
     return [row_to_record(row) for row in rows]
