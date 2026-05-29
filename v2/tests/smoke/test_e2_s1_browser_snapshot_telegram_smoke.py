@@ -26,10 +26,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from stackowl.config.browser import BrowserSettings
-from stackowl.config.test_mode import TestModeGuard
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
+from stackowl.config.browser import BrowserSettings
+from stackowl.config.test_mode import TestModeGuard
 from stackowl.gateway.scanner import GatewayScanner
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices
@@ -294,15 +294,13 @@ async def test_smoke_back_press_getimages_through_telegram(tmp_path: Path) -> No
         assert "base64" not in provider.results["get_images"]
         # press: dispatched ok.
         assert '"ok": true' in provider.results["press"].lower()
-        # back: REACHED through the real pipeline and returned a well-formed structured
-        # result. NOTE: headless Camoufox/Firefox does not actuate history navigation
-        # (verified: both page.go_back() and JS history.back() are no-ops here), so we
-        # assert the tool's graceful self-healing contract — a structured result with a
-        # `navigated` field — NOT that the page actually moved. See FF-E2-1 (engine
-        # back-navigation limitation). The navigate-back logic itself is unit-tested
-        # with a faithful fake in tests/tools/browser/test_back.py.
-        assert '"navigated"' in provider.results["back"]
-        assert "no previous page" in provider.results["back"] or '"navigated": true' in provider.results["back"]
+        # back: actually navigated to the previous history entry (PageA). FF-E2-1 is
+        # FIXED by the browser.sessionhistory.max_entries baseline pref in
+        # CamoufoxRuntime — Camoufox otherwise ships history disabled, making go_back
+        # a no-op. This assertion proves the fix end-to-end on the live engine.
+        assert '"navigated": true' in provider.results["back"], provider.results["back"]
+        title_after = await page.title()  # type: ignore[attr-defined]
+        assert "PageA" in title_after, f"browser_back did not return to PageA (title={title_after!r})"
         # response delivered back out to the user's Telegram chat.
         assert out.strip() and bot.messages[-1]["chat_id"] == USER_ID
     finally:

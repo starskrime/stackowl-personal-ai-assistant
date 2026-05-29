@@ -140,8 +140,14 @@ class CamoufoxRuntime:
             kwargs["headless"] = False
         if s.addons:
             kwargs["addons"] = [str(p) for p in s.addons]
+        # Baseline prefs merged under any operator overrides. Camoufox ships with
+        # session history effectively disabled, which makes page.go_back() a no-op
+        # (browser_back / FF-E2-1) — restore it. Verified: this single pref re-enables
+        # back/forward navigation on Camoufox/Firefox 135.
+        prefs: dict[str, Any] = {"browser.sessionhistory.max_entries": 50}
         if s.firefox_user_prefs:
-            kwargs["firefox_user_prefs"] = dict(s.firefox_user_prefs)
+            prefs.update(dict(s.firefox_user_prefs))
+        kwargs["firefox_user_prefs"] = prefs
         if s.default_proxy is not None:
             kwargs["proxy"] = _proxy_to_dict(s.default_proxy)
         return kwargs
