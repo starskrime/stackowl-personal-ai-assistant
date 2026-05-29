@@ -7,20 +7,7 @@ from pathlib import Path
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolResult
-
-
-def _data_root() -> Path:
-    from stackowl.paths import StackowlHome
-    return StackowlHome.workspace().resolve()
-
-
-def _guard(path: Path) -> bool:
-    """Return True if path is safely inside STACKOWL_DATA_DIR."""
-    try:
-        path.resolve().relative_to(_data_root())
-        return True
-    except ValueError:
-        return False
+from stackowl.tools.io.path_guard import is_within_root as _guard  # shared guard (E3)
 
 
 class ReadFileTool(Tool):

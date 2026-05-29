@@ -236,6 +236,7 @@ class ToolRegistry:
         from stackowl.tools.browser.snapshot import BrowserSnapshotTool
         from stackowl.tools.browser.tools import ATOMIC_BROWSER_TOOLS
         from stackowl.tools.io.read_file import ReadFileTool
+        from stackowl.tools.io.search_files import SearchFilesTool
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
@@ -245,6 +246,7 @@ class ToolRegistry:
         registry = cls()
         registry.register(ReadFileTool())
         registry.register(WriteFileTool())
+        registry.register(SearchFilesTool())
         registry.register(ShellTool())
         registry.register(WebFetchTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:

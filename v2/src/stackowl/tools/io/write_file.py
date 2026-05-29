@@ -7,7 +7,7 @@ from pathlib import Path
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolResult
-from stackowl.tools.io.read_file import _guard
+from stackowl.tools.io.path_guard import is_within_root as _guard  # shared guard (E3)
 
 
 class WriteFileTool(Tool):
