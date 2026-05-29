@@ -197,13 +197,13 @@ class _MultiToolProvider:
             yield ""
 
 
-# Only console.* messages — NOT an uncaught throw. Any uncaught page error
-# crashes this headless Camoufox build's driver connection (engine fragility,
-# see FF-E2-4), so the live smoke exercises the messages bucket; the errors
-# (pageerror) bucket is covered by the unit test's fire_error path.
+# Logs a message AND throws an uncaught error. The uncaught throw used to crash
+# the Camoufox driver (FF-E2-4) on Playwright 1.60; pinned to 1.59 it is handled
+# correctly, so this smoke now proves BOTH buckets live (messages + errors) and
+# stands as the FF-E2-4 regression guard.
 _PAGE_CONSOLE = (
     b"<!DOCTYPE html><html><head><title>Console</title></head><body><script>"
-    b"console.log('SMOKELOG'); console.error('SMOKEERRLINE');"
+    b"console.log('SMOKELOG'); throw new Error('SMOKEPAGEERR');"
     b"</script></body></html>"
 )
 _PAGE_A = b"<html><head><title>PageA</title></head><body><h1>PageA</h1></body></html>"
@@ -369,12 +369,12 @@ async def test_smoke_console_through_telegram(tmp_path: Path) -> None:
 
         out = await _turn(env, "show me the console")
 
-        # The eagerly-wired buffer captured the load-time console messages (log +
-        # console.error), proving the substrate fills from page birth through the
-        # real pipeline. (errors/pageerror bucket is unit-tested — see FF-E2-4.)
+        # The eagerly-wired buffer captured BOTH the load-time console.log AND the
+        # uncaught page error — and the browser did NOT crash (FF-E2-4 regression
+        # guard; would have died on Playwright 1.60 + Camoufox 135).
         assert "SMOKELOG" in provider.result, provider.result
-        assert "SMOKEERRLINE" in provider.result, provider.result
-        assert '"error_count":' in provider.result  # structure present
+        assert "SMOKEPAGEERR" in provider.result, provider.result  # pageerror bucket, live
+        assert '"error_count": 1' in provider.result, provider.result
         assert out.strip() and bot.messages[-1]["chat_id"] == USER_ID
     finally:
         await sessions.close_all()

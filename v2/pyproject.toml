@@ -32,7 +32,13 @@ dependencies = [
     "python-telegram-bot>=21.0",
     "discord.py>=2.3",
     "slack-bolt>=1.18",
-    "playwright>=1.43.0",
+    # Upper bound <1.60: Playwright 1.60 bundles Firefox 150, whose pageerror
+    # serialization assumes a `location` field that Camoufox 0.4.11's frozen
+    # Firefox-135 Juggler does not send — Playwright's driver then crashes on any
+    # uncaught page JS error (FF-E2-4). Lower bound >=1.59: aria_snapshot(mode="ai")
+    # (the browser_snapshot ref keystone) is unavailable before 1.59. 1.59.x is the
+    # only line satisfying both against Camoufox 0.4.11 (latest, frozen since Jan 2025).
+    "playwright>=1.59.0,<1.60.0",
     "openai-whisper>=20231117",
     "mcp>=1.0.0",
     "google-auth-oauthlib>=1.2.0",
