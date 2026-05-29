@@ -1,9 +1,9 @@
 """Unified SkillLoader — scans all four skill source dirs and registers them.
 
 Subsumes the orphaned ``stackowl.plugins.skill_pack_loader.SkillPackLoader``
-(deleted in Commit 3a per the placement vote). Adopts the Anthropic /
-Hermes-Agent / Claude-Code-Skills single-file ``SKILL.md`` format (frontmatter
-+ markdown body) so StackOwl skills are portable across the wider ecosystem.
+(deleted in Commit 3a per the placement vote). Adopts the common single-file
+``SKILL.md`` format (Anthropic / Claude Code skills; frontmatter + markdown body)
+so StackOwl skills are portable across the wider ecosystem.
 
 Skill directory layout (each source dir contains many of these):
 

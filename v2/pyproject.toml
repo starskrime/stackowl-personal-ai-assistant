@@ -48,6 +48,13 @@ dependencies = [
     "camoufox[geoip]>=0.4.0",
     "trafilatura>=2.0.0",
     "pyvirtualdisplay>=3.0",
+    # PDF text extraction (E3-S4, ADR-9 primary). Pinned to a patched range:
+    # <5.1 carries CVE-2023-36464 (infinite loop on malformed object streams) and
+    # the quadratic-blowup advisories fixed across the 3.17/4.x line and folded
+    # into 5.x. Floor at 5.4 keeps us above all known pypdf CVEs; ceiling <7 guards
+    # against an unreviewed major. Pure-Python, lightweight on ARM64 (no Pillow/
+    # pdfminer drag, unlike pdfplumber).
+    "pypdf>=5.4,<7",
 ]
 
 [project.scripts]

@@ -1,7 +1,8 @@
 """search_files — content/filename search, ripgrep-first with a pure-Python fallback.
 
-Ports the *algorithm* from Hermes' file search (ripgrep-first, consecutive-
-identical-search loop detection, terse file:line output) — NOT its shell plumbing.
+Ports the *algorithm* from an established open-source agent's file search
+(ripgrep-first, consecutive-identical-search loop detection, terse file:line
+output) — NOT its shell plumbing.
 The story mandates argv-array ``asyncio.subprocess`` (never ``shell=True``), so rg
 is invoked with a fixed argv and the query/path travel as separate arguments
 (no command injection). When rg is absent we fall back to a pure-Python

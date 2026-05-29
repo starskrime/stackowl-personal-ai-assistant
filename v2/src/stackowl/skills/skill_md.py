@@ -1,7 +1,7 @@
 """SKILL.md parser — frontmatter (YAML) + markdown body.
 
-Matches the Anthropic / Hermes-Agent / Claude-Code-Skills convention so
-StackOwl skills are portable across the wider ecosystem. Format:
+Matches the common single-file ``SKILL.md`` convention (Anthropic / Claude Code
+skills) so StackOwl skills are portable across the wider ecosystem. Format:
 
     ---
     name: my-skill

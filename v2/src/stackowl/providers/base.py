@@ -13,13 +13,38 @@ from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
 
 
+class DocumentBlock(BaseModel):
+    """A binary document (e.g. a PDF) attached to a Message for native handling.
+
+    Carries the raw bytes plus a MIME type so a document-capable provider can ship
+    the file to a vision/document model. Text-only providers ignore it (they read
+    ``Message.content`` only) — see ``ModelProvider.supports_document``, which
+    defaults False so existing providers report "not document-capable" rather than
+    silently dropping the attachment. Added for the ``pdf`` tool's Mode B (E3-S4).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    data: bytes
+    media_type: str = "application/pdf"
+    filename: str | None = None
+
+
 class Message(BaseModel):
-    """A single conversation turn."""
+    """A single conversation turn.
+
+    ``content`` (text) is the load-bearing field every provider reads. ``documents``
+    is an optional, default-empty attachment list used only by document-capable
+    providers (E3-S4 Mode B); text-only providers leave it untouched, so adding it
+    is fully backward-compatible — all existing call sites construct a Message with
+    only ``role``/``content`` and keep working.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     role: Literal["system", "user", "assistant", "tool"]
     content: str
+    documents: tuple[DocumentBlock, ...] = ()
 
 
 class CompletionResult(BaseModel):
@@ -54,6 +79,18 @@ class ModelProvider(ABC):
     def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
         """Wire protocol this provider speaks."""
         ...
+
+    @property
+    def supports_document(self) -> bool:
+        """Whether this provider can accept ``Message.documents`` (native document blocks).
+
+        Defaults to **False** on the ABC so EVERY existing provider is unchanged and
+        reports "text-only" — a caller routing a document (pdf Mode B, E3-S4) checks
+        this flag and returns "needs a document-capable model" rather than letting a
+        text-only provider silently drop the bytes. A provider backed by a
+        vision/document-capable model overrides this to return True.
+        """
+        return False
 
     @abstractmethod
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
