@@ -207,6 +207,34 @@ class StartupOrchestrator:
             "[startup] gateway: skills loaded",
             extra={"_fields": {"count": len(skills_components.loaded)}},
         )
+
+        # E1-S3 — MCP federation boot phase (after providers/skills, before traffic).
+        # Fail-soft: a down/slow/misconfigured server never blocks boot. Federated
+        # tools register namespaced (mcp.<server>.<tool>), non-clobbering.
+        mcp_cfg = self._settings.mcp_client
+        if mcp_cfg.auto_discover_on_startup and mcp_cfg.servers:
+            try:
+                from stackowl.mcp.allowlist import McpServerAllowlist
+                from stackowl.mcp.cache import McpToolCache
+                from stackowl.mcp.client import McpClient
+                from stackowl.mcp.probe import McpLivenessProbe
+                from stackowl.startup.mcp_register import run as mcp_register_run
+
+                mcp_client = McpClient(
+                    McpServerAllowlist(list(mcp_cfg.allowed_uri_prefixes)),
+                    McpToolCache(ttl_seconds=mcp_cfg.tool_cache_ttl_seconds),
+                    McpLivenessProbe(),
+                )
+                mcp_summary = await mcp_register_run(mcp_client, list(mcp_cfg.servers), tool_registry)
+                log.info(
+                    "[startup] gateway: MCP tools registered",
+                    extra={"_fields": {"servers": len(mcp_summary), "tools": sum(mcp_summary.values())}},
+                )
+            except Exception as exc:  # boot must survive a broken MCP layer
+                log.error(
+                    "[startup] gateway: MCP registration phase failed — continuing without federation",
+                    exc_info=exc,
+                )
         # `/skill` slash command — Commit 3, sub-phase 3b.
         from stackowl.commands.skill_command import SkillCommand
 

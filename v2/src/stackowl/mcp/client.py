@@ -141,8 +141,18 @@ class McpClient:
         tools = await self.discover_tools(config)
         count = 0
         for definition in tools:
-            tool_registry.register(McpTool(definition, self, config))
-            count += 1
+            tool = McpTool(definition, self, config)
+            # Fail-soft per tool: a name collision (assert-unique registry) or any
+            # registration refusal skips that one tool, never the whole server.
+            try:
+                tool_registry.register(tool)
+                count += 1
+            except Exception as exc:
+                log.warning(
+                    "mcp.client.register_server_tools: skipped tool (collision/refused)",
+                    exc_info=exc,
+                    extra={"_fields": {"server": config.name, "tool": tool.name}},
+                )
         log.debug("mcp.client.register_server_tools: exit", extra={"_fields": {"server": config.name, "registered": count}})
         return count
 

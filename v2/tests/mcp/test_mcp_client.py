@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard, TestModeViolation
+from stackowl.mcp._tool import McpTool
 from stackowl.mcp.allowlist import McpServerAllowlist, McpServerConfig
 from stackowl.mcp.cache import McpToolCache, McpToolDefinition
 from stackowl.mcp.client import McpClient
-from stackowl.mcp._tool import McpTool
 from stackowl.mcp.probe import McpLivenessProbe
 from stackowl.tools.registry import ToolRegistry
 
@@ -85,14 +85,16 @@ async def test_register_server_tools_adds_to_registry(monkeypatch: pytest.Monkey
     client._cache.put("test_srv", [McpToolDefinition(name="my_tool", description="d", server_name="test_srv")])
     registry = ToolRegistry()
     await client.register_server_tools(config, registry)
-    assert registry.get("my_tool") is not None
+    # E1-S3: federated tools register under the namespaced key mcp.<server>.<tool>
+    assert registry.get("mcp.test_srv.my_tool") is not None
 
 
-def test_mcp_tool_name_matches_definition() -> None:
+def test_mcp_tool_name_is_namespaced() -> None:
     client, config = _client()
     defn = McpToolDefinition(name="foo", description="bar", server_name="srv")
     tool = McpTool(defn, client, config)
-    assert tool.name == "foo"
+    # E1-S3 / §17: StackOwl-facing name is namespaced (non-clobbering)
+    assert tool.name == "mcp.srv.foo"
 
 
 def test_mcp_tool_description_matches_definition() -> None:

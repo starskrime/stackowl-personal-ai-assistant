@@ -198,6 +198,8 @@ class ToolRegistry:
         from stackowl.tools.io.read_file import ReadFileTool
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
+        from stackowl.tools.meta.tool_describe import ToolDescribeTool
+        from stackowl.tools.meta.tool_search import ToolSearchTool
         from stackowl.tools.system.shell import ShellTool
 
         registry = cls()
@@ -208,4 +210,8 @@ class ToolRegistry:
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())
+        # E1 meta tools — always present (tool_search is the overflow-discovery
+        # primitive per ADR-11; tool_describe is its inspect sibling).
+        registry.register(ToolSearchTool())
+        registry.register(ToolDescribeTool())
         return registry

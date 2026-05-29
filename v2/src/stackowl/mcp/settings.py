@@ -14,5 +14,9 @@ class McpClientSettings(BaseModel):
 
     servers: tuple[McpServerConfig, ...] = Field(default_factory=tuple)
     tool_cache_ttl_seconds: float = Field(default=300.0, gt=0.0)
-    allowed_uri_prefixes: tuple[str, ...] = ("http://localhost:", "stdio://")
+    # Prefixes are matched against the FULL server URI (e.g. "sse://http://localhost:8080/sse",
+    # "stdio:///path/to/server"). The default permits local stdio servers and
+    # localhost SSE only; remote SSE must be added explicitly. (E1-S3 party-mode MAJOR #2 —
+    # the prior "http://localhost:" never matched an "sse://..." URI and silently denied SSE.)
+    allowed_uri_prefixes: tuple[str, ...] = ("stdio://", "sse://http://localhost:")
     auto_discover_on_startup: bool = True
