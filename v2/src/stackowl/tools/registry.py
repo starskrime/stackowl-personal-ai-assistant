@@ -8,6 +8,10 @@ from stackowl.infra.observability import log
 from stackowl.tools.base import Tool
 from stackowl.tools.consent import ConsentPolicy, ConsentRequest, ConsentScope
 
+# A tool declaring one of these consent categories MUST be consequential — else
+# it would declare itself dangerous yet skip the consent gate (E1-S4 / §17).
+_DANGEROUS_CONSENT_CATEGORIES = frozenset({"lock", "alarm", "destructive"})
+
 
 class _SyncConfirmPrompter:
     """Adapts a legacy ``(tool_name) -> bool`` confirm_fn to the async prompter API.
@@ -145,6 +149,16 @@ class ToolRegistry:
             for names in self._source_map.values():
                 if tool.name in names:
                     names.remove(tool.name)
+        # Register-time fail-closed (E1-S4 / §17): a tool that declares a dangerous
+        # consent_category but is NOT marked consequential would slip past the gate.
+        manifest = tool.manifest
+        if manifest.consent_category in _DANGEROUS_CONSENT_CATEGORIES and manifest.action_severity != "consequential":
+            from stackowl.exceptions import ToolRegistrationError
+
+            raise ToolRegistrationError(
+                tool.name,
+                f"consent_category {manifest.consent_category!r} requires action_severity='consequential'",
+            )
         self._tools[tool.name] = tool
         if source_name:
             self._source_map.setdefault(source_name, []).append(tool.name)
@@ -174,9 +188,29 @@ class ToolRegistry:
     def all(self) -> list[Tool]:
         return list(self._tools.values())
 
-    def to_provider_schema(self, protocol: str) -> list[dict[str, object]]:
-        """Emit tool schemas in the format expected by the given provider protocol."""
-        tools = self.all()
+    def to_provider_schema(
+        self,
+        protocol: str,
+        *,
+        profile: list[str] | None = None,
+        pins: list[str] | None = None,
+        hydrated: set[str] | None = None,
+    ) -> list[dict[str, object]]:
+        """Emit tool schemas for the given provider protocol.
+
+        With no gating args (the default) every registered tool is emitted —
+        backward-compatible. When ``profile``/``pins``/``hydrated`` are supplied
+        (the per-owl path, E1-S4), the presented set is DNA-gated and capped via
+        :class:`ToolPresentation`; overflow stays reachable through tool_search.
+        """
+        if profile is None and pins is None and hydrated is None:
+            tools = self.all()
+        else:
+            from stackowl.tools._infra.presentation import ToolPresentation
+
+            tools = ToolPresentation().select(
+                all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated
+            )
         if protocol == "anthropic":
             return [
                 {"name": t.name, "description": t.description, "input_schema": t.parameters}

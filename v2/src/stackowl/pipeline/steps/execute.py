@@ -26,7 +26,29 @@ async def _run_with_tools(
     tool_registry: ToolRegistry,
 ) -> PipelineState:
     """Execute the provider's tool loop and return updated state."""
-    tool_schemas = tool_registry.to_provider_schema(provider.protocol)
+    # E1-S4 — DNA-gated presented set: an owl with a non-empty capability_profile
+    # sees base ∪ its groups ∪ pins ∪ tool_search (capped); overflow via tool_search.
+    # Owls without a profile keep the full catalog (no regression).
+    #
+    # NOTE: gating is PRESENTATION, not authorization. _dispatch (below) resolves
+    # tools from the FULL registry, so a tool_search'd overflow tool stays callable
+    # by name even when it is not in this turn's schema — that is how overflow stays
+    # reachable. The consent gate (not gating) is the real access-control boundary.
+    profile: list[str] | None = None
+    pins: list[str] | None = None
+    owl_registry = get_services().owl_registry
+    if owl_registry is not None:
+        try:
+            owl_manifest = owl_registry.get(state.owl_name)
+            if owl_manifest.capability_profile:
+                profile = list(owl_manifest.capability_profile)
+                pins = list(owl_manifest.tools)
+        except Exception as exc:  # unknown owl / lookup failure → no gating (safe)
+            log.engine.debug(
+                "[pipeline] execute: owl profile lookup failed — full catalog",
+                exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
+            )
+    tool_schemas = tool_registry.to_provider_schema(provider.protocol, profile=profile, pins=pins)
     log.engine.info(
         "[pipeline] execute: tool_loop entry",
         extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name, "tools": len(tool_schemas)}},

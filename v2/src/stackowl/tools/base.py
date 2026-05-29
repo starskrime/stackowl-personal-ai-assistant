@@ -35,6 +35,11 @@ class ToolManifest(BaseModel):
     # The consent gate keys always-ask exclusions off THIS, never off LLM-supplied
     # call args — the model must not be able to relax its own gating (E0-S1 / B2).
     consent_category: str | None = None
+    # Toolset-group name for DNA-gated presentation (e.g. "code", "media", "home").
+    # An owl's capability_profile lists group names; a tool joins the presented set
+    # when its toolset_group is in that profile (ADR-11 / E1-S4). Distinct from
+    # consent_category (which is about consent, not grouping).
+    toolset_group: str | None = None
 
 
 class Tool(ABC):
