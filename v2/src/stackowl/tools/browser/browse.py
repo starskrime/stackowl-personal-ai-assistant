@@ -129,6 +129,7 @@ class BrowserBrowseTool(Tool):
         return ToolManifest(
             name=self.name, description=self.description,
             parameters=self.parameters, action_severity="consequential",
+            toolset_group="browser",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

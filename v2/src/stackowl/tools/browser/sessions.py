@@ -17,12 +17,53 @@ import asyncio
 import contextlib
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 from stackowl.config.browser import BrowserSettings, ProxyConfig
 from stackowl.infra.observability import log
 from stackowl.tools.browser.runtime import CamoufoxRuntime
+
+# Per-page ring-buffer bound. Events fire whether or not a tool is reading; the
+# buffer is bounded (drop-oldest) so an attacker page logging in a loop can't OOM
+# us. Per-page (not per-session) so navigations/tabs don't mix or leak (party
+# Operations §2).
+_PAGE_LOG_BUFFER_MAX = 500
+# Bound on simultaneously-pending JS dialogs per page — an attacker page firing
+# alert() in a loop must not OOM us. When exceeded, the oldest is auto-dismissed.
+_DIALOG_QUEUE_MAX = 20
+
+
+@dataclass
+class PendingDialog:
+    """A JS dialog awaiting accept/dismiss, captured by ``page.on("dialog")``."""
+
+    dialog_id: str
+    type: str  # alert | confirm | prompt | beforeunload
+    message: str
+    default_value: str
+    dialog: Any  # the engine Dialog handle (accept()/dismiss() are async)
+    created_at: float
+    auto_task: Any = None  # asyncio.Task for the TTL auto-dismiss (cancelled on resolve)
+
+
+@dataclass
+class PageObservers:
+    """Bounded, eagerly-filled buffers for one page's console/error/dialog events.
+
+    Wired at page construction (not first tool call) so events emitted before any
+    tool call are still captured (party Operations §1). One holder per page_handle.
+    """
+
+    console: deque[dict[str, str]] = field(
+        default_factory=lambda: deque(maxlen=_PAGE_LOG_BUFFER_MAX)
+    )
+    errors: deque[dict[str, str]] = field(
+        default_factory=lambda: deque(maxlen=_PAGE_LOG_BUFFER_MAX)
+    )
+    # Pending JS dialogs keyed by dialog_id (insertion-ordered → oldest first).
+    dialogs: dict[str, PendingDialog] = field(default_factory=dict)
 
 
 class BrowserSessionLimitError(Exception):
@@ -40,6 +81,8 @@ class BrowserSession:
     profile_name: str | None
     context: Any  # Playwright BrowserContext
     pages: dict[str, Any] = field(default_factory=dict)
+    # Per-page observers (console/error buffers, …), keyed by page_handle.
+    observers: dict[str, PageObservers] = field(default_factory=dict)
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
     nav_count: int = 0
@@ -66,6 +109,9 @@ class BrowserSessionRegistry:
         self._runtime = runtime
         self._settings = settings
         self._sessions: dict[str, BrowserSession] = {}
+        # Strong refs to fire-and-forget background tasks (oldest-dialog dismiss),
+        # so they are not GC'd mid-flight. Discarded on completion.
+        self._bg_tasks: set[asyncio.Task[None]] = set()
         self._registry_lock = asyncio.Lock()
         self._sweep_task: asyncio.Task[None] | None = None
         # Self-healing: when runtime is recycled (crash or scheduled), all
@@ -90,6 +136,8 @@ class BrowserSessionRegistry:
         if not self._sessions:
             return
         count = len(self._sessions)
+        for sess in self._sessions.values():
+            self._cancel_session_timers(sess)
         self._sessions.clear()
         log.engine.warning(
             "[browser] sessions.purge: dropped all sessions after runtime recycle",
@@ -206,12 +254,147 @@ class BrowserSessionRegistry:
             page = await sess.context.new_page()
             handle = page_handle or uuid.uuid4().hex[:8]
             sess.pages[handle] = page
+            self._wire_page_observers(sess, page, handle)
             sess.touch()
             log.engine.debug(
                 "[browser] sessions.get_page: new",
                 extra={"_fields": {"session_id": session_id, "page_handle": handle}},
             )
             return sess, page, handle
+
+    def _wire_page_observers(self, sess: BrowserSession, page: Any, handle: str) -> None:
+        """Eagerly attach console/error buffers to a freshly-created page.
+
+        Handlers are sync (Playwright requirement) and fill bounded per-page
+        ring buffers from page birth, so logs emitted before the first
+        ``browser_console`` call are not lost. Best-effort: a stubbed page in
+        tests may not support ``.on`` — we still register the buffer so reads
+        return empty arrays rather than erroring.
+        """
+        obs = PageObservers()
+        sess.observers[handle] = obs
+        if not hasattr(page, "on"):
+            return
+
+        def _on_console(msg: Any) -> None:
+            try:
+                obs.console.append({
+                    "type": str(getattr(msg, "type", "log")),
+                    "text": str(getattr(msg, "text", "")),
+                })
+            except Exception as exc:  # never let a log handler break the page
+                log.engine.error("[browser] console handler failed", exc_info=exc)
+
+        def _on_pageerror(err: Any) -> None:
+            try:
+                # Capture the error class too — for an LLM debugging a page the
+                # type (TypeError vs ReferenceError) is high-signal.
+                obs.errors.append({
+                    "name": str(getattr(err, "name", "") or ""),
+                    "message": str(getattr(err, "message", None) or err),
+                })
+            except Exception as exc:
+                log.engine.error("[browser] pageerror handler failed", exc_info=exc)
+
+        def _on_dialog(dialog: Any) -> None:
+            try:
+                self._register_dialog(obs, dialog)
+            except Exception as exc:
+                log.engine.error("[browser] dialog handler failed", exc_info=exc)
+
+        try:
+            page.on("console", _on_console)
+            page.on("pageerror", _on_pageerror)
+            page.on("dialog", _on_dialog)
+        except Exception as exc:  # stubbed/limited page object — degrade, but log
+            log.engine.debug(
+                "[browser] sessions.get_page: observer wiring skipped",
+                extra={"_fields": {"page_handle": handle, "exc": str(exc)}},
+            )
+
+    def _register_dialog(self, obs: PageObservers, dialog: Any) -> None:
+        """Record a pending dialog and arm its TTL auto-dismiss (self-healing).
+
+        A JS dialog blocks the page until accepted/dismissed; if no action arrives
+        within ``dialog_auto_dismiss_seconds`` we dismiss it so the page never
+        hangs. The queue is bounded — when full, the oldest pending dialog is
+        auto-dismissed to make room (attacker alert()-loop protection).
+        """
+        if len(obs.dialogs) >= _DIALOG_QUEUE_MAX:
+            oldest_id, oldest = next(iter(obs.dialogs.items()))
+            obs.dialogs.pop(oldest_id, None)
+            if oldest.auto_task is not None:
+                oldest.auto_task.cancel()
+            self._spawn_bg(self._safe_dismiss(oldest.dialog))
+            log.engine.warning(
+                "[browser] dialog queue full — auto-dismissed oldest",
+                extra={"_fields": {"dropped_id": oldest_id}},
+            )
+        dialog_id = uuid.uuid4().hex[:8]
+        pd = PendingDialog(
+            dialog_id=dialog_id,
+            type=str(getattr(dialog, "type", "") or ""),
+            message=str(getattr(dialog, "message", "") or ""),
+            default_value=str(getattr(dialog, "default_value", "") or ""),
+            dialog=dialog,
+            created_at=time.monotonic(),
+        )
+        obs.dialogs[dialog_id] = pd
+        ttl = self._settings.dialog_auto_dismiss_seconds
+        with contextlib.suppress(RuntimeError):  # no running loop (stubbed test page)
+            pd.auto_task = asyncio.get_running_loop().create_task(
+                self._auto_dismiss_after(obs, dialog_id, ttl)
+            )
+        log.engine.debug(
+            "[browser] dialog captured",
+            extra={"_fields": {"dialog_id": dialog_id, "type": pd.type}},
+        )
+
+    @staticmethod
+    async def _safe_dismiss(dialog: Any) -> None:
+        with contextlib.suppress(Exception):
+            await dialog.dismiss()
+
+    def _spawn_bg(self, coro: Any) -> None:
+        """Run a fire-and-forget coroutine, holding a strong ref so it isn't GC'd."""
+        try:
+            task = asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:  # no running loop (stubbed test page)
+            coro.close()
+            return
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    @staticmethod
+    def _cancel_dialog_timers(obs: PageObservers) -> None:
+        """Cancel a page's pending-dialog TTL timers and drop the entries.
+
+        Called on tab/session teardown so leaked timers never fire ``dismiss`` on
+        a closed Dialog/page (self-healing teardown, party Operations §3).
+        """
+        for pd in obs.dialogs.values():
+            if pd.auto_task is not None:
+                with contextlib.suppress(Exception):
+                    pd.auto_task.cancel()
+        obs.dialogs.clear()
+
+    def _cancel_session_timers(self, sess: BrowserSession) -> None:
+        for obs in sess.observers.values():
+            self._cancel_dialog_timers(obs)
+
+    async def _auto_dismiss_after(self, obs: PageObservers, dialog_id: str, ttl: float) -> None:
+        try:
+            await asyncio.sleep(ttl)
+        except asyncio.CancelledError:
+            return  # resolved by the tool before TTL — nothing to do
+        pd = obs.dialogs.pop(dialog_id, None)
+        if pd is None:
+            return
+        await self._safe_dismiss(pd.dialog)
+        log.engine.warning(
+            "[browser] dialog auto-dismissed on TTL",
+            extra={"_fields": {"dialog_id": dialog_id, "ttl_s": ttl}},
+        )
 
     async def list_for_owner(self, owner_key: str) -> list[BrowserSessionInfo]:
         now = time.monotonic()
@@ -249,6 +432,8 @@ class BrowserSessionRegistry:
             "[browser] sessions.close: entry",
             extra={"_fields": {"session_id": session_id, "owner_key": sess.owner_key}},
         )
+        # Cancel armed dialog TTL timers so they don't fire against a closed page.
+        self._cancel_session_timers(sess)
         with contextlib.suppress(Exception):
             await sess.context.close()
         manager = getattr(sess.context, "_stackowl_persistent_manager", None)

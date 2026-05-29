@@ -227,7 +227,13 @@ class ToolRegistry:
     @classmethod
     def with_defaults(cls) -> ToolRegistry:
         """Bootstrap the registry with the foundation tools + browser family."""
+        from stackowl.tools.browser.back import BrowserBackTool
         from stackowl.tools.browser.browse import BrowserBrowseTool
+        from stackowl.tools.browser.console import BrowserConsoleTool
+        from stackowl.tools.browser.dialog import BrowserDialogTool
+        from stackowl.tools.browser.get_images import BrowserGetImagesTool
+        from stackowl.tools.browser.press import BrowserPressTool
+        from stackowl.tools.browser.snapshot import BrowserSnapshotTool
         from stackowl.tools.browser.tools import ATOMIC_BROWSER_TOOLS
         from stackowl.tools.io.read_file import ReadFileTool
         from stackowl.tools.io.web_fetch import WebFetchTool
@@ -244,6 +250,12 @@ class ToolRegistry:
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())
+        registry.register(BrowserSnapshotTool())
+        registry.register(BrowserBackTool())
+        registry.register(BrowserPressTool())
+        registry.register(BrowserGetImagesTool())
+        registry.register(BrowserConsoleTool())
+        registry.register(BrowserDialogTool())
         # E1 meta tools — always present (tool_search is the overflow-discovery
         # primitive per ADR-11; tool_describe is its inspect sibling).
         registry.register(ToolSearchTool())

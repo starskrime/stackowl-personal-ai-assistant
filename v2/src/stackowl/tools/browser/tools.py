@@ -11,10 +11,11 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
@@ -98,7 +99,32 @@ def _owner_key_from_state() -> str:
 # --------------------------------------------------------------------------- atomic tools
 
 
-class BrowserNavigateTool(Tool):
+class _BrowserTool(Tool):
+    """Base for atomic browser tools.
+
+    All browser tools share ``toolset_group="browser"`` so a browser-profiled owl
+    counts them as ONE capability group under the E1-S4 presented-set cap (else a
+    browser owl would blow the cap on browser tools alone). Subclasses set the
+    class attribute ``_severity`` instead of overriding ``manifest`` — the group is
+    injected uniformly here.
+    """
+
+    _severity: Literal["read", "write", "consequential"] = "read"
+    _consent_category: str | None = None
+
+    @property
+    def manifest(self) -> ToolManifest:
+        return ToolManifest(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters,
+            action_severity=self._severity,
+            consent_category=self._consent_category,
+            toolset_group="browser",
+        )
+
+
+class BrowserNavigateTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_navigate"
     @property
@@ -190,7 +216,7 @@ class BrowserNavigateTool(Tool):
         }, t0)
 
 
-class BrowserExtractTool(Tool):
+class BrowserExtractTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_extract"
     @property
@@ -245,12 +271,22 @@ class BrowserExtractTool(Tool):
         return _ok(output, t0)
 
 
-class BrowserClickTool(Tool):
+class BrowserClickTool(_BrowserTool):
+    _severity = "write"
+    # Engine-emitted aria refs are opaque alphanumeric tokens (e.g. "e7"). We
+    # validate the shape before interpolating into the aria-ref selector so a
+    # ref value can never inject selector syntax (E2-S1 click-by-ref).
+    _REF_PATTERN = re.compile(r"^[A-Za-z0-9]+$")
+
     @property
     def name(self) -> str: return "browser_click"
     @property
     def description(self) -> str:
-        return "Click an element by CSS selector OR visible text. Pass either; CSS selector tried first."
+        return (
+            "Click an element. Preferred: pass ref=<id> from a browser_snapshot [ref=eN] marker "
+            "(stable across re-render). Otherwise pass selector_or_text (CSS selector tried first, "
+            "then visible text)."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {
@@ -258,32 +294,43 @@ class BrowserClickTool(Tool):
             "properties": {
                 "session_id": {"type": "string"},
                 "page_handle": {"type": "string"},
+                "ref": {"type": "string", "description": "Stable ref from browser_snapshot (e.g. 'e7')."},
                 "selector_or_text": {"type": "string"},
             },
-            "required": ["session_id", "selector_or_text"],
+            "required": ["session_id"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="write",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
         session_id = str(kwargs.get("session_id", ""))
         page_handle = kwargs.get("page_handle")
+        ref = str(kwargs.get("ref", "")).strip()
         target = str(kwargs.get("selector_or_text", ""))
         log.tool.info(
             "browser_click.execute: entry",
-            extra={"_fields": {"session_id": session_id, "target_len": len(target)}},
+            extra={"_fields": {"session_id": session_id, "by_ref": bool(ref), "target_len": len(target)}},
         )
+        if not ref and not target:
+            return _err("Provide either ref (from browser_snapshot) or selector_or_text", t0, tool="browser_click")
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_click")
         sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        # Try CSS selector first, fall back to text-based.
+        # Preferred path: click by snapshot ref via the engine's aria-ref selector engine.
+        if ref:
+            if not self._REF_PATTERN.match(ref):
+                return _err(f"Invalid ref format: {ref!r}", t0, tool="browser_click")
+            try:
+                await page.locator(f"aria-ref={ref}").click(timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
+            except Exception as exc:
+                return _err(
+                    f"Click by ref {ref!r} failed (stale snapshot? re-run browser_snapshot): {exc}",
+                    t0, tool="browser_click",
+                )
+            log.tool.info("browser_click.execute: exit", extra={"_fields": {"mode": "ref"}})
+            return _ok({"ok": True, "click_target": "ref"}, t0, tool="browser_click")
+        # Fallback path: CSS selector first, then visible text.
         try:
             await page.click(target, timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
             mode = "selector"
@@ -292,12 +339,13 @@ class BrowserClickTool(Tool):
                 await page.get_by_text(target, exact=False).first.click(timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
                 mode = "text"
             except Exception as exc:
-                return _err(f"Click failed: {exc}", t0)
+                return _err(f"Click failed: {exc}", t0, tool="browser_click")
         log.tool.info("browser_click.execute: exit", extra={"_fields": {"mode": mode}})
-        return _ok({"ok": True, "click_target": mode}, t0)
+        return _ok({"ok": True, "click_target": mode}, t0, tool="browser_click")
 
 
-class BrowserTypeTool(Tool):
+class BrowserTypeTool(_BrowserTool):
+    _severity = "write"
     @property
     def name(self) -> str: return "browser_type"
     @property
@@ -317,12 +365,6 @@ class BrowserTypeTool(Tool):
             "required": ["session_id", "selector", "text"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="write",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -350,7 +392,7 @@ class BrowserTypeTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserScreenshotTool(Tool):
+class BrowserScreenshotTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_screenshot"
     @property
@@ -399,7 +441,8 @@ class BrowserScreenshotTool(Tool):
         return _ok({"path": str(out_path)}, t0)
 
 
-class BrowserScrollTool(Tool):
+class BrowserScrollTool(_BrowserTool):
+    _severity = "write"
     @property
     def name(self) -> str: return "browser_scroll"
     @property
@@ -418,12 +461,6 @@ class BrowserScrollTool(Tool):
             "required": ["session_id"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="write",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -454,7 +491,7 @@ class BrowserScrollTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserWaitForTool(Tool):
+class BrowserWaitForTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_wait_for"
     @property
@@ -491,7 +528,8 @@ class BrowserWaitForTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserEvalJsTool(Tool):
+class BrowserEvalJsTool(_BrowserTool):
+    _severity = "consequential"
     @property
     def name(self) -> str: return "browser_eval_js"
     @property
@@ -512,12 +550,6 @@ class BrowserEvalJsTool(Tool):
             "required": ["session_id", "script"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="consequential",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -551,7 +583,8 @@ class BrowserEvalJsTool(Tool):
         return _ok(payload, t0)
 
 
-class BrowserUploadTool(Tool):
+class BrowserUploadTool(_BrowserTool):
+    _severity = "consequential"
     @property
     def name(self) -> str: return "browser_upload"
     @property
@@ -573,12 +606,6 @@ class BrowserUploadTool(Tool):
             "required": ["session_id", "selector", "file_path"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="consequential",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -601,7 +628,8 @@ class BrowserUploadTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserDownloadTool(Tool):
+class BrowserDownloadTool(_BrowserTool):
+    _severity = "consequential"
     @property
     def name(self) -> str: return "browser_download"
     @property
@@ -623,12 +651,6 @@ class BrowserDownloadTool(Tool):
             "required": ["session_id", "trigger_selector"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="consequential",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -664,7 +686,7 @@ class BrowserDownloadTool(Tool):
         return _ok({"path": str(out_path), "bytes": size, "sha256": sha}, t0)
 
 
-class BrowserCookiesGetTool(Tool):
+class BrowserCookiesGetTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_cookies_get"
     @property
@@ -694,7 +716,8 @@ class BrowserCookiesGetTool(Tool):
         return _ok(cookies, t0)
 
 
-class BrowserCookiesSetTool(Tool):
+class BrowserCookiesSetTool(_BrowserTool):
+    _severity = "write"
     @property
     def name(self) -> str: return "browser_cookies_set"
     @property
@@ -710,12 +733,6 @@ class BrowserCookiesSetTool(Tool):
             "required": ["session_id", "cookies"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="write",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -735,7 +752,8 @@ class BrowserCookiesSetTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserCookiesClearTool(Tool):
+class BrowserCookiesClearTool(_BrowserTool):
+    _severity = "write"
     @property
     def name(self) -> str: return "browser_cookies_clear"
     @property
@@ -744,12 +762,6 @@ class BrowserCookiesClearTool(Tool):
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="write",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -763,7 +775,7 @@ class BrowserCookiesClearTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserTabOpenTool(Tool):
+class BrowserTabOpenTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_tab_open"
     @property
@@ -782,7 +794,7 @@ class BrowserTabOpenTool(Tool):
         return _ok({"page_handle": page_handle}, t0)
 
 
-class BrowserTabListTool(Tool):
+class BrowserTabListTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_tab_list"
     @property
@@ -802,7 +814,8 @@ class BrowserTabListTool(Tool):
         return _ok(tabs, t0)
 
 
-class BrowserTabCloseTool(Tool):
+class BrowserTabCloseTool(_BrowserTool):
+    _severity = "write"
     @property
     def name(self) -> str: return "browser_tab_close"
     @property
@@ -815,12 +828,6 @@ class BrowserTabCloseTool(Tool):
             "required": ["session_id", "page_handle"],
         }
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="write",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -831,6 +838,11 @@ class BrowserTabCloseTool(Tool):
             return _err(err, t0)
         sess = await sessions.get(session_id)
         page = sess.pages.pop(page_handle, None)
+        # Drop the page's console/error buffers and cancel any armed dialog TTL
+        # timers so they don't fire dismiss() on a closed page.
+        closed_obs = sess.observers.pop(page_handle, None)
+        if closed_obs is not None:
+            sessions._cancel_dialog_timers(closed_obs)
         if page is None:
             return _err(f"page_handle not found: {page_handle}", t0)
         with contextlib.suppress(Exception):
@@ -838,7 +850,8 @@ class BrowserTabCloseTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserCloseTool(Tool):
+class BrowserCloseTool(_BrowserTool):
+    _severity = "write"
     @property
     def name(self) -> str: return "browser_close"
     @property
@@ -847,12 +860,6 @@ class BrowserCloseTool(Tool):
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}
 
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self.name, description=self.description,
-            parameters=self.parameters, action_severity="write",
-        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -864,7 +871,7 @@ class BrowserCloseTool(Tool):
         return _ok({"ok": True}, t0)
 
 
-class BrowserRecallUrlTool(Tool):
+class BrowserRecallUrlTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_recall_url"
     @property

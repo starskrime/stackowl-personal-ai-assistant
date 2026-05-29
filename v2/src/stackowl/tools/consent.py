@@ -43,7 +43,9 @@ __all__ = [
 # Default tools that ALWAYS re-prompt — never satisfied by batch/window/auto.
 # Per E11/E12/E13 party reviews (readiness Section 9 #7): code execution, GUI
 # control, and Home-Assistant locks/alarms are never relaxed.
-_DEFAULT_ALWAYS_ASK_TOOLS = frozenset({"execute_code", "computer_use", "ha_call_service"})
+_DEFAULT_ALWAYS_ASK_TOOLS = frozenset(
+    {"execute_code", "computer_use", "ha_call_service", "browser_dialog"}
+)
 _DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset({"lock", "alarm", "destructive"})
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
