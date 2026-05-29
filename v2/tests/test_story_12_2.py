@@ -136,47 +136,43 @@ def test_tool_custom_manifest_severity() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_gate_check_returns_true_for_read_tool_without_calling_confirm_fn() -> None:
+async def test_gate_check_returns_true_for_read_tool_without_calling_confirm_fn() -> None:
     """Gate must not call confirm_fn for non-consequential tools."""
     confirm_fn = MagicMock(return_value=True)
     gate = ConsequentialActionGate(confirm_fn=confirm_fn)
-    result = gate.check(_ReadTool())
+    result = await gate.check(_ReadTool())
     assert result is True
     confirm_fn.assert_not_called()
 
 
-def test_gate_check_calls_confirm_fn_for_consequential_tool() -> None:
+async def test_gate_check_calls_confirm_fn_for_consequential_tool() -> None:
     """Gate calls confirm_fn when tool has consequential severity."""
     confirm_fn = MagicMock(return_value=True)
     gate = ConsequentialActionGate(confirm_fn=confirm_fn)
     tool = _ConsequentialTool()
-    result = gate.check(tool)
+    result = await gate.check(tool)
     assert result is True
     confirm_fn.assert_called_once_with(tool.name)
 
 
-def test_gate_check_returns_false_when_confirm_fn_returns_false() -> None:
+async def test_gate_check_returns_false_when_confirm_fn_returns_false() -> None:
     """Gate returns False when the confirm_fn denies execution."""
     gate = ConsequentialActionGate(confirm_fn=lambda _name: False)
-    assert gate.check(_ConsequentialTool()) is False
+    assert await gate.check(_ConsequentialTool()) is False
 
 
-def test_gate_check_returns_true_for_write_tool_without_calling_confirm_fn() -> None:
+async def test_gate_check_returns_true_for_write_tool_without_calling_confirm_fn() -> None:
     """write severity is not consequential — gate allows without prompting."""
     confirm_fn = MagicMock(return_value=False)
     gate = ConsequentialActionGate(confirm_fn=confirm_fn)
-    assert gate.check(_WriteToolCustomManifest()) is True
+    assert await gate.check(_WriteToolCustomManifest()) is True
     confirm_fn.assert_not_called()
 
 
-def test_gate_default_confirm_blocks_in_non_interactive(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default confirm_fn returns False when stdin is not a TTY."""
-    import io
-
-    monkeypatch.setattr("sys.stdin", io.StringIO("YES\n"))
-    gate = ConsequentialActionGate()  # uses _default_confirm
-    # StringIO.isatty() returns False
-    assert gate.check(_ConsequentialTool()) is False
+async def test_gate_default_construction_fails_closed() -> None:
+    """Default construction (no policy, no confirm_fn) denies consequential actions."""
+    gate = ConsequentialActionGate()  # FailClosedPrompter
+    assert await gate.check(_ConsequentialTool()) is False
 
 
 # ---------------------------------------------------------------------------

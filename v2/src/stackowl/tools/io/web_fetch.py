@@ -12,6 +12,7 @@ import contextlib
 import time
 from typing import Any
 
+from stackowl.infra.net.ssrf_guard import SsrfGuard
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolResult
@@ -21,6 +22,36 @@ from stackowl.tools.browser._retry import with_browser_retry
 
 _MAX_OUTPUT_BYTES = 32_768  # markdown is denser than HTML; allow more than the old 8KB
 _NAV_TIMEOUT_MS = 30_000
+# Shared SSRF egress guard (E0-S2) — blocks private/loopback/link-local/metadata
+# targets and non-http(s) schemes before any navigation.
+_SSRF_GUARD = SsrfGuard()
+
+
+async def _guard_navigation(route: Any) -> None:
+    """Playwright route handler: re-validate every navigation/redirect hop.
+
+    A pre-flight check on the initial URL is not enough — a public page can
+    302 to ``http://169.254.169.254/`` and the browser would follow it. This
+    aborts any navigation (including redirect targets) whose URL fails the SSRF
+    policy; non-navigation subresources pass through. Fails closed on error.
+    """
+    request = route.request
+    try:
+        if request.is_navigation_request():
+            ok, reason = _SSRF_GUARD.is_allowed(request.url)
+            if not ok:
+                log.tool.warning(
+                    "web_fetch: blocked navigation/redirect by SSRF egress guard",
+                    extra={"_fields": {"url": url_path_only(request.url), "reason": reason}},
+                )
+                await route.abort()
+                return
+    except Exception as exc:
+        log.tool.warning("web_fetch: navigation guard error — aborting (fail closed)", exc_info=exc)
+        with contextlib.suppress(Exception):
+            await route.abort()
+        return
+    await route.continue_()
 
 
 class WebFetchTool(Tool):
@@ -64,6 +95,19 @@ class WebFetchTool(Tool):
         if not url:
             return ToolResult(success=False, output="", error="Missing url parameter", duration_ms=0)
 
+        # E0-S2 — SSRF egress guard: reject internal/metadata targets before navigating.
+        ok, reason = _SSRF_GUARD.is_allowed(url)
+        if not ok:
+            log.tool.warning(
+                "web_fetch.execute: blocked by SSRF egress guard",
+                extra={"_fields": {"url": log_url, "reason": reason}},
+            )
+            return ToolResult(
+                success=False, output="",
+                error=f"URL blocked by egress policy: {reason}",
+                duration_ms=(time.monotonic() - t0) * 1000,
+            )
+
         services = get_services()
         runtime = services.browser_runtime
         if runtime is None:
@@ -79,6 +123,8 @@ class WebFetchTool(Tool):
             ctx_local: Any = await runtime.open_context(owner_key="local")
             page_local: Any = None
             try:
+                # Re-validate every navigation/redirect against the SSRF policy.
+                await ctx_local.route("**/*", _guard_navigation)
                 page_local = await ctx_local.new_page()
                 resp = await page_local.goto(
                     url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS,

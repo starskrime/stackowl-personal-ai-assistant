@@ -17,6 +17,15 @@ class DomainError(StackOwlError):
     """Base for domain-logic errors (business rule violations)."""
 
 
+class ToolRegistrationError(DomainError):
+    """Raised when a tool registration is refused (name collision / dangerous shadow)."""
+
+    def __init__(self, tool_name: str, reason: str) -> None:
+        super().__init__(f"tool registration refused for {tool_name!r}: {reason}")
+        self.tool_name = tool_name
+        self.reason = reason
+
+
 class InfrastructureError(StackOwlError):
     """Base for infrastructure / external-dependency errors."""
 

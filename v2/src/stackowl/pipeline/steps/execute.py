@@ -32,11 +32,60 @@ async def _run_with_tools(
         extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name, "tools": len(tool_schemas)}},
     )
 
+    # F3.1 — within a single run, a tool denied once must not re-prompt the user
+    # if the model stubbornly re-calls it; short-circuit subsequent calls.
+    denied_this_run: set[str] = set()
+
     async def _dispatch(name: str, args: dict[str, object]) -> str:
         t = tool_registry.get(name)
         if t is None:
             log.engine.warning("[pipeline] execute: unknown tool in dispatch", extra={"_fields": {"tool": name}})
             return f"Tool not found: {name}"
+        if name in denied_this_run:
+            log.engine.info(
+                "[pipeline] execute: tool already declined this run — not re-prompting",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+            )
+            return (
+                f"The action '{name}' was already declined this turn. Do not call it again — "
+                "respond to the user instead."
+            )
+        # E0-S1 — consent gate runs BEFORE execution for consequential tools.
+        # The category is derived inside gate.check() from the TRUSTED manifest,
+        # never from LLM-supplied args. Fail closed: a gate error, OR a missing
+        # gate on a consequential tool, denies rather than runs it.
+        gate = get_services().consent_gate
+        is_consequential = t.manifest.action_severity == "consequential"
+        if gate is not None:
+            try:
+                allowed = await gate.check(t, channel=state.channel, session_id=state.session_id)
+            except Exception as exc:
+                log.engine.error(
+                    "[pipeline] execute: consent gate raised — denying (fail closed)",
+                    exc_info=exc,
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+                )
+                allowed = False
+        elif is_consequential:
+            # No gate wired but the tool is consequential → fail closed (never run
+            # a consequential action without a functioning consent control).
+            log.engine.error(
+                "[pipeline] execute: consequential tool but NO consent gate wired — denying",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+            )
+            allowed = False
+        else:
+            allowed = True
+        if not allowed:
+            denied_this_run.add(name)
+            log.engine.info(
+                "[pipeline] execute: consequential action declined by gate",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id, "session_id": state.session_id}},
+            )
+            return (
+                f"The action '{name}' requires your approval and was not run because consent "
+                "was declined or not granted. Ask the user to approve it if they want it to proceed."
+            )
         tr = await t(**args)
         # Learning Commit 5 — post-execute heuristic match + event emission.
         # Zero behavior change; downstream subscribers (classify, future hooks)

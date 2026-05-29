@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.browser.runtime import CamoufoxRuntime
     from stackowl.tools.browser.sessions import BrowserSessionRegistry
-    from stackowl.tools.registry import ToolRegistry
+    from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 
 @dataclass
@@ -49,6 +49,7 @@ class StepServices:
     embedding_registry: EmbeddingRegistry | None = field(default=None)
     lessons_index: LessonsIndex | None = field(default=None)
     heuristic_store: ToolHeuristicStore | None = field(default=None)
+    consent_gate: ConsequentialActionGate | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

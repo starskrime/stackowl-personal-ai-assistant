@@ -30,6 +30,10 @@ class OwlAgentManifest(BaseModel):
     timeout_seconds: float = Field(default=30.0, gt=0.0)
     max_concurrent_requests: int = Field(default=1, ge=1)
     dna: OwlDNA = Field(default_factory=OwlDNA)
+    # Toolset-group names this owl is provisioned for — drives DNA-gated
+    # presented-set selection (ADR-11). Additive + defaulted: existing manifests
+    # without it remain valid. Empty means "no capability gating" (all tools).
+    capability_profile: list[str] = []
 
     @field_validator("name")
     @classmethod

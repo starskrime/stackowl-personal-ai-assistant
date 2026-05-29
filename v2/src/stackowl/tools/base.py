@@ -31,6 +31,10 @@ class ToolManifest(BaseModel):
     description: str
     parameters: dict[str, object]
     action_severity: Literal["read", "write", "consequential"] = "read"
+    # Trusted, tool-declared consent category (e.g. "lock", "alarm", "destructive").
+    # The consent gate keys always-ask exclusions off THIS, never off LLM-supplied
+    # call args — the model must not be able to relax its own gating (E0-S1 / B2).
+    consent_category: str | None = None
 
 
 class Tool(ABC):

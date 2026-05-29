@@ -288,6 +288,32 @@ class StartupOrchestrator:
             reason = "binary not found" if probe is not None else "probe did not run"
             log.warning("[startup] gateway: browser runtime skipped — %s", reason)
 
+        # E0-S1 — consent gate: combination consent policy + per-channel prompters.
+        # Routing prompter is mutable so the Telegram prompter can register after
+        # its adapter starts (below). CLI gets the TTY prompter immediately.
+        from stackowl.tools.consent import ConsentPolicy, RoutingPrompter, TtyConsentPrompter
+        from stackowl.tools.registry import ConsequentialActionGate
+        from stackowl.tui.i18n import register_translations
+
+        # Consent button/label catalog — English copy lives here (i18n catalog is
+        # the one place English belongs); other locales can be registered later.
+        register_translations(
+            "en",
+            {
+                "consent.prompt.title": "⚠ Approval needed",
+                "consent.btn.approve_once": "✅ Approve once",
+                "consent.btn.deny": "🚫 Deny",
+                "consent.btn.approve_session": "✅ Approve for this session",
+                "consent.btn.trust_window": "🕒 Trust for 15 min",
+            },
+        )
+
+        consent_routing = RoutingPrompter()
+        consent_routing.register("cli", TtyConsentPrompter())
+        consent_gate = ConsequentialActionGate(
+            ConsentPolicy(prompter=consent_routing, audit_logger=audit_logger)
+        )
+
         services = StepServices(
             provider_registry=provider_registry,
             stream_registry=stream_registry,
@@ -306,6 +332,7 @@ class StartupOrchestrator:
             embedding_registry=memory_components.embedding_registry,
             lessons_index=memory_components.lessons_index,
             heuristic_store=_build_heuristic_store(db_pool),
+            consent_gate=consent_gate,
         )
         backend = AsyncioBackend(services=services)
         parliament = ParliamentOrchestrator(
@@ -543,7 +570,33 @@ class StartupOrchestrator:
                     update={"bot_token": resolved_token, "webhook_secret": resolved_webhook_secret}
                 )
                 telegram_adapter = TelegramChannelAdapter(resolved_tg_settings)
+
+                # E0-S1 — wire the Telegram consent round-trip BEFORE start() so a
+                # message arriving at boot can never miss its prompter (would else
+                # fail closed with a spurious denial). The prompter only needs the
+                # adapter object; the callback handler is attached after start()
+                # (it needs the live bot application).
+                from stackowl.channels.telegram.consent import TelegramConsentPrompter
+
+                tg_consent_prompter = TelegramConsentPrompter(telegram_adapter)
+                consent_routing.register("telegram", tg_consent_prompter)
+
                 await telegram_adapter.start()
+
+                try:
+                    from stackowl.channels.telegram.callbacks import CallbackRouter
+
+                    tg_callback_router = CallbackRouter(db_pool, telegram_adapter)
+                    await tg_callback_router.ensure_table()
+                    tg_callback_router.register("consent:", tg_consent_prompter.handle_callback)
+                    telegram_adapter.attach_callback_router(tg_callback_router)
+                    log.info("[startup] gateway: Telegram consent gate wired")
+                except Exception as exc:
+                    log.error(
+                        "[startup] gateway: Telegram consent callback wiring failed — "
+                        "consequential actions on Telegram will fail closed",
+                        exc_info=exc,
+                    )
 
                 async def _telegram_loop() -> None:
                     log.info("[startup] gateway: telegram loop started")

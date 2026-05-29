@@ -12,30 +12,29 @@ callbacks.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from telegram import Update
-from telegram.ext import ContextTypes, MessageHandler, filters
+from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from stackowl.channels.base import ChannelAdapter
+from stackowl.channels.splitter import TelegramMessageSplitter
 from stackowl.channels.telegram._bot import build_inline_keyboard, start_bot, stop_bot
 from stackowl.channels.telegram.formatter import TelegramMarkdownFormatter
 from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention
 from stackowl.channels.telegram.settings import TelegramSettings
-from stackowl.channels.splitter import TelegramMessageSplitter
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
 from stackowl.pipeline.streaming import ResponseChunk
 
-import asyncio
-
 if TYPE_CHECKING:
-    from stackowl.channels.registry import ChannelRegistry
+    pass
 
 _UPDATE_DEGRADED_AFTER_S = 120.0
 
@@ -148,15 +147,29 @@ class TelegramChannelAdapter(ChannelAdapter):
             )
         log.telegram.debug("[telegram] adapter.send_text: exit")
 
-    async def send_inline_keyboard(self, text: str, keyboard: dict[str, object]) -> None:
-        """Send a message with an inline keyboard attachment."""
+    async def send_inline_keyboard(
+        self, text: str, keyboard: dict[str, object], chat_id: int | None = None
+    ) -> None:
+        """Send a message with an inline keyboard attachment.
+
+        ``chat_id`` targets a specific chat (e.g. the user who initiated a consent
+        prompt); when omitted it falls back to the most-recent chat. Raises
+        :class:`RuntimeError` when no target chat can be resolved so callers that
+        require delivery (consent gate) can fail closed immediately.
+        """
         log.telegram.debug(
             "[telegram] adapter.send_inline_keyboard: entry",
-            extra={"_fields": {"text_len": len(text)}},
+            extra={"_fields": {"text_len": len(text), "explicit_chat": chat_id is not None}},
         )
         TestModeGuard.assert_not_test_mode("telegram.send_inline_keyboard")
-        if self._bot_app is None or self._last_chat_id is None:
-            log.telegram.warning("[telegram] adapter.send_inline_keyboard: no active chat")
+        target_chat = chat_id if chat_id is not None else self._last_chat_id
+        if self._bot_app is None or target_chat is None:
+            log.telegram.warning("[telegram] adapter.send_inline_keyboard: no target chat")
+            # An explicit chat_id (e.g. the consent gate) requires delivery — raise
+            # so the caller fails closed instead of silently hanging. The best-effort
+            # path (no explicit chat_id, e.g. notifications) stays a silent no-op.
+            if chat_id is not None:
+                raise RuntimeError("telegram.send_inline_keyboard: target chat unavailable")
             return
         markup = build_inline_keyboard(keyboard)
         log.telegram.debug(
@@ -164,7 +177,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             extra={"_fields": {"has_markup": markup is not None}},
         )
         await self._bot_app.bot.send_message(
-            chat_id=self._last_chat_id,
+            chat_id=target_chat,
             text=text,
             parse_mode="MarkdownV2",
             reply_markup=markup,
@@ -203,6 +216,20 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter.acknowledge_callback: decision answer_query")
         await self._bot_app.bot.answer_callback_query(callback_id, text=text or None)
         log.telegram.debug("[telegram] adapter.acknowledge_callback: exit")
+
+    def attach_callback_router(self, router: Any) -> None:
+        """Route Telegram callback-query taps (inline buttons) through ``router``.
+
+        ``router`` must expose an async ``route(update, context)`` callback. Used
+        to wire the consent inline-keyboard round-trip; safe no-op if the bot is
+        not initialised.
+        """
+        log.telegram.debug("[telegram] adapter.attach_callback_router: entry")
+        if self._bot_app is None:
+            log.telegram.warning("[telegram] adapter.attach_callback_router: bot not initialised — skipped")
+            return
+        self._bot_app.add_handler(CallbackQueryHandler(router.route))
+        log.telegram.debug("[telegram] adapter.attach_callback_router: exit")
 
     async def _handle_update(
         self,

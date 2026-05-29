@@ -126,6 +126,10 @@ class CallbackRouter:
         self._handlers: dict[str, _Handler] = {}
         log.telegram.debug("[telegram] callbacks.router.init: entry")
 
+    async def ensure_table(self) -> None:
+        """Ensure the idempotency table exists (delegates to the store)."""
+        await self._store.ensure_table()
+
     def register(self, prefix: str, handler: _Handler) -> None:
         """Register ``handler`` for ``callback_data`` values beginning with ``prefix``.
 
