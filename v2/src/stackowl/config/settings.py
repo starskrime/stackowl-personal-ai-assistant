@@ -82,8 +82,12 @@ class OrchestratorSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     backend: Literal["langgraph", "asyncio"] = Field(
-        default="langgraph",
-        description="Pipeline orchestration backend.",
+        default="asyncio",
+        description=(
+            "Pipeline orchestration backend. 'asyncio' is the default known-good "
+            "backend; 'langgraph' is experimental/opt-in (the LangGraph backend "
+            "exists but is exercised only when explicitly selected)."
+        ),
         json_schema_extra={"hot_reload": False},
     )
 

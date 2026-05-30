@@ -157,7 +157,7 @@ class StartupOrchestrator:
         from stackowl.owls.registry import OwlRegistry
         from stackowl.parliament.orchestrator import ParliamentOrchestrator
         from stackowl.parliament.session_store import SessionStore
-        from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
+        from stackowl.pipeline.backends.factory import create_backend
         from stackowl.pipeline.services import StepServices
         from stackowl.pipeline.state import PipelineState
         from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
@@ -384,7 +384,7 @@ class StartupOrchestrator:
             consent_gate=consent_gate,
             clarify_gateway=clarify_gateway,
         )
-        backend = AsyncioBackend(services=services)
+        backend = create_backend(self._settings.orchestrator.backend, services=services)
         parliament = ParliamentOrchestrator(
             backend=backend,
             session_store=SessionStore(db_pool),
