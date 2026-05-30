@@ -133,6 +133,9 @@ class RoundRunner:
             channel="parliament",
             owl_name=owl_name,
             pipeline_step="parliament_round",
+            # Internal owl-to-owl debate round — no user is answering mid-round,
+            # so a clarify call must default-deny rather than park the debate.
+            interactive=False,
         )
         t0 = time.monotonic()
         try:

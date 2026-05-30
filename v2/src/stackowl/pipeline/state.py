@@ -31,6 +31,16 @@ class PipelineState(BaseModel, frozen=True):
     channel: str
     owl_name: str
     pipeline_step: str
+    # True when a user is present on the originating channel and can answer a
+    # mid-turn clarify question. Channel-driven (CLI/Telegram/etc.) runs are
+    # interactive by default; cron/scheduler, parliament, and A2A sub-pipelines
+    # construct with interactive=False so a clarify call default-denies instead
+    # of parking a coroutine with no one to answer it.
+    interactive: bool = True
+    # ID of an in-flight clarify question awaiting a user answer for this run.
+    # The Event itself lives in the (out-of-band) clarify registry — a frozen
+    # model cannot hold an asyncio.Event — so only the id is carried in state.
+    pending_clarify_id: str | None = None
     responses: tuple[ResponseChunk, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
     memory_context: str | None = None

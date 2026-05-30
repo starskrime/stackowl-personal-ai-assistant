@@ -126,6 +126,10 @@ class GoalExecutionHandler(JobHandler):
             channel="cli",
             owl_name="secretary",
             pipeline_step="",
+            # Cron/scheduler goal execution has no user present to answer a
+            # mid-turn clarify; default-deny so a clarify call never parks a
+            # scheduler worker slot waiting for an answer that cannot come.
+            interactive=False,
         )
         log.scheduler.debug(
             "[scheduler] goal_execution.execute: pipeline submitted",

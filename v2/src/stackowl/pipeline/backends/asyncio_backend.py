@@ -38,7 +38,12 @@ class AsyncioBackend(OrchestratorBackend):
         )
         t0 = time.monotonic()
         token = set_services(self._services)
-        trace_token = TraceContext.start(state.session_id, trace_id=state.trace_id)
+        trace_token = TraceContext.start(
+            state.session_id,
+            trace_id=state.trace_id,
+            interactive=state.interactive,
+            channel=state.channel,
+        )
         current = state
         step_durations: list[tuple[str, float]] = []
         try:

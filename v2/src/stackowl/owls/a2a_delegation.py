@@ -169,6 +169,10 @@ class A2ADelegator:
             tool_calls=(),
             errors=(),
             pipeline_step="dispatch",
+            # Delegated specialist sub-pipeline: no direct user channel binding
+            # to deliver/answer a clarify, so default-deny regardless of the
+            # parent's interactivity. Clarify must bubble through the parent.
+            interactive=False,
         )
         backend = AsyncioBackend(services=self._services)
 
