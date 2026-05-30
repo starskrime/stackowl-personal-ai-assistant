@@ -363,6 +363,21 @@ class StartupOrchestrator:
 
         register_clarify_sweep_handler(clarify_gateway)
 
+        # E6 — web-search provider registry (precedence: SearXNG → Brave → DDG).
+        # SearXNG/Brave are configured upgrades; DDG is the keyless zero-config floor.
+        # brave_api_key is a SECRET REFERENCE string (env-var / keychain:/ file:); ""
+        # disables the Brave provider. The web_search tool reads this off services.
+        from stackowl.web_search.providers import BraveProvider, DdgProvider, SearxngProvider
+        from stackowl.web_search.registry import WebSearchRegistry
+
+        web_search_registry = WebSearchRegistry(
+            [
+                SearxngProvider(self._settings.web_search.searxng_base_url),
+                BraveProvider(self._settings.web_search.brave_api_key or None),
+                DdgProvider(),
+            ]
+        )
+
         services = StepServices(
             provider_registry=provider_registry,
             stream_registry=stream_registry,
@@ -383,6 +398,7 @@ class StartupOrchestrator:
             heuristic_store=_build_heuristic_store(db_pool),
             consent_gate=consent_gate,
             clarify_gateway=clarify_gateway,
+            web_search_registry=web_search_registry,
         )
         backend = create_backend(self._settings.orchestrator.backend, services=services)
         parliament = ParliamentOrchestrator(

@@ -32,7 +32,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -72,6 +72,34 @@ class BudgetSettings(BaseModel):
     daily_limit_usd: float | None = Field(
         default=None,
         description="Daily spend cap in USD. None = unlimited.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class WebSearchSettings(BaseModel):
+    """Web-search provider configuration (SearXNG instance, etc.).
+
+    DDG is the keyless zero-config floor and needs no settings. SearXNG and Brave are
+    configured upgrades: ``searxng_base_url`` enables the self-hosted SearXNG provider.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    searxng_base_url: str = Field(
+        default="",
+        description=(
+            "Base URL of a self-hosted SearXNG instance (e.g. 'http://localhost:8080'). "
+            "Empty disables the SearXNG provider. Network-free availability check."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    brave_api_key: str = Field(
+        default="",
+        description=(
+            "Secret REFERENCE for the Brave Search API key — an env-var name, "
+            "'keychain:<service>', or 'file:<path>' (resolved at use, never the raw "
+            "secret). Empty disables the Brave provider. Network-free availability check."
+        ),
         json_schema_extra={"hot_reload": True},
     )
 
@@ -283,6 +311,7 @@ class Settings(BaseSettings):
         json_schema_extra={"hot_reload": True},
     )
     governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
+    web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
 
     @classmethod
     def settings_customise_sources(

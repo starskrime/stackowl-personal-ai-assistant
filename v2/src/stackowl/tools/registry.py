@@ -235,6 +235,7 @@ class ToolRegistry:
         from stackowl.tools.browser.press import BrowserPressTool
         from stackowl.tools.browser.snapshot import BrowserSnapshotTool
         from stackowl.tools.browser.tools import ATOMIC_BROWSER_TOOLS
+        from stackowl.tools.interaction.clarify import ClarifyTool
         from stackowl.tools.io.apply_patch import ApplyPatchTool
         from stackowl.tools.io.edit import EditTool
         from stackowl.tools.io.pdf import PdfTool
@@ -243,7 +244,6 @@ class ToolRegistry:
         from stackowl.tools.io.undo_store import UndoStore, UndoWriteTool
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
-        from stackowl.tools.interaction.clarify import ClarifyTool
         from stackowl.tools.knowledge.memory import MemoryTool
         from stackowl.tools.knowledge.session_search import SessionSearchTool
         from stackowl.tools.knowledge.skill_manage import SkillManageTool
@@ -255,6 +255,7 @@ class ToolRegistry:
         from stackowl.tools.planning.store import PlanStore
         from stackowl.tools.planning.todo import TodoTool
         from stackowl.tools.planning.update_plan import UpdatePlanTool
+        from stackowl.tools.search.web_search import WebSearchTool
         from stackowl.tools.system.shell import ShellTool
 
         registry = cls()
@@ -270,6 +271,9 @@ class ToolRegistry:
         registry.register(UndoWriteTool(store=_undo_store))
         registry.register(ShellTool())
         registry.register(WebFetchTool())
+        # web_search — reads get_services().web_search_registry at execute time, so
+        # no constructor wiring here (the registry is built in the gateway phase).
+        registry.register(WebSearchTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())

@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from stackowl.tools.browser.runtime import CamoufoxRuntime
     from stackowl.tools.browser.sessions import BrowserSessionRegistry
     from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
+    from stackowl.web_search.registry import WebSearchRegistry
 
 
 @dataclass
@@ -52,6 +53,7 @@ class StepServices:
     heuristic_store: ToolHeuristicStore | None = field(default=None)
     consent_gate: ConsequentialActionGate | None = field(default=None)
     clarify_gateway: ClarifyGateway | None = field(default=None)
+    web_search_registry: WebSearchRegistry | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")
