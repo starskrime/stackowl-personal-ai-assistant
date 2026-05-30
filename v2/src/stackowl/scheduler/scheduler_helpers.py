@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,6 +11,29 @@ from typing import Any
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.scheduler.job import Job
+
+# Fixed-interval schedule DSL token: ``every <n><unit>`` (s/m/h/d, case-insensitive,
+# optional space). NOT user natural language — a scheduler token like ``daily@``.
+_EVERY_RE = re.compile(r"^every\s+(\d+)\s*([smhd])$", re.IGNORECASE)
+_EVERY_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_every(schedule: str) -> timedelta | None:
+    """Parse an ``every <n><unit>`` fixed-interval token into a :class:`timedelta`.
+
+    Returns ``None`` (not an error) when ``schedule`` is not an ``every`` token or
+    the count is non-positive — callers fall through to their other branches.
+    Single source of truth shared by ``compute_next_run`` and ``is_valid_schedule``
+    so the tool never advertises a cadence the scheduler then mis-arms.
+    """
+    match = _EVERY_RE.match(schedule.strip())
+    if match is None:
+        return None
+    count = int(match.group(1))
+    if count <= 0:
+        return None
+    return timedelta(seconds=count * _EVERY_UNIT_SECONDS[match.group(2).lower()])
+
 
 _INSERT_AUDIT_SQL = (
     "INSERT INTO audit_log (event_type, actor, target, timestamp, details) "
@@ -77,6 +101,14 @@ def compute_next_run(schedule: str) -> str:
         if candidate <= now:
             candidate += timedelta(days=1)
         return candidate.isoformat()
+    interval = parse_every(schedule)
+    if interval is not None:
+        next_iso = (datetime.now(UTC) + interval).isoformat()
+        log.scheduler.debug(
+            "[scheduler] compute_next_run: every-interval",
+            extra={"_fields": {"schedule": schedule, "next_run": next_iso}},
+        )
+        return next_iso
     try:
         from croniter import croniter  # type: ignore[import-untyped]
 
@@ -90,6 +122,30 @@ def compute_next_run(schedule: str) -> str:
             extra={"_fields": {"schedule": schedule}},
         )
         return (datetime.now(UTC) + timedelta(days=1)).isoformat()
+
+
+async def reap_stale_running(db: DbPool) -> int:
+    """Reset jobs stuck in ``status='running'`` back to a runnable state.
+
+    Runs at startup (from ``recover()``): the process that set a job ``running``
+    is, by definition, gone, so ANY ``running`` row is stale. Recurring jobs get
+    a freshly-recomputed ``next_run_at``; one-shots are left due (their stored
+    ``next_run_at`` is already in the past). Idempotent — a clean DB reaps 0.
+    Returns the number of jobs reaped.
+    """
+    log.scheduler.debug("[scheduler] reap_stale_running: entry")
+    rows = await db.fetch_all("SELECT job_id, schedule FROM jobs WHERE status = 'running'")
+    for row in rows:
+        next_run = compute_next_run(str(row["schedule"]))
+        await db.execute(
+            "UPDATE jobs SET status = 'pending', next_run_at = ? WHERE job_id = ?",
+            (next_run, row["job_id"]),
+        )
+    log.scheduler.info(
+        "[scheduler] reap_stale_running: exit",
+        extra={"_fields": {"reaped": len(rows)}},
+    )
+    return len(rows)
 
 
 def row_to_job(row: dict[str, Any]) -> Job:

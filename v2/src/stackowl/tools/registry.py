@@ -255,6 +255,7 @@ class ToolRegistry:
         from stackowl.tools.planning.store import PlanStore
         from stackowl.tools.planning.todo import TodoTool
         from stackowl.tools.planning.update_plan import UpdatePlanTool
+        from stackowl.tools.scheduling.cronjob import CronjobTool
         from stackowl.tools.search.web_search import WebSearchTool
         from stackowl.tools.system.shell import ShellTool
 
@@ -274,6 +275,10 @@ class ToolRegistry:
         # web_search — reads get_services().web_search_registry at execute time, so
         # no constructor wiring here (the registry is built in the gateway phase).
         registry.register(WebSearchTool())
+        # cronjob — schedules agent-goal jobs via the JobScheduler facade it
+        # builds from get_services().db_pool at execute time (no constructor
+        # wiring; reuses the goal_execution handler — E7-S1).
+        registry.register(CronjobTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())

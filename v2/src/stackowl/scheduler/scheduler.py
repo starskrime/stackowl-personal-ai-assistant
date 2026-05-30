@@ -15,9 +15,11 @@ from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler_helpers import (
     compute_next_run,
     insert_job,
+    reap_stale_running,
     row_to_job,
     write_audit,
 )
+from stackowl.scheduler.scheduler_mutations import run_now, update_job
 from stackowl.supervisor.supervisor import SupervisedTask
 
 _POLL_INTERVAL_SEC = 30.0
@@ -154,7 +156,6 @@ class JobScheduler(SupervisedTask):
             (job.job_id,),
         )
 
-    # ------------------------------------------------------------ lifecycle
     async def pause(self, job_id: str) -> None:
         """Pause a job — sets status='failed', enabled=0. Idempotent."""
         log.scheduler.debug("[scheduler] pause: entry", extra={"_fields": {"job_id": job_id}})
@@ -192,22 +193,20 @@ class JobScheduler(SupervisedTask):
         log.scheduler.info("[scheduler] stop_job: exit", extra={"_fields": {"job_id": job_id}})
 
     async def recover(self, replay_window_hours: int = 24) -> int:
-        """Re-arm overdue pending jobs after a process restart.
+        """Re-arm overdue pending jobs after a restart.
 
-        For each due job: jobs with ``replay_missed=True`` whose miss is
-        inside ``replay_window_hours`` are dispatched once; everyone else
-        just has ``next_run_at`` advanced to the next scheduled slot.
-        Returns the number of jobs replayed.
+        ``replay_missed`` jobs missed inside ``replay_window_hours`` are
+        dispatched once; the rest just advance ``next_run_at``. Returns the
+        count replayed.
         """
         log.scheduler.info(
             "[scheduler] recover: entry",
             extra={"_fields": {"window_hours": replay_window_hours}},
         )
+        await reap_stale_running(self._db)
         now = datetime.now(UTC)
-        rows = await self._db.fetch_all(
-            "SELECT * FROM jobs WHERE status = 'pending' AND next_run_at <= ?",
-            (now.isoformat(),),
-        )
+        sql = "SELECT * FROM jobs WHERE status = 'pending' AND next_run_at <= ?"
+        rows = await self._db.fetch_all(sql, (now.isoformat(),))
         replayed = 0
         for row in rows:
             job = row_to_job(row)
@@ -284,4 +283,17 @@ class JobScheduler(SupervisedTask):
         log.scheduler.debug("[scheduler] list_jobs: exit", extra={"_fields": {"count": len(jobs)}})
         return jobs
 
+    async def update_job(
+        self,
+        job_id: str,
+        *,
+        schedule: str | None = None,
+        goal: str | None = None,
+        params: dict[str, object] | None = None,
+    ) -> Job | None:
+        """Update a job in place — thin delegate to ``scheduler_mutations`` (B2)."""
+        return await update_job(self._db, job_id, schedule=schedule, goal=goal, params=params)
 
+    async def run_now(self, job_id: str) -> JobResult | None:
+        """Run one job out of band — thin delegate; mirrors the poller's CAS (B2)."""
+        return await run_now(self._db, self._clock, self._registry, job_id)
