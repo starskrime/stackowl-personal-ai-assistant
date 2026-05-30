@@ -251,6 +251,9 @@ class ToolRegistry:
         from stackowl.tools.knowledge.transcripts import TranscriptsTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
+        from stackowl.tools.planning.store import PlanStore
+        from stackowl.tools.planning.todo import TodoTool
+        from stackowl.tools.planning.update_plan import UpdatePlanTool
         from stackowl.tools.system.shell import ShellTool
 
         registry = cls()
@@ -285,4 +288,10 @@ class ToolRegistry:
         registry.register(SkillsListTool())
         registry.register(SessionSearchTool())
         registry.register(TranscriptsTool())
+        # todo + update_plan share ONE PlanStore so they write a single plan slot
+        # (operator decision): todo mutates individual items; update_plan replaces
+        # the whole plan — same source of truth (cf. the shared UndoStore above).
+        _plan_store = PlanStore()
+        registry.register(TodoTool(store=_plan_store))
+        registry.register(UpdatePlanTool(store=_plan_store))
         return registry
