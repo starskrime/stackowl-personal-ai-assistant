@@ -721,7 +721,12 @@ def format_scan_report(result: ScanResult) -> str:
             sev = f.severity.upper().ljust(8)
             cat = f.category.ljust(14)
             loc = f"{f.file}:{f.line}".ljust(28)
-            lines.append(f"  {sev} {cat} {loc} \"{f.match[:60]}\"")
+            # Don't echo the matched text for high/critical findings — those are
+            # exactly the secret/exfil hits whose match could surface a real
+            # credential back into the model context. Category + location is enough
+            # for the agent to locate and fix it (MINOR-2).
+            shown = "[redacted]" if f.severity in ("critical", "high") else f.match[:60]
+            lines.append(f'  {sev} {cat} {loc} "{shown}"')
     return "\n".join(lines)
 
 
