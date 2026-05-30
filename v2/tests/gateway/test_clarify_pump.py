@@ -23,6 +23,7 @@ from stackowl.pipeline.streaming import ResponseChunk, StreamReader, StreamRegis
 @dataclass
 class _FakeEntry:
     question: str = "Which colour?"
+    choices: tuple[str, ...] = ()
     event: asyncio.Event | None = None
 
 
@@ -30,9 +31,14 @@ class _FakeGateway:
     """Duck-typed ClarifyGateway surface the pump touches."""
 
     def __init__(self) -> None:
+        self.peek_result: _FakeEntry | None = None
         self.resolve_result: _FakeEntry | None = None
         self.cleared: list[str] = []
+        self.cancelled: list[tuple[str, str]] = []
         self.resolve_calls: list[tuple[str, str, str]] = []
+
+    def peek_for_session(self, session_id: str, channel: str) -> _FakeEntry | None:
+        return self.peek_result
 
     def try_resolve(self, session_id: str, channel: str, answer: str) -> _FakeEntry | None:
         self.resolve_calls.append((session_id, channel, answer))
@@ -41,6 +47,22 @@ class _FakeGateway:
     def clear_session(self, session_id: str) -> list[str]:
         self.cleared.append(session_id)
         return []
+
+    def cancel_pending(self, session_id: str, channel: str) -> str | None:
+        self.cancelled.append((session_id, channel))
+        return None
+
+
+class _FakeClassifier:
+    """Stubs ClarifyIntentClassifier.is_answer with a fixed verdict."""
+
+    def __init__(self, verdict: bool) -> None:
+        self._verdict = verdict
+        self.calls: list[str] = []
+
+    async def is_answer(self, *, question: str, choices: object, message: str) -> bool:
+        self.calls.append(message)
+        return self._verdict
 
 
 class _DrainingAdapter:
@@ -54,57 +76,97 @@ class _DrainingAdapter:
             self.chunks.append(chunk.content)
 
 
-def _pump() -> tuple[ClarifyPump, _FakeGateway, StreamRegistry]:
+def _pump(classifier: _FakeClassifier | None = None) -> tuple[ClarifyPump, _FakeGateway, StreamRegistry]:
     gw = _FakeGateway()
     reg = StreamRegistry()
-    return ClarifyPump(gw, reg), gw, reg  # type: ignore[arg-type]
+    return ClarifyPump(gw, reg, classifier), gw, reg  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------- resolve_or_rewrite
 
 
-def test_resolve_blocking_consumes_no_new_turn() -> None:
+async def test_resolve_blocking_consumes_no_new_turn() -> None:
     pump, gw, _ = _pump()
     ev = asyncio.Event()
     ev.set()  # a blocking resolve: the parked waiter was woken
+    gw.peek_result = _FakeEntry(event=ev)  # a clarify is pending
     gw.resolve_result = _FakeEntry(event=ev)
-    consumed, text = pump.resolve_or_rewrite(
+    consumed, text = await pump.resolve_or_rewrite(
         session_id="s1", channel="cli", route="owl", target="default", input_text="blue",
     )
     assert consumed is True
     assert text == "blue"
 
 
-def test_resolve_turn_yield_rewrites_input() -> None:
+async def test_resolve_turn_yield_rewrites_input() -> None:
     pump, gw, _ = _pump()
+    gw.peek_result = _FakeEntry(question="Which colour?", event=None)
     gw.resolve_result = _FakeEntry(question="Which colour?", event=None)  # turn-yield
-    consumed, text = pump.resolve_or_rewrite(
+    consumed, text = await pump.resolve_or_rewrite(
         session_id="s1", channel="cli", route="owl", target="default", input_text="blue",
     )
     assert consumed is False
     assert "Which colour?" in text and "blue" in text
 
 
-def test_no_pending_passes_through() -> None:
+async def test_no_pending_passes_through() -> None:
     pump, gw, _ = _pump()
-    gw.resolve_result = None
-    consumed, text = pump.resolve_or_rewrite(
+    gw.peek_result = None  # no clarify in flight
+    consumed, text = await pump.resolve_or_rewrite(
         session_id="s1", channel="cli", route="owl", target="default", input_text="hello",
     )
     assert consumed is False
     assert text == "hello"
+    assert gw.resolve_calls == []  # never consulted try_resolve
 
 
-def test_command_is_never_an_answer_and_reset_clears() -> None:
+async def test_command_is_never_an_answer_and_reset_clears() -> None:
     pump, gw, _ = _pump()
-    gw.resolve_result = _FakeEntry(event=asyncio.Event())  # would resolve if consulted
-    consumed, text = pump.resolve_or_rewrite(
+    gw.peek_result = _FakeEntry(event=asyncio.Event())  # would resolve if consulted
+    consumed, text = await pump.resolve_or_rewrite(
         session_id="s1", channel="cli", route="command", target="reset", input_text="/reset",
     )
     assert consumed is False
     assert text == "/reset"
     assert gw.cleared == ["s1"]  # /reset cleared the pending clarify
     assert gw.resolve_calls == []  # try_resolve never consulted for a command
+
+
+async def test_classifier_new_request_cancels_and_runs_fresh() -> None:
+    # A clarify is pending; the typed reply is classified NEW_REQUEST → the pump
+    # CANCELS the clarify (cancel_pending — a pivot, NOT clear_session, so the
+    # parked waiter wakes CANCELLED not TIMED_OUT) and returns the message for a
+    # fresh turn.
+    classifier = _FakeClassifier(verdict=False)
+    pump, gw, _ = _pump(classifier)
+    gw.peek_result = _FakeEntry(question="Which colour?", event=asyncio.Event())
+    consumed, text = await pump.resolve_or_rewrite(
+        session_id="s1", channel="cli", route="owl", target="default",
+        input_text="actually, what's the weather?",
+    )
+    assert consumed is False
+    assert text == "actually, what's the weather?"  # original message, not swallowed
+    assert gw.cancelled == [("s1", "cli")]  # parked turn cancelled via the PIVOT path
+    assert gw.cleared == []  # NOT clear_session (that wakes TIMED_OUT, wrong outcome)
+    assert gw.resolve_calls == []  # never resolved with the unrelated message
+    assert classifier.calls == ["actually, what's the weather?"]
+
+
+async def test_classifier_answer_resolves() -> None:
+    # Classified ANSWER → resolves the parked turn as normal.
+    classifier = _FakeClassifier(verdict=True)
+    pump, gw, _ = _pump(classifier)
+    ev = asyncio.Event()
+    ev.set()
+    gw.peek_result = _FakeEntry(event=ev)
+    gw.resolve_result = _FakeEntry(event=ev)
+    consumed, text = await pump.resolve_or_rewrite(
+        session_id="s1", channel="cli", route="owl", target="default", input_text="blue",
+    )
+    assert consumed is True
+    assert classifier.calls == ["blue"]
+    assert gw.cleared == []  # NOT cancelled — it was a real answer
+    assert gw.resolve_calls == [("s1", "cli", "blue")]
 
 
 # ------------------------------------------------------------ serialize_prior

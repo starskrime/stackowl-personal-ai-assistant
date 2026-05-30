@@ -21,7 +21,7 @@ from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.clarify import TelegramClarifyResolver
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.interaction.clarify_gateway import ClarifyGateway
+from stackowl.interaction.clarify_gateway import OUTCOME_ANSWERED, ClarifyGateway
 
 USER_ID = 555444
 
@@ -148,9 +148,9 @@ async def test_tap_resolves_parked_waiter_with_chosen_text() -> None:
     await asyncio.sleep(0)  # let it park on the event
     await resolver.handle_callback("cbid", f"clarify:{cid}:1")
 
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
     assert answer == "blue"  # choices[1]
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
 
 
 @pytest.mark.asyncio
@@ -163,9 +163,9 @@ async def test_tap_resolve_before_park_still_delivers() -> None:
 
     # Tap BEFORE the waiter parks — peek/try_resolve leave the entry for the waiter.
     await resolver.handle_callback("cbid", f"clarify:{cid}:0")
-    answer, timed_out = await gw.wait_for_answer(cid, timeout=5.0)
+    answer, outcome = await gw.wait_for_answer(cid, timeout=5.0)
     assert answer == "red"
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
 
 
 @pytest.mark.asyncio
@@ -245,9 +245,9 @@ async def test_tap_resolves_by_id_independent_of_cap_one() -> None:
 
     await resolver.handle_callback("cbid", "clarify:CID_A:1")
 
-    answer, timed_out = await waiter_a
+    answer, outcome = await waiter_a
     assert answer == "a1"  # A's choices[1], NOT b1
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
     # B is fully untouched — proves the resolve did not session-match the first.
     assert entry_b.answer is None
     assert not entry_b.event.is_set()
@@ -286,6 +286,6 @@ async def test_blank_choice_in_middle_keeps_idx_alignment() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)
     await resolver.handle_callback("cbid", f"clarify:{cid}:2")
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
     assert answer == "blue"
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED

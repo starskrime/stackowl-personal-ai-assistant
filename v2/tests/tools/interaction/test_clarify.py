@@ -94,6 +94,34 @@ async def test_interactive_graceful_timeout(with_gateway: ClarifyGateway) -> Non
     assert "ABORT" in result.output
 
 
+async def test_interactive_pivot_returns_cancelled(with_gateway: ClarifyGateway) -> None:
+    """A user PIVOT (cancel_pending) yields the DISTINCT set-aside result.
+
+    Driving a parked ``ClarifyTool.execute`` and then calling
+    ``gateway.cancel_pending`` must produce the ``_CANCELLED`` "moved on / set that
+    aside" text — NOT the ``_TIMED_OUT`` assumption text — so the model never
+    best-guesses an answer to the abandoned (possibly consequential) question.
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        task = asyncio.ensure_future(
+            ClarifyTool().execute(question="delete which file?"),
+        )
+        await asyncio.sleep(0)  # let it register + park on the waiter
+        cancelled_id = with_gateway.cancel_pending("s1", "cli")
+        assert cancelled_id is not None  # a parked waiter was woken (pivot)
+        result = await task
+    finally:
+        TraceContext.reset(trace)
+
+    assert result.success is True
+    # The distinct set-aside framing — NOT the timeout/assumption framing.
+    assert "moved on" in result.output
+    assert "setting that question aside" in result.output
+    assert "did not reply in time" not in result.output
+    assert "best assumption" not in result.output
+
+
 async def test_choices_passed_through_unchanged(with_gateway: ClarifyGateway) -> None:
     """Choices are passed through verbatim — no synthetic 'Other' is appended."""
     trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")

@@ -40,6 +40,7 @@ from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.interaction.clarify_gateway import ClarifyGateway
+    from stackowl.interaction.intent_classifier import ClarifyIntentClassifier
     from stackowl.pipeline.streaming import (
         ResponseChunk,
         StreamRegistry,
@@ -64,17 +65,24 @@ class ClarifyPump:
     """Clarify-aware turn dispatch for one channel loop (owns its in-flight map)."""
 
     def __init__(
-        self, clarify_gateway: ClarifyGateway, stream_registry: StreamRegistry,
+        self,
+        clarify_gateway: ClarifyGateway,
+        stream_registry: StreamRegistry,
+        intent_classifier: ClarifyIntentClassifier | None = None,
     ) -> None:
         self._gateway = clarify_gateway
         self._stream_registry = stream_registry
+        # Optional: classifies a during-park reply as answer vs new-request so an
+        # unrelated message isn't swallowed as the answer. None → always treat a
+        # reply as the answer (the pre-D behavior).
+        self._classifier = intent_classifier
         # Per-loop in-flight send tasks, keyed by session, so a still-delivering
         # same-session turn isn't clobbered when the slot is reused.
         self._inflight: dict[str, asyncio.Task[None]] = {}
 
     # ----------------------------------------------------------- resolve-router
 
-    def resolve_or_rewrite(
+    async def resolve_or_rewrite(
         self, *, session_id: str, channel: str, route: str, target: str, input_text: str,
     ) -> tuple[bool, str]:
         """Intercept a reply to a pending clarify.
@@ -83,9 +91,17 @@ class ClarifyPump:
 
         * ``consumed=True`` — a BLOCKING parked turn was just resumed in-place
           (its waiter was woken); the loop must start NO new turn.
-        * ``consumed=False`` — no pending clarify, or a turn-yield resolve whose
-          question + reply have been folded into the returned ``input_text`` for a
-          fresh resume turn, or a normal message.
+        * ``consumed=False`` — no pending clarify, a new-request that gracefully
+          cancelled the pending clarify (run ``input_text`` as a fresh turn), a
+          turn-yield resolve folded into the returned ``input_text``, or a normal
+          message.
+
+        When a clarify is pending and an intent classifier is configured, the
+        typed reply is classified: an ANSWER resolves the parked turn; a
+        NEW_REQUEST gracefully cancels the clarify (the parked turn wakes with a
+        distinct CANCELLED outcome — set the question aside, do NOT assume an
+        answer) and the message runs as a fresh turn — so a user who pivots isn't
+        silently answered with their unrelated message.
 
         Slash commands are never treated as answers; the ``/reset`` command
         additionally clears any pending clarify for the session. Never raises.
@@ -94,8 +110,36 @@ class ClarifyPump:
             if target == _RESET_COMMAND:
                 self._gateway.clear_session(session_id)
             return False, input_text
+
+        # Is there a pending clarify for this session+channel? (read-only)
+        pending = self._gateway.peek_for_session(session_id, channel)
+        if pending is None:
+            return False, input_text  # ordinary message — no clarify in flight
+
+        # A clarify IS pending. Decide: does this typed reply answer it, or is it a
+        # new request? (A button tap never reaches here — it resolves via the
+        # callback path.) Classifier fail-safe → answer, so we never lose a reply.
+        if self._classifier is not None:
+            is_answer = await self._classifier.is_answer(
+                question=pending.question, choices=pending.choices, message=input_text,
+            )
+            if not is_answer:
+                # The user pivoted — cancel the parked turn gracefully (it wakes
+                # with a DISTINCT cancelled outcome: set the question aside, no
+                # assumption) and run this message as a fresh turn. Use
+                # cancel_pending (a pivot), NOT clear_session (a teardown that
+                # wakes as TIMED_OUT and would wrongly invite a best-guess).
+                self._gateway.cancel_pending(session_id, channel)
+                log.gateway.info(
+                    "clarify_pump.resolve_or_rewrite: reply classified NEW_REQUEST — "
+                    "clarify cancelled, running as a fresh turn",
+                    extra={"_fields": {"session_id": session_id, "channel": channel}},
+                )
+                return False, input_text
+
         resolved = self._gateway.try_resolve(session_id, channel, input_text)
         if resolved is None:
+            # Raced away (e.g. a button tap resolved it during classification).
             return False, input_text
         if resolved.event is not None and resolved.event.is_set():
             log.gateway.info(

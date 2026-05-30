@@ -1,0 +1,320 @@
+"""Tests for :class:`ClarifyIntentClassifier`.
+
+A fake fast-tier provider returns a canned verdict (real
+``complete(messages, model, **kwargs)`` signature); is_answer maps:
+
+* ``"ANSWER"`` → True; ``"NEW"`` → False; ``"new request"`` → False.
+* whitespace/punctuation tolerant: ``"ANSWER."`` / ``" answer\n"`` → True.
+* garbage verdict (``"maybe"``) → True (fail-safe).
+* provider ``complete`` raising → True (fail-safe).
+* ``get_by_tier`` raising / no provider → True (fail-safe).
+* empty message → True (fail-safe), no provider call.
+
+Every case also asserts is_answer NEVER raises.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from typing import Literal
+
+import pytest
+
+from stackowl.interaction.intent_classifier import ClarifyIntentClassifier
+from stackowl.providers.base import CompletionResult, Message, ModelProvider
+
+_QUESTION = "Which environment should I deploy to?"
+_CHOICES = ("staging", "production")
+_MESSAGE = "production"
+
+
+class _FakeProvider(ModelProvider):
+    """Fast-tier provider stand-in honouring the real ModelProvider.complete sig.
+
+    Returns ``canned_verdict`` from complete(); if ``raise_on_complete`` is set,
+    complete() raises it. Records the messages it was called with for assertion.
+    """
+
+    def __init__(
+        self,
+        canned_verdict: str = "ANSWER",
+        *,
+        raise_on_complete: Exception | None = None,
+        hang_seconds: float | None = None,
+    ) -> None:
+        self._verdict = canned_verdict
+        self._raise = raise_on_complete
+        self._hang_seconds = hang_seconds
+        self.calls: list[list[Message]] = []
+
+    @property
+    def name(self) -> str:
+        return "fake-fast"
+
+    @property
+    def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object,
+    ) -> CompletionResult:
+        self.calls.append(list(messages))
+        if self._hang_seconds is not None:
+            await asyncio.sleep(self._hang_seconds)
+        if self._raise is not None:
+            raise self._raise
+        return CompletionResult(
+            content=self._verdict,
+            input_tokens=1,
+            output_tokens=1,
+            model="fake-model",
+            provider_name=self.name,
+            duration_ms=1.0,
+        )
+
+    async def stream(  # pragma: no cover — unused by the classifier
+        self, messages: list[Message], model: str, **kwargs: object,
+    ) -> AsyncIterator[str]:
+        yield ""
+
+
+class _FakeRegistry:
+    """Minimal registry: get_by_tier returns a provided provider (or raises)."""
+
+    def __init__(
+        self,
+        provider: ModelProvider | None = None,
+        *,
+        raise_on_get: Exception | None = None,
+    ) -> None:
+        self._provider = provider
+        self._raise = raise_on_get
+        self.tiers_requested: list[str] = []
+
+    def get_by_tier(self, tier: str) -> ModelProvider:
+        self.tiers_requested.append(tier)
+        if self._raise is not None:
+            raise self._raise
+        assert self._provider is not None  # test wiring guarantee
+        return self._provider
+
+
+def _make(
+    provider: ModelProvider | None = None,
+    *,
+    raise_on_get: Exception | None = None,
+    timeout_s: float = 3.0,
+) -> tuple[ClarifyIntentClassifier, _FakeRegistry]:
+    registry = _FakeRegistry(provider, raise_on_get=raise_on_get)
+    classifier = ClarifyIntentClassifier(registry, timeout_s=timeout_s)  # type: ignore[arg-type]
+    return classifier, registry
+
+
+# ----------------------------------------------------------------- verdict map
+
+
+@pytest.mark.asyncio
+async def test_answer_verdict_is_true() -> None:
+    classifier, registry = _make(_FakeProvider("ANSWER"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+    # Resolved the FAST tier.
+    assert registry.tiers_requested == ["fast"]
+
+
+@pytest.mark.asyncio
+async def test_new_verdict_is_false() -> None:
+    classifier, _ = _make(_FakeProvider("NEW"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message="actually, what's the weather?",
+    )
+    assert out is False
+
+
+@pytest.mark.asyncio
+async def test_new_request_phrase_is_false() -> None:
+    classifier, _ = _make(_FakeProvider("new request"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message="show me my calendar",
+    )
+    assert out is False
+
+
+@pytest.mark.asyncio
+async def test_answer_with_trailing_punctuation_is_true() -> None:
+    classifier, _ = _make(_FakeProvider("ANSWER."))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_answer_with_surrounding_whitespace_is_true() -> None:
+    classifier, _ = _make(_FakeProvider(" answer\n"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+
+
+# ------------------------------------------------------------------ fail-safe
+
+
+@pytest.mark.asyncio
+async def test_garbage_verdict_fail_safe_true() -> None:
+    classifier, _ = _make(_FakeProvider("maybe"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_provider_raising_fail_safe_true() -> None:
+    classifier, _ = _make(
+        _FakeProvider(raise_on_complete=RuntimeError("boom")),
+    )
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_get_by_tier_raising_fail_safe_true() -> None:
+    classifier, registry = _make(raise_on_get=RuntimeError("no providers"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+    assert registry.tiers_requested == ["fast"]
+
+
+@pytest.mark.asyncio
+async def test_empty_message_fail_safe_true_without_provider_call() -> None:
+    provider = _FakeProvider("NEW")  # would say NEW if ever called
+    classifier, registry = _make(provider)
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message="   ",
+    )
+    assert out is True
+    # Short-circuited before any provider resolution / call.
+    assert registry.tiers_requested == []
+    assert provider.calls == []
+
+
+# -------------------------------------------------------------- never raises
+
+
+@pytest.mark.asyncio
+async def test_is_answer_never_raises_across_inputs() -> None:
+    cases = [
+        _make(_FakeProvider("ANSWER")),
+        _make(_FakeProvider("NEW")),
+        _make(_FakeProvider("maybe")),
+        _make(_FakeProvider(raise_on_complete=ValueError("x"))),
+        _make(raise_on_get=RuntimeError("none")),
+    ]
+    for classifier, _ in cases:
+        out = await classifier.is_answer(
+            question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+        )
+        assert isinstance(out, bool)
+
+
+@pytest.mark.asyncio
+async def test_no_choices_still_classifies() -> None:
+    """An empty choices tuple is fine — the LLM classifies on question+reply alone."""
+    classifier, _ = _make(_FakeProvider("ANSWER"))
+    out = await classifier.is_answer(
+        question="Free text question?", choices=(), message="some answer",
+    )
+    assert out is True
+
+
+# --------------------------------------------- MAJOR-1: token-order robustness
+
+
+@pytest.mark.asyncio
+async def test_verbose_new_verdict_with_answer_token_is_false() -> None:
+    """A verbose NEW verdict that also contains 'answer' must NOT be swallowed.
+
+    Regression for token precedence: "NEW — this does not answer the question"
+    contains BOTH tokens, but the leading token (NEW) wins, so the pivot is preserved
+    instead of being misclassified as an answer (the old "answer"-first bug).
+    """
+    classifier, _ = _make(
+        _FakeProvider("NEW — this does not answer the question"),
+    )
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message="actually, what's the weather?",
+    )
+    assert out is False
+
+
+@pytest.mark.asyncio
+async def test_answer_alone_is_true() -> None:
+    classifier, _ = _make(_FakeProvider("ANSWER"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_new_alone_is_false() -> None:
+    classifier, _ = _make(_FakeProvider("NEW"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message="show me my calendar",
+    )
+    assert out is False
+
+
+@pytest.mark.asyncio
+async def test_both_tokens_genuinely_ambiguous_is_true_fail_safe() -> None:
+    """Both tokens present with no clear winner → fail-safe True (treat as answer)."""
+    classifier, _ = _make(_FakeProvider("answer or new?"))
+    out = await classifier.is_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert out is True
+
+
+# ------------------------------------------------ MAJOR-2: bounded by a timeout
+
+
+@pytest.mark.asyncio
+async def test_hung_provider_fail_safe_true_quickly() -> None:
+    """A hung fast provider fail-safes to True without HOL-blocking the loop.
+
+    The classifier is built with a 50ms timeout against a provider that sleeps 10s;
+    the whole call is itself wrapped in a 2s wait_for to PROVE it does not hang.
+    """
+    classifier, _ = _make(_FakeProvider(hang_seconds=10.0), timeout_s=0.05)
+    out = await asyncio.wait_for(
+        classifier.is_answer(
+            question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+        ),
+        timeout=2.0,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_through_is_answer() -> None:
+    """Cancelling the awaiting task tears it down — CancelledError is not swallowed."""
+    classifier, _ = _make(_FakeProvider(hang_seconds=10.0), timeout_s=10.0)
+    task = asyncio.ensure_future(
+        classifier.is_answer(
+            question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+        )
+    )
+    # Let the task reach the awaited provider.complete().
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

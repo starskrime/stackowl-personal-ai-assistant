@@ -236,6 +236,14 @@ class SchedulerAssembly:
             db, handler_name="reflection_writer", schedule="every 15m",
             interval_minutes=15,
         )
+        # Clarify sweep reaps abandoned turn-yield clarify entries (blocking ones
+        # self-reap via their own park timeout). The INTERVAL is intentionally a
+        # FRACTION of CLARIFY_TTL_SECONDS (30m TTL) so an aged entry never lives
+        # ~2×TTL before being swept — interval << TTL is deliberate.
+        await _seed_minutes_schedule(
+            db, handler_name="clarify_sweep", schedule="every 10m",
+            interval_minutes=10,
+        )
         # Skill synthesizer runs once per day at 03:30 (between knowledge_prune
         # at 04:00 and evolution at 02:00) — needs ≥several days of outcomes
         # to find qualifying clusters, so daily is the right cadence.

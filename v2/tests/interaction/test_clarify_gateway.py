@@ -7,10 +7,11 @@ drops + returns ids; sweep_expired drops old entries (injected clock);
 no-adapter still registers but logs an undelivered delivery.
 
 Covers (blocking-await): blocking ask sets an event; wait_for_answer returns the
-answer after a concurrent try_resolve; wait_for_answer times out → (None, True) +
-entry popped; try_resolve on a blocking entry sets answer + wakes the parked
-waiter; cap-one replace abandons the prior parked waiter; clear_session /
-sweep_expired wake a parked waiter (timed_out).
+answer after a concurrent try_resolve; wait_for_answer times out →
+(None, OUTCOME_TIMED_OUT) + entry popped; try_resolve on a blocking entry sets
+answer + wakes the parked waiter; cap-one replace abandons the prior parked
+waiter; clear_session / sweep_expired / clear_all wake a parked waiter
+(OUTCOME_TIMED_OUT); cancel_pending wakes a parked waiter (OUTCOME_CANCELLED).
 """
 
 from __future__ import annotations
@@ -19,7 +20,13 @@ import asyncio
 
 import pytest
 
-from stackowl.interaction.clarify_gateway import ClarifyGateway, PendingClarify
+from stackowl.interaction.clarify_gateway import (
+    OUTCOME_ANSWERED,
+    OUTCOME_CANCELLED,
+    OUTCOME_TIMED_OUT,
+    ClarifyGateway,
+    PendingClarify,
+)
 
 
 class _FakeAdapter:
@@ -155,10 +162,10 @@ async def test_try_resolve_by_id_blocking_sets_answer_without_pop() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)  # let the waiter park on the event
     match = gw.try_resolve_by_id(cid, "blue")
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
 
     assert answer == "blue"
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
     assert match is not None
     assert match.clarify_id == cid
     assert match.answer == "blue"
@@ -237,6 +244,48 @@ async def test_peek_unknown_id_returns_none() -> None:
     assert gw.peek("nope") is None
 
 
+# ------------------------------------------------------- peek_for_session
+
+
+@pytest.mark.asyncio
+async def test_peek_for_session_returns_entry_without_pop_or_event_touch() -> None:
+    gw = ClarifyGateway()
+    cid = await gw.ask("s1", "cli", "q?", choices=("A", "B"), blocking=True)
+
+    entry = gw.peek_for_session("s1", "cli")
+    assert isinstance(entry, PendingClarify)
+    assert entry.clarify_id == cid
+    assert entry.choices == ("A", "B")
+    # Pure read: entry stays in _pending and its event is untouched.
+    assert cid in gw._pending
+    assert entry.event is not None and not entry.event.is_set()
+    assert entry.answer is None
+    # Still resolvable afterwards (peek did not consume it).
+    assert gw.try_resolve("s1", "cli", "A") is not None
+
+
+@pytest.mark.asyncio
+async def test_peek_for_session_no_match_returns_none() -> None:
+    gw = ClarifyGateway()
+    assert gw.peek_for_session("s1", "cli") is None
+    await gw.ask("s1", "cli", "q?")
+    # Wrong session → None.
+    assert gw.peek_for_session("s2", "cli") is None
+
+
+@pytest.mark.asyncio
+async def test_peek_for_session_respects_channel_binding() -> None:
+    """A telegram-bound pending is NOT returned for a cli peek (and vice versa)."""
+    gw = ClarifyGateway()
+    await gw.ask("s1", "telegram", "q?")
+    # Right session, wrong channel → None.
+    assert gw.peek_for_session("s1", "cli") is None
+    # Correct channel returns it.
+    entry = gw.peek_for_session("s1", "telegram")
+    assert entry is not None
+    assert entry.channel == "telegram"
+
+
 # ----------------------------------------------------------- clear_session
 
 
@@ -257,6 +306,64 @@ async def test_clear_session_drops_and_returns_ids() -> None:
 async def test_clear_session_no_entries_returns_empty() -> None:
     gw = ClarifyGateway()
     assert gw.clear_session("nope") == []
+
+
+# ----------------------------------------------------------- cancel_pending
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_wakes_parked_waiter_with_cancelled() -> None:
+    """A user PIVOT cancels the parked clarify with a DISTINCT cancelled outcome.
+
+    The parked ``wait_for_answer`` must wake with ``(None, OUTCOME_CANCELLED)`` —
+    NOT timed_out — so the tool sets the question aside instead of inviting a
+    best-guess assumption on a possibly-consequential action.
+    """
+    gw = ClarifyGateway()
+    cid = await gw.ask("s1", "cli", "delete which file?", blocking=True)
+
+    waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
+    await asyncio.sleep(0)  # park on the entry's event
+
+    cancelled_id = gw.cancel_pending("s1", "cli")
+    answer, outcome = await waiter
+
+    assert cancelled_id == cid
+    assert answer is None
+    assert outcome == OUTCOME_CANCELLED
+    # Entry is gone — a later reply can't mis-resolve it.
+    assert cid not in gw._pending
+    assert gw.try_resolve("s1", "cli", "late") is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_no_pending_returns_none() -> None:
+    gw = ClarifyGateway()
+    assert gw.cancel_pending("s1", "cli") is None
+    # A different-channel pending is not cancelled (binding enforced).
+    await gw.ask("s1", "telegram", "q?", blocking=True)
+    assert gw.cancel_pending("s1", "cli") is None
+    assert gw.peek_for_session("s1", "telegram") is not None
+
+
+@pytest.mark.asyncio
+async def test_clear_session_wakes_as_timed_out_not_cancelled() -> None:
+    """clear_session is a TEARDOWN — its waiter wakes TIMED_OUT, never CANCELLED.
+
+    Only a user pivot (cancel_pending) yields CANCELLED; a /new or shutdown
+    clear is a timeout-shaped abandon.
+    """
+    gw = ClarifyGateway()
+    cid = await gw.ask("s1", "cli", "q?", blocking=True)
+
+    waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
+    await asyncio.sleep(0)
+
+    gw.clear_session("s1")
+    answer, outcome = await waiter
+
+    assert answer is None
+    assert outcome == OUTCOME_TIMED_OUT
 
 
 # ----------------------------------------------------------- sweep_expired
@@ -322,10 +429,10 @@ async def test_wait_for_answer_resolved_concurrently() -> None:
     waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
     await asyncio.sleep(0)  # let the waiter actually park on the event
     match = gw.try_resolve("s1", "cli", "blue")
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
 
     assert answer == "blue"
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
     # try_resolve returned the (popped) entry with its event now set — the
     # router's signal that this was a blocking (in-turn) resolve.
     assert match is not None
@@ -355,9 +462,9 @@ async def test_wait_for_answer_resolve_before_park() -> None:
     assert cid in gw._pending
 
     # Now park: event already set → returns the answer without waiting.
-    answer, timed_out = await gw.wait_for_answer(cid, timeout=5.0)
+    answer, outcome = await gw.wait_for_answer(cid, timeout=5.0)
     assert answer == "blue"
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
     # The waiter owns the pop — entry is gone afterwards.
     assert cid not in gw._pending
 
@@ -375,9 +482,9 @@ async def test_wait_for_answer_resolve_real_empty_string() -> None:
     match = gw.try_resolve("s1", "cli", "")
     assert match is not None
 
-    answer, timed_out = await gw.wait_for_answer(cid, timeout=5.0)
+    answer, outcome = await gw.wait_for_answer(cid, timeout=5.0)
     assert answer == ""
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
     assert cid not in gw._pending
 
 
@@ -397,9 +504,9 @@ async def test_double_resolve_before_park_delivers_once() -> None:
     assert first is not None
     assert second is first  # same entry re-set, never a different one
 
-    answer, timed_out = await gw.wait_for_answer(cid, timeout=5.0)
+    answer, outcome = await gw.wait_for_answer(cid, timeout=5.0)
     assert answer == "green"  # last-writer-wins; an answer is delivered
-    assert timed_out is False
+    assert outcome == OUTCOME_ANSWERED
     assert cid not in gw._pending
 
     # Entry gone → a further resolve finds nothing.
@@ -420,11 +527,11 @@ async def test_abandon_while_parked_returns_timed_out() -> None:
     await asyncio.sleep(0)  # park on the entry's event
 
     dropped = gw.clear_session("s1")
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
 
     assert dropped == [cid]
     assert answer is None
-    assert timed_out is True
+    assert outcome == OUTCOME_TIMED_OUT
 
 
 @pytest.mark.asyncio
@@ -432,10 +539,10 @@ async def test_wait_for_answer_times_out_and_pops() -> None:
     gw = ClarifyGateway()
     cid = await gw.ask("s1", "cli", "q?", blocking=True)
 
-    answer, timed_out = await gw.wait_for_answer(cid, timeout=0.05)
+    answer, outcome = await gw.wait_for_answer(cid, timeout=0.05)
 
     assert answer is None
-    assert timed_out is True
+    assert outcome == OUTCOME_TIMED_OUT
     # Entry popped so a late reply is ignored.
     assert cid not in gw._pending
     assert gw.try_resolve("s1", "cli", "late") is None
@@ -444,9 +551,9 @@ async def test_wait_for_answer_times_out_and_pops() -> None:
 @pytest.mark.asyncio
 async def test_wait_for_answer_absent_entry_returns_timed_out() -> None:
     gw = ClarifyGateway()
-    answer, timed_out = await gw.wait_for_answer("nope", timeout=0.05)
+    answer, outcome = await gw.wait_for_answer("nope", timeout=0.05)
     assert answer is None
-    assert timed_out is True
+    assert outcome == OUTCOME_TIMED_OUT
 
 
 @pytest.mark.asyncio
@@ -474,11 +581,11 @@ async def test_cap_one_replace_abandons_prior_blocking_waiter() -> None:
     # A second ask for the same session replaces the first and must wake (abandon)
     # the orphaned waiter rather than leak it.
     cid2 = await gw.ask("s1", "cli", "second?", blocking=True)
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
 
     assert cid1 != cid2
     assert answer is None
-    assert timed_out is True  # abandoned → woken with no answer
+    assert outcome == OUTCOME_TIMED_OUT  # abandoned → woken with no answer
     # Only the second entry survives.
     assert cid1 not in gw._pending
     assert cid2 in gw._pending
@@ -519,11 +626,11 @@ async def test_clear_session_wakes_blocking_waiter() -> None:
     await asyncio.sleep(0)
 
     dropped = gw.clear_session("s1")
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
 
     assert dropped == [cid]
     assert answer is None
-    assert timed_out is True
+    assert outcome == OUTCOME_TIMED_OUT
 
 
 @pytest.mark.asyncio
@@ -538,8 +645,53 @@ async def test_sweep_expired_wakes_blocking_waiter() -> None:
 
     clock.now = 200.0
     n = gw.sweep_expired(10.0)
-    answer, timed_out = await waiter
+    answer, outcome = await waiter
 
     assert n == 1
     assert answer is None
-    assert timed_out is True
+    assert outcome == OUTCOME_TIMED_OUT
+
+
+# --------------------------------------------------------------- clear_all
+
+
+@pytest.mark.asyncio
+async def test_clear_all_drops_every_session_and_returns_ids() -> None:
+    gw = ClarifyGateway()
+    cid_a = await gw.ask("s1", "cli", "qa?")
+    cid_b = await gw.ask("s2", "cli", "qb?")
+    cid_c = await gw.ask("s3", "telegram", "qc?")
+
+    dropped = gw.clear_all()
+
+    # Every entry across every session+channel is returned.
+    assert set(dropped) == {cid_a, cid_b, cid_c}
+    # Registry is empty — nothing resolvable anymore.
+    assert gw.try_resolve("s1", "cli", "a") is None
+    assert gw.try_resolve("s2", "cli", "a") is None
+    assert gw.try_resolve("s3", "telegram", "a") is None
+    # Second call is a no-op (idempotent teardown).
+    assert gw.clear_all() == []
+
+
+@pytest.mark.asyncio
+async def test_clear_all_no_entries_returns_empty() -> None:
+    gw = ClarifyGateway()
+    assert gw.clear_all() == []
+
+
+@pytest.mark.asyncio
+async def test_clear_all_wakes_parked_blocking_waiter() -> None:
+    gw = ClarifyGateway()
+    cid = await gw.ask("s1", "cli", "q?", blocking=True)
+
+    waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
+    await asyncio.sleep(0)
+
+    dropped = gw.clear_all()
+    answer, outcome = await waiter
+
+    assert dropped == [cid]
+    # The parked blocking waiter is woken WITHOUT an answer (timed_out).
+    assert answer is None
+    assert outcome == OUTCOME_TIMED_OUT

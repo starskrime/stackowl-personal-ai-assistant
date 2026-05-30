@@ -34,6 +34,11 @@ import time
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.interaction.clarify_gateway import (
+    CLARIFY_TTL_SECONDS,
+    OUTCOME_ANSWERED,
+    OUTCOME_CANCELLED,
+)
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
@@ -41,10 +46,6 @@ from stackowl.tools.base import Tool, ToolManifest, ToolResult
 # tapped button resolves with the exact choice TEXT), so no synthetic escape-hatch
 # pseudo-choice is appended — the choices are passed through unchanged, capped.
 _MAX_CHOICES = 5
-
-# Default park timeout: a parked asyncio waiter is cheap and the concurrent
-# gateway loop frees the loop while we wait, so 30 minutes is comfortable.
-_DEFAULT_TIMEOUT_S = 1800.0
 
 # Answer frame surfaced to the model when the user replies, so it continues the
 # original turn with the answer in hand (party LLM-Ergonomics).
@@ -56,6 +57,15 @@ _TIMED_OUT = (
     "The user did not reply in time to your question ({question!r}). If this was "
     "gating a consequential action, ABORT — do not assume an answer; otherwise "
     "proceed with your best assumption and state it."
+)
+
+# Distinct PIVOT result: the user moved on to a different request without
+# answering. NOT a timeout — set the question aside, do NOT assume or act on any
+# answer to it (party Security: a pivot is not consent and not an assumption).
+_CANCELLED = (
+    "The user moved on to a different request without answering your question "
+    "({question!r}). Acknowledge in ONE short line that you're setting that "
+    "question aside; do not block, and do NOT assume or act on any answer to it."
 )
 
 # Sentinel for non-interactive contexts. ABORTS on a consequential gate; never
@@ -70,7 +80,7 @@ _NON_INTERACTIVE_SENTINEL = (
 class ClarifyTool(Tool):
     """Ask the user a question mid-turn and BLOCK until they answer (or timeout)."""
 
-    def __init__(self, *, timeout_s: float = _DEFAULT_TIMEOUT_S) -> None:
+    def __init__(self, *, timeout_s: float = CLARIFY_TTL_SECONDS) -> None:
         """Store the park timeout (seconds) the interactive path waits on.
 
         Defaults to 30 minutes — a parked asyncio waiter is cheap and the
@@ -195,7 +205,7 @@ class ClarifyTool(Tool):
                 awaiting_text=awaiting_text,
                 blocking=True,
             )
-            answer, timed_out = await gateway.wait_for_answer(
+            answer, outcome = await gateway.wait_for_answer(
                 clarify_id, timeout=self._timeout_s,
             )
         except Exception as exc:  # self-healing — never raise out of a tool
@@ -206,17 +216,25 @@ class ClarifyTool(Tool):
             )
             return self._unavailable(t0)
 
-        # 4. EXIT — graceful in-turn timeout, or the answer to continue the turn.
-        if timed_out:
+        # 4. EXIT — one of three DISTINCT outcomes: the answer (continue the turn),
+        # a user PIVOT (set the question aside, no assumption), or a graceful
+        # in-turn timeout (abort on a consequential gate, else best assumption).
+        if outcome == OUTCOME_ANSWERED:
             return self._ok(
-                _TIMED_OUT.format(question=question),
+                _ANSWERED.format(question=question, answer=answer),
                 t0,
-                extra={"clarify_id": clarify_id, "timed_out": True},
+                extra={"clarify_id": clarify_id, "answered": True},
+            )
+        if outcome == OUTCOME_CANCELLED:
+            return self._ok(
+                _CANCELLED.format(question=question),
+                t0,
+                extra={"clarify_id": clarify_id, "cancelled": True},
             )
         return self._ok(
-            _ANSWERED.format(question=question, answer=answer),
+            _TIMED_OUT.format(question=question),
             t0,
-            extra={"clarify_id": clarify_id, "answered": True},
+            extra={"clarify_id": clarify_id, "timed_out": True},
         )
 
     # ---------------------------------------------------------------- helpers

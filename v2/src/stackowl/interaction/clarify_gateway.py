@@ -63,6 +63,21 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 # collision-resistant id (Security: never sequential, INC-3).
 _ID_BYTES = 16
 
+# wait_for_answer OUTCOME constants — the second element of its return tuple.
+# A user PIVOT (NEW_REQUEST during park) produces a DISTINCT cancelled outcome,
+# never conflated with a genuine timeout (Winston/party blocker): a real answer
+# → ANSWERED; a pivot cancellation → CANCELLED (set the question aside, no
+# assumption); a sweep/clear/shutdown abandon or true timeout → TIMED_OUT.
+OUTCOME_ANSWERED = "answered"
+OUTCOME_TIMED_OUT = "timed_out"
+OUTCOME_CANCELLED = "cancelled"
+
+# Single source of truth for the clarify TTL (Winston #4). The blocking-park
+# timeout, the sweep handler TTL, and the sweep interval are all derived from
+# this one value (the sweep INTERVAL is a FRACTION of it — see assembly.py — so
+# an entry never lives ~2×TTL).
+CLARIFY_TTL_SECONDS: float = 1800.0
+
 
 @dataclass(slots=True)
 class PendingClarify:
@@ -87,6 +102,11 @@ class PendingClarify:
     created_at: float = 0.0
     answer: str | None = None
     event: asyncio.Event | None = None
+    # Set True ONLY by cancel_pending (a user pivot / NEW_REQUEST), so a parked
+    # waiter woken without an answer can distinguish a CANCELLED pivot from a
+    # TIMED_OUT sweep/clear/shutdown abandon. Cap-one replace / clear_session /
+    # sweep_expired / clear_all leave this False → those wake as TIMED_OUT.
+    cancelled: bool = False
 
 
 @dataclass
@@ -230,30 +250,36 @@ class ClarifyGateway:
 
     async def wait_for_answer(
         self, clarify_id: str, timeout: float,
-    ) -> tuple[str | None, bool]:
+    ) -> tuple[str | None, str]:
         """Park on the blocking entry's event until resolved, timed out, or gone.
 
         The WAITER owns the pop (resolve-before-park safe — see :meth:`try_resolve`).
         The entry is captured by id ONCE up front and the reference is held for the
-        rest of the call; the answer is read from that held reference, never re-got
-        by id (the entry may already be gone from ``_pending``).
+        rest of the call; the answer (and ``cancelled`` flag) are read from that
+        held reference, never re-got by id (the entry may already be gone from
+        ``_pending``).
 
-        Returns ``(answer, timed_out)``:
+        Returns ``(answer, outcome)`` where ``outcome`` is one of the module-level
+        ``OUTCOME_*`` constants:
 
         * Entry absent at entry (already resolved+popped / expired / cleared /
-          never existed) → ``(None, True)``.
-        * Event already set when we arrive (resolve-before-park) → skip waiting,
-          pop, and return ``(answer, False)``.
-        * Event set by :meth:`try_resolve` within ``timeout`` → pop, ``(answer, False)``.
-        * Event set WITHOUT an answer (the entry was abandoned by a cap-one
-          replace / clear_session / sweep_expired) → pop, ``(None, True)`` (timed_out).
+          never existed) → ``(None, OUTCOME_TIMED_OUT)``.
+        * Event already set when we arrive (resolve-before-park) with an answer →
+          skip waiting, pop, ``(answer, OUTCOME_ANSWERED)``.
+        * Event set by :meth:`try_resolve` within ``timeout`` → pop,
+          ``(answer, OUTCOME_ANSWERED)``.
+        * Event set WITHOUT an answer AND ``entry.cancelled`` (a user PIVOT via
+          :meth:`cancel_pending`) → pop, ``(None, OUTCOME_CANCELLED)``.
+        * Event set WITHOUT an answer and NOT cancelled (cap-one replace /
+          clear_session / sweep_expired / clear_all abandon) → pop,
+          ``(None, OUTCOME_TIMED_OUT)``.
         * ``timeout`` elapsed first → the entry is POPPED (so a late reply is
-          ignored, never mis-resolved) and ``(None, True)`` is returned.
+          ignored, never mis-resolved) and ``(None, OUTCOME_TIMED_OUT)``.
 
         Self-healing: any unexpected error pops the entry and returns
-        ``(None, True)``. ``CancelledError`` propagates (cooperative cancellation).
-        Only call this for a ``blocking=True`` entry whose ``event`` exists; an
-        entry with no event yields ``(None, True)``.
+        ``(None, OUTCOME_TIMED_OUT)``. ``CancelledError`` propagates (cooperative
+        cancellation). Only call this for a ``blocking=True`` entry whose ``event``
+        exists; an entry with no event yields ``(None, OUTCOME_TIMED_OUT)``.
         """
         # Capture the entry by id ONCE here and hold the reference for the rest of
         # the call. The WAITER owns the pop (try_resolve no longer pops a blocking
@@ -267,7 +293,7 @@ class ClarifyGateway:
                 "clarify_gateway.wait_for_answer: no parked entry",
                 extra={"_fields": {"clarify_id": clarify_id, "present": entry is not None}},
             )
-            return (None, True)
+            return (None, OUTCOME_TIMED_OUT)
         try:
             if not entry.event.is_set():
                 # Not yet resolved → park. (If already set — resolve-before-park —
@@ -279,7 +305,7 @@ class ClarifyGateway:
                 "clarify_gateway.wait_for_answer: timed out — entry popped",
                 extra={"_fields": {"clarify_id": clarify_id, "timeout": timeout}},
             )
-            return (None, True)
+            return (None, OUTCOME_TIMED_OUT)
         except asyncio.CancelledError:  # cooperative cancellation must propagate
             # Pop the parked entry FIRST so a cancelled wait (shutdown teardown /
             # cancelled send-task) does not leak a ghost in _pending. A later
@@ -300,27 +326,29 @@ class ClarifyGateway:
                 exc_info=exc,
                 extra={"_fields": {"clarify_id": clarify_id}},
             )
-            return (None, True)
+            return (None, OUTCOME_TIMED_OUT)
         # Resolved (or already-resolved). The WAITER pops the entry now — idempotent
         # if try_resolve/abandon already removed it. Read the answer from the HELD
         # reference (never re-get by id — the entry may already be gone from the map).
         #
-        # A real resolve writes a (non-None) answer before setting the event; an
-        # abandonment (cap-one replace / clear_session / sweep_expired) sets the
-        # event with answer still None. The latter is reported as timed_out so the
-        # parked waiter degrades gracefully instead of treating None as an answer.
+        # A real resolve writes a (non-None) answer before setting the event →
+        # ANSWERED. An abandonment sets the event with answer still None: a user
+        # PIVOT (cancel_pending) marked entry.cancelled=True → CANCELLED (set the
+        # question aside, no assumption); any other abandon (cap-one replace /
+        # clear_session / sweep_expired / clear_all) → TIMED_OUT.
         self._pending.pop(clarify_id, None)
         if entry.answer is None:
+            outcome = OUTCOME_CANCELLED if entry.cancelled else OUTCOME_TIMED_OUT
             log.gateway.info(
                 "clarify_gateway.wait_for_answer: woken without answer (abandoned)",
-                extra={"_fields": {"clarify_id": clarify_id}},
+                extra={"_fields": {"clarify_id": clarify_id, "outcome": outcome}},
             )
-            return (None, True)
+            return (None, outcome)
         log.gateway.info(
             "clarify_gateway.wait_for_answer: woken with answer",
             extra={"_fields": {"clarify_id": clarify_id}},
         )
-        return (entry.answer, False)
+        return (entry.answer, OUTCOME_ANSWERED)
 
     # ------------------------------------------------------------- try_resolve
 
@@ -504,6 +532,103 @@ class ClarifyGateway:
             )
             return None
 
+    # ------------------------------------------------------- peek_for_session
+
+    def peek_for_session(
+        self, session_id: str, channel: str,
+    ) -> PendingClarify | None:
+        """Read-only lookup of the pending entry for ``session_id`` AND ``channel``.
+
+        Mirrors :meth:`try_resolve`'s session+channel matching exactly (first
+        non-popped entry bound to BOTH keys) but is a PURE read — it NEVER pops
+        the entry and NEVER touches its event, unlike :meth:`try_resolve`. Used
+        by the pump to detect "is there a pending clarify on this session+channel?"
+        BEFORE deciding whether to classify an inbound typed message as an answer
+        vs a new request. The session+channel binding is enforced here exactly as
+        in :meth:`try_resolve` (a mismatched channel/session returns ``None``).
+        Returns the live :class:`PendingClarify` or ``None`` if there is no entry
+        for this exact pair. Never raises.
+        """
+        try:
+            match = next(
+                (
+                    e
+                    for e in self._pending.values()
+                    if e.session_id == session_id and e.channel == channel
+                ),
+                None,
+            )
+            log.gateway.debug(
+                "clarify_gateway.peek_for_session: lookup",
+                extra={
+                    "_fields": {
+                        "session_id": session_id,
+                        "channel": channel,
+                        "found": match is not None,
+                    }
+                },
+            )
+            return match
+        except Exception as exc:  # self-healing — a read must never raise
+            log.gateway.error(
+                "clarify_gateway.peek_for_session: failed — treating as not found",
+                exc_info=exc,
+                extra={"_fields": {"session_id": session_id, "channel": channel}},
+            )
+            return None
+
+    # ----------------------------------------------------------- cancel_pending
+
+    def cancel_pending(self, session_id: str, channel: str) -> str | None:
+        """Cancel the pending clarify for ``session_id`` AND ``channel`` (a PIVOT).
+
+        Called by the pump when a during-park typed reply is classified
+        NEW_REQUEST: the user moved on, so the parked question must be SET ASIDE —
+        distinct from a timeout. Finds the matching entry (same session+channel
+        binding as :meth:`peek_for_session`), marks ``entry.cancelled = True``,
+        then wakes any parked waiter via :meth:`_abandon_waiter` so its
+        :meth:`wait_for_answer` returns ``(None, OUTCOME_CANCELLED)``, and pops the
+        entry. Returns the cancelled ``clarify_id`` (or ``None`` if nothing was
+        pending). Unlike :meth:`clear_session` (a teardown that wakes as
+        TIMED_OUT), this is the user-pivot path. Never raises.
+        """
+        try:
+            match = next(
+                (
+                    e
+                    for e in self._pending.values()
+                    if e.session_id == session_id and e.channel == channel
+                ),
+                None,
+            )
+            if match is None:
+                log.gateway.debug(
+                    "clarify_gateway.cancel_pending: no pending clarify",
+                    extra={"_fields": {"session_id": session_id, "channel": channel}},
+                )
+                return None
+            match.cancelled = True
+            self._pending.pop(match.clarify_id, None)
+            self._abandon_waiter(match, reason="cancel_pending")
+            log.gateway.info(
+                "clarify_gateway.cancel_pending: cancelled pending clarify (pivot)",
+                extra={
+                    "_fields": {
+                        "session_id": session_id,
+                        "channel": channel,
+                        "clarify_id": match.clarify_id,
+                    }
+                },
+            )
+            return match.clarify_id
+        except Exception as exc:  # self-healing — never raise into the pump
+            log.gateway.error(
+                "clarify_gateway.cancel_pending: failed — treating as no pending",
+                exc_info=exc,
+                extra={"_fields": {"session_id": session_id, "channel": channel}},
+            )
+            return None
+
     # --------------------------------------------------------- _abandon_waiter
 
     @staticmethod
@@ -511,9 +636,11 @@ class ClarifyGateway:
         """Wake a parked blocking waiter without an answer so it cannot leak.
 
         If ``entry`` has an event that is still unset, set it (leaving
-        ``answer=None``) so the parked :meth:`wait_for_answer` unblocks and
-        returns ``(None, True)`` (timed_out) instead of hanging forever. A no-op
-        for turn-yield entries (no event) and for already-set events. Never raises.
+        ``answer=None``) so the parked :meth:`wait_for_answer` unblocks instead of
+        hanging forever. The outcome it reports is derived from ``entry.cancelled``:
+        a pivot (cancel_pending set it True) → ``OUTCOME_CANCELLED``; any other
+        abandon → ``OUTCOME_TIMED_OUT``. A no-op for turn-yield entries (no event)
+        and for already-set events. Never raises.
         """
         ev = entry.event
         if ev is not None and not ev.is_set():
@@ -552,6 +679,36 @@ class ClarifyGateway:
                 "clarify_gateway.clear_session: failed",
                 exc_info=exc,
                 extra={"_fields": {"session_id": session_id}},
+            )
+            return []
+
+    # ---------------------------------------------------------------- clear_all
+
+    def clear_all(self) -> list[str]:
+        """Drop ALL pending entries across every session; return their ids.
+
+        Shutdown-teardown counterpart to :meth:`clear_session`: wakes any parked
+        blocking waiter (it returns ``(None, OUTCOME_TIMED_OUT)``) via
+        :meth:`_abandon_waiter` so no coroutine leaks, then empties the registry.
+        Returns the ids of every dropped entry (empty list if none). Never raises.
+        """
+        try:
+            dropped = list(self._pending.keys())
+            for cid in dropped:
+                entry = self._pending.pop(cid, None)
+                if entry is not None:
+                    self._abandon_waiter(entry, reason="clear_all")
+            if dropped:
+                log.gateway.info(
+                    "clarify_gateway.clear_all: dropped all pending clarifies",
+                    extra={"_fields": {"dropped": dropped}},
+                )
+            return dropped
+        except Exception as exc:  # self-healing
+            log.gateway.error(
+                "clarify_gateway.clear_all: failed",
+                exc_info=exc,
+                extra={"_fields": {}},
             )
             return []
 

@@ -347,8 +347,21 @@ class StartupOrchestrator:
         # loops reach it (closure) to resolve a reply into the parked turn. Per
         # channel adapters register themselves below so the gateway can deliver.
         from stackowl.interaction.clarify_gateway import ClarifyGateway
+        from stackowl.interaction.intent_classifier import ClarifyIntentClassifier
 
         clarify_gateway = ClarifyGateway()
+        # Classifies a during-park typed reply as answer vs new-request (fast tier,
+        # fail-safe→answer) so a user who pivots isn't silently answered with their
+        # unrelated message. The clarify pumps consult it before resolving.
+        clarify_classifier = ClarifyIntentClassifier(provider_registry)
+        # Periodic reaper for abandoned turn-yield clarify entries (blocking ones
+        # self-reap via their own park timeout). Recurring job seeded in the
+        # scheduler assembly ("clarify_sweep", every 30m).
+        from stackowl.scheduler.handlers.clarify_sweep import (
+            register_clarify_sweep_handler,
+        )
+
+        register_clarify_sweep_handler(clarify_gateway)
 
         services = StepServices(
             provider_registry=provider_registry,
@@ -512,7 +525,7 @@ class StartupOrchestrator:
         # stackowl.gateway.clarify_pump.ClarifyPump.
         from stackowl.gateway.clarify_pump import ClarifyPump
 
-        cli_pump = ClarifyPump(clarify_gateway, stream_registry)
+        cli_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
 
         async def _message_loop() -> None:
             log.info("[startup] gateway: message loop started")
@@ -538,7 +551,7 @@ class StartupOrchestrator:
                         input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
                         # E5 — a reply to a pending clarify resumes its turn (or,
                         # in turn-yield fallback, seeds a fresh resume turn).
-                        consumed, input_text = cli_pump.resolve_or_rewrite(
+                        consumed, input_text = await cli_pump.resolve_or_rewrite(
                             session_id=msg.session_id, channel=msg.channel,
                             route=decision.route, target=decision.target, input_text=input_text,
                         )
@@ -648,7 +661,7 @@ class StartupOrchestrator:
                 # E5 — let the clarify gateway deliver questions over Telegram,
                 # and give the Telegram loop its own clarify-aware dispatch pump.
                 clarify_gateway.register_adapter("telegram", telegram_adapter)
-                tg_pump = ClarifyPump(clarify_gateway, stream_registry)
+                tg_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
 
                 try:
                     from stackowl.channels.telegram.callbacks import CallbackRouter
@@ -700,7 +713,7 @@ class StartupOrchestrator:
                                 decision = scanner.scan(msg)
                                 input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
                                 # E5 — resolve a reply into its parked clarify turn.
-                                consumed, input_text = tg_pump.resolve_or_rewrite(
+                                consumed, input_text = await tg_pump.resolve_or_rewrite(
                                     session_id=msg.session_id, channel=msg.channel,
                                     route=decision.route, target=decision.target, input_text=input_text,
                                 )
@@ -784,6 +797,10 @@ class StartupOrchestrator:
         try:
             await adapter.run()
         finally:
+            # E5 — drop any pending clarifies (wakes parked blocking waiters so
+            # their turns end cleanly rather than hanging on the park timeout).
+            with contextlib.suppress(Exception):
+                clarify_gateway.clear_all()
             if telegram_loop_task is not None:
                 telegram_loop_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
