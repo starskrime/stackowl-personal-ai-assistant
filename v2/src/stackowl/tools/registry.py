@@ -243,6 +243,7 @@ class ToolRegistry:
         from stackowl.tools.io.undo_store import UndoStore, UndoWriteTool
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
+        from stackowl.tools.knowledge.memory import MemoryTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
         from stackowl.tools.system.shell import ShellTool
@@ -273,4 +274,5 @@ class ToolRegistry:
         # primitive per ADR-11; tool_describe is its inspect sibling).
         registry.register(ToolSearchTool())
         registry.register(ToolDescribeTool())
+        registry.register(MemoryTool())
         return registry
