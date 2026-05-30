@@ -63,6 +63,7 @@ class SlackSlashCommandBridge:
             channel="slack",
             owl_name="secretary",
             pipeline_step="slash_command",
+            interactive=True,  # real user typed a slash command
         )
 
         try:

@@ -2,9 +2,11 @@
 
 State/context plumbing only: PipelineState carries `interactive` and
 `pending_clarify_id`; TraceContext exposes `interactive` and `channel`; both
-backends propagate state -> TraceContext; non-interactive construction sites
-(cron/parliament/A2A) build with interactive=False while channel-driven sites
-keep the interactive=True default.
+backends propagate state -> TraceContext. FAIL-CLOSED: `interactive` defaults to
+False everywhere — a human is assumed absent unless a user-facing channel
+explicitly declares True. Non-interactive sites (cron/parliament/A2A) ride that
+False default (and keep explicit interactive=False for clarity); user-facing
+channel adapters set interactive=True explicitly.
 """
 
 from __future__ import annotations
@@ -33,10 +35,16 @@ def _make_state(**overrides: object) -> PipelineState:
 # --- PipelineState fields -------------------------------------------------
 
 
-def test_pipeline_state_interactive_defaults_true() -> None:
+def test_pipeline_state_interactive_defaults_false() -> None:
+    # FAIL-CLOSED: human assumed absent unless a channel explicitly opts in.
     state = _make_state()
-    assert state.interactive is True
+    assert state.interactive is False
     assert state.pending_clarify_id is None
+
+
+def test_pipeline_state_interactive_can_be_true() -> None:
+    state = _make_state(interactive=True)
+    assert state.interactive is True
 
 
 def test_pipeline_state_interactive_can_be_false() -> None:
@@ -53,7 +61,7 @@ def test_evolve_preserves_interactive_and_pending_id() -> None:
 
 
 def test_evolve_can_update_interactive_and_pending_id() -> None:
-    state = _make_state()
+    state = _make_state(interactive=True)
     evolved = state.evolve(interactive=False, pending_clarify_id="xyz")
     assert evolved.interactive is False
     assert evolved.pending_clarify_id == "xyz"
@@ -74,11 +82,12 @@ def test_state_serialization_roundtrip_includes_new_fields() -> None:
 # --- TraceContext API shape ----------------------------------------------
 
 
-def test_trace_context_defaults_interactive_true_channel_none() -> None:
+def test_trace_context_defaults_interactive_false_channel_none() -> None:
+    # FAIL-CLOSED: start() without an explicit interactive=True assumes no human.
     token = TraceContext.start("sess")
     try:
         ctx = TraceContext.get()
-        assert ctx["interactive"] is True
+        assert ctx["interactive"] is False
         assert ctx["channel"] is None
     finally:
         TraceContext.reset(token)
@@ -95,12 +104,12 @@ def test_trace_context_exposes_interactive_and_channel() -> None:
 
 
 def test_trace_context_token_reset_restores_previous() -> None:
-    # Defaults outside any run.
-    assert TraceContext.get()["interactive"] is True
+    # Defaults outside any run (FAIL-CLOSED: interactive False).
+    assert TraceContext.get()["interactive"] is False
     assert TraceContext.get()["channel"] is None
-    token = TraceContext.start("sess", interactive=False, channel="telegram")
+    token = TraceContext.start("sess", interactive=True, channel="telegram")
     TraceContext.reset(token)
-    assert TraceContext.get()["interactive"] is True
+    assert TraceContext.get()["interactive"] is False
     assert TraceContext.get()["channel"] is None
 
 
@@ -133,10 +142,11 @@ def test_a2a_delegation_builds_non_interactive() -> None:
     assert "interactive=False" in inspect.getsource(a2a_delegation)
 
 
-def test_user_channel_state_stays_interactive() -> None:
-    # A channel/user-facing state uses the default — interactive=True.
-    state = _make_state(channel="telegram")
-    assert state.interactive is True
+def test_user_channel_state_is_interactive_when_declared() -> None:
+    # FAIL-CLOSED: user-facing channel adapters must declare interactive=True
+    # explicitly; a bare construction rides the safe False default.
+    assert _make_state(channel="telegram").interactive is False
+    assert _make_state(channel="telegram", interactive=True).interactive is True
 
 
 # --- Backend propagation --------------------------------------------------
@@ -175,12 +185,12 @@ async def test_asyncio_backend_propagates_interactive_and_channel() -> None:
 
     assert seen["interactive"] is False
     assert seen["channel"] == "cli"
-    # Context reset after the run.
-    assert TraceContext.get()["interactive"] is True
+    # Context reset after the run (FAIL-CLOSED default).
+    assert TraceContext.get()["interactive"] is False
 
 
 @pytest.mark.asyncio
-async def test_asyncio_backend_defaults_interactive_true_inside_run() -> None:
+async def test_asyncio_backend_propagates_interactive_true_inside_run() -> None:
     seen: dict[str, object] = {}
 
     async def _capturing_step(state: PipelineState) -> PipelineState:
@@ -202,7 +212,7 @@ async def test_asyncio_backend_defaults_interactive_true_inside_run() -> None:
 
     try:
         backend = AsyncioBackend(services=StepServices())
-        await backend.run(_make_state(channel="telegram"))
+        await backend.run(_make_state(channel="telegram", interactive=True))
     finally:
         reg_module.PIPELINE_STEPS[:] = orig_steps
         deliver_module.run = orig_deliver_run  # type: ignore[assignment]

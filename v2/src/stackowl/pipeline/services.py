@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
+    from stackowl.interaction.clarify_gateway import ClarifyGateway
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.learning.tool_heuristic_store import ToolHeuristicStore
     from stackowl.memory.bridge import MemoryBridge
@@ -50,6 +51,7 @@ class StepServices:
     lessons_index: LessonsIndex | None = field(default=None)
     heuristic_store: ToolHeuristicStore | None = field(default=None)
     consent_gate: ConsequentialActionGate | None = field(default=None)
+    clarify_gateway: ClarifyGateway | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

@@ -32,11 +32,14 @@ class PipelineState(BaseModel, frozen=True):
     owl_name: str
     pipeline_step: str
     # True when a user is present on the originating channel and can answer a
-    # mid-turn clarify question. Channel-driven (CLI/Telegram/etc.) runs are
-    # interactive by default; cron/scheduler, parliament, and A2A sub-pipelines
-    # construct with interactive=False so a clarify call default-denies instead
-    # of parking a coroutine with no one to answer it.
-    interactive: bool = True
+    # mid-turn clarify question. FAIL-CLOSED: defaults to False — a human is
+    # assumed ABSENT unless a user-facing channel (CLI/Telegram/etc.) EXPLICITLY
+    # sets interactive=True for a real user turn. cron/scheduler, parliament, and
+    # A2A sub-pipelines ride this False default so a clarify call default-denies
+    # (returns its ABORT sentinel) instead of parking a coroutine with no one to
+    # answer it. A forgotten flag therefore degrades safely to "clarify
+    # unavailable" rather than faking a human presence.
+    interactive: bool = False
     # ID of an in-flight clarify question awaiting a user answer for this run.
     # The Event itself lives in the (out-of-band) clarify registry — a frozen
     # model cannot hold an asyncio.Event — so only the id is carried in state.

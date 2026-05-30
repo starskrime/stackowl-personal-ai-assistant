@@ -110,4 +110,5 @@ def _build_state(command_name: str, user_id: int) -> Any:
         channel="telegram",
         owl_name="",
         pipeline_step="slash_command",
+        interactive=True,  # real user typed a slash command
     )

@@ -25,7 +25,7 @@ class TraceContext:
     _span_id: ContextVar[str | None] = ContextVar("span_id", default=None)
     _parent_span_id: ContextVar[str | None] = ContextVar("parent_span_id", default=None)
     _session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
-    _interactive: ContextVar[bool] = ContextVar("interactive", default=True)
+    _interactive: ContextVar[bool] = ContextVar("interactive", default=False)
     _channel: ContextVar[str | None] = ContextVar("channel", default=None)
 
     @classmethod
@@ -34,7 +34,7 @@ class TraceContext:
         session_id: str | None = None,
         *,
         trace_id: str | None = None,
-        interactive: bool = True,
+        interactive: bool = False,
         channel: str | None = None,
     ) -> _TraceToken:
         """Set trace context for the current async task; return a token to reset later.
@@ -47,6 +47,8 @@ class TraceContext:
         ``interactive`` and ``channel`` mirror the originating PipelineState so
         tools (which read TraceContext, not PipelineState) can tell whether a
         user is present to answer a clarify and on which channel to deliver it.
+        FAIL-CLOSED: ``interactive`` defaults to False — a human is assumed
+        absent unless a user-facing channel explicitly declares True.
         """
         return _TraceToken(
             trace=cls._trace_id.set(trace_id or str(uuid4())),

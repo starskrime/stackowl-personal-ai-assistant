@@ -95,4 +95,5 @@ def _empty_state() -> Any:
         channel="whatsapp",
         owl_name="",
         pipeline_step="slash_command",
+        interactive=True,  # real user typed a slash command
     )

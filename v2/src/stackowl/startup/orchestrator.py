@@ -342,6 +342,14 @@ class StartupOrchestrator:
             ConsentPolicy(prompter=consent_routing, audit_logger=audit_logger)
         )
 
+        # E5 — clarify pause/resume gateway. One DI singleton: tools reach it via
+        # get_services().clarify_gateway to ask the user mid-turn; the message
+        # loops reach it (closure) to resolve a reply into the parked turn. Per
+        # channel adapters register themselves below so the gateway can deliver.
+        from stackowl.interaction.clarify_gateway import ClarifyGateway
+
+        clarify_gateway = ClarifyGateway()
+
         services = StepServices(
             provider_registry=provider_registry,
             stream_registry=stream_registry,
@@ -361,6 +369,7 @@ class StartupOrchestrator:
             lessons_index=memory_components.lessons_index,
             heuristic_store=_build_heuristic_store(db_pool),
             consent_gate=consent_gate,
+            clarify_gateway=clarify_gateway,
         )
         backend = AsyncioBackend(services=services)
         parliament = ParliamentOrchestrator(
@@ -458,6 +467,8 @@ class StartupOrchestrator:
         adapter = CLIAdapter(
             tui_components=tui_components, event_bus=event_bus,
         )
+        # E5 — let the clarify gateway deliver questions back over the CLI.
+        clarify_gateway.register_adapter("cli", adapter)
 
         # 2. DECISION — define the message processing loop
         async def _deliver_parliament(topic: str, owl_names: list[str], session_id: str) -> None:
@@ -494,6 +505,15 @@ class StartupOrchestrator:
                 ))
                 await writer.close()
 
+        # E5 — clarify-aware turn dispatch. Each channel loop owns a ClarifyPump
+        # (its own in-flight map): it decouples adapter.send from receive so a
+        # parked clarify turn doesn't deadlock the loop, intercepts replies into
+        # their parked turn, and serializes same-session slot reuse. See
+        # stackowl.gateway.clarify_pump.ClarifyPump.
+        from stackowl.gateway.clarify_pump import ClarifyPump
+
+        cli_pump = ClarifyPump(clarify_gateway, stream_registry)
+
         async def _message_loop() -> None:
             log.info("[startup] gateway: message loop started")
             try:
@@ -515,17 +535,26 @@ class StartupOrchestrator:
                             extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
                         )
                         decision = scanner.scan(msg)
-                        writer, reader = stream_registry.create(msg.session_id)
                         input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
+                        # E5 — a reply to a pending clarify resumes its turn (or,
+                        # in turn-yield fallback, seeds a fresh resume turn).
+                        consumed, input_text = cli_pump.resolve_or_rewrite(
+                            session_id=msg.session_id, channel=msg.channel,
+                            route=decision.route, target=decision.target, input_text=input_text,
+                        )
+                        if consumed:
+                            continue
+                        # Don't clobber a still-delivering same-session turn.
+                        await cli_pump.serialize_prior(msg.session_id)
+                        writer, reader = stream_registry.create(msg.session_id)
                         if decision.route == "parliament" and decision.parliament_owls:
                             log.info(
                                 "[startup] gateway: routing to parliament",
                                 extra={"_fields": {"owls": decision.parliament_owls, "session_id": msg.session_id}},
                             )
-                            _task = asyncio.create_task(
+                            producer: asyncio.Task[object] = asyncio.create_task(
                                 _deliver_parliament(input_text, decision.parliament_owls, msg.session_id)
                             )
-                            _task.add_done_callback(_log_pipeline_crash)
                         elif decision.route == "command":
                             log.info(
                                 "[startup] gateway: command route",
@@ -538,12 +567,12 @@ class StartupOrchestrator:
                                 channel=msg.channel,
                                 owl_name="system",
                                 pipeline_step="start",
+                                interactive=True,  # real user typed a slash command
                             )
                             cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
-                            _task = asyncio.create_task(
+                            producer = asyncio.create_task(
                                 _deliver_command_stub(decision.target, msg.session_id, cmd_state, cmd_args)
                             )
-                            _task.add_done_callback(_log_pipeline_crash)
                         else:
                             state = PipelineState(
                                 trace_id=msg.trace_id,
@@ -552,11 +581,17 @@ class StartupOrchestrator:
                                 channel=msg.channel,
                                 owl_name=decision.target,
                                 pipeline_step="start",
+                                interactive=True,  # real user turn on the CLI channel
                             )
-                            _task = asyncio.create_task(backend.run(state))
-                            _task.add_done_callback(_log_pipeline_crash)
-                        await adapter.send(reader)
-                        stream_registry.remove(msg.session_id)
+                            producer = asyncio.create_task(backend.run(state))
+                        producer.add_done_callback(_log_pipeline_crash)
+                        # Decoupled send: frees the loop so a parked clarify turn
+                        # can receive its answer; the pump closes the writer if the
+                        # producer crashes so the send can never wedge the session.
+                        cli_pump.spawn_send(
+                            channel_adapter=adapter, reader=reader,
+                            session_id=msg.session_id, producer=producer, writer=writer,
+                        )
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001 — top-level loop guard
@@ -610,6 +645,10 @@ class StartupOrchestrator:
                 consent_routing.register("telegram", tg_consent_prompter)
 
                 await telegram_adapter.start()
+                # E5 — let the clarify gateway deliver questions over Telegram,
+                # and give the Telegram loop its own clarify-aware dispatch pump.
+                clarify_gateway.register_adapter("telegram", telegram_adapter)
+                tg_pump = ClarifyPump(clarify_gateway, stream_registry)
 
                 try:
                     from stackowl.channels.telegram.callbacks import CallbackRouter
@@ -647,8 +686,16 @@ class StartupOrchestrator:
                                     extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
                                 )
                                 decision = scanner.scan(msg)
-                                writer, reader = stream_registry.create(msg.session_id)
                                 input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
+                                # E5 — resolve a reply into its parked clarify turn.
+                                consumed, input_text = tg_pump.resolve_or_rewrite(
+                                    session_id=msg.session_id, channel=msg.channel,
+                                    route=decision.route, target=decision.target, input_text=input_text,
+                                )
+                                if consumed:
+                                    continue
+                                await tg_pump.serialize_prior(msg.session_id)
+                                writer, reader = stream_registry.create(msg.session_id)
                                 if decision.route == "parliament" and decision.parliament_owls:
                                     log.info(
                                         "[startup] gateway: routing to parliament (telegram)",
@@ -657,7 +704,7 @@ class StartupOrchestrator:
                                             "session_id": msg.session_id,
                                         }},
                                     )
-                                    _tg_task = asyncio.create_task(
+                                    tg_producer: asyncio.Task[object] = asyncio.create_task(
                                         _deliver_parliament(input_text, decision.parliament_owls, msg.session_id)
                                     )
                                 elif decision.route == "command":
@@ -672,9 +719,10 @@ class StartupOrchestrator:
                                         channel=msg.channel,
                                         owl_name="system",
                                         pipeline_step="start",
+                                        interactive=True,  # real user typed a slash command
                                     )
                                     tg_cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
-                                    _tg_task = asyncio.create_task(_deliver_command_stub(
+                                    tg_producer = asyncio.create_task(_deliver_command_stub(
                                         decision.target, msg.session_id, tg_cmd_state, tg_cmd_args,
                                     ))
                                 else:
@@ -685,11 +733,14 @@ class StartupOrchestrator:
                                         channel=msg.channel,
                                         owl_name=decision.target,
                                         pipeline_step="start",
+                                        interactive=True,  # real user turn on the Telegram channel
                                     )
-                                    _tg_task = asyncio.create_task(backend.run(state))
-                                _tg_task.add_done_callback(_log_pipeline_crash)
-                                await telegram_adapter.send(reader)
-                                stream_registry.remove(msg.session_id)
+                                    tg_producer = asyncio.create_task(backend.run(state))
+                                tg_producer.add_done_callback(_log_pipeline_crash)
+                                tg_pump.spawn_send(
+                                    channel_adapter=telegram_adapter, reader=reader,
+                                    session_id=msg.session_id, producer=tg_producer, writer=writer,
+                                )
                             except asyncio.CancelledError:
                                 raise
                             except Exception as exc:  # noqa: BLE001 — top-level loop guard

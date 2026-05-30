@@ -1,0 +1,196 @@
+"""ClarifyPump — the clarify-aware turn dispatch shared by every channel loop.
+
+The gateway message loops (CLI, Telegram, …) used to ``await adapter.send(reader)``
+inline, which COUPLES delivery to the receive loop: a turn that PARKS on a
+clarify question would deadlock the loop so the user's reply could never arrive.
+``ClarifyPump`` breaks that coupling and owns the three concerns a clarify-capable
+loop needs:
+
+* :meth:`resolve_or_rewrite` — intercept a reply to a pending clarify BEFORE any
+  stream is created. A *blocking* resolve (the parked turn's waiter was woken)
+  returns ``consumed=True`` so the loop starts NO new turn; a *turn-yield* resolve
+  folds the question + reply into a fresh resume turn; ``/reset`` clears the
+  session's pending clarify; everything else passes through untouched.
+* :meth:`serialize_prior` — because the response stream is keyed by ``session_id``
+  and :mod:`deliver` resolves the writer by ``session_id`` at delivery time, an
+  unrelated same-session turn must not reuse the slot until the prior turn has
+  finished delivering. (See ``FF-E5-B2``: re-keying streams per ``trace_id`` would
+  remove this method entirely.)
+* :meth:`spawn_send` — drain the response stream in its OWN task so the receive
+  loop is free while a turn is parked. It also guards the producer: if the turn's
+  producer task crashes (or is cancelled) BEFORE :mod:`deliver` closes the writer,
+  the send task would otherwise hang forever and wedge the session — so a producer
+  done-callback closes the writer, guaranteeing the send drains and the stream is
+  reaped (party-mode review B-1).
+
+The class is deliberately framed around primitives (``session_id``, ``channel``,
+``route``, ``target``, ``input_text``) rather than the inbound-message /
+route-decision types, so both channel loops share ONE implementation and the
+smoke/unit tests exercise the REAL pump instead of a re-simulation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Protocol
+
+from stackowl.infra.observability import log
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.interaction.clarify_gateway import ClarifyGateway
+    from stackowl.pipeline.streaming import (
+        ResponseChunk,
+        StreamRegistry,
+        StreamWriter,
+    )
+
+# The reset command name whose dispatch should also clear a pending clarify.
+_RESET_COMMAND = "reset"
+
+
+class _SendableAdapter(Protocol):
+    """Minimal surface the pump needs from a channel adapter."""
+
+    async def send(self, reader: AsyncIterator[ResponseChunk]) -> None: ...  # noqa: D102
+
+
+class _ClosableWriter(Protocol):
+    async def close(self) -> None: ...  # noqa: D102
+
+
+class ClarifyPump:
+    """Clarify-aware turn dispatch for one channel loop (owns its in-flight map)."""
+
+    def __init__(
+        self, clarify_gateway: ClarifyGateway, stream_registry: StreamRegistry,
+    ) -> None:
+        self._gateway = clarify_gateway
+        self._stream_registry = stream_registry
+        # Per-loop in-flight send tasks, keyed by session, so a still-delivering
+        # same-session turn isn't clobbered when the slot is reused.
+        self._inflight: dict[str, asyncio.Task[None]] = {}
+
+    # ----------------------------------------------------------- resolve-router
+
+    def resolve_or_rewrite(
+        self, *, session_id: str, channel: str, route: str, target: str, input_text: str,
+    ) -> tuple[bool, str]:
+        """Intercept a reply to a pending clarify.
+
+        Returns ``(consumed, input_text)``:
+
+        * ``consumed=True`` — a BLOCKING parked turn was just resumed in-place
+          (its waiter was woken); the loop must start NO new turn.
+        * ``consumed=False`` — no pending clarify, or a turn-yield resolve whose
+          question + reply have been folded into the returned ``input_text`` for a
+          fresh resume turn, or a normal message.
+
+        Slash commands are never treated as answers; the ``/reset`` command
+        additionally clears any pending clarify for the session. Never raises.
+        """
+        if route == "command":
+            if target == _RESET_COMMAND:
+                self._gateway.clear_session(session_id)
+            return False, input_text
+        resolved = self._gateway.try_resolve(session_id, channel, input_text)
+        if resolved is None:
+            return False, input_text
+        if resolved.event is not None and resolved.event.is_set():
+            log.gateway.info(
+                "clarify_pump.resolve_or_rewrite: reply resumed parked turn",
+                extra={"_fields": {"session_id": session_id, "channel": channel}},
+            )
+            return True, input_text
+        # Turn-yield fallback — re-inject the question + the user's reply so a
+        # fresh turn can act on it (the parked-turn path is the primary one).
+        log.gateway.info(
+            "clarify_pump.resolve_or_rewrite: reply -> turn-yield resume",
+            extra={"_fields": {"session_id": session_id}},
+        )
+        return False, (
+            f"[Earlier you asked the user: {resolved.question}]\n"
+            f"The user's reply: {input_text}\nContinue accordingly."
+        )
+
+    # --------------------------------------------------------- serialize-prior
+
+    async def serialize_prior(self, session_id: str) -> None:
+        """Await a still-delivering same-session turn before reusing its slot."""
+        prior = self._inflight.get(session_id)
+        if prior is not None and not prior.done():
+            with contextlib.suppress(Exception):
+                await prior
+
+    # ---------------------------------------------------------------- spawn-send
+
+    def spawn_send(
+        self,
+        *,
+        channel_adapter: _SendableAdapter,
+        reader: AsyncIterator[ResponseChunk],
+        session_id: str,
+        producer: asyncio.Task[object],
+        writer: StreamWriter | _ClosableWriter | None,
+    ) -> None:
+        """Drain the response stream in its own task; free the receive loop.
+
+        ``producer`` is the turn task (``backend.run`` / parliament / command
+        stub). If it crashes or is cancelled before :mod:`deliver` closes the
+        writer, the send task would hang on a stream that never gets its sentinel
+        and wedge the session — so a producer done-callback closes the writer
+        (idempotent) to guarantee the send drains and the stream is reaped.
+        """
+        send_task: asyncio.Task[None] = asyncio.create_task(
+            channel_adapter.send(reader)
+        )
+        self._inflight[session_id] = send_task
+
+        def _cleanup(task: asyncio.Task[None], sid: str = session_id) -> None:
+            self._stream_registry.remove(sid)
+            if self._inflight.get(sid) is task:
+                self._inflight.pop(sid, None)
+
+        send_task.add_done_callback(_cleanup)
+
+        # B-1 — guarantee the writer is closed if the producer fails/cancels
+        # before deliver does, so the send task can never hang the session.
+        if writer is not None:
+            def _close_on_producer_failure(
+                prod: asyncio.Task[object], w: object = writer, sid: str = session_id,
+            ) -> None:
+                failed = prod.cancelled() or (
+                    not prod.cancelled() and prod.exception() is not None
+                )
+                if not failed:
+                    return
+                log.gateway.warning(
+                    "clarify_pump.spawn_send: producer failed before close — "
+                    "closing writer so the send task drains",
+                    extra={"_fields": {"session_id": sid}},
+                )
+                with contextlib.suppress(RuntimeError):
+                    asyncio.create_task(self._safe_close(w))  # type: ignore[arg-type]
+
+            producer.add_done_callback(_close_on_producer_failure)
+
+    @staticmethod
+    async def _safe_close(writer: _ClosableWriter) -> None:
+        """Close a writer, swallowing errors (it may already be closed)."""
+        try:
+            await writer.close()
+        except Exception as exc:  # self-healing — a double close is harmless
+            log.gateway.debug(
+                "clarify_pump._safe_close: close failed (likely already closed)",
+                extra={"_fields": {"error": str(exc)}},
+            )
+
+    # ------------------------------------------------------------------ shutdown
+
+    async def drain(self) -> None:
+        """Await any in-flight send tasks (used on loop teardown)."""
+        pending = [t for t in self._inflight.values() if not t.done()]
+        for task in pending:
+            with contextlib.suppress(Exception):
+                await task

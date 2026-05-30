@@ -71,6 +71,43 @@ class ChannelAdapter(ABC):
         )
         await self.send_text(text)
 
+    async def send_clarify(
+        self,
+        question: str,
+        choices: tuple[str, ...] | list[str],
+        clarify_id: str,  # noqa: ARG002 — id carried for rich channels (Phase 2)
+    ) -> None:
+        """Deliver a clarify question to the user (turn-yield model).
+
+        Default behaviour: render a NUMBERED LIST via ``send_text`` — the
+        question, then ``1. choice`` / ``2. choice`` / … followed by a prompt to
+        reply, or just the question when no choices are given. All channels
+        inherit this text-only delivery for MVS; Telegram's inline-keyboard
+        rendering is a Phase 2 override (not done here).
+
+        The user's NEXT inbound message on this session+channel resolves the
+        clarify (the gateway loop routes it to ``ClarifyGateway.try_resolve``);
+        there is no parked coroutine to answer.
+        """
+        items = [str(c).strip() for c in choices if str(c).strip()]
+        if items:
+            lines = [question]
+            lines.extend(f"{i}. {c}" for i, c in enumerate(items, start=1))
+            lines.append("Reply with your choice.")
+            text = "\n".join(lines)
+        else:
+            text = question
+        log.gateway.debug(
+            "[channel] send_clarify: rendering numbered-list default",
+            extra={
+                "_fields": {
+                    "channel": self.channel_name,
+                    "n_choices": len(items),
+                }
+            },
+        )
+        await self.send_text(text)
+
     async def download_media(self, file_id: str) -> bytes:
         """Download a media attachment by its channel-specific file ID.
 

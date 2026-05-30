@@ -243,6 +243,7 @@ class ToolRegistry:
         from stackowl.tools.io.undo_store import UndoStore, UndoWriteTool
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
+        from stackowl.tools.interaction.clarify import ClarifyTool
         from stackowl.tools.knowledge.memory import MemoryTool
         from stackowl.tools.knowledge.session_search import SessionSearchTool
         from stackowl.tools.knowledge.skill_manage import SkillManageTool
@@ -294,4 +295,7 @@ class ToolRegistry:
         _plan_store = PlanStore()
         registry.register(TodoTool(store=_plan_store))
         registry.register(UpdatePlanTool(store=_plan_store))
+        # clarify — ask the user mid-turn and BLOCK until they answer (default
+        # 30-minute park timeout; the concurrent gateway loop frees the loop).
+        registry.register(ClarifyTool())
         return registry
