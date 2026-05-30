@@ -256,6 +256,7 @@ class ToolRegistry:
         from stackowl.tools.planning.todo import TodoTool
         from stackowl.tools.planning.update_plan import UpdatePlanTool
         from stackowl.tools.scheduling.cronjob import CronjobTool
+        from stackowl.tools.scheduling.heartbeat_respond import HeartbeatRespondTool
         from stackowl.tools.search.web_search import WebSearchTool
         from stackowl.tools.system.shell import ShellTool
 
@@ -279,6 +280,10 @@ class ToolRegistry:
         # builds from get_services().db_pool at execute time (no constructor
         # wiring; reuses the goal_execution handler — E7-S1).
         registry.register(CronjobTool())
+        # heartbeat_respond — declares a heartbeat turn's outcome and (notify=True)
+        # routes a clamped Notification through get_services().proactive_deliverer
+        # at execute time (the S0 transport chokepoint); no constructor wiring.
+        registry.register(HeartbeatRespondTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())
