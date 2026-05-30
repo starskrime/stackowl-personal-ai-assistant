@@ -10,9 +10,15 @@ from stackowl.mcp.tool_exposure import (
 )
 
 
+class _StubManifest:
+    def __init__(self, action_severity: str) -> None:
+        self.action_severity = action_severity
+
+
 class _StubTool:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, action_severity: str = "read") -> None:
         self._name = name
+        self._severity = action_severity
 
     @property
     def name(self) -> str:
@@ -25,6 +31,10 @@ class _StubTool:
     @property
     def parameters(self) -> dict[str, Any]:
         return {}
+
+    @property
+    def manifest(self) -> _StubManifest:
+        return _StubManifest(self._severity)
 
 
 class TestDefaultDeny:
@@ -58,6 +68,24 @@ class TestOptIn:
             extra_denylist=frozenset({"web_fetch"}),
         )
         assert not policy.is_exposed(_StubTool("web_fetch"))
+
+
+class TestConsequentialDeny:
+    """A consequential tool must not cross the headless MCP boundary by default."""
+
+    def test_consequential_tool_denied_by_default(self) -> None:
+        policy = McpToolExposurePolicy()
+        # e.g. send_message / skill_manage — consequential, NOT in the browser denylist.
+        assert not policy.is_exposed(_StubTool("send_message", action_severity="consequential"))
+
+    def test_allow_consequential_opt_in_exposes(self) -> None:
+        policy = McpToolExposurePolicy(allow_consequential=True)
+        assert policy.is_exposed(_StubTool("send_message", action_severity="consequential"))
+
+    def test_read_and_write_tools_unaffected(self) -> None:
+        policy = McpToolExposurePolicy()
+        assert policy.is_exposed(_StubTool("web_fetch", action_severity="read"))
+        assert policy.is_exposed(_StubTool("edit", action_severity="write"))
 
 
 class TestFilterTools:

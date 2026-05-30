@@ -39,14 +39,17 @@ class McpToolExposurePolicy:
         self,
         *,
         allow_browser_writes: bool = False,
+        allow_consequential: bool = False,
         extra_denylist: frozenset[str] = frozenset(),
     ) -> None:
         self._allow_browser_writes = allow_browser_writes
+        self._allow_consequential = allow_consequential
         self._extra = extra_denylist
         log.debug(
             "mcp.tool_exposure.__init__: ready",
             extra={"_fields": {
                 "allow_browser_writes": allow_browser_writes,
+                "allow_consequential": allow_consequential,
                 "extra_deny_count": len(extra_denylist),
             }},
         )
@@ -55,6 +58,13 @@ class McpToolExposurePolicy:
         name = tool.name
         if name in self._extra:
             return False
+        # Severity-aware boundary: the MCP server is headless — there is no
+        # interactive consent channel out here, so a `consequential` tool would
+        # run UNGATED for an external MCP client. Deny it unless the operator has
+        # explicitly opted in. This protects every consequential tool, not just
+        # the browser denylist (which predates the severity field).
+        if tool.manifest.action_severity == "consequential" and not self._allow_consequential:
+            return False
         return not (name in DEFAULT_MCP_BROWSER_DENYLIST and not self._allow_browser_writes)
 
     def filter_tools(self, tools: list[Tool]) -> list[Tool]:
@@ -62,7 +72,8 @@ class McpToolExposurePolicy:
 
     def denial_message(self, name: str) -> str:
         return (
-            f"Tool '{name}' is not exposed over MCP. The operator must set "
-            f"mcp_server.allow_browser_writes=true in stackowl.yaml to enable "
-            f"consequential browser tools for MCP clients."
+            f"Tool '{name}' is not exposed over MCP. Consequential tools (and the "
+            f"browser-write set) are denied across the MCP boundary by default — "
+            f"the operator must opt in (mcp_server.allow_consequential / "
+            f"allow_browser_writes in stackowl.yaml) to enable them for MCP clients."
         )

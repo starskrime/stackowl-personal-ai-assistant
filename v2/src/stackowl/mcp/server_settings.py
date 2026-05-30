@@ -30,3 +30,13 @@ class McpServerSettings(BaseModel):
             "when the MCP client is trusted."
         ),
     )
+    allow_consequential: bool = Field(
+        default=False,
+        description=(
+            "When False (default), ANY consequential tool (e.g. send_message, "
+            "skill_manage) is denied across the MCP boundary — the headless MCP "
+            "server has no interactive consent channel, so a consequential tool "
+            "would run ungated for an external client. Set True only when the MCP "
+            "client is fully trusted to invoke consequential actions without consent."
+        ),
+    )

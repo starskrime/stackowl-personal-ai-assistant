@@ -257,6 +257,7 @@ class ToolRegistry:
         from stackowl.tools.planning.update_plan import UpdatePlanTool
         from stackowl.tools.scheduling.cronjob import CronjobTool
         from stackowl.tools.scheduling.heartbeat_respond import HeartbeatRespondTool
+        from stackowl.tools.scheduling.send_message import SendMessageTool
         from stackowl.tools.search.web_search import WebSearchTool
         from stackowl.tools.system.shell import ShellTool
 
@@ -284,6 +285,11 @@ class ToolRegistry:
         # routes a clamped Notification through get_services().proactive_deliverer
         # at execute time (the S0 transport chokepoint); no constructor wiring.
         registry.register(HeartbeatRespondTool())
+        # send_message — agent-initiated outbound text; routes a clamped (normal)
+        # Notification through get_services().proactive_deliverer (the S0 transport
+        # chokepoint) at execute time. Consequential: the registry's consent gate
+        # fires before execute (fails closed off-TTY). No constructor wiring.
+        registry.register(SendMessageTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())

@@ -44,6 +44,7 @@ class McpServer:
         self._extra_capabilities: dict[str, Any] = {}
         self._exposure = McpToolExposurePolicy(
             allow_browser_writes=self._settings.allow_browser_writes,
+            allow_consequential=self._settings.allow_consequential,
         )
         self._setup_handlers()
         # Advertise the browser capability so MCP clients can detect support.
