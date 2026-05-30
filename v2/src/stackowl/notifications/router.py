@@ -32,15 +32,20 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
 
 
-DeliveryStatus = Literal["delivered", "batched", "suppressed"]
+# ``RouterDecision`` is the closed set the router's pure decision table can
+# produce. ``DeliveryStatus`` is the broader transport-layer outcome: it adds
+# ``failed``, a terminal status produced ONLY by the outbound transport layer
+# (ProactiveDeliverer) when a channel is unknown or a send fails after retry.
+RouterDecision = Literal["delivered", "batched", "suppressed"]
+DeliveryStatus = Literal["delivered", "batched", "suppressed", "failed"]
 FocusMode = Literal["off", "soft", "hard"]
 
 _QUEUE_DEGRADED_THRESHOLD = 100
 
 _INSERT_QUEUE_SQL = (
     "INSERT INTO notification_queue "
-    "(notification_id, message_hash, urgency, category, channel, job_id, scheduled_for) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+    "(notification_id, message_hash, urgency, category, channel, job_id, scheduled_for, message) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _COUNT_QUEUE_SQL = "SELECT COUNT(*) AS n FROM notification_queue"
 
@@ -88,7 +93,7 @@ class NotificationRouter:
     def get_focus_mode(self) -> FocusMode:
         return self._focus_mode
 
-    async def deliver(self, notification: Notification) -> DeliveryStatus:
+    async def deliver(self, notification: Notification) -> RouterDecision:
         """Route ``notification`` to the appropriate sink."""
         # 1. ENTRY
         log.notifications.debug(
@@ -186,7 +191,7 @@ class NotificationRouter:
         urgency: Literal["critical", "normal", "low"],
         quiet: bool,
         focus_mode: FocusMode,
-    ) -> DeliveryStatus:
+    ) -> RouterDecision:
         """Pure decision table (see Story 7.4 spec)."""
         if urgency == "critical":
             return "delivered"
@@ -200,7 +205,7 @@ class NotificationRouter:
 
     async def _apply_decision(
         self,
-        decision: DeliveryStatus,
+        decision: RouterDecision,
         notification: Notification,
         channel: str,
         message_hash: str,
@@ -235,6 +240,7 @@ class NotificationRouter:
                         channel,
                         notification.job_id,
                         scheduled.isoformat(),
+                        notification.message,
                     ),
                 )
             except Exception as exc:  # B5 — never silent
@@ -269,11 +275,11 @@ class NotificationRouter:
 
     async def _apply_frequency_cap(
         self,
-        decision: DeliveryStatus,
+        decision: RouterDecision,
         job_id: str,
         channel: str,
         now: datetime,
-    ) -> DeliveryStatus:
+    ) -> RouterDecision:
         """Downgrade ``delivered`` → ``batched`` once the per-hour cap is hit."""
         cap = self._settings.notifications.max_notifications_per_hour
         if cap <= 0:

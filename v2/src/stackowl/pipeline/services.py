@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.preferences import PreferenceStore
     from stackowl.messaging.a2a import A2AQueue
+    from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.router import NotificationRouter
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.streaming import StreamRegistry
@@ -46,6 +47,7 @@ class StepServices:
     audit_logger: AuditLogger | None = field(default=None)
     preference_store: PreferenceStore | None = field(default=None)
     notification_router: NotificationRouter | None = field(default=None)
+    proactive_deliverer: ProactiveDeliverer | None = field(default=None)
     event_bus: EventBus | None = field(default=None)
     skill_store: SkillIndexStore | None = field(default=None)
     embedding_registry: EmbeddingRegistry | None = field(default=None)

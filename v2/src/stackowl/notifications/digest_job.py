@@ -4,12 +4,20 @@ Registered with the scheduler under ``handler_name = "notification_digest"``.
 On every execution the handler:
 
 1. Selects all ``notification_queue`` rows whose ``scheduled_for <= now``.
-2. Writes a ``delivered`` row to ``notification_log`` for each (the queued
-   ``message_hash`` and ``urgency`` are preserved verbatim).
-3. Deletes the flushed rows from ``notification_queue``.
+2. For each row with a persisted body, transports it through the injected
+   :class:`ProactiveDeliverer` (legacy rows without a body degrade to an
+   audit-only flush). On a successful transport it writes a ``delivered``
+   row to ``notification_log`` and deletes the queue row.
+3. On a failed transport the row is NOT deleted and no ``delivered`` row is
+   written — the body's ``scheduled_for`` is already ``<= now`` so the next
+   tick retries it. Retries are BOUNDED: ``attempts`` is incremented each
+   failure and the row is dead-lettered (``failed`` audit row + delete) past
+   ``_MAX_FLUSH_ATTEMPTS`` so a permanently-bad channel cannot hot-loop or
+   grow the queue without bound.
 
-Like :class:`NotificationRouter`, the handler never touches a real channel
-adapter — channel transport lands in the channels epic.
+Delivery is **at-least-once**: if an adapter's ``send_text`` reaches the user
+but then errors on the response path, the row is retained and re-sent next
+tick. Exactly-once dedupe needs adapter-level idempotency (tracked fast-follow).
 """
 
 from __future__ import annotations
@@ -26,20 +34,28 @@ from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
+    from stackowl.notifications.deliverer import ProactiveDeliverer
 
 
 _SELECT_DUE_SQL = (
-    "SELECT notification_id, message_hash, urgency, category, channel, job_id "
+    "SELECT notification_id, message_hash, urgency, category, channel, job_id, "
+    "message, attempts "
     "FROM notification_queue WHERE scheduled_for <= ? ORDER BY scheduled_for ASC"
 )
 _DELETE_QUEUE_SQL = "DELETE FROM notification_queue WHERE notification_id = ?"
+_BUMP_ATTEMPTS_SQL = "UPDATE notification_queue SET attempts = ? WHERE notification_id = ?"
+
+# A row that fails transport this many times is dead-lettered (failed audit row
+# + removed) so a permanently-bad channel cannot hot-loop or grow the queue.
+_MAX_FLUSH_ATTEMPTS = 5
 
 
 class NotificationDigestJob(JobHandler):
     """Flushes pending notification_queue rows and records deliveries."""
 
-    def __init__(self, db: DbPool) -> None:
+    def __init__(self, db: DbPool, deliverer: ProactiveDeliverer | None = None) -> None:
         self._db = db
+        self._deliverer = deliverer
 
     @property
     def handler_name(self) -> str:
@@ -117,18 +133,104 @@ class NotificationDigestJob(JobHandler):
         message_hash = str(row["message_hash"])
         job_id_value = row.get("job_id")
         job_id = str(job_id_value) if job_id_value is not None else None
+        body_value = row.get("message")
+        body = str(body_value) if body_value is not None else None
+        attempts_value = row.get("attempts")
+        attempts = attempts_value if isinstance(attempts_value, int) else 0
 
-        log.notifications.info(
-            "[notifications] digest._flush_row: delivered",
-            extra={
-                "_fields": {
-                    "channel": channel,
-                    "message_hash": message_hash,
-                    "urgency": urgency,
-                    "category": category,
-                }
-            },
-        )
+        # Transport the stored body if present + a deliverer is wired; otherwise
+        # degrade to audit-only (legacy rows without a body, or no deliverer).
+        if body is not None and self._deliverer is not None:
+            transport_status = await self._deliverer.transport(channel, body)
+            if transport_status == "failed":
+                # Do NOT write a "delivered" audit row here — that would lie in the
+                # audit trail. The row's scheduled_for is already <= now, so the next
+                # digest tick re-selects it. Retries are BOUNDED: past the cap the row
+                # is dead-lettered (failed audit row + delete) so a permanently-bad
+                # channel cannot hot-loop or grow the queue without bound.
+                if attempts + 1 >= _MAX_FLUSH_ATTEMPTS:
+                    log.notifications.error(
+                        "[notifications] digest._flush_row: transport failed — "
+                        "dead-lettering after max attempts",
+                        extra={
+                            "_fields": {
+                                "notification_id": notification_id,
+                                "channel": channel,
+                                "message_hash": message_hash,
+                                "attempts": attempts + 1,
+                                "max_attempts": _MAX_FLUSH_ATTEMPTS,
+                            }
+                        },
+                    )
+                    await write_log_row(
+                        self._db,
+                        notification_id=notification_id,
+                        urgency=urgency,
+                        category=category,
+                        channel=channel,
+                        job_id=job_id,
+                        status="failed",
+                        created_at=now,
+                        delivered_at=None,
+                        message_hash=message_hash,
+                    )
+                    try:
+                        await self._db.execute(_DELETE_QUEUE_SQL, (notification_id,))
+                    except Exception as exc:  # B5 — never silent
+                        log.notifications.warning(
+                            "[notifications] digest._flush_row: dead-letter delete failed",
+                            exc_info=exc,
+                            extra={"_fields": {"notification_id": notification_id}},
+                        )
+                    return False
+                log.notifications.warning(
+                    "[notifications] digest._flush_row: transport failed — retaining row for retry",
+                    extra={
+                        "_fields": {
+                            "notification_id": notification_id,
+                            "channel": channel,
+                            "message_hash": message_hash,
+                            "attempts": attempts + 1,
+                            "max_attempts": _MAX_FLUSH_ATTEMPTS,
+                        }
+                    },
+                )
+                try:
+                    await self._db.execute(
+                        _BUMP_ATTEMPTS_SQL, (attempts + 1, notification_id)
+                    )
+                except Exception as exc:  # B5 — never silent
+                    log.notifications.warning(
+                        "[notifications] digest._flush_row: attempt-bump failed",
+                        exc_info=exc,
+                        extra={"_fields": {"notification_id": notification_id}},
+                    )
+                return False
+            log.notifications.info(
+                "[notifications] digest._flush_row: transported",
+                extra={
+                    "_fields": {
+                        "channel": channel,
+                        "message_hash": message_hash,
+                        "urgency": urgency,
+                        "category": category,
+                        "transport_status": transport_status,
+                    }
+                },
+            )
+        else:
+            log.notifications.info(
+                "[notifications] digest._flush_row: audit-only flush (no body)",
+                extra={
+                    "_fields": {
+                        "channel": channel,
+                        "message_hash": message_hash,
+                        "urgency": urgency,
+                        "category": category,
+                        "has_deliverer": self._deliverer is not None,
+                    }
+                },
+            )
 
         await write_log_row(
             self._db,

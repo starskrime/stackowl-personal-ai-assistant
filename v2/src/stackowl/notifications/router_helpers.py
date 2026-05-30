@@ -157,7 +157,7 @@ async def write_log_row(
     category: str,
     channel: str,
     job_id: str | None,
-    status: Literal["delivered", "batched", "suppressed"],
+    status: Literal["delivered", "batched", "suppressed", "failed"],
     created_at: datetime,
     delivered_at: datetime | None,
     message_hash: str,

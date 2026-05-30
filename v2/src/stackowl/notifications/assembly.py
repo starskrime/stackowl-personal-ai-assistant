@@ -39,6 +39,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
     from stackowl.events.bus import EventBus
     from stackowl.memory.preferences import PreferenceStore
+    from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.digest_job import NotificationDigestJob
     from stackowl.notifications.router import NotificationRouter
 
@@ -63,6 +64,7 @@ class NotificationComponents:
     """Frozen container of the wired notifications subsystem."""
 
     router: NotificationRouter
+    proactive_deliverer: ProactiveDeliverer
     digest_handler: NotificationDigestJob
     focus_command: FocusCommand
     urgent_command: UrgentCommand
@@ -88,10 +90,12 @@ class NotificationAssembly:
         log.notifications.info("[notifications] assembly.build: entry")
 
         # Deferred imports keep this module cheap to import in tests.
+        from stackowl.channels.registry import ChannelRegistry
         from stackowl.commands.focus_command import FocusCommand
         from stackowl.commands.notifications_command import NotificationsMissedCommand
         from stackowl.commands.quiet_command import QuietHoursCommand
         from stackowl.commands.urgent_command import UrgentCommand
+        from stackowl.notifications.deliverer import ProactiveDeliverer
         from stackowl.notifications.digest_job import NotificationDigestJob
         from stackowl.notifications.router import NotificationRouter
         from stackowl.scheduler.base import HandlerRegistry
@@ -124,8 +128,18 @@ class NotificationAssembly:
 
         router.set_focus_mode = _persisting_set_focus_mode  # type: ignore[method-assign]
 
-        # 2) Digest job — register handler + seed 5-minute schedule.
-        digest_handler = NotificationDigestJob(db=db)
+        # 1d) Outbound transport bridge — resolves the channel-registry
+        # singleton once here (not inside deliver()), then transports
+        # router-vetted messages to channel adapters.
+        proactive_deliverer = ProactiveDeliverer(
+            router=router,
+            registry=ChannelRegistry.instance(),
+            settings=settings,
+        )
+
+        # 2) Digest job — register handler + seed 5-minute schedule. The
+        # deliverer is injected so batched rows are actually transported on flush.
+        digest_handler = NotificationDigestJob(db=db, deliverer=proactive_deliverer)
         HandlerRegistry.instance().register(digest_handler)
         await _seed_digest_schedule(db)
         log.notifications.info(
@@ -151,6 +165,7 @@ class NotificationAssembly:
         log.notifications.info("[notifications] assembly.build: exit — all wired")
         return NotificationComponents(
             router=router,
+            proactive_deliverer=proactive_deliverer,
             digest_handler=digest_handler,
             focus_command=focus_command,
             urgent_command=urgent_command,

@@ -14,7 +14,7 @@ from stackowl.infra.trace import TraceContext
 
 def test_migration_runner_fixture(migration_runner: Any) -> None:
     results = migration_runner.run()
-    assert len(results) == 36  # +0036 E4 staged_facts agent_self
+    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns
     assert all(r.action == "applied" for r in results)
 
 

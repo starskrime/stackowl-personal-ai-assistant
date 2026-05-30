@@ -254,4 +254,4 @@ def test_migration_count_is_19(tmp_path: Path) -> None:
     # Historical name; bumped to 20 when Story 7.5 added 0020_webhook_rate_log.
     runner = MigrationRunner(db_path=tmp_path / "mig.db")
     results = runner.run()
-    assert len(results) == 36  # +0036 E4 staged_facts agent_self
+    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns

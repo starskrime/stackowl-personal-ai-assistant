@@ -92,7 +92,7 @@ def test_migration_count_is_16(tmp_path: Path) -> None:
     """
     runner = MigrationRunner(db_path=tmp_path / "count.db")
     results = runner.run()
-    assert len(results) == 36  # +0036 E4 staged_facts agent_self
+    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns
 
 
 # ---------------------------------------------------------------------------

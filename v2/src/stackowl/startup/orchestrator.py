@@ -261,6 +261,7 @@ class StartupOrchestrator:
             preference_store=preference_store,
         )
         notification_router = notification_components.router
+        proactive_deliverer = notification_components.proactive_deliverer
 
         # Browser runtime — only start if the binary is present (libs/xvfb are advisory).
         browser_runtime: CamoufoxRuntime | None = None
@@ -391,6 +392,7 @@ class StartupOrchestrator:
             audit_logger=audit_logger,
             preference_store=preference_store,
             notification_router=notification_router,
+            proactive_deliverer=proactive_deliverer,
             event_bus=event_bus,
             skill_store=skills_components.store,
             embedding_registry=memory_components.embedding_registry,
