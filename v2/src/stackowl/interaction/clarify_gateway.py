@@ -205,7 +205,7 @@ class ClarifyGateway:
             )
         else:
             try:
-                await adapter.send_clarify(question, choices, clarify_id)
+                await adapter.send_clarify(session_id, question, choices, clarify_id)
             except Exception as exc:  # self-healing — delivery must not crash the turn
                 log.gateway.error(
                     "clarify_gateway.ask: delivery failed — entry kept",
@@ -371,17 +371,7 @@ class ClarifyGateway:
                     extra={"_fields": {"session_id": session_id, "channel": channel}},
                 )
                 return None
-            blocking = match.event is not None
-            if match.event is not None:
-                # Blocking resolve: hand the answer to the (possibly not-yet-parked)
-                # waiter and wake it. Do NOT pop — the waiter owns the pop so a
-                # resolve-before-park reply is never discarded. The set event is
-                # both the wake signal and the router's blocking-resolve marker.
-                match.answer = answer
-                match.event.set()
-            else:
-                # Turn-yield resolve: no parked waiter, pop here.
-                self._pending.pop(match.clarify_id, None)
+            blocking = self._resolve_entry(match, answer)
             log.gateway.info(
                 "clarify_gateway.try_resolve: resolved",
                 extra={
@@ -400,6 +390,117 @@ class ClarifyGateway:
                 "clarify_gateway.try_resolve: failed — treating as no match",
                 exc_info=exc,
                 extra={"_fields": {"session_id": session_id, "channel": channel}},
+            )
+            return None
+
+    # ------------------------------------------------------- try_resolve_by_id
+
+    def try_resolve_by_id(
+        self, clarify_id: str, answer: str,
+    ) -> PendingClarify | None:
+        """Resolve the SPECIFIC pending clarify identified by ``clarify_id``.
+
+        Identical resolution semantics to :meth:`try_resolve`'s by-(session,
+        channel) path, but keyed on the disambiguating ``clarify_id`` the tap
+        CARRIES rather than a session+channel re-match. This matters once the
+        cap-one-per-session MVS rule is relaxed: a session could then hold
+        multiple pending entries, and a session+channel match would resolve
+        whichever entry comes first — possibly NOT the one the user tapped. The
+        id is exact, so the tapped question is the one resolved.
+
+        Returns the matched :class:`PendingClarify`, or ``None`` if no entry
+        exists for ``clarify_id`` (already answered, superseded, expired,
+        cleared, or never minted).
+
+        Pop ownership is split by mode exactly as in :meth:`try_resolve`:
+
+        * **BLOCKING entry** (``event is not None``): write the answer + SET the
+          event; do NOT pop (the WAITER owns the pop — resolve-before-park safe).
+        * **TURN-YIELD entry** (``event is None``): POP and return.
+
+        Self-healing — never raises (any unexpected error logs and returns
+        ``None``). :meth:`try_resolve` keeps its session+channel signature
+        because a TYPED reply carries no id and must still match by binding.
+        """
+        try:
+            match = self._pending.get(clarify_id)
+            if match is None:
+                log.gateway.debug(
+                    "clarify_gateway.try_resolve_by_id: no match",
+                    extra={"_fields": {"clarify_id": clarify_id}},
+                )
+                return None
+            blocking = self._resolve_entry(match, answer)
+            log.gateway.info(
+                "clarify_gateway.try_resolve_by_id: resolved",
+                extra={
+                    "_fields": {
+                        "clarify_id": clarify_id,
+                        "answer_len": len(answer),
+                        "blocking": blocking,
+                    }
+                },
+            )
+            return match
+        except Exception as exc:  # self-healing — never raise into the callback path
+            log.gateway.error(
+                "clarify_gateway.try_resolve_by_id: failed — treating as no match",
+                exc_info=exc,
+                extra={"_fields": {"clarify_id": clarify_id}},
+            )
+            return None
+
+    # ----------------------------------------------------------- _resolve_entry
+
+    def _resolve_entry(self, entry: PendingClarify, answer: str) -> bool:
+        """Apply the mode-split resolution to a matched entry; return ``blocking``.
+
+        Shared body of :meth:`try_resolve` and :meth:`try_resolve_by_id` so both
+        deliver IDENTICAL semantics:
+
+        * **BLOCKING entry** (``entry.event is not None``): hand the answer to the
+          (possibly not-yet-parked) waiter and wake it by setting the event. Do
+          NOT pop — the WAITER owns the pop so a resolve-before-park reply is
+          never discarded. The set event is both the wake signal and the gateway
+          loop router's blocking-resolve marker.
+        * **TURN-YIELD entry** (``entry.event is None``): no parked waiter — pop
+          here.
+
+        Returns ``True`` for a blocking entry, ``False`` for a turn-yield entry.
+        """
+        blocking = entry.event is not None
+        if entry.event is not None:
+            entry.answer = answer
+            entry.event.set()
+        else:
+            self._pending.pop(entry.clarify_id, None)
+        return blocking
+
+    # --------------------------------------------------------------------- peek
+
+    def peek(self, clarify_id: str) -> PendingClarify | None:
+        """Read-only lookup of the pending entry by ``clarify_id``.
+
+        Returns the live :class:`PendingClarify` for ``clarify_id`` or ``None``
+        if no such entry exists (already answered, superseded, expired, cleared,
+        or never minted). NEVER pops the entry and NEVER touches its event —
+        unlike :meth:`try_resolve` this is a pure read. Used by the inline-button
+        callback resolver to map a tapped button index → the choice text + the
+        entry's ``session_id``/``channel``, and to detect a stale/superseded tap
+        (``None``). Never raises.
+        """
+        try:
+            entry = self._pending.get(clarify_id)
+            log.gateway.debug(
+                "clarify_gateway.peek: lookup",
+                extra={"_fields": {"clarify_id": clarify_id, "found": entry is not None}},
+            )
+            return entry
+        except Exception as exc:  # self-healing — a read must never raise
+            log.gateway.error(
+                "clarify_gateway.peek: failed — treating as not found",
+                exc_info=exc,
+                extra={"_fields": {"clarify_id": clarify_id}},
             )
             return None
 

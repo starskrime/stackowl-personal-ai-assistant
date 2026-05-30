@@ -26,16 +26,16 @@ from stackowl.tools.registry import ToolRegistry
 class _FakeAdapter:
     def __init__(self, name: str = "cli") -> None:
         self._name = name
-        self.calls: list[tuple[str, tuple[str, ...], str]] = []
+        self.calls: list[tuple[str, str, tuple[str, ...], str]] = []
 
     @property
     def channel_name(self) -> str:
         return self._name
 
     async def send_clarify(
-        self, question: str, choices: tuple[str, ...], clarify_id: str,
+        self, session_id: str, question: str, choices: tuple[str, ...], clarify_id: str,
     ) -> None:
-        self.calls.append((question, tuple(choices), clarify_id))
+        self.calls.append((session_id, question, tuple(choices), clarify_id))
 
 
 @pytest.fixture
@@ -94,7 +94,8 @@ async def test_interactive_graceful_timeout(with_gateway: ClarifyGateway) -> Non
     assert "ABORT" in result.output
 
 
-async def test_choices_auto_append_other(with_gateway: ClarifyGateway) -> None:
+async def test_choices_passed_through_unchanged(with_gateway: ClarifyGateway) -> None:
+    """Choices are passed through verbatim — no synthetic 'Other' is appended."""
     trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
@@ -104,8 +105,27 @@ async def test_choices_auto_append_other(with_gateway: ClarifyGateway) -> None:
         # Inspect the registered entry's choices, then resolve to unblock.
         entry = with_gateway.try_resolve("s1", "cli", "A")
         assert entry is not None
-        assert entry.choices[:2] == ("A", "B")
-        assert entry.choices[-1] == "Other (type your own)"
+        # Exactly the choices given — no auto-appended escape-hatch option.
+        assert entry.choices == ("A", "B")
+        await task
+    finally:
+        TraceContext.reset(trace)
+
+
+async def test_choices_capped_at_max(with_gateway: ClarifyGateway) -> None:
+    """More than _MAX_CHOICES are capped; still no synthetic option added."""
+    from stackowl.tools.interaction.clarify import _MAX_CHOICES
+
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        many = [f"opt{i}" for i in range(_MAX_CHOICES + 3)]
+        task = asyncio.ensure_future(
+            ClarifyTool().execute(question="pick?", choices=many),
+        )
+        await asyncio.sleep(0)
+        entry = with_gateway.try_resolve("s1", "cli", "opt0")
+        assert entry is not None
+        assert entry.choices == tuple(many[:_MAX_CHOICES])
         await task
     finally:
         TraceContext.reset(trace)

@@ -656,8 +656,20 @@ class StartupOrchestrator:
                     tg_callback_router = CallbackRouter(db_pool, telegram_adapter)
                     await tg_callback_router.ensure_table()
                     tg_callback_router.register("consent:", tg_consent_prompter.handle_callback)
+                    # E5-C — a tapped clarify choice button resolves the parked
+                    # turn (parallel to the typed-reply path handled by the loop).
+                    # NOTE: consent and clarify share this router but resolve very
+                    # differently — consent awaits a local Future in-coroutine;
+                    # clarify resolves a gateway Event across the decoupled pump's
+                    # turn-yield/blocking duality. Do NOT refactor them into a
+                    # shared base — a local Future would deadlock clarify's
+                    # resolve-before-park case.
+                    from stackowl.channels.telegram.clarify import TelegramClarifyResolver
+
+                    tg_clarify_resolver = TelegramClarifyResolver(clarify_gateway)
+                    tg_callback_router.register("clarify:", tg_clarify_resolver.handle_callback)
                     telegram_adapter.attach_callback_router(tg_callback_router)
-                    log.info("[startup] gateway: Telegram consent gate wired")
+                    log.info("[startup] gateway: Telegram consent + clarify callbacks wired")
                 except Exception as exc:
                     log.error(
                         "[startup] gateway: Telegram consent callback wiring failed — "

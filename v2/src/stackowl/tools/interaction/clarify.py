@@ -23,8 +23,8 @@ never parks anything.
 Severity: ``read`` — asking a question mutates nothing. ``toolset_group``:
 ``interaction``.
 
-Provenance: the choices+auto-"Other" affordance and the cron-cannot-ask rule
-are ported HYBRID from a reference agent's clarify primitive. See
+Provenance: the choices affordance and the cron-cannot-ask rule are ported
+HYBRID from a reference agent's clarify primitive. See
 ``_bmad-output/research/tool-port-analysis.md`` (E5 ``clarify`` row).
 """
 
@@ -37,11 +37,10 @@ from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
-# Sane cap on predefined choices; an "Other (type your own)" affordance is
-# auto-appended when any choices are given, so the model never has to think
-# about the escape hatch (ported affordance).
+# Sane cap on predefined choices. On chat channels typing always works (and a
+# tapped button resolves with the exact choice TEXT), so no synthetic escape-hatch
+# pseudo-choice is appended — the choices are passed through unchanged, capped.
 _MAX_CHOICES = 5
-_OTHER_CHOICE = "Other (type your own)"
 
 # Default park timeout: a parked asyncio waiter is cheap and the concurrent
 # gateway loop frees the loop while we wait, so 30 minutes is comfortable.
@@ -89,9 +88,9 @@ class ClarifyTool(Tool):
         return (
             "Ask the USER a question and WAIT for their answer, when the task is "
             "genuinely ambiguous or you are missing information only the user "
-            "can provide. Provide 'choices' (a short list — an 'Other' option is "
-            "added automatically) when the answer is a pick from options; omit "
-            "them for an open question (set awaiting_text). After calling this "
+            "can provide. Provide 'choices' (a short list) when the answer is a "
+            "pick from options; omit them for an open question (set "
+            "awaiting_text). After calling this "
             "you MUST stop and wait — the user's next message is their answer. "
             "LANE: resolve ambiguity / missing info by asking the human. "
             "ANTI-LANE: do NOT use clarify to look something up — use memory for "
@@ -114,9 +113,9 @@ class ClarifyTool(Tool):
                     "items": {"type": "string"},
                     "maxItems": _MAX_CHOICES,
                     "description": (
-                        f"Up to {_MAX_CHOICES} answer choices. An 'Other (type "
-                        "your own)' option is appended automatically. Omit for "
-                        "an open-ended question."
+                        f"Up to {_MAX_CHOICES} answer choices, passed through "
+                        "verbatim (no synthetic option is added). Omit for an "
+                        "open-ended question."
                     ),
                 },
                 "awaiting_text": {
@@ -224,16 +223,13 @@ class ClarifyTool(Tool):
 
     @staticmethod
     def _coerce_choices(raw: object) -> tuple[str, ...]:
-        """Trim/cap choices and auto-append the 'Other' affordance when any given."""
+        """Trim blank entries and cap at ``_MAX_CHOICES`` — passed through as-is."""
         if not isinstance(raw, (list, tuple)):
             return ()
         items = [str(c).strip() for c in raw if str(c).strip()]
         if not items:
             return ()
-        items = items[:_MAX_CHOICES]
-        if _OTHER_CHOICE not in items:
-            items.append(_OTHER_CHOICE)
-        return tuple(items)
+        return tuple(items[:_MAX_CHOICES])
 
     @staticmethod
     def _ok(

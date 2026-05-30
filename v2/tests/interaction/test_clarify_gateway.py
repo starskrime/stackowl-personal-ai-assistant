@@ -27,16 +27,16 @@ class _FakeAdapter:
 
     def __init__(self, name: str = "cli") -> None:
         self._name = name
-        self.calls: list[tuple[str, tuple[str, ...], str]] = []
+        self.calls: list[tuple[str, str, tuple[str, ...], str]] = []
 
     @property
     def channel_name(self) -> str:
         return self._name
 
     async def send_clarify(
-        self, question: str, choices: tuple[str, ...], clarify_id: str,
+        self, session_id: str, question: str, choices: tuple[str, ...], clarify_id: str,
     ) -> None:
-        self.calls.append((question, tuple(choices), clarify_id))
+        self.calls.append((session_id, question, tuple(choices), clarify_id))
 
 
 class _FakeClock:
@@ -61,8 +61,8 @@ async def test_ask_registers_and_delivers() -> None:
     cid = await gw.ask("s1", "cli", "X or Y?", choices=("X", "Y"))
 
     assert isinstance(cid, str) and cid
-    # Delivered exactly once with the same id.
-    assert adapter.calls == [("X or Y?", ("X", "Y"), cid)]
+    # Delivered exactly once with the new (session_id-first) signature.
+    assert adapter.calls == [("s1", "X or Y?", ("X", "Y"), cid)]
     # Registered and resolvable.
     entry = gw.try_resolve("s1", "cli", "X")
     assert isinstance(entry, PendingClarify)
@@ -136,6 +136,105 @@ async def test_try_resolve_refuses_mismatched_session() -> None:
 async def test_try_resolve_no_pending_returns_none() -> None:
     gw = ClarifyGateway()
     assert gw.try_resolve("s1", "cli", "a") is None
+
+
+# ----------------------------------------------------- try_resolve_by_id
+
+
+@pytest.mark.asyncio
+async def test_try_resolve_by_id_blocking_sets_answer_without_pop() -> None:
+    """A blocking entry resolved by id wakes a parked waiter without popping.
+
+    Same semantics as try_resolve's blocking branch: answer written + event set,
+    entry NOT popped (the waiter owns the pop), and the parked wait_for_answer
+    wakes with the answer.
+    """
+    gw = ClarifyGateway()
+    cid = await gw.ask("s1", "cli", "fav colour?", blocking=True)
+
+    waiter = asyncio.ensure_future(gw.wait_for_answer(cid, timeout=5.0))
+    await asyncio.sleep(0)  # let the waiter park on the event
+    match = gw.try_resolve_by_id(cid, "blue")
+    answer, timed_out = await waiter
+
+    assert answer == "blue"
+    assert timed_out is False
+    assert match is not None
+    assert match.clarify_id == cid
+    assert match.answer == "blue"
+    assert match.event is not None and match.event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_try_resolve_by_id_unknown_returns_none() -> None:
+    gw = ClarifyGateway()
+    await gw.ask("s1", "cli", "q?", blocking=True)
+    assert gw.try_resolve_by_id("no-such-id", "a") is None
+
+
+@pytest.mark.asyncio
+async def test_try_resolve_by_id_turn_yield_pops_and_returns() -> None:
+    """A turn-yield entry (event None) resolved by id is popped and returned."""
+    gw = ClarifyGateway()
+    cid = await gw.ask("s1", "cli", "q?")  # blocking=False → no event
+
+    match = gw.try_resolve_by_id(cid, "answer")
+    assert match is not None
+    assert match.clarify_id == cid
+    assert match.event is None
+    # Popped — a second resolve finds nothing.
+    assert cid not in gw._pending
+    assert gw.try_resolve_by_id(cid, "again") is None
+
+
+@pytest.mark.asyncio
+async def test_try_resolve_by_id_does_not_touch_other_session() -> None:
+    """Only the id'd entry is resolved — a different session's entry is untouched.
+
+    Two blocking entries for DIFFERENT sessions are registered (cap-one is
+    per-session, so two distinct sessions coexist). Resolving A by id must leave
+    B fully intact (no answer, event unset).
+    """
+    gw = ClarifyGateway()
+    cid_a = await gw.ask("s1", "cli", "qa?", blocking=True)
+    cid_b = await gw.ask("s2", "cli", "qb?", blocking=True)
+
+    match = gw.try_resolve_by_id(cid_a, "answer-a")
+    assert match is not None and match.clarify_id == cid_a
+
+    # B is completely untouched.
+    other = gw._pending[cid_b]
+    assert other.answer is None
+    assert other.event is not None and not other.event.is_set()
+
+
+# ------------------------------------------------------------------- peek
+
+
+@pytest.mark.asyncio
+async def test_peek_returns_entry_without_pop_or_event_touch() -> None:
+    gw = ClarifyGateway()
+    cid = await gw.ask("s1", "cli", "q?", choices=("A", "B"), blocking=True)
+
+    entry = gw.peek(cid)
+    assert isinstance(entry, PendingClarify)
+    assert entry.clarify_id == cid
+    assert entry.choices == ("A", "B")
+    assert entry.session_id == "s1"
+    assert entry.channel == "cli"
+    # peek is a pure read: entry stays in _pending and its event is untouched.
+    assert cid in gw._pending
+    assert entry.event is not None and not entry.event.is_set()
+    assert entry.answer is None
+    # A second peek returns the same live entry (still no pop).
+    assert gw.peek(cid) is entry
+    assert cid in gw._pending
+
+
+@pytest.mark.asyncio
+async def test_peek_unknown_id_returns_none() -> None:
+    gw = ClarifyGateway()
+    assert gw.peek("nope") is None
 
 
 # ----------------------------------------------------------- clear_session

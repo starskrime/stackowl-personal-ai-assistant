@@ -184,6 +184,117 @@ class TelegramChannelAdapter(ChannelAdapter):
         )
         log.telegram.debug("[telegram] adapter.send_inline_keyboard: exit")
 
+    async def send_clarify(
+        self,
+        session_id: str,
+        question: str,
+        choices: tuple[str, ...] | list[str],
+        clarify_id: str,
+    ) -> None:
+        """Deliver a clarify question as tap-buttons (one per choice).
+
+        Targets the asking user's chat (``session_id`` == Telegram user id). Each
+        choice becomes an inline button whose ``callback_data`` is
+        ``clarify:{clarify_id}:{idx}`` — a tap is resolved by the clarify callback
+        handler, which maps ``idx`` back to the choice text and wakes the parked
+        turn. Open-ended questions (no choices) are sent as plain text and
+        answered by typing.
+
+        Self-healing: a non-int ``session_id``, a callback_data overflow, or any
+        delivery error degrades to a best-effort ``send_text`` of the bare
+        question — delivery failure must never crash the turn (the gateway treats
+        ``send_clarify`` as best-effort).
+        """
+        # Count non-blank choices for the "no choices at all" decision, but DO NOT
+        # renumber them: button callback_data must carry each choice's ORIGINAL
+        # index so `clarify:{id}:{idx}` always indexes the gateway's stored
+        # `entry.choices[idx]`. A re-filtered list would desync the indices the
+        # moment any choice is blank, mapping a tap to the wrong choice text.
+        n_nonblank = sum(1 for c in choices if str(c).strip())
+        # The question is free-form (often LLM) text; send_text/send_inline_keyboard
+        # send with parse_mode=MarkdownV2 and assume PRE-ESCAPED bodies (codebase
+        # convention). Escape here so a lone '.'/'('/'-'/'_' can't make Telegram
+        # reject the send and silently leave the turn parked. Button LABELS are NOT
+        # markdown-parsed by Telegram, so choices stay raw.
+        body = self._formatter.format_plain(question)
+        log.telegram.debug(
+            "[telegram] adapter.send_clarify: entry",
+            extra={"_fields": {"n_choices": n_nonblank, "clarify_id": clarify_id}},
+        )
+        try:
+            chat_id = int(session_id)
+        except (TypeError, ValueError):
+            log.telegram.error(
+                "[telegram] adapter.send_clarify: session_id is not a chat id — text fallback",
+                extra={"_fields": {"session_id": session_id, "clarify_id": clarify_id}},
+            )
+            await self._send_clarify_text_fallback(body)
+            return
+
+        if not n_nonblank:
+            # Open-ended question (no non-blank choices) — answered by typing.
+            log.telegram.debug(
+                "[telegram] adapter.send_clarify: decision no_choices — plain text",
+                extra={"_fields": {"chat_id": chat_id}},
+            )
+            await self._send_clarify_text_fallback(body, chat_id=chat_id)
+            return
+
+        try:
+            from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
+
+            builder = InlineKeyboardBuilder()
+            # Enumerate the ORIGINAL choices and PRESERVE each original index in the
+            # callback_data, skipping blanks. So `clarify:{id}:{idx}` always indexes
+            # the gateway's stored `entry.choices[idx]` even with blanks present.
+            n_buttons = 0
+            for idx, choice in enumerate(choices):
+                c = str(choice).strip()
+                if not c:
+                    continue
+                builder.add_button(c, f"clarify:{clarify_id}:{idx}")
+                n_buttons += 1
+            keyboard = builder.build()
+            log.telegram.debug(
+                "[telegram] adapter.send_clarify: step keyboard_built",
+                extra={"_fields": {"chat_id": chat_id, "n_buttons": n_buttons}},
+            )
+            await self.send_inline_keyboard(body, keyboard, chat_id=chat_id)
+        except Exception as exc:  # self-healing — any failure → best-effort text
+            log.telegram.error(
+                "[telegram] adapter.send_clarify: button delivery failed — text fallback",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id, "clarify_id": clarify_id}},
+            )
+            await self._send_clarify_text_fallback(body, chat_id=chat_id)
+            return
+        log.telegram.debug(
+            "[telegram] adapter.send_clarify: exit",
+            extra={"_fields": {"chat_id": chat_id, "delivered": True}},
+        )
+
+    async def _send_clarify_text_fallback(
+        self, question: str, *, chat_id: int | None = None
+    ) -> None:
+        """Best-effort plain-text delivery of a clarify question (never raises)."""
+        try:
+            if chat_id is not None:
+                # Pin delivery to the asking user's chat even on the text path.
+                prior = self._last_chat_id
+                self._last_chat_id = chat_id
+                try:
+                    await self.send_text(question)
+                finally:
+                    self._last_chat_id = prior
+            else:
+                await self.send_text(question)
+        except Exception as exc:  # delivery failure must not crash the turn
+            log.telegram.error(
+                "[telegram] adapter.send_clarify: text fallback failed",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id}},
+            )
+
     async def download_media(self, file_id: str) -> bytes:
         """Download a media file by its Telegram file_id."""
         log.telegram.debug(

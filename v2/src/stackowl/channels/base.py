@@ -73,17 +73,19 @@ class ChannelAdapter(ABC):
 
     async def send_clarify(
         self,
+        session_id: str,  # noqa: ARG002 — chat-targeting id used only by rich channels
         question: str,
         choices: tuple[str, ...] | list[str],
-        clarify_id: str,  # noqa: ARG002 — id carried for rich channels (Phase 2)
+        clarify_id: str,  # noqa: ARG002 — id carried for rich (button) channels
     ) -> None:
         """Deliver a clarify question to the user (turn-yield model).
 
         Default behaviour: render a NUMBERED LIST via ``send_text`` — the
         question, then ``1. choice`` / ``2. choice`` / … followed by a prompt to
         reply, or just the question when no choices are given. All channels
-        inherit this text-only delivery for MVS; Telegram's inline-keyboard
-        rendering is a Phase 2 override (not done here).
+        inherit this text-only delivery (``session_id`` is unused here — a CLI
+        has one terminal); Telegram overrides this to render tap-buttons whose
+        callbacks resolve the parked turn.
 
         The user's NEXT inbound message on this session+channel resolves the
         clarify (the gateway loop routes it to ``ClarifyGateway.try_resolve``);
