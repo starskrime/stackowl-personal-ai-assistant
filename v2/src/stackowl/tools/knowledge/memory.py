@@ -25,8 +25,8 @@ it off, and a blanket deny would block every legitimate write. Memory is
 low-blast-radius and every mutation is audited + tagged ``agent_self`` — that
 provenance trail is the control here, not a gate.
 
-Provenance / port-vs-build: BUILD (Hermes' flat-file MEMORY.md is incompatible
-with our tri-store; porting would create a second store). See
+Provenance / port-vs-build: BUILD (the reference agent's flat-file memory is
+incompatible with our tri-store; porting would create a second store). See
 ``_bmad-output/research/tool-port-analysis.md`` (E4 ``memory`` row).
 """
 
