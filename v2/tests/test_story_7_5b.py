@@ -284,7 +284,7 @@ def test_migration_0020_file_exists() -> None:
 def test_migration_count_is_20(tmp_path: Path) -> None:
     runner = MigrationRunner(db_path=tmp_path / "mig.db")
     results = runner.run()
-    assert len(results) == 35
+    assert len(results) == 36  # +0036 E4 staged_facts agent_self
 
 
 async def test_webhook_events_log_table_exists(tmp_path: Path) -> None:

@@ -232,9 +232,10 @@ def test_migration_count_is_15(migration_runner: Any) -> None:
     # Migration 0018 (Story 7.1 jobs_v2) raised it to 18;
     # Migration 0019 (Story 7.4 notification_overrides) raised it to 19;
     # Migration 0020 (Story 7.5 webhook_events_log) raised it to 20;
+    # Migration 0036 (E4 staged_facts agent_self source_type) raised it to 36;
     # this fixture's name is kept historical for log searchability.
     results = migration_runner.run()
-    assert len(results) == 35
+    assert len(results) == 36
 
 
 async def test_reindex_queue_table_present(tmp_path: Path) -> None:

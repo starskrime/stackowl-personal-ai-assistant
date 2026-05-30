@@ -16,10 +16,17 @@ from stackowl.memory.models import StagedFact
 from stackowl.memory.sqlite_helpers import unpack_embedding
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.audit.logger import AuditLogger
     from stackowl.db.pool import DbPool
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.models import MemoryRecord
+
+# Literal of source_type values accepted by ``remember_fact``. The default is
+# ``"manual"`` (human-authored via /memory remember). The ``memory`` self-mutation
+# tool passes ``"agent_self"`` so tool-authored facts are distinguishable for
+# recall down-ranking + privileged-context exclusion (E4 design change #3).
+RememberSourceType = Literal["manual", "agent_self"]
 
 
 ExportFormat = Literal["json", "csv"]
@@ -98,22 +105,37 @@ async def remember_fact(
     bridge: MemoryBridge,
     promoter: FactPromoter,
     text: str,
+    *,
+    source_type: RememberSourceType = "manual",
+    source_ref: str = "user_explicit",
+    audit: AuditLogger | None = None,
+    actor: str = "user:remember",
 ) -> str:
-    """Stage ``text`` as a user-explicit fact and force-promote it.
+    """Stage ``text`` as an explicit fact, force-promote it, and (optionally) audit.
+
+    This is the shared add-with-provenance chokepoint: BOTH the ``/memory
+    remember`` slash command AND the ``memory`` tool route adds through here.
 
     Returns the new ``fact_id``. Built with confidence=1.0 and
     reinforcement_count=3 so it immediately meets the standard promotion
     gates even if force-promote is later removed from the pipeline.
+
+    ``source_type`` defaults to ``"manual"`` (human-authored). The ``memory``
+    self-mutation tool passes ``"agent_self"`` so tool-authored facts are
+    distinguishable for recall down-ranking + privileged-context exclusion
+    (E4 design change #3). When ``audit`` is supplied, an append-only audit row
+    is written (the tool path supplies it; the slash path leaves it ``None`` to
+    preserve existing behavior).
     """
     log.memory.debug(
         "[memory] memory_helpers.remember_fact: entry",
-        extra={"_fields": {"text_len": len(text)}},
+        extra={"_fields": {"text_len": len(text), "source_type": source_type}},
     )
     fact = StagedFact(
         fact_id=str(uuid.uuid4()),
         content=text,
-        source_type="manual",
-        source_ref="user_explicit",
+        source_type=source_type,
+        source_ref=source_ref,
         confidence=1.0,
         reinforcement_count=3,
     )
@@ -128,11 +150,75 @@ async def remember_fact(
         )
         raise
     await promoter.force_promote(fact.fact_id)
+    if audit is not None:
+        _audit_memory_mutation(
+            audit, event_type="memory.remember", actor=actor,
+            target=fact.fact_id,
+            details={"source_type": source_type, "text_len": len(text)},
+        )
     log.memory.info(
         "[memory] memory_helpers.remember_fact: exit",
-        extra={"_fields": {"fact_id": fact.fact_id}},
+        extra={"_fields": {"fact_id": fact.fact_id, "source_type": source_type}},
     )
     return fact.fact_id
+
+
+def _audit_memory_mutation(
+    audit: AuditLogger,
+    *,
+    event_type: str,
+    actor: str,
+    target: str,
+    details: dict[str, object],
+) -> None:
+    """Best-effort append of a memory-mutation audit row.
+
+    Failures are logged and swallowed — losing an audit row must never abort
+    the underlying memory mutation (which has already happened by call time).
+    """
+    try:
+        audit.append(
+            event_type=event_type, actor=actor, target=target, details=details,
+        )
+    except Exception as exc:  # B5 — never let audit failure break the mutation
+        log.memory.error(
+            "[memory] memory_helpers: audit append failed",
+            exc_info=exc,
+            extra={"_fields": {"event_type": event_type, "target": target}},
+        )
+
+
+async def forget_fact(
+    bridge: MemoryBridge,
+    fact_id: str,
+    *,
+    audit: AuditLogger | None = None,
+    actor: str = "user:forget",
+) -> None:
+    """Delete a committed/staged fact and (optionally) audit — the shared
+    forget-with-provenance chokepoint mirroring :func:`remember_fact`.
+
+    BOTH the ``/memory forget`` / ``/memory delete`` slash paths AND the
+    ``memory`` tool route deletes through here, so a tool-driven delete cannot
+    bypass the audit row a human delete would (eventually) leave. ``fact_id`` is
+    the resolved, full fact id (the caller resolves any prefix first). When
+    ``audit`` is supplied an append-only audit row is written; the slash path
+    leaves it ``None`` to preserve existing behavior.
+    """
+    log.memory.debug(
+        "[memory] memory_helpers.forget_fact: entry",
+        extra={"_fields": {"fact_id": fact_id[:16]}},
+    )
+    await bridge.delete(fact_id)
+    if audit is not None:
+        _audit_memory_mutation(
+            audit, event_type="memory.forget", actor=actor,
+            target=fact_id, details={},
+        )
+    log.memory.info(
+        "[memory] memory_helpers.forget_fact: exit",
+        extra={"_fields": {"fact_id": fact_id}},
+    )
 
 
 def parse_export_args(args: str) -> tuple[ExportFormat, Path | None]:

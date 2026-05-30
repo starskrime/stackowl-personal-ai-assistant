@@ -21,6 +21,7 @@ from stackowl.commands.memory_helpers import (
     collect_stats,
     do_export,
     fetch_all_committed_for_reindex,
+    forget_fact,
     format_budget,
     format_search_hits,
     format_stats,
@@ -188,7 +189,7 @@ class MemoryCommand(SlashCommand):
                 f"Confirm deletion of '{fact_id}'.\n"
                 f"Type '/memory delete {fact_id} YES' to proceed."
             )
-        await self._bridge.delete(fact_id)
+        await forget_fact(self._bridge, fact_id, actor="user:delete")
         log.memory.info(
             "[commands] memory.delete: exit",
             extra={"_fields": {"fact_id": fact_id}},
@@ -255,7 +256,7 @@ class MemoryCommand(SlashCommand):
                 f"Forget fact {fact.fact_id[:8]} ('{fact.content[:40]}...')?\n"
                 f"   Type: /memory forget {fact.fact_id} YES to confirm."
             )
-        await self._bridge.delete(fact.fact_id)
+        await forget_fact(self._bridge, fact.fact_id, actor="user:forget")
         log.memory.info("[commands] memory.forget: exit", extra={"_fields": {"fact_id": fact.fact_id}})
         return f"✓ Forgotten: {fact.fact_id}"
 

@@ -14,6 +14,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -148,6 +149,97 @@ def hash_dir(path: Path) -> str:
                 extra={"_fields": {"file": str(file_path)}},
             )
     return h.hexdigest()
+
+
+async def record_skill_mutation(
+    store: SkillIndexStore,
+    *,
+    skill_name: str,
+    source: SkillSource,
+    op: str,
+    actor: str,
+    target_dir: Path,
+    mutate: Callable[[], Awaitable[None]],
+    snapshot_when: str = "after",
+    snapshot: dict[str, str] | None = None,
+    before_hash: str | None = None,
+    skill_id: int | None = None,
+    details: dict[str, object] | None = None,
+) -> tuple[str | None, str | None]:
+    """Single mutate-with-provenance chokepoint for skill writes (E4 #1).
+
+    This is the ONE place that captures ``before_hash`` → (caller mutates) →
+    ``after_hash`` + a restorable ``snapshot`` and appends the audit row. BOTH
+    the ``/skill`` slash command AND the new ``skill_manage`` tool route their
+    mutations through here, so the tool path can never mutate a skill without
+    the same restore safety net the slash path has (audit + snapshot →
+    ``/skill diff`` / ``/skill restore``).
+
+    Flow:
+
+    1. Compute ``before_hash`` from ``target_dir`` (empty-digest if it doesn't exist).
+    2. If ``snapshot_when == "before"`` (e.g. delete), snapshot ``target_dir`` now.
+    3. Await ``mutate()`` — the caller's actual disk change.
+    4. Compute ``after_hash`` from ``target_dir`` (empty-digest if it's now gone).
+    5. If ``snapshot_when == "after"`` (e.g. create/restore), snapshot now.
+    6. Append the audit row via :meth:`SkillIndexStore.audit_write`.
+
+    ``snapshot_when``:
+      * ``"before"`` — snapshot the pre-mutation tree (deletes — so restore can
+        resurrect the dir).
+      * ``"after"``  — snapshot the post-mutation tree (create/edit/restore).
+      * ``"none"``   — no content snapshot (enable/disable toggles).
+
+    ``snapshot`` (optional) lets the caller supply a pre-computed snapshot
+    (e.g. ``/skill restore`` reuses the audit entry's snapshot verbatim); when
+    given it overrides the ``snapshot_when`` capture.
+
+    ``before_hash`` (optional) lets the caller supply a pre-computed
+    pre-mutation hash (e.g. ``/skill restore`` hashes the live tree BEFORE
+    overwriting it, outside this helper); when given, the internal pre-hash is
+    skipped.
+
+    Returns ``(before_hash, after_hash)`` for the caller's logging/UX.
+    """
+    # 1. ENTRY
+    log.skills.debug(
+        "[skills] record_skill_mutation: entry",
+        extra={"_fields": {
+            "skill_name": skill_name, "source": source, "op": op,
+            "actor": actor, "snapshot_when": snapshot_when,
+        }},
+    )
+    if before_hash is None:
+        before_hash = hash_dir(target_dir) if target_dir.exists() else None
+    captured: dict[str, str] | None = snapshot
+    if captured is None and snapshot_when == "before":
+        captured = snapshot_dir(target_dir)
+    # 3. STEP — run the caller's actual disk mutation.
+    await mutate()
+    after_hash = hash_dir(target_dir) if target_dir.exists() else None
+    if captured is None and snapshot_when == "after":
+        captured = snapshot_dir(target_dir)
+    # 6. STEP — append the audit row (the provenance chokepoint).
+    await store.audit_write(
+        skill_name=skill_name,
+        source=source,
+        op=op,
+        actor=actor,
+        skill_id=skill_id,
+        before_hash=before_hash,
+        after_hash=after_hash,
+        details=details,
+        snapshot=captured,
+    )
+    # 4. EXIT
+    log.skills.info(
+        "[skills] record_skill_mutation: audited",
+        extra={"_fields": {
+            "skill_name": skill_name, "op": op, "actor": actor,
+            "snapshot_files": len(captured) if captured else 0,
+        }},
+    )
+    return before_hash, after_hash
 
 
 def rewrite_skill_md_name(skill_dir: Path, new_name: str) -> None:

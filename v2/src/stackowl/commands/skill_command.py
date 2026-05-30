@@ -30,9 +30,9 @@ from stackowl.commands.skill_helpers import (
     install_from_archive_url,
     install_from_git_url,
     install_from_local_path,
+    record_skill_mutation,
     reindex_after_change,
     restore_snapshot,
-    snapshot_dir,
 )
 from stackowl.infra.observability import log
 from stackowl.skills.loader import SkillLoader
@@ -256,19 +256,20 @@ class SkillCommand(SlashCommand):
             src_path = Path(args).expanduser()
             result = await install_from_local_path(src_path, self._root)
             actor_kind = "local"
-        # 3. STEP — refresh index + audit (snapshot included so /skill restore
-        # can roll forward to this version)
-        after = hash_dir(result.path)
-        snapshot = snapshot_dir(result.path)
-        await reindex_after_change(
-            self._loader, self._store, self._root,
-            embedding_registry=self._embedding_registry,
-        )
-        await self._store.audit_write(
+        # 3. STEP — refresh index + audit through the provenance chokepoint
+        # (snapshot included so /skill restore can roll forward to this version).
+        async def _reindex() -> None:
+            await reindex_after_change(
+                self._loader, self._store, self._root,
+                embedding_registry=self._embedding_registry,
+            )
+
+        await record_skill_mutation(
+            self._store,
             skill_name=result.name, source="installed", op="create",
-            actor=f"user:{actor_kind}", after_hash=after,
+            actor=f"user:{actor_kind}", target_dir=result.path,
+            mutate=_reindex, snapshot_when="after",
             details={"path": str(result.path)},
-            snapshot=snapshot,
         )
         # 4. EXIT
         log.skills.info(
@@ -295,17 +296,19 @@ class SkillCommand(SlashCommand):
             return (f"Confirm removal of '{sk.name}' ({sk.source}) at {sk.path}.\n"
                     f"   Type: /skill rm {sk.name} YES to proceed.")
         path_to_delete = Path(sk.path)
-        before = hash_dir(path_to_delete)
-        # Snapshot BEFORE delete so /skill restore can resurrect the dir.
-        snapshot = snapshot_dir(path_to_delete)
-        # 3. STEP — delete from disk + index
-        shutil.rmtree(path_to_delete, ignore_errors=True)
-        await self._store.delete(sk.skill_id)
-        await self._store.audit_write(
+
+        # 3. STEP — delete from disk + index through the provenance chokepoint.
+        # snapshot_when="before" so /skill restore can resurrect the dir.
+        async def _delete() -> None:
+            shutil.rmtree(path_to_delete, ignore_errors=True)
+            await self._store.delete(sk.skill_id)
+
+        await record_skill_mutation(
+            self._store,
             skill_name=sk.name, source=sk.source, op="delete",
-            actor="user:rm", before_hash=before,
+            actor="user:rm", target_dir=path_to_delete,
+            mutate=_delete, snapshot_when="before",
             details={"path": str(path_to_delete)},
-            snapshot=snapshot,
         )
         log.skills.info(
             "[commands] skill.rm: exit",
@@ -365,6 +368,10 @@ class SkillCommand(SlashCommand):
         sk = await self._find_one(args)
         if sk is None:
             return f"✗ /skill {verb}: no skill matching {args!r}"
+        # Enable/disable is a metadata toggle with no content snapshot — it does
+        # not route through record_skill_mutation (which is the content-mutation
+        # provenance chokepoint). The audit row carries no before/after hash, as
+        # before.
         await self._store.set_enabled(sk.skill_id, enabled=enabled)
         await self._store.audit_write(
             skill_name=sk.name, source=sk.source, op=verb,
@@ -427,22 +434,27 @@ class SkillCommand(SlashCommand):
                 exc_info=exc, extra={"_fields": {"name": name, "version": version}},
             )
             return f"✗ /skill restore: write failed: {exc}"
-        # Re-index + re-embed.
-        await reindex_after_change(
-            self._loader, self._store, self._root,
-            embedding_registry=self._embedding_registry,
-        )
-        after = hash_dir(target_dir)
-        await self._store.audit_write(
+        # Re-index + re-embed, then audit through the provenance chokepoint.
+        # before-hash was captured above (the live tree pre-overwrite); the
+        # snapshot is the restored audit entry's own snapshot, reused verbatim.
+        async def _reindex() -> None:
+            await reindex_after_change(
+                self._loader, self._store, self._root,
+                embedding_registry=self._embedding_registry,
+            )
+
+        await record_skill_mutation(
+            self._store,
             skill_name=name, source=entry.source, op="restore",
-            actor="user:restore", before_hash=before, after_hash=after,
+            actor="user:restore", target_dir=target_dir,
+            mutate=_reindex, snapshot_when="after",
+            snapshot=entry.snapshot, before_hash=before,
             details={
                 "restored_from_audit_id": entry.audit_id,
                 "restored_from_op": entry.op,
                 "restored_from_actor": entry.actor,
                 "restored_hash": version,
             },
-            snapshot=entry.snapshot,
         )
         # 4. EXIT
         log.skills.info(
