@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from stackowl.messaging.a2a import A2AQueue
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.router import NotificationRouter
+    from stackowl.owls.concurrency import ConcurrencyGovernor
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.streaming import StreamRegistry
     from stackowl.providers.registry import ProviderRegistry
@@ -56,6 +57,10 @@ class StepServices:
     consent_gate: ConsequentialActionGate | None = field(default=None)
     clarify_gateway: ClarifyGateway | None = field(default=None)
     web_search_registry: WebSearchRegistry | None = field(default=None)
+    # E8-S0 — shared budget for in-flight delegated + parliament pipelines.
+    # ONE instance, injected here AND into the parliament fan-out so both draw
+    # from a single budget (fork-bomb / concurrency rail). None → ungated.
+    delegation_governor: ConcurrencyGovernor | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

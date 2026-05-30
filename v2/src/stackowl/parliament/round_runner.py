@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from typing import TYPE_CHECKING
 
 from stackowl.exceptions import OwlConcurrencyError, OwlTimeoutError, OwlTokenLimitError
 from stackowl.infra.observability import log
 from stackowl.parliament.models import ParliamentRound, ParliamentSession
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.state import PipelineState
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only import
+    from stackowl.owls.concurrency import ConcurrencyGovernor
 
 _TRUNCATION_CHARS = 500
 
@@ -28,10 +32,13 @@ class RoundRunner:
         backend: OrchestratorBackend,
         per_owl_timeout_s: float,
         token_budget: int,
+        delegation_governor: ConcurrencyGovernor | None = None,
     ) -> None:
         self._backend = backend
         self._per_owl_timeout_s = per_owl_timeout_s
         self._token_budget = token_budget
+        # E8-S0 — shared in-flight budget; the same instance A2ADelegator holds.
+        self._governor = delegation_governor
 
     async def run_round(
         self,
@@ -107,6 +114,18 @@ class RoundRunner:
         )
         return round_
 
+    async def _run_under_governor(self, state: PipelineState) -> PipelineState:
+        """Run one owl's pipeline under the shared concurrency budget.
+
+        Acquires a governor slot (released in ``finally`` via the slot context
+        manager) so a parliament fan-out cannot exceed the host-wide in-flight
+        cap shared with delegation. Ungated when no governor is wired.
+        """
+        if self._governor is None:
+            return await self._backend.run(state)
+        async with self._governor.slot():
+            return await self._backend.run(state)
+
     async def _run_owl(
         self,
         session: ParliamentSession,
@@ -140,7 +159,7 @@ class RoundRunner:
         t0 = time.monotonic()
         try:
             final_state = await asyncio.wait_for(
-                self._backend.run(state),
+                self._run_under_governor(state),
                 timeout=self._per_owl_timeout_s,
             )
         except TimeoutError:

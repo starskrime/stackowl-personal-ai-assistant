@@ -23,6 +23,7 @@ import time
 from stackowl.exceptions import A2ATimeoutError, StackOwlError
 from stackowl.infra.observability import log
 from stackowl.messaging.a2a import A2AMessage, A2AQueue
+from stackowl.owls.delegation_limits import GOVERNOR_ACQUIRE_TIMEOUT_SECONDS
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
@@ -149,6 +150,32 @@ class A2ADelegator:
         )
         return response.content
 
+    async def _run_under_governor(
+        self,
+        backend: AsyncioBackend,
+        sub_state: PipelineState,
+    ) -> PipelineState:
+        """Run the specialist pipeline under the shared concurrency budget.
+
+        Acquires a slot from the injected governor before ``backend.run`` and
+        releases it in ``finally`` (via the slot context manager) so a crash
+        never leaks a permit. When no governor is wired (early-stage tests), run
+        ungated and log a warning rather than failing.
+        """
+        governor = self._services.delegation_governor
+        if governor is None:
+            log.engine.warning(
+                "[a2a-delegator] _run_under_governor: no delegation_governor wired — "
+                "running ungated",
+                extra={"_fields": {"trace_id": sub_state.trace_id, "owl": sub_state.owl_name}},
+            )
+            return await backend.run(sub_state)
+        # Bounded acquire: under acquire-while-holding saturation the child fails
+        # fast (GovernorSaturatedError, a StackOwlError) — caught by _run_specialist,
+        # which replies empty and frees the parent — instead of deadlocking.
+        async with governor.slot(timeout=GOVERNOR_ACQUIRE_TIMEOUT_SECONDS):
+            return await backend.run(sub_state)
+
     async def _run_specialist(
         self,
         *,
@@ -173,12 +200,16 @@ class A2ADelegator:
             # to deliver/answer a clarify, so default-deny regardless of the
             # parent's interactivity. Clarify must bubble through the parent.
             interactive=False,
+            # E8-S0 — increment delegation depth exactly once per level. The
+            # child-toolset exclusion (depth>0) and the S1 depth refusal read
+            # this; it is the structural fork-bomb cap.
+            delegation_depth=parent_state.delegation_depth + 1,
         )
         backend = AsyncioBackend(services=self._services)
 
         response_text = ""
         try:
-            final_state = await backend.run(sub_state)
+            final_state = await self._run_under_governor(backend, sub_state)
             response_text = "".join(chunk.content for chunk in final_state.responses)
             if final_state.errors:
                 log.engine.warning(

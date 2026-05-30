@@ -19,6 +19,29 @@ from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message, ModelProvider
 from stackowl.tools.registry import ToolRegistry
 
+# E8-S0 — tools a delegated child (delegation_depth>0) must NOT see, so a child
+# cannot recurse into a fork-bomb. Names are matched defensively (the tools are
+# registered by later stories S1/S3); excluding by name is correct ahead of them.
+_CHILD_EXCLUDED_TOOLS = frozenset({"delegate_task", "sessions_spawn"})
+
+
+def _schema_tool_name(schema: dict[str, object]) -> str:
+    """Extract the tool name from a provider schema (anthropic or openai shape)."""
+    name = schema.get("name")
+    if isinstance(name, str):  # anthropic protocol shape
+        return name
+    fn = schema.get("function")
+    if isinstance(fn, dict):  # openai protocol shape: {"function": {"name": ...}}
+        inner = fn.get("name")
+        if isinstance(inner, str):
+            return inner
+    return ""
+
+
+def _exclude_spawn_tools(schemas: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Drop spawn/delegate tools from a presented schema list (depth>0 children)."""
+    return [s for s in schemas if _schema_tool_name(s) not in _CHILD_EXCLUDED_TOOLS]
+
 
 async def _run_with_tools(
     state: PipelineState,
@@ -49,6 +72,20 @@ async def _run_with_tools(
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
     tool_schemas = tool_registry.to_provider_schema(provider.protocol, profile=profile, pins=pins)
+    # E8-S0 — child-toolset exclusion (PRIMARY fork-bomb cap): a delegated child
+    # (delegation_depth>0) may not itself spawn/delegate, so remove those two
+    # tools from the PRESENTED set. Excluded by NAME defensively so it is correct
+    # once S1/S3 register delegate_task/sessions_spawn (they don't exist yet).
+    if state.delegation_depth > 0:
+        tool_schemas = _exclude_spawn_tools(tool_schemas)
+        log.engine.debug(
+            "[pipeline] execute: depth>0 — excluding spawn/delegate tools",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "delegation_depth": state.delegation_depth,
+                "tools": len(tool_schemas),
+            }},
+        )
     log.engine.info(
         "[pipeline] execute: tool_loop entry",
         extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name, "tools": len(tool_schemas)}},
@@ -59,6 +96,20 @@ async def _run_with_tools(
     denied_this_run: set[str] = set()
 
     async def _dispatch(name: str, args: dict[str, object]) -> str:
+        # E8-S0 — EXECUTION-layer fork-bomb cap (not just presentation). A delegated
+        # child (delegation_depth>0) is refused these tools even if it names one the
+        # presented schema omitted: presentation gating is not authorization, so the
+        # depth gate must enforce HERE, fail-closed, from the TRUSTED state.
+        if state.delegation_depth > 0 and name in _CHILD_EXCLUDED_TOOLS:
+            log.engine.warning(
+                "[pipeline] execute: depth>0 child denied spawn/delegate tool",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                   "delegation_depth": state.delegation_depth}},
+            )
+            return (
+                f"'{name}' is not available to a delegated sub-agent (delegation depth "
+                f"limit reached). Complete the task yourself and return your result."
+            )
         t = tool_registry.get(name)
         if t is None:
             log.engine.warning("[pipeline] execute: unknown tool in dispatch", extra={"_fields": {"tool": name}})

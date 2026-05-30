@@ -40,6 +40,13 @@ class PipelineState(BaseModel, frozen=True):
     # answer it. A forgotten flag therefore degrades safely to "clarify
     # unavailable" rather than faking a human presence.
     interactive: bool = False
+    # Recursion depth of this (sub-)pipeline in the delegation tree. 0 for a
+    # top-level user turn; incremented by one each time A2ADelegator spawns a
+    # specialist child (see _run_specialist). Carried across evolve() like every
+    # other field. The child-toolset exclusion gates on depth>0 (PRIMARY
+    # fork-bomb cap), and the S1 delegate_task tool refuses past
+    # MAX_DELEGATION_DEPTH (defense-in-depth).
+    delegation_depth: int = 0
     # ID of an in-flight clarify question awaiting a user answer for this run.
     # The Event itself lives in the (out-of-band) clarify registry — a frozen
     # model cannot hold an asyncio.Event — so only the id is carried in state.

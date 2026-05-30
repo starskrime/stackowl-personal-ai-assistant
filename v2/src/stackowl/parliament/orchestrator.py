@@ -21,6 +21,7 @@ from stackowl.pipeline.backends.base import OrchestratorBackend
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only import
     from stackowl.memory.bridge import MemoryBridge
+    from stackowl.owls.concurrency import ConcurrencyGovernor
 
 
 class ParliamentOrchestrator:
@@ -48,6 +49,7 @@ class ParliamentOrchestrator:
         synthesizer: ParliamentSynthesizer | None = None,
         pellet_generator: KnowledgePelletGenerator | None = None,
         memory_bridge: MemoryBridge | None = None,
+        delegation_governor: ConcurrencyGovernor | None = None,
     ) -> None:
         self._backend = backend
         self._store = session_store
@@ -62,10 +64,12 @@ class ParliamentOrchestrator:
         if pellet_generator is None and memory_bridge is not None:
             pellet_generator = KnowledgePelletGenerator(memory_bridge=memory_bridge)
         self._pellet_gen = pellet_generator
+        # E8-S0 — per-owl fan-out shares the SAME governor as A2ADelegator.
         self._round_runner = RoundRunner(
             backend=backend,
             per_owl_timeout_s=per_owl_timeout_s,
             token_budget=token_budget,
+            delegation_governor=delegation_governor,
         )
 
     @classmethod

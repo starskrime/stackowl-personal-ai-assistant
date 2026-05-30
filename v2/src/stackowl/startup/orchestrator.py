@@ -379,6 +379,14 @@ class StartupOrchestrator:
             ]
         )
 
+        # E8-S0 — ONE shared concurrency governor: bounds total in-flight
+        # delegated + parliament pipelines on this host. Injected onto
+        # StepServices (A2ADelegator reads it off services) AND into the
+        # ParliamentOrchestrator below, so both draw from a SINGLE budget.
+        from stackowl.owls.concurrency import ConcurrencyGovernor
+
+        delegation_governor = ConcurrencyGovernor()
+
         services = StepServices(
             provider_registry=provider_registry,
             stream_registry=stream_registry,
@@ -401,11 +409,13 @@ class StartupOrchestrator:
             consent_gate=consent_gate,
             clarify_gateway=clarify_gateway,
             web_search_registry=web_search_registry,
+            delegation_governor=delegation_governor,
         )
         backend = create_backend(self._settings.orchestrator.backend, services=services)
         parliament = ParliamentOrchestrator(
             backend=backend,
             session_store=SessionStore(db_pool),
+            delegation_governor=delegation_governor,
         )
         scanner = GatewayScanner(owl_registry=owl_registry)
 
