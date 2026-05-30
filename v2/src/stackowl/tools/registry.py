@@ -244,9 +244,11 @@ class ToolRegistry:
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
         from stackowl.tools.knowledge.memory import MemoryTool
+        from stackowl.tools.knowledge.session_search import SessionSearchTool
         from stackowl.tools.knowledge.skill_manage import SkillManageTool
         from stackowl.tools.knowledge.skill_view import SkillViewTool
         from stackowl.tools.knowledge.skills_list import SkillsListTool
+        from stackowl.tools.knowledge.transcripts import TranscriptsTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
         from stackowl.tools.system.shell import ShellTool
@@ -281,4 +283,6 @@ class ToolRegistry:
         registry.register(SkillManageTool())
         registry.register(SkillViewTool())
         registry.register(SkillsListTool())
+        registry.register(SessionSearchTool())
+        registry.register(TranscriptsTool())
         return registry
