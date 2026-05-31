@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 import pytest
 
@@ -64,6 +65,42 @@ async def test_assemble_handles_no_memory():
     from stackowl.pipeline.steps import assemble
     out = await assemble.run(_state(owl_name="default", memory_context=None))
     assert out.system_prompt  # persona alone, never None/empty
+
+
+@pytest.mark.asyncio
+async def test_assemble_leads_with_agentic_base_prompt():
+    """The agentic base prompt (live date + tool-use mandate) must lead the
+    system prompt, ahead of persona and memory."""
+    reg = _make_registry_with_default()
+    set_services(StepServices(owl_registry=reg))
+    from stackowl.pipeline.steps import assemble
+    s = _state(owl_name="default", memory_context="## Learned Preferences\n- likes tea")
+    out = await assemble.run(s)
+    assert out.system_prompt is not None
+    # Live date is injected (proves the base prompt is wired in, not the
+    # model's stale training cutoff).
+    assert str(datetime.now().year) in out.system_prompt
+    # Tool-use mandate (ReAct syntax) is present.
+    assert "ACTION:" in out.system_prompt
+    # Persona still present, and the base prompt leads it.
+    persona = reg.get("default").system_prompt
+    assert persona.split("\n")[0] in out.system_prompt
+    assert out.system_prompt.index("ACTION:") < out.system_prompt.index(persona.split("\n")[0])
+
+
+def test_personas_drop_passive_legacy_phrasing():
+    """Rewritten personas must not carry the old passive/chatbot phrasing."""
+    from stackowl.owls.registry import (
+        _make_default_archivist,
+        _make_default_librarian,
+        _make_default_secretary,
+    )
+    secretary = _make_default_secretary().system_prompt
+    assert "you are an AI assistant" not in secretary
+    librarian = _make_default_librarian().system_prompt
+    assert "do not click" not in librarian
+    archivist = _make_default_archivist().system_prompt
+    assert "do not interact" not in archivist
 
 
 def test_assemble_registered_between_classify_and_execute():

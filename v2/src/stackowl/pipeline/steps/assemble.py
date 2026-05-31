@@ -9,7 +9,9 @@ recalled memory blocks classify produced.
 from __future__ import annotations
 
 from stackowl.exceptions import OwlNotFoundError
+from stackowl.infra.clock import now_local
 from stackowl.infra.observability import log
+from stackowl.owls.base_prompt import build_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
@@ -49,12 +51,21 @@ async def run(state: PipelineState) -> PipelineState:
             "[pipeline] assemble: no owl_registry wired — memory-only prompt",
             extra={"_fields": {"owl": state.owl_name}},
         )
-    parts = [p for p in (persona, state.memory_context) if p]
+    try:
+        base = build_base_prompt(now_local())
+    except Exception as exc:  # no-hidden-errors: never let prompt-building crash the turn
+        log.engine.error(
+            "[pipeline] assemble: base prompt build FAILED — persona-only",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        base = ""
+    parts = [p for p in (base, persona, state.memory_context) if p]
     system_prompt = "\n\n".join(parts) or None
     log.engine.debug(
         "[pipeline] assemble: exit",
         extra={"_fields": {
             "trace_id": state.trace_id,
+            "base_len": len(base),
             "persona_len": len(persona),
             "system_len": len(system_prompt or ""),
         }},
