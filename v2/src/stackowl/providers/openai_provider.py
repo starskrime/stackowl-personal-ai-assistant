@@ -17,6 +17,11 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.providers._react import parse_react_action
+from stackowl.providers._truncate import (
+    CONTEXT_CHAR_BUDGET,
+    trim_messages_to_budget,
+    truncate_observation,
+)
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 
 
@@ -162,7 +167,16 @@ class OpenAIProvider(ModelProvider):
                 return directive
             return None
 
+        budget = (
+            int(self._config.context_chars * 0.8)
+            if self._config.context_chars
+            else CONTEXT_CHAR_BUDGET
+        )
+
         for _ in range(resolved_iterations):
+            # Bound total context BEFORE the call: elide oldest tool observations
+            # if the accumulated history would overflow the model's window.
+            messages = trim_messages_to_budget(messages, budget)
             try:
                 response = await self._client.chat.completions.create(
                     model=resolved_model,
@@ -194,8 +208,11 @@ class OpenAIProvider(ModelProvider):
                             extra={"_fields": {"provider": self._name, "tool": name}},
                         )
                         result_text = f"ERROR running {name}: {exc}"
-                    all_calls.append({"id": None, "name": name, "args": args, "result": result_text})
-                    messages.append({"role": "user", "content": f"OBSERVATION: {result_text}"})
+                    # Cap the observation so a huge tool result (e.g. a browser
+                    # snapshot) can't blow the context window over iterations.
+                    capped = truncate_observation(result_text)
+                    all_calls.append({"id": None, "name": name, "args": args, "result": capped})
+                    messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
                     continue
                 # no action -> draft final answer. Phase D: before accepting it,
                 # ask the persistence judge whether the agent delivered or gave up.
@@ -236,13 +253,15 @@ class OpenAIProvider(ModelProvider):
                         exc_info=exc,
                         extra={"_fields": {"provider": self._name, "tool": fn_name}},
                     )
-                    err = f"ERROR: could not parse arguments for {fn_name}: {exc}"
+                    err = truncate_observation(f"ERROR: could not parse arguments for {fn_name}: {exc}")
                     all_calls.append({"id": tc.id, "name": fn_name, "args": {}, "result": err})
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": err})
                     continue
                 result_text = await tool_dispatcher(fn_name, args)
-                all_calls.append({"id": tc.id, "name": fn_name, "args": args, "result": result_text})
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_text})
+                # Cap the observation so a huge tool result can't overflow the context.
+                capped = truncate_observation(result_text)
+                all_calls.append({"id": tc.id, "name": fn_name, "args": args, "result": capped})
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": capped})
 
         log.engine.warning(
             "[openai] complete_with_tools: max_iterations reached",

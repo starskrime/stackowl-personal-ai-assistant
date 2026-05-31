@@ -12,6 +12,11 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
+from stackowl.providers._truncate import (
+    CONTEXT_CHAR_BUDGET,
+    trim_messages_to_budget,
+    truncate_observation,
+)
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 
 
@@ -127,14 +132,24 @@ class AnthropicProvider(ModelProvider):
                 return directive
             return None
 
+        budget = (
+            int(self._config.context_chars * 0.8)
+            if self._config.context_chars
+            else CONTEXT_CHAR_BUDGET
+        )
+
         for _ in range(resolved_iterations):
+            # Bound total context BEFORE the call. Only tool_result CONTENT is
+            # elided (never the message itself), so tool_use/tool_result pairing
+            # stays valid for the Anthropic API.
+            messages = trim_messages_to_budget(messages, budget)
             try:
                 response = await self._client.messages.create(
                     model=self._config.default_model,
                     messages=messages,  # type: ignore[arg-type]
                     max_tokens=self._config.max_output_tokens,
                     tools=tool_schemas,  # type: ignore[arg-type]
-                    **system_kwargs,  # type: ignore[arg-type]
+                    **system_kwargs,
                 )
             except anthropic.APIError as exc:
                 log.engine.error(
@@ -173,8 +188,10 @@ class AnthropicProvider(ModelProvider):
                 if b.type != "tool_use":
                     continue
                 result_text = await tool_dispatcher(b.name, dict(b.input))
-                all_calls.append({"id": b.id, "name": b.name, "args": b.input, "result": result_text})
-                tool_results.append({"type": "tool_result", "tool_use_id": b.id, "content": result_text})
+                # Cap the observation so a huge tool result can't overflow the context.
+                capped = truncate_observation(result_text)
+                all_calls.append({"id": b.id, "name": b.name, "args": b.input, "result": capped})
+                tool_results.append({"type": "tool_result", "tool_use_id": b.id, "content": capped})
             messages.append({"role": "user", "content": tool_results})
 
         log.engine.warning(
