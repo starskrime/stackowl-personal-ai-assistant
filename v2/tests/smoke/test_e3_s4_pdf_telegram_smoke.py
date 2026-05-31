@@ -61,7 +61,7 @@ class _VisionProvider:
         self._pdf_path = pdf_path
         self.result = ""
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher):  # noqa: ANN001
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
         self.result = await tool_dispatcher("pdf", {"path": self._pdf_path})
         return (self.result, [{"name": "pdf", "args": {}, "result": self.result}])
 

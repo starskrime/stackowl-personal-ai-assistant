@@ -55,7 +55,7 @@ class _SearchProvider:
     def __init__(self) -> None:
         self.result = ""
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher):  # noqa: ANN001
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
         self.result = await tool_dispatcher("search_files", {"pattern": r"def execute", "target": "content"})
         return ("searched", [{"name": "search_files", "args": {}, "result": self.result}])
 

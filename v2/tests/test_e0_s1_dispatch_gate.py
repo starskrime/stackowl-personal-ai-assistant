@@ -64,7 +64,7 @@ class _FakeProvider:
         self.tool_name = tool_name
         self.dispatch_result: str | None = None
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher):
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):
         self.dispatch_result = await tool_dispatcher(self.tool_name, {})
         return ("done", [{"name": self.tool_name, "args": {}, "result": self.dispatch_result}])
 
@@ -78,7 +78,7 @@ class _RepeatingProvider:
         self.tool_name = tool_name
         self.results: list[str] = []
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher):
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):
         self.results.append(await tool_dispatcher(self.tool_name, {}))
         self.results.append(await tool_dispatcher(self.tool_name, {}))
         return ("done", [])

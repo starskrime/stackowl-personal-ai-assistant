@@ -97,7 +97,7 @@ class _ScriptedProvider:
         self.child_depths: list[int] = []
         self.child_ran: bool = False
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher):  # noqa: ANN001
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
         ctx = TraceContext.get()
         owl = ctx.get("owl_name")
         depth = int(ctx.get("delegation_depth") or 0)

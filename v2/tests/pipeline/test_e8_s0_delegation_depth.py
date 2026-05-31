@@ -136,6 +136,7 @@ class _CapturingProvider:
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
+        history: list | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         self.seen_schemas = tool_schemas
         return "done", []
@@ -220,6 +221,7 @@ class _InvokingProvider:
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
+        history: list | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         self.dispatch_result = await tool_dispatcher(self._tool_name, {})
         return "done", []

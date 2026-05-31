@@ -61,7 +61,7 @@ class _ScriptedProvider:
         self.script: list[tuple[str, dict]] = []
         self.results: list[str] = []
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher):  # noqa: ANN001
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
         name, args = self.script.pop(0)
         out = await tool_dispatcher(name, args)  # PARKS here for blocking clarify
         self.results.append(out)

@@ -346,34 +346,6 @@ async def _gather_history(session_id: str, limit: int) -> list[Message]:
     return _parse_turns_to_messages([t.content for t in turns])
 
 
-async def _gather_recent_session_turns(session_id: str, limit: int) -> str:
-    """Best-effort: fetch the last ``limit`` staged conversation turns for the session.
-
-    Provides short-term memory of the current session so the agent can follow
-    multi-turn references without waiting for the dream worker to promote them.
-    """
-    services = get_services()
-    bridge = services.memory_bridge
-    if bridge is None or limit <= 0:
-        return ""
-    try:
-        turns = await bridge.recent_conversation_turns(session_id=session_id, limit=limit)
-    except Exception as exc:
-        log.engine.warning(
-            "[pipeline] classify: recent_conversation_turns failed — skipping",
-            exc_info=exc, extra={"_fields": {"session_id": session_id}},
-        )
-        return ""
-    if not turns:
-        return ""
-    lines = ["Recent conversation:"]
-    for turn in turns:
-        # Keep each turn compact to control token bloat.
-        snippet = turn.content[:500]
-        lines.append(f"- {snippet}")
-    return "\n".join(lines)
-
-
 async def run(state: PipelineState) -> PipelineState:
     log.engine.debug(
         "[pipeline] classify: entry", extra={"_fields": {"trace_id": state.trace_id}}
