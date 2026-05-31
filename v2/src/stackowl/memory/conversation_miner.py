@@ -29,6 +29,10 @@ _EXISTS_STAGED_SQL = (
 _EXISTS_COMMITTED_SQL = (
     "SELECT 1 FROM committed_facts WHERE source_ref = ? AND content = ? LIMIT 1"
 )
+_REINFORCE_SQL = (
+    "UPDATE staged_facts SET reinforcement_count = reinforcement_count + 1 "
+    "WHERE source_type = ? AND source_ref = ? AND content = ? AND status = 'staged'"
+)
 
 
 def _parse_turns(contents: list[str]) -> list[Message]:
@@ -98,7 +102,7 @@ class ConversationMiner:
         return total
 
     async def mine_session(self, session_id: str) -> int:
-        """Mine one session. Returns count of newly staged facts (0 when idempotent)."""
+        """Mine one session. Returns count of NEWLY staged facts (0 on re-mine; reinforcements not counted)."""
         # 1. ENTRY
         log.memory.debug(
             "[memory] conversation_miner.mine_session: entry",
@@ -128,11 +132,28 @@ class ConversationMiner:
             extra={"_fields": {"session_id": session_id, "fact_count": len(facts)}},
         )
         staged = 0
+        reinforced = 0
         for fact in facts:
-            if await self._already_present(fact.source_ref, fact.content):
+            committed = await self._db.fetch_all(_EXISTS_COMMITTED_SQL, (fact.source_ref, fact.content))
+            if committed:
+                # Already in committed_facts — no action needed.
                 log.memory.debug(
-                    "[memory] conversation_miner.mine_session: fact already present — skip",
+                    "[memory] conversation_miner.mine_session: fact already committed — skip",
                     extra={"_fields": {"session_id": session_id}},
+                )
+                continue
+            already_staged = await self._db.fetch_all(
+                _EXISTS_STAGED_SQL, (EXTRACTED_FACT_SOURCE_TYPE, fact.source_ref, fact.content)
+            )
+            if already_staged:
+                # Corroborate-then-commit: bump reinforcement_count on re-derivation.
+                await self._db.execute(
+                    _REINFORCE_SQL, (EXTRACTED_FACT_SOURCE_TYPE, fact.source_ref, fact.content)
+                )
+                reinforced += 1
+                log.memory.debug(
+                    "[memory] conversation_miner.mine_session: fact reinforced",
+                    extra={"_fields": {"session_id": session_id, "reinforced": reinforced}},
                 )
                 continue
             try:
@@ -153,16 +174,6 @@ class ConversationMiner:
         # 4. EXIT
         log.memory.info(
             "[memory] conversation_miner.mine_session: exit",
-            extra={"_fields": {"session_id": session_id, "staged": staged}},
+            extra={"_fields": {"session_id": session_id, "staged": staged, "reinforced": reinforced}},
         )
         return staged
-
-    async def _already_present(self, source_ref: str, content: str) -> bool:
-        """Return True if this exact content is already staged or committed for source_ref."""
-        if await self._db.fetch_all(
-            _EXISTS_STAGED_SQL, (EXTRACTED_FACT_SOURCE_TYPE, source_ref, content)
-        ):
-            return True
-        if await self._db.fetch_all(_EXISTS_COMMITTED_SQL, (source_ref, content)):
-            return True
-        return False

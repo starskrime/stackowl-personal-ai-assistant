@@ -60,7 +60,11 @@ async def test_mine_session_extracts_and_stages(tmp_db: DbPool) -> None:
 
 
 async def test_mine_session_is_idempotent(tmp_db: DbPool) -> None:
-    """Re-mining the same session produces no new rows (content dedup)."""
+    """Re-mining the same session produces NO new rows (content dedup preserved).
+
+    Corroborate-then-commit: the second pass reinforces the existing staged row
+    (bumps reinforcement_count) but does NOT create a duplicate row.
+    """
     bridge = SqliteMemoryBridge(tmp_db)
     await bridge.store("User: I live in Baku\n\nAssistant: Noted.", "s1")
 
@@ -69,12 +73,40 @@ async def test_mine_session_is_idempotent(tmp_db: DbPool) -> None:
     assert first == 1
 
     second = await miner.mine_session("s1")
-    assert second == 0  # content dedup -> nothing new staged
+    assert second == 0  # no NEW rows — reinforcement happened, not a new stage
 
+    # Invariant: still exactly one row
     rows = await tmp_db.fetch_all(
         "SELECT count(*) AS n FROM staged_facts WHERE source_type='conversation_fact' AND source_ref='s1'",
     )
     assert rows[0]["n"] == 1
+
+
+async def test_remine_reinforces_existing_fact(tmp_db: DbPool) -> None:
+    """Corroborate-then-commit: re-mining bumps reinforcement_count on existing staged row."""
+    bridge = SqliteMemoryBridge(tmp_db)
+    await bridge.store("User: I live in Baku\n\nAssistant: Noted.", "s1")
+
+    miner = ConversationMiner(db=tmp_db, extractor=_StubExtractor(), bridge=bridge, message_limit=20)
+
+    # First pass — fact is new, staged with reinforcement_count=0.
+    first = await miner.mine_session("s1")
+    assert first == 1
+
+    row_before = await tmp_db.fetch_all(
+        "SELECT reinforcement_count FROM staged_facts WHERE source_type='conversation_fact' AND source_ref='s1'",
+    )
+    assert row_before[0]["reinforcement_count"] == 0
+
+    # Second pass — same content re-derived: reinforcement_count must become 1.
+    second = await miner.mine_session("s1")
+    assert second == 0  # no NEW rows
+
+    rows = await tmp_db.fetch_all(
+        "SELECT reinforcement_count FROM staged_facts WHERE source_type='conversation_fact' AND source_ref='s1'",
+    )
+    assert len(rows) == 1, "must still be exactly one staged row"
+    assert rows[0]["reinforcement_count"] == 1
 
 
 async def test_mine_all_iterates_distinct_sessions(tmp_db: DbPool) -> None:

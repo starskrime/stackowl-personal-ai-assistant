@@ -19,7 +19,10 @@ SELECT fact_id, content, source_type, source_ref, confidence,
 FROM staged_facts
 WHERE status = 'staged'
   AND confidence >= ?
-  AND reinforcement_count >= ?
+  AND (
+        (source_type = 'conversation_fact' AND reinforcement_count >= ?)
+     OR (source_type != 'conversation_fact' AND reinforcement_count >= ?)
+  )
 """
 
 _SELECT_BY_ID_SQL = """
@@ -60,6 +63,7 @@ class FactPromoter:
         db: DbPool,
         confidence_threshold: float = 0.8,
         reinforcement_required: int = 3,
+        conversation_fact_reinforcement_required: int = 1,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
@@ -68,12 +72,14 @@ class FactPromoter:
                 "_fields": {
                     "confidence_threshold": confidence_threshold,
                     "reinforcement_required": reinforcement_required,
+                    "conversation_fact_reinforcement_required": conversation_fact_reinforcement_required,
                 }
             },
         )
         self._db = db
         self._confidence_threshold = confidence_threshold
         self._reinforcement_required = reinforcement_required
+        self._conversation_fact_reinforcement_required = conversation_fact_reinforcement_required
         # 4. EXIT
         log.memory.debug("[memory] fact_promoter.init: exit")
 
@@ -86,13 +92,18 @@ class FactPromoter:
                 "_fields": {
                     "confidence_threshold": self._confidence_threshold,
                     "reinforcement_required": self._reinforcement_required,
+                    "conversation_fact_reinforcement_required": self._conversation_fact_reinforcement_required,
                 }
             },
         )
-        # 3. STEP — select eligible
+        # 3. STEP — select eligible (conversation_fact uses lower threshold)
         rows = await self._db.fetch_all(
             _SELECT_ELIGIBLE_SQL,
-            (self._confidence_threshold, self._reinforcement_required),
+            (
+                self._confidence_threshold,
+                self._conversation_fact_reinforcement_required,
+                self._reinforcement_required,
+            ),
         )
         log.memory.debug(
             "[memory] fact_promoter.promote_eligible: candidates found",

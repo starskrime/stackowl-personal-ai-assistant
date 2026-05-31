@@ -177,6 +177,10 @@ class MemorySettings(BaseModel):
     )
     promotion_confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     reinforcement_required: int = Field(default=3, ge=1)
+    # Corroborations (re-derivations by the conversation miner) before a mined
+    # conversation fact promotes to long-term committed memory.
+    # 1 = commit after being seen in a second dream pass.
+    conversation_fact_reinforcement_required: int = Field(default=1, ge=0)
     prune_after_days: int = Field(default=90, ge=1)
     extraction_after_n_messages: int = Field(default=5, ge=1)
     per_user_ceiling_bytes: int = Field(default=52_428_800, ge=1_000_000)

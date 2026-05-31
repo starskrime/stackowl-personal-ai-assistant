@@ -153,6 +153,7 @@ class MemoryAssembly:
             db=db,
             confidence_threshold=mem.promotion_confidence_threshold,
             reinforcement_required=mem.reinforcement_required,
+            conversation_fact_reinforcement_required=mem.conversation_fact_reinforcement_required,
         )
         pruner = MemoryPruner(
             db=db,
