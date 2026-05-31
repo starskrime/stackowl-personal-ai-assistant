@@ -8,6 +8,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
 from stackowl.pipeline.backends.base import OrchestratorBackend
+from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
@@ -71,6 +72,11 @@ class AsyncioBackend(OrchestratorBackend):
                         extra={"_fields": {"step": step_name, "trace_id": state.trace_id, "duration_ms": duration_ms}},
                     )
                     current = current.evolve(errors=(*current.errors, error_msg))
+
+            # Phase 2 #2 — surface a CRITICAL (execute) step failure to the user
+            # BEFORE deliver, so silence is replaced by a localized apology. Shared
+            # with LangGraphBackend; self-healing (never raises into the backend).
+            current = await surface_critical_failure(current, self._services)
 
             current = current.evolve(pipeline_step="deliver")
             deliver_t0 = time.monotonic()

@@ -25,10 +25,22 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
+from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
-from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import deliver
+
+
+async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
+    """Surface a critical-step failure (shared helper), then deliver.
+
+    Services are read from the ambient pipeline-services context (set by ``run``),
+    matching how every other step resolves its dependencies. The surfacing helper
+    is self-healing and never raises, so deliver always runs afterwards.
+    """
+    surfaced = await surface_critical_failure(state, get_services())
+    return await deliver.run(surfaced)
 
 try:
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -174,7 +186,10 @@ class LangGraphBackend(OrchestratorBackend):
         builder: StateGraph[_LGState, None, _LGState, _LGState] = StateGraph(_LGState)
         for step_name, step_fn in PIPELINE_STEPS:
             builder.add_node(step_name, self._wrap_step(step_name, step_fn))  # type: ignore[call-overload]
-        builder.add_node("deliver", self._wrap_step("deliver", deliver.run))  # type: ignore[call-overload]
+        # Phase 2 #2 — the deliver node first surfaces a CRITICAL (execute) failure
+        # to the user (shared helper, identical to AsyncioBackend) so no backend
+        # diverges, then runs deliver. Self-healing; never raises into the graph.
+        builder.add_node("deliver", self._wrap_step("deliver", _deliver_with_surfacing))  # type: ignore[call-overload]
 
         # Canonical sequence: triage → dispatch → classify → execute
         # → parliament_step (via Send) → consolidate → synthesize → deliver → END.
