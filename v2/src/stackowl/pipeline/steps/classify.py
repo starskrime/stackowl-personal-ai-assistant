@@ -14,6 +14,7 @@ import re
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+from stackowl.providers.base import Message
 
 # Unicode tokenisation — stdlib ``re`` ``\w`` already covers \p{L}\p{N}_
 # under the UNICODE flag, which is enabled by default on Python 3. Never
@@ -305,6 +306,46 @@ async def _gather_lessons(query: str, limit: int = 3) -> str:
     return result
 
 
+def _parse_turns_to_messages(contents: list[str]) -> list[Message]:
+    """Parse stored "User: X\n\nAssistant: Y" rows into real Message turns.
+
+    The store format is fixed by consolidate.py: f"User: {input}\n\nAssistant: {reply}".
+    Returns oldest-first user/assistant pairs; skips empty halves so we never
+    emit a blank-content turn (providers reject empty content).
+    """
+    msgs: list[Message] = []
+    for content in contents:
+        user_part, _, assistant_part = content.partition("\n\nAssistant:")
+        user_text = user_part.removeprefix("User:").strip()
+        assistant_text = assistant_part.strip()
+        if user_text:
+            msgs.append(Message(role="user", content=user_text))
+        if assistant_text:
+            msgs.append(Message(role="assistant", content=assistant_text))
+    return msgs
+
+
+async def _gather_history(session_id: str, limit: int) -> list[Message]:
+    """Fetch the last ``limit`` staged conversation turns as real Message objects.
+
+    Returns oldest-first user/assistant Message pairs for direct injection into
+    the model's message history (not folded into the system-prompt text block).
+    """
+    services = get_services()
+    bridge = services.memory_bridge
+    if bridge is None or limit <= 0:
+        return []
+    try:
+        turns = await bridge.recent_conversation_turns(session_id=session_id, limit=limit)
+    except Exception as exc:
+        log.engine.warning(
+            "[pipeline] classify: history fetch failed — skipping",
+            exc_info=exc, extra={"_fields": {"session_id": session_id}},
+        )
+        return []
+    return _parse_turns_to_messages([t.content for t in turns])
+
+
 async def _gather_recent_session_turns(session_id: str, limit: int) -> str:
     """Best-effort: fetch the last ``limit`` staged conversation turns for the session.
 
@@ -351,7 +392,7 @@ async def run(state: PipelineState) -> PipelineState:
         short_term_window = Settings().memory.short_term_window
     except Exception:
         short_term_window = 6
-    recent_block = await _gather_recent_session_turns(state.session_id, short_term_window)
+    history = await _gather_history(state.session_id, short_term_window)
     # Long-term graph context.
     graph_context = await _gather_graph_context(state.input_text)
     # Persisted user preferences (high priority — pin to top).
@@ -365,12 +406,13 @@ async def run(state: PipelineState) -> PipelineState:
     lessons_block = await _gather_lessons(state.input_text, limit=3)
     # Combine: prefs first (always in view), then skills (what tactics apply),
     # then lessons (cross-source learnings), then reflections (what went wrong
-    # before), then recent conversation (most temporally relevant), then
-    # long-term context, then graph.
+    # before), then long-term context, then graph.
+    # NOTE: prior conversation turns are NO LONGER included here — they are
+    # passed as real message history via state.history to avoid duplication.
     parts = [
         p for p in (
             prefs_block, skills_block, lessons_block, reflections_block,
-            recent_block, context, graph_context,
+            context, graph_context,
         ) if p
     ]
     combined = "\n\n".join(parts)
@@ -384,9 +426,9 @@ async def run(state: PipelineState) -> PipelineState:
                 "skills_len": len(skills_block),
                 "lessons_len": len(lessons_block),
                 "reflections_len": len(reflections_block),
-                "recent_len": len(recent_block),
+                "history_len": len(history),
                 "graph_context_len": len(graph_context),
             }
         },
     )
-    return state.evolve(memory_context=combined or None)
+    return state.evolve(memory_context=combined or None, history=tuple(history))
