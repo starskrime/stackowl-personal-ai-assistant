@@ -61,6 +61,11 @@ class Notification(BaseModel):
     channel_name: str | None = None
     job_id: str | None = None
     idempotency_key: str | None = None
+    # Optional outbound file/media attachment (E8 send_file). When set, the
+    # ProactiveDeliverer routes to the channel adapter's ``send_file`` instead of
+    # the text path, using ``message`` as the (optional) caption. None preserves
+    # the pure-text behaviour for every existing caller.
+    file_path: str | None = None
 
 
 class NotificationRouter:

@@ -110,6 +110,20 @@ class ChannelAdapter(ABC):
         )
         await self.send_text(text)
 
+    async def send_file(self, file_path: str, caption: str | None = None) -> None:
+        """Send a file/media attachment to the user (E8 send_file).
+
+        Default behaviour: raise :class:`NotImplementedError` — a channel that
+        cannot transport binary files (CLI, SMS, a not-yet-implemented adapter)
+        signals "file send not supported on <channel>" this way; the
+        :class:`ProactiveDeliverer` maps the raise to a structured ``"failed"``
+        status and NEVER crashes the turn (self-healing). Channels that can carry
+        files (Telegram) override this to upload the bytes with ``caption``.
+        """
+        raise NotImplementedError(
+            f"file send not supported on {self.channel_name!r}"
+        )
+
     async def download_media(self, file_id: str) -> bytes:
         """Download a media attachment by its channel-specific file ID.
 

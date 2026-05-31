@@ -33,16 +33,21 @@ __all__ = ["PresentationConfig", "ToolPresentation"]
 # crowd a full profile group (e.g. the 25-tool browser group) past the cap. Bump
 # the cap by the same 3 so base growth does NOT shrink the discretionary headroom
 # an owl profile already had (a browser owl still sees its core snapshot/click).
-_DEFAULT_CAP = 28
+_DEFAULT_CAP = 29
 # Guaranteed base set — read-only/foundation essentials every owl always has.
 # Phase B: the self-improvement trio (skill_manage / reflect_now /
 # synthesize_skills) joins the base set so EVERY owl can reach self-learning +
-# gap-analysis/skill-build mid-turn (not only the nightly scheduler). The
-# consequential ones (skill_manage, synthesize_skills) are still consent-gated at
-# dispatch — surfacing them does not bypass consent.
+# gap-analysis/skill-build mid-turn (not only the nightly scheduler). E8 adds
+# send_file so EVERY owl can deliver a workspace file it produced (the agent can
+# download but, without surfacing this, could not send the bytes). The
+# consequential ones (skill_manage, synthesize_skills, send_file) are still
+# consent-gated at dispatch — surfacing them does not bypass consent. The cap is
+# bumped in lockstep with each base addition so base growth does NOT shrink the
+# discretionary per-turn headroom a full owl profile already had.
 _DEFAULT_BASE = frozenset({
     "read_file", "write_file", "shell", "web_fetch",
     "skill_manage", "reflect_now", "synthesize_skills",
+    "send_file",
 })
 _DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"})
 

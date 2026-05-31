@@ -304,6 +304,7 @@ class ToolRegistry:
         from stackowl.tools.planning.update_plan import UpdatePlanTool
         from stackowl.tools.scheduling.cronjob import CronjobTool
         from stackowl.tools.scheduling.heartbeat_respond import HeartbeatRespondTool
+        from stackowl.tools.scheduling.send_file import SendFileTool
         from stackowl.tools.scheduling.send_message import SendMessageTool
         from stackowl.tools.search.web_search import WebSearchTool
         from stackowl.tools.system.shell import ShellTool
@@ -337,6 +338,12 @@ class ToolRegistry:
         # chokepoint) at execute time. Consequential: the registry's consent gate
         # fires before execute (fails closed off-TTY). No constructor wiring.
         registry.register(SendMessageTool())
+        # send_file — agent-initiated outbound FILE/media; threads a workspace-scoped
+        # path through a Notification(file_path=...) into get_services().
+        # proactive_deliverer (the S0 chokepoint), which routes it to the channel
+        # adapter's send_file. Consequential: the consent gate fires before execute
+        # (fails closed off-TTY). Workspace-scoped + size-capped + flood-capped.
+        registry.register(SendFileTool())
         # delegate_task — hands a sub-task to a specialist owl via the shared
         # A2ADelegator resolved off get_services().a2a_delegator at execute time
         # (no constructor wiring; the depth/width rails live in the tool). The S0

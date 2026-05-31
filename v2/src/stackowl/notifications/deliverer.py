@@ -85,6 +85,7 @@ class ProactiveDeliverer:
                     "urgency": notification.urgency,
                     "category": notification.category,
                     "channel": notification.channel_name,
+                    "has_file": notification.file_path is not None,
                 }
             },
         )
@@ -102,8 +103,15 @@ class ProactiveDeliverer:
             self._log_exit(status, channel, t0)
             return status
 
-        # 3. STEP — resolve adapter + transport the body (bounded retry-once).
-        result = await self._transport(channel, notification.message)
+        # 3. STEP — resolve adapter + transport. A file notification routes to the
+        # adapter's send_file (caption == the router-vetted message body); the pure
+        # text path is unchanged when file_path is None.
+        if notification.file_path is not None:
+            result = await self._transport_file(
+                channel, notification.file_path, notification.message
+            )
+        else:
+            result = await self._transport(channel, notification.message)
         self._log_exit(result, channel, t0)
         return result
 
@@ -160,6 +168,53 @@ class ProactiveDeliverer:
                 )
                 return "failed"
         return "failed"  # pragma: no cover — loop always returns
+
+    async def _transport_file(
+        self, channel: str, file_path: str, caption: str
+    ) -> DeliveryStatus:
+        """Resolve the adapter and upload ``file_path`` via ``send_file``.
+
+        Returns ``"delivered"`` on a successful upload, or ``"failed"`` (logged,
+        B5) on an unknown channel, a channel that does not support file send
+        (``NotImplementedError``), or any send error. Never raises.
+
+        Unlike :meth:`_transport`, a file upload is NOT retried: re-running an
+        upload that may have partially succeeded risks a duplicate send, so a
+        single attempt is made and any failure is surfaced structured.
+        """
+        try:
+            adapter = self._registry.get(channel)
+        except Exception as exc:  # B5 — unknown / unavailable channel
+            log.notifications.error(
+                "[notifications] deliverer._transport_file: channel unavailable",
+                exc_info=exc,
+                extra={"_fields": {"channel": channel}},
+            )
+            return "failed"
+
+        caption_arg = caption or None
+        try:
+            await adapter.send_file(file_path, caption_arg)
+        except NotImplementedError as exc:  # B5 — channel cannot carry files
+            log.notifications.error(
+                "[notifications] deliverer._transport_file: channel does not support files",
+                exc_info=exc,
+                extra={"_fields": {"channel": channel}},
+            )
+            return "failed"
+        except Exception as exc:  # B5 — upload failed (no retry: upload not idempotent)
+            log.notifications.error(
+                "[notifications] deliverer._transport_file: send_file failed",
+                exc_info=exc,
+                extra={"_fields": {"channel": channel}},
+            )
+            return "failed"
+
+        log.notifications.debug(
+            "[notifications] deliverer._transport_file: sent",
+            extra={"_fields": {"channel": channel, "has_caption": caption_arg is not None}},
+        )
+        return "delivered"
 
     def _log_exit(self, status: DeliveryStatus, channel: str, t0: float) -> None:
         # 4. EXIT

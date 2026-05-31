@@ -317,6 +317,64 @@ class TelegramChannelAdapter(ChannelAdapter):
                 extra={"_fields": {"chat_id": chat_id}},
             )
 
+    # File extensions routed to the richer Telegram media senders (lower-cased,
+    # leading-dot). Anything else (incl. no extension) goes via send_document.
+    _VIDEO_EXTS = frozenset({".mp4", ".mov", ".webm"})
+    _PHOTO_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif"})
+
+    async def send_file(self, file_path: str, caption: str | None = None) -> None:
+        """Upload ``file_path`` to the user's chat, picking the media kind by extension.
+
+        ``.mp4/.mov/.webm`` → ``bot.send_video``; ``.jpg/.jpeg/.png/.gif`` →
+        ``bot.send_photo``; everything else → ``bot.send_document``. The file is
+        opened in binary mode and passed to the Bot API; ``caption`` (optional)
+        is attached. Targets the most-recent chat (same chat resolution as
+        :meth:`send_text`); a missing chat / uninitialised bot is a logged no-op
+        (the deliverer surfaces undeliverable as ``failed``). On a send error the
+        file handle is always closed and the exception propagates to the
+        deliverer, which maps it to a structured ``failed`` — never a crash.
+        """
+        from pathlib import Path
+
+        ext = Path(file_path).suffix.lower()
+        log.telegram.debug(
+            "[telegram] adapter.send_file: entry",
+            extra={"_fields": {"ext": ext, "has_caption": bool(caption)}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.send_file")
+        if self._bot_app is None or self._last_chat_id is None:
+            log.telegram.warning(
+                "[telegram] adapter.send_file: no active chat — file dropped",
+                extra={"_fields": {"has_app": self._bot_app is not None}},
+            )
+            return
+
+        # 2. DECISION — pick the Bot API media sender by extension.
+        if ext in self._VIDEO_EXTS:
+            sender, arg = self._bot_app.bot.send_video, "video"
+        elif ext in self._PHOTO_EXTS:
+            sender, arg = self._bot_app.bot.send_photo, "photo"
+        else:
+            sender, arg = self._bot_app.bot.send_document, "document"
+        log.telegram.debug(
+            "[telegram] adapter.send_file: decision media_kind",
+            extra={"_fields": {"kind": arg}},
+        )
+
+        # 3. STEP — open in binary and upload; always close the handle.
+        handle = open(file_path, "rb")  # noqa: SIM115 — closed in finally below
+        try:
+            kwargs: dict[str, Any] = {"chat_id": self._last_chat_id, arg: handle}
+            if caption:
+                kwargs["caption"] = caption
+            await sender(**kwargs)
+        finally:
+            handle.close()
+        log.telegram.debug(
+            "[telegram] adapter.send_file: exit",
+            extra={"_fields": {"kind": arg, "chat_id": self._last_chat_id}},
+        )
+
     async def download_media(self, file_id: str) -> bytes:
         """Download a media file by its Telegram file_id."""
         log.telegram.debug(
