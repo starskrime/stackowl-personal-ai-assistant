@@ -86,6 +86,16 @@ class TelegramChannelAdapter(ChannelAdapter):
 
         app.add_handler(MessageHandler(filters.TEXT, self._handle_update))
         self.register_with_registry()
+        # RC-D: publish the slash-command menu so "/" autocompletes in clients.
+        from stackowl.channels.telegram.commands_registration import register_commands
+        from stackowl.commands.registry import CommandRegistry
+
+        try:
+            await register_commands(app.bot, CommandRegistry.instance().list())
+        except Exception as exc:  # B5 — never block startup on menu registration
+            log.telegram.error(
+                "[telegram] adapter.start: command registration failed", exc_info=exc,
+            )
         log.telegram.debug("[telegram] adapter.start: exit")
 
     async def stop(self) -> None:
