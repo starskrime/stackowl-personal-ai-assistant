@@ -10,3 +10,12 @@ dist/
 .ruff_cache/
 stackowl.yaml
 .dev-home/
+
+# Runtime state/artifacts must live under ~/.stackowl/ (StackowlHome), never the project.
+# These guard against stray writes if a process ever runs with the wrong CWD.
+/data/
+/downloads/
+*.mp4
+*.mov
+*.mkv
+*.webm
