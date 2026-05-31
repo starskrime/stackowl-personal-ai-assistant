@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from stackowl.pipeline.steps.classify import _parse_turns_to_messages
 
@@ -145,3 +147,34 @@ async def test_execute_streaming_branch_builds_history_messages(monkeypatch):
     assert captured_messages[1].content == "prior response"
     assert captured_messages[2].role == "user"
     assert captured_messages[2].content == "current"
+
+
+# ---------------------------------------------------------------------------
+# H2 — no-hidden-errors: _gather_history fetch failure must log at ERROR
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_gather_history_logs_error_on_fetch_failure(caplog):
+    """When recent_conversation_turns raises, _gather_history must return []
+    (self-heal) AND log at ERROR level (not just warning)."""
+    from stackowl.pipeline.services import StepServices, set_services, reset_services
+    from stackowl.pipeline.steps.classify import _gather_history
+
+    class _BrokenBridge:
+        async def recent_conversation_turns(self, session_id, limit):
+            raise RuntimeError("simulated bridge failure")
+
+    token = set_services(StepServices(memory_bridge=_BrokenBridge()))
+    try:
+        with caplog.at_level(logging.ERROR, logger="stackowl.engine"):
+            result = await _gather_history("session-x", limit=6)
+    finally:
+        reset_services(token)
+
+    # Self-heals to empty list
+    assert result == []
+    # ERROR was logged (not just a warning)
+    assert any(
+        r.levelno == logging.ERROR and "history fetch FAILED" in r.getMessage()
+        for r in caplog.records
+    ), f"Expected ERROR log not found. Records: {[r.getMessage() for r in caplog.records]}"

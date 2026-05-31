@@ -338,8 +338,8 @@ async def _gather_history(session_id: str, limit: int) -> list[Message]:
     try:
         turns = await bridge.recent_conversation_turns(session_id=session_id, limit=limit)
     except Exception as exc:
-        log.engine.warning(
-            "[pipeline] classify: history fetch failed — skipping",
+        log.engine.error(
+            "[pipeline] classify: history fetch FAILED — short-term memory degraded",
             exc_info=exc, extra={"_fields": {"session_id": session_id}},
         )
         return []

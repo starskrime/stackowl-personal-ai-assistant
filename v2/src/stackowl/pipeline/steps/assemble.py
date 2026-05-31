@@ -8,6 +8,7 @@ recalled memory blocks classify produced.
 
 from __future__ import annotations
 
+from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra.observability import log
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.services import get_services
@@ -31,9 +32,16 @@ async def run(state: PipelineState) -> PipelineState:
                 "[pipeline] assemble: persona resolved",
                 extra={"_fields": {"owl": state.owl_name, "persona_len": len(persona)}},
             )
-        except Exception as exc:  # B5 — unknown owl must not blank the prompt
-            log.engine.warning(
-                "[pipeline] assemble: persona lookup failed — memory-only prompt",
+        except OwlNotFoundError:
+            # Legitimately degradable — system/parliament routes have no persona.
+            log.engine.debug(
+                "[pipeline] assemble: owl not found — memory-only prompt",
+                extra={"_fields": {"owl": state.owl_name}},
+            )
+        except Exception as exc:
+            # Unexpected failure (malformed manifest, injector bug, etc.) — loud.
+            log.engine.error(
+                "[pipeline] assemble: persona injection FAILED — RC-B degraded",
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
     else:

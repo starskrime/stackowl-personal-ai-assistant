@@ -72,21 +72,29 @@ class ConversationMiner:
         log.memory.info("[memory] conversation_miner.mine_all: entry")
         rows = await self._db.fetch_all(_DISTINCT_SESSIONS_SQL)
         total = 0
+        failed = 0
         for row in rows:
             session_id = row["source_ref"]
             try:
                 total += await self.mine_session(session_id)
             except Exception as exc:  # B5
+                failed += 1
                 log.memory.error(
                     "[memory] conversation_miner.mine_all: session failed — skipping",
                     exc_info=exc,
                     extra={"_fields": {"session_id": session_id}},
                 )
         # 4. EXIT
-        log.memory.info(
-            "[memory] conversation_miner.mine_all: exit",
-            extra={"_fields": {"sessions": len(rows), "staged": total}},
-        )
+        if failed > 0:
+            log.memory.error(
+                "[memory] conversation_miner.mine_all: completed with failures",
+                extra={"_fields": {"sessions": len(rows), "staged": total, "failed": failed}},
+            )
+        else:
+            log.memory.info(
+                "[memory] conversation_miner.mine_all: exit",
+                extra={"_fields": {"sessions": len(rows), "staged": total, "failed": 0}},
+            )
         return total
 
     async def mine_session(self, session_id: str) -> int:
@@ -130,11 +138,17 @@ class ConversationMiner:
             try:
                 await self._bridge.stage(fact)
                 staged += 1
-            except DuplicateFactError as exc:  # B5
+            except DuplicateFactError as exc:  # Expected idempotency — quiet warning.
                 log.memory.warning(
                     "[memory] conversation_miner: duplicate fact_id — skipping",
                     exc_info=exc,
                     extra={"_fields": {"fact_id": fact.fact_id}},
+                )
+            except Exception as exc:  # Unexpected stage error — loud, skip this fact only.
+                log.memory.error(
+                    "[memory] conversation_miner: stage FAILED — skipping fact",
+                    exc_info=exc,
+                    extra={"_fields": {"session_id": session_id, "fact_id": fact.fact_id}},
                 )
         # 4. EXIT
         log.memory.info(

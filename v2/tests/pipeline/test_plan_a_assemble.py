@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from stackowl.owls.manifest import OwlAgentManifest
@@ -69,3 +71,59 @@ def test_assemble_registered_between_classify_and_execute():
     names = [n for n, _ in PIPELINE_STEPS]
     assert "assemble" in names
     assert names.index("classify") < names.index("assemble") < names.index("execute")
+
+
+# ---------------------------------------------------------------------------
+# H1 — no-hidden-errors: unexpected persona injection failures must be loud
+# ---------------------------------------------------------------------------
+
+class _BrokenRegistry:
+    """Stub registry whose .get() raises an unexpected non-not-found error."""
+
+    def get(self, name: str):  # noqa: D102
+        raise ValueError(f"simulated internal registry error for {name!r}")
+
+
+@pytest.mark.asyncio
+async def test_assemble_logs_error_on_unexpected_registry_exception(caplog):
+    """When registry.get raises something other than OwlNotFoundError, assemble
+    must self-heal (return a state) AND log at ERROR level."""
+    set_services(StepServices(owl_registry=_BrokenRegistry()))
+    from stackowl.pipeline.steps import assemble
+
+    s = _state(owl_name="broken_owl", memory_context="some memory")
+    with caplog.at_level(logging.ERROR, logger="stackowl.engine"):
+        out = await assemble.run(s)
+
+    # Self-heals: returns a valid PipelineState
+    assert out is not None
+    # Memory context is still present even without persona
+    assert out.system_prompt is not None
+    assert "some memory" in out.system_prompt
+    # Loud ERROR log was emitted
+    assert any(
+        r.levelno == logging.ERROR and "persona injection FAILED" in r.getMessage()
+        for r in caplog.records
+    ), f"Expected ERROR log not found. Records: {[r.getMessage() for r in caplog.records]}"
+
+
+@pytest.mark.asyncio
+async def test_assemble_unknown_owl_degrades_quietly(caplog):
+    """An OwlNotFoundError (unknown owl name) must NOT log at ERROR — it's a
+    legitimate degradation for system/parliament routes. assemble must
+    self-heal to memory-only."""
+    reg = OwlRegistry.with_default_secretary()  # 'nonexistent_owl' is not registered
+    set_services(StepServices(owl_registry=reg))
+    from stackowl.pipeline.steps import assemble
+
+    s = _state(owl_name="nonexistent_owl", memory_context="ctx")
+    with caplog.at_level(logging.DEBUG, logger="stackowl.engine"):
+        out = await assemble.run(s)
+
+    assert out is not None
+    assert out.system_prompt is not None
+    assert "ctx" in out.system_prompt
+    # Must NOT have an ERROR record for this path
+    assert not any(
+        r.levelno == logging.ERROR for r in caplog.records
+    ), f"Unexpected ERROR for unknown-owl path: {[r.getMessage() for r in caplog.records]}"
