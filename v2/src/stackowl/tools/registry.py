@@ -228,6 +228,7 @@ class ToolRegistry:
     def with_defaults(cls) -> ToolRegistry:
         """Bootstrap the registry with the foundation tools + browser family."""
         from stackowl.tools.agents.delegate_task import DelegateTaskTool
+        from stackowl.tools.agents.mixture_of_agents import MixtureOfAgentsTool
         from stackowl.tools.browser.back import BrowserBackTool
         from stackowl.tools.browser.browse import BrowserBrowseTool
         from stackowl.tools.browser.console import BrowserConsoleTool
@@ -296,6 +297,12 @@ class ToolRegistry:
         # (no constructor wiring; the depth/width rails live in the tool). The S0
         # execution gate withholds it at delegation_depth>0 (E8-S1).
         registry.register(DelegateTaskTool())
+        # mixture_of_agents — fans one hard question across healthy_distinct()
+        # providers, then synthesizes via the parliament synthesizer. Reads
+        # provider_registry/db_pool/event_bus off get_services() at execute time
+        # (no constructor wiring). Self-healing: partial-ensemble tolerant,
+        # structured refusal on a thin roster. Severity read (E8-S2).
+        registry.register(MixtureOfAgentsTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())

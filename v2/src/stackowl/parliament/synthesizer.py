@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.parliament.convergence import ConvergenceDetector
+from stackowl.parliament.positions_synthesis import synthesize_positions
 from stackowl.parliament.synthesis_models import SynthesisResult
 from stackowl.parliament.synthesis_parser import SynthesisParser
 from stackowl.providers.base import Message
@@ -125,7 +126,7 @@ class ParliamentSynthesizer:
             raw_text = completion.content
 
         confidence = self._compute_confidence(session, mean_sim)
-        parsed = self._parser.parse(raw_text, session)
+        parsed = self._parser.parse(raw_text, session.session_id)
         synthesis_text = self._format_synthesis_text(raw_text, session, confidence)
 
         result = SynthesisResult(
@@ -149,6 +150,30 @@ class ParliamentSynthesizer:
             },
         )
         return result
+
+    async def synthesize_positions(
+        self,
+        question: str,
+        positions: list[str],
+    ) -> SynthesisResult:
+        """Synthesize a verdict from raw independent positions (no session).
+
+        Positions-in / verdict-out entry point used by the ``mixture_of_agents``
+        tool (E8-S2). Reuses the same synthesis ``_SYSTEM_PROMPT`` + structural
+        parser as :meth:`synthesize` (via :mod:`positions_synthesis`) but takes
+        already-collected proposer answers rather than a
+        :class:`ParliamentSession` — so MoA never fabricates a fake session.
+        Single-round; degrades gracefully on a synth-provider failure; never
+        raises out of the synthesis itself.
+        """
+        TestModeGuard.assert_not_test_mode("parliament.synthesize_positions")
+        return await synthesize_positions(
+            providers=self._providers,
+            parser=self._parser,
+            system_prompt=_SYSTEM_PROMPT,
+            question=question,
+            positions=positions,
+        )
 
     async def _compute_mean_similarity(self, session: ParliamentSession) -> float:
         """Return mean pairwise similarity for the last round's responses."""

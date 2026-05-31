@@ -7,17 +7,11 @@ extracts those fields and gracefully degrades when the output is malformed.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from stackowl.infra.observability import log
 from stackowl.parliament.synthesis_models import (
     DisagreementPoint,
     SynthesisResult,
 )
-
-if TYPE_CHECKING:
-    from stackowl.parliament.models import ParliamentSession
-
 
 _DIAMOND = "◆"
 
@@ -25,11 +19,16 @@ _DIAMOND = "◆"
 class SynthesisParser:
     """Parses an LLM synthesis response into a :class:`SynthesisResult`."""
 
-    def parse(self, raw: str, session: ParliamentSession) -> SynthesisResult:
-        """Parse structural markers; on failure return a graceful fallback."""
+    def parse(self, raw: str, session_id: str) -> SynthesisResult:
+        """Parse structural markers; on failure return a graceful fallback.
+
+        Takes ``session_id`` (a correlation tag for logging) rather than a whole
+        ``ParliamentSession`` so the parser is reusable by callers that have raw
+        positions but no Parliament session (E8-S2 MoA), without fabricating one.
+        """
         log.parliament.debug(
             "[parliament] synthesis_parser.parse: entry",
-            extra={"_fields": {"session_id": session.session_id, "raw_len": len(raw)}},
+            extra={"_fields": {"session_id": session_id, "raw_len": len(raw)}},
         )
         try:
             body = raw.split(_DIAMOND)[0].strip()
@@ -54,7 +53,7 @@ class SynthesisParser:
                 "[parliament] synthesis_parser.parse: exit — parsed",
                 extra={
                     "_fields": {
-                        "session_id": session.session_id,
+                        "session_id": session_id,
                         "disagreements": len(disagreements),
                     }
                 },
@@ -74,7 +73,7 @@ class SynthesisParser:
                 exc_info=exc,
                 extra={
                     "_fields": {
-                        "session_id": session.session_id,
+                        "session_id": session_id,
                         "raw_len": len(raw),
                     }
                 },

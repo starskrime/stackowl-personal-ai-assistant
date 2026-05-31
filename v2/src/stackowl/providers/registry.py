@@ -185,6 +185,39 @@ class ProviderRegistry:
         )
         raise AllProvidersUnavailableError(details)
 
+    def healthy_distinct(self, limit: int | None = None) -> list[ModelProvider]:
+        """Return providers whose CircuitBreaker is NOT OPEN, distinct underlying.
+
+        Used by MoA layer-1 fan-out (E8-S2): a roster of independent, available
+        providers. A provider with no breaker counts as healthy. Distinctness is
+        by underlying provider identity (``id``) so the same instance registered
+        under two names is not consulted twice. ``limit`` caps the roster size.
+        """
+        log.engine.debug(
+            "[registry] healthy_distinct: entry",
+            extra={"_fields": {"limit": limit, "total": len(self._providers)}},
+        )
+        seen: set[int] = set()
+        roster: list[ModelProvider] = []
+        skipped_open: list[str] = []
+        for name, provider in self._providers.items():
+            breaker = self._breakers.get(name)
+            if breaker is not None and breaker.state is CircuitState.OPEN:
+                skipped_open.append(name)
+                continue
+            identity = id(provider)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            roster.append(provider)
+            if limit is not None and len(roster) >= limit:
+                break
+        log.engine.debug(
+            "[registry] healthy_distinct: exit",
+            extra={"_fields": {"healthy": len(roster), "skipped_open": skipped_open}},
+        )
+        return roster
+
     def get_circuit_breaker(self, name: str) -> CircuitBreaker | None:
         """Return the CircuitBreaker for `name`, or None if unknown."""
         return self._breakers.get(name)
