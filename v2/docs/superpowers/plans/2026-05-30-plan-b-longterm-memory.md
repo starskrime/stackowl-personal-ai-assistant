@@ -26,8 +26,21 @@ Even after extraction works, the promotion gate is `confidence >= 0.8 AND reinfo
 
 ---
 
+## Cross-plan finding (must fix first — Task 0)
+
+`FactExtractor` stamps extracted facts with `source_type="conversation"` (fact_extractor.py:151) — the SAME type as raw turns. Left as-is this would (a) make extracted facts show up in Plan A's `recent_conversation_turns` short-term history (which filters `source_type='conversation'`), corrupting it, and (b) make mining re-extract from its own output. Fix: extracted facts get a DISTINCT `source_type` (`"conversation_fact"`). This automatically excludes them from `recent_conversation_turns` (still filters `'conversation'`), so it also REMOVES the Plan A pollution risk. Promotion/recall are `source_type`-agnostic, so committed-fact recall is unaffected. Constant: `EXTRACTED_FACT_SOURCE_TYPE = "conversation_fact"`.
+
+### Task 0: Give extracted facts a distinct source_type
+- Modify `src/stackowl/memory/fact_extractor.py:151`: change `source_type="conversation"` to `source_type="conversation_fact"` (define a module constant `EXTRACTED_FACT_SOURCE_TYPE = "conversation_fact"` and use it).
+- Test (`tests/memory/test_plan_b_conversation_miner.py`): assert `FactExtractor.extract(...)` returns facts whose `source_type == "conversation_fact"` (stub the provider/LLM call — grep how existing fact_extractor tests stub it; TestModeGuard blocks live calls).
+- Verify no consumer depended on extracted facts being `'conversation'`: grep `source_type` usages; the only `'conversation'` readers are `recent_conversation_turns` (wants raw turns only — correct to exclude) and the dormant `FactExtractionJobHandler` (unaffected). Promotion (`fact_promoter`) is source_type-agnostic — confirm.
+- Commit: `fix(v2): tag extracted facts distinct from raw conversation turns (RC-A; protects Plan A short-term history)`.
+
+Task 1's dedup/exists SQL below uses `source_type='conversation_fact'` (NOT `'fact'`); the distinct-sessions query stays `source_type='conversation'` (raw turns).
+
 ## File Structure
 
+- Modify: `src/stackowl/memory/fact_extractor.py` — extracted facts get a distinct source_type (Task 0).
 - Create: `src/stackowl/memory/conversation_miner.py` — `ConversationMiner`: mine staged conversation turns → extract → stage (idempotent).
 - Modify: `src/stackowl/memory/dream_worker.py` — accept an optional `miner`; call `miner.mine_all()` at the start of `execute()` (B5-guarded).
 - Modify: `src/stackowl/scheduler/handlers/dream_worker.py` — `register_dream_worker_handler` accepts + forwards an optional `miner`.
