@@ -22,7 +22,18 @@ from stackowl.providers._truncate import (
     trim_messages_to_budget,
     truncate_observation,
 )
+from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+
+
+def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
+    """Last non-empty assistant text already in ``messages`` (newest first), or ""."""
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            content = m.get("content")
+            if isinstance(content, str) and content.strip():
+                return content
+    return ""
 
 
 def _render_tool_catalog(tool_schemas: list[dict[str, Any]]) -> str:
@@ -267,6 +278,35 @@ class OpenAIProvider(ModelProvider):
             "[openai] complete_with_tools: max_iterations reached",
             extra={"_fields": {"provider": self._name}},
         )
+        # Phase F — graceful max-out: never return empty. Make ONE final model call
+        # WITHOUT tools after a global, language-agnostic wrap-up directive so the
+        # user always gets a coherent answer (best result + remaining blocker +
+        # next step). Fail-open: any provider error falls back to the last assistant
+        # text already gathered, so a hard failure never produces silence here.
+        try:
+            messages = trim_messages_to_budget(messages, budget)
+            messages.append({"role": "user", "content": WRAPUP_DIRECTIVE})
+            wrapup = await self._client.chat.completions.create(
+                model=resolved_model,
+                messages=messages,  # type: ignore[arg-type]
+                max_tokens=self._config.max_output_tokens,
+            )
+            text = wrapup.choices[0].message.content or ""
+            if text.strip():
+                log.engine.debug(
+                    "[openai] complete_with_tools: wrap-up answer delivered at max-out",
+                    extra={"_fields": {"provider": self._name, "len": len(text)}},
+                )
+                return text, all_calls
+        except Exception as exc:  # fail-open — never surface silence on a wrap-up error
+            log.engine.error(
+                "[openai] complete_with_tools: wrap-up call failed — falling back",
+                exc_info=exc,
+                extra={"_fields": {"provider": self._name}},
+            )
+        fallback = _last_assistant_text(messages)
+        if fallback.strip():
+            return fallback, all_calls
         return "", all_calls
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:

@@ -17,7 +17,33 @@ from stackowl.providers._truncate import (
     trim_messages_to_budget,
     truncate_observation,
 )
+from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+
+
+def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
+    """Last non-empty assistant text already in ``messages`` (newest first), or "".
+
+    Anthropic assistant turns carry a list of content blocks; concatenate any
+    ``text`` blocks. A plain-string assistant content is also handled.
+    """
+    for m in reversed(messages):
+        if m.get("role") != "assistant":
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            if content.strip():
+                return content
+            continue
+        if isinstance(content, list):
+            text = "".join(
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+            if text.strip():
+                return text
+    return ""
 
 
 def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
@@ -198,6 +224,35 @@ class AnthropicProvider(ModelProvider):
             "[anthropic] complete_with_tools: max_iterations reached",
             extra={"_fields": {"provider": self._name}},
         )
+        # Phase F — graceful max-out: never return empty. Make ONE final model call
+        # WITHOUT tools (keeping the system prompt) after a global, language-agnostic
+        # wrap-up directive so the user always gets a coherent answer. Fail-open: any
+        # provider error falls back to the last assistant text already gathered.
+        try:
+            messages = trim_messages_to_budget(messages, budget)
+            messages.append({"role": "user", "content": WRAPUP_DIRECTIVE})
+            wrapup = await self._client.messages.create(
+                model=self._config.default_model,
+                messages=messages,  # type: ignore[arg-type]
+                max_tokens=self._config.max_output_tokens,
+                **system_kwargs,
+            )
+            text = "".join(b.text for b in wrapup.content if hasattr(b, "text"))
+            if text.strip():
+                log.engine.debug(
+                    "[anthropic] complete_with_tools: wrap-up answer delivered at max-out",
+                    extra={"_fields": {"provider": self._name, "len": len(text)}},
+                )
+                return text, all_calls
+        except Exception as exc:  # fail-open — never surface silence on a wrap-up error
+            log.engine.error(
+                "[anthropic] complete_with_tools: wrap-up call failed — falling back",
+                exc_info=exc,
+                extra={"_fields": {"provider": self._name}},
+            )
+        fallback = _last_assistant_text(messages)
+        if fallback.strip():
+            return fallback, all_calls
         return "", all_calls
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:

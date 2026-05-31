@@ -24,7 +24,7 @@ class ProviderConfig(BaseModel):
     timeout_seconds: float = 30.0
     rate_limit_rpm: int | None = None  # Requests per minute; None = no limit
     max_output_tokens: int = 4096
-    tool_max_iterations: int = 8
+    tool_max_iterations: int = 30
     # Optional per-model context window in CHARACTERS. When set, the tool loop uses
     # ~80% of this as its total-context trim budget instead of the global default,
     # so a small-context model gets trimmed sooner and a large one less aggressively.
