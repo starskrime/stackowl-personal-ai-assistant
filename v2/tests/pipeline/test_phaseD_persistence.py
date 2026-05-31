@@ -129,6 +129,34 @@ async def test_judge_fails_open_on_provider_error() -> None:
     assert reason == "judge-error"
 
 
+@pytest.mark.asyncio
+async def test_judge_clarifying_question_is_not_giveup() -> None:
+    """A draft that poses ONE necessary clarifying question must be delivered=True.
+
+    A clarifying question IS taking action — the agent is proceeding by gathering
+    the information it needs. The updated judge prompt explicitly carves this out
+    so the persistence enforcer never nudges the agent to "try harder" when it
+    has legitimately asked the user for a required disambiguating detail.
+    """
+    provider = _StubJudgeProvider(
+        '{"delivered": true, "reason": "clarifying question asked to proceed"}'
+    )
+    delivered, reason = await judge_delivery(
+        provider,
+        user_request="set up my project with the right config",
+        draft_answer=(
+            "Before I set this up, could you tell me which environment you are "
+            "targeting — development or production?"
+        ),
+        tools_tried=[],
+    )
+    assert delivered is True, (
+        "A clarifying question draft must be judged delivered=True — "
+        "asking a necessary question is not a give-up."
+    )
+    assert reason  # non-empty reason is part of the contract
+
+
 # =========================================================================== #
 # Fake OpenAI SDK client (shape from tests/providers/test_react_protocol.py)
 # =========================================================================== #
