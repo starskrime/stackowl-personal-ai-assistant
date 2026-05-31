@@ -190,6 +190,172 @@ def is_catastrophic(args: list[str]) -> tuple[bool, str]:
     return (False, "")
 
 
+async def _gate_catastrophic(
+    *, tool_name: str, command: str, reason: str
+) -> ToolResult | None:
+    """Require consent for a catastrophic command shape.
+
+    Shared by :class:`ShellTool` and any tool that runs argv through
+    :func:`run_argv` (e.g. a learned tool). Returns a structured declined
+    :class:`ToolResult` when the command must NOT run (no user present, no gate,
+    gate error, or user denial); returns ``None`` when the user approved and the
+    command may proceed. Fail-closed everywhere — any error path denies and never
+    spawns.
+    """
+    ctx = TraceContext.get()
+    interactive = bool(ctx.get("interactive", False))
+    channel = ctx.get("channel")
+    session_id = ctx.get("session_id")
+    log.tool.warning(
+        "shell.execute: catastrophic command — requiring consent",
+        extra={"_fields": {"reason": reason, "interactive": interactive, "channel": channel}},
+    )
+
+    # No interactive user to approve → fail closed (deny). Never auto-run.
+    if not interactive or not session_id or not channel:
+        log.tool.error(
+            "shell.execute: catastrophic command and no user present — refused (fail closed)",
+            extra={"_fields": {"reason": reason, "interactive": interactive}},
+        )
+        return ToolResult(
+            success=False,
+            output="",
+            error=(
+                "refused: catastrophic command and no user present to approve — "
+                f"reason: {reason}"
+            ),
+            duration_ms=0,
+        )
+
+    gate = get_services().consent_gate
+    if gate is None:
+        log.tool.error(
+            "shell.execute: catastrophic command but NO consent gate wired — refused",
+            extra={"_fields": {"reason": reason}},
+        )
+        return ToolResult(
+            success=False,
+            output="",
+            error=f"refused: catastrophic command and no consent gate available — reason: {reason}",
+            duration_ms=0,
+        )
+
+    try:
+        allowed = await gate.policy.request(
+            tool_name=tool_name,
+            channel=channel,
+            session_id=session_id,
+            category="catastrophic",
+            summary=f"Run shell command: {command}",
+        )
+    except Exception as exc:  # no-hidden-errors — fail closed on any gate error
+        log.tool.error(
+            "shell.execute: consent gate raised — refused (fail closed)",
+            exc_info=exc,
+            extra={"_fields": {"reason": reason}},
+        )
+        return ToolResult(
+            success=False,
+            output="",
+            error=f"refused: consent check failed — reason: {reason}",
+            duration_ms=0,
+        )
+
+    if not allowed:
+        log.tool.info(
+            "shell.execute: catastrophic command declined by user",
+            extra={"_fields": {"reason": reason}},
+        )
+        return ToolResult(
+            success=False,
+            output="",
+            error=f"declined by user — reason: {reason}",
+            duration_ms=0,
+        )
+
+    log.tool.info(
+        "shell.execute: catastrophic command approved — proceeding",
+        extra={"_fields": {"reason": reason}},
+    )
+    return None
+
+
+async def run_argv(
+    argv: list[str],
+    *,
+    tool_name: str = "shell",
+    workdir: str | None = None,
+    timeout_sec: float = _TIMEOUT_SEC,
+) -> ToolResult:
+    """Run an already-split argv through the allowlisted subprocess boundary.
+
+    The SINGLE execution seam shared by :class:`ShellTool` and learned tools: the
+    catastrophic-shape check + consent path, then ``create_subprocess_exec``
+    (``shell=False`` — pipes/redirects/chaining are inert), timeout, and OSError
+    handling, with 4-point logging. Honors the workspace-CWD default (no
+    ``workdir`` → workspace). Never raises — every failure becomes a structured
+    failed :class:`ToolResult`.
+    """
+    t0 = time.monotonic()
+    if not argv:
+        return ToolResult(success=False, output="", error="Empty command", duration_ms=0)
+
+    cwd = workdir or _default_workspace_cwd()
+    rendered = " ".join(argv)
+    log.tool.debug(
+        "shell.execute: entry",
+        extra={"_fields": {"command": rendered[:200], "timeout_sec": timeout_sec}},
+    )
+
+    # CATASTROPHIC gate — every command runs silently EXCEPT a narrow set of
+    # system-destroying shapes, which require the user's explicit approval.
+    catastrophic, reason = is_catastrophic(argv)
+    if catastrophic:
+        decision = await _gate_catastrophic(tool_name=tool_name, command=rendered, reason=reason)
+        if decision is not None:
+            return decision  # refused / declined / fail-closed — never spawns
+
+    log.tool.debug("shell.execute: launching subprocess", extra={"_fields": {"args": argv[:5]}})
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd or None,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except TimeoutError:
+        duration_ms = (time.monotonic() - t0) * 1000
+        log.tool.warning(
+            "shell.execute: timeout",
+            extra={"_fields": {"command": rendered[:100], "timeout_sec": timeout_sec, "duration_ms": duration_ms}},
+        )
+        return ToolResult(
+            success=False, output="", error=f"Command timed out after {timeout_sec}s", duration_ms=duration_ms
+        )
+    except OSError as exc:
+        duration_ms = (time.monotonic() - t0) * 1000
+        log.tool.error("shell.execute: OS error", exc_info=exc, extra={"_fields": {"command": rendered[:100]}})
+        return ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
+
+    duration_ms = (time.monotonic() - t0) * 1000
+    success = proc.returncode == 0
+    output = stdout.decode("utf-8", errors="replace").strip()
+    error = stderr.decode("utf-8", errors="replace").strip() if not success else None
+    log.tool.debug(
+        "shell.execute: exit",
+        extra={
+            "_fields": {
+                "success": success,
+                "returncode": proc.returncode,
+                "output_len": len(output),
+                "duration_ms": duration_ms,
+            }
+        },
+    )
+    return ToolResult(success=success, output=output, error=error, duration_ms=duration_ms)
+
+
 class ShellTool(Tool):
     """Run any shell command in a subprocess; catastrophic ones need consent."""
 
@@ -241,156 +407,18 @@ class ShellTool(Tool):
             "required": ["command"],
         }
 
-    async def _gate_catastrophic(self, command: str, reason: str) -> ToolResult | None:
-        """Require consent for a catastrophic command.
-
-        Returns a structured declined :class:`ToolResult` when the command must
-        NOT run (no user present, no gate, gate error, or user denial). Returns
-        ``None`` when the user approved and the command may proceed.
-
-        Fail-closed everywhere: any error path denies and never spawns.
-        """
-        ctx = TraceContext.get()
-        interactive = bool(ctx.get("interactive", False))
-        channel = ctx.get("channel")
-        session_id = ctx.get("session_id")
-        log.tool.warning(
-            "shell.execute: catastrophic command — requiring consent",
-            extra={"_fields": {"reason": reason, "interactive": interactive, "channel": channel}},
-        )
-
-        # No interactive user to approve → fail closed (deny). Never auto-run.
-        if not interactive or not session_id or not channel:
-            log.tool.error(
-                "shell.execute: catastrophic command and no user present — refused (fail closed)",
-                extra={"_fields": {"reason": reason, "interactive": interactive}},
-            )
-            return ToolResult(
-                success=False,
-                output="",
-                error=(
-                    "refused: catastrophic command and no user present to approve — "
-                    f"reason: {reason}"
-                ),
-                duration_ms=0,
-            )
-
-        gate = get_services().consent_gate
-        if gate is None:
-            log.tool.error(
-                "shell.execute: catastrophic command but NO consent gate wired — refused",
-                extra={"_fields": {"reason": reason}},
-            )
-            return ToolResult(
-                success=False,
-                output="",
-                error=f"refused: catastrophic command and no consent gate available — reason: {reason}",
-                duration_ms=0,
-            )
-
-        try:
-            allowed = await gate.policy.request(
-                tool_name="shell",
-                channel=channel,
-                session_id=session_id,
-                category="catastrophic",
-                summary=f"Run shell command: {command}",
-            )
-        except Exception as exc:  # no-hidden-errors — fail closed on any gate error
-            log.tool.error(
-                "shell.execute: consent gate raised — refused (fail closed)",
-                exc_info=exc,
-                extra={"_fields": {"reason": reason}},
-            )
-            return ToolResult(
-                success=False,
-                output="",
-                error=f"refused: consent check failed — reason: {reason}",
-                duration_ms=0,
-            )
-
-        if not allowed:
-            log.tool.info(
-                "shell.execute: catastrophic command declined by user",
-                extra={"_fields": {"reason": reason}},
-            )
-            return ToolResult(
-                success=False,
-                output="",
-                error=f"declined by user — reason: {reason}",
-                duration_ms=0,
-            )
-
-        log.tool.info(
-            "shell.execute: catastrophic command approved — proceeding",
-            extra={"_fields": {"reason": reason}},
-        )
-        return None
-
     async def execute(self, **kwargs: object) -> ToolResult:
         command = str(kwargs.get("command", ""))
         # No explicit workdir → default the subprocess CWD to the workspace, so a
         # file the command writes by relative name lands where send_file/write_file
         # expect it. An explicit non-empty workdir still wins.
-        workdir = str(kwargs.get("workdir", "")) or _default_workspace_cwd()
+        workdir = str(kwargs.get("workdir", "")) or None
         timeout_sec = _resolve_timeout(kwargs.get("timeout"))
-        log.tool.debug(
-            "shell.execute: entry",
-            extra={"_fields": {"command": command[:200], "timeout_sec": timeout_sec}},
-        )
-        t0 = time.monotonic()
         try:
             args = shlex.split(command)
         except ValueError as exc:
             return ToolResult(success=False, output="", error=f"Invalid command syntax: {exc}", duration_ms=0)
-
-        if not args:
-            return ToolResult(success=False, output="", error="Empty command", duration_ms=0)
-
-        # CATASTROPHIC gate — every command runs silently EXCEPT a narrow set of
-        # system-destroying shapes, which require the user's explicit approval.
-        catastrophic, reason = is_catastrophic(args)
-        if catastrophic:
-            decision = await self._gate_catastrophic(command, reason)
-            if decision is not None:
-                return decision  # refused / declined / fail-closed — never spawns
-
-        log.tool.debug("shell.execute: launching subprocess", extra={"_fields": {"args": args[:5]}})
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=workdir or None,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
-        except TimeoutError:
-            duration_ms = (time.monotonic() - t0) * 1000
-            log.tool.warning(
-                "shell.execute: timeout",
-                extra={"_fields": {"command": command[:100], "timeout_sec": timeout_sec, "duration_ms": duration_ms}},
-            )
-            return ToolResult(
-                success=False, output="", error=f"Command timed out after {timeout_sec}s", duration_ms=duration_ms
-            )
-        except OSError as exc:
-            duration_ms = (time.monotonic() - t0) * 1000
-            log.tool.error("shell.execute: OS error", exc_info=exc, extra={"_fields": {"command": command[:100]}})
-            return ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
-
-        duration_ms = (time.monotonic() - t0) * 1000
-        success = proc.returncode == 0
-        output = stdout.decode("utf-8", errors="replace").strip()
-        error = stderr.decode("utf-8", errors="replace").strip() if not success else None
-        log.tool.debug(
-            "shell.execute: exit",
-            extra={
-                "_fields": {
-                    "success": success,
-                    "returncode": proc.returncode,
-                    "output_len": len(output),
-                    "duration_ms": duration_ms,
-                }
-            },
-        )
-        return ToolResult(success=success, output=output, error=error, duration_ms=duration_ms)
+        # The shared seam does the catastrophic-shape check + consent path, the
+        # workspace-CWD default, create_subprocess_exec, timeout and OSError
+        # handling (the learned-tool path runs the SAME seam).
+        return await run_argv(args, tool_name="shell", workdir=workdir, timeout_sec=timeout_sec)

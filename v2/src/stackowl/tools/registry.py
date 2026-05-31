@@ -297,6 +297,7 @@ class ToolRegistry:
         from stackowl.tools.knowledge.skills_list import SkillsListTool
         from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
         from stackowl.tools.knowledge.transcripts import TranscriptsTool
+        from stackowl.tools.meta.tool_build import ToolBuildTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
         from stackowl.tools.planning.store import PlanStore
@@ -382,6 +383,12 @@ class ToolRegistry:
         # primitive per ADR-11; tool_describe is its inspect sibling).
         registry.register(ToolSearchTool())
         registry.register(ToolDescribeTool())
+        # tool_build — self-extension meta-tool (H4): the agent authors a NEW
+        # declarative tool (validate → security-scan → consent → persist →
+        # register live → reload on every boot). Authored tools run only via the
+        # allowlisted shell argv boundary (no in-process eval). Consequential:
+        # consent-gated at dispatch + a second internal consent at the persist step.
+        registry.register(ToolBuildTool())
         registry.register(MemoryTool())
         registry.register(SkillManageTool())
         registry.register(SkillViewTool())

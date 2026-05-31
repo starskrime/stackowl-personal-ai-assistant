@@ -208,6 +208,19 @@ class StartupOrchestrator:
             extra={"_fields": {"count": len(skills_components.loaded)}},
         )
 
+        # H4 — reload agent-authored (learned) tools so a tool the agent minted via
+        # tool_build survives reboots. Runs AFTER with_defaults + SkillsAssembly so
+        # the built-ins are already registered: the collision/dangerous-shadow guard
+        # then protects them (a learned spec can never clobber a built-in). Reads
+        # declarative *.json specs only — NEVER execs model-authored Python.
+        from stackowl.tools.meta.learned_tool_loader import LearnedToolLoader
+
+        learned_count = await LearnedToolLoader().load_all(tool_registry)
+        log.info(
+            "[startup] gateway: learned tools loaded",
+            extra={"_fields": {"count": learned_count}},
+        )
+
         # E1-S3 — MCP federation boot phase (after providers/skills, before traffic).
         # Fail-soft: a down/slow/misconfigured server never blocks boot. Federated
         # tools register namespaced (mcp.<server>.<tool>), non-clobbering.

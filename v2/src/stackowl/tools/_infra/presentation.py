@@ -33,7 +33,10 @@ __all__ = ["PresentationConfig", "ToolPresentation"]
 # crowd a full profile group (e.g. the 25-tool browser group) past the cap. Bump
 # the cap by the same 3 so base growth does NOT shrink the discretionary headroom
 # an owl profile already had (a browser owl still sees its core snapshot/click).
-_DEFAULT_CAP = 29
+# H4 adds tool_build (self-extension) to the base set so EVERY owl can mint a new
+# tool mid-turn; the cap is bumped by 1 in lockstep so base growth does NOT shrink
+# the discretionary per-turn headroom.
+_DEFAULT_CAP = 30
 # Guaranteed base set — read-only/foundation essentials every owl always has.
 # Phase B: the self-improvement trio (skill_manage / reflect_now /
 # synthesize_skills) joins the base set so EVERY owl can reach self-learning +
@@ -48,6 +51,9 @@ _DEFAULT_BASE = frozenset({
     "read_file", "write_file", "shell", "web_fetch",
     "skill_manage", "reflect_now", "synthesize_skills",
     "send_file",
+    # H4 — tool_build: every owl can author a new tool to overcome a capability
+    # gap (consequential → still consent-gated at dispatch; surfacing ≠ bypass).
+    "tool_build",
 })
 _DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"})
 

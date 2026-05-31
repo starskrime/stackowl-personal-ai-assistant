@@ -56,6 +56,17 @@ class StackowlHome:
         return cls.workspace() / "tools"
 
     @classmethod
+    def learned_tools_dir(cls) -> Path:
+        """Agent-authored tool specs (H4 tool_build).
+
+        Each ``*.json`` is one declarative LearnedToolSpec the agent minted; the
+        boot loader reads them back into the registry on every start so a learned
+        tool survives reboots. Lives under ``tools/learned`` (distinct from the
+        ``tools`` root, which is reserved for other tool-state).
+        """
+        return cls.tools_dir() / "learned"
+
+    @classmethod
     def knowledge_dir(cls) -> Path:
         return cls.workspace() / "knowledge"
 
@@ -114,6 +125,7 @@ class StackowlHome:
             cls.kuzu_dir(),
             cls.lancedb_dir(),
             cls.tools_dir(),
+            cls.learned_tools_dir(),
             cls.knowledge_dir(),
             cls.skills_dir(),
             cls.skills_dir() / "builtin",
