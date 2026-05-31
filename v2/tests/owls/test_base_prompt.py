@@ -77,6 +77,42 @@ def test_charter_is_global() -> None:
         )
 
 
+def test_charter_carries_direct_means_and_deliver_result() -> None:
+    """The charter must steer toward the most direct/programmatic means over
+    operating an interface by hand, and toward delivering the finished result
+    itself — never handing back a link or manual steps for the user to do.
+
+    Asserted on robust substrings (essence), not brittle full sentences, so the
+    wording can evolve. Must also introduce no forbidden tool/domain token.
+    """
+    charter = behavioral_charter()
+    lowered = charter.lower()
+
+    # (a) Prefer the most direct means over a hands-on interactive/visual UI.
+    assert "direct" in lowered, "charter must prefer the most direct means"
+    assert "running code or commands" in lowered, (
+        "charter must name composing capabilities directly (running code or commands)"
+    )
+    assert "interactive interface" in lowered or "visual interface" in lowered, (
+        "charter must contrast direct means against operating an interface by hand"
+    )
+
+    # (b) Deliver the finished result itself — never a link or manual procedure.
+    assert "deliver the finished result" in lowered, (
+        "charter must require delivering the finished result itself"
+    )
+    assert "link" in lowered and (
+        "manual procedure" in lowered or "instructions" in lowered
+    ), "charter must forbid handing back a link or manual steps for the user to do"
+
+    # Essence still pure behaviour: no forbidden tool/domain tokens introduced.
+    for token in _FORBIDDEN_TOKENS:
+        assert token not in lowered, (
+            f"direct-means principle must NOT introduce case-specific token "
+            f"{token!r}"
+        )
+
+
 def test_adapter_has_date_and_protocol() -> None:
     """The adapter renders today's date human-readably (not raw isoformat) and
     teaches the ReAct call protocol."""
@@ -139,6 +175,7 @@ def test_build_base_prompt_composes() -> None:
 
     # A distinctive slice of each must appear in the composed prompt.
     assert charter[:40] in prompt
+    assert adapter[:40] in prompt  # adapter content is composed in
     assert "ACTION:" in prompt  # from adapter
     assert "2026" in prompt  # from adapter
     # Charter leads the adapter (strongest, durable signal first).
