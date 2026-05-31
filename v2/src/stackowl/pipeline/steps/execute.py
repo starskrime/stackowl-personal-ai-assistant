@@ -179,7 +179,15 @@ async def _run_with_tools(
                     exc_info=exc,
                     extra={"_fields": {"tool": name}},
                 )
-        return tr.output if tr.success else (tr.error or tr.output)
+        if tr.success:
+            return tr.output
+        # FAILED — prefix the rendered error with the structural marker so the
+        # give-up judge (which sees only these rendered strings) can tell a failed
+        # action from a successful one. Language-agnostic; the model still reads a
+        # normal error message after the (invisible-ish) sentinel.
+        from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+
+        return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"
 
     # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback
     # the provider loop calls just before accepting a final answer. The provider

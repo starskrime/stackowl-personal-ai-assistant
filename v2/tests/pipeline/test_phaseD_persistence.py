@@ -272,6 +272,84 @@ async def test_judge_logs_verdict_at_info(caplog: pytest.LogCaptureFixture) -> N
 
 
 # =========================================================================== #
+# 1b. UNIT — summarize_tool_outcomes (per-tool ok|failed from each call result)
+# =========================================================================== #
+
+
+def test_summarize_marks_failed_when_result_has_failure_marker() -> None:
+    """A call whose result carries the structural failure marker → name(failed)."""
+    from stackowl.pipeline.persistence import (
+        TOOL_FAILED_MARKER,
+        summarize_tool_outcomes,
+    )
+
+    calls = [
+        {"name": "browser_navigate", "result": "<page snapshot ...>"},
+        {"name": "send_file", "result": f"{TOOL_FAILED_MARKER}send_file: file outside workspace"},
+    ]
+    assert summarize_tool_outcomes(calls) == [
+        "browser_navigate(ok)",
+        "send_file(failed)",
+    ]
+
+
+def test_summarize_marks_ok_when_result_is_ambiguous() -> None:
+    """Conservative fail-open: a result with no failure marker is treated as ok,
+    even if its prose happens to mention an error — we never INVENT failures."""
+    from stackowl.pipeline.persistence import summarize_tool_outcomes
+
+    calls = [
+        {"name": "shell", "result": "the build finished; one harmless error was logged"},
+        {"name": "read_file", "result": "contents..."},
+    ]
+    assert summarize_tool_outcomes(calls) == ["shell(ok)", "read_file(ok)"]
+
+
+def test_summarize_is_robust_to_missing_keys() -> None:
+    """A malformed entry (missing name/result) must not raise — fail-open pure."""
+    from stackowl.pipeline.persistence import summarize_tool_outcomes
+
+    calls: list[dict[str, Any]] = [{}, {"name": "x"}, {"result": "y"}]
+    out = summarize_tool_outcomes(calls)
+    # No crash; each yields some name(ok) entry (ambiguous → ok).
+    assert all(o.endswith("(ok)") for o in out)
+    assert len(out) == 3
+
+
+@pytest.mark.asyncio
+async def test_judge_prompt_conveys_failed_tool_is_not_delivery() -> None:
+    """When the outcome list marks the action the draft CLAIMS it did as failed,
+    the prompt SENT to the judge must (a) carry the name(ok|failed) outcome list
+    verbatim and (b) state the rule that a failed tool call is NOT delivery.
+
+    The verdict comes from the stub; this asserts WIRING + prompt content —
+    global, no tool/site/task names baked into the rule itself."""
+    provider = _CapturingJudgeProvider(
+        '{"delivered": false, "reason": "claimed a send but the send tool failed"}'
+    )
+    delivered, _reason = await judge_delivery(
+        provider,
+        user_request="send me the clip",
+        draft_answer="Here's the video you asked for.",
+        tools_tried=["browser_navigate(ok)", "send_file(failed)"],
+    )
+    assert delivered is False
+
+    prompt = "\n".join(m.content for m in provider.seen_messages).lower()
+    # (a) the outcome list is carried verbatim into the prompt.
+    assert "send_file(failed)" in prompt
+    assert "browser_navigate(ok)" in prompt
+    # (b) the prompt RELABELS the tools line to convey outcomes (name and outcome),
+    # not bare names.
+    assert "outcome" in prompt
+    # (c) the load-bearing rule: a tool appearing here does NOT mean it succeeded;
+    # a failed backing tool call means NOT delivered. Assert the concepts co-occur
+    # in one stretch of the prompt (global wording — no tool/site/task names).
+    assert "failed" in prompt
+    assert "does not mean it succeeded" in prompt or "not mean it succeeded" in prompt
+
+
+# =========================================================================== #
 # Fake OpenAI SDK client (shape from tests/providers/test_react_protocol.py)
 # =========================================================================== #
 

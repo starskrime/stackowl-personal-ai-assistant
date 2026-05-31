@@ -28,7 +28,20 @@ from stackowl.infra.observability import log
 from stackowl.memory.json_parser import parse_json_response
 from stackowl.providers.base import Message, ModelProvider
 
-__all__ = ["PERSISTENCE_DIRECTIVE", "judge_delivery"]
+__all__ = [
+    "PERSISTENCE_DIRECTIVE",
+    "TOOL_FAILED_MARKER",
+    "judge_delivery",
+    "summarize_tool_outcomes",
+]
+
+# STRUCTURAL, language-agnostic failure sentinel. The dispatcher (execute.py) is
+# the only place that holds the authoritative ``ToolResult.success`` boolean; it
+# prefixes a FAILED tool's rendered result with this marker so the give-up judge —
+# which sees only the rendered ``result`` strings — can tell a failed action from a
+# successful one. It is a structural token, NOT a domain/language word, so it works
+# in any language and for any tool.
+TOOL_FAILED_MARKER = "\x00TOOL_FAILED\x00"
 
 # GLOBAL corrective directive — injected when the judge rules the agent gave up.
 # Deliberately capability-oriented and case-free: no domain words, no tool brand
@@ -47,10 +60,34 @@ _DRAFT_CAP = 2000
 _TOOLS_CAP = 40
 
 
+def summarize_tool_outcomes(all_calls: list[dict[str, object]]) -> list[str]:
+    """Render each tool call as ``name(ok)`` or ``name(failed)`` for the judge.
+
+    The outcome is decided ONLY by the structural :data:`TOOL_FAILED_MARKER` the
+    dispatcher prefixes onto a FAILED tool's rendered result — never by inspecting
+    the prose (no hardcoded tool names or domain/language words). Conservative &
+    fail-OPEN: if a call's ``result`` is missing or carries no marker, it is marked
+    ``ok`` (we never INVENT a failure). Pure; never raises.
+    """
+    outcomes: list[str] = []
+    for call in all_calls:
+        name = call.get("name")
+        name_str = name if isinstance(name, str) and name else "tool"
+        result = call.get("result")
+        failed = isinstance(result, str) and TOOL_FAILED_MARKER in result
+        outcomes.append(f"{name_str}({'failed' if failed else 'ok'})")
+    return outcomes
+
+
 def _build_messages(
     user_request: str, draft_answer: str, tools_tried: list[str]
 ) -> list[Message]:
-    """Build the compact, GLOBAL judge prompt (no domain/language-specific content)."""
+    """Build the compact, GLOBAL judge prompt (no domain/language-specific content).
+
+    ``tools_tried`` carries per-tool OUTCOMES as ``name(ok)``/``name(failed)``
+    strings (see :func:`summarize_tool_outcomes`). A plain ``name`` with no
+    ``(failed)`` reads as not-failed, so a bare name list still works gracefully.
+    """
     tool_list = ", ".join(tools_tried[:_TOOLS_CAP]) if tools_tried else "(none)"
     system = Message(
         role="system",
@@ -65,11 +102,14 @@ def _build_messages(
             "a tool. Running or installing the right tool very often overcomes a "
             "technical or capability limitation. So before concluding that a "
             "technical task is impossible, the agent MUST try that escape hatch. "
-            "The TOOLS USED list gives you the NAMES of the tools the agent used "
-            "this turn. Reason about whether those names include running a command, "
-            "executing a shell, or installing/building/compiling software — versus, "
-            "say, only browsing, reading, or fetching. (You are judging by meaning, "
-            "not by any fixed keyword.)\n\n"
+            "The TOOLS USED list gives you each tool the agent used this turn AND "
+            "its outcome, written as name(ok) or name(failed). A tool appearing "
+            "here does NOT mean it succeeded: name(failed) means that tool call "
+            "did NOT do what it was supposed to. Reason about whether the tools "
+            "used include running a command, executing a shell, or installing/"
+            "building/compiling software — versus, say, only browsing, reading, or "
+            "fetching — and whether the ones that matter actually succeeded. (You "
+            "are judging by meaning, not by any fixed keyword.)\n\n"
             "DELIVERED (delivered=true) — any of these:\n"
             "  • The agent produced the requested outcome.\n"
             "  • The agent asked ONE necessary clarifying question because the "
@@ -81,6 +121,11 @@ def _build_messages(
             "failed (or a required credential it cannot obtain / a hardware "
             "resource it does not have remained the true obstacle).\n\n"
             "GAVE UP (delivered=false) — any of these:\n"
+            "  • The draft claims something was produced, sent, accessed, "
+            "converted, or done, but the tool call that would accomplish it is "
+            "marked failed (or no tool capable of it succeeded). A tool in the "
+            "list does not mean it succeeded — a failed tool call is NOT delivery. "
+            "Rule this a give-up.\n"
             "  • The agent refused, apologized, or deferred WITHOUT exhausting its "
             "capabilities: it could have run a command, installed or built "
             "something, authored a skill, or searched for a method — but did not.\n"
@@ -104,12 +149,14 @@ def _build_messages(
         content=(
             f"USER REQUEST:\n{user_request[:_REQUEST_CAP]}\n\n"
             f"AGENT DRAFT REPLY:\n{draft_answer[:_DRAFT_CAP]}\n\n"
-            f"TOOLS USED THIS TURN (names): {tool_list}\n\n"
+            f"TOOLS USED THIS TURN (name and outcome): {tool_list}\n\n"
             "Decide whether the agent delivered the requested outcome or gave up "
             "without exhausting its capabilities. In particular: if the draft "
-            "claims a technical or capability limitation but the TOOLS USED names "
-            "show no command was run and nothing was installed or built, that is a "
-            "give-up.\n"
+            "claims it produced, sent, accessed, or did something but the backing "
+            "tool call is marked failed (or no tool capable of it succeeded), that "
+            "is NOT delivered — rule a give-up. And if the draft claims a technical "
+            "or capability limitation but the outcomes show no command was run and "
+            "nothing was installed or built, that is also a give-up.\n"
             'Output exactly: {"delivered": true, "reason": "..."}'
         ),
     )
@@ -123,6 +170,11 @@ async def judge_delivery(
     tools_tried: list[str],
 ) -> tuple[bool, str]:
     """Judge whether ``draft_answer`` delivered ``user_request``.
+
+    ``tools_tried`` holds per-tool OUTCOME strings (``name(ok)``/``name(failed)``)
+    derived from each call's result via :func:`summarize_tool_outcomes`, so the
+    judge can tell a failed action from a successful one. A bare name list (no
+    ``(failed)``) still works — it simply reads as no-tool-failed.
 
     Returns ``(delivered, reason)``. ``delivered`` is False ONLY when the judge
     explicitly rules a give-up. On ANY failure (provider error, unparseable

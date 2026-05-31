@@ -12,6 +12,7 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
+from stackowl.pipeline.persistence import summarize_tool_outcomes
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
@@ -140,7 +141,7 @@ class AnthropicProvider(ModelProvider):
                 return None
             try:
                 directive = await persistence_check(
-                    content, [c["name"] for c in all_calls]
+                    content, summarize_tool_outcomes(all_calls)
                 )
             except Exception as exc:  # fail OPEN — never block/loop on a judge error
                 log.engine.error(
