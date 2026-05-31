@@ -276,8 +276,24 @@ async def test_judge_logs_verdict_at_info(caplog: pytest.LogCaptureFixture) -> N
 # =========================================================================== #
 
 
-def test_summarize_marks_failed_when_result_has_failure_marker() -> None:
-    """A call whose result carries the structural failure marker → name(failed)."""
+def test_summarize_keys_on_explicit_failed_flag() -> None:
+    """Outcome is decided FIRST by the typed ``failed`` boolean providers record —
+    the result text is clean (no marker), so we must NOT depend on it."""
+    from stackowl.pipeline.persistence import summarize_tool_outcomes
+
+    calls = [
+        {"name": "browser_navigate", "result": "<page snapshot ...>", "failed": False},
+        {"name": "send_file", "result": "send_file: file outside workspace", "failed": True},
+    ]
+    assert summarize_tool_outcomes(calls) == [
+        "browser_navigate(ok)",
+        "send_file(failed)",
+    ]
+
+
+def test_summarize_falls_back_to_marker_for_legacy_entry() -> None:
+    """Defense-in-depth: a legacy entry lacking the ``failed`` key but still
+    carrying the marker in ``result`` → name(failed)."""
     from stackowl.pipeline.persistence import (
         TOOL_FAILED_MARKER,
         summarize_tool_outcomes,
@@ -291,6 +307,15 @@ def test_summarize_marks_failed_when_result_has_failure_marker() -> None:
         "browser_navigate(ok)",
         "send_file(failed)",
     ]
+
+
+def test_summarize_flag_overrides_clean_result() -> None:
+    """An explicit failed=False on a clean result is honored as ok even though the
+    prose mentions an error (we never INVENT a failure)."""
+    from stackowl.pipeline.persistence import summarize_tool_outcomes
+
+    calls = [{"name": "shell", "result": "one harmless error was logged", "failed": False}]
+    assert summarize_tool_outcomes(calls) == ["shell(ok)"]
 
 
 def test_summarize_marks_ok_when_result_is_ambiguous() -> None:

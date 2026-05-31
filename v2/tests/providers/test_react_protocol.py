@@ -17,7 +17,6 @@ from stackowl.providers._react import parse_react_action
 from stackowl.providers.openai_provider import OpenAIProvider
 from stackowl.tools.registry import ToolRegistry
 
-
 # --------------------------------------------------------------------------- #
 # Parser unit tests
 # --------------------------------------------------------------------------- #
@@ -260,3 +259,142 @@ async def test_react_fallback_dispatches_tool_and_returns_final(
     assert system_msgs
     assert "ACTION:" in str(system_msgs[0]["content"])
     assert "web_search" in str(system_msgs[0]["content"])
+
+
+# --------------------------------------------------------------------------- #
+# Failure marker is an INTERNAL signal — stripped before model/telemetry, and
+# carried as the typed ``failed`` flag (refinement of H3).
+# --------------------------------------------------------------------------- #
+
+
+def _web_search_schema() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web.",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_react_failed_dispatch_strips_marker_and_flags_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A FAILED dispatch (marker prefix) on the ReAct path must: feed the model a
+    marker-free OBSERVATION, store a marker-free result, and record failed=True."""
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    react_msg = _FakeMessage(
+        content='ACTION: web_search\n```json\n{"query": "x"}\n```',
+        tool_calls=None,
+    )
+    final_msg = _FakeMessage(content="done", tool_calls=None)
+    client = _FakeClient([_FakeResponse(react_msg), _FakeResponse(final_msg)])
+    provider = _make_provider(client)
+
+    async def dispatcher(name: str, args: dict[str, Any]) -> str:
+        return f"{TOOL_FAILED_MARKER}web_search: network unreachable"
+
+    text, calls = await provider.complete_with_tools(
+        user_text="q",
+        system_text="sys",
+        tool_schemas=_web_search_schema(),
+        tool_dispatcher=dispatcher,
+    )
+
+    # all_calls entry: clean result, explicit failed=True.
+    assert len(calls) == 1
+    assert calls[0]["failed"] is True
+    assert TOOL_FAILED_MARKER not in str(calls[0]["result"])
+    assert "\x00" not in str(calls[0]["result"])
+    assert "network unreachable" in str(calls[0]["result"])
+
+    # The OBSERVATION fed back to the model on call 2 carries NO marker / NUL.
+    second_call_messages = client.chat.completions.calls[1]
+    obs = [
+        str(m.get("content", ""))
+        for m in second_call_messages
+        if m.get("role") == "user" and "OBSERVATION" in str(m.get("content", ""))
+    ]
+    assert obs
+    assert all(TOOL_FAILED_MARKER not in o and "\x00" not in o for o in obs)
+
+
+@pytest.mark.asyncio
+async def test_react_successful_dispatch_has_failed_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful dispatch records failed=False and a clean (no-op strip) result."""
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    react_msg = _FakeMessage(
+        content='ACTION: web_search\n```json\n{"query": "x"}\n```',
+        tool_calls=None,
+    )
+    final_msg = _FakeMessage(content="done", tool_calls=None)
+    client = _FakeClient([_FakeResponse(react_msg), _FakeResponse(final_msg)])
+    provider = _make_provider(client)
+
+    async def dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "RESULT: ok"
+
+    _text, calls = await provider.complete_with_tools(
+        user_text="q",
+        system_text="sys",
+        tool_schemas=_web_search_schema(),
+        tool_dispatcher=dispatcher,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["failed"] is False
+    assert calls[0]["result"] == "RESULT: ok"
+    assert TOOL_FAILED_MARKER not in str(calls[0]["result"])
+
+
+@pytest.mark.asyncio
+async def test_native_failed_dispatch_strips_marker_and_flags_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same guarantee on the NATIVE tool_calls path: the ``tool`` message content
+    sent to the API is marker-free and the call records failed=True."""
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    tool_call = _FakeToolCall("call_1", "web_search", '{"query": "x"}')
+    tool_msg = _FakeMessage(content=None, tool_calls=[tool_call])
+    final_msg = _FakeMessage(content="done", tool_calls=None)
+    client = _FakeClient([_FakeResponse(tool_msg), _FakeResponse(final_msg)])
+    provider = _make_provider(client)
+
+    async def dispatcher(name: str, args: dict[str, Any]) -> str:
+        return f"{TOOL_FAILED_MARKER}web_search: blocked"
+
+    _text, calls = await provider.complete_with_tools(
+        user_text="q",
+        system_text="sys",
+        tool_schemas=_web_search_schema(),
+        tool_dispatcher=dispatcher,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["failed"] is True
+    assert TOOL_FAILED_MARKER not in str(calls[0]["result"])
+
+    # The tool message content sent on call 2 carries no marker.
+    second_call_messages = client.chat.completions.calls[1]
+    tool_msgs = [
+        str(m.get("content", ""))
+        for m in second_call_messages
+        if m.get("role") == "tool"
+    ]
+    assert tool_msgs
+    assert all(TOOL_FAILED_MARKER not in t and "\x00" not in t for t in tool_msgs)

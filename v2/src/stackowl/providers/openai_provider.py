@@ -16,7 +16,7 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
-from stackowl.pipeline.persistence import summarize_tool_outcomes
+from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.providers._react import parse_react_action
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
@@ -220,10 +220,16 @@ class OpenAIProvider(ModelProvider):
                             extra={"_fields": {"provider": self._name, "tool": name}},
                         )
                         result_text = f"ERROR running {name}: {exc}"
+                    # Classify failure from the dispatcher's internal marker, then
+                    # STRIP it: the marker is a private signal channel — the model's
+                    # OBSERVATION and stored telemetry must only ever see clean text
+                    # (a NUL sentinel can corrupt HTTP/JSON payloads and text columns).
+                    failed = TOOL_FAILED_MARKER in result_text
+                    clean = result_text.replace(TOOL_FAILED_MARKER, "")
                     # Cap the observation so a huge tool result (e.g. a browser
                     # snapshot) can't blow the context window over iterations.
-                    capped = truncate_observation(result_text)
-                    all_calls.append({"id": None, "name": name, "args": args, "result": capped})
+                    capped = truncate_observation(clean)
+                    all_calls.append({"id": None, "name": name, "args": args, "result": capped, "failed": failed})
                     messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
                     continue
                 # no action -> draft final answer. Phase D: before accepting it,
@@ -266,13 +272,18 @@ class OpenAIProvider(ModelProvider):
                         extra={"_fields": {"provider": self._name, "tool": fn_name}},
                     )
                     err = truncate_observation(f"ERROR: could not parse arguments for {fn_name}: {exc}")
-                    all_calls.append({"id": tc.id, "name": fn_name, "args": {}, "result": err})
+                    # A malformed-args dispatch is always a failure for the judge.
+                    all_calls.append({"id": tc.id, "name": fn_name, "args": {}, "result": err, "failed": True})
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": err})
                     continue
                 result_text = await tool_dispatcher(fn_name, args)
+                # Classify then STRIP the internal failure marker — model/telemetry
+                # only ever see clean text; failure travels as the typed flag below.
+                failed = TOOL_FAILED_MARKER in result_text
+                clean = result_text.replace(TOOL_FAILED_MARKER, "")
                 # Cap the observation so a huge tool result can't overflow the context.
-                capped = truncate_observation(result_text)
-                all_calls.append({"id": tc.id, "name": fn_name, "args": args, "result": capped})
+                capped = truncate_observation(clean)
+                all_calls.append({"id": tc.id, "name": fn_name, "args": args, "result": capped, "failed": failed})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": capped})
 
         log.engine.warning(

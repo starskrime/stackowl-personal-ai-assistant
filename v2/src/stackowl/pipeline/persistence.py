@@ -63,18 +63,25 @@ _TOOLS_CAP = 40
 def summarize_tool_outcomes(all_calls: list[dict[str, object]]) -> list[str]:
     """Render each tool call as ``name(ok)`` or ``name(failed)`` for the judge.
 
-    The outcome is decided ONLY by the structural :data:`TOOL_FAILED_MARKER` the
-    dispatcher prefixes onto a FAILED tool's rendered result — never by inspecting
-    the prose (no hardcoded tool names or domain/language words). Conservative &
-    fail-OPEN: if a call's ``result`` is missing or carries no marker, it is marked
-    ``ok`` (we never INVENT a failure). Pure; never raises.
+    The outcome is decided FIRST by the explicit, typed ``failed`` boolean each
+    provider records on the call (derived from the dispatcher's structural
+    :data:`TOOL_FAILED_MARKER`, then stripped so the model/DB never see it). For
+    any legacy entry lacking that flag, we fall back to the marker still being
+    present in ``result`` as defense-in-depth — never by inspecting prose (no
+    hardcoded tool names or domain/language words). Conservative & fail-OPEN: if a
+    call is missing both signals it is marked ``ok`` (we never INVENT a failure).
+    Pure; never raises.
     """
     outcomes: list[str] = []
     for call in all_calls:
         name = call.get("name")
         name_str = name if isinstance(name, str) and name else "tool"
-        result = call.get("result")
-        failed = isinstance(result, str) and TOOL_FAILED_MARKER in result
+        if "failed" in call:
+            failed = bool(call.get("failed"))
+        else:
+            # Defense-in-depth fallback for entries without the explicit flag.
+            result = call.get("result")
+            failed = isinstance(result, str) and TOOL_FAILED_MARKER in result
         outcomes.append(f"{name_str}({'failed' if failed else 'ok'})")
     return outcomes
 

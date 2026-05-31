@@ -12,7 +12,7 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
-from stackowl.pipeline.persistence import summarize_tool_outcomes
+from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
@@ -215,9 +215,15 @@ class AnthropicProvider(ModelProvider):
                 if b.type != "tool_use":
                     continue
                 result_text = await tool_dispatcher(b.name, dict(b.input))
+                # Classify failure from the dispatcher's internal marker, then STRIP
+                # it: the marker is a private signal channel — the tool_result content
+                # sent to the API and the stored telemetry must only ever see clean
+                # text (a NUL sentinel can corrupt HTTP/JSON payloads and text columns).
+                failed = TOOL_FAILED_MARKER in result_text
+                clean = result_text.replace(TOOL_FAILED_MARKER, "")
                 # Cap the observation so a huge tool result can't overflow the context.
-                capped = truncate_observation(result_text)
-                all_calls.append({"id": b.id, "name": b.name, "args": b.input, "result": capped})
+                capped = truncate_observation(clean)
+                all_calls.append({"id": b.id, "name": b.name, "args": b.input, "result": capped, "failed": failed})
                 tool_results.append({"type": "tool_result", "tool_use_id": b.id, "content": capped})
             messages.append({"role": "user", "content": tool_results})
 
