@@ -145,7 +145,11 @@ def test_to_provider_schema_with_profile_gates_and_caps() -> None:
     reg.register(_T("render", group="media"))
     schemas = reg.to_provider_schema("anthropic", profile=["code"])
     names = {s["name"] for s in schemas}
-    assert len(schemas) <= 25
+    # Default presentation cap (bumped to 28 in Phase B so the larger base set
+    # does not shrink a profile group's discretionary headroom).
+    from stackowl.tools._infra.presentation import _DEFAULT_CAP
+
+    assert len(schemas) <= _DEFAULT_CAP
     assert "read_file" in names and "tool_search" in names  # base/always present
     assert "render" not in names  # media group excluded
 

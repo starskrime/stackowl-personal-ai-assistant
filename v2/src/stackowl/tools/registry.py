@@ -290,10 +290,12 @@ class ToolRegistry:
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
         from stackowl.tools.knowledge.memory import MemoryTool
+        from stackowl.tools.knowledge.reflect_now import ReflectNowTool
         from stackowl.tools.knowledge.session_search import SessionSearchTool
         from stackowl.tools.knowledge.skill_manage import SkillManageTool
         from stackowl.tools.knowledge.skill_view import SkillViewTool
         from stackowl.tools.knowledge.skills_list import SkillsListTool
+        from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
         from stackowl.tools.knowledge.transcripts import TranscriptsTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
@@ -377,6 +379,14 @@ class ToolRegistry:
         registry.register(SkillManageTool())
         registry.register(SkillViewTool())
         registry.register(SkillsListTool())
+        # Phase B — wire the EXISTING self-improvement engines as owl tools.
+        # reflect_now constructs ReflectionWriterHandler off get_services() at
+        # execute time (self-learning); synthesize_skills constructs
+        # SkillSynthesizerHandler (gap-analysis + skill-build). REUSE the handlers
+        # (no logic reimplemented). synthesize_skills is consequential (authors
+        # learned/ skills) → consent-gated; reflect_now is read.
+        registry.register(ReflectNowTool())
+        registry.register(SynthesizeSkillsTool())
         registry.register(SessionSearchTool())
         registry.register(TranscriptsTool())
         # todo + update_plan share ONE PlanStore so they write a single plan slot
