@@ -17,6 +17,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import TimeoutError as PlaywrightTimeout
+
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -24,9 +27,26 @@ from stackowl.tools.browser._extraction import extract_links, extract_markdown
 from stackowl.tools.browser._fingerprint import detect_captcha
 from stackowl.tools.browser._logging import truncate_for_error, url_path_only
 from stackowl.tools.browser._retry import with_browser_retry
+from stackowl.tools.browser.sessions import (
+    BrowserSessionLimitError,
+    BrowserSessionNotFoundError,
+)
 
 _DEFAULT_NAV_TIMEOUT_MS = 30_000
 _DEFAULT_SELECTOR_TIMEOUT_MS = 10_000
+
+# Expected, recoverable failures from the browser engine + session layer. These
+# are caught inside each tool's ``execute`` and surfaced as a structured
+# ``ToolResult(success=False, ...)`` so the agent gets an actionable OBSERVATION
+# (re-snapshot, retry, reopen session) instead of an exception bubbling to the
+# base Tool wrapper. ``PlaywrightTimeout`` is a subclass of ``PlaywrightError``
+# but is listed explicitly for clarity.
+_BROWSER_ERRORS: tuple[type[BaseException], ...] = (
+    PlaywrightTimeout,
+    PlaywrightError,
+    BrowserSessionNotFoundError,
+    BrowserSessionLimitError,
+)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -75,6 +95,18 @@ def _err(msg: str, t0: float, *, tool: str = "browser_tool") -> ToolResult:
         extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
     )
     return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+
+
+def _browser_failure(msg: str, exc: BaseException, t0: float, *, tool: str) -> ToolResult:
+    """ERROR-log a caught Playwright/session exception (B5), then return a
+    structured failure so the agent gets an actionable OBSERVATION instead of
+    the exception bubbling to the base Tool wrapper."""
+    log.tool.error(
+        f"{tool}.execute: browser error — returning structured failure",
+        exc_info=exc,
+        extra={"_fields": {"tool": tool, "error_type": type(exc).__name__}},
+    )
+    return _err(msg, t0, tool=tool)
 
 
 def _ok(payload: dict[str, Any] | list[Any] | str, t0: float, *, tool: str = "browser_tool") -> ToolResult:
@@ -248,13 +280,20 @@ class BrowserExtractTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        if selector:
-            html = await page.evaluate(
-                "(s) => { const el = document.querySelector(s); return el ? el.outerHTML : ''; }", str(selector)
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+            if selector:
+                html = await page.evaluate(
+                    "(s) => { const el = document.querySelector(s); return el ? el.outerHTML : ''; }", str(selector)
+                )
+            else:
+                html = await page.content()
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"Extract failed (page may have navigated/closed — re-run browser_navigate): "
+                f"{type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_extract",
             )
-        else:
-            html = await page.content()
         if mode == "html":
             output = html or ""
         elif mode == "links":
@@ -316,7 +355,13 @@ class BrowserClickTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0, tool="browser_click")
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"browser session unavailable (reopen with browser_navigate): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_click",
+            )
         # Preferred path: click by snapshot ref via the engine's aria-ref selector engine.
         if ref:
             if not self._REF_PATTERN.match(ref):
@@ -385,11 +430,18 @@ class BrowserTypeTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        await page.fill(selector, text, timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
-        if submit:
-            await page.press(selector, "Enter")
-        return _ok({"ok": True}, t0)
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+            await page.fill(selector, text, timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
+            if submit:
+                await page.press(selector, "Enter")
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"Type failed for selector {selector!r} (element not found / stale snapshot — "
+                f"re-run browser_snapshot): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_type",
+            )
+        return _ok({"ok": True}, t0, tool="browser_type")
 
 
 class BrowserScreenshotTool(_BrowserTool):
@@ -424,18 +476,24 @@ class BrowserScreenshotTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        out_dir: Path = runtime.settings.screenshots_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ts = int(time.time() * 1000)
-        out_path = out_dir / f"{session_id[:8]}-{ts}.png"
-        if selector:
-            handle = await page.query_selector(str(selector))
-            if handle is None:
-                return _err(f"Selector not found: {selector}", t0)
-            await handle.screenshot(path=str(out_path))
-        else:
-            await page.screenshot(path=str(out_path), full_page=full_page)
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+            out_dir: Path = runtime.settings.screenshots_dir
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time() * 1000)
+            out_path = out_dir / f"{session_id[:8]}-{ts}.png"
+            if selector:
+                handle = await page.query_selector(str(selector))
+                if handle is None:
+                    return _err(f"Selector not found: {selector}", t0, tool="browser_screenshot")
+                await handle.screenshot(path=str(out_path))
+            else:
+                await page.screenshot(path=str(out_path), full_page=full_page)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"Screenshot failed (page may have navigated/closed): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_screenshot",
+            )
         with contextlib.suppress(OSError):
             out_path.chmod(0o600)
         return _ok({"path": str(out_path)}, t0)
@@ -471,24 +529,30 @@ class BrowserScrollTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        if direction == "top":
-            await page.evaluate("() => window.scrollTo(0, 0)")
-        elif direction == "bottom":
-            await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-        else:
-            sign = -1 if direction == "up" else 1
-            if amount == "page":
-                px = "window.innerHeight"
-            elif amount == "half":
-                px = "window.innerHeight / 2"
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+            if direction == "top":
+                await page.evaluate("() => window.scrollTo(0, 0)")
+            elif direction == "bottom":
+                await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
             else:
-                try:
-                    px = str(int(amount))
-                except ValueError:
-                    return _err(f"Invalid scroll amount: {amount}", t0)
-            await page.evaluate(f"() => window.scrollBy(0, {sign} * ({px}))")
-        return _ok({"ok": True}, t0)
+                sign = -1 if direction == "up" else 1
+                if amount == "page":
+                    px = "window.innerHeight"
+                elif amount == "half":
+                    px = "window.innerHeight / 2"
+                else:
+                    try:
+                        px = str(int(amount))
+                    except ValueError:
+                        return _err(f"Invalid scroll amount: {amount}", t0, tool="browser_scroll")
+                await page.evaluate(f"() => window.scrollBy(0, {sign} * ({px}))")
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"Scroll failed (page may have navigated/closed): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_scroll",
+            )
+        return _ok({"ok": True}, t0, tool="browser_scroll")
 
 
 class BrowserWaitForTool(_BrowserTool):
@@ -520,12 +584,21 @@ class BrowserWaitForTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"browser session unavailable (reopen with browser_navigate): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_wait_for",
+            )
         try:
             await page.wait_for_selector(selector, timeout=timeout_ms)
-        except Exception as exc:
-            return _err(f"Timeout waiting for {selector!r}: {exc}", t0)
-        return _ok({"ok": True}, t0)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"Timeout waiting for {selector!r}: {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_wait_for",
+            )
+        return _ok({"ok": True}, t0, tool="browser_wait_for")
 
 
 class BrowserEvalJsTool(_BrowserTool):
@@ -569,8 +642,15 @@ class BrowserEvalJsTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        result = await page.evaluate(script)
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+            result = await page.evaluate(script)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"eval_js failed (page may have navigated/closed, or script raised): "
+                f"{type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_eval_js",
+            )
         try:
             payload = json.dumps(result, default=str)
         except (TypeError, ValueError):
@@ -618,8 +698,15 @@ class BrowserUploadTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        await page.set_input_files(selector, str(file_path))
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+            await page.set_input_files(selector, str(file_path))
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"Upload failed for selector {selector!r} (not a file input / element not found): "
+                f"{type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_upload",
+            )
         _audit_consequential(
             "browser_upload",
             url_path_only(page.url),
@@ -662,15 +749,22 @@ class BrowserDownloadTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
-        downloads_dir: Path = runtime.settings.downloads_dir
-        downloads_dir.mkdir(parents=True, exist_ok=True)
-        async with page.expect_download() as di:
-            await page.click(trigger)
-        download = await di.value
-        suggested = download.suggested_filename or f"download-{uuid.uuid4().hex[:8]}"
-        out_path = downloads_dir / suggested
-        await download.save_as(str(out_path))
+        try:
+            sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
+            downloads_dir: Path = runtime.settings.downloads_dir
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+            async with page.expect_download() as di:
+                await page.click(trigger)
+            download = await di.value
+            suggested = download.suggested_filename or f"download-{uuid.uuid4().hex[:8]}"
+            out_path = downloads_dir / suggested
+            await download.save_as(str(out_path))
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"Download failed: trigger {trigger!r} did not start a download "
+                f"(element not found / no download fired): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_download",
+            )
         with contextlib.suppress(OSError):
             out_path.chmod(0o600)
         size = out_path.stat().st_size
@@ -709,11 +803,17 @@ class BrowserCookiesGetTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess = await sessions.get(session_id)
-        cookies = await sess.context.cookies()
+        try:
+            sess = await sessions.get(session_id)
+            cookies = await sess.context.cookies()
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"cookies_get failed (session unavailable): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_cookies_get",
+            )
         if domain:
             cookies = [c for c in cookies if str(domain) in c.get("domain", "")]
-        return _ok(cookies, t0)
+        return _ok(cookies, t0, tool="browser_cookies_get")
 
 
 class BrowserCookiesSetTool(_BrowserTool):
@@ -741,9 +841,15 @@ class BrowserCookiesSetTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess = await sessions.get(session_id)
         cookies_list = list(cookies) if isinstance(cookies, list) else []
-        await sess.context.add_cookies(cookies_list)
+        try:
+            sess = await sessions.get(session_id)
+            await sess.context.add_cookies(cookies_list)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"cookies_set failed (session unavailable / invalid cookie shape): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_cookies_set",
+            )
         _audit_consequential(
             "browser_cookies_set",
             None,
@@ -769,10 +875,16 @@ class BrowserCookiesClearTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess = await sessions.get(session_id)
-        await sess.context.clear_cookies()
+        try:
+            sess = await sessions.get(session_id)
+            await sess.context.clear_cookies()
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"cookies_clear failed (session unavailable): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_cookies_clear",
+            )
         _audit_consequential("browser_cookies_clear", None, {"session_id": session_id})
-        return _ok({"ok": True}, t0)
+        return _ok({"ok": True}, t0, tool="browser_cookies_clear")
 
 
 class BrowserTabOpenTool(_BrowserTool):
@@ -790,8 +902,14 @@ class BrowserTabOpenTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess, page, page_handle = await sessions.get_page(session_id, None)
-        return _ok({"page_handle": page_handle}, t0)
+        try:
+            sess, page, page_handle = await sessions.get_page(session_id, None)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"tab_open failed (session unavailable / page limit reached): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_tab_open",
+            )
+        return _ok({"page_handle": page_handle}, t0, tool="browser_tab_open")
 
 
 class BrowserTabListTool(_BrowserTool):
@@ -809,9 +927,15 @@ class BrowserTabListTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess = await sessions.get(session_id)
+        try:
+            sess = await sessions.get(session_id)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"tab_list failed (session unavailable): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_tab_list",
+            )
         tabs = [{"page_handle": h, "url": url_path_only(p.url)} for h, p in sess.pages.items()]
-        return _ok(tabs, t0)
+        return _ok(tabs, t0, tool="browser_tab_list")
 
 
 class BrowserTabCloseTool(_BrowserTool):
@@ -836,7 +960,13 @@ class BrowserTabCloseTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        sess = await sessions.get(session_id)
+        try:
+            sess = await sessions.get(session_id)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"tab_close failed (session unavailable): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_tab_close",
+            )
         page = sess.pages.pop(page_handle, None)
         # Drop the page's console/error buffers and cancel any armed dialog TTL
         # timers so they don't fire dismiss() on a closed page.
@@ -867,8 +997,14 @@ class BrowserCloseTool(_BrowserTool):
         runtime, sessions, err = _services_or_unavailable()
         if err:
             return _err(err, t0)
-        await sessions.close(session_id)
-        return _ok({"ok": True}, t0)
+        try:
+            await sessions.close(session_id)
+        except _BROWSER_ERRORS as exc:
+            return _browser_failure(
+                f"close failed (session may already be gone): {type(exc).__name__}: {exc}",
+                exc, t0, tool="browser_close",
+            )
+        return _ok({"ok": True}, t0, tool="browser_close")
 
 
 class BrowserRecallUrlTool(_BrowserTool):

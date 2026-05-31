@@ -27,6 +27,50 @@ class AuditLogger:
         log.debug("[audit] logger.init: exit")
 
     # ------------------------------------------------------------------
+    # Schema (self-healing)
+    # ------------------------------------------------------------------
+
+    # Mirrors migration 0023/0027. Kept here so an AuditLogger constructed
+    # against a DB that has not had the audit migration applied (e.g. a
+    # caller-supplied path, or a DB created before 0023 landed) still writes
+    # successfully instead of raising ``no such table: audit_log`` — the live
+    # failure behind the swallowed "[consent] policy.request: audit append
+    # failed" error. ``IF NOT EXISTS`` makes it idempotent and safe to run on
+    # every open; the migration runner remains the canonical owner.
+    _SCHEMA_DDL = (
+        """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            audit_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type     TEXT    NOT NULL,
+            actor          TEXT    NOT NULL,
+            target         TEXT,
+            timestamp      REAL    NOT NULL,
+            details        TEXT    NOT NULL DEFAULT '{}',
+            integrity_hash TEXT    NOT NULL DEFAULT ''
+        )
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+            BEFORE UPDATE ON audit_log
+        BEGIN
+            SELECT RAISE(ABORT, 'audit_log is append-only');
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+            BEFORE DELETE ON audit_log
+        BEGIN
+            SELECT RAISE(ABORT, 'audit_log is append-only');
+        END
+        """,
+    )
+
+    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
+        """Idempotently provision the audit_log table + append-only triggers."""
+        for stmt in self._SCHEMA_DDL:
+            conn.execute(stmt)
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -47,6 +91,7 @@ class AuditLogger:
         try:
             conn = sqlite3.connect(self._db_path)
             try:
+                self._ensure_schema(conn)
                 # 2. DECISION — get previous hash for chain
                 row = conn.execute(
                     "SELECT integrity_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1"
@@ -93,6 +138,7 @@ class AuditLogger:
             conn = sqlite3.connect(self._db_path)
             conn.row_factory = sqlite3.Row
             try:
+                self._ensure_schema(conn)
                 # 2. DECISION
                 log.debug("[audit] logger.tail: decision — querying last %d rows", n)
                 # 3. STEP
