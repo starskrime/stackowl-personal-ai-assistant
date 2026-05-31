@@ -23,6 +23,8 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.providers.base import ModelProvider
 
 
+EXTRACTED_FACT_SOURCE_TYPE = "conversation_fact"
+
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 _TEMPLATE_NAME = "fact_extraction.j2"
 _FENCE_OPEN_RE = re.compile(r"^\s*```(?:[A-Za-z0-9_-]+)?\s*\n?", re.UNICODE)
@@ -148,7 +150,7 @@ class FactExtractor:
             facts.append(
                 StagedFact(
                     content=draft.content,
-                    source_type="conversation",
+                    source_type=EXTRACTED_FACT_SOURCE_TYPE,
                     source_ref=session_id,
                     confidence=draft.confidence,
                     embedding=embedding,
