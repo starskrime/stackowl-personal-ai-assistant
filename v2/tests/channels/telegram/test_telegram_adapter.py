@@ -14,7 +14,6 @@ from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, stri
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / factories
 # ---------------------------------------------------------------------------
@@ -282,3 +281,72 @@ def test_strip_bot_mention_case_insensitive() -> None:
 
 def test_strip_bot_mention_empty_username_passthrough() -> None:
     assert strip_bot_mention("hello world", "") == "hello world"
+
+
+# ---------------------------------------------------------------------------
+# edit_message — rewrites a message + (by default) removes the inline keyboard
+# ---------------------------------------------------------------------------
+
+
+def _adapter_with_bot() -> tuple[TelegramChannelAdapter, MagicMock]:
+    """Adapter wired to a fake bot whose edit_message_text records its kwargs."""
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.edit_message_text = AsyncMock()
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+    return adapter, bot
+
+
+@pytest.mark.asyncio
+async def test_edit_message_calls_edit_message_text_with_raw_text() -> None:
+    adapter, bot = _adapter_with_bot()
+    ok = await adapter.edit_message(555, 17, "✅ done", reply_markup=None)
+    assert ok is True
+    bot.edit_message_text.assert_awaited_once()
+    kwargs = bot.edit_message_text.await_args.kwargs
+    assert kwargs["chat_id"] == 555
+    assert kwargs["message_id"] == 17
+    assert kwargs["text"] == "✅ done"
+    # parse_mode is None — the decision text is sent raw (no MarkdownV2 escaping).
+    assert kwargs["parse_mode"] is None
+    # Default reply_markup=None → removes the inline keyboard.
+    assert kwargs["reply_markup"] is None
+
+
+@pytest.mark.asyncio
+async def test_edit_message_passes_reply_markup_through() -> None:
+    adapter, bot = _adapter_with_bot()
+    markup = object()
+    await adapter.edit_message(1, 2, "x", reply_markup=markup)
+    assert bot.edit_message_text.await_args.kwargs["reply_markup"] is markup
+
+
+@pytest.mark.asyncio
+async def test_edit_message_treats_not_modified_as_benign() -> None:
+    """A 'message is not modified' error is benign — no raise, returns False."""
+    adapter, bot = _adapter_with_bot()
+    bot.edit_message_text = AsyncMock(
+        side_effect=RuntimeError("Bad Request: message is not modified")
+    )
+    # Must NOT raise — a benign no-op edit cannot break the consent flow.
+    ok = await adapter.edit_message(1, 2, "same text")
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_edit_message_swallows_errors_and_logs() -> None:
+    """A genuine edit failure is logged and returns False — never raises."""
+    adapter, bot = _adapter_with_bot()
+    bot.edit_message_text = AsyncMock(side_effect=RuntimeError("network down"))
+    with patch("stackowl.channels.telegram.adapter.log") as mock_log:
+        ok = await adapter.edit_message(1, 2, "text")
+        assert ok is False
+        mock_log.telegram.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_message_noop_when_bot_uninitialised() -> None:
+    adapter = _adapter()
+    assert adapter._bot_app is None
+    ok = await adapter.edit_message(1, 2, "text")
+    assert ok is False

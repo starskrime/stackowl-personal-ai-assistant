@@ -158,7 +158,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         keyboard: dict[str, object],
         chat_id: int | None = None,
         parse_mode: str | None = "MarkdownV2",
-    ) -> None:
+    ) -> Any:
         """Send a message with an inline keyboard attachment.
 
         ``chat_id`` targets a specific chat (e.g. the user who initiated a consent
@@ -171,6 +171,11 @@ class TelegramChannelAdapter(ChannelAdapter):
         must NOT be entity-parsed (e.g. a consent prompt containing a literal
         shell command) — plain text cannot trigger a Telegram 400 on unescaped
         ``.``/``-``/``=``/``/`` characters.
+
+        Returns the sent :class:`telegram.Message` (carries ``message_id`` and
+        ``chat.id``) so callers can later :meth:`edit_message` it — e.g. the
+        consent gate rewrites the prompt to the chosen decision on tap. Returns
+        ``None`` on the best-effort no-target path.
         """
         log.telegram.debug(
             "[telegram] adapter.send_inline_keyboard: entry",
@@ -200,11 +205,12 @@ class TelegramChannelAdapter(ChannelAdapter):
         # unescaped command/path cannot 400 on entity parsing (consent prompts).
         if parse_mode is not None:
             send_kwargs["parse_mode"] = parse_mode
-        await self._bot_app.bot.send_message(**send_kwargs)
+        message = await self._bot_app.bot.send_message(**send_kwargs)
         log.telegram.debug(
             "[telegram] adapter.send_inline_keyboard: exit",
             extra={"_fields": {"parse_mode": parse_mode}},
         )
+        return message
 
     async def send_clarify(
         self,
@@ -407,6 +413,70 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter.acknowledge_callback: decision answer_query")
         await self._bot_app.bot.answer_callback_query(callback_id, text=text or None)
         log.telegram.debug("[telegram] adapter.acknowledge_callback: exit")
+
+    async def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        *,
+        reply_markup: Any | None = None,
+    ) -> bool:
+        """Rewrite an existing message's text and (by default) drop its keyboard.
+
+        Used to turn a consent prompt into a resolved decision after the user
+        taps a button: ``reply_markup=None`` removes the inline keyboard so the
+        message can't be re-tapped. ``text`` is sent raw (``parse_mode=None``) —
+        a decision summary may contain literal command/path characters that
+        MarkdownV2 would reject.
+
+        Best-effort and fail-open: any Bot API failure is LOGGED and returns
+        ``False`` rather than raising, so a failed cosmetic edit can never break
+        a consent decision that has already been recorded. Telegram's benign
+        "message is not modified" response (the new text equals the old) is
+        treated as a no-op (debug log, returns ``False``).
+        """
+        log.telegram.debug(
+            "[telegram] adapter.edit_message: entry",
+            extra={"_fields": {
+                "chat_id": chat_id, "message_id": message_id, "text_len": len(text),
+                "removes_keyboard": reply_markup is None,
+            }},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.edit_message")
+        if self._bot_app is None:
+            log.telegram.warning("[telegram] adapter.edit_message: bot not initialised — skipped")
+            return False
+        try:
+            await self._bot_app.bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode=None,
+                reply_markup=reply_markup,
+            )
+        except Exception as exc:
+            # "message is not modified" is benign — the new text equals the old,
+            # so there is nothing to rewrite. Log at debug and carry on.
+            if "not modified" in str(exc).lower():
+                log.telegram.debug(
+                    "[telegram] adapter.edit_message: not modified — benign no-op",
+                    extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+                )
+                return False
+            # Any other failure is a cosmetic edit failure — log and fail open so
+            # the (already-recorded) consent decision is never lost.
+            log.telegram.error(
+                "[telegram] adapter.edit_message: edit failed — fail open",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+            )
+            return False
+        log.telegram.debug(
+            "[telegram] adapter.edit_message: exit",
+            extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+        )
+        return True
 
     def attach_callback_router(self, router: Any) -> None:
         """Route Telegram callback-query taps (inline buttons) through ``router``.

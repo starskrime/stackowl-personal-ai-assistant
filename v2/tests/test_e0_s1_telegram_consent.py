@@ -13,13 +13,27 @@ from stackowl.channels.telegram.consent import TelegramConsentPrompter
 from stackowl.tools.consent import ConsentRequest, ConsentScope
 
 
+class _FakeMessage:
+    """Minimal stand-in for telegram.Message (message_id + chat.id)."""
+
+    def __init__(self, message_id: int, chat_id: int) -> None:
+        self.message_id = message_id
+        self.chat = type("_Chat", (), {"id": chat_id})()
+
+
 class _FakeAdapter:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(
+        self, *, fail: bool = False, edit_raises: bool = False, message_id: int = 777
+    ) -> None:
         self.sent: list[tuple[str, dict]] = []
         self.sent_chat_ids: list[int | None] = []
         self.sent_parse_modes: list[str | None] = []
         self.sent_event = asyncio.Event()
         self._fail = fail
+        self._edit_raises = edit_raises
+        self._message_id = message_id
+        # Records of edit_message calls: (chat_id, message_id, text, reply_markup)
+        self.edits: list[tuple[int, int, str, object | None]] = []
 
     async def send_inline_keyboard(
         self,
@@ -27,13 +41,27 @@ class _FakeAdapter:
         keyboard: dict,
         chat_id: int | None = None,
         parse_mode: str | None = "MarkdownV2",
-    ) -> None:
+    ) -> object | None:
         if self._fail:
             raise RuntimeError("transport down")
         self.sent.append((text, keyboard))
         self.sent_chat_ids.append(chat_id)
         self.sent_parse_modes.append(parse_mode)
         self.sent_event.set()
+        return _FakeMessage(self._message_id, chat_id if chat_id is not None else 0)
+
+    async def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        *,
+        reply_markup: object | None = None,
+    ) -> bool:
+        if self._edit_raises:
+            raise RuntimeError("edit transport down")
+        self.edits.append((chat_id, message_id, text, reply_markup))
+        return True
 
 
 def _buttons(keyboard: dict) -> list[dict]:
@@ -160,3 +188,69 @@ async def test_malformed_callback_does_not_resolve() -> None:
     # garbage callback data is ignored; prompt still times out to deny
     await prompter.handle_callback("cb-y", "garbage")
     assert await prompter.prompt(_req()) is ConsentScope.DENY
+
+
+# ---------------------------------------------------------------------------
+# UX: on tap, the original message is rewritten to the decision + buttons gone
+# ---------------------------------------------------------------------------
+
+
+async def _drive(adapter: _FakeAdapter, scope: str, prompter: TelegramConsentPrompter) -> ConsentScope:
+    async def _resolve() -> None:
+        await adapter.sent_event.wait()
+        await prompter.handle_callback("cb", _cd_for(adapter.sent[0][1], scope))
+
+    results = await asyncio.gather(prompter.prompt(_req()), _resolve())
+    return results[0]
+
+
+async def test_tap_edits_message_to_allow_symbol() -> None:
+    adapter = _FakeAdapter(message_id=4242)
+    prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
+    scope = await _drive(adapter, "once", prompter)
+    assert scope is ConsentScope.ONCE
+    assert len(adapter.edits) == 1
+    chat_id, message_id, text, reply_markup = adapter.edits[0]
+    assert chat_id == 100  # session_id of _req()
+    assert message_id == 4242
+    assert reply_markup is None  # keyboard removed
+    assert text.startswith("✅")
+    assert "run the dangerous thing" in text  # the ORIGINAL action summary
+
+
+async def test_tap_edits_message_to_session_symbol() -> None:
+    adapter = _FakeAdapter(message_id=11)
+    prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
+    scope = await _drive(adapter, "session", prompter)
+    assert scope is ConsentScope.SESSION
+    assert adapter.edits[0][1] == 11
+    assert adapter.edits[0][3] is None
+    assert adapter.edits[0][2].startswith("🔒")
+
+
+async def test_tap_edits_message_to_deny_symbol() -> None:
+    adapter = _FakeAdapter()
+    prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
+    scope = await _drive(adapter, "deny", prompter)
+    assert scope is ConsentScope.DENY
+    assert adapter.edits[0][3] is None
+    assert adapter.edits[0][2].startswith("❌")
+
+
+async def test_tap_edits_message_to_window_symbol() -> None:
+    adapter = _FakeAdapter()
+    prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
+    scope = await _drive(adapter, "window", prompter)
+    assert scope is ConsentScope.WINDOW
+    assert adapter.edits[0][3] is None
+    assert adapter.edits[0][2].startswith("🔒")
+
+
+async def test_edit_failure_does_not_lose_the_decision() -> None:
+    """Fail-open UX: if edit_message RAISES, the consent decision is still returned."""
+    adapter = _FakeAdapter(edit_raises=True)
+    prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
+    scope = await _drive(adapter, "once", prompter)
+    # The future was resolved BEFORE the (failing) edit — decision is never lost.
+    assert scope is ConsentScope.ONCE
+    assert adapter.edits == []  # edit raised, recorded nothing

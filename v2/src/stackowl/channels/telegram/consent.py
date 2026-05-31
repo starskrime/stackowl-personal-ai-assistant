@@ -13,7 +13,8 @@ Fail-closed: a send failure, a malformed callback, or a timeout all resolve to
 from __future__ import annotations
 
 import asyncio
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Any, Protocol
 from uuid import uuid4
 
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
@@ -40,6 +41,30 @@ _LABEL_KEYS = {
     ConsentScope.WINDOW: "consent.btn.trust_window",
 }
 
+# Decision → leading symbol, mapped once over the whole ConsentScope enum.
+# Language-neutral on purpose (the platform is multilingual): a glyph conveys
+# the outcome — ✅ granted, 🔒 scoped/conditional allow, ❌ refused — without
+# any English copy. The original action summary follows the symbol.
+_DECISION_SYMBOLS = {
+    ConsentScope.ONCE: "✅",
+    ConsentScope.SESSION: "🔒",
+    ConsentScope.WINDOW: "🔒",
+    ConsentScope.DENY: "❌",
+}
+# Fallback symbol for any scope not explicitly mapped (defensive — keeps the
+# edit best-effort rather than raising a KeyError mid-resolution).
+_DEFAULT_SYMBOL = "•"
+
+
+@dataclass(slots=True)
+class _Pending:
+    """A live consent prompt: the suspended Future plus the message to edit."""
+
+    future: asyncio.Future[ConsentScope]
+    chat_id: int
+    message_id: int | None
+    summary: str
+
 
 class _SupportsInlineKeyboard(Protocol):
     async def send_inline_keyboard(
@@ -48,7 +73,16 @@ class _SupportsInlineKeyboard(Protocol):
         keyboard: dict[str, object],
         chat_id: int | None = None,
         parse_mode: str | None = "MarkdownV2",
-    ) -> None: ...
+    ) -> Any: ...
+
+    async def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        *,
+        reply_markup: Any | None = None,
+    ) -> bool: ...
 
 
 class TelegramConsentPrompter:
@@ -64,7 +98,7 @@ class TelegramConsentPrompter:
         self._adapter = adapter
         self._timeout = timeout_seconds
         self._lang = lang
-        self._pending: dict[str, asyncio.Future[ConsentScope]] = {}
+        self._pending: dict[str, _Pending] = {}
 
     async def prompt(self, req: ConsentRequest) -> ConsentScope:
         """Send the keyboard and suspend until a button resolves it (or timeout)."""
@@ -88,7 +122,12 @@ class TelegramConsentPrompter:
         rid = uuid4().hex
         loop = asyncio.get_running_loop()
         future: asyncio.Future[ConsentScope] = loop.create_future()
-        self._pending[rid] = future
+        # Stash the action summary so handle_callback can rewrite the message to
+        # "{symbol} {summary}" without re-deriving it. message_id is filled in
+        # once the send returns the Message.
+        self._pending[rid] = _Pending(
+            future=future, chat_id=chat_id, message_id=None, summary=req.summary
+        )
 
         keyboard = self._build_keyboard(rid, req)
         text = self._build_text(req)
@@ -99,9 +138,13 @@ class TelegramConsentPrompter:
         # closed → spurious DENY. So send as plain text (parse_mode=None): a consent
         # prompt needs no markdown and plain text can never 400 on entity parsing.
         try:
-            await self._adapter.send_inline_keyboard(
+            message = await self._adapter.send_inline_keyboard(
                 text, keyboard, chat_id=chat_id, parse_mode=None
             )
+            # Capture the message identity so the tap handler can edit it later.
+            # Defensive getattr: a no-target/best-effort send may return None, and
+            # a missing id simply skips the cosmetic edit (decision still works).
+            self._pending[rid].message_id = getattr(message, "message_id", None)
         except Exception as exc:
             self._pending.pop(rid, None)
             log.telegram.error(
@@ -146,8 +189,8 @@ class TelegramConsentPrompter:
             log.telegram.debug("[telegram] consent.handle_callback: not a consent callback — ignored")
             return
         rid, scope_raw = parts[1], parts[2]
-        future = self._pending.get(rid)
-        if future is None or future.done():
+        pending = self._pending.get(rid)
+        if pending is None or pending.future.done():
             log.telegram.debug(
                 "[telegram] consent.handle_callback: no live request — ignored",
                 extra={"_fields": {"rid": rid}},
@@ -161,11 +204,40 @@ class TelegramConsentPrompter:
                 extra={"_fields": {"scope_raw": scope_raw}},
             )
             scope = ConsentScope.DENY
-        future.set_result(scope)
+        # Resolve the decision FIRST — the prompt() coroutine must wake regardless
+        # of whether the cosmetic message edit below succeeds (fail-open UX).
+        pending.future.set_result(scope)
         log.telegram.info(
             "[telegram] consent.handle_callback: resolved",
             extra={"_fields": {"rid": rid, "scope": scope.value}},
         )
+        # UX: rewrite the original prompt to the chosen decision and drop the
+        # keyboard so it reads as resolved and can't be re-tapped. Best-effort —
+        # the decision is already recorded; a failed edit must never lose it.
+        await self._edit_to_decision(pending, scope)
+
+    async def _edit_to_decision(self, pending: _Pending, scope: ConsentScope) -> None:
+        """Best-effort: rewrite the prompt message to "{symbol} {summary}", no keys."""
+        if pending.message_id is None:
+            log.telegram.debug(
+                "[telegram] consent.handle_callback: no message_id — edit skipped",
+            )
+            return
+        symbol = _DECISION_SYMBOLS.get(scope, _DEFAULT_SYMBOL)
+        decision_text = f"{symbol} {pending.summary}".strip()
+        try:
+            await self._adapter.edit_message(
+                pending.chat_id, pending.message_id, decision_text, reply_markup=None
+            )
+        except Exception as exc:  # fail-open — decision already resolved
+            log.telegram.error(
+                "[telegram] consent.handle_callback: message edit failed — decision kept",
+                exc_info=exc,
+                extra={"_fields": {
+                    "chat_id": pending.chat_id, "message_id": pending.message_id,
+                    "scope": scope.value,
+                }},
+            )
 
     # ------------------------------------------------------------------
     # internals
