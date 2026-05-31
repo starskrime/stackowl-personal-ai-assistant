@@ -1,0 +1,522 @@
+"""Phase D — real-time persistence enforcer + shell timeout primitive.
+
+Four layers, red->green:
+
+  1. UNIT  — ``judge_delivery`` rules give-up / fails OPEN on malformed output.
+  2. PROVIDER-LOOP — a fake OpenAI client whose first "final answer" is a give-up
+     (no tool_calls, plain text); a ``persistence_check`` that returns the directive
+     once then None makes the loop CONTINUE (append directive + 2nd model call); an
+     always-nudge check is BOUNDED at 2 nudges (no infinite loop).
+  3. GATEWAY — scanner->backend->execute where the model first gives up, the judge
+     (the FAST-tier provider) says not-delivered, and on the nudge the model emits
+     ACTION: <tool> and dispatches -> the tool RAN (the agent did NOT give up).
+     A fail-if-removed variant proves the execute wiring is load-bearing.
+  4. SHELL — ``timeout`` arg honoured + bounded to the ceiling; default unchanged.
+
+Mirrors ``tests/providers/test_react_protocol.py`` (fake SDK client) and
+``tests/pipeline/test_phaseA_react_gateway_smoke.py`` (gateway-driving harness).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from stackowl.config.provider import ProviderConfig
+from stackowl.config.test_mode import TestModeGuard
+from stackowl.db.pool import DbPool
+from stackowl.gateway.scanner import GatewayScanner, IngressMessage
+from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
+from stackowl.owls.registry import OwlRegistry
+from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
+from stackowl.pipeline.persistence import PERSISTENCE_DIRECTIVE, judge_delivery
+from stackowl.pipeline.services import StepServices
+from stackowl.pipeline.state import PipelineState
+from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.openai_provider import OpenAIProvider
+from stackowl.providers.registry import ProviderRegistry
+from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.registry import ToolRegistry
+from stackowl.tools.system.shell import (
+    _TIMEOUT_CEILING_SEC,
+    _TIMEOUT_SEC,
+    ShellTool,
+    _resolve_timeout,
+)
+
+# =========================================================================== #
+# 1. UNIT — judge_delivery
+# =========================================================================== #
+
+
+class _StubJudgeProvider(ModelProvider):
+    """A provider whose ``complete`` returns a fixed raw string (the judge JSON)."""
+
+    def __init__(self, raw: str, *, raise_exc: Exception | None = None) -> None:
+        self._raw = raw
+        self._raise = raise_exc
+
+    @property
+    def name(self) -> str:
+        return "stub-judge"
+
+    @property
+    def protocol(self) -> Any:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        if self._raise is not None:
+            raise self._raise
+        return CompletionResult(
+            content=self._raw,
+            input_tokens=1,
+            output_tokens=1,
+            model="stub-judge",
+            provider_name="stub-judge",
+            duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield self._raw
+
+
+@pytest.mark.asyncio
+async def test_judge_rules_giveup() -> None:
+    provider = _StubJudgeProvider('{"delivered": false, "reason": "gave up"}')
+    delivered, reason = await judge_delivery(
+        provider, "do the task", "I cannot help with that.", ["read_file"]
+    )
+    assert delivered is False
+    assert "gave up" in reason
+
+
+@pytest.mark.asyncio
+async def test_judge_rules_delivered() -> None:
+    provider = _StubJudgeProvider('{"delivered": true, "reason": "done"}')
+    delivered, _reason = await judge_delivery(
+        provider, "do the task", "Here is the result.", ["shell"]
+    )
+    assert delivered is True
+
+
+@pytest.mark.asyncio
+async def test_judge_fails_open_on_malformed() -> None:
+    provider = _StubJudgeProvider("this is not json at all {{{")
+    delivered, reason = await judge_delivery(provider, "req", "ans", [])
+    assert delivered is True  # fail OPEN
+    assert reason == "judge-error"
+
+
+@pytest.mark.asyncio
+async def test_judge_fails_open_on_wrong_type() -> None:
+    # 'delivered' present but not a bool -> fail open.
+    provider = _StubJudgeProvider('{"delivered": "nope", "reason": "x"}')
+    delivered, reason = await judge_delivery(provider, "req", "ans", [])
+    assert delivered is True
+    assert reason == "judge-error"
+
+
+@pytest.mark.asyncio
+async def test_judge_fails_open_on_provider_error() -> None:
+    provider = _StubJudgeProvider("", raise_exc=RuntimeError("boom"))
+    delivered, reason = await judge_delivery(provider, "req", "ans", [])
+    assert delivered is True
+    assert reason == "judge-error"
+
+
+# =========================================================================== #
+# Fake OpenAI SDK client (shape from tests/providers/test_react_protocol.py)
+# =========================================================================== #
+
+
+class _FakeMessage:
+    def __init__(self, content: str | None, tool_calls: list[Any] | None = None) -> None:
+        self.content = content
+        self.tool_calls = tool_calls
+
+
+class _FakeChoice:
+    def __init__(self, message: _FakeMessage) -> None:
+        self.message = message
+
+
+class _FakeResponse:
+    def __init__(self, message: _FakeMessage) -> None:
+        self.choices = [_FakeChoice(message)]
+        self.model = "gemma4:e4b"
+
+
+class _FakeCompletions:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self._responses = responses
+        self._i = 0
+        self.calls: list[list[dict[str, Any]]] = []
+
+    async def create(self, **kwargs: Any) -> _FakeResponse:
+        self.calls.append([dict(m) for m in kwargs["messages"]])
+        # Repeat the LAST response once exhausted, so an always-nudge test that
+        # keeps continuing does not IndexError before the budget stops it.
+        idx = min(self._i, len(self._responses) - 1)
+        resp = self._responses[idx]
+        self._i += 1
+        return resp
+
+
+class _FakeChat:
+    def __init__(self, completions: _FakeCompletions) -> None:
+        self.completions = completions
+
+
+class _FakeClient:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self.chat = _FakeChat(_FakeCompletions(responses))
+
+
+def _make_provider(client: _FakeClient) -> OpenAIProvider:
+    config = ProviderConfig(
+        name="ollama",
+        protocol="openai",
+        base_url="http://localhost:11434/v1",
+        default_model="gemma4:e4b",
+        tier="local",
+    )
+    provider = OpenAIProvider(config, api_key="")
+    provider._client = client  # type: ignore[assignment]
+    return provider
+
+
+# =========================================================================== #
+# 2. PROVIDER-LOOP — persistence_check continues then accepts; bounded at 2
+# =========================================================================== #
+
+
+@pytest.mark.asyncio
+async def test_persistence_check_continues_then_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    # Call 1: a give-up (no tool_calls, plain refusal text).
+    giveup = _FakeMessage(content="I cannot do that.", tool_calls=None)
+    # Call 2: a delivered final answer.
+    delivered = _FakeMessage(content="Done — here is the result.", tool_calls=None)
+    client = _FakeClient([_FakeResponse(giveup), _FakeResponse(delivered)])
+    provider = _make_provider(client)
+
+    async def dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "unused"
+
+    nudges: list[tuple[str, list[str]]] = []
+
+    async def persistence_check(draft: str, tools_tried: list[str]) -> str | None:
+        nudges.append((draft, tools_tried))
+        # Nudge ONCE (on the give-up), then accept.
+        return PERSISTENCE_DIRECTIVE if len(nudges) == 1 else None
+
+    text, _calls = await provider.complete_with_tools(
+        user_text="do the task",
+        system_text="sys",
+        tool_schemas=[],
+        tool_dispatcher=dispatcher,
+        persistence_check=persistence_check,
+    )
+
+    # The loop CONTINUED: a 2nd model call happened, and we got the 2nd answer.
+    assert len(client.chat.completions.calls) == 2
+    assert text == "Done — here is the result."
+    # The directive was injected as a user turn before the 2nd call.
+    second_call = client.chat.completions.calls[1]
+    assert any(
+        m.get("role") == "user" and m.get("content") == PERSISTENCE_DIRECTIVE
+        for m in second_call
+    ), f"directive not injected: {second_call!r}"
+    assert len(nudges) == 2  # checked on call-1 (nudge) + call-2 (accept)
+
+
+@pytest.mark.asyncio
+async def test_persistence_nudge_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    # Every response is a give-up; an always-nudge check must STOP after 2 nudges.
+    giveup = _FakeMessage(content="I cannot do that.", tool_calls=None)
+    client = _FakeClient([_FakeResponse(giveup)])  # repeated by the fake
+    provider = _make_provider(client)
+
+    async def dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "unused"
+
+    nudge_returns = 0
+
+    async def always_nudge(draft: str, tools_tried: list[str]) -> str | None:
+        nonlocal nudge_returns
+        nudge_returns += 1
+        return PERSISTENCE_DIRECTIVE  # never satisfied
+
+    text, _calls = await provider.complete_with_tools(
+        user_text="do the task",
+        system_text="sys",
+        tool_schemas=[],
+        tool_dispatcher=dispatcher,
+        persistence_check=always_nudge,
+    )
+
+    # Budget is 2: 2 directives injected -> 3 model calls total (initial + 2 nudges),
+    # then the budget is spent and the answer is accepted. Never infinite.
+    # (Count via the FINAL call's accumulated history — each directive appears once.)
+    last_call = client.chat.completions.calls[-1]
+    directive_injections = sum(
+        1
+        for m in last_call
+        if m.get("role") == "user" and m.get("content") == PERSISTENCE_DIRECTIVE
+    )
+    assert directive_injections == 2, f"expected 2 nudges, got {directive_injections}"
+    assert len(client.chat.completions.calls) == 3
+    assert text == "I cannot do that."  # accepted once budget exhausted
+
+
+# =========================================================================== #
+# 3. GATEWAY — the agent does NOT give up; it escalates and dispatches a tool
+# =========================================================================== #
+
+_TOOL_NAME = "do_the_work"
+_TOOL_MARKER = "WORK-DONE-PHASE-D"
+
+
+class _DoWorkTool(Tool):
+    """Deterministic read tool: records that it ran, returns a marker."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    @property
+    def name(self) -> str:
+        return _TOOL_NAME
+
+    @property
+    def description(self) -> str:
+        return "Actually perform the requested work."
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {
+            "type": "object",
+            "properties": {"task": {"type": "string"}},
+            "required": ["task"],
+        }
+
+    async def execute(self, **kwargs: object) -> ToolResult:
+        self.calls.append(dict(kwargs))
+        return ToolResult(success=True, output=_TOOL_MARKER, error=None, duration_ms=0.0)
+
+
+class _JudgeRoutingProvider(ModelProvider):
+    """FAST-tier provider that BOTH routes (triage) AND judges (persistence).
+
+    The triage SecretaryRouter calls complete() expecting an owl name; the
+    persistence judge calls complete() expecting JSON. We disambiguate by the
+    presence of the judge's distinctive 'AGENT DRAFT REPLY' marker in the prompt.
+    The judge always rules NOT delivered, so the give-up is always nudged.
+    """
+
+    @property
+    def name(self) -> str:
+        return "judge-routing-fake"
+
+    @property
+    def protocol(self) -> Any:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        joined = "\n".join(m.content for m in messages)
+        if "AGENT DRAFT REPLY" in joined:
+            content = '{"delivered": false, "reason": "stopped without acting"}'
+        else:
+            content = "secretary"
+        return CompletionResult(
+            content=content,
+            input_tokens=1,
+            output_tokens=1,
+            model="judge-routing-fake",
+            provider_name="judge-routing-fake",
+            duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield "secretary"
+
+
+def _make_real_provider(client: _FakeClient) -> OpenAIProvider:
+    config = ProviderConfig(
+        name="ollama",
+        protocol="openai",
+        base_url="http://localhost:11434/v1",
+        default_model="gemma4:e4b",
+        tier="powerful",
+    )
+    provider = OpenAIProvider(config, api_key="")
+    provider._client = client  # type: ignore[assignment]
+    return provider
+
+
+def _build_services(
+    bridge: SqliteMemoryBridge,
+    provider: OpenAIProvider,
+    owl_registry: OwlRegistry,
+    tool_registry: ToolRegistry,
+) -> StepServices:
+    preg = ProviderRegistry()
+    preg.register_mock("secretary", provider, tier="powerful")
+    preg.register_mock("powerful", provider, tier="powerful")
+    # The FAST tier serves BOTH triage routing AND the persistence judge.
+    preg.register_mock("router", _JudgeRoutingProvider(), tier="fast")
+    return StepServices(
+        memory_bridge=bridge,
+        provider_registry=preg,
+        owl_registry=owl_registry,
+        tool_registry=tool_registry,
+    )
+
+
+def _state_from_decision(
+    decision: Any, *, trace_id: str, session_id: str, channel: str, raw_text: str
+) -> PipelineState:
+    input_text = decision.stripped_text if decision.stripped_text is not None else raw_text
+    return PipelineState(
+        trace_id=trace_id,
+        session_id=session_id,
+        input_text=input_text,
+        channel=channel,
+        owl_name=decision.target,
+        pipeline_step="start",
+        interactive=True,
+    )
+
+
+async def _drive_gateway(
+    tmp_db: DbPool, *, with_persistence: bool
+) -> tuple[_DoWorkTool, PipelineState, _FakeClient]:
+    """Run scanner->backend->execute once. ``with_persistence`` toggles the wiring
+    by switching the state's gating flags so we can prove the wiring is load-bearing
+    without editing src (depth>0 disables enforcement)."""
+    # Call 1: a give-up (no ACTION, plain refusal). Call 2 (after nudge): ACTION.
+    giveup = _FakeMessage(content="Sorry, I am unable to complete this.", tool_calls=None)
+    act = _FakeMessage(
+        content=f'ACTION: {_TOOL_NAME}\n```json\n{{"task": "the work"}}\n```',
+        tool_calls=None,
+    )
+    final = _FakeMessage(content=f"Completed: {_TOOL_MARKER}", tool_calls=None)
+    client = _FakeClient([_FakeResponse(giveup), _FakeResponse(act), _FakeResponse(final)])
+    provider = _make_real_provider(client)
+
+    bridge = SqliteMemoryBridge(db=tmp_db)
+    owl_registry = OwlRegistry.with_default_secretary()
+    tool = _DoWorkTool()
+    tool_registry = ToolRegistry()
+    tool_registry.register(tool)
+
+    services = _build_services(bridge, provider, owl_registry, tool_registry)
+    backend = AsyncioBackend(services=services)
+    scanner = GatewayScanner(owl_registry=owl_registry)
+
+    msg = IngressMessage(
+        text="please do the work", session_id="sess-D", channel="cli",
+        trace_id="trace-D-1",
+    )
+    decision = scanner.scan(msg)
+    state = _state_from_decision(
+        decision, trace_id=msg.trace_id, session_id="sess-D",
+        channel=msg.channel, raw_text=msg.text,
+    )
+    if not with_persistence:
+        # delegation_depth>0 disables enforcement gating in execute.py — this is the
+        # "wiring removed" equivalent that must make the no-giveup assertion FAIL.
+        state = state.evolve(delegation_depth=1)
+    final_state = await backend.run(state)
+    return tool, final_state, client
+
+
+@pytest.mark.asyncio
+async def test_gateway_agent_does_not_give_up(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    tool, final_state, _client = await _drive_gateway(tmp_db, with_persistence=True)
+
+    # The persistence enforcer caught the give-up, nudged, and the agent ESCALATED:
+    # it dispatched the tool instead of giving up.
+    assert tool.calls, (
+        "GATEWAY FAIL: the agent gave up — the tool was never dispatched. The "
+        "persistence_check did not catch the give-up / did not continue the loop."
+    )
+    assert tool.calls[0].get("task") == "the work"
+    delivered = "".join(c.content for c in final_state.responses)
+    assert _TOOL_MARKER in delivered
+
+
+@pytest.mark.asyncio
+async def test_gateway_fail_if_persistence_disabled(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    # With enforcement gated OFF (depth>0), the give-up is accepted and the tool
+    # NEVER runs — proving the persistence wiring is what makes the agent continue.
+    tool, _final_state, _client = await _drive_gateway(tmp_db, with_persistence=False)
+    assert not tool.calls, (
+        "Control FAIL: the tool ran even with persistence disabled — the gateway "
+        "test would pass even if the wiring were removed, so it proves nothing."
+    )
+
+
+# =========================================================================== #
+# 4. SHELL — timeout arg honoured + bounded; default unchanged
+# =========================================================================== #
+
+
+def test_shell_timeout_default_when_omitted() -> None:
+    assert _resolve_timeout(None) == _TIMEOUT_SEC
+
+
+def test_shell_timeout_honoured_within_ceiling() -> None:
+    assert _resolve_timeout(90) == 90.0
+    assert _resolve_timeout(90.5) == 90.5
+
+
+def test_shell_timeout_bounded_to_ceiling() -> None:
+    assert _resolve_timeout(10_000) == _TIMEOUT_CEILING_SEC
+
+
+def test_shell_timeout_invalid_falls_back_to_default() -> None:
+    assert _resolve_timeout("not-a-number") == _TIMEOUT_SEC
+    assert _resolve_timeout(0) == _TIMEOUT_SEC
+    assert _resolve_timeout(-5) == _TIMEOUT_SEC
+
+
+def test_shell_timeout_in_schema() -> None:
+    schema = ShellTool().parameters
+    props = schema["properties"]
+    assert isinstance(props, dict)
+    assert "timeout" in props
+
+
+@pytest.mark.asyncio
+async def test_shell_timeout_triggers_structured_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A short per-call timeout against a sleep must return a structured failure
+    # (no-hidden-errors), not raise. Uses python3 (allowlisted) to sleep.
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    tool = ShellTool()
+    result = await tool.execute(
+        command="python3 -c \"import time; time.sleep(5)\"", timeout=0.2
+    )
+    assert result.success is False
+    assert "timed out" in (result.error or "")

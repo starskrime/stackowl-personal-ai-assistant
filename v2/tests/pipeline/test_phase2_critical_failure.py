@@ -66,6 +66,7 @@ class _FailingExecuteProvider(ModelProvider):
         tool_dispatcher,
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        persistence_check=None,
     ) -> tuple[str, list]:
         raise RuntimeError("provider down (tool loop)")
 
@@ -112,6 +113,7 @@ class _ApologyProvider(ModelProvider):
         tool_dispatcher,
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        persistence_check=None,
     ) -> tuple[str, list]:
         return self._reply, []
 
@@ -152,6 +154,7 @@ class _HappyProvider(ModelProvider):
         tool_dispatcher,
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        persistence_check=None,
     ) -> tuple[str, list]:
         return self._reply, []
 

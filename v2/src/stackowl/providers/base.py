@@ -110,8 +110,16 @@ class ModelProvider(ABC):
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run a multi-turn tool loop; return (final_response_text, tool_invocation_records).
+
+        ``persistence_check`` (Phase D) is an optional real-time deliver-vs-giveup
+        hook: a provider that supports the tool loop calls it just BEFORE returning
+        a final answer with ``(draft_answer, tool_names_used)``; if it returns a
+        non-empty directive string the provider must inject it and CONTINUE the loop
+        (bounded, fail-open) instead of returning. The default impl below ignores
+        tools entirely, so it ignores this hook too.
 
         Default: falls back to a single complete() ignoring tools.
         Providers that support tool use override this method.

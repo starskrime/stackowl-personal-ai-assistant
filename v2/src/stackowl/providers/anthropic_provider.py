@@ -78,13 +78,18 @@ class AnthropicProvider(ModelProvider):
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Anthropic native tool-use loop using content blocks."""
         TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
         resolved_iterations = max_iterations if max_iterations != 8 else self._config.tool_max_iterations
         log.engine.debug(
             "[anthropic] complete_with_tools: entry",
-            extra={"_fields": {"provider": self._name, "tool_count": len(tool_schemas), "max_iterations": resolved_iterations}},
+            extra={"_fields": {
+                "provider": self._name,
+                "tool_count": len(tool_schemas),
+                "max_iterations": resolved_iterations,
+            }},
         )
         history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
         messages: list[dict[str, Any]] = [
@@ -93,6 +98,34 @@ class AnthropicProvider(ModelProvider):
         ]
         system_kwargs: dict[str, Any] = {"system": system_text} if system_text else {}
         all_calls: list[dict[str, Any]] = []
+        # Phase D — bounded persistence enforcement: at most 2 corrective nudges
+        # per turn, so a stubborn give-up cannot explode cost/loops.
+        nudge_budget = 2
+
+        async def _enforce(content: str) -> str | None:
+            """Run the persistence check for a draft final answer (fail-OPEN)."""
+            nonlocal nudge_budget
+            if persistence_check is None or nudge_budget <= 0:
+                return None
+            try:
+                directive = await persistence_check(
+                    content, [c["name"] for c in all_calls]
+                )
+            except Exception as exc:  # fail OPEN — never block/loop on a judge error
+                log.engine.error(
+                    "[anthropic] complete_with_tools: persistence_check raised — accepting answer",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._name}},
+                )
+                return None
+            if directive:
+                nudge_budget -= 1
+                log.engine.info(
+                    "[anthropic] complete_with_tools: persistence nudge — continuing loop",
+                    extra={"_fields": {"provider": self._name, "nudge_budget": nudge_budget}},
+                )
+                return directive
+            return None
 
         for _ in range(resolved_iterations):
             try:
@@ -113,6 +146,12 @@ class AnthropicProvider(ModelProvider):
 
             if response.stop_reason != "tool_use":
                 text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                # Phase D: before accepting the draft, ask the persistence judge
+                # whether the agent delivered or gave up.
+                directive = await _enforce(text)
+                if directive:
+                    messages.append({"role": "user", "content": directive})
+                    continue
                 log.engine.debug(
                     "[anthropic] complete_with_tools: exit",
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},

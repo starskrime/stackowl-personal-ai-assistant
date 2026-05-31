@@ -97,6 +97,7 @@ class OpenAIProvider(ModelProvider):
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """OpenAI function-calling tool-use loop."""
         import json
@@ -127,6 +128,39 @@ class OpenAIProvider(ModelProvider):
         messages.append({"role": "user", "content": user_text})
         resolved_model = self._config.default_model
         all_calls: list[dict[str, Any]] = []
+        # Phase D — bounded persistence enforcement: at most 2 corrective nudges
+        # per turn, so a stubborn give-up cannot explode cost/loops.
+        nudge_budget = 2
+
+        async def _enforce(content: str) -> str | None:
+            """Run the persistence check for a draft final answer.
+
+            Returns a non-empty directive string to INJECT-and-CONTINUE, or None to
+            accept ``content`` as final. Fail-OPEN: if the check is absent, the
+            budget is spent, or it raises, returns None (accept the answer).
+            """
+            nonlocal nudge_budget
+            if persistence_check is None or nudge_budget <= 0:
+                return None
+            try:
+                directive = await persistence_check(
+                    content, [c["name"] for c in all_calls]
+                )
+            except Exception as exc:  # fail OPEN — never block/loop on a judge error
+                log.engine.error(
+                    "[openai] complete_with_tools: persistence_check raised — accepting answer",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._name}},
+                )
+                return None
+            if directive:
+                nudge_budget -= 1
+                log.engine.info(
+                    "[openai] complete_with_tools: persistence nudge — continuing loop",
+                    extra={"_fields": {"provider": self._name, "nudge_budget": nudge_budget}},
+                )
+                return directive
+            return None
 
         for _ in range(resolved_iterations):
             try:
@@ -163,7 +197,12 @@ class OpenAIProvider(ModelProvider):
                     all_calls.append({"id": None, "name": name, "args": args, "result": result_text})
                     messages.append({"role": "user", "content": f"OBSERVATION: {result_text}"})
                     continue
-                # no action -> final answer (existing behavior)
+                # no action -> draft final answer. Phase D: before accepting it,
+                # ask the persistence judge whether the agent delivered or gave up.
+                directive = await _enforce(content)
+                if directive:
+                    messages.append({"role": "user", "content": directive})
+                    continue
                 log.engine.debug(
                     "[openai] complete_with_tools: exit",
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},

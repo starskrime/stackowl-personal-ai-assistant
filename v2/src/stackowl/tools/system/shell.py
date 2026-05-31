@@ -10,7 +10,31 @@ from pathlib import Path
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolResult
 
-_TIMEOUT_SEC = 30.0
+# Default per-command timeout. Raised from the old 30s so an agent-requested
+# self-install / longer build / download can complete (Phase D). A per-call
+# `timeout` arg overrides this, bounded to _TIMEOUT_CEILING_SEC.
+_TIMEOUT_SEC = 120.0
+# Hard ceiling: even an agent-requested timeout cannot exceed this, so a single
+# command can never wedge the turn indefinitely.
+_TIMEOUT_CEILING_SEC = 300.0
+
+
+def _resolve_timeout(raw: object) -> float:
+    """Resolve the effective per-call timeout: default if unset, else bounded.
+
+    Returns ``_TIMEOUT_SEC`` when no timeout is requested; otherwise the requested
+    value clamped to (0, _TIMEOUT_CEILING_SEC]. A non-numeric/invalid request falls
+    back to the default rather than raising (no-hidden-errors: the command still runs).
+    """
+    if raw is None:
+        return _TIMEOUT_SEC
+    try:
+        requested = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return _TIMEOUT_SEC
+    if requested <= 0:
+        return _TIMEOUT_SEC
+    return min(requested, _TIMEOUT_CEILING_SEC)
 
 _ALLOWED_COMMANDS: frozenset[str] = frozenset(
     {
@@ -59,6 +83,14 @@ class ShellTool(Tool):
             "properties": {
                 "command": {"type": "string", "description": "Shell command string"},
                 "workdir": {"type": "string", "description": "Working directory (optional)"},
+                "timeout": {
+                    "type": "number",
+                    "description": (
+                        "Optional per-command timeout in seconds (default "
+                        f"{int(_TIMEOUT_SEC)}, bounded to {int(_TIMEOUT_CEILING_SEC)}). "
+                        "Raise it for longer installs/downloads/builds."
+                    ),
+                },
             },
             "required": ["command"],
         }
@@ -66,7 +98,11 @@ class ShellTool(Tool):
     async def execute(self, **kwargs: object) -> ToolResult:
         command = str(kwargs.get("command", ""))
         workdir = str(kwargs.get("workdir", "")) or None
-        log.tool.debug("shell.execute: entry", extra={"_fields": {"command": command[:200]}})
+        timeout_sec = _resolve_timeout(kwargs.get("timeout"))
+        log.tool.debug(
+            "shell.execute: entry",
+            extra={"_fields": {"command": command[:200], "timeout_sec": timeout_sec}},
+        )
         t0 = time.monotonic()
         try:
             args = shlex.split(command)
@@ -97,15 +133,15 @@ class ShellTool(Tool):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=workdir or None,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_TIMEOUT_SEC)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
         except TimeoutError:
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.warning(
                 "shell.execute: timeout",
-                extra={"_fields": {"command": command[:100], "duration_ms": duration_ms}},
+                extra={"_fields": {"command": command[:100], "timeout_sec": timeout_sec, "duration_ms": duration_ms}},
             )
             return ToolResult(
-                success=False, output="", error=f"Command timed out after {_TIMEOUT_SEC}s", duration_ms=duration_ms
+                success=False, output="", error=f"Command timed out after {timeout_sec}s", duration_ms=duration_ms
             )
         except OSError as exc:
             duration_ms = (time.monotonic() - t0) * 1000

@@ -181,15 +181,71 @@ async def _run_with_tools(
                 )
         return tr.output if tr.success else (tr.error or tr.output)
 
-    t0 = time.monotonic()
-    try:
-        final_text, raw_calls = await provider.complete_with_tools(
-            user_text=state.input_text,
-            system_text=state.system_prompt,
-            tool_schemas=tool_schemas,
-            tool_dispatcher=_dispatch,
-            history=list(state.history),
+    # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback
+    # the provider loop calls just before accepting a final answer. The provider
+    # cannot reach the provider_registry; execute (which has services) can — so we
+    # close over it here. GATING: only interactive user turns at delegation depth 0
+    # get enforced, so cron/parliament/delegated sub-pipelines are never nudged.
+    persistence_check = None
+    if state.interactive and state.delegation_depth == 0:
+        from stackowl.pipeline.persistence import (
+            PERSISTENCE_DIRECTIVE,
+            judge_delivery,
         )
+
+        async def _persistence_check(draft: str, tools_tried: list[str]) -> str | None:
+            """Judge the draft answer; return the corrective directive on give-up.
+
+            Fail-OPEN: any error (no judge provider, judge raises) returns None so
+            the answer is accepted and the turn never hangs/loops.
+            """
+            try:
+                preg = get_services().provider_registry
+                if preg is None:  # no registry → cannot judge; accept (fail open)
+                    return None
+                judge_provider = preg.get_with_cascade("fast")
+                delivered, reason = await judge_delivery(
+                    judge_provider, state.input_text, draft, tools_tried
+                )
+            except Exception as exc:  # fail OPEN — never block the turn
+                log.engine.error(
+                    "[pipeline] execute: persistence judge failed — accepting answer",
+                    exc_info=exc,
+                    extra={"_fields": {"trace_id": state.trace_id}},
+                )
+                return None
+            if not delivered:
+                log.engine.info(
+                    "[pipeline] execute: persistence judge ruled give-up — nudging",
+                    extra={"_fields": {"trace_id": state.trace_id, "reason": reason[:120]}},
+                )
+                return PERSISTENCE_DIRECTIVE
+            return None
+
+        persistence_check = _persistence_check
+
+    t0 = time.monotonic()
+    # Only forward persistence_check when it is actually enabled (interactive,
+    # depth 0). Omitting the kwarg otherwise keeps the call backward-compatible
+    # with every provider implementation (no new kwarg on the non-interactive path).
+    try:
+        if persistence_check is not None:
+            final_text, raw_calls = await provider.complete_with_tools(
+                user_text=state.input_text,
+                system_text=state.system_prompt,
+                tool_schemas=tool_schemas,
+                tool_dispatcher=_dispatch,
+                history=list(state.history),
+                persistence_check=persistence_check,
+            )
+        else:
+            final_text, raw_calls = await provider.complete_with_tools(
+                user_text=state.input_text,
+                system_text=state.system_prompt,
+                tool_schemas=tool_schemas,
+                tool_dispatcher=_dispatch,
+                history=list(state.history),
+            )
     except Exception as exc:
         log.engine.error(
             "[pipeline] execute: tool_loop failed",
