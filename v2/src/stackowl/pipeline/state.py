@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.providers.base import Message
 
 
 class ToolCall(BaseModel, frozen=True):
@@ -54,6 +55,15 @@ class PipelineState(BaseModel, frozen=True):
     responses: tuple[ResponseChunk, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
     memory_context: str | None = None
+    # Real prior conversation turns (user/assistant), oldest-first. Populated by
+    # the classify step from staged conversation rows and threaded into the
+    # provider messages array by execute. Empty for the first turn / non-chat
+    # pipelines. RC-C fix.
+    history: tuple[Message, ...] = ()
+    # Final assembled system prompt (owl persona + DNA directives + memory
+    # blocks). Built by the assemble step; consumed by execute. None until
+    # assemble runs. RC-B fix.
+    system_prompt: str | None = None
     errors: tuple[str, ...] = ()
     # Per-pipeline-step elapsed time in milliseconds, keyed by step name.
     # Populated by the backend's step loop; consumed by the outcome-capture
