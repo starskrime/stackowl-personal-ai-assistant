@@ -10,12 +10,15 @@ command fails closed (deny); it is NEVER auto-refused otherwise.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.trace import TraceContext
+from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.tools.consent import ConsentPolicy
 from stackowl.tools.registry import ConsequentialActionGate
@@ -296,3 +299,52 @@ async def test_consent_prompt_sent_as_plain_text() -> None:
 
     assert captured["parse_mode"] is None  # plain text — cannot 400 on entities
     assert "yt-dlp" in captured["text"]
+
+
+# =========================================================================== #
+# 5. Subprocess CWD defaults to the workspace (H2) — files a command writes by
+#    relative name land where send_file/write_file expect them.
+# =========================================================================== #
+
+
+@pytest.mark.asyncio
+async def test_no_workdir_defaults_cwd_to_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no workdir, a command that writes a file by relative name lands in
+    the workspace, and its observed CWD IS the workspace (real subprocess)."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    ws = tmp_path / "ws"
+    monkeypatch.setattr(StackowlHome, "workspace", classmethod(lambda cls: ws))
+
+    # Benign command → runs without consent. Writes its own CWD into marker.txt.
+    code = "import os; open('marker.txt', 'w').write(os.getcwd())"
+    result = await ShellTool().execute(command=f"{sys.executable} -c {code!r}")
+
+    assert result.success is True, result.error
+    marker = ws / "marker.txt"
+    assert marker.exists()  # file landed IN the workspace (mkdir self-healed)
+    assert Path(marker.read_text()).resolve() == ws.resolve()  # CWD was the workspace
+
+
+@pytest.mark.asyncio
+async def test_explicit_workdir_overrides_workspace_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit workdir still wins over the workspace default."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    monkeypatch.setattr(StackowlHome, "workspace", classmethod(lambda cls: ws))
+
+    code = "import os; open('marker.txt', 'w').write(os.getcwd())"
+    result = await ShellTool().execute(
+        command=f"{sys.executable} -c {code!r}", workdir=str(explicit)
+    )
+
+    assert result.success is True, result.error
+    assert (explicit / "marker.txt").exists()  # landed in the explicit dir
+    assert not (ws / "marker.txt").exists()  # NOT the workspace
+    assert Path((explicit / "marker.txt").read_text()).resolve() == explicit.resolve()

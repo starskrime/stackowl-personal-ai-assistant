@@ -194,6 +194,37 @@ async def test_caption_optional_blank_message(_workspace: Path) -> None:
     assert deliverer.calls[0].message == ""  # no caption → empty message
 
 
+async def test_bare_relative_name_resolves_under_workspace_and_sends(
+    _workspace: Path,
+) -> None:
+    """A bare filename resolves to <workspace>/<name> and is accepted (H2)."""
+    deliverer = _FakeDeliverer()
+    _make_file(_workspace, name="video.mp4")
+    result = await _run(
+        SendFileTool(), deliverer=deliverer, file_path="video.mp4", target="telegram"
+    )
+    assert result.success is True
+    expected = str((_workspace / "video.mp4").resolve())
+    assert deliverer.calls[0].file_path == expected  # resolved under workspace
+    assert _decode(result.output)["file_path"] == expected
+
+
+async def test_missing_bare_name_gives_instructive_not_found_error(
+    _workspace: Path,
+) -> None:
+    """A missing bare name → the new 'produce it first' error, NOT 'outside workspace'."""
+    deliverer = _FakeDeliverer()
+    result = await _run(
+        SendFileTool(), deliverer=deliverer, file_path="ghost.mp4", target="telegram"
+    )
+    assert result.success is False
+    err = result.error or ""
+    assert "not in workspace yet" in err
+    assert "produce it first" in err
+    assert "outside workspace" not in err  # boundary error must NOT fire for a bare name
+    assert deliverer.calls == []
+
+
 async def test_file_outside_workspace_structured_error_no_deliver(
     _workspace: Path, tmp_path: Path
 ) -> None:
@@ -228,7 +259,7 @@ async def test_file_missing_structured_error(_workspace: Path) -> None:
         SendFileTool(), deliverer=deliverer, file_path=ghost, target="telegram"
     )
     assert result.success is False
-    assert "not found" in (result.error or "")
+    assert "not in workspace yet" in (result.error or "")
     assert deliverer.calls == []
 
 

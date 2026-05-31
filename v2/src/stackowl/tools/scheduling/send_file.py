@@ -98,9 +98,11 @@ class SendFileTool(Tool):
     def description(self) -> str:
         return (
             "Send a file or media (a video, image, document, etc.) to the user "
-            "over a channel. 'file_path' MUST be a file you produced inside the "
-            "workspace (e.g. something you downloaded) — arbitrary host paths are "
-            "rejected. 'caption' is an optional message attached to the file. "
+            "over a channel. 'file_path' MUST be a file that already exists in the "
+            "workspace (e.g. something you downloaded) — produce/download it FIRST, "
+            "then send it; a bare/relative name resolves under the workspace. "
+            "Arbitrary host paths are rejected. "
+            "'caption' is an optional message attached to the file. "
             "'target' defaults to the channel this conversation is on; set it only "
             "for a cross-channel send. Sends are consent-gated, rate-limited and "
             "size-capped (~50 MB; a larger file cannot be sent). "
@@ -117,8 +119,9 @@ class SendFileTool(Tool):
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Path to the file to send. Must reside under the StackOwl "
-                        "workspace directory."
+                        "Path of a file that already exists in the StackOwl "
+                        "workspace. Produce/download the file FIRST, then send it; "
+                        "a relative name is resolved under the workspace."
                     ),
                 },
                 "caption": {
@@ -248,7 +251,14 @@ class SendFileTool(Tool):
         workspace = StackowlHome.workspace()
         try:
             workspace_root = workspace.resolve()
-            resolved = Path(text).resolve()
+            # Relative names resolve UNDER the workspace (not the process CWD), so a
+            # file the agent just produced in the workspace can be sent by bare name.
+            candidate = Path(text)
+            resolved = (
+                candidate.resolve()
+                if candidate.is_absolute()
+                else (workspace_root / text).resolve()
+            )
         except OSError as exc:  # B5 — resolve can raise on a broken symlink loop
             log.tool.warning(
                 "send_file.execute: path resolution failed",
@@ -264,7 +274,11 @@ class SendFileTool(Tool):
             )
 
         if not resolved.exists():
-            return None, f"file not found: {text!r} does not exist."
+            return None, (
+                f"file not in workspace yet: {text!r} does not exist — produce it "
+                "first (e.g. run a command that creates/downloads it into the "
+                "workspace), then send it by name."
+            )
         if not resolved.is_file():
             return None, f"not a regular file: {text!r} is not a file."
 

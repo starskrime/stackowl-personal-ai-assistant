@@ -20,6 +20,7 @@ from pathlib import Path
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolResult
 
@@ -112,6 +113,25 @@ def _is_recursive(flags: list[str]) -> bool:
     return False
 
 
+def _default_workspace_cwd() -> str | None:
+    """The workspace dir to use as the subprocess CWD when no ``workdir`` is given.
+
+    Files a command writes by relative name then land in the workspace, where
+    ``send_file``/``write_file`` expect them. Self-healing (B5): if the dir cannot
+    be created, log and fall back to ``None`` (process CWD) rather than crashing.
+    """
+    try:
+        ws = StackowlHome.workspace()
+        ws.mkdir(parents=True, exist_ok=True)
+        return str(ws)
+    except OSError as exc:  # B5 — never let a cwd-prep failure crash the command
+        log.tool.warning(
+            "shell.execute: workspace cwd unavailable — using process cwd",
+            extra={"_fields": {"error": str(exc)}},
+        )
+        return None
+
+
 def _split_flags_and_operands(rest: list[str]) -> tuple[list[str], list[str]]:
     """Partition the tail of a command into option flags and positional operands."""
     flags = [tok for tok in rest if tok.startswith("-")]
@@ -202,7 +222,13 @@ class ShellTool(Tool):
                         "explicit approval before they run."
                     ),
                 },
-                "workdir": {"type": "string", "description": "Working directory (optional)"},
+                "workdir": {
+                    "type": "string",
+                    "description": (
+                        "Working directory (optional; defaults to the StackOwl "
+                        "workspace directory, where files written by relative name land)."
+                    ),
+                },
                 "timeout": {
                     "type": "number",
                     "description": (
@@ -303,7 +329,10 @@ class ShellTool(Tool):
 
     async def execute(self, **kwargs: object) -> ToolResult:
         command = str(kwargs.get("command", ""))
-        workdir = str(kwargs.get("workdir", "")) or None
+        # No explicit workdir → default the subprocess CWD to the workspace, so a
+        # file the command writes by relative name lands where send_file/write_file
+        # expect it. An explicit non-empty workdir still wins.
+        workdir = str(kwargs.get("workdir", "")) or _default_workspace_cwd()
         timeout_sec = _resolve_timeout(kwargs.get("timeout"))
         log.tool.debug(
             "shell.execute: entry",

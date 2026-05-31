@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from stackowl.infra.observability import log
+from stackowl.paths import StackowlHome
 from stackowl.tools.base import Tool, ToolResult
 from stackowl.tools.io.path_guard import is_within_root as _guard  # shared guard (E3)
 
@@ -26,7 +27,13 @@ class WriteFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Relative or absolute file path"},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "File path. A relative path is resolved under the workspace; "
+                        "an absolute path must be inside the workspace."
+                    ),
+                },
                 "content": {"type": "string", "description": "Text content to write"},
             },
             "required": ["path", "content"],
@@ -37,7 +44,15 @@ class WriteFileTool(Tool):
         content = str(kwargs.get("content", ""))
         log.tool.debug("write_file.execute: entry", extra={"_fields": {"path": path_str, "content_len": len(content)}})
         t0 = time.monotonic()
-        target = Path(path_str)
+        # A relative name resolves UNDER the workspace (not the process CWD), so
+        # write_file anchors the same way as send_file/shell. The traversal guard
+        # below still confines the result to the workspace (defense in depth).
+        candidate = Path(path_str)
+        target = (
+            candidate
+            if candidate.is_absolute()
+            else StackowlHome.workspace() / path_str
+        )
         if not _guard(target):
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.warning("write_file.execute: path traversal denied", extra={"_fields": {"path": path_str}})
