@@ -153,7 +153,11 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter.send_text: exit")
 
     async def send_inline_keyboard(
-        self, text: str, keyboard: dict[str, object], chat_id: int | None = None
+        self,
+        text: str,
+        keyboard: dict[str, object],
+        chat_id: int | None = None,
+        parse_mode: str | None = "MarkdownV2",
     ) -> None:
         """Send a message with an inline keyboard attachment.
 
@@ -161,6 +165,12 @@ class TelegramChannelAdapter(ChannelAdapter):
         prompt); when omitted it falls back to the most-recent chat. Raises
         :class:`RuntimeError` when no target chat can be resolved so callers that
         require delivery (consent gate) can fail closed immediately.
+
+        ``parse_mode`` defaults to ``"MarkdownV2"`` for callers that pass
+        pre-formatted markdown (notifications). Pass ``None`` for raw text that
+        must NOT be entity-parsed (e.g. a consent prompt containing a literal
+        shell command) — plain text cannot trigger a Telegram 400 on unescaped
+        ``.``/``-``/``=``/``/`` characters.
         """
         log.telegram.debug(
             "[telegram] adapter.send_inline_keyboard: entry",
@@ -181,13 +191,20 @@ class TelegramChannelAdapter(ChannelAdapter):
             "[telegram] adapter.send_inline_keyboard: decision markup_built",
             extra={"_fields": {"has_markup": markup is not None}},
         )
-        await self._bot_app.bot.send_message(
-            chat_id=target_chat,
-            text=text,
-            parse_mode="MarkdownV2",
-            reply_markup=markup,
+        send_kwargs: dict[str, object] = {
+            "chat_id": target_chat,
+            "text": text,
+            "reply_markup": markup,
+        }
+        # Only set parse_mode when requested; None means "send as raw text" so an
+        # unescaped command/path cannot 400 on entity parsing (consent prompts).
+        if parse_mode is not None:
+            send_kwargs["parse_mode"] = parse_mode
+        await self._bot_app.bot.send_message(**send_kwargs)
+        log.telegram.debug(
+            "[telegram] adapter.send_inline_keyboard: exit",
+            extra={"_fields": {"parse_mode": parse_mode}},
         )
-        log.telegram.debug("[telegram] adapter.send_inline_keyboard: exit")
 
     async def send_clarify(
         self,

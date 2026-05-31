@@ -43,7 +43,11 @@ _LABEL_KEYS = {
 
 class _SupportsInlineKeyboard(Protocol):
     async def send_inline_keyboard(
-        self, text: str, keyboard: dict[str, object], chat_id: int | None = None
+        self,
+        text: str,
+        keyboard: dict[str, object],
+        chat_id: int | None = None,
+        parse_mode: str | None = "MarkdownV2",
     ) -> None: ...
 
 
@@ -89,9 +93,15 @@ class TelegramConsentPrompter:
         keyboard = self._build_keyboard(rid, req)
         text = self._build_text(req)
 
-        # 3. STEP — send to the resolved chat; any failure fails closed
+        # 3. STEP — send to the resolved chat; any failure fails closed. A consent
+        # prompt is RAW text (tool name + a literal shell command, paths, '.'/'-'/'='
+        # /'/' chars). MarkdownV2 would reject those unescaped → HTTP 400 → fail
+        # closed → spurious DENY. So send as plain text (parse_mode=None): a consent
+        # prompt needs no markdown and plain text can never 400 on entity parsing.
         try:
-            await self._adapter.send_inline_keyboard(text, keyboard, chat_id=chat_id)
+            await self._adapter.send_inline_keyboard(
+                text, keyboard, chat_id=chat_id, parse_mode=None
+            )
         except Exception as exc:
             self._pending.pop(rid, None)
             log.telegram.error(

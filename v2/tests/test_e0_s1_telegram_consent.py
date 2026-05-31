@@ -17,16 +17,22 @@ class _FakeAdapter:
     def __init__(self, *, fail: bool = False) -> None:
         self.sent: list[tuple[str, dict]] = []
         self.sent_chat_ids: list[int | None] = []
+        self.sent_parse_modes: list[str | None] = []
         self.sent_event = asyncio.Event()
         self._fail = fail
 
     async def send_inline_keyboard(
-        self, text: str, keyboard: dict, chat_id: int | None = None
+        self,
+        text: str,
+        keyboard: dict,
+        chat_id: int | None = None,
+        parse_mode: str | None = "MarkdownV2",
     ) -> None:
         if self._fail:
             raise RuntimeError("transport down")
         self.sent.append((text, keyboard))
         self.sent_chat_ids.append(chat_id)
+        self.sent_parse_modes.append(parse_mode)
         self.sent_event.set()
 
 
@@ -43,8 +49,11 @@ def _cd_for(keyboard: dict, scope: str) -> str:
 
 
 def _req(allow_relaxation: bool = True) -> ConsentRequest:
+    # session_id must be a numeric Telegram chat id: the B1 fix resolves the
+    # target chat from it and fails closed (no send) on a non-numeric value, so a
+    # placeholder like "s1" would make the inline keyboard never go out.
     return ConsentRequest(
-        tool_name="danger", channel="telegram", session_id="s1",
+        tool_name="danger", channel="telegram", session_id="100",
         summary="run the dangerous thing", allow_relaxation=allow_relaxation,
     )
 
@@ -120,6 +129,9 @@ async def test_prompt_targets_requesting_users_chat() -> None:
     req = ConsentRequest(tool_name="danger", channel="telegram", session_id="424242", summary="x")
     await prompter.prompt(req)  # times out to deny, but records the target chat
     assert adapter.sent_chat_ids == [424242]
+    # Consent prompts are sent as PLAIN TEXT (parse_mode=None) so an unescaped
+    # command/path can never 400 on MarkdownV2 entity parsing → spurious deny.
+    assert adapter.sent_parse_modes == [None]
 
 
 async def test_non_numeric_session_fails_closed() -> None:
