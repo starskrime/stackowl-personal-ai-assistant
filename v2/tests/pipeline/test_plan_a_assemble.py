@@ -62,3 +62,10 @@ async def test_assemble_handles_no_memory():
     from stackowl.pipeline.steps import assemble
     out = await assemble.run(_state(owl_name="default", memory_context=None))
     assert out.system_prompt  # persona alone, never None/empty
+
+
+def test_assemble_registered_between_classify_and_execute():
+    from stackowl.pipeline.registry import PIPELINE_STEPS
+    names = [n for n, _ in PIPELINE_STEPS]
+    assert "assemble" in names
+    assert names.index("classify") < names.index("assemble") < names.index("execute")
