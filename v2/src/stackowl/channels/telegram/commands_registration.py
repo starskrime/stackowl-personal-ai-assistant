@@ -21,7 +21,7 @@ _MAX_NAME = 32
 _MAX_DESC = 256
 
 
-def build_bot_commands(commands: list[Any]) -> list["BotCommand"]:
+def build_bot_commands(commands: list[Any]) -> list[BotCommand]:
     """Translate SlashCommand objects to Telegram BotCommand, enforcing TG limits."""
     from telegram import BotCommand
 
