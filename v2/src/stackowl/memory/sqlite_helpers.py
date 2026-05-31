@@ -32,6 +32,24 @@ def unpack_embedding(blob: bytes | None) -> list[float]:
     return [float(x) for x in arr]
 
 
+def cosine_similarity(a: list[float] | None, b: list[float] | None) -> float | None:
+    """Cosine similarity of two vectors in ``[-1.0, 1.0]``.
+
+    Returns ``None`` when similarity is undefined — either operand is missing,
+    empty, length-mismatched, or a zero vector — so callers can fall back rather
+    than treat a degenerate comparison as a match.
+    """
+    if not a or not b or len(a) != len(b):
+        return None
+    va = np.asarray(a, dtype="<f4")
+    vb = np.asarray(b, dtype="<f4")
+    na = float(np.linalg.norm(va))
+    nb = float(np.linalg.norm(vb))
+    if na == 0.0 or nb == 0.0:
+        return None
+    return float(np.dot(va, vb) / (na * nb))
+
+
 def parse_iso(value: str) -> datetime:
     """Parse an ISO-8601 timestamp, defaulting to UTC for naive values."""
     try:

@@ -181,6 +181,14 @@ class MemorySettings(BaseModel):
     # conversation fact promotes to long-term committed memory.
     # 1 = commit after being seen in a second dream pass.
     conversation_fact_reinforcement_required: int = Field(default=1, ge=0)
+    # Cosine-similarity threshold (over stored embeddings) above which a newly
+    # mined conversation_fact is treated as a re-derivation of an existing staged
+    # fact and REINFORCES it instead of staging a near-duplicate. A reworded
+    # re-extraction ("User lives in Baku" vs "The user is based in Baku") embeds
+    # close enough to clear this bar. Falls back to exact-content match when an
+    # embedding is unavailable. 1.0 = identical vectors required (effectively
+    # exact); lower = more aggressive merging.
+    conversation_fact_dedup_similarity: float = Field(default=0.92, ge=0.0, le=1.0)
     prune_after_days: int = Field(default=90, ge=1)
     extraction_after_n_messages: int = Field(default=5, ge=1)
     per_user_ceiling_bytes: int = Field(default=52_428_800, ge=1_000_000)
