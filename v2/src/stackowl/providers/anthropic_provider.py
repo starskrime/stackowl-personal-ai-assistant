@@ -77,6 +77,7 @@ class AnthropicProvider(ModelProvider):
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
+        history: list[Message] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Anthropic native tool-use loop using content blocks."""
         TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
@@ -85,7 +86,11 @@ class AnthropicProvider(ModelProvider):
             "[anthropic] complete_with_tools: entry",
             extra={"_fields": {"provider": self._name, "tool_count": len(tool_schemas), "max_iterations": resolved_iterations}},
         )
-        messages: list[dict[str, Any]] = [{"role": "user", "content": user_text}]
+        history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
+        messages: list[dict[str, Any]] = [
+            *history_dicts,
+            {"role": "user", "content": user_text},
+        ]
         system_kwargs: dict[str, Any] = {"system": system_text} if system_text else {}
         all_calls: list[dict[str, Any]] = []
 

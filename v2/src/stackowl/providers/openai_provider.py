@@ -84,6 +84,7 @@ class OpenAIProvider(ModelProvider):
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
+        history: list[Message] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """OpenAI function-calling tool-use loop."""
         import json
@@ -94,9 +95,11 @@ class OpenAIProvider(ModelProvider):
             "[openai] complete_with_tools: entry",
             extra={"_fields": {"provider": self._name, "tool_count": len(tool_schemas), "max_iterations": resolved_iterations}},
         )
+        history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
         messages: list[dict[str, Any]] = []
         if system_text:
             messages.append({"role": "system", "content": system_text})
+        messages.extend(history_dicts)
         messages.append({"role": "user", "content": user_text})
         resolved_model = self._config.default_model
         all_calls: list[dict[str, Any]] = []

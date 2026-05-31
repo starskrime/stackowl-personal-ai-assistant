@@ -109,6 +109,7 @@ class ModelProvider(ABC):
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
         max_iterations: int = 8,
+        history: list[Message] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run a multi-turn tool loop; return (final_response_text, tool_invocation_records).
 
@@ -118,6 +119,7 @@ class ModelProvider(ABC):
         msgs: list[Message] = []
         if system_text:
             msgs.append(Message(role="system", content=system_text))
+        msgs.extend(history or [])
         msgs.append(Message(role="user", content=user_text))
         result = await self.complete(msgs, model="")
         return result.content, []
