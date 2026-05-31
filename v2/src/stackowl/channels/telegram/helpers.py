@@ -13,6 +13,7 @@ __all__ = [
     "hash_user_id",
     "is_authorized",
     "strip_bot_mention",
+    "strip_command_bot_suffix",
 ]
 
 
@@ -33,6 +34,21 @@ def is_authorized(user_id: int, allowed: frozenset[int]) -> bool:
     if not allowed:
         return False
     return user_id in allowed
+
+
+def strip_command_bot_suffix(text: str, bot_username: str | None) -> str:
+    """Turn a leading "/cmd@BotName" into "/cmd" (Telegram group convention).
+
+    Only touches a command token at the very start of the message; ordinary text
+    containing "@BotName" is left alone.
+    """
+    if not bot_username or not text.startswith("/"):
+        return text
+    head, sep, rest = text.partition(" ")
+    suffix = f"@{bot_username}"
+    if head.endswith(suffix):
+        head = head[: -len(suffix)]
+    return head + sep + rest
 
 
 def strip_bot_mention(text: str, bot_username: str) -> str:

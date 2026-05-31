@@ -25,7 +25,7 @@ from stackowl.channels.base import ChannelAdapter
 from stackowl.channels.splitter import TelegramMessageSplitter
 from stackowl.channels.telegram._bot import build_inline_keyboard, start_bot, stop_bot
 from stackowl.channels.telegram.formatter import TelegramMarkdownFormatter
-from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention
+from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention, strip_command_bot_suffix
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.gateway.scanner import IngressMessage
@@ -378,6 +378,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             if self._bot_username
             else text_raw.strip()
         )
+        stripped = strip_command_bot_suffix(stripped, self._bot_username)
         log.telegram.debug(
             "[telegram] adapter.handle_update: decision strip_mention",
             extra={"_fields": {"stripped_len": len(stripped)}},
