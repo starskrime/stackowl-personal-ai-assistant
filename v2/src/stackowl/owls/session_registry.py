@@ -8,10 +8,13 @@ lifecycle (spawn / touch / reap); it deliberately does NOT duplicate
 reaped it asks the A2AQueue to DRAIN that session's mailbox so orphaned inter-owl
 messages don't leak (the queue has no eviction of its own).
 
-A :class:`SessionHandle` carries the session's persistent conversation
-``history`` (reusing the :class:`stackowl.providers.base.Message` shape that
-``PipelineState.history`` uses) so a later ``sessions_send`` (E8-S4) can continue
-the conversation.
+Continuity is NOT stored on the handle. A session's conversation is threaded
+THROUGH the existing Plan A history system: ``sessions_spawn`` / ``sessions_send``
+run the pipeline with ``session_id=f"session:{label}"``; ``classify`` reads prior
+turns from the MemoryBridge by that id (overwriting any seed) and ``consolidate``
+writes each turn back to the bridge under that id. The handle therefore carries
+ONLY identity + activity — no ``history`` (a duplicated handle-history would be
+dead, silently overwritten by classify's bridge read).
 
 Self-healing: every method is bounded and structured — a duplicate label or the
 ``MAX_LIVE_SESSIONS`` cap raises a typed :class:`SessionRegistryError` the tool
@@ -32,7 +35,6 @@ from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.messaging.a2a import A2AQueue
 from stackowl.owls.delegation_limits import MAX_LIVE_SESSIONS, SESSION_IDLE_TTL_SECONDS
-from stackowl.providers.base import Message
 
 
 class SessionRegistryError(StackOwlError):
@@ -50,11 +52,12 @@ class SessionRegistryError(StackOwlError):
 
 
 class SessionHandle(BaseModel):
-    """A single named, persistent owl session.
+    """A single named, persistent owl session — identity + activity only.
 
-    Frozen for the identity fields; ``last_active`` and ``history`` evolve via
-    :meth:`with_active` / :meth:`with_history` (model_copy) so the handle stays an
-    immutable value the registry swaps in its map rather than mutating in place.
+    Frozen; ``last_active`` evolves via :meth:`with_active` (model_copy) so the
+    handle stays an immutable value the registry swaps in its map rather than
+    mutating in place. Conversation continuity is NOT here — it lives in the
+    MemoryBridge under ``session:{label}`` (see module docstring).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -63,15 +66,10 @@ class SessionHandle(BaseModel):
     owl_name: str
     created_at: float  # monotonic seconds at spawn
     last_active: float  # monotonic seconds of the most recent touch
-    history: tuple[Message, ...] = ()
 
     def with_active(self, now: float) -> SessionHandle:
         """Return a copy with ``last_active`` bumped to ``now`` (monotonic)."""
         return self.model_copy(update={"last_active": now})
-
-    def with_history(self, history: tuple[Message, ...], now: float) -> SessionHandle:
-        """Return a copy carrying new ``history`` and a bumped ``last_active``."""
-        return self.model_copy(update={"history": history, "last_active": now})
 
 
 class SessionRegistry:
@@ -98,13 +96,7 @@ class SessionRegistry:
         )
 
     # --------------------------------------------------------------- spawn
-    def spawn(
-        self,
-        label: str,
-        owl_name: str,
-        *,
-        history: tuple[Message, ...] = (),
-    ) -> SessionHandle:
+    def spawn(self, label: str, owl_name: str) -> SessionHandle:
         """Register a new named session; refuse a duplicate label or past the cap.
 
         Raises :class:`SessionRegistryError` (structured, caught by the tool) on a
@@ -141,7 +133,7 @@ class SessionRegistry:
                 )
             now = self._clock.monotonic()
             handle = SessionHandle(
-                label=label, owl_name=owl_name, created_at=now, last_active=now, history=history,
+                label=label, owl_name=owl_name, created_at=now, last_active=now,
             )
             self._sessions[label] = handle
         # 4. EXIT
@@ -173,20 +165,6 @@ class SessionRegistry:
                 log.engine.debug("[sessions] touch: unknown label", extra={"_fields": {"label": label}})
                 return None
             refreshed = current.with_active(self._clock.monotonic())
-            self._sessions[label] = refreshed
-        return refreshed
-
-    def set_history(self, label: str, history: tuple[Message, ...]) -> SessionHandle | None:
-        """Store ``history`` on ``label`` (and bump activity). None if gone."""
-        log.engine.debug(
-            "[sessions] set_history: entry",
-            extra={"_fields": {"label": label, "turns": len(history)}},
-        )
-        with self._lock:
-            current = self._sessions.get(label)
-            if current is None:
-                return None
-            refreshed = current.with_history(history, self._clock.monotonic())
             self._sessions[label] = refreshed
         return refreshed
 

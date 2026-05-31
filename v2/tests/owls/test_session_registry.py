@@ -13,7 +13,6 @@ import pytest
 from stackowl.messaging.a2a import A2AMessage, A2AQueue
 from stackowl.owls.delegation_limits import MAX_LIVE_SESSIONS
 from stackowl.owls.session_registry import SessionRegistry, SessionRegistryError
-from stackowl.providers.base import Message
 
 
 class _FakeClock:
@@ -145,14 +144,12 @@ def test_touch_bumps_last_active() -> None:
     assert reg.touch("nope") is None
 
 
-def test_set_history_stores_turns() -> None:
+def test_handle_carries_no_history_field() -> None:
+    # Continuity is the bridge's job — the handle is identity + activity ONLY.
     reg = SessionRegistry(clock=_FakeClock())
-    reg.spawn("s", "scout")
-    history = (Message(role="user", content="hi"), Message(role="assistant", content="hello"))
-    refreshed = reg.set_history("s", history)
-    assert refreshed is not None
-    assert reg.get("s").history == history
-    assert reg.set_history("missing", history) is None
+    handle = reg.spawn("s", "scout")
+    assert not hasattr(handle, "history")
+    assert not hasattr(reg, "set_history")
 
 
 def test_clear_all_drains_every_mailbox() -> None:

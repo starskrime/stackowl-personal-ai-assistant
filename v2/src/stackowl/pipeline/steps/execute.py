@@ -22,7 +22,7 @@ from stackowl.tools.registry import ToolRegistry
 # E8-S0 — tools a delegated child (delegation_depth>0) must NOT see, so a child
 # cannot recurse into a fork-bomb. Names are matched defensively (the tools are
 # registered by later stories S1/S3); excluding by name is correct ahead of them.
-_CHILD_EXCLUDED_TOOLS = frozenset({"delegate_task", "sessions_spawn"})
+_CHILD_EXCLUDED_TOOLS = frozenset({"delegate_task", "sessions_spawn", "sessions_send"})
 
 
 def _schema_tool_name(schema: dict[str, object]) -> str:

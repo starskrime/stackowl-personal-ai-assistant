@@ -35,6 +35,7 @@ from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.gateway.scanner import GatewayScanner
+from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.messaging.a2a import A2AQueue
 from stackowl.owls.concurrency import ConcurrencyGovernor
 from stackowl.owls.delegation_limits import MAX_LIVE_SESSIONS
@@ -161,6 +162,7 @@ def _build_env(tmp_db: DbPool) -> _Env:
         a2a_queue=a2a_queue,
         delegation_governor=ConcurrencyGovernor(),
         session_registry=sessions,  # REAL registry wired exactly as the orchestrator does
+        memory_bridge=SqliteMemoryBridge(db=tmp_db),  # REAL bridge → classify/consolidate run
         db_pool=tmp_db,
     )
     return _Env(

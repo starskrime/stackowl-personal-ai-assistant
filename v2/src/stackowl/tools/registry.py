@@ -229,6 +229,7 @@ class ToolRegistry:
         """Bootstrap the registry with the foundation tools + browser family."""
         from stackowl.tools.agents.delegate_task import DelegateTaskTool
         from stackowl.tools.agents.mixture_of_agents import MixtureOfAgentsTool
+        from stackowl.tools.agents.sessions_send import SessionsSendTool
         from stackowl.tools.agents.sessions_spawn import SessionsSpawnTool
         from stackowl.tools.browser.back import BrowserBackTool
         from stackowl.tools.browser.browse import BrowserBrowseTool
@@ -310,6 +311,14 @@ class ToolRegistry:
         # registry). The S0 execution gate withholds it at delegation_depth>0
         # (it is in _CHILD_EXCLUDED_TOOLS) so a child cannot spawn (E8-S3).
         registry.register(SessionsSpawnTool())
+        # sessions_send — CONTINUE-RUN: looks an existing session up by label in
+        # the DI SessionRegistry (get_services().session_registry) and runs its owl
+        # once with the persisted history + the new message under the shared
+        # delegation_governor (depth=1), persisting the grown history. Self-healing:
+        # unknown session / run failure / timeout / rate-limit → structured, session
+        # preserved, never raises. The S0 execution gate withholds it at
+        # delegation_depth>0 (it is in _CHILD_EXCLUDED_TOOLS). Severity write (E8-S4).
+        registry.register(SessionsSendTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())

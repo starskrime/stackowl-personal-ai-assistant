@@ -7,9 +7,11 @@ truth). The persona is resolved exactly like ``delegate_task`` (explicit ``owl``
 role → a sensible default specialist via :func:`resolve_target_owl`). When an
 ``initial_task`` is supplied, it is run ONCE through a child
 :class:`stackowl.pipeline.backends.asyncio_backend.AsyncioBackend` UNDER the shared
-``delegation_governor`` (depth-aware, mirroring :class:`A2ADelegator`) and the
-resulting conversation ``history`` is stored on the session handle so a later
-``sessions_send`` (E8-S4) can continue it.
+``delegation_governor`` (depth-aware, mirroring :class:`A2ADelegator`) with
+``session_id=f"session:{label}"`` so the seed turn is persisted to the MemoryBridge
+under the SESSION's id (by ``consolidate``); a later ``sessions_send`` (E8-S4)
+reads it back via ``classify``. Continuity is the bridge's job — nothing is stored
+on the handle.
 
 THREE rails, all self-healing / no-hidden-errors:
 * **Duplicate / capacity** — :meth:`SessionRegistry.spawn` raises a structured
@@ -39,7 +41,6 @@ from stackowl.owls.session_registry import SessionRegistryError
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
-from stackowl.providers.base import Message
 from stackowl.tools.agents.resolver import resolve_target_owl
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
@@ -165,12 +166,10 @@ class SessionsSpawnTool(Tool):
         status = "spawned"
         if args.initial_task:
             status = await self._run_initial_task(
-                registry=registry,
                 label=args.label,
                 owl_name=owl_name,
                 initial_task=args.initial_task,
                 trace_id=trace_id,
-                session_id=str(ctx.get("session_id") or ""),
                 channel=str(ctx.get("channel") or "internal"),
             )
 
@@ -182,27 +181,30 @@ class SessionsSpawnTool(Tool):
     async def _run_initial_task(
         self,
         *,
-        registry: object,
         label: str,
         owl_name: str,
         initial_task: str,
         trace_id: str,
-        session_id: str,
         channel: str,
     ) -> str:
-        """Run ``initial_task`` once under the governor; store history. Self-healing.
+        """Run ``initial_task`` once under the governor. Self-healing.
 
-        Returns the resulting status string. A run failure NEVER tears down the
-        already-spawned session (it stays live, addressable later) — it is logged
-        and surfaced as ``'spawned_initial_failed'`` so the model knows the seed
-        run produced nothing rather than inventing a result.
+        The run uses ``session_id=f"session:{label}"`` so ``consolidate`` persists
+        the seed turn to the MemoryBridge under the SESSION's id — that IS the
+        continuity (a later ``sessions_send`` reads it back via ``classify``). The
+        handle stores NO history. A run failure NEVER tears down the already-spawned
+        session (it stays live, addressable later) — it is logged and surfaced as
+        ``'spawned_initial_failed'`` so the model knows the seed run produced
+        nothing rather than inventing a result.
         """
         services = get_services()
         # A2A sub-pipeline: no user channel binding (default-deny clarify), and
         # delegation_depth=1 so the child cannot itself spawn/delegate (S0 cap).
+        # session_id is the SESSION's id (NOT the caller's) so the seed turn lands
+        # in the bridge under this session — consolidate persists it (no depth skip).
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-spawn",
-            session_id=session_id,
+            session_id=f"session:{label}",
             input_text=initial_task,
             channel=channel,
             owl_name=owl_name,
@@ -221,12 +223,6 @@ class SessionsSpawnTool(Tool):
             )
             return "spawned_initial_failed"
 
-        answer = "".join(chunk.content for chunk in final_state.responses)
-        history: tuple[Message, ...] = (
-            Message(role="user", content=initial_task),
-            Message(role="assistant", content=answer),
-        )
-        registry.set_history(label, history)  # type: ignore[attr-defined]
         if final_state.errors:
             log.tool.warning(
                 "sessions_spawn._run_initial_task: initial run reported errors",
@@ -234,9 +230,10 @@ class SessionsSpawnTool(Tool):
                                    "errors": list(final_state.errors)}},
             )
             return "spawned_initial_failed"
+        answer_len = sum(len(c.content) for c in final_state.responses)
         log.tool.debug(
-            "sessions_spawn._run_initial_task: stored history",
-            extra={"_fields": {"trace_id": trace_id, "label": label, "answer_len": len(answer)}},
+            "sessions_spawn._run_initial_task: seed turn persisted to bridge",
+            extra={"_fields": {"trace_id": trace_id, "label": label, "answer_len": answer_len}},
         )
         return "spawned_with_initial"
 
