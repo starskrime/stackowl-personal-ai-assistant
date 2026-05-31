@@ -66,6 +66,7 @@ from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import StreamRegistry
+from stackowl.providers.base import CompletionResult
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 from stackowl.web_search.base import WebHit, WebSearchProvider, WebSearchResult, success_result
 from stackowl.web_search.registry import WebSearchRegistry
@@ -237,8 +238,14 @@ class _ScriptedSecretary:
             answer = "I don't have anything remembered about ARM64 ML inference yet."
         return (answer, [])
 
-    async def complete(self, *a, **k):  # pragma: no cover — not on this path
-        return ""
+    async def complete(self, *a, **k) -> CompletionResult:  # noqa: ANN002,ANN003
+        # The real triage step CALLS complete() (router reads .input_tokens), so
+        # honor the ModelProvider result contract — return a real CompletionResult
+        # so triage runs genuinely instead of crashing + being swallowed.
+        return CompletionResult(
+            content="", input_tokens=1, output_tokens=1, model="scripted",
+            provider_name="scripted-secretary", duration_ms=0.0,
+        )
 
     async def stream(self, *a, **k):  # pragma: no cover — not on this path
         if False:
