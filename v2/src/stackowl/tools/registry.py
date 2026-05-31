@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool
@@ -223,6 +224,46 @@ class ToolRegistry:
             }
             for t in tools
         ]
+
+    def render_text_catalog(self, schemas: list[dict[str, Any]]) -> str:
+        """Render presented tool schemas into a compact text block for text-protocol mode.
+
+        Used when a model has no native tool-calling: it reads this catalog and replies
+        with ``ACTION: <name>`` + a ```json args block, which the ReAct fallback parses.
+        Defensive about schema shape (openai/anthropic/gemini differ) — malformed entries
+        are skipped, never raised. Kept compact for small-context (4B) models.
+        """
+        header = (
+            "TOOLS (to use one, output: ACTION: <name> then a ```json args block):"
+        )
+        lines: list[str] = [header]
+        for entry in schemas:
+            if not isinstance(entry, dict):
+                continue
+            # openai: {"function": {name, description, parameters}}; anthropic: flat.
+            fn = entry.get("function")
+            body = fn if isinstance(fn, dict) else entry
+            name = body.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            description = body.get("description")
+            params = body.get("parameters")
+            if not isinstance(params, dict):
+                params = body.get("input_schema") if isinstance(body.get("input_schema"), dict) else {}
+            props = params.get("properties") if isinstance(params, dict) else None
+            arg_names = list(props.keys()) if isinstance(props, dict) else []
+            sig = ", ".join(arg_names)
+            desc = ""
+            if isinstance(description, str) and description:
+                first = description.strip().splitlines()[0]
+                desc = f" — {first}"
+            lines.append(f"- {name}({sig}){desc}")
+        catalog = "\n".join(lines)
+        log.tool.debug(
+            "[tools] registry.render_text_catalog: exit",
+            extra={"_fields": {"tool_count": len(lines) - 1, "chars": len(catalog)}},
+        )
+        return catalog
 
     @classmethod
     def with_defaults(cls) -> ToolRegistry:

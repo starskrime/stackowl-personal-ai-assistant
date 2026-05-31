@@ -16,7 +16,19 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
+from stackowl.providers._react import parse_react_action
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+
+
+def _render_tool_catalog(tool_schemas: list[dict[str, Any]]) -> str:
+    """Render tool schemas to a text catalog for text-protocol (no-native-tool-call) mode.
+
+    Delegates to the single renderer on ToolRegistry so the catalog format lives in one
+    place. Imported lazily to keep the provider free of an import-time tools dependency.
+    """
+    from stackowl.tools.registry import ToolRegistry
+
+    return ToolRegistry().render_text_catalog(tool_schemas)
 
 
 def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
@@ -93,10 +105,22 @@ class OpenAIProvider(ModelProvider):
         resolved_iterations = max_iterations if max_iterations != 8 else self._config.tool_max_iterations
         log.engine.debug(
             "[openai] complete_with_tools: entry",
-            extra={"_fields": {"provider": self._name, "tool_count": len(tool_schemas), "max_iterations": resolved_iterations}},
+            extra={
+                "_fields": {
+                    "provider": self._name,
+                    "tool_count": len(tool_schemas),
+                    "max_iterations": resolved_iterations,
+                }
+            },
         )
         history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
         messages: list[dict[str, Any]] = []
+        # Text-protocol fallback: teach the model how to call tools via ACTION:/json
+        # text, so weak models without native tool_calls can still act (parsed back
+        # by parse_react_action below). Native tool_calls still take priority.
+        catalog = _render_tool_catalog(tool_schemas) if tool_schemas else ""
+        if catalog:
+            system_text = f"{system_text}\n\n{catalog}" if system_text else catalog
         if system_text:
             messages.append({"role": "system", "content": system_text})
         messages.extend(history_dicts)
@@ -122,12 +146,29 @@ class OpenAIProvider(ModelProvider):
 
             choice = response.choices[0]
             if not choice.message.tool_calls:
-                text = choice.message.content or ""
+                content = choice.message.content or ""
+                action = parse_react_action(content)
+                if action is not None:
+                    name, args = action
+                    messages.append({"role": "assistant", "content": content})
+                    try:
+                        result_text = await tool_dispatcher(name, args)
+                    except Exception as exc:  # no-hidden-errors: surface to the model, keep looping
+                        log.engine.error(
+                            "[openai] react dispatch failed",
+                            exc_info=exc,
+                            extra={"_fields": {"provider": self._name, "tool": name}},
+                        )
+                        result_text = f"ERROR running {name}: {exc}"
+                    all_calls.append({"id": None, "name": name, "args": args, "result": result_text})
+                    messages.append({"role": "user", "content": f"OBSERVATION: {result_text}"})
+                    continue
+                # no action -> final answer (existing behavior)
                 log.engine.debug(
                     "[openai] complete_with_tools: exit",
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
                 )
-                return text, all_calls
+                return content, all_calls
 
             # Append assistant turn with tool_calls
             messages.append({
@@ -145,9 +186,23 @@ class OpenAIProvider(ModelProvider):
 
             # Dispatch and append tool results
             for tc in choice.message.tool_calls:
-                args = json.loads(tc.function.arguments)
-                result_text = await tool_dispatcher(tc.function.name, args)
-                all_calls.append({"id": tc.id, "name": tc.function.name, "args": args, "result": result_text})
+                fn_name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, ValueError) as exc:
+                    # no-hidden-errors: a malformed arg blob must not crash the turn —
+                    # feed it back as an OBSERVATION so the model can self-correct.
+                    log.engine.error(
+                        "[openai] complete_with_tools: tool args parse failed",
+                        exc_info=exc,
+                        extra={"_fields": {"provider": self._name, "tool": fn_name}},
+                    )
+                    err = f"ERROR: could not parse arguments for {fn_name}: {exc}"
+                    all_calls.append({"id": tc.id, "name": fn_name, "args": {}, "result": err})
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": err})
+                    continue
+                result_text = await tool_dispatcher(fn_name, args)
+                all_calls.append({"id": tc.id, "name": fn_name, "args": args, "result": result_text})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_text})
 
         log.engine.warning(
