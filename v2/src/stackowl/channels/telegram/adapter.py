@@ -90,12 +90,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         from stackowl.channels.telegram.commands_registration import register_commands
         from stackowl.commands.registry import CommandRegistry
 
-        try:
-            await register_commands(app.bot, CommandRegistry.instance().list())
-        except Exception as exc:  # B5 — never block startup on menu registration
-            log.telegram.error(
-                "[telegram] adapter.start: command registration failed", exc_info=exc,
-            )
+        await register_commands(app.bot, CommandRegistry.instance().list())
         log.telegram.debug("[telegram] adapter.start: exit")
 
     async def stop(self) -> None:

@@ -32,3 +32,13 @@ async def test_register_commands_calls_set_my_commands():
     bot = _Bot()
     await register_commands(bot, [_Cmd("help", "Show help")])
     assert bot.pushed and bot.pushed[0].command == "help"
+
+
+def test_build_bot_commands_dedupes_colliding_names():
+    cmds = [_Cmd("help", "first"), _Cmd("Help", "second-collides"), _Cmd("cost", "ok")]
+    out = build_bot_commands(cmds)
+    names = [c.command for c in out]
+    assert names.count("help") == 1
+    assert "cost" in names
+    # first occurrence wins
+    assert next(c for c in out if c.command == "help").description == "first"

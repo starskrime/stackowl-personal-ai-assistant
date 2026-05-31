@@ -46,7 +46,7 @@ def strip_command_bot_suffix(text: str, bot_username: str | None) -> str:
         return text
     head, sep, rest = text.partition(" ")
     suffix = f"@{bot_username}"
-    if head.endswith(suffix):
+    if head.lower().endswith(suffix.lower()):
         head = head[: -len(suffix)]
     return head + sep + rest
 

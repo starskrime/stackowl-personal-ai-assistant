@@ -26,6 +26,7 @@ def build_bot_commands(commands: list[Any]) -> list[BotCommand]:
     from telegram import BotCommand
 
     out: list[BotCommand] = []
+    seen: set[str] = set()
     for c in commands:
         name = _NAME_RE.sub("", str(c.command).lower())[:_MAX_NAME]
         if not name:
@@ -34,6 +35,13 @@ def build_bot_commands(commands: list[Any]) -> list[BotCommand]:
                 extra={"_fields": {"raw": str(c.command)}},
             )
             continue
+        if name in seen:
+            log.telegram.warning(
+                "[telegram] commands: duplicate command name skipped",
+                extra={"_fields": {"name": name}},
+            )
+            continue
+        seen.add(name)
         desc = (str(getattr(c, "description", "")) or name)[:_MAX_DESC]
         out.append(BotCommand(name, desc))
     return out
