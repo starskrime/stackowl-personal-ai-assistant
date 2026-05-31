@@ -16,6 +16,8 @@ class _TraceToken(NamedTuple):
     session: Token[str | None]
     interactive: Token[bool]
     channel: Token[str | None]
+    delegation_depth: Token[int]
+    owl_name: Token[str | None]
 
 
 class TraceContext:
@@ -27,6 +29,16 @@ class TraceContext:
     _session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
     _interactive: ContextVar[bool] = ContextVar("interactive", default=False)
     _channel: ContextVar[str | None] = ContextVar("channel", default=None)
+    # E8-S1 — delegation recursion depth of the current (sub-)pipeline. 0 for a
+    # top-level user turn; one per A2ADelegator spawn level. delegate_task reads
+    # this off TraceContext (tools never see PipelineState) for its depth
+    # backstop and to stamp the reconstructed parent_state. Default 0.
+    _delegation_depth: ContextVar[int] = ContextVar("delegation_depth", default=0)
+    # E8-S1 — the owl running the current (sub-)pipeline. delegate_task reads this
+    # to attribute the TRUE caller (from_owl) instead of hardcoding "secretary",
+    # avoiding mis-attribution + a self-delegation loop when a non-secretary owl
+    # delegates. Mirrors the delegation_depth propagation. Default None.
+    _owl_name: ContextVar[str | None] = ContextVar("owl_name", default=None)
 
     @classmethod
     def start(
@@ -36,6 +48,8 @@ class TraceContext:
         trace_id: str | None = None,
         interactive: bool = False,
         channel: str | None = None,
+        delegation_depth: int = 0,
+        owl_name: str | None = None,
     ) -> _TraceToken:
         """Set trace context for the current async task; return a token to reset later.
 
@@ -57,6 +71,8 @@ class TraceContext:
             session=cls._session_id.set(session_id),
             interactive=cls._interactive.set(interactive),
             channel=cls._channel.set(channel),
+            delegation_depth=cls._delegation_depth.set(delegation_depth),
+            owl_name=cls._owl_name.set(owl_name),
         )
 
     @classmethod
@@ -68,6 +84,8 @@ class TraceContext:
         cls._session_id.reset(token.session)
         cls._interactive.reset(token.interactive)
         cls._channel.reset(token.channel)
+        cls._delegation_depth.reset(token.delegation_depth)
+        cls._owl_name.reset(token.owl_name)
 
     @classmethod
     @asynccontextmanager
@@ -92,4 +110,6 @@ class TraceContext:
             "session_id": cls._session_id.get(),
             "interactive": cls._interactive.get(),
             "channel": cls._channel.get(),
+            "delegation_depth": cls._delegation_depth.get(),
+            "owl_name": cls._owl_name.get(),
         }

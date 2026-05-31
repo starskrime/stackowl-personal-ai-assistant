@@ -95,6 +95,8 @@ class LangGraphBackend(OrchestratorBackend):
             trace_id=state.trace_id,
             interactive=state.interactive,
             channel=state.channel,
+            delegation_depth=state.delegation_depth,
+            owl_name=state.owl_name,
         )
         try:
             compiled = await self._ensure_compiled()

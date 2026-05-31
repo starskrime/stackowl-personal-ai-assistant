@@ -13,6 +13,19 @@ async def run(state: PipelineState) -> PipelineState:
     Retrieves the StreamRegistry from pipeline services context.
     Discards gracefully if no writer is registered — never raises.
     """
+    # A delegated sub-pipeline (delegation_depth>0) shares the parent's session_id
+    # but has NO user stream of its own — its result returns to the parent via the
+    # A2A response (final_state.responses), not the user's StreamWriter. Delivering
+    # here would write the child's raw text to the PARENT's stream and close it,
+    # losing the parent's (footered) answer. Skip delivery for delegated children.
+    if state.delegation_depth > 0:
+        log.gateway.debug(
+            "[pipeline] deliver: delegated sub-pipeline — skip user-stream delivery",
+            extra={"_fields": {"session_id": state.session_id,
+                               "delegation_depth": state.delegation_depth}},
+        )
+        return state
+
     services = get_services()
     registry = services.stream_registry
     log.gateway.info(

@@ -383,11 +383,16 @@ class StartupOrchestrator:
         # delegated + parliament pipelines on this host. Injected onto
         # StepServices (A2ADelegator reads it off services) AND into the
         # ParliamentOrchestrator below, so both draw from a SINGLE budget.
+        from stackowl.messaging.a2a import A2AQueue
         from stackowl.owls.concurrency import ConcurrencyGovernor
 
         delegation_governor = ConcurrencyGovernor()
+        # E8-S1 — ONE A2A mailbox shared by the dispatch step + A2ADelegator so a
+        # specialist's reply lands in the same queue the caller awaits on.
+        a2a_queue = A2AQueue()
 
         services = StepServices(
+            a2a_queue=a2a_queue,
             provider_registry=provider_registry,
             stream_registry=stream_registry,
             owl_registry=owl_registry,
@@ -411,6 +416,13 @@ class StartupOrchestrator:
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
         )
+        # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
+        # the shared governor + a2a_queue off services), then inject it back onto
+        # the same mutable StepServices so the delegate_task tool reaches THIS
+        # instance. No second delegator with a different governor/queue is created.
+        from stackowl.owls.a2a_delegation import A2ADelegator
+
+        services.a2a_delegator = A2ADelegator(a2a_queue=a2a_queue, services=services)
         backend = create_backend(self._settings.orchestrator.backend, services=services)
         parliament = ParliamentOrchestrator(
             backend=backend,

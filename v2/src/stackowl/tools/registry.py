@@ -227,6 +227,7 @@ class ToolRegistry:
     @classmethod
     def with_defaults(cls) -> ToolRegistry:
         """Bootstrap the registry with the foundation tools + browser family."""
+        from stackowl.tools.agents.delegate_task import DelegateTaskTool
         from stackowl.tools.browser.back import BrowserBackTool
         from stackowl.tools.browser.browse import BrowserBrowseTool
         from stackowl.tools.browser.console import BrowserConsoleTool
@@ -290,6 +291,11 @@ class ToolRegistry:
         # chokepoint) at execute time. Consequential: the registry's consent gate
         # fires before execute (fails closed off-TTY). No constructor wiring.
         registry.register(SendMessageTool())
+        # delegate_task — hands a sub-task to a specialist owl via the shared
+        # A2ADelegator resolved off get_services().a2a_delegator at execute time
+        # (no constructor wiring; the depth/width rails live in the tool). The S0
+        # execution gate withholds it at delegation_depth>0 (E8-S1).
+        registry.register(DelegateTaskTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())

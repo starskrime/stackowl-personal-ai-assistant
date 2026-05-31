@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from stackowl.messaging.a2a import A2AQueue
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.router import NotificationRouter
+    from stackowl.owls.a2a_delegation import A2ADelegator
     from stackowl.owls.concurrency import ConcurrencyGovernor
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.streaming import StreamRegistry
@@ -61,6 +62,12 @@ class StepServices:
     # ONE instance, injected here AND into the parliament fan-out so both draw
     # from a single budget (fork-bomb / concurrency rail). None → ungated.
     delegation_governor: ConcurrencyGovernor | None = field(default=None)
+    # E8-S1 — Secretary→specialist round-trip orchestrator. The delegate_task
+    # tool reads THIS instance off services at execute time (it never builds its
+    # own, so the depth/governor/queue rails stay a single source of truth). The
+    # same instance shares the governor + a2a_queue wired above. None → the tool
+    # degrades to a structured "no delegator wired" result (self-healing, B5).
+    a2a_delegator: A2ADelegator | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")
