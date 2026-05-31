@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from stackowl.owls.a2a_delegation import A2ADelegator
     from stackowl.owls.concurrency import ConcurrencyGovernor
     from stackowl.owls.registry import OwlRegistry
+    from stackowl.owls.session_registry import SessionRegistry
     from stackowl.pipeline.streaming import StreamRegistry
     from stackowl.providers.registry import ProviderRegistry
     from stackowl.skills.store import SkillIndexStore
@@ -68,6 +69,12 @@ class StepServices:
     # same instance shares the governor + a2a_queue wired above. None → the tool
     # degrades to a structured "no delegator wired" result (self-healing, B5).
     a2a_delegator: A2ADelegator | None = field(default=None)
+    # E8-S3 — named persistent owl sessions. The sessions_spawn tool reads THIS
+    # instance off services at execute time (it never builds its own, so the cap /
+    # TTL / mailbox-drain rails stay a single source of truth). Shares the same
+    # a2a_queue wired above so a cleared/reaped session drains the right mailbox.
+    # None → the tool degrades to a structured "sessions unavailable" result (B5).
+    session_registry: SessionRegistry | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

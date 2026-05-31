@@ -244,6 +244,16 @@ class SchedulerAssembly:
             db, handler_name="clarify_sweep", schedule="every 10m",
             interval_minutes=10,
         )
+        # E8-S3 — session sweep reaps named owl sessions idle past
+        # SESSION_IDLE_TTL_SECONDS (30m), draining each reaped session's A2A
+        # mailbox. Interval (10m) is a fraction of the TTL so an abandoned session
+        # never lives ~2×TTL before reaping. The handler is registered in the
+        # gateway assembly (it needs the SessionRegistry singleton); this only
+        # seeds the recurring jobs row so the scheduler actually dispatches it.
+        await _seed_minutes_schedule(
+            db, handler_name="session_sweep", schedule="every 10m",
+            interval_minutes=10,
+        )
         # Skill synthesizer runs once per day at 03:30 (between knowledge_prune
         # at 04:00 and evolution at 02:00) — needs ≥several days of outcomes
         # to find qualifying clusters, so daily is the right cadence.

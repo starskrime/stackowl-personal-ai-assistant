@@ -99,6 +99,31 @@ class A2AQueue:
             return 0
         return self._queues[owl_name].qsize()
 
+    def drain(self, owl_name: str) -> int:
+        """Discard every pending message in ``owl_name``'s mailbox; drop the queue.
+
+        The queue has no eviction of its own, so when a session is cleared/reaped
+        its orphaned messages would otherwise leak forever. This pops the mailbox
+        empty (non-blocking) and removes it from the live map, returning the number
+        of messages discarded. Never raises — an empty/absent mailbox drains to 0.
+        """
+        log.engine.debug("[a2a] drain: entry", extra={"_fields": {"owl": owl_name}})
+        queue = self._queues.pop(owl_name, None)
+        if queue is None:
+            log.engine.debug("[a2a] drain: no mailbox", extra={"_fields": {"owl": owl_name}})
+            return 0
+        discarded = 0
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            discarded += 1
+        log.engine.debug(
+            "[a2a] drain: exit", extra={"_fields": {"owl": owl_name, "discarded": discarded}}
+        )
+        return discarded
+
     def queue_depths(self) -> dict[str, int]:
         """Return ``{owl_name: pending_count}`` for every active queue."""
         return {name: q.qsize() for name, q in self._queues.items()}

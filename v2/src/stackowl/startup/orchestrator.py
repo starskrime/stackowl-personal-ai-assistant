@@ -391,6 +391,19 @@ class StartupOrchestrator:
         # specialist's reply lands in the same queue the caller awaits on.
         a2a_queue = A2AQueue()
 
+        # E8-S3 — the named-session registry. ONE DI singleton, sharing the SAME
+        # a2a_queue so a cleared/reaped session drains the right mailbox. The
+        # recurring TTL sweep is registered as a JobHandler below and seeded as a
+        # `session_sweep` job row in the scheduler assembly (every 10m). Wired
+        # onto StepServices so the sessions_spawn tool reaches THIS instance.
+        from stackowl.owls.session_registry import SessionRegistry
+        from stackowl.scheduler.handlers.session_sweep import (
+            register_session_sweep_handler,
+        )
+
+        session_registry = SessionRegistry(a2a_queue=a2a_queue)
+        register_session_sweep_handler(session_registry)
+
         services = StepServices(
             a2a_queue=a2a_queue,
             provider_registry=provider_registry,
@@ -415,6 +428,7 @@ class StartupOrchestrator:
             clarify_gateway=clarify_gateway,
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
+            session_registry=session_registry,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto
@@ -841,6 +855,10 @@ class StartupOrchestrator:
             # their turns end cleanly rather than hanging on the park timeout).
             with contextlib.suppress(Exception):
                 clarify_gateway.clear_all()
+            # E8-S3 — clear every named session (draining each mailbox) so no
+            # session or its A2A mailbox outlives the process.
+            with contextlib.suppress(Exception):
+                session_registry.clear_all()
             if telegram_loop_task is not None:
                 telegram_loop_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):

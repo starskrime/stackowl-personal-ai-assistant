@@ -33,3 +33,15 @@ MAX_CONCURRENT_DELEGATIONS = 4
 # the parent rather than deadlocking forever. Kept below a typical delegation
 # receive timeout so the child surrenders before the parent gives up.
 GOVERNOR_ACQUIRE_TIMEOUT_SECONDS = 45.0
+
+# E8-S3 — hard cap on concurrently-live named owl sessions in the SessionRegistry.
+# A personal assistant rarely needs more than a handful of parallel persistent
+# sub-conversations; past this the `sessions_spawn` tool refuses (structured,
+# never raising) so a runaway caller cannot leak unbounded session handles.
+MAX_LIVE_SESSIONS = 8
+
+# E8-S3 — idle time-to-live for a named session. A session whose `last_active`
+# (monotonic) is older than this is reaped by the SessionRegistry sweep (its A2A
+# mailbox drained) so an abandoned session never leaks. 1800s (30m) mirrors the
+# clarify-park horizon so the whole platform reaps idle state on one cadence.
+SESSION_IDLE_TTL_SECONDS = 1800.0

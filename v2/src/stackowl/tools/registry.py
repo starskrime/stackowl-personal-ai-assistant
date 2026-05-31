@@ -229,6 +229,7 @@ class ToolRegistry:
         """Bootstrap the registry with the foundation tools + browser family."""
         from stackowl.tools.agents.delegate_task import DelegateTaskTool
         from stackowl.tools.agents.mixture_of_agents import MixtureOfAgentsTool
+        from stackowl.tools.agents.sessions_spawn import SessionsSpawnTool
         from stackowl.tools.browser.back import BrowserBackTool
         from stackowl.tools.browser.browse import BrowserBrowseTool
         from stackowl.tools.browser.console import BrowserConsoleTool
@@ -303,6 +304,12 @@ class ToolRegistry:
         # (no constructor wiring). Self-healing: partial-ensemble tolerant,
         # structured refusal on a thin roster. Severity read (E8-S2).
         registry.register(MixtureOfAgentsTool())
+        # sessions_spawn — creates a named persistent owl session in the DI
+        # SessionRegistry resolved off get_services().session_registry at execute
+        # time (no constructor wiring; the cap/TTL/drain rails live in the
+        # registry). The S0 execution gate withholds it at delegation_depth>0
+        # (it is in _CHILD_EXCLUDED_TOOLS) so a child cannot spawn (E8-S3).
+        registry.register(SessionsSpawnTool())
         for tool_cls in ATOMIC_BROWSER_TOOLS:
             registry.register(tool_cls())
         registry.register(BrowserBrowseTool())
