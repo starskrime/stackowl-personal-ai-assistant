@@ -109,7 +109,15 @@ class StackowlHome:
 
     @classmethod
     def downloads_dir(cls) -> Path:
-        return cls.home() / "downloads"
+        """The single canonical downloads folder.
+
+        Lives UNDER the workspace (not the home root) so ``send_file`` can deliver
+        from it, yet is a sibling of — not mixed in with — the persistent stores
+        (stackowl.db / lancedb / kuzu / skills / knowledge) that live at the
+        workspace ROOT. That separation lets the downloads janitor prune this
+        folder on a schedule without ever touching durable state.
+        """
+        return cls.workspace() / "downloads"
 
     @classmethod
     def browser_cache_dir(cls) -> Path:
@@ -146,3 +154,73 @@ class StackowlHome:
         with contextlib.suppress(OSError):
             cls.secrets_dir().chmod(0o700)
             cls.browser_profiles_dir().chmod(0o700)
+        # Both the legacy and the new downloads dir now exist (the mkdir loop
+        # created the new one); migrate any files left in the legacy location.
+        cls.migrate_legacy_downloads()
+
+    @classmethod
+    def migrate_legacy_downloads(cls) -> None:
+        """Move any files from the legacy ``~/.stackowl/downloads`` into the new
+        workspace downloads dir. Idempotent, best-effort, NEVER raises.
+
+        The downloads folder was relocated from the home root to under the
+        workspace. This one-shot, self-healing migration moves any leftover
+        entries from the old location so a user upgrading in place keeps their
+        files. It is a no-op when the legacy dir is absent, empty, or already the
+        same resolved path as the new dir.
+        """
+        from stackowl.infra.observability import log
+
+        try:
+            import contextlib
+            import shutil
+
+            legacy = cls.home() / "downloads"
+            target = cls.downloads_dir()
+            if not legacy.is_dir():
+                return
+            try:
+                same = legacy.resolve() == target.resolve()
+            except OSError:
+                same = False
+            if same:
+                return
+            entries = list(legacy.iterdir())
+            if not entries:
+                # Empty legacy dir — clean it up and bail.
+                with contextlib.suppress(OSError):
+                    legacy.rmdir()
+                return
+
+            target.mkdir(parents=True, exist_ok=True)
+            moved = 0
+            for entry in entries:
+                dest = target / entry.name
+                if dest.exists():
+                    log.startup.warning(
+                        "[paths] migrate_legacy_downloads: name clash — skipping",
+                        extra={"_fields": {"entry": entry.name}},
+                    )
+                    continue
+                try:
+                    shutil.move(str(entry), str(dest))
+                    moved += 1
+                except OSError as exc:
+                    log.startup.warning(
+                        "[paths] migrate_legacy_downloads: move failed — skipping",
+                        exc_info=exc,
+                        extra={"_fields": {"entry": entry.name}},
+                    )
+            # Remove the now-(hopefully)-empty legacy dir; suppress if anything
+            # was left behind (a skipped clash/error).
+            with contextlib.suppress(OSError):
+                legacy.rmdir()
+            log.startup.info(
+                "[paths] migrate_legacy_downloads: migrated legacy downloads",
+                extra={"_fields": {"moved": moved, "target": str(target)}},
+            )
+        except Exception as exc:  # never let a migration crash startup
+            log.startup.error(
+                "[paths] migrate_legacy_downloads: unexpected failure — skipped",
+                exc_info=exc,
+            )

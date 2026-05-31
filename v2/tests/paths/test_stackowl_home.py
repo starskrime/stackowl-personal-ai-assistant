@@ -74,6 +74,99 @@ def test_ensure_exists_creates_full_tree_idempotent(tmp_path: Path, monkeypatch:
     StackowlHome.ensure_exists()
 
 
+def test_downloads_dir_is_under_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    from stackowl.paths import StackowlHome
+
+    assert StackowlHome.downloads_dir() == StackowlHome.workspace() / "downloads"
+    # And the workspace root is a parent of it (so send_file's containment passes).
+    assert StackowlHome.workspace() in StackowlHome.downloads_dir().parents
+
+
+def test_ensure_exists_creates_downloads_under_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("STACKOWL_HOME", str(home))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    monkeypatch.delenv("STACKOWL_LOG_DIR", raising=False)
+    monkeypatch.delenv("STACKOWL_PID_FILE", raising=False)
+    from stackowl.paths import StackowlHome
+
+    StackowlHome.ensure_exists()
+    assert (home / "workspace" / "downloads").exists()
+
+
+def test_migrate_legacy_downloads_moves_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("STACKOWL_HOME", str(home))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    from stackowl.paths import StackowlHome
+
+    legacy = home / "downloads"
+    legacy.mkdir(parents=True)
+    (legacy / "clip.mp4").write_bytes(b"video-bytes")
+
+    StackowlHome.migrate_legacy_downloads()
+
+    new_file = StackowlHome.downloads_dir() / "clip.mp4"
+    assert new_file.exists()
+    assert new_file.read_bytes() == b"video-bytes"
+    # Legacy dir was emptied and removed.
+    assert not legacy.exists()
+
+
+def test_migrate_legacy_downloads_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("STACKOWL_HOME", str(home))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    from stackowl.paths import StackowlHome
+
+    legacy = home / "downloads"
+    legacy.mkdir(parents=True)
+    (legacy / "a.bin").write_bytes(b"data")
+
+    StackowlHome.migrate_legacy_downloads()
+    # Second call: legacy is gone — a clean no-op, no raise.
+    StackowlHome.migrate_legacy_downloads()
+
+    assert (StackowlHome.downloads_dir() / "a.bin").exists()
+
+
+def test_migrate_legacy_downloads_noop_when_legacy_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("STACKOWL_HOME", str(home))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    from stackowl.paths import StackowlHome
+
+    # No legacy dir at all — must not raise, must not create anything spurious.
+    StackowlHome.migrate_legacy_downloads()
+    assert not (home / "downloads").exists()
+
+
+def test_migrate_legacy_downloads_noop_when_legacy_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("STACKOWL_HOME", str(home))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    from stackowl.paths import StackowlHome
+
+    legacy = home / "downloads"
+    legacy.mkdir(parents=True)
+
+    StackowlHome.migrate_legacy_downloads()
+    # Empty legacy dir is cleaned up.
+    assert not legacy.exists()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="chmod not meaningful on Windows")
 def test_ensure_exists_sets_secrets_dir_0700_on_posix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "stackowl-home"

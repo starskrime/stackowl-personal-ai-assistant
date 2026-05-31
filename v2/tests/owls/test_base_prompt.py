@@ -165,6 +165,23 @@ def test_adapter_example_parses_with_real_parser() -> None:
     assert args == {"arg": "value"}
 
 
+def test_adapter_carries_downloads_convention() -> None:
+    """The operational adapter steers downloads into the workspace downloads/
+    folder — generic file-hygiene mechanics, no tool/domain words. The charter
+    must NOT carry this (it stays pure behaviour)."""
+    adapter = operational_adapter(_fixed()).lower()
+    charter = behavioral_charter().lower()
+
+    # The adapter names the workspace downloads convention.
+    assert "downloads/" in adapter
+    assert "workspace" in adapter
+
+    # It is allowed to use the word "download" (operational layer); the charter
+    # is not — the forbidden-token test already guards the charter. Re-assert the
+    # charter does not pick up the convention.
+    assert "downloads/" not in charter
+
+
 def test_build_base_prompt_composes() -> None:
     """build_base_prompt(dt) contains both charter and adapter content."""
     dt = _fixed()

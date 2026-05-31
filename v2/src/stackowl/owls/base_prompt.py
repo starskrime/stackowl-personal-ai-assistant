@@ -83,7 +83,10 @@ def operational_adapter(now: datetime) -> str:
         "```\n"
         "Then stop and wait for the OBSERVATION (the result) before continuing. "
         "The capabilities currently available to you are listed separately; use "
-        "their exact names in place of <name>."
+        "their exact names in place of <name>.\n\n"
+        "When you fetch or save a file for the user, write it into the workspace's "
+        "downloads/ folder, so it can be delivered to them and is cleaned up "
+        "automatically over time."
     )
 
 

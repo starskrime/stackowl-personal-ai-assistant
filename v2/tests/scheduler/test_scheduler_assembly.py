@@ -157,6 +157,35 @@ async def test_build_seed_is_idempotent(tmp_db: DbPool) -> None:
     assert len(rows) == 1  # NOT 2
 
 
+async def test_build_registers_downloads_janitor(tmp_db: DbPool) -> None:
+    await _build(tmp_db)
+    handler = HandlerRegistry.instance().get("downloads_janitor")
+    assert handler is not None
+    assert handler.handler_name == "downloads_janitor"
+
+
+async def test_build_seeds_downloads_janitor_12h_schedule(tmp_db: DbPool) -> None:
+    await _build(tmp_db)
+    rows = await tmp_db.fetch_all(
+        "SELECT handler_name, schedule, idempotency_key FROM jobs "
+        "WHERE handler_name = ?", ("downloads_janitor",),
+    )
+    assert len(rows) == 1
+    assert rows[0]["schedule"] == "every 12h"
+    # 12h = 720m — the idempotency key encodes the interval.
+    assert rows[0]["idempotency_key"] == "downloads_janitor:every-720m"
+
+
+async def test_downloads_janitor_seed_is_idempotent(tmp_db: DbPool) -> None:
+    await _build(tmp_db)
+    HandlerRegistry.reset()
+    await _build(tmp_db)
+    rows = await tmp_db.fetch_all(
+        "SELECT job_id FROM jobs WHERE handler_name = ?", ("downloads_janitor",),
+    )
+    assert len(rows) == 1  # second build did not duplicate
+
+
 async def test_supervisor_supervises_the_scheduler(tmp_db: DbPool) -> None:
     components = await _build(tmp_db)
     # Supervisor's internal _tasks dict (or similar) contains the scheduler.

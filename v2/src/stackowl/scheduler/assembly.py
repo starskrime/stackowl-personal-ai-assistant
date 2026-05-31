@@ -97,6 +97,9 @@ class SchedulerAssembly:
         # Deferred imports — keep this module cheap when scheduler isn't used.
         from stackowl.scheduler.base import HandlerRegistry
         from stackowl.scheduler.handlers.check_in import CheckInHandler
+        from stackowl.scheduler.handlers.downloads_janitor import (
+            register_downloads_janitor_handler,
+        )
         from stackowl.scheduler.handlers.evolution import register_evolution_handler
         from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
         from stackowl.scheduler.handlers.knowledge_prune import KnowledgePruneHandler
@@ -131,6 +134,10 @@ class SchedulerAssembly:
 
         knowledge_prune_handler = KnowledgePruneHandler(pruner=memory_components.pruner)
         HandlerRegistry.instance().register(knowledge_prune_handler)
+
+        # Downloads janitor — needs no browser runtime/services, so it registers
+        # directly here (its own factory defaults to StackowlHome.downloads_dir()).
+        register_downloads_janitor_handler()
 
         tool_pruning_handler = ToolPruningHandler()
         HandlerRegistry.instance().register(tool_pruning_handler)
@@ -253,6 +260,13 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="session_sweep", schedule="every 10m",
             interval_minutes=10,
+        )
+        # Downloads janitor — prune the single workspace downloads folder every
+        # 12h (720m), deleting files older than 2 days (the handler's default
+        # retention). Scoped to that folder ONLY; never touches durable stores.
+        await _seed_minutes_schedule(
+            db, handler_name="downloads_janitor", schedule="every 12h",
+            interval_minutes=720,
         )
         # Skill synthesizer runs once per day at 03:30 (between knowledge_prune
         # at 04:00 and evolution at 02:00) — needs ≥several days of outcomes
