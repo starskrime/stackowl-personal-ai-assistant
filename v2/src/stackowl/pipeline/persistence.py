@@ -60,20 +60,41 @@ def _build_messages(
             "for methods. Given the user's request, the agent's draft reply, and "
             "the tools the agent used this turn, decide — by the user's intent in "
             "ANY language — whether the agent DELIVERED or gave up.\n\n"
+            "THE UNIVERSAL ESCAPE HATCH. The agent's single most powerful "
+            "capability is running a command in a shell and installing or building "
+            "a tool. Running or installing the right tool very often overcomes a "
+            "technical or capability limitation. So before concluding that a "
+            "technical task is impossible, the agent MUST try that escape hatch. "
+            "The TOOLS USED list gives you the NAMES of the tools the agent used "
+            "this turn. Reason about whether those names include running a command, "
+            "executing a shell, or installing/building/compiling software — versus, "
+            "say, only browsing, reading, or fetching. (You are judging by meaning, "
+            "not by any fixed keyword.)\n\n"
             "DELIVERED (delivered=true) — any of these:\n"
             "  • The agent produced the requested outcome.\n"
             "  • The agent asked ONE necessary clarifying question because the "
             "request is genuinely ambiguous and cannot proceed without that "
             "information — asking is taking action, not giving up.\n"
-            "  • The agent stated a specific, concrete, factual blocker (e.g. a "
-            "required credential it cannot obtain, a hardware resource it does not "
-            "have) after making real attempts.\n\n"
-            "GAVE UP (delivered=false) — the agent refused, apologized, or "
-            "deferred WITHOUT exhausting its capabilities: it could have run a "
-            "command, installed or built something, authored a skill, or searched "
-            "for a method — but did not. An agent that only explains why it cannot "
-            "proceed or delegates the work back to the user without trying has NOT "
-            "delivered.\n\n"
+            "  • The agent stated a specific, concrete blocker AFTER actually "
+            "trying the escape hatch — i.e. the TOOLS USED list shows it really "
+            "ran commands and/or installed/built a tool, and those genuinely "
+            "failed (or a required credential it cannot obtain / a hardware "
+            "resource it does not have remained the true obstacle).\n\n"
+            "GAVE UP (delivered=false) — any of these:\n"
+            "  • The agent refused, apologized, or deferred WITHOUT exhausting its "
+            "capabilities: it could have run a command, installed or built "
+            "something, authored a skill, or searched for a method — but did not.\n"
+            "  • The agent claims a technical or capability limitation as the "
+            "reason it did not deliver (for example: it cannot download, process, "
+            "access, convert, or handle something; external tools won't work; this "
+            "is not possible in its environment) BUT the TOOLS USED list shows it "
+            "only used one category of tools (e.g. only browsing/reading/fetching) "
+            "and never ran a command nor installed or built anything. A "
+            "plausible-sounding technical excuse is NOT acceptable until the agent "
+            "has actually attempted to overcome it by running a command or "
+            "installing/building a tool. Rule this a give-up.\n"
+            "  • The agent only explains why it cannot proceed, or delegates the "
+            "work back to the user, without trying.\n\n"
             "Return ONLY a JSON object — no prose, no markdown fences. Schema: "
             '{"delivered": true|false, "reason": "<one short sentence>"}.'
         ),
@@ -83,9 +104,12 @@ def _build_messages(
         content=(
             f"USER REQUEST:\n{user_request[:_REQUEST_CAP]}\n\n"
             f"AGENT DRAFT REPLY:\n{draft_answer[:_DRAFT_CAP]}\n\n"
-            f"TOOLS USED THIS TURN: {tool_list}\n\n"
+            f"TOOLS USED THIS TURN (names): {tool_list}\n\n"
             "Decide whether the agent delivered the requested outcome or gave up "
-            "without exhausting its capabilities.\n"
+            "without exhausting its capabilities. In particular: if the draft "
+            "claims a technical or capability limitation but the TOOLS USED names "
+            "show no command was run and nothing was installed or built, that is a "
+            "give-up.\n"
             'Output exactly: {"delivered": true, "reason": "..."}'
         ),
     )
@@ -144,9 +168,14 @@ async def judge_delivery(
     reason = obj.get("reason")
     reason_str = reason if isinstance(reason, str) else ""
 
-    # 4. EXIT
-    log.engine.debug(
-        "[persistence] judge_delivery: exit",
-        extra={"_fields": {"delivered": delivered, "reason": reason_str[:120]}},
+    # 4. EXIT — log the verdict at INFO on EVERY run (no-hidden-decision): we must
+    # always see in logs WHY the judge did or did not nudge, not only on a nudge.
+    log.engine.info(
+        "[persistence] judge verdict",
+        extra={"_fields": {
+            "delivered": delivered,
+            "reason": reason_str[:120],
+            "tools_tried": tools_tried[:_TOOLS_CAP],
+        }},
     )
     return delivered, reason_str

@@ -157,6 +157,120 @@ async def test_judge_clarifying_question_is_not_giveup() -> None:
     assert reason  # non-empty reason is part of the contract
 
 
+class _CapturingJudgeProvider(ModelProvider):
+    """A provider that records the messages it was asked to judge, then returns
+    a fixed raw JSON. Lets a test inspect the PROMPT the judge actually sent."""
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.seen_messages: list[Message] = []
+
+    @property
+    def name(self) -> str:
+        return "capturing-judge"
+
+    @property
+    def protocol(self) -> Any:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_messages = list(messages)
+        return CompletionResult(
+            content=self._raw,
+            input_tokens=1,
+            output_tokens=1,
+            model="capturing-judge",
+            provider_name="capturing-judge",
+            duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield self._raw
+
+
+@pytest.mark.asyncio
+async def test_judge_prompt_lists_tools_and_demands_escape_hatch() -> None:
+    """The judge prompt MUST (a) carry the tools_tried list verbatim and
+    (b) instruct that a technical/capability limitation claimed WITHOUT having
+    run a command / installed-or-built a tool counts as a give-up.
+
+    The verdict itself comes from the stub, so this asserts the WIRING + that the
+    prompt asks the right question — global, no tool/site/task names."""
+    provider = _CapturingJudgeProvider(
+        '{"delivered": false, "reason": "technical excuse, no command run"}'
+    )
+    delivered, _reason = await judge_delivery(
+        provider,
+        user_request="process this thing for me",
+        draft_answer=(
+            "I can't process this — it isn't possible in my environment and "
+            "external tools won't work here."
+        ),
+        tools_tried=["open_url", "read_page"],
+    )
+    assert delivered is False
+
+    prompt = "\n".join(m.content for m in provider.seen_messages).lower()
+    # (a) tools_tried carried verbatim into the prompt.
+    assert "open_url" in prompt and "read_page" in prompt
+    # (b) the escape-hatch principle is stated: a technical limitation without
+    # running a command / installing or building a tool = give-up. Frame-agnostic
+    # — assert the load-bearing concepts appear, not any specific tool/site name.
+    assert "command" in prompt
+    assert "install" in prompt
+    assert "limitation" in prompt or "impossible" in prompt or "cannot" in prompt
+
+
+@pytest.mark.asyncio
+async def test_judge_prompt_allows_blocker_after_command_attempt() -> None:
+    """When a command-execution-type tool IS in tools_tried, the prompt must
+    convey that a specific blocker AFTER that real attempt is acceptable
+    (delivered=true) — the escape hatch was genuinely tried."""
+    provider = _CapturingJudgeProvider(
+        '{"delivered": true, "reason": "blocker after real command attempts"}'
+    )
+    delivered, _reason = await judge_delivery(
+        provider,
+        user_request="process this thing for me",
+        draft_answer=(
+            "I ran the commands and installed the helper, but the resource is "
+            "genuinely unavailable, so I cannot proceed."
+        ),
+        tools_tried=["run_command", "open_url"],
+    )
+    assert delivered is True
+
+    prompt = "\n".join(m.content for m in provider.seen_messages).lower()
+    # The tools_tried list is carried verbatim.
+    assert "run_command" in prompt
+    # The "blocker AFTER trying the escape hatch is acceptable" distinction is present.
+    assert "after" in prompt
+    assert "command" in prompt
+
+
+@pytest.mark.asyncio
+async def test_judge_logs_verdict_at_info(caplog: pytest.LogCaptureFixture) -> None:
+    """Every judge run logs its verdict at INFO (no-hidden-decision): we must be
+    able to see WHY the judge did or did not nudge, even when it does NOT nudge."""
+    import logging
+
+    provider = _CapturingJudgeProvider(
+        '{"delivered": true, "reason": "produced the outcome"}'
+    )
+    with caplog.at_level(logging.INFO):
+        delivered, _reason = await judge_delivery(
+            provider, "do the task", "Here is the result.", ["run_command"]
+        )
+    assert delivered is True
+    assert any("judge verdict" in rec.getMessage() for rec in caplog.records), (
+        "the judge must log its verdict at INFO on every run"
+    )
+
+
 # =========================================================================== #
 # Fake OpenAI SDK client (shape from tests/providers/test_react_protocol.py)
 # =========================================================================== #
