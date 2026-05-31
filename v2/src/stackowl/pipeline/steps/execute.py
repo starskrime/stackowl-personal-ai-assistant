@@ -185,9 +185,10 @@ async def _run_with_tools(
     try:
         final_text, raw_calls = await provider.complete_with_tools(
             user_text=state.input_text,
-            system_text=state.memory_context,
+            system_text=state.system_prompt,
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,
+            history=list(state.history),
         )
     except Exception as exc:
         log.engine.error(
@@ -306,9 +307,9 @@ async def run(state: PipelineState) -> PipelineState:
     if tool_registry is not None and tool_registry.all():
         return await _run_with_tools(state, provider, tool_registry)
 
-    messages: list[Message] = [Message(role="user", content=state.input_text)]
-    if state.memory_context:
-        messages = [Message(role="system", content=state.memory_context), *messages]
+    messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]
+    if state.system_prompt:
+        messages = [Message(role="system", content=state.system_prompt), *messages]
 
     manifest = _resolve_manifest(state.owl_name)
     stream_iter = _open_stream(provider, manifest, messages)
