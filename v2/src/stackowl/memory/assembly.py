@@ -189,6 +189,7 @@ class MemoryAssembly:
         conversation_miner = ConversationMiner(
             db=db, extractor=fact_extractor, bridge=bridge,
             message_limit=mem.extraction_after_n_messages * 4,
+            dedup_similarity=mem.conversation_fact_dedup_similarity,
         )
 
         # 6) DreamWorker — register via existing factory (respects B9 boundary).

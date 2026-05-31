@@ -13,12 +13,14 @@ from typing import TYPE_CHECKING
 from stackowl.exceptions import DuplicateFactError
 from stackowl.infra.observability import log
 from stackowl.memory.fact_extractor import EXTRACTED_FACT_SOURCE_TYPE
+from stackowl.memory.sqlite_helpers import cosine_similarity, unpack_embedding
 from stackowl.providers.base import Message
 
 if TYPE_CHECKING:  # pragma: no cover
     from stackowl.db.pool import DbPool
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.fact_extractor import FactExtractor
+    from stackowl.memory.models import StagedFact
 
 _DISTINCT_SESSIONS_SQL = (
     "SELECT DISTINCT source_ref FROM staged_facts WHERE source_type = 'conversation'"
@@ -32,6 +34,15 @@ _EXISTS_COMMITTED_SQL = (
 _REINFORCE_SQL = (
     "UPDATE staged_facts SET reinforcement_count = reinforcement_count + 1 "
     "WHERE source_type = ? AND source_ref = ? AND content = ? AND status = 'staged'"
+)
+_REINFORCE_BY_ID_SQL = (
+    "UPDATE staged_facts SET reinforcement_count = reinforcement_count + 1 "
+    "WHERE fact_id = ? AND status = 'staged'"
+)
+# Staged conversation_facts for one source_ref — the candidate pool for semantic dedup.
+_STAGED_FOR_REF_SQL = (
+    "SELECT fact_id, embedding FROM staged_facts "
+    "WHERE source_type = ? AND source_ref = ? AND status = 'staged'"
 )
 
 
@@ -57,16 +68,18 @@ class ConversationMiner:
         extractor: FactExtractor,
         bridge: MemoryBridge,
         message_limit: int = 40,
+        dedup_similarity: float = 0.92,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
             "[memory] conversation_miner.init: entry",
-            extra={"_fields": {"message_limit": message_limit}},
+            extra={"_fields": {"message_limit": message_limit, "dedup_similarity": dedup_similarity}},
         )
         self._db = db
         self._extractor = extractor
         self._bridge = bridge
         self._message_limit = message_limit
+        self._dedup_similarity = dedup_similarity
         # 4. EXIT
         log.memory.debug("[memory] conversation_miner.init: exit")
 
@@ -142,14 +155,20 @@ class ConversationMiner:
                     extra={"_fields": {"session_id": session_id}},
                 )
                 continue
-            already_staged = await self._db.fetch_all(
-                _EXISTS_STAGED_SQL, (EXTRACTED_FACT_SOURCE_TYPE, fact.source_ref, fact.content)
-            )
-            if already_staged:
-                # Corroborate-then-commit: bump reinforcement_count on re-derivation.
-                await self._db.execute(
-                    _REINFORCE_SQL, (EXTRACTED_FACT_SOURCE_TYPE, fact.source_ref, fact.content)
+            # Semantic dedup: reinforce an existing staged fact whose embedding is
+            # near-identical (handles reworded re-extractions). Falls back to exact
+            # content match when this fact has no embedding. Per-fact try/except so a
+            # single malformed candidate never aborts the session (self-heal).
+            try:
+                reinforced_existing = await self._reinforce_if_duplicate(fact, session_id)
+            except Exception as exc:  # B5 — never silently drop; degrade to staging.
+                log.memory.error(
+                    "[memory] conversation_miner.mine_session: dedup check FAILED — staging anyway",
+                    exc_info=exc,
+                    extra={"_fields": {"session_id": session_id, "fact_id": fact.fact_id}},
                 )
+                reinforced_existing = False
+            if reinforced_existing:
                 reinforced += 1
                 log.memory.debug(
                     "[memory] conversation_miner.mine_session: fact reinforced",
@@ -177,3 +196,74 @@ class ConversationMiner:
             extra={"_fields": {"session_id": session_id, "staged": staged, "reinforced": reinforced}},
         )
         return staged
+
+    async def _reinforce_if_duplicate(self, fact: StagedFact, session_id: str) -> bool:
+        """Reinforce an existing staged conversation_fact this fact duplicates.
+
+        Strategy:
+          1. SEMANTIC — if ``fact`` has an embedding, compare it (cosine) against
+             every staged conversation_fact for the same ``source_ref``. If the
+             best match >= the configured threshold, bump that row by ``fact_id``.
+          2. FALLBACK (exact) — when ``fact`` has no embedding (or no embedded
+             candidate cleared the bar), fall back to exact-content match so the
+             miner never crashes and never silently drops a re-derivation.
+
+        Returns ``True`` when an existing fact was reinforced (caller skips staging).
+        """
+        # 1. SEMANTIC path — only when this fact carries an embedding.
+        if fact.embedding:
+            candidates = await self._db.fetch_all(
+                _STAGED_FOR_REF_SQL, (EXTRACTED_FACT_SOURCE_TYPE, fact.source_ref)
+            )
+            best_id: str | None = None
+            best_sim = -1.0
+            for cand in candidates:
+                cand_emb = unpack_embedding(cand["embedding"]) or None
+                sim = cosine_similarity(fact.embedding, cand_emb)
+                if sim is None:
+                    continue
+                if sim > best_sim:
+                    best_sim, best_id = sim, cand["fact_id"]
+            if best_id is not None and best_sim >= self._dedup_similarity:
+                await self._db.execute(_REINFORCE_BY_ID_SQL, (best_id,))
+                log.memory.debug(
+                    "[memory] conversation_miner.dedup: semantic match reinforced",
+                    extra={
+                        "_fields": {
+                            "session_id": session_id,
+                            "matched_fact_id": best_id,
+                            "similarity": round(best_sim, 4),
+                            "threshold": self._dedup_similarity,
+                        }
+                    },
+                )
+                return True
+            # Embedded but nothing cleared the bar — let exact-match below have a
+            # turn (covers a stored row that happens to lack an embedding).
+            log.memory.debug(
+                "[memory] conversation_miner.dedup: no semantic match — checking exact content",
+                extra={
+                    "_fields": {
+                        "session_id": session_id,
+                        "best_similarity": round(best_sim, 4) if best_id else None,
+                        "threshold": self._dedup_similarity,
+                    }
+                },
+            )
+        else:
+            # 2. FALLBACK trigger — embedding unavailable for this fact.
+            log.memory.debug(
+                "[memory] conversation_miner.dedup: no embedding — falling back to exact match",
+                extra={"_fields": {"session_id": session_id, "fact_id": fact.fact_id}},
+            )
+
+        # Exact-content fallback (the original behaviour).
+        already_staged = await self._db.fetch_all(
+            _EXISTS_STAGED_SQL, (EXTRACTED_FACT_SOURCE_TYPE, fact.source_ref, fact.content)
+        )
+        if already_staged:
+            await self._db.execute(
+                _REINFORCE_SQL, (EXTRACTED_FACT_SOURCE_TYPE, fact.source_ref, fact.content)
+            )
+            return True
+        return False
