@@ -109,12 +109,15 @@ async def test_classify_loads_recent_session_turns(tmp_db: DbPool) -> None:
     finally:
         reset_services(token)
 
-    ctx = out.memory_context or ""
-    assert "Recent conversation:" in ctx
-    assert "turn 1" in ctx
-    assert "turn 2" in ctx
-    assert "turn 3" in ctx
-    assert "User: other" not in ctx  # session isolation
+    # Plan A (RC-C): recent turns are now loaded as REAL message turns into
+    # state.history (oldest-first), not folded into memory_context as text.
+    history_text = " ".join(m.content for m in out.history)
+    assert "turn 1" in history_text
+    assert "turn 2" in history_text
+    assert "turn 3" in history_text
+    assert "other" not in history_text  # session isolation
+    # And they no longer leak into memory_context (avoids double-injection).
+    assert "Recent conversation:" not in (out.memory_context or "")
 
 
 async def test_classify_handles_bridge_None_gracefully() -> None:

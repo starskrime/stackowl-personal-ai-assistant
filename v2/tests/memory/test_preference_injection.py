@@ -65,8 +65,14 @@ async def test_no_preferences_section_when_owner_has_none(tmp_db: DbPool) -> Non
     assert "Learned Preferences" not in ctx
 
 
-async def test_preferences_section_appears_before_recent_conversation(tmp_db: DbPool) -> None:
-    """Preferences should be pinned to the top of memory_context."""
+async def test_preferences_pinned_to_top_of_memory_context(tmp_db: DbPool) -> None:
+    """Preferences stay pinned to the top of memory_context.
+
+    Plan A (RC-C) moved recent conversation OUT of memory_context into
+    state.history (real message turns), so the old "prefs before Recent
+    conversation:" ordering no longer applies. This verifies prefs remain
+    pinned to the top of memory_context and the recent turn surfaces in history.
+    """
     bridge = SqliteMemoryBridge(db=tmp_db)
     store = PreferenceStore(db=tmp_db)
     await bridge.store("User: hi\n\nAssistant: hello", "sess-A")
@@ -82,11 +88,12 @@ async def test_preferences_section_appears_before_recent_conversation(tmp_db: Db
         reset_services(token)
 
     ctx = out.memory_context or ""
-    prefs_idx = ctx.find("## Learned Preferences")
-    recent_idx = ctx.find("Recent conversation:")
-    assert prefs_idx >= 0
-    assert recent_idx >= 0
-    assert prefs_idx < recent_idx
+    # Prefs remain pinned to the very top of memory_context.
+    assert ctx.lstrip().startswith("## Learned Preferences")
+    # Recent conversation no longer lives in memory_context (moved to history).
+    assert "Recent conversation:" not in ctx
+    # The prior turn now surfaces as a real history message instead.
+    assert any("hi" in m.content for m in out.history)
 
 
 async def test_classify_does_not_crash_when_store_is_none(tmp_db: DbPool) -> None:
