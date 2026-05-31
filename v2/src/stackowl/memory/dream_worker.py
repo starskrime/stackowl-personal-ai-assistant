@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
         ContradictionDetector,
         ContradictionReport,
     )
+    from stackowl.memory.conversation_miner import ConversationMiner
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
     from stackowl.memory.pruner import MemoryPruner
@@ -60,6 +61,7 @@ class DreamWorkerJobHandler(JobHandler):
         pruner: MemoryPruner,
         kuzu_handler: KuzuSyncJobHandler,
         detector: ContradictionDetector,
+        miner: ConversationMiner | None = None,
     ) -> None:
         # 1. ENTRY
         log.memory.debug("[memory] dream_worker.init: entry")
@@ -68,6 +70,7 @@ class DreamWorkerJobHandler(JobHandler):
         self._pruner = pruner
         self._kuzu = kuzu_handler
         self._detector = detector
+        self._miner = miner
         # 4. EXIT
         log.memory.debug("[memory] dream_worker.init: exit")
 
@@ -83,6 +86,7 @@ class DreamWorkerJobHandler(JobHandler):
             extra={"_fields": {"job_id": job.job_id}},
         )
         TestModeGuard.assert_not_test_mode("dream_worker.execute")
+        await self._mine()
         t0 = time.monotonic()
         db: DbPool = self._bridge._db  # JobHandler reuses the bridge's pool
 
@@ -157,6 +161,23 @@ class DreamWorkerJobHandler(JobHandler):
         )
 
     # ------------------------------------------------------------------ helpers
+
+    async def _mine(self) -> int:
+        """Mine staged conversation turns into staged facts. None-safe.
+
+        Failure here must NOT abort the consolidation pass (self-heal) but must be
+        LOUD (no hidden errors): logged at ERROR with context.
+        """
+        if self._miner is None:
+            return 0
+        try:
+            return await self._miner.mine_all()
+        except Exception as exc:
+            log.memory.error(
+                "[memory] dream_worker: conversation mining FAILED — consolidation continues",
+                exc_info=exc,
+            )
+            return 0
 
     async def _begin_new_run(self, db: DbPool) -> DreamWorkerCheckpoint:
         run_id = str(uuid.uuid4())

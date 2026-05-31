@@ -17,6 +17,7 @@ from stackowl.scheduler.base import HandlerRegistry
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
     from stackowl.memory.contradiction_detector import ContradictionDetector
+    from stackowl.memory.conversation_miner import ConversationMiner
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
@@ -41,6 +42,7 @@ def register_dream_worker_handler(
     pruner: MemoryPruner,
     kuzu_handler: KuzuSyncJobHandler,
     detector: ContradictionDetector,
+    miner: ConversationMiner | None = None,
 ) -> DreamWorkerJobHandler:
     """Construct and register the :class:`DreamWorkerJobHandler` singleton.
 
@@ -57,6 +59,7 @@ def register_dream_worker_handler(
         pruner=pruner,
         kuzu_handler=kuzu_handler,
         detector=detector,
+        miner=miner,
     )
     HandlerRegistry.instance().register(handler)
     # 4. EXIT

@@ -169,16 +169,6 @@ class MemoryAssembly:
             db=db,
         )
 
-        # 6) DreamWorker — register via existing factory (respects B9 boundary).
-        dream_worker = register_dream_worker_handler(
-            bridge=bridge,
-            promoter=promoter,
-            pruner=pruner,
-            kuzu_handler=kuzu_sync_handler,
-            detector=detector,
-        )
-        await seed_dream_worker_schedule(db)
-
         # 7) FactExtractor — uses powerful-tier provider for quality extraction.
         # Provider cascade ensures graceful fallback if powerful is unavailable.
         # Embedding registry is passed so extracted facts can be embedded for
@@ -192,7 +182,27 @@ class MemoryAssembly:
             sensitive_categories=mem.sensitive_categories,
         )
 
-        # 7) FactExtractionJobHandler — register so the scheduler dispatches
+        # 7a) ConversationMiner — wired here so DreamWorker can run it each pass.
+        from stackowl.memory.conversation_miner import ConversationMiner
+
+        conversation_miner = ConversationMiner(
+            db=db, extractor=fact_extractor, bridge=bridge,
+            message_limit=mem.extraction_after_n_messages * 4,
+        )
+
+        # 6) DreamWorker — register via existing factory (respects B9 boundary).
+        # Placed after fact_extractor so conversation_miner can be passed in.
+        dream_worker = register_dream_worker_handler(
+            bridge=bridge,
+            promoter=promoter,
+            pruner=pruner,
+            kuzu_handler=kuzu_sync_handler,
+            detector=detector,
+            miner=conversation_miner,
+        )
+        await seed_dream_worker_schedule(db)
+
+        # 7b) FactExtractionJobHandler — register so the scheduler dispatches
         # per-session extraction jobs as they get enqueued upstream.
         fact_extraction_handler = FactExtractionJobHandler(
             extractor=fact_extractor,
