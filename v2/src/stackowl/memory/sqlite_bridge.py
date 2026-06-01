@@ -174,12 +174,16 @@ class SqliteMemoryBridge(MemoryBridge):
             semantic = await semantic_recall(
                 self._db, self._embeddings, self._lancedb, query, limit
             )
-            if semantic is not None:
+            if semantic:
                 log.memory.debug(
                     "[memory] sqlite_bridge.recall: exit — semantic",
                     extra={"_fields": {"n_results": len(semantic)}},
                 )
                 return semantic
+            log.memory.debug(
+                "[memory] sqlite_bridge.recall: semantic empty → FTS5 fallback",
+                extra={"_fields": {"semantic_is_none": semantic is None}},
+            )
         # 3. STEP — FTS5 BM25 fallback
         records = await fts_recall(self._db, query, limit)
         # 4. EXIT
