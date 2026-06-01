@@ -280,6 +280,7 @@ class ToolRegistry:
         from stackowl.tools.browser.press import BrowserPressTool
         from stackowl.tools.browser.snapshot import BrowserSnapshotTool
         from stackowl.tools.browser.tools import ATOMIC_BROWSER_TOOLS
+        from stackowl.tools.interaction.batch_approve import BatchApproveTool
         from stackowl.tools.interaction.clarify import ClarifyTool
         from stackowl.tools.io.apply_patch import ApplyPatchTool
         from stackowl.tools.io.edit import EditTool
@@ -412,4 +413,12 @@ class ToolRegistry:
         # clarify — ask the user mid-turn and BLOCK until they answer (default
         # 30-minute park timeout; the concurrent gateway loop frees the loop).
         registry.register(ClarifyTool())
+        # batch_approve — present N planned consequential actions as ONE batch
+        # consent (J8). Reuses the clarify_gateway round-trip for the single
+        # prompt; on approve-all it executes each action DIRECTLY (pre-consented,
+        # bypassing the per-action gate) + audits. Severity write (NOT
+        # consequential) so the per-action dispatch gate does not double-prompt:
+        # the batch presentation IS the consent. No constructor wiring — it reads
+        # tool_registry / clarify_gateway / audit_logger off get_services().
+        registry.register(BatchApproveTool())
         return registry
