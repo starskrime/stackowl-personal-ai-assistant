@@ -286,6 +286,7 @@ class MemoryCommand(SlashCommand):
         event_bus: EventBus,
         lancedb: LanceDBAdapter | None = None,
         promoter: FactPromoter | None = None,
+        embedding_registry: EmbeddingRegistry | None = None,
     ) -> MemoryCommand:
         """Construct a :class:`MemoryCommand` and register it on the singleton."""
         cmd = cls(
@@ -295,6 +296,7 @@ class MemoryCommand(SlashCommand):
             event_bus=event_bus,
             lancedb=lancedb,
             promoter=promoter,
+            embedding_registry=embedding_registry,
         )
         CommandRegistry.instance().register(cmd)
         return cmd

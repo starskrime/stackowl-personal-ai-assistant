@@ -267,6 +267,23 @@ class StartupOrchestrator:
         from stackowl.notifications.assembly import NotificationAssembly
 
         event_bus = EventBus()
+
+        # `/memory` slash command — wires the user-facing memory management surface
+        # (remember/search/reindex/stats/...) onto the same CommandRegistry singleton
+        # the other slash commands use. Reuses the already-built memory_components so
+        # remember+recall, reindex back-fill, and stats all run over the live stores.
+        from stackowl.commands.memory_command import MemoryCommand
+
+        MemoryCommand.create_and_register(
+            bridge=memory_bridge,
+            settings=self._settings,
+            db=db_pool,
+            event_bus=event_bus,
+            lancedb=memory_components.lancedb,
+            promoter=memory_components.promoter,
+            embedding_registry=memory_components.embedding_registry,
+        )
+
         notification_components = await NotificationAssembly.build(
             db=db_pool,
             settings=self._settings,
