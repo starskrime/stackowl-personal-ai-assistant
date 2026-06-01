@@ -20,6 +20,19 @@ def data_root() -> Path:
     return StackowlHome.workspace().resolve()
 
 
+def resolve_in_workspace(path_str: str) -> Path:
+    """Anchor a user-supplied path to the workspace before guarding.
+
+    An ABSOLUTE path is returned unchanged; a RELATIVE path resolves UNDER the
+    workspace (:func:`data_root`), NOT the process CWD. This mirrors how
+    ``search_files`` anchors its ``path`` arg and what ``search_files`` emits as
+    hit paths, so a relative hit piped straight into read/edit/patch round-trips
+    correctly. :func:`is_within_root` still confines the result (defense in depth).
+    """
+    candidate = Path(path_str)
+    return candidate if candidate.is_absolute() else data_root() / path_str
+
+
 def is_within_root(path: Path) -> bool:
     """Return True iff ``path`` resolves to a location inside :func:`data_root`.
 

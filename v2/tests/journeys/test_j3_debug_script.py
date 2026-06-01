@@ -64,7 +64,6 @@ from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import StreamRegistry
 from stackowl.providers.base import CompletionResult, Message
-from stackowl.tools.io.path_guard import data_root
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 USER_ID = 434343
@@ -172,13 +171,12 @@ class _ScriptedSecretary:
             f"search output was: {self.search_out!r}"
         )
         # search_files renders hits WORKSPACE-RELATIVE (path:line: text). The agent
-        # knows its workspace root, so it resolves the located hit to an absolute
-        # path before read_file/edit (whose guard resolves relative paths against
-        # CWD, not the workspace). The located basename still comes from the REAL
-        # search output — a broken search yields the wrong file and the read/edit
-        # downstream assertions fail.
-        located_rel = results[0].split(":", 1)[0]
-        self.located_path = str(data_root() / located_rel)
+        # pipes that RELATIVE hit path STRAIGHT into read_file/edit — no manual
+        # workspace resolution — because read_file/edit now anchor a relative path
+        # under the workspace exactly as search_files does (the round-trip fix). The
+        # located path still comes from the REAL search output — a broken search
+        # yields the wrong file and the read/edit downstream assertions fail.
+        self.located_path = results[0].split(":", 1)[0]
 
         # 2. READ the located file (real read_file, confined to the workspace).
         read_args = {"path": self.located_path}

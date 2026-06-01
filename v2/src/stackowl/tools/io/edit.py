@@ -20,12 +20,12 @@ import difflib
 import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from pathlib import Path
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.io.fuzzy_match import fuzzy_find_and_replace
 from stackowl.tools.io.path_guard import is_within_root as _guard
+from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve
 from stackowl.tools.io.undo_store import UndoStore
 
 # Similarity floor below which we don't bother quoting a "nearest" candidate —
@@ -120,7 +120,9 @@ class EditTool(Tool):
         if not old_string:
             return self._err("old_string cannot be empty", t0)
 
-        target = Path(path_str)
+        # A relative path anchors UNDER the workspace (mirrors search_files hit
+        # paths), so a relative hit piped straight in round-trips. Guard confines.
+        target = _resolve(path_str)
         # Path guard FIRST — never touch a file outside the workspace.
         if not _guard(target):
             log.tool.warning("edit.execute: path traversal denied", extra={"_fields": {"path": path_str}})

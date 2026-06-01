@@ -52,6 +52,36 @@ class TestIsWithinRoot:
         assert path_guard.data_root() == workspace.resolve()
 
 
+class TestResolveInWorkspace:
+    """The shared anchor used by read/write/edit/apply_patch (round-trip fix).
+
+    A RELATIVE path — exactly what search_files emits as a hit path — resolves
+    UNDER the workspace, so a search hit piped straight into read/edit lands on
+    the right file. An ABSOLUTE path is returned untouched. The guard still
+    confines whatever comes out, so a genuine escape is still denied.
+    """
+
+    def test_relative_anchors_under_workspace(self, workspace: Path) -> None:
+        # search_files renders hits like "src/classifier.py" — anchor under ws.
+        resolved = path_guard.resolve_in_workspace("src/classifier.py")
+        assert resolved == workspace / "src" / "classifier.py"
+        assert path_guard.is_within_root(resolved) is True
+
+    def test_absolute_returned_unchanged(self, workspace: Path) -> None:
+        abs_in = workspace / "src" / "classifier.py"
+        assert path_guard.resolve_in_workspace(str(abs_in)) == abs_in
+
+    def test_relative_escape_still_denied_by_guard(self, workspace: Path) -> None:
+        # Anchoring does not weaken confinement: a "../" relative path resolves
+        # under ws textually but climbs out — the guard catches it.
+        resolved = path_guard.resolve_in_workspace("../secret.txt")
+        assert path_guard.is_within_root(resolved) is False
+
+    def test_absolute_outside_still_denied_by_guard(self, workspace: Path) -> None:
+        resolved = path_guard.resolve_in_workspace("/etc/passwd")
+        assert path_guard.is_within_root(resolved) is False
+
+
 class TestSharedBySiblings:
     def test_read_and_write_import_the_same_guard(self) -> None:
         from stackowl.tools.io import read_file, write_file
@@ -59,3 +89,13 @@ class TestSharedBySiblings:
         # Both tools alias the shared guard — one source of truth (party E3 #1).
         assert read_file._guard is path_guard.is_within_root
         assert write_file._guard is path_guard.is_within_root
+
+    def test_io_tools_share_the_same_resolver(self) -> None:
+        from stackowl.tools.io import apply_patch, edit, read_file, write_file
+
+        # Every path-taking io tool anchors through the ONE shared resolver, so a
+        # relative search hit round-trips identically across read/edit/patch/write.
+        assert read_file._resolve is path_guard.resolve_in_workspace
+        assert write_file._resolve is path_guard.resolve_in_workspace
+        assert edit._resolve is path_guard.resolve_in_workspace
+        assert apply_patch._resolve is path_guard.resolve_in_workspace

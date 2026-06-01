@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from stackowl.infra.observability import log
-from stackowl.paths import StackowlHome
 from stackowl.tools.base import Tool, ToolResult
 from stackowl.tools.io.path_guard import is_within_root as _guard  # shared guard (E3)
+from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve  # workspace anchoring
 
 
 class WriteFileTool(Tool):
@@ -47,12 +46,7 @@ class WriteFileTool(Tool):
         # A relative name resolves UNDER the workspace (not the process CWD), so
         # write_file anchors the same way as send_file/shell. The traversal guard
         # below still confines the result to the workspace (defense in depth).
-        candidate = Path(path_str)
-        target = (
-            candidate
-            if candidate.is_absolute()
-            else StackowlHome.workspace() / path_str
-        )
+        target = _resolve(path_str)
         if not _guard(target):
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.warning("write_file.execute: path traversal denied", extra={"_fields": {"path": path_str}})

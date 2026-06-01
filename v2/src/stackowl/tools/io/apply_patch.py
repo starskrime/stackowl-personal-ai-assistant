@@ -52,6 +52,7 @@ from stackowl.tools.io.patch_parser import (
     parse_v4a_patch,
 )
 from stackowl.tools.io.path_guard import is_within_root as _guard
+from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve
 from stackowl.tools.io.undo_store import UndoStore
 
 # Reject patches larger than this (defends against pathological/oversized input
@@ -280,7 +281,7 @@ class ApplyPatchTool(Tool):
     # ------------------------------------------------------------------ per-op apply
 
     def _apply_update(self, op: PatchOperation, state: _ApplyState) -> None:
-        target = Path(op.file_path)
+        target = _resolve(op.file_path)
         try:
             raw = target.read_text(encoding="utf-8", newline="")
         except FileNotFoundError as exc:
@@ -299,7 +300,7 @@ class ApplyPatchTool(Tool):
         state.diffs.append(self._unified_diff(current, new_content, op.file_path))
 
     def _apply_add(self, op: PatchOperation, state: _ApplyState) -> None:
-        target = Path(op.file_path)
+        target = _resolve(op.file_path)
         # Add over an existing file is an error (would clobber).
         if target.exists():
             raise _ApplyError(f"ADD {op.file_path}: file already exists (would overwrite)")
@@ -321,7 +322,7 @@ class ApplyPatchTool(Tool):
         state.diffs.append(diff)
 
     def _apply_delete(self, op: PatchOperation, state: _ApplyState) -> None:
-        target = Path(op.file_path)
+        target = _resolve(op.file_path)
         try:
             raw = target.read_text(encoding="utf-8", newline="")
         except FileNotFoundError as exc:
@@ -342,9 +343,9 @@ class ApplyPatchTool(Tool):
         )
 
     def _apply_move(self, op: PatchOperation, state: _ApplyState) -> None:
-        src = Path(op.file_path)
+        src = _resolve(op.file_path)
         assert op.new_path is not None  # parser guarantees this for MOVE
-        dst = Path(op.new_path)
+        dst = _resolve(op.new_path)
         try:
             raw = src.read_text(encoding="utf-8", newline="")
         except FileNotFoundError as exc:
@@ -458,9 +459,9 @@ class ApplyPatchTool(Tool):
         """Every filesystem path the patch will touch — both ends of a Move."""
         targets: list[Path] = []
         for op in operations:
-            targets.append(Path(op.file_path))
+            targets.append(_resolve(op.file_path))
             if op.operation == OperationType.MOVE and op.new_path:
-                targets.append(Path(op.new_path))
+                targets.append(_resolve(op.new_path))
         return targets
 
     @staticmethod

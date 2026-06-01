@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolResult
 from stackowl.tools.io.path_guard import is_within_root as _guard  # shared guard (E3)
+from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve  # workspace anchoring
 
 
 class ReadFileTool(Tool):
@@ -33,7 +33,9 @@ class ReadFileTool(Tool):
         path_str = str(kwargs.get("path", ""))
         log.tool.debug("read_file.execute: entry", extra={"_fields": {"path": path_str}})
         t0 = time.monotonic()
-        target = Path(path_str)
+        # A relative path anchors UNDER the workspace (mirrors search_files hit
+        # paths), so a relative hit piped straight in round-trips. Guard confines.
+        target = _resolve(path_str)
         if not _guard(target):
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.warning(
