@@ -7,7 +7,8 @@ Two-layer Mixture-of-Agents over StackOwl's OWN provider roster (no vendor lock)
   across them concurrently — each proposer under a per-proposer timeout, the batch
   gathered with ``return_exceptions=True``. A proposer that errors or times out is
   filtered out BEFORE synthesis (logged at ERROR, never hidden); the call survives
-  on the survivors. Per-proposer cost is recorded via :class:`CostTracker`.
+  on the survivors. Per-proposer cost is recorded by the PROVIDER itself inside
+  ``provider.complete`` (E8-S0cost single recording site).
 * **Layer 2 (synthesize):** the surviving positions go to
   :meth:`ParliamentSynthesizer.synthesize_positions` (positions-in / verdict-out —
   MoA never fabricates a fake ParliamentSession), collapsing them into one verdict
@@ -28,22 +29,19 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
-from stackowl.pipeline.services import StepServices, get_services
+from stackowl.interaction.cost_pause import gate_or_continue
+from stackowl.pipeline.services import get_services
 from stackowl.tools.agents.moa_runner import run_ensemble
 from stackowl.tools.agents.moa_schema import (
     MIXTURE_OF_AGENTS_DESCRIPTION,
     MIXTURE_OF_AGENTS_PARAMETERS,
 )
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
-
-if TYPE_CHECKING:
-    from stackowl.providers.cost_tracker import CostTracker
 
 _TOOLSET_GROUP = "agents"
 _MIN_ROSTER = 2
@@ -138,15 +136,38 @@ class MixtureOfAgentsTool(Tool):
                 note="insufficient roster",
             )
 
+        # E8-S0cost — soft per-turn cost pause via the ONE shared gate helper (B2:
+        # same site as delegate_task). BEFORE the layer-1 fan-out (the expensive
+        # parallel gather), if this turn's accumulated spend crossed the budget, it
+        # ASKS the user (Continue/Stop). "Stop" aborts here — NO fan-out runs. The
+        # helper/guard fail OPEN + are interactive-only, so a background run /
+        # under-budget turn / disabled feature proceeds unchanged.
+        ctx = TraceContext.get()
+        trace_id = str(ctx.get("trace_id") or "")
+        if not await gate_or_continue(services, action="fan-out"):
+            log.tool.info(
+                "mixture_of_agents.execute: cost pause — user chose Stop, aborting",
+                extra={"_fields": {"trace_id": trace_id}},
+            )
+            return self._ok(
+                {
+                    "status": "cost_budget_stopped",
+                    "detail": (
+                        "stopped — this turn is over the per-turn cost budget and "
+                        "the user chose not to continue; answer the question directly."
+                    ),
+                },
+                t0,
+                note="stopped — over the per-turn cost budget",
+            )
+
         # 3. STEP — layer-1 fan-out + layer-2 synthesis (self-healing, never raises).
-        trace_id = str(TraceContext.get().get("trace_id") or "")
-        cost_tracker = self._build_cost_tracker(services)
+        # Per-proposer cost is recorded by the providers themselves inside
+        # provider.complete (E8-S0cost single recording site) — no tracker threaded.
         record = await run_ensemble(
             registry=registry,
             roster=roster,
             question=args.question,
-            cost_tracker=cost_tracker,
-            trace_id=trace_id,
         )
         note = (
             f"synthesized from {record.get('consulted')} model(s)"
@@ -157,17 +178,6 @@ class MixtureOfAgentsTool(Tool):
         return self._ok(record, t0, note=note)
 
     # ---------------------------------------------------------------- helpers
-
-    @staticmethod
-    def _build_cost_tracker(services: StepServices) -> CostTracker | None:
-        """Build a CostTracker from services (db_pool + event_bus) when present."""
-        db = services.db_pool
-        bus = services.event_bus
-        if db is None or bus is None:
-            return None
-        from stackowl.providers.cost_tracker import CostTracker
-
-        return CostTracker(db=db, event_bus=bus, daily_limit_usd=None)
 
     def _ok(self, record: dict[str, object], t0: float, *, note: str) -> ToolResult:
         duration_ms = (time.monotonic() - t0) * 1000.0

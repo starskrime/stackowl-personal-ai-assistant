@@ -21,7 +21,6 @@ from stackowl.providers.base import Message
 if TYPE_CHECKING:
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.state import PipelineState
-    from stackowl.providers.cost_tracker import CostTracker
     from stackowl.providers.registry import ProviderRegistry
 
 _DEFAULT_FALLBACK = "secretary"
@@ -141,11 +140,9 @@ class SecretaryRouter:
         self,
         provider_registry: ProviderRegistry,
         owl_registry: OwlRegistry,
-        cost_tracker: CostTracker | None = None,
     ) -> None:
         self._provider_registry: ProviderRegistry = provider_registry
         self._owl_registry: OwlRegistry = owl_registry
-        self._cost_tracker: CostTracker | None = cost_tracker
 
     def _build_prompt(self, owls: list[tuple[str, str]], user_text: str) -> str:
         """Compose the router-glue prompt (English template, user data inlined)."""
@@ -176,7 +173,8 @@ class SecretaryRouter:
         """Call the fast-tier provider and return the chosen owl name.
 
         Falls back to ``secretary`` on any provider failure, empty reply, or
-        unknown owl. Records cost via ``CostTracker`` when one is configured.
+        unknown owl. The routing LLM call's cost is recorded by the PROVIDER
+        itself (E8-S0cost single recording site), so the router records nothing.
         """
         log.engine.debug(
             "[router] route: entry",
@@ -258,27 +256,9 @@ class SecretaryRouter:
 
         chosen = self._parse_choice(result.content, known_names)
 
-        if self._cost_tracker is not None:
-            try:
-                await self._cost_tracker.record(
-                    provider_name=provider.name,
-                    model="routing",
-                    input_tokens=result.input_tokens,
-                    output_tokens=result.output_tokens,
-                    duration_ms=duration_ms,
-                    trace_id=state.trace_id,
-                )
-            except Exception as exc:  # noqa: BLE001 — cost tracking is best-effort
-                log.engine.warning(
-                    "[router] route: cost_tracker.record failed",
-                    exc_info=exc,
-                    extra={
-                        "_fields": {
-                            "trace_id": state.trace_id,
-                            "provider": provider.name,
-                        }
-                    },
-                )
+        # E8-S0cost — the routing call's cost is recorded by the PROVIDER inside
+        # provider.complete (single recording site), so the router records nothing
+        # here — recording it again would DOUBLE-COUNT the routing spend.
 
         log.engine.info(
             "[router] selected %s (LLM decision, %.1fms)",

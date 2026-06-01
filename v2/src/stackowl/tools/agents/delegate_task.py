@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.interaction.cost_pause import gate_or_continue
 from stackowl.owls.delegation_limits import (
     MAX_CONCURRENT_DELEGATIONS,
     MAX_DELEGATION_DEPTH,
@@ -139,8 +140,7 @@ class DelegateTaskTool(Tool):
                 extra={"_fields": {"trace_id": trace_id, "depth": depth, "cap": MAX_DELEGATION_DEPTH}},
             )
             return refusal_result(
-                t0,
-                reason="depth_limit",
+                t0, reason="depth_limit",
                 detail=(
                     f"delegation depth limit reached ({depth} >= {MAX_DELEGATION_DEPTH}); "
                     "handle this sub-task yourself instead of delegating further."
@@ -155,16 +155,12 @@ class DelegateTaskTool(Tool):
                 extra={"_fields": {"trace_id": trace_id}},
             )
             return refusal_result(
-                t0,
-                reason="unavailable",
+                t0, reason="unavailable",
                 detail="delegation is not available in this environment; handle the sub-task yourself.",
             )
 
         target = resolve_target_owl(
-            registry=services.owl_registry,
-            to_owl=args.to_owl,
-            role=args.role,
-            caller=caller,
+            registry=services.owl_registry, to_owl=args.to_owl, role=args.role, caller=caller,
         )
         if target is None:
             log.tool.warning(
@@ -172,11 +168,29 @@ class DelegateTaskTool(Tool):
                 extra={"_fields": {"trace_id": trace_id, "to_owl": args.to_owl, "role": args.role}},
             )
             return refusal_result(
-                t0,
-                reason="unresolved_target",
+                t0, reason="unresolved_target",
                 detail=(
                     "could not resolve a specialist owl for this sub-task "
                     f"(to_owl={args.to_owl!r}, role={args.role!r}); handle it yourself."
+                ),
+            )
+
+        # E8-S0cost — soft per-turn cost pause via the ONE shared gate helper
+        # (B2: same site as mixture_of_agents). BEFORE spending on a delegation, if
+        # this turn's accumulated spend crossed the budget, it ASKS the user
+        # (Continue/Stop). A "Stop" aborts here (structured refusal, no delegation
+        # runs). The helper/guard fail OPEN + are interactive-only, so a background
+        # run / under-budget turn / disabled feature proceeds unchanged.
+        if not await gate_or_continue(services, action="delegation"):
+            log.tool.info(
+                "delegate_task.execute: cost pause — user chose Stop, aborting",
+                extra={"_fields": {"trace_id": trace_id, "to": target}},
+            )
+            return refusal_result(
+                t0, reason="cost_budget",
+                detail=(
+                    "stopped — this turn is over the per-turn cost budget and the "
+                    "user chose not to continue; handle the sub-task yourself or stop."
                 ),
             )
 
@@ -187,8 +201,7 @@ class DelegateTaskTool(Tool):
                 extra={"_fields": {"trace_id": trace_id, "cap": MAX_CONCURRENT_DELEGATIONS}},
             )
             return refusal_result(
-                t0,
-                reason="width_limit",
+                t0, reason="width_limit",
                 detail=(
                     f"too many concurrent delegations this turn (>= {MAX_CONCURRENT_DELEGATIONS}); "
                     "handle this sub-task yourself."
@@ -198,15 +211,9 @@ class DelegateTaskTool(Tool):
         # 3. STEP — run the delegation round-trip; always release the width slot.
         try:
             return await self._run_delegation(
-                delegator=delegator,
-                args=args,
-                caller=caller,
-                target=target,
-                depth=depth,
-                trace_id=trace_id,
-                session_id=str(ctx.get("session_id") or ""),
-                channel=str(ctx.get("channel") or "internal"),
-                t0=t0,
+                delegator=delegator, args=args, caller=caller, target=target, depth=depth,
+                trace_id=trace_id, session_id=str(ctx.get("session_id") or ""),
+                channel=str(ctx.get("channel") or "internal"), t0=t0,
             )
         finally:
             self._release(trace_id)
@@ -229,13 +236,8 @@ class DelegateTaskTool(Tool):
         """Build parent_state, call delegate(), and shape the structured result."""
         sub_task = compose_sub_task(args.goal, args.context)
         parent_state = PipelineState(
-            trace_id=trace_id or "delegate-task",
-            session_id=session_id,
-            input_text=sub_task,
-            channel=channel,
-            owl_name=caller,
-            pipeline_step="dispatch",
-            delegation_depth=depth,
+            trace_id=trace_id or "delegate-task", session_id=session_id, input_text=sub_task,
+            channel=channel, owl_name=caller, pipeline_step="dispatch", delegation_depth=depth,
         )
         log.tool.debug(
             "delegate_task._run_delegation: dispatching",
@@ -243,10 +245,7 @@ class DelegateTaskTool(Tool):
         )
         try:
             result_text = await delegator.delegate(  # type: ignore[attr-defined]
-                from_owl=caller,
-                to_owl=target,
-                sub_task=sub_task,
-                parent_state=parent_state,
+                from_owl=caller, to_owl=target, sub_task=sub_task, parent_state=parent_state,
             )
         except Exception as exc:  # B5 — delegate is contracted not to raise; belt-and-braces.
             log.tool.error(
@@ -256,8 +255,7 @@ class DelegateTaskTool(Tool):
             )
             return ok_result(
                 {"status": "error", "to_owl": target, "detail": str(exc)},
-                t0,
-                note=f"delegation to {target} failed",
+                t0, note=f"delegation to {target} failed",
             )
 
         if not result_text.strip():
@@ -267,8 +265,7 @@ class DelegateTaskTool(Tool):
             )
             return ok_result(
                 {"status": "timeout_or_empty", "to_owl": target, "result": ""},
-                t0,
-                note=f"{target} produced no result (timed out or returned nothing)",
+                t0, note=f"{target} produced no result (timed out or returned nothing)",
             )
 
         record = {"status": "ok", "to_owl": target, "result": result_text + provenance_footer(target)}

@@ -10,7 +10,12 @@ from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
+from stackowl.providers.cost_tracker_helpers import _MAX_TRACKED_TURNS, TurnCostLedger
 from stackowl.providers.pricing.loader import PricingLoader
+
+# Re-exported (the bound lives on TurnCostLedger now, B2 split) so callers/tests
+# that import ``_MAX_TRACKED_TURNS`` from this module keep working.
+__all__ = ["CostRecord", "CostTracker", "DailySummary", "_MAX_TRACKED_TURNS"]
 
 _BUDGET_WARN_RATIO = 0.80
 
@@ -67,6 +72,11 @@ class CostTracker:
         self._pricing: PricingLoader = pricing or PricingLoader()
         self._warned_dates: set[str] = set()
         self._exceeded_dates: set[str] = set()
+        # E8-S0cost — BOUNDED in-memory per-trace running total (USD). Updated on
+        # every record() so a hot cost-pause check (CostPauseGuard) reads a turn's
+        # accumulated spend WITHOUT a SQLite query. The bounded FIFO ledger lives in
+        # TurnCostLedger (B2 split) so this file stays under the line cap.
+        self._turn_ledger: TurnCostLedger = TurnCostLedger()
         log.engine.debug(
             "[cost_tracker] init: exit",
             extra={"_fields": {"pricing_models": len(self._pricing.table)}},
@@ -88,15 +98,11 @@ class CostTracker:
         """Record a completed LLM call. Persists to SQLite and checks budget."""
         log.engine.debug(
             "[cost_tracker] record: entry",
-            extra={
-                "_fields": {
-                    "provider": provider_name,
-                    "model": model,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "duration_ms": duration_ms,
-                }
-            },
+            extra={"_fields": {
+                "provider": provider_name, "model": model,
+                "input_tokens": input_tokens, "output_tokens": output_tokens,
+                "duration_ms": duration_ms,
+            }},
         )
 
         now = datetime.datetime.now(tz=datetime.UTC)
@@ -105,14 +111,10 @@ class CostTracker:
         if self._daily_limit_usd is not None and today in self._exceeded_dates:
             log.engine.error(
                 "[cost_tracker] record: budget already exceeded — blocking call",
-                extra={
-                    "_fields": {
-                        "provider": provider_name,
-                        "model": model,
-                        "date": today,
-                        "limit_usd": self._daily_limit_usd,
-                    }
-                },
+                extra={"_fields": {
+                    "provider": provider_name, "model": model,
+                    "date": today, "limit_usd": self._daily_limit_usd,
+                }},
             )
             raise ProviderError(
                 "budget",
@@ -121,13 +123,9 @@ class CostTracker:
 
         cost_usd = self._estimate_cost(model, input_tokens, output_tokens)
         record = CostRecord(
-            provider_name=provider_name,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost_usd,
-            trace_id=trace_id,
-            recorded_at=now.isoformat(),
+            provider_name=provider_name, model=model,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            cost_usd=cost_usd, trace_id=trace_id, recorded_at=now.isoformat(),
         )
 
         try:
@@ -139,12 +137,8 @@ class CostTracker:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    record.provider_name,
-                    record.model,
-                    record.input_tokens,
-                    record.output_tokens,
-                    record.cost_usd,
-                    record.trace_id,
+                    record.provider_name, record.model, record.input_tokens,
+                    record.output_tokens, record.cost_usd, record.trace_id,
                     record.recorded_at,
                 ),
             )
@@ -158,12 +152,7 @@ class CostTracker:
 
         log.engine.info(
             "[cost] %s/%s: $%.6f (%din/%dout tokens, %.1fms)",
-            provider_name,
-            model,
-            cost_usd,
-            input_tokens,
-            output_tokens,
-            duration_ms,
+            provider_name, model, cost_usd, input_tokens, output_tokens, duration_ms,
             extra={
                 "_fields": {
                     "provider": provider_name,
@@ -175,6 +164,14 @@ class CostTracker:
                 }
             },
         )
+
+        # E8-S0cost — fold this call into the turn's bounded running total BEFORE
+        # the daily-cap check (which may raise on the NEXT call, not this one), so
+        # a live cost-pause check sees the spend the moment it lands. Keyed by
+        # trace_id; the parent turn, its delegated children, and MoA proposers all
+        # record under the same trace_id, so the total is the WHOLE turn's spend.
+        if trace_id:
+            self._turn_ledger.add(trace_id, cost_usd)
 
         await self._check_budget(today)
 
@@ -261,6 +258,16 @@ class CostTracker:
             },
         )
         return summary
+
+    def turn_cost_usd(self, trace_id: str) -> float:
+        """Return the accumulated USD spend for ``trace_id`` this server lifetime.
+
+        Reads the bounded in-memory running total maintained by :meth:`record` via
+        the composed :class:`TurnCostLedger` (B2 split); a hot path for the
+        cost-pause check (NO SQLite query). Returns ``0.0`` for an unknown/empty/
+        evicted trace.
+        """
+        return self._turn_ledger.total(trace_id)
 
     def update_limit(self, daily_limit_usd: float | None) -> None:
         """Hot-reload budget limit (called by ConfigWatcher on settings_reloaded)."""

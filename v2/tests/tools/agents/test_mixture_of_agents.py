@@ -29,7 +29,12 @@ def _live_io():  # noqa: ANN202
 
 
 class _FakeProvider:
-    """Canned provider — answers, raises, hangs, or returns empty per mode."""
+    """Canned provider — answers, raises, hangs, or returns empty per mode.
+
+    E8-S0cost: like a real ModelProvider, it records each ``complete`` call's cost
+    to an attached CostTracker (set via ``set_cost_tracker``) — the single recording
+    site is the provider, so MoA's proposer spend lands here, not in moa_runner.
+    """
 
     protocol = "openai"
 
@@ -37,10 +42,14 @@ class _FakeProvider:
         self._label = label
         self._mode = mode
         self.calls = 0
+        self._cost_tracker: object | None = None
 
     @property
     def name(self) -> str:
         return self._label
+
+    def set_cost_tracker(self, cost_tracker: object | None) -> None:
+        self._cost_tracker = cost_tracker
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         self.calls += 1
@@ -57,7 +66,7 @@ class _FakeProvider:
             )
         else:
             content = f"{self._label} says: pick A."
-        return CompletionResult(
+        result = CompletionResult(
             content=content,
             input_tokens=7,
             output_tokens=11,
@@ -65,6 +74,16 @@ class _FakeProvider:
             provider_name=self._label,
             duration_ms=1.0,
         )
+        if self._cost_tracker is not None:
+            await self._cost_tracker.record(  # type: ignore[attr-defined]
+                provider_name=self._label,
+                model=result.model,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                duration_ms=result.duration_ms,
+                trace_id="",
+            )
+        return result
 
     def stream(self, *a: object, **k: object):  # pragma: no cover
         raise NotImplementedError
@@ -272,9 +291,11 @@ async def test_per_proposer_cost_recorded() -> None:
     synth = _FakeProvider("synth", mode="synth")
     reg = _registry(("a", a, "fast"), ("b", b, "standard"), ("synth", synth, "powerful"))
     tracker = _RecordingCostTracker()
+    # E8-S0cost — the PROVIDER is the single recording site: attach the shared
+    # tracker via the registry so every provider.complete records (proposers AND
+    # the synthesizer's aggregation call), exactly as the real pipeline does.
+    reg.set_cost_tracker(tracker)  # type: ignore[arg-type]
     tool = MixtureOfAgentsTool()
-    # Inject the recording cost tracker by patching the builder.
-    tool._build_cost_tracker = staticmethod(lambda services: tracker)  # type: ignore[assignment,method-assign]
     token = set_services(StepServices(provider_registry=reg))
     try:
         res = await tool.execute(question="q")
@@ -283,13 +304,13 @@ async def test_per_proposer_cost_recorded() -> None:
 
     rec = _record(res.output)
     assert rec["status"] == "ok", rec
-    # One cost record per surviving PROPOSER. All three providers are in the
-    # healthy roster, so all three are consulted as proposers (the "synth"
-    # provider doubles as the powerful-tier aggregator but is still a proposer).
+    # Every real LLM call records (single recording site = the provider): the three
+    # proposers (a, b, synth) PLUS the synth provider's powerful-tier aggregation
+    # call → synth is recorded twice. This proves proposer spend lands via the
+    # provider, not via moa_runner.
     recorded_providers = sorted(str(r["provider_name"]) for r in tracker.records)
-    assert recorded_providers == ["a", "b", "synth"], tracker.records
-    # cost recorded once per proposer (not the synth aggregation call).
-    assert len(tracker.records) == 3, tracker.records
+    assert recorded_providers == ["a", "b", "synth", "synth"], tracker.records
+    assert len(tracker.records) == 4, tracker.records
 
 
 @pytest.mark.asyncio

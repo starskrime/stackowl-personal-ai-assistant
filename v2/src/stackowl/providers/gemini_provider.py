@@ -122,6 +122,13 @@ class GeminiProvider(ModelProvider):
             provider_name=self._name,
             duration_ms=duration_ms,
         )
+        # E8-S0cost — single recording site: every provider call records its spend.
+        await self._record_cost(
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            duration_ms=duration_ms,
+        )
         log.engine.debug(
             "[gemini] complete: exit",
             extra={

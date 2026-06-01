@@ -74,6 +74,19 @@ class BudgetSettings(BaseModel):
         description="Daily spend cap in USD. None = unlimited.",
         json_schema_extra={"hot_reload": True},
     )
+    per_turn_pause_usd: float | None = Field(
+        default=0.50,
+        description=(
+            "Soft per-turn budget in USD. When a single interactive turn's "
+            "accumulated LLM spend crosses this, the assistant ASKS the user "
+            "(Continue / Stop) before any further expensive op (delegation / "
+            "mixture-of-agents) runs. This is a SOFT pause (asks, never raises) "
+            "and is distinct from daily_limit_usd (a hard cap). Interactive-only: "
+            "background runs (cron/heartbeat/parliament/delegation children) are "
+            "never paused. None = the per-turn pause is disabled."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
 
 
 class WebSearchSettings(BaseModel):

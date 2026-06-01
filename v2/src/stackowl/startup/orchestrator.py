@@ -417,6 +417,32 @@ class StartupOrchestrator:
         session_registry = SessionRegistry(a2a_queue=a2a_queue)
         register_session_sweep_handler(session_registry)
 
+        # E8-S0cost — ONE shared CostTracker (per-turn running total feeds the soft
+        # cost-pause) + the CostPauseGuard that asks the user "Continue?" via the
+        # clarify gateway before the next expensive op once a turn crosses the soft
+        # per-turn budget. The daily hard cap stays on this same tracker. The guard
+        # fails OPEN (never wedges a turn) and is interactive-only.
+        from stackowl.interaction.cost_pause import CostPauseGuard
+        from stackowl.providers.cost_tracker import CostTracker
+
+        cost_tracker = CostTracker(
+            db=db_pool,
+            event_bus=event_bus,
+            daily_limit_usd=self._settings.budget.daily_limit_usd,
+        )
+        # E8-S0cost — make providers the SINGLE cost-recording site: inject the ONE
+        # shared tracker into every provider so a turn's REAL main-pipeline spend
+        # (complete + each tool-loop API round) feeds CostTracker.turn_cost_usd and
+        # the soft cost-pause can fire. Done AFTER both exist (the tracker needs
+        # db_pool/event_bus built later than the registry). The router + MoA call
+        # provider.complete, so they no longer record separately (no double-count).
+        provider_registry.set_cost_tracker(cost_tracker)
+        cost_pause_guard = CostPauseGuard(
+            cost_tracker=cost_tracker,
+            clarify_gateway=clarify_gateway,
+            threshold_usd=self._settings.budget.per_turn_pause_usd,
+        )
+
         services = StepServices(
             a2a_queue=a2a_queue,
             provider_registry=provider_registry,
@@ -442,6 +468,8 @@ class StartupOrchestrator:
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
             session_registry=session_registry,
+            cost_tracker=cost_tracker,
+            cost_pause_guard=cost_pause_guard,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto

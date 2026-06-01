@@ -170,6 +170,7 @@ class AnthropicProvider(ModelProvider):
             # elided (never the message itself), so tool_use/tool_result pairing
             # stays valid for the Anthropic API.
             messages = trim_messages_to_budget(messages, budget)
+            _t_call = time.monotonic()
             try:
                 response = await self._client.messages.create(
                     model=self._config.default_model,
@@ -185,6 +186,11 @@ class AnthropicProvider(ModelProvider):
                     extra={"_fields": {"provider": self._name}},
                 )
                 raise ProviderError(self._name, exc) from exc
+
+            # E8-S0cost — record EACH internal tool-loop API round's spend (B5:
+            # usage extraction is itself fail-open — a response shape without usage
+            # must never break the loop).
+            await self._record_usage_safe(response, (time.monotonic() - _t_call) * 1000)
 
             if response.stop_reason != "tool_use":
                 text = "".join(b.text for b in response.content if hasattr(b, "text"))
@@ -238,12 +244,14 @@ class AnthropicProvider(ModelProvider):
         try:
             messages = trim_messages_to_budget(messages, budget)
             messages.append({"role": "user", "content": WRAPUP_DIRECTIVE})
+            _t_wrap = time.monotonic()
             wrapup = await self._client.messages.create(
                 model=self._config.default_model,
                 messages=messages,  # type: ignore[arg-type]
                 max_tokens=self._config.max_output_tokens,
                 **system_kwargs,
             )
+            await self._record_usage_safe(wrapup, (time.monotonic() - _t_wrap) * 1000)
             text = "".join(b.text for b in wrapup.content if hasattr(b, "text"))
             if text.strip():
                 log.engine.debug(
@@ -261,6 +269,29 @@ class AnthropicProvider(ModelProvider):
         if fallback.strip():
             return fallback, all_calls
         return "", all_calls
+
+    async def _record_usage_safe(self, response: Any, duration_ms: float) -> None:
+        """Record one tool-loop round's cost from an Anthropic response (B5 fail-open).
+
+        Extracting usage off the response is itself defensive: a response shape
+        without ``usage``/``model`` (e.g. a scripted test fake) must NEVER break the
+        tool loop, so any extraction error is logged and swallowed here. The actual
+        record() call is further guarded inside ``_record_cost``.
+        """
+        try:
+            usage = getattr(response, "usage", None)
+            in_tok = usage.input_tokens if usage else 0
+            out_tok = usage.output_tokens if usage else 0
+            model = getattr(response, "model", "") or ""
+        except Exception as exc:  # B5 — usage shape varies / may be absent on fakes.
+            log.engine.debug(
+                "[anthropic] _record_usage_safe: usage extraction skipped",
+                extra={"_fields": {"provider": self._name, "err": str(exc)}},
+            )
+            return
+        await self._record_cost(
+            model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+        )
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("anthropic.complete")
@@ -301,6 +332,13 @@ class AnthropicProvider(ModelProvider):
             output_tokens=response.usage.output_tokens,
             model=response.model,
             provider_name=self._name,
+            duration_ms=duration_ms,
+        )
+        # E8-S0cost — single recording site: every provider call records its spend.
+        await self._record_cost(
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
             duration_ms=duration_ms,
         )
         log.engine.debug(

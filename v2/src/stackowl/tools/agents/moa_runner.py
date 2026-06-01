@@ -3,15 +3,18 @@
 Holds the self-healing ensemble logic so ``mixture_of_agents.py`` stays under the
 B2 line cap: fan a question across a roster of providers (per-proposer timeout +
 ``return_exceptions=True``), filter failures BEFORE synthesis (each ERROR-logged,
-none hidden), record per-proposer cost, then collapse survivors via
+none hidden), then collapse survivors via
 :meth:`ParliamentSynthesizer.synthesize_positions`. Returns a plain structured
 record dict (status + provenance + degraded flag + failed list); never raises.
+
+E8-S0cost — per-proposer cost is recorded by the PROVIDER itself inside
+``provider.complete`` (the single recording site), so this module records nothing;
+recording here too would DOUBLE-COUNT each proposer call.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
@@ -21,8 +24,7 @@ from stackowl.parliament.synthesizer import ParliamentSynthesizer
 from stackowl.providers.base import Message
 
 if TYPE_CHECKING:
-    from stackowl.providers.base import CompletionResult, ModelProvider
-    from stackowl.providers.cost_tracker import CostTracker
+    from stackowl.providers.base import ModelProvider
     from stackowl.providers.registry import ProviderRegistry
 
 _PER_PROPOSER_TIMEOUT_S = 30.0
@@ -43,20 +45,19 @@ async def run_ensemble(
     registry: ProviderRegistry,
     roster: list[ModelProvider],
     question: str,
-    cost_tracker: CostTracker | None,
-    trace_id: str,
 ) -> dict[str, object]:
     """Fan out over ``roster``, filter failures, synthesize survivors.
 
     Returns a structured record dict with ``status`` one of ``ok`` /
-    ``all_proposers_failed`` / ``synthesis_failed``. Never raises.
+    ``all_proposers_failed`` / ``synthesis_failed``. Never raises. Per-proposer cost
+    is recorded by the provider itself (E8-S0cost single recording site).
     """
     log.tool.debug(
         "mixture_of_agents.run_ensemble: fanning out",
-        extra={"_fields": {"roster": len(roster), "has_cost_tracker": cost_tracker is not None}},
+        extra={"_fields": {"roster": len(roster)}},
     )
     outcomes = await asyncio.gather(
-        *[_propose(p, question, cost_tracker, trace_id) for p in roster],
+        *[_propose(p, question) for p in roster],
         return_exceptions=True,
     )
 
@@ -138,15 +139,13 @@ async def _synthesize(
 async def _propose(
     provider: ModelProvider,
     question: str,
-    cost_tracker: CostTracker | None,
-    trace_id: str,
 ) -> ProposerOutcome:
     """Ask one provider for its position under a per-proposer timeout.
 
     Self-healing: a timeout or any provider error becomes a structured failure
-    outcome (ERROR-logged), never an exception bubbling into synthesis.
+    outcome (ERROR-logged), never an exception bubbling into synthesis. The call's
+    cost is recorded by the provider itself (E8-S0cost single recording site).
     """
-    t_call = time.monotonic()
     messages = [Message(role="user", content=question)]
     try:
         completion = await asyncio.wait_for(
@@ -167,7 +166,6 @@ async def _propose(
         )
         return ProposerOutcome(provider_name=provider.name, error=str(exc))
 
-    await _record_cost(cost_tracker, provider.name, completion, t_call, trace_id)
     text = completion.content.strip()
     if not text:
         log.tool.warning(
@@ -176,30 +174,3 @@ async def _propose(
         )
         return ProposerOutcome(provider_name=provider.name, error="empty")
     return ProposerOutcome(provider_name=provider.name, position=text)
-
-
-async def _record_cost(
-    cost_tracker: CostTracker | None,
-    provider_name: str,
-    completion: CompletionResult,
-    t_call: float,
-    trace_id: str,
-) -> None:
-    """Record one proposer's cost; best-effort (never fails the call)."""
-    if cost_tracker is None:
-        return
-    try:
-        await cost_tracker.record(
-            provider_name=provider_name,
-            model=completion.model or "mixture_of_agents",
-            input_tokens=completion.input_tokens,
-            output_tokens=completion.output_tokens,
-            duration_ms=(time.monotonic() - t_call) * 1000.0,
-            trace_id=trace_id,
-        )
-    except Exception as exc:  # noqa: BLE001 — cost tracking is best-effort.
-        log.tool.error(
-            "mixture_of_agents._record_cost: cost record failed",
-            exc_info=exc,
-            extra={"_fields": {"provider": provider_name}},
-        )

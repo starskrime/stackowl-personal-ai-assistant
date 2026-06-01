@@ -11,11 +11,13 @@ from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.providers.base import ModelProvider
 from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
+from stackowl.providers.cost_tracker_helpers import inject_cost_tracker
 from stackowl.providers.rate_limiter import RateLimiter
 
 if TYPE_CHECKING:
     from stackowl.config.provider import ProviderConfig
     from stackowl.config.settings import Settings
+    from stackowl.providers.cost_tracker import CostTracker
 
 
 _TIER_ORDER: tuple[str, ...] = ("fast", "standard", "powerful", "local")
@@ -50,6 +52,20 @@ class ProviderRegistry:
         self._tiers: dict[str, str] = {}
         self._breakers: dict[str, CircuitBreaker] = {}
         self._limiters: dict[str, RateLimiter] = {}
+        # E8-S0cost — the ONE shared CostTracker; remembered so providers registered
+        # later (mocks, hot additions) still inherit it (single recording site).
+        self._cost_tracker: CostTracker | None = None
+
+    def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
+        """Inject the shared CostTracker into every provider (the SINGLE recording
+        site, feeding turn_cost_usd); later registrations inherit it via register_mock."""
+        self._cost_tracker = cost_tracker
+        for provider in self._providers.values():
+            inject_cost_tracker(provider, cost_tracker)
+        log.engine.debug(
+            "[registry] set_cost_tracker: injected into providers",
+            extra={"_fields": {"provider_count": len(self._providers), "has_tracker": cost_tracker is not None}},
+        )
 
     @classmethod
     def from_settings(cls, settings: Settings, *, clock: Clock = WallClock()) -> ProviderRegistry:
@@ -238,6 +254,7 @@ class ProviderRegistry:
         self._tiers[name] = tier
         self._breakers[name] = CircuitBreaker(provider_name=name, clock=self._clock)
         self._limiters[name] = RateLimiter.from_rpm(name, None, clock=self._clock)
+        inject_cost_tracker(mock, self._cost_tracker)  # E8-S0cost single recording site
         log.engine.debug(
             "[registry] mock registered",
             extra={"_fields": {"name": name, "tier": tier}},

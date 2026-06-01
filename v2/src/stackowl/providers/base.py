@@ -5,12 +5,16 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.providers.cost_tracker import CostTracker
 
 
 class DocumentBlock(BaseModel):
@@ -67,6 +71,55 @@ class ModelProvider(ABC):
     ProviderRegistry holds only ModelProvider references — no concrete class knowledge
     outside the providers package.
     """
+
+    # E8-S0cost — the ONE shared CostTracker, injected by ProviderRegistry after
+    # construction (set_cost_tracker). When present, every LLM call this provider
+    # makes (complete + each complete_with_tools API round) records its usage so a
+    # turn's REAL spend feeds CostTracker.turn_cost_usd(trace_id) and the soft
+    # cost-pause can fire. None by default (tests / standalone providers) → the
+    # recording helper is a no-op. NEVER let recording break a completion (B5).
+    _cost_tracker: CostTracker | None = None
+
+    def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
+        """Inject the shared CostTracker (idempotent; ProviderRegistry calls this)."""
+        self._cost_tracker = cost_tracker
+
+    async def _record_cost(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        duration_ms: float,
+    ) -> None:
+        """Record ONE LLM call's cost to the shared tracker (single recording site).
+
+        Reads ``trace_id`` off :class:`TraceContext` so the parent turn, its
+        delegated children, and any sub-pipeline all fold into the SAME per-turn
+        running total (the context propagates the id across async hops). Best-effort
+        and self-healing (B5): no tracker wired, or any error (including the daily
+        hard-cap raise the NEXT call would trigger) is logged and swallowed here so
+        cost accounting can NEVER break or block a completion that already happened.
+        """
+        tracker = self._cost_tracker
+        if tracker is None:
+            return
+        trace_id = str(TraceContext.get().get("trace_id") or "")
+        try:
+            await tracker.record(
+                provider_name=self.name,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                duration_ms=duration_ms,
+                trace_id=trace_id,
+            )
+        except Exception as exc:  # B5 — never let cost recording break a completion.
+            log.engine.error(
+                "[provider] _record_cost: cost record failed — continuing",
+                exc_info=exc,
+                extra={"_fields": {"provider": self.name, "model": model}},
+            )
 
     @property
     @abstractmethod

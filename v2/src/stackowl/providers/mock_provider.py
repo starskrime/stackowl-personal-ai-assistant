@@ -46,7 +46,7 @@ class MockProvider(ModelProvider):
             "[mock] complete: returning canned result",
             extra={"_fields": {"provider": self._name, "call_count": self._call_count}},
         )
-        return CompletionResult(
+        result = CompletionResult(
             content=self._canned_text,
             input_tokens=len(" ".join(m.content for m in messages).split()),
             output_tokens=len(self._canned_text.split()),
@@ -54,6 +54,15 @@ class MockProvider(ModelProvider):
             provider_name=self._name,
             duration_ms=1.0,
         )
+        # E8-S0cost — record like a real provider when a CostTracker is attached, so
+        # an end-to-end test sees REAL recorded spend feed the per-turn total.
+        await self._record_cost(
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            duration_ms=result.duration_ms,
+        )
+        return result
 
     def canned_chunk(self, index: int, is_final: bool = False) -> ResponseChunk:
         """Helper: produce a ResponseChunk for use in pipeline state assertions."""

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
     from stackowl.interaction.clarify_gateway import ClarifyGateway
+    from stackowl.interaction.cost_pause import CostPauseGuard
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.learning.tool_heuristic_store import ToolHeuristicStore
     from stackowl.memory.bridge import MemoryBridge
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from stackowl.owls.registry import OwlRegistry
     from stackowl.owls.session_registry import SessionRegistry
     from stackowl.pipeline.streaming import StreamRegistry
+    from stackowl.providers.cost_tracker import CostTracker
     from stackowl.providers.registry import ProviderRegistry
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.browser.runtime import CamoufoxRuntime
@@ -75,6 +77,14 @@ class StepServices:
     # a2a_queue wired above so a cleared/reaped session drains the right mailbox.
     # None → the tool degrades to a structured "sessions unavailable" result (B5).
     session_registry: SessionRegistry | None = field(default=None)
+    # E8-S0cost — ONE shared CostTracker so the per-turn running total the
+    # cost-pause guard reads is fed by the SAME instance MoA/router record into.
+    # None → no shared tracker (tools fall back to building an ungated local one).
+    cost_tracker: CostTracker | None = field(default=None)
+    # E8-S0cost — the soft per-turn cost pause. delegate_task + mixture_of_agents
+    # read THIS off services and call gate() BEFORE their expensive op; a "Stop"
+    # answer aborts that op. None → no pause (feature absent / non-interactive).
+    cost_pause_guard: CostPauseGuard | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")
