@@ -110,6 +110,47 @@ class MockProvider(ModelProvider):
         return _empty()
 
 
+class FailingProvider(ModelProvider):
+    """Powerful-tier provider whose ``complete()`` always raises (FF-E8-S2-1).
+
+    Models a synthesis-provider outage so we can assert the failure is SURFACED
+    (synthesizer raises; orchestrator stores no verdict + no pellet), never
+    masked as a clean confidence-scored synthesis.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[list[Message]] = []
+
+    @property
+    def name(self) -> str:
+        return "failing-powerful"
+
+    @property
+    def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
+        return "openai"
+
+    async def complete(
+        self,
+        messages: list[Message],
+        model: str,
+        **kwargs: object,
+    ) -> CompletionResult:
+        self.calls.append(messages)
+        raise RuntimeError("synthesis provider offline")
+
+    def stream(
+        self,
+        messages: list[Message],
+        model: str,
+        **kwargs: object,
+    ) -> AsyncIterator[str]:
+        async def _empty() -> AsyncIterator[str]:
+            for _ in ():
+                yield ""
+
+        return _empty()
+
+
 class MockProviderRegistry:
     """Minimal provider registry that records tier requests."""
 
@@ -490,6 +531,49 @@ class TestOrchestratorWiring:
         result = await orch.run("topic", ["a", "b"])
         assert result.status == "completed"
         assert result.synthesis is None
+
+    async def test_synthesizer_raises_on_provider_failure(self) -> None:
+        # FF-E8-S2-1: a synth-provider failure must SURFACE (raise) — never be
+        # masked as a clean, confidence-scored verdict built off a placeholder.
+        registry = MockProviderRegistry(FailingProvider())
+        synth = ParliamentSynthesizer(registry)  # type: ignore[arg-type]
+        session = _make_session_with_rounds(round_count=1)
+        with pytest.raises(RuntimeError, match="synthesis provider offline"):
+            await synth.synthesize(session)
+
+    async def test_orchestrator_surfaces_failed_synthesis_no_pellet(
+        self,
+        parliament_db: DbPool,
+        capture_logs: list[dict[str, object]],
+    ) -> None:
+        # FF-E8-S2-1: when synthesis fails, the session completes WITHOUT a
+        # synthesis (no fabricated verdict), NO pellet is staged, and the failure
+        # is ERROR-logged — never a successful-looking confidence-scored output.
+        provider = FailingProvider()
+        registry = MockProviderRegistry(provider)
+        synth = ParliamentSynthesizer(registry)  # type: ignore[arg-type]
+        bridge = _CapturingBridge()
+        pellet_gen = KnowledgePelletGenerator(memory_bridge=bridge)
+        store = SessionStore(parliament_db)
+        backend = _RecordingBackend("agreed")
+        orch = ParliamentOrchestrator(
+            backend=backend,
+            session_store=store,
+            max_rounds=1,
+            synthesizer=synth,
+            pellet_generator=pellet_gen,
+        )
+        result = await orch.run("topic", ["a", "b"])
+        # Session is finished but carries NO fabricated synthesis verdict.
+        assert result.status == "completed"
+        assert result.synthesis is None
+        # A failed synthesis yields NO stored pellet.
+        assert bridge.staged == []
+        # The synth provider WAS attempted (the failure path was exercised).
+        assert provider.calls
+        # The failure is surfaced at ERROR level, not masked / warned.
+        errors = [r for r in capture_logs if r.get("level") == "ERROR"]
+        assert any("synthesis failed" in r.get("msg", "") for r in errors)
 
 
 # Silence import linter for time (we use it transitively via backends).

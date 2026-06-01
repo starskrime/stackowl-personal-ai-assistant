@@ -253,7 +253,7 @@ class ParliamentOrchestrator:
         try:
             synthesis_result = await self._synthesizer.synthesize(session)
         except Exception as exc:
-            log.parliament.warning(
+            log.parliament.error(
                 "[parliament] orchestrator._finalize_session: synthesis failed",
                 exc_info=exc,
                 extra={"_fields": {"session_id": session.session_id}},

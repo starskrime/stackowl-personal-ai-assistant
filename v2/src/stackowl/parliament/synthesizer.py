@@ -111,8 +111,13 @@ class ParliamentSynthesizer:
         try:
             completion = await provider.complete(messages, model="")
         except Exception as exc:
-            log.parliament.warning(
-                "[parliament] synthesizer.synthesize: provider call failed",
+            # No-hidden-errors: a synthesis-provider failure must NOT be masked as a
+            # clean confidence-scored verdict (a placeholder dressed up as a real
+            # synthesis). Surface it so the orchestrator marks the session finished
+            # WITHOUT a synthesis and SKIPS pellet generation — the user is told the
+            # parliament could not synthesize, never shown a fabricated consensus.
+            log.parliament.error(
+                "[parliament] synthesizer.synthesize: provider call failed — surfacing",
                 exc_info=exc,
                 extra={
                     "_fields": {
@@ -121,9 +126,8 @@ class ParliamentSynthesizer:
                     }
                 },
             )
-            raw_text = "[synthesis unavailable — provider call failed]"
-        else:
-            raw_text = completion.content
+            raise
+        raw_text = completion.content
 
         confidence = self._compute_confidence(session, mean_sim)
         parsed = self._parser.parse(raw_text, session.session_id)
