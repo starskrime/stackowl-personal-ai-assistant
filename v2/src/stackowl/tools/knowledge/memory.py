@@ -182,8 +182,13 @@ class MemoryTool(Tool):
         if db is None:
             return self._unavailable("add", "no database pool is configured", t0)
 
-        promoter = FactPromoter(db)
+        # Wire the LanceDB adapter (owned by the bridge) into the promoter so the
+        # committed fact's vector is upserted for SEMANTIC recall; falls back to
+        # None for bridges that don't expose one (FTS recall still works).
+        lancedb = getattr(bridge, "lancedb", None)
+        promoter = FactPromoter(db, lancedb=lancedb)
         # Route through the shared chokepoint — agent_self provenance + audit.
+        # Pass the embedding registry so the fact is embedded at remember time.
         fact_id = await remember_fact(
             bridge,
             promoter,
@@ -192,6 +197,7 @@ class MemoryTool(Tool):
             source_ref=_SOURCE_REF,
             audit=services.audit_logger,
             actor=_ACTOR,
+            embedding_registry=services.embedding_registry,
         )
         # 4. EXIT — mutating turns must be VISIBLE (party #7): state plainly what
         # was remembered, with the id so it can be forgotten later.

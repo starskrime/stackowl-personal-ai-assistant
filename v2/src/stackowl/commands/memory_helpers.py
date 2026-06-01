@@ -18,6 +18,7 @@ from stackowl.memory.sqlite_helpers import unpack_embedding
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.audit.logger import AuditLogger
     from stackowl.db.pool import DbPool
+    from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.models import MemoryRecord
@@ -101,6 +102,38 @@ def format_budget(usage_bytes: int, ceiling_bytes: int) -> str:
     )
 
 
+async def _best_effort_embed(
+    text: str, embedding_registry: EmbeddingRegistry | None
+) -> tuple[list[float] | None, str | None]:
+    """Embed ``text`` for storage, mirroring FactExtractor's degrade pattern.
+
+    Returns ``(embedding, embedding_model)``. On a missing registry or any embed
+    failure it logs at warning+ and degrades to ``(None, None)`` — recall still
+    works via the FTS5 fallback, so an embed failure must never abort the remember.
+    """
+    if embedding_registry is None:
+        log.memory.warning(
+            "[memory] memory_helpers._best_effort_embed: no embedding registry — fact will have embedding=None",
+        )
+        return None, None
+    try:
+        provider = embedding_registry.get()
+        vectors = await provider.embed([text])
+    except Exception as exc:
+        # B5 — log and degrade gracefully (never raise)
+        log.memory.warning(
+            "[memory] memory_helpers._best_effort_embed: embedding failed — proceeding without",
+            exc_info=exc,
+        )
+        return None, None
+    if not vectors or not vectors[0]:
+        log.memory.warning(
+            "[memory] memory_helpers._best_effort_embed: empty embedding — proceeding without",
+        )
+        return None, None
+    return list(vectors[0]), provider.model_name
+
+
 async def remember_fact(
     bridge: MemoryBridge,
     promoter: FactPromoter,
@@ -110,6 +143,7 @@ async def remember_fact(
     source_ref: str = "user_explicit",
     audit: AuditLogger | None = None,
     actor: str = "user:remember",
+    embedding_registry: EmbeddingRegistry | None = None,
 ) -> str:
     """Stage ``text`` as an explicit fact, force-promote it, and (optionally) audit.
 
@@ -131,6 +165,9 @@ async def remember_fact(
         "[memory] memory_helpers.remember_fact: entry",
         extra={"_fields": {"text_len": len(text), "source_type": source_type}},
     )
+    # Best-effort embed at remember time so the committed fact carries a vector
+    # (StagedFact is frozen — construct WITH the embedding, never mutate).
+    embedding, embedding_model = await _best_effort_embed(text, embedding_registry)
     fact = StagedFact(
         fact_id=str(uuid.uuid4()),
         content=text,
@@ -138,6 +175,8 @@ async def remember_fact(
         source_ref=source_ref,
         confidence=1.0,
         reinforcement_count=3,
+        embedding=embedding,
+        embedding_model=embedding_model,
     )
     try:
         await bridge.stage(fact)
@@ -331,21 +370,43 @@ async def do_export(
 
 async def fetch_all_committed_for_reindex(
     db: DbPool,
+    embedding_registry: EmbeddingRegistry | None = None,
 ) -> list[tuple[str, list[float], dict[str, str]]]:
-    """Return ``(fact_id, embedding, metadata)`` for every committed fact."""
+    """Return ``(fact_id, embedding, metadata)`` for every committed fact.
+
+    Rows lacking a stored embedding (e.g. facts remembered before embed-at-remember
+    landed) are BACK-FILLED by re-embedding their content when an
+    ``embedding_registry`` is supplied — so a one-time ``/memory reindex`` populates
+    LanceDB for previously embedding-less facts. Without a registry, or on embed
+    failure, such a row is logged and skipped (best-effort, never raises).
+    """
     rows = await db.fetch_all(
         """SELECT fact_id, content, embedding, source_type, source_ref
            FROM committed_facts"""
     )
     out: list[tuple[str, list[float], dict[str, str]]] = []
     for row in rows:
-        embedding = unpack_embedding(row["embedding"])
+        embedding: list[float] = unpack_embedding(row["embedding"])
         if not embedding:
-            log.memory.warning(
-                "[memory] memory_helpers.fetch_all_committed_for_reindex: skip",
-                extra={"_fields": {"fact_id": row["fact_id"], "reason": "no_embedding"}},
+            backfilled, _model = await _best_effort_embed(
+                row["content"], embedding_registry
             )
-            continue
+            if not backfilled:
+                log.memory.warning(
+                    "[memory] memory_helpers.fetch_all_committed_for_reindex: skip",
+                    extra={
+                        "_fields": {
+                            "fact_id": row["fact_id"],
+                            "reason": "no_embedding_no_backfill",
+                        }
+                    },
+                )
+                continue
+            embedding = backfilled
+            log.memory.info(
+                "[memory] memory_helpers.fetch_all_committed_for_reindex: back-filled embedding",
+                extra={"_fields": {"fact_id": row["fact_id"]}},
+            )
         metadata = {
             "source_type": row["source_type"],
             "source_ref": row["source_ref"],

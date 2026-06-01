@@ -35,6 +35,7 @@ from stackowl.infra.observability import log
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
+    from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.fact_promoter import FactPromoter
@@ -67,6 +68,7 @@ class MemoryCommand(SlashCommand):
         event_bus: EventBus,
         lancedb: LanceDBAdapter | None = None,
         promoter: FactPromoter | None = None,
+        embedding_registry: EmbeddingRegistry | None = None,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
@@ -75,6 +77,7 @@ class MemoryCommand(SlashCommand):
                 "_fields": {
                     "has_lancedb": lancedb is not None,
                     "has_promoter": promoter is not None,
+                    "has_embeddings": embedding_registry is not None,
                 }
             },
         )
@@ -84,6 +87,7 @@ class MemoryCommand(SlashCommand):
         self._bus = event_bus
         self._lancedb = lancedb
         self._promoter = promoter
+        self._embeddings = embedding_registry
         # 4. EXIT
         log.memory.debug("[commands] memory.init: exit")
 
@@ -217,7 +221,7 @@ class MemoryCommand(SlashCommand):
                 "[commands] memory.reindex: no lancedb adapter configured"
             )
             return "✗ /memory reindex: LanceDB adapter not configured"
-        records = await fetch_all_committed_for_reindex(self._db)
+        records = await fetch_all_committed_for_reindex(self._db, self._embeddings)
         if not records:
             log.memory.info("[commands] memory.reindex: exit — no records")
             return "No committed facts to reindex (0 written)"

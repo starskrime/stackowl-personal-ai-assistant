@@ -10,6 +10,7 @@ from stackowl.memory.sqlite_helpers import row_to_staged
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
+    from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.models import StagedFact
 
 
@@ -64,6 +65,7 @@ class FactPromoter:
         confidence_threshold: float = 0.8,
         reinforcement_required: int = 3,
         conversation_fact_reinforcement_required: int = 1,
+        lancedb: LanceDBAdapter | None = None,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
@@ -73,6 +75,7 @@ class FactPromoter:
                     "confidence_threshold": confidence_threshold,
                     "reinforcement_required": reinforcement_required,
                     "conversation_fact_reinforcement_required": conversation_fact_reinforcement_required,
+                    "has_lancedb": lancedb is not None,
                 }
             },
         )
@@ -80,6 +83,7 @@ class FactPromoter:
         self._confidence_threshold = confidence_threshold
         self._reinforcement_required = reinforcement_required
         self._conversation_fact_reinforcement_required = conversation_fact_reinforcement_required
+        self._lancedb = lancedb
         # 4. EXIT
         log.memory.debug("[memory] fact_promoter.init: exit")
 
@@ -185,6 +189,29 @@ class FactPromoter:
                 _INSERT_FTS_SQL,
                 (rowid_rows[0]["rid"], fact.content),
             )
+        # Vector upsert — the committed fact must be SEMANTICALLY recallable, not
+        # only FTS. The SQLite commit + FTS sync above are the source of truth, so
+        # a LanceDB failure here is logged and swallowed; it MUST NOT abort the
+        # promotion (recall degrades to the FTS fallback). Skip when the fact has
+        # no embedding or no adapter was injected.
+        if self._lancedb is not None and fact.embedding:
+            try:
+                await self._lancedb.upsert(
+                    fact.fact_id,
+                    fact.embedding,
+                    {
+                        "source_type": fact.source_type,
+                        "source_ref": fact.source_ref,
+                        "content": fact.content,
+                    },
+                )
+            except Exception as exc:
+                # B5 — log loudly, never abort the promotion.
+                log.memory.warning(
+                    "[memory] fact_promoter: LanceDB upsert failed — fact committed, semantic recall degraded",
+                    exc_info=exc,
+                    extra={"_fields": {"fact_id": fact.fact_id}},
+                )
         log.memory.info(
             "[memory] fact_promoter: promoted",
             extra={

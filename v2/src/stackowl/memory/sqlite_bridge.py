@@ -59,6 +59,16 @@ class SqliteMemoryBridge(MemoryBridge):
         # 4. EXIT
         log.memory.debug("[memory] sqlite_bridge.init: exit")
 
+    @property
+    def lancedb(self) -> LanceDBAdapter | None:
+        """The ANN adapter this bridge writes/reads vectors through (may be None).
+
+        Exposed so write chokepoints (e.g. the ``memory`` tool's FactPromoter) can
+        upsert committed-fact vectors through the SAME adapter the bridge recalls
+        from — keeping the vector store single-sourced.
+        """
+        return self._lancedb
+
     # --- pipeline contract ------------------------------------------------------------
 
     async def retrieve(self, query: str, session_id: str) -> str:
