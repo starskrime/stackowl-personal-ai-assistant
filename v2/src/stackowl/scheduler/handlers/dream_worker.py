@@ -26,7 +26,10 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 
 
 _DREAM_SCHEDULE = "daily@03:00"
-_DREAM_IDEMPOTENCY_KEY = "dream_worker:nightly"
+# BASE idempotency key only. The scheduler suffixes ``@<next_run_at>`` per
+# occurrence (JobScheduler._occurrence_key), so a static "run once ever" key
+# would wedge this recurring job in a permanent idempotent skip.
+_DREAM_IDEMPOTENCY_KEY = "dream_worker"
 _SELECT_EXISTING_SQL = "SELECT job_id FROM jobs WHERE handler_name = ?"
 _INSERT_JOB_SQL = """
 INSERT INTO jobs

@@ -67,16 +67,26 @@ class JobScheduler(SupervisedTask):
         for row in rows:
             await self._run_job(row_to_job(row))
 
+    def _occurrence_key(self, job: Job) -> str:
+        """Dedup key scoped to the SCHEDULED INSTANT being serviced.
+
+        The static ``idempotency_key`` means "run once ever" — wrong for a
+        recurring job. Suffixing the occurrence's ``next_run_at`` makes the same
+        scheduled instant idempotent while each new instant is a fresh run.
+        """
+        return f"{job.idempotency_key}@{job.next_run_at}"
+
     async def _run_job(self, job: Job) -> None:
+        occurrence_key = self._occurrence_key(job)
         already = await self._db.fetch_all(
             "SELECT status FROM job_runs WHERE idempotency_key = ? AND status = 'completed'",
-            (job.idempotency_key,),
+            (occurrence_key,),
         )
         if already:
             log.heartbeat.info(
                 "[scheduler] %s: idempotent skip",
                 job.job_id,
-                extra={"_fields": {"job_id": job.job_id, "key": job.idempotency_key}},
+                extra={"_fields": {"job_id": job.job_id, "occurrence_key": occurrence_key}},
             )
             return
 
@@ -142,7 +152,7 @@ class JobScheduler(SupervisedTask):
         )
         await self._db.execute(
             "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, duration_ms, ran_at) VALUES (?,?,?,?,?,?)",
-            (run_id, job.job_id, job.idempotency_key, "completed", duration_ms, now_iso),
+            (run_id, job.job_id, self._occurrence_key(job), "completed", duration_ms, now_iso),
         )
         log.heartbeat.info(
             "[scheduler] %s: exit — completed",

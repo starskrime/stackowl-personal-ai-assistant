@@ -190,14 +190,20 @@ def _rejected(job_id: str, reason: str) -> JobResult:
 
 
 async def _record_run(db: DbPool, job: Job, result: JobResult, duration_ms: float) -> None:
-    """Write a ``job_runs`` row for this out-of-band run (mirrors the poller)."""
+    """Write a ``job_runs`` row for this out-of-band run (mirrors the poller).
+
+    Keys the row to the occurrence (``idempotency_key@next_run_at``) exactly as
+    :meth:`JobScheduler._occurrence_key` does, so an out-of-band run cannot
+    poison the dedup lookup for a future poll at a different scheduled instant.
+    """
     now_iso = datetime.now(UTC).isoformat()
     run_id = str(uuid.uuid4())
     status = "completed" if result.success else "failed"
+    occurrence_key = f"{job.idempotency_key}@{job.next_run_at}"
     await db.execute(
         "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, duration_ms, ran_at) "
         "VALUES (?,?,?,?,?,?)",
-        (run_id, job.job_id, job.idempotency_key, status, duration_ms, now_iso),
+        (run_id, job.job_id, occurrence_key, status, duration_ms, now_iso),
     )
 
 
