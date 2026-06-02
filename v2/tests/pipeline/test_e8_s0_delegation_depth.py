@@ -62,6 +62,8 @@ class TestChildToolsetExclusion:
         (read-only, no persistence) stays available to children."""
         assert "process" in _CHILD_EXCLUDED_TOOLS
         assert "wait" not in _CHILD_EXCLUDED_TOOLS
+        # E11-S5: a delegated child must NOT run arbitrary code in the sandbox.
+        assert "execute_code" in _CHILD_EXCLUDED_TOOLS
         # Presentation: a depth>0 child's schema list drops `process`, keeps `wait`.
         schemas: list[dict[str, object]] = [
             {"name": "process"},

@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from stackowl.process.registry import ProcessRegistry
     from stackowl.providers.cost_tracker import CostTracker
     from stackowl.providers.registry import ProviderRegistry
+    from stackowl.sandbox.selector import SandboxSelector
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.browser.runtime import CamoufoxRuntime
     from stackowl.tools.browser.sessions import BrowserSessionRegistry
@@ -92,6 +93,13 @@ class StepServices:
     # read THIS off services and call gate() BEFORE their expensive op; a "Stop"
     # answer aborts that op. None → no pause (feature absent / non-interactive).
     cost_pause_guard: CostPauseGuard | None = field(default=None)
+    # E11-S5 — the sandbox backend selector (bwrap-primary, Docker for network).
+    # The execute_code tool reads THIS instance off services at execute time (it
+    # never builds its own, so the configured backend set + capability probe stay a
+    # single source of truth). None → execute_code degrades to a structured "code
+    # execution unavailable — no sandbox backend" result and NEVER runs on the host
+    # (self-healing, B5; the load-bearing safety invariant).
+    sandbox_selector: SandboxSelector | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

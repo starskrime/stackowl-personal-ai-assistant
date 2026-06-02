@@ -74,6 +74,19 @@ class Tool(ABC):
             parameters=self.parameters,
         )
 
+    def consent_summary(self, **call_args: object) -> str | None:
+        """Build a TRUSTED, bounded one-line summary of THIS call for the consent
+        prompt, or ``None`` to fall back to the static :attr:`description`.
+
+        The consent gate shows what a consequential action will actually DO so the
+        user can approve meaningfully (e.g. ``execute_code`` renders the language +
+        a bounded code digest + whether network is requested) — not just the
+        generic tool description. Overrides MUST render from the tool's OWN trusted
+        view of the validated args and stay BOUNDED (never echo unbounded raw LLM
+        text); the gate truncates defensively regardless. Never raises.
+        """
+        return None
+
     @abstractmethod
     async def execute(self, **kwargs: object) -> ToolResult: ...
 

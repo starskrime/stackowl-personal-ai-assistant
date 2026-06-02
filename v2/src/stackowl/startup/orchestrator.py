@@ -452,6 +452,24 @@ class StartupOrchestrator:
         process_registry.reconcile()
         register_process_sweep_handler(process_registry)
 
+        # E11-S5 — the sandbox backend selector (the KEYSTONE code-execution trust
+        # boundary). ONE DI singleton built from settings.sandbox: the rootless
+        # bwrap backend (PRIMARY) + the network-capable Docker backend, each gated
+        # by its enabled flag (a disabled backend reports unavailable and is never
+        # picked). The execute_code tool reads THIS off services at execute time; if
+        # neither backend is viable the selector returns a structured unavailable and
+        # the tool NEVER runs code on the host. Wired onto StepServices below.
+        from stackowl.sandbox.bwrap import BwrapSandbox
+        from stackowl.sandbox.docker import DockerSandbox
+        from stackowl.sandbox.selector import SandboxSelector
+
+        sandbox_selector = SandboxSelector(
+            backends=[
+                BwrapSandbox(enabled=self._settings.sandbox.bwrap_enabled),
+                DockerSandbox(enabled=self._settings.sandbox.docker_enabled),
+            ]
+        )
+
         # E8-S0cost — ONE shared CostTracker (per-turn running total feeds the soft
         # cost-pause) + the CostPauseGuard that asks the user "Continue?" via the
         # clarify gateway before the next expensive op once a turn crosses the soft
@@ -506,6 +524,7 @@ class StartupOrchestrator:
             process_registry=process_registry,
             cost_tracker=cost_tracker,
             cost_pause_guard=cost_pause_guard,
+            sandbox_selector=sandbox_selector,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto

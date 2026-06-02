@@ -25,8 +25,11 @@ from stackowl.tools.registry import ToolRegistry
 # E9-S2/FF-E9-5 — `process` joins them: a child handles its sub-task and returns
 # without leaving persistent OS processes running past the parent turn (the S0
 # count-cap + mandatory TTL still bound the top-level owl).
+# E11-S5 GAP-B — `execute_code` joins them: a delegated sub-agent must NOT run
+# arbitrary code in a sandbox. The top-level owl runs code under the consent gate;
+# a child handles its sub-task and returns, never recursing into code execution.
 _CHILD_EXCLUDED_TOOLS = frozenset(
-    {"delegate_task", "sessions_spawn", "sessions_send", "process"}
+    {"delegate_task", "sessions_spawn", "sessions_send", "process", "execute_code"}
 )
 
 
@@ -136,7 +139,12 @@ async def _run_with_tools(
         is_consequential = t.manifest.action_severity == "consequential"
         if gate is not None:
             try:
-                allowed = await gate.check(t, channel=state.channel, session_id=state.session_id)
+                # E11-S5 GAP-A — pass the validated call args so a tool's
+                # consent_summary() can show WHAT will run (e.g. execute_code's
+                # code + language + network), not just the static description.
+                allowed = await gate.check(
+                    t, channel=state.channel, session_id=state.session_id, call_args=args
+                )
             except Exception as exc:
                 log.engine.error(
                     "[pipeline] execute: consent gate raised — denying (fail closed)",

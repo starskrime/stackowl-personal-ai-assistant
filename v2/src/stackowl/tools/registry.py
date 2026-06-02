@@ -13,6 +13,11 @@ from stackowl.tools.consent import ConsentPolicy, ConsentRequest, ConsentScope
 # it would declare itself dangerous yet skip the consent gate (E1-S4 / §17).
 _DANGEROUS_CONSENT_CATEGORIES = frozenset({"lock", "alarm", "destructive"})
 
+# Defensive cap on the summary shown in the consent prompt. A tool's
+# consent_summary() is supposed to be bounded already (E11 GAP-A), but the gate
+# truncates regardless so a buggy/hostile summary can never flood the prompt.
+_MAX_CONSENT_SUMMARY_CHARS = 1200
+
 
 class _SyncConfirmPrompter:
     """Adapts a legacy ``(tool_name) -> bool`` confirm_fn to the async prompter API.
@@ -68,11 +73,17 @@ class ConsequentialActionGate:
         channel: str | None = None,
         session_id: str | None = None,
         category: str | None = None,
+        call_args: dict[str, object] | None = None,
     ) -> bool:
         """Return True if execution should proceed.
 
         Non-consequential tools always pass without consulting the policy.
         Consequential tools delegate to :meth:`ConsentPolicy.request`.
+
+        ``call_args`` are the validated per-call arguments (E11 GAP-A): when the
+        tool builds a per-call :meth:`Tool.consent_summary`, the gate shows THAT
+        (e.g. the code + language + network for ``execute_code``) so the user
+        approves what will actually run — not the static tool description.
         """
         # 1. ENTRY
         log.tool.debug(
@@ -91,12 +102,13 @@ class ConsequentialActionGate:
         # category (e.g. a tool computing it from validated args) may supplement it,
         # but never from raw LLM-supplied call args (E0-S1 / B2).
         effective_category = tool.manifest.consent_category or category
+        summary = self._build_summary(tool, call_args)
         allowed = await self._policy.request(
             tool_name=tool.name,
             channel=channel or "",
             session_id=session_id or "",
             category=effective_category,
-            summary=tool.description,
+            summary=summary,
         )
         # 4. EXIT
         log.tool.debug(
@@ -104,6 +116,31 @@ class ConsequentialActionGate:
             extra={"_fields": {"tool": tool.name, "allowed": allowed}},
         )
         return allowed
+
+    @staticmethod
+    def _build_summary(tool: Tool, call_args: dict[str, object] | None) -> str:
+        """Resolve the consent-prompt summary, preferring the per-call digest.
+
+        Tries the tool's :meth:`Tool.consent_summary` (the trusted, bounded view of
+        what THIS call does — E11 GAP-A); falls back to the static
+        :attr:`Tool.description`. The result is truncated to
+        :data:`_MAX_CONSENT_SUMMARY_CHARS` so a buggy/oversized summary can never
+        flood the prompt. Never raises — a summary failure degrades to the
+        description, never blocks the gate.
+        """
+        summary: str | None = None
+        try:
+            summary = tool.consent_summary(**(call_args or {}))
+        except Exception as exc:  # B5 — a summary error must not block the gate
+            log.tool.warning(
+                "[gate] consent_summary raised — falling back to description",
+                exc_info=exc,
+                extra={"_fields": {"tool": tool.name}},
+            )
+        text = summary if summary else tool.description
+        if len(text) > _MAX_CONSENT_SUMMARY_CHARS:
+            text = text[:_MAX_CONSENT_SUMMARY_CHARS] + "…[truncated]"
+        return text
 
 
 class ToolRegistry:
@@ -280,6 +317,7 @@ class ToolRegistry:
         from stackowl.tools.browser.press import BrowserPressTool
         from stackowl.tools.browser.snapshot import BrowserSnapshotTool
         from stackowl.tools.browser.tools import ATOMIC_BROWSER_TOOLS
+        from stackowl.tools.code.execute_code import ExecuteCodeTool
         from stackowl.tools.interaction.batch_approve import BatchApproveTool
         from stackowl.tools.interaction.clarify import ClarifyTool
         from stackowl.tools.io.apply_patch import ApplyPatchTool
@@ -477,4 +515,14 @@ class ToolRegistry:
         # constructor wiring); self-healing → structured result, never raises.
         # Severity read; group media.
         registry.register(ImageGenerateTool())
+        # execute_code — run code in an ISOLATED sandbox (E11-S5, the keystone tool).
+        # Reads get_services().sandbox_selector at execute time (no constructor
+        # wiring; the bwrap-primary/Docker-for-network policy + capability probe live
+        # in the selector). Consequential + always-ask: the consent gate fires before
+        # execute and shows the actual code (bounded) + language + network (GAP-A) via
+        # consent_summary; a delegated child (depth>0) is refused at dispatch (GAP-B).
+        # Self-healing: no selector / selector-unavailable / backend error →
+        # structured "unavailable", NEVER a host subprocess. Severity consequential;
+        # group code.
+        registry.register(ExecuteCodeTool())
         return registry
