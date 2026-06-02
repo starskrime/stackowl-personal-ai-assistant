@@ -298,6 +298,7 @@ class ToolRegistry:
         from stackowl.tools.knowledge.skills_list import SkillsListTool
         from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
         from stackowl.tools.knowledge.transcripts import TranscriptsTool
+        from stackowl.tools.media.tts import TtsTool
         from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
         from stackowl.tools.meta.tool_build import ToolBuildTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
@@ -444,4 +445,13 @@ class ToolRegistry:
         # get_services().provider_registry at execute time (no constructor wiring);
         # self-healing → structured result, never raises. Severity read; group media.
         registry.register(VisionAnalyzeTool())
+        # tts — synthesize speech from text on the LOCAL-FIRST TTS substrate
+        # (E10-S3). Composes the TtsSelector (local OSS engine first, opt-in cloud
+        # fallback only when enabled + configured) over the media/tts backends. The
+        # text stays on-box when the local engine is available; a CLOUD fallback is
+        # disclosed in the output (egress, mirroring pdf Mode B). Returns the audio
+        # PATH under media_dir (send_file delivers it), never raw bytes. Builds its
+        # selector from Settings().tts at execute time (no constructor wiring);
+        # self-healing → structured result, never raises. Severity read; group media.
+        registry.register(TtsTool())
         return registry

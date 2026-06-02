@@ -32,7 +32,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -113,6 +113,75 @@ class WebSearchSettings(BaseModel):
             "'keychain:<service>', or 'file:<path>' (resolved at use, never the raw "
             "secret). Empty disables the Brave provider. Network-free availability check."
         ),
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class TtsSettings(BaseModel):
+    """Text-to-speech configuration (E10-S3) — self-hosted-first, cloud opt-in.
+
+    The local OSS TTS engine ('piper') is the default + the only thing ON by
+    default. The cloud fallback is DISABLED unless ``cloud_enabled`` is True AND a
+    key reference is configured — and even then it is only used when the local
+    engine is unavailable (selector is local-first).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    engine: Literal["piper", "auto"] = Field(
+        default="piper",
+        description=(
+            "TTS engine selection. 'piper' = local OSS engine only. 'auto' = local "
+            "first, then the cloud fallback IF it is enabled + configured."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    voice: str = Field(
+        default="en_US-lessac-medium",
+        description="Default local-engine voice id (overridable per call).",
+        json_schema_extra={"hot_reload": True},
+    )
+    voice_base_url: str = Field(
+        default="",
+        description=(
+            "Override host for downloading local voice models (air-gapped / "
+            "self-hosted mirror). Empty = the engine's published voice host."
+        ),
+        json_schema_extra={"hot_reload": False},
+    )
+    cloud_enabled: bool = Field(
+        default=False,
+        description=(
+            "Opt-in switch for the cloud TTS fallback. False (default) = local "
+            "engine only; the text never leaves the machine."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_api_key: str = Field(
+        default="",
+        description=(
+            "Secret REFERENCE for the cloud TTS endpoint key — an env-var name, "
+            "'keychain:<service>', or 'file:<path>' (resolved at use, never the raw "
+            "secret). Empty disables the cloud fallback regardless of cloud_enabled."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description=(
+            "Base URL of the OpenAI-compatible speech endpoint for the cloud "
+            "fallback. Point this at a self-hosted endpoint to keep audio on-prem."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_voice: str = Field(
+        default="alloy",
+        description="Default voice id for the cloud fallback.",
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_model: str = Field(
+        default="tts-1",
+        description="Model id sent to the cloud speech endpoint.",
         json_schema_extra={"hot_reload": True},
     )
 
@@ -343,6 +412,7 @@ class Settings(BaseSettings):
     )
     governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
+    tts: TtsSettings = Field(default_factory=TtsSettings)
 
     @classmethod
     def settings_customise_sources(
