@@ -25,7 +25,6 @@ class PipelineStrip(Widget):
     DEFAULT_CSS = """
     PipelineStrip {
         height: 2;
-        layer: top;
         background: $color-surface;
         color: $color-text-secondary;
     }

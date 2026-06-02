@@ -40,7 +40,6 @@ class ConversationView(Widget):
 
     DEFAULT_CSS = """
     ConversationView {
-        layer: base;
         height: 1fr;
         border: solid $color-border;
         background: $color-bg;

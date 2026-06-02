@@ -9,11 +9,16 @@ text editor.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual import events
 from textual.message import Message
 from textual.widgets import TextArea
 
 from stackowl.infra.observability import log
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class SubmitTextArea(TextArea):
@@ -46,6 +51,20 @@ class SubmitTextArea(TextArea):
             self.text = text
             super().__init__()
 
+    #: Optional navigation hook.  When set and a key is pressed, it is consulted
+    #: BEFORE the editor's own handling: if it returns ``True`` the key is
+    #: considered consumed (e.g. the autocomplete dropdown moved its highlight)
+    #: and never reaches the editor — no submit, no cursor move, no insert.
+    nav_hook: Callable[[str], bool] | None = None
+
+    def set_nav_hook(self, hook: Callable[[str], bool] | None) -> None:
+        """Install (or clear) the navigation hook consulted on every key."""
+        log.tui.debug(
+            "[tui] submit_text_area.set_nav_hook: entry",
+            extra={"_fields": {"has_hook": hook is not None}},
+        )
+        self.nav_hook = hook
+
     async def _on_key(self, event: events.Key) -> None:
         """Intercept Enter / Shift+Enter; defer every other key to TextArea.
 
@@ -57,6 +76,18 @@ class SubmitTextArea(TextArea):
             "[tui] submit_text_area._on_key: entry",
             extra={"_fields": {"key": event.key}},
         )
+        # Navigation hook gets first refusal: when the autocomplete dropdown is
+        # open it consumes nav keys (up/down/tab/enter/escape) so they drive the
+        # dropdown instead of submitting / moving the cursor.
+        hook = self.nav_hook
+        if hook is not None and hook(event.key):
+            log.tui.debug(
+                "[tui] submit_text_area._on_key: decision — consumed by nav_hook",
+                extra={"_fields": {"key": event.key}},
+            )
+            event.prevent_default()
+            event.stop()
+            return
         if event.key == "enter":
             log.tui.debug(
                 "[tui] submit_text_area._on_key: submit",

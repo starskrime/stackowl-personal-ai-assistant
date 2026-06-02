@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from stackowl.tui.widgets.autocomplete_dropdown import AutocompleteDropdown
 from stackowl.tui.widgets.banner import Banner
 from stackowl.tui.widgets.compose_area import ComposeArea
 from stackowl.tui.widgets.constellation_view import ConstellationView, OwlCard
@@ -11,6 +12,7 @@ from stackowl.tui.widgets.pipeline_strip import PipelineStrip
 from stackowl.tui.widgets.submit_text_area import SubmitTextArea
 
 __all__ = [
+    "AutocompleteDropdown",
     "Banner",
     "ComposeArea",
     "ConstellationView",

@@ -25,7 +25,12 @@ class ComposeSubmittedMessage(FrozenMessage):
     text: str
 
 
-@dataclass(frozen=True)
+# NOT frozen: like ComposeSubmittedMessage above, this message bubbles from the
+# ComposeArea child widget up to the App, and Textual's pump mutates internal
+# bookkeeping during bubbling — which a frozen dataclass rejects, crashing the
+# pump.  Payload immutability is preserved by convention (set once at
+# construction); the FrozenMessage base permits only the pump's writes.
+@dataclass
 class AutocompleteSelectedMessage(FrozenMessage):
     """Emitted when the user picks an entry from the autocomplete dropdown.
 

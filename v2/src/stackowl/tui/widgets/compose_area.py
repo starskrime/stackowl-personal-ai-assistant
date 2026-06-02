@@ -11,12 +11,19 @@ from textual.widgets import Static, TextArea
 
 from stackowl.infra.observability import log
 from stackowl.tui.i18n import localize
-from stackowl.tui.messages import ComposeAreaStateMessage, ComposeSubmittedMessage
+from stackowl.tui.messages import (
+    AutocompleteSelectedMessage,
+    ComposeAreaStateMessage,
+    ComposeSubmittedMessage,
+)
+from stackowl.tui.widgets.autocomplete_dropdown import AutocompleteDropdown
 from stackowl.tui.widgets.compose_helpers import (
     AutocompleteKind,
     AutocompleteState,
     CommandInfo,
     build_state,
+    filter_candidates,
+    filter_command_infos,
 )
 from stackowl.tui.widgets.submit_text_area import SubmitTextArea
 
@@ -27,6 +34,7 @@ if TYPE_CHECKING:
 
 _INPUT_ID = "compose_input"
 _PLACEHOLDER_ID = "compose_placeholder"
+_DROPDOWN_ID = "autocomplete_dropdown"
 
 _STATE_IDLE = "idle"
 _STATE_COMPOSING = "composing"
@@ -45,6 +53,7 @@ class ComposeArea(Widget):
 
     DEFAULT_CSS = """
     ComposeArea {
+        dock: bottom;
         height: 5;
         min-height: 3;
         background: $color-surface;
@@ -101,6 +110,7 @@ class ComposeArea(Widget):
         self._autocomplete_state: AutocompleteState = AutocompleteState(
             kind=AutocompleteKind.NONE, prefix="", candidates=()
         )
+        self._dropdown_open: bool = False
 
     # ------------------------------------------------------------------ binding
     def set_command_names(self, names: Iterable[str]) -> None:
@@ -134,6 +144,28 @@ class ComposeArea(Widget):
             localize("compose.placeholder"),
             id=_PLACEHOLDER_ID,
             classes="compose-placeholder",
+        )
+        yield AutocompleteDropdown(id=_DROPDOWN_ID)
+
+    def on_mount(self) -> None:
+        """Wire the editor's nav hook to the dropdown router; start hidden."""
+        log.tui.debug(
+            "[tui] compose_area.on_mount: entry",
+            extra={"_fields": {}},
+        )
+        try:
+            editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
+            editor.nav_hook = self._handle_autocomplete_key
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] compose_area.on_mount: editor not mounted",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
+        self._hide_autocomplete()
+        log.tui.debug(
+            "[tui] compose_area.on_mount: exit",
+            extra={"_fields": {"dropdown_open": self._dropdown_open}},
         )
 
     # ------------------------------------------------------------------ reactive
@@ -284,32 +316,139 @@ class ComposeArea(Widget):
         placeholder.update(text)
 
     # ------------------------------------------------------------------ autocomplete
+    def _dropdown(self) -> AutocompleteDropdown | None:
+        """Self-healing accessor for the dropdown overlay."""
+        try:
+            return self.query_one(f"#{_DROPDOWN_ID}", AutocompleteDropdown)
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] compose_area._dropdown: not mounted",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
+            return None
+
     def _show_command_autocomplete(self, prefix: str) -> None:
+        # Use filter_command_infos (carries descriptions) against the same
+        # prefix the name-only build_state already computed.
+        infos = filter_command_infos(prefix, self._command_infos)
         log.tui.debug(
             "[tui] compose_area._show_command_autocomplete: step",
-            extra={
-                "_fields": {
-                    "prefix_len": len(prefix),
-                    "candidates": len(self._autocomplete_state.candidates),
-                }
-            },
+            extra={"_fields": {"prefix_len": len(prefix), "candidates": len(infos)}},
         )
+        if not infos:
+            self._hide_autocomplete()
+            return
+        items: list[tuple[str, str | None]] = [
+            (ci.name, ci.description) for ci in infos
+        ]
+        dropdown = self._dropdown()
+        if dropdown is None:
+            return
+        dropdown.set_items(items)
+        dropdown.display = True
+        self._dropdown_open = True
 
     def _show_owl_autocomplete(self, prefix: str) -> None:
+        names = filter_candidates(prefix, self._owl_names)
         log.tui.debug(
             "[tui] compose_area._show_owl_autocomplete: step",
-            extra={
-                "_fields": {
-                    "prefix_len": len(prefix),
-                    "candidates": len(self._autocomplete_state.candidates),
-                }
-            },
+            extra={"_fields": {"prefix_len": len(prefix), "candidates": len(names)}},
         )
+        if not names:
+            self._hide_autocomplete()
+            return
+        items: list[tuple[str, str | None]] = [(n, None) for n in names]
+        dropdown = self._dropdown()
+        if dropdown is None:
+            return
+        dropdown.set_items(items)
+        dropdown.display = True
+        self._dropdown_open = True
 
     def _hide_autocomplete(self) -> None:
         log.tui.debug(
             "[tui] compose_area._hide_autocomplete: step",
             extra={"_fields": {}},
+        )
+        self._dropdown_open = False
+        dropdown = self._dropdown()
+        if dropdown is not None:
+            dropdown.display = False
+
+    def _handle_autocomplete_key(self, key: str) -> bool:
+        """Nav-hook router — drive the dropdown while it is open.
+
+        Returns ``True`` iff the key was consumed by the dropdown (so the editor
+        must NOT process it).  When the dropdown is closed, or for keys the
+        dropdown does not own, returns ``False`` so the editor handles the key
+        normally (and ``on_text_area_changed`` refreshes the candidate list).
+        """
+        if not self._dropdown_open:
+            return False
+        dropdown = self._dropdown()
+        if dropdown is None:
+            self._dropdown_open = False
+            return False
+        log.tui.debug(
+            "[tui] compose_area._handle_autocomplete_key: decision",
+            extra={"_fields": {"key": key}},
+        )
+        if key == "down":
+            dropdown.move_down()
+            return True
+        if key == "up":
+            dropdown.move_up()
+            return True
+        if key in ("tab", "enter"):
+            self._complete_current()
+            return True
+        if key == "escape":
+            self._hide_autocomplete()
+            return True
+        return False
+
+    def _complete_current(self) -> None:
+        """Accept the highlighted candidate: rewrite editor text + post message."""
+        dropdown = self._dropdown()
+        if dropdown is None:
+            return
+        name = dropdown.current()
+        if name is None:
+            return
+        is_command = self._autocomplete_state.kind == AutocompleteKind.COMMAND
+        completion_type = "command" if is_command else "owl"
+        log.tui.debug(
+            "[tui] compose_area._complete_current: entry",
+            extra={"_fields": {"name": name, "type": completion_type}},
+        )
+        try:
+            editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] compose_area._complete_current: editor not mounted",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
+            return
+        if is_command:
+            # Command trigger is always at line start ("/prefix") → replace wholesale.
+            new_text = f"/{name} "
+        else:
+            # Replace the last "@<prefix>" token with "@<name> ".
+            text = editor.text
+            at_idx = text.rfind("@")
+            new_text = f"@{name} " if at_idx < 0 else f"{text[:at_idx]}@{name} "
+        editor.text = new_text
+        editor.move_cursor(editor.document.end)
+        self._set_placeholder_visible(not new_text)
+        self.post_message(
+            AutocompleteSelectedMessage(selected=name, completion_type=completion_type)
+        )
+        self._hide_autocomplete()
+        log.tui.debug(
+            "[tui] compose_area._complete_current: exit",
+            extra={"_fields": {"text_len": len(new_text), "type": completion_type}},
         )
 
     # ------------------------------------------------------------------ actions

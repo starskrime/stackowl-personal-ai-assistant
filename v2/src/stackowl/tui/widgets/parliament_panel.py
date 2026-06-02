@@ -49,6 +49,7 @@ class ParliamentPanel(Widget):
     DEFAULT_CSS = """
     ParliamentPanel {
         layer: overlay;
+        display: none;
         width: 80%;
         height: 80%;
         background: $color-bg-elevated;
