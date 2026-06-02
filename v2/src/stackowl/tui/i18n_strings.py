@@ -13,10 +13,25 @@ from stackowl.infra.observability import log
 from stackowl.tui.i18n import register_translations
 
 _EN: dict[str, str] = {
+    # Banner
     "banner.tagline_primary": "Personal AI Assistant",
     "banner.tagline_secondary": "Challenge Everything",
+    # Transcript
     "transcript.role.you": "you",
+    # Compose box
+    "compose.placeholder": "Message StackOwl…   ( /  commands  ·  Shift+Enter  newline )",
+    "compose.mcp_disabled": "Input paused — an MCP spectator is connected",
+    "compose.parliament_active": "Parliament in session…",
+    # Autocomplete
     "autocomplete.no_matches": "No matches",
+    # Parliament
+    "parliament.round": "Round",
+    "parliament.consensus": "Consensus",
+    "parliament.recommendation": "Recommendation",
+    "parliament.disagreements": "Disagreements",
+    "parliament.tip": "Tip",
+    # Evolution inspection
+    "evolution.inspection.no_changes": "No trait changes",
 }
 
 
