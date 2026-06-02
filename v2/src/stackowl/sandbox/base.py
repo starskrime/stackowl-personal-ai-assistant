@@ -74,7 +74,7 @@ class SandboxAvailability:
 class SandboxBackend(ABC):
     """Abstract isolated code-execution backend (E11 keystone trust boundary).
 
-    Implementations MUST uphold the five module-level INVARIANTS. In particular
+    Implementations MUST uphold the seven module-level INVARIANTS. In particular
     :meth:`run` NEVER raises for an operational failure — it returns a structured
     :class:`ExecResult` (the selector / tool surface it), and :meth:`is_available`
     likewise never raises.

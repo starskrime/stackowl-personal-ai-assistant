@@ -14,11 +14,13 @@ so the isolation layer cannot be entangled with the tool surface it guards.
 from __future__ import annotations
 
 from stackowl.sandbox.base import SandboxAvailability, SandboxBackend
+from stackowl.sandbox.bwrap import BwrapSandbox
 from stackowl.sandbox.capability import SandboxCapability, SandboxProbe
 from stackowl.sandbox.selector import SandboxSelection, SandboxSelector
 from stackowl.sandbox.spec import ExecResult, ExecSpec, ExitReason, ResourceCaps
 
 __all__ = [
+    "BwrapSandbox",
     "ExecResult",
     "ExecSpec",
     "ExitReason",
