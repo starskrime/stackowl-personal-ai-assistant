@@ -298,6 +298,7 @@ class ToolRegistry:
         from stackowl.tools.knowledge.skills_list import SkillsListTool
         from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
         from stackowl.tools.knowledge.transcripts import TranscriptsTool
+        from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
         from stackowl.tools.meta.tool_build import ToolBuildTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
@@ -435,4 +436,12 @@ class ToolRegistry:
         # deadline uses an injected Clock; the poll loop sleeps between polls (never
         # a busy spin) and honors cancellation. No constructor wiring; severity read.
         registry.register(WaitTool())
+        # vision_analyze — describe / answer a question about an image (local path
+        # or http(s) URL) on the LOCAL-FIRST vision substrate (E10-S1). Composes the
+        # ImageLoader + VisionSelector + a provider.complete() image-block call; the
+        # image stays on-box when a local vision model is configured, and a CLOUD
+        # backend is disclosed in the output (egress, mirroring pdf Mode B). Reads
+        # get_services().provider_registry at execute time (no constructor wiring);
+        # self-healing → structured result, never raises. Severity read; group media.
+        registry.register(VisionAnalyzeTool())
         return registry
