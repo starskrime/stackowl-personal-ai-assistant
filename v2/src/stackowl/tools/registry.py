@@ -302,6 +302,7 @@ class ToolRegistry:
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
         from stackowl.tools.planning.store import PlanStore
+        from stackowl.tools.process.process_tool import ProcessTool
         from stackowl.tools.planning.todo import TodoTool
         from stackowl.tools.planning.update_plan import UpdatePlanTool
         from stackowl.tools.scheduling.cronjob import CronjobTool
@@ -421,4 +422,10 @@ class ToolRegistry:
         # the batch presentation IS the consent. No constructor wiring — it reads
         # tool_registry / clarify_gateway / audit_logger off get_services().
         registry.register(BatchApproveTool())
+        # process — run/supervise a long-running or interactive background OS
+        # process (start/poll/log/write/submit/kill/close/list). A thin surface over
+        # get_services().process_registry (E9-S0): the catastrophic gate + concurrency
+        # cap + mandatory TTL live INSIDE the registry; the tool surfaces its
+        # structured refusals as clean results. No constructor wiring; severity write.
+        registry.register(ProcessTool())
         return registry
