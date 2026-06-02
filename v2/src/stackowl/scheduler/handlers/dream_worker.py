@@ -2,7 +2,7 @@
 
 Provides :func:`register_dream_worker_handler` (factory used by the startup
 orchestrator) and :func:`seed_dream_worker_schedule` (idempotent INSERT
-that gives the JobScheduler a daily-at-03:00 row to dispatch).
+that gives the JobScheduler an ``every <interval>m`` row to dispatch).
 """
 
 from __future__ import annotations
@@ -25,12 +25,20 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 
 
-_DREAM_SCHEDULE = "daily@03:00"
+# Default cadence in minutes when a caller doesn't pass an interval. The real
+# value is config-driven (MemorySettings.dream_worker_interval_minutes) and
+# threaded in by the assembly caller — this default keeps direct callers valid.
+_DEFAULT_INTERVAL_MINUTES = 30
 # BASE idempotency key only. The scheduler suffixes ``@<next_run_at>`` per
 # occurrence (JobScheduler._occurrence_key), so a static "run once ever" key
 # would wedge this recurring job in a permanent idempotent skip.
 _DREAM_IDEMPOTENCY_KEY = "dream_worker"
-_SELECT_EXISTING_SQL = "SELECT job_id FROM jobs WHERE handler_name = ?"
+_SELECT_EXISTING_SQL = (
+    "SELECT job_id, schedule FROM jobs WHERE handler_name = ?"
+)
+_UPDATE_SCHEDULE_SQL = (
+    "UPDATE jobs SET schedule = ?, next_run_at = ? WHERE handler_name = 'dream_worker'"
+)
 _INSERT_JOB_SQL = """
 INSERT INTO jobs
     (job_id, handler_name, schedule, idempotency_key, last_run_at,
@@ -73,29 +81,52 @@ def register_dream_worker_handler(
     return handler
 
 
-def _next_run_at_local_3am() -> str:
-    """Return the next local-time 03:00 as an ISO8601 string (UTC)."""
-    now = datetime.now()
-    candidate = now.replace(hour=3, minute=0, second=0, microsecond=0)
-    if candidate <= now:
-        candidate += timedelta(days=1)
-    return candidate.astimezone(UTC).isoformat()
+async def seed_dream_worker_schedule(
+    db: DbPool, interval_minutes: int = _DEFAULT_INTERVAL_MINUTES
+) -> None:
+    """Ensure the ``dream_worker`` job runs on the configured ``every <N>m`` cadence.
 
+    * No existing row → INSERT a fresh ``every <interval>m`` job.
+    * Existing row whose ``schedule`` differs from the configured value → REPAIR
+      it in place (additive UPDATE), so a live ``daily@03:00`` row migrates to
+      the new cadence. This is what makes the cadence config-driven across
+      upgrades without a destructive migration.
+    * Existing row already on the configured cadence → no-op.
 
-async def seed_dream_worker_schedule(db: DbPool) -> None:
-    """Insert a single ``dream_worker`` row into ``jobs`` if none exists.
-
-    Idempotent: a second call is a no-op. Schedule is ``daily@03:00`` so the
-    existing :func:`_compute_next_run` parser advances ``next_run_at``
-    correctly on every completion.
+    The idempotency key stays the base ``dream_worker`` — the scheduler suffixes
+    the serviced occurrence per tick.
     """
     # 1. ENTRY
-    log.heartbeat.debug("[scheduler] dream_worker schedule: seed entry")
+    schedule = f"every {interval_minutes}m"
+    log.heartbeat.debug(
+        "[scheduler] dream_worker schedule: seed entry",
+        extra={"_fields": {"schedule": schedule}},
+    )
+    next_run_at = (
+        datetime.now(UTC) + timedelta(minutes=interval_minutes)
+    ).isoformat()
     existing = await db.fetch_all(_SELECT_EXISTING_SQL, ("dream_worker",))
     if existing:
-        log.heartbeat.debug(
-            "[scheduler] dream_worker schedule: already seeded — noop",
-            extra={"_fields": {"row_count": len(existing)}},
+        current = existing[0]["schedule"]
+        if current == schedule:
+            # 2. DECISION — already on the configured cadence.
+            log.heartbeat.debug(
+                "[scheduler] dream_worker schedule: already current — noop",
+                extra={"_fields": {"schedule": schedule}},
+            )
+            return
+        # 2. DECISION — repair a legacy/mismatched cadence in place.
+        await db.execute(_UPDATE_SCHEDULE_SQL, (schedule, next_run_at))
+        # 4. EXIT
+        log.heartbeat.info(
+            "[scheduler] dream_worker schedule repaired",
+            extra={
+                "_fields": {
+                    "old_schedule": current,
+                    "new_schedule": schedule,
+                    "next_run_at": next_run_at,
+                }
+            },
         )
         return
     job_id = f"dream-{uuid.uuid4().hex[:8]}"
@@ -105,10 +136,10 @@ async def seed_dream_worker_schedule(db: DbPool) -> None:
         (
             job_id,
             "dream_worker",
-            _DREAM_SCHEDULE,
+            schedule,
             _DREAM_IDEMPOTENCY_KEY,
             None,
-            _next_run_at_local_3am(),
+            next_run_at,
             "pending",
             0,
             now_iso,
@@ -117,7 +148,7 @@ async def seed_dream_worker_schedule(db: DbPool) -> None:
     # 4. EXIT
     log.heartbeat.info(
         "[scheduler] dream_worker schedule seeded",
-        extra={"_fields": {"job_id": job_id, "schedule": _DREAM_SCHEDULE}},
+        extra={"_fields": {"job_id": job_id, "schedule": schedule}},
     )
 
 

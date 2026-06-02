@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.memory.sqlite_helpers import row_to_staged
 
@@ -24,6 +26,7 @@ WHERE status = 'staged'
         (source_type = 'conversation_fact' AND reinforcement_count >= ?)
      OR (source_type != 'conversation_fact' AND reinforcement_count >= ?)
   )
+  AND staged_at <= ?
 """
 
 _SELECT_BY_ID_SQL = """
@@ -66,6 +69,8 @@ class FactPromoter:
         reinforcement_required: int = 3,
         conversation_fact_reinforcement_required: int = 1,
         lancedb: LanceDBAdapter | None = None,
+        clock: Clock | None = None,
+        settle_minutes: int = 0,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
@@ -76,6 +81,7 @@ class FactPromoter:
                     "reinforcement_required": reinforcement_required,
                     "conversation_fact_reinforcement_required": conversation_fact_reinforcement_required,
                     "has_lancedb": lancedb is not None,
+                    "settle_minutes": settle_minutes,
                 }
             },
         )
@@ -84,8 +90,37 @@ class FactPromoter:
         self._reinforcement_required = reinforcement_required
         self._conversation_fact_reinforcement_required = conversation_fact_reinforcement_required
         self._lancedb = lancedb
+        # Injected time source (ARCH-99) — never call datetime.now() directly so
+        # the settle window is deterministically testable.
+        self._clock: Clock = clock or WallClock()
+        self._settle_minutes = settle_minutes
         # 4. EXIT
         log.memory.debug("[memory] fact_promoter.init: exit")
+
+    def _settle_cutoff(self) -> str:
+        """ISO-8601 (offset form) cutoff: facts staged at/before this are eligible.
+
+        Matches the ``+00:00`` offset form written by the bridge — never a
+        ``Z`` suffix — so lexicographic comparison in SQLite stays correct.
+        """
+        return (
+            self._clock.now() - timedelta(minutes=self._settle_minutes)
+        ).isoformat()
+
+    def eligibility_params(self) -> dict[str, object]:
+        """Expose the eligibility gate so the DreamWorker can mirror it exactly.
+
+        Returns the same thresholds + settle cutoff that ``promote_eligible``
+        binds, so outcome-verification counts *exactly* what would have promoted.
+        """
+        return {
+            "confidence_threshold": self._confidence_threshold,
+            "conversation_fact_reinforcement_required": (
+                self._conversation_fact_reinforcement_required
+            ),
+            "reinforcement_required": self._reinforcement_required,
+            "settle_cutoff": self._settle_cutoff(),
+        }
 
     async def promote_eligible(self) -> int:
         """Scan ``staged_facts`` for promotion candidates. Returns count promoted."""
@@ -100,6 +135,8 @@ class FactPromoter:
                 }
             },
         )
+        # 2. DECISION — only facts settled past the window are eligible.
+        cutoff = self._settle_cutoff()
         # 3. STEP — select eligible (conversation_fact uses lower threshold)
         rows = await self._db.fetch_all(
             _SELECT_ELIGIBLE_SQL,
@@ -107,6 +144,7 @@ class FactPromoter:
                 self._confidence_threshold,
                 self._conversation_fact_reinforcement_required,
                 self._reinforcement_required,
+                cutoff,
             ),
         )
         log.memory.debug(

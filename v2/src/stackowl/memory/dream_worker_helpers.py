@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -39,6 +40,32 @@ PHASE_ORDER: tuple[PhaseName, ...] = (
 
 _RESUME_WINDOW_HOURS = 25
 _AUDIT_EVENT_TYPE = "memory.contradiction"
+
+# Mirrors FactPromoter._SELECT_ELIGIBLE_SQL EXACTLY (same gate: per-source
+# reinforcement, confidence threshold, settle cutoff) but COUNTs rows still
+# status='staged' — the OUTCOME signal that eligible memories never moved
+# short→long. Kept in lock-step with the promoter query by review.
+_COUNT_STUCK_ELIGIBLE_SQL = """
+SELECT COUNT(*) AS n
+FROM staged_facts
+WHERE status = 'staged'
+  AND confidence >= ?
+  AND (
+        (source_type = 'conversation_fact' AND reinforcement_count >= ?)
+     OR (source_type != 'conversation_fact' AND reinforcement_count >= ?)
+  )
+  AND staged_at <= ?
+"""
+
+_MARK_FAILED_SQL = """
+UPDATE dreamworker_runs
+   SET status = 'failed', error = ?, completed_at = ?
+ WHERE run_id = ?
+"""
+
+_RECORD_STUCK_SQL = (
+    "UPDATE dreamworker_runs SET stuck_eligible = ? WHERE run_id = ?"
+)
 
 
 class DreamWorkerCheckpoint(BaseModel):
@@ -76,7 +103,7 @@ UPDATE dreamworker_runs
 
 _FINALIZE_RUN_SQL = """
 UPDATE dreamworker_runs
-   SET completed_at = ?, phase = 'complete'
+   SET completed_at = ?, phase = 'complete', status = 'completed'
  WHERE run_id = ?
 """
 
@@ -183,13 +210,110 @@ async def advance_phase(
 
 
 async def finalize_run(db: DbPool, run_id: str) -> None:
-    """Mark a run completed_at = now and set phase = 'complete'."""
+    """Mark a run completed_at = now, phase = 'complete', status = 'completed'."""
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(_FINALIZE_RUN_SQL, (now_iso, run_id))
     log.memory.info(
         "[memory] dw_helpers.finalize_run: exit",
         extra={"_fields": {"run_id": run_id, "completed_at": now_iso}},
     )
+
+
+async def mark_run_failed(
+    db: DbPool, run_id: str, phase: str, error: str
+) -> None:
+    """Record a terminal failure on a run (status='failed' + error + completed_at).
+
+    Wrapped in its own try/except logged at WARNING so a tracker-write failure
+    can never mask the original error that the caller is about to surface (no
+    hidden errors — degrade loudly, never silently).
+    """
+    # 1. ENTRY
+    log.memory.debug(
+        "[memory] dw_helpers.mark_run_failed: entry",
+        extra={"_fields": {"run_id": run_id, "phase": phase}},
+    )
+    now_iso = datetime.now(UTC).isoformat()
+    # Truncate the error so a giant traceback can't bloat the row.
+    error_text = f"{phase}: {error}"[:2000]
+    try:
+        await db.execute(_MARK_FAILED_SQL, (error_text, now_iso, run_id))
+    except Exception as exc:  # B5 — tracker write must not mask the real error
+        log.memory.warning(
+            "[memory] dw_helpers.mark_run_failed: tracker write FAILED",
+            exc_info=exc,
+            extra={"_fields": {"run_id": run_id, "phase": phase}},
+        )
+        return
+    # 4. EXIT
+    log.memory.warning(
+        "[memory] dw_helpers.mark_run_failed: run marked failed",
+        extra={"_fields": {"run_id": run_id, "phase": phase}},
+    )
+
+
+async def retry_once_promotion(
+    promote: Callable[[], Awaitable[int]],
+) -> int:
+    """Run the promotion call with bounded retry-once.
+
+    On the first exception, log at ERROR and retry exactly once. If the retry
+    also raises, re-raise so the caller's failure path records status='failed'.
+    Only the promotion phase is retried — checkpoint-resume + the cadence cover
+    whole-run recovery.
+    """
+    try:
+        return await promote()
+    except Exception as exc:  # B5 — loud, then one bounded retry
+        log.memory.error(
+            "[memory] dw_helpers.retry_once_promotion: promotion failed — retrying once",
+            exc_info=exc,
+        )
+        return await promote()
+
+
+async def count_stuck_eligible(
+    db: DbPool,
+    *,
+    confidence_threshold: float,
+    conversation_fact_reinforcement_required: int,
+    reinforcement_required: int,
+    settle_cutoff: str,
+) -> int:
+    """Count staged facts that SHOULD have promoted but are still status='staged'.
+
+    Mirrors the promoter eligibility gate exactly (per-source reinforcement,
+    confidence threshold, settle cutoff) so a non-zero result means eligible
+    memories failed to move short→long — the OUTCOME we verify, not merely that
+    the promotion phase ran.
+    """
+    rows = await db.fetch_all(
+        _COUNT_STUCK_ELIGIBLE_SQL,
+        (
+            confidence_threshold,
+            conversation_fact_reinforcement_required,
+            reinforcement_required,
+            settle_cutoff,
+        ),
+    )
+    count = int(rows[0]["n"]) if rows else 0
+    log.memory.debug(
+        "[memory] dw_helpers.count_stuck_eligible: exit",
+        extra={"_fields": {"stuck": count}},
+    )
+    return count
+
+
+async def record_stuck_eligible(db: DbPool, run_id: str, count: int) -> None:
+    """Persist the stuck-eligible count on the run row (best-effort, loud on fail)."""
+    try:
+        await db.execute(_RECORD_STUCK_SQL, (count, run_id))
+    except Exception as exc:  # B5
+        log.memory.warning(
+            "[memory] dw_helpers.record_stuck_eligible: write FAILED",
+            exc_info=exc,
+            extra={"_fields": {"run_id": run_id, "count": count}},
+        )
 
 
 async def load_committed_for_scan(db: DbPool) -> list[MemoryRecord]:
@@ -287,8 +411,12 @@ __all__: list[str] = [
     "DreamWorkerCheckpoint",
     "PhaseName",
     "advance_phase",
+    "count_stuck_eligible",
     "finalize_run",
     "load_committed_for_scan",
     "mark_audit_contradictions",
+    "mark_run_failed",
+    "record_stuck_eligible",
+    "retry_once_promotion",
     "select_resumable_run",
 ]

@@ -71,12 +71,14 @@ class MemoryBridge(ABC):
         ...
 
     async def recent_conversation_turns(
-        self, session_id: str, limit: int = 6,
+        self, session_id: str, limit: int = 6, staged_before: str | None = None,
     ) -> list[StagedFact]:
         """Return last *limit* conversation staged facts for *session_id*, oldest-first.
 
         Used by ``classify`` to give the LLM short-term memory of the in-progress
         session even before the dream worker promotes facts to ``committed_facts``.
+        ``staged_before`` is an optional ISO-8601 cutoff (the DreamWorker settle
+        window); ``None`` keeps the default short-term-recall behaviour.
         Default implementation returns ``[]``; concrete bridges override.
         """
         return []

@@ -149,11 +149,16 @@ class MemoryAssembly:
         )
 
         # 5) Consolidation building blocks.
+        from stackowl.infra.clock import WallClock
+
+        clock = WallClock()
         promoter = FactPromoter(
             db=db,
             confidence_threshold=mem.promotion_confidence_threshold,
             reinforcement_required=mem.reinforcement_required,
             conversation_fact_reinforcement_required=mem.conversation_fact_reinforcement_required,
+            clock=clock,
+            settle_minutes=mem.dream_worker_settle_minutes,
         )
         pruner = MemoryPruner(
             db=db,
@@ -190,6 +195,8 @@ class MemoryAssembly:
             db=db, extractor=fact_extractor, bridge=bridge,
             message_limit=mem.extraction_after_n_messages * 4,
             dedup_similarity=mem.conversation_fact_dedup_similarity,
+            clock=clock,
+            settle_minutes=mem.dream_worker_settle_minutes,
         )
 
         # 6) DreamWorker — register via existing factory (respects B9 boundary).
@@ -202,7 +209,9 @@ class MemoryAssembly:
             detector=detector,
             miner=conversation_miner,
         )
-        await seed_dream_worker_schedule(db)
+        await seed_dream_worker_schedule(
+            db, interval_minutes=mem.dream_worker_interval_minutes
+        )
 
         # 7b) FactExtractionJobHandler — register so the scheduler dispatches
         # per-session extraction jobs as they get enqueued upstream.

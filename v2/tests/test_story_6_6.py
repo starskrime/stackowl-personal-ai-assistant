@@ -131,7 +131,8 @@ def test_migration_count_is_17(tmp_path: Path) -> None:
     """
     runner = MigrationRunner(db_path=tmp_path / "count.db")
     results = runner.run()
-    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns
+    # ACTUAL migration-file count — bump by one whenever a migration is added.
+    assert len(results) == 41  # +0039, +0040, +0041 dreamworker status
 
 
 def test_dream_worker_checkpoint_field_types() -> None:

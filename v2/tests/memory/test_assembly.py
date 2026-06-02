@@ -115,7 +115,9 @@ async def test_build_seeds_dream_worker_schedule(tmp_db: DbPool) -> None:
         ("dream_worker",),
     )
     assert len(rows) == 1
-    assert rows[0]["schedule"] == "daily@03:00"
+    # Cadence is config-driven (MemorySettings.dream_worker_interval_minutes,
+    # default 30) — the legacy daily@03:00 literal is gone.
+    assert rows[0]["schedule"] == "every 30m"
 
 
 async def test_build_is_idempotent_on_schedule_seed(tmp_db: DbPool) -> None:

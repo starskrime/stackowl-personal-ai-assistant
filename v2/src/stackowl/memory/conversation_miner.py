@@ -8,9 +8,11 @@ can commit them. Idempotent: re-mining the same turns does not duplicate facts.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from stackowl.exceptions import DuplicateFactError
+from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.memory.fact_extractor import EXTRACTED_FACT_SOURCE_TYPE
 from stackowl.memory.sqlite_helpers import cosine_similarity, unpack_embedding
@@ -69,19 +71,36 @@ class ConversationMiner:
         bridge: MemoryBridge,
         message_limit: int = 40,
         dedup_similarity: float = 0.92,
+        clock: Clock | None = None,
+        settle_minutes: int = 0,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
             "[memory] conversation_miner.init: entry",
-            extra={"_fields": {"message_limit": message_limit, "dedup_similarity": dedup_similarity}},
+            extra={
+                "_fields": {
+                    "message_limit": message_limit,
+                    "dedup_similarity": dedup_similarity,
+                    "settle_minutes": settle_minutes,
+                }
+            },
         )
         self._db = db
         self._extractor = extractor
         self._bridge = bridge
         self._message_limit = message_limit
         self._dedup_similarity = dedup_similarity
+        # Injected time source (ARCH-99) so the settle window is deterministic.
+        self._clock: Clock = clock or WallClock()
+        self._settle_minutes = settle_minutes
         # 4. EXIT
         log.memory.debug("[memory] conversation_miner.init: exit")
+
+    def _settle_cutoff(self) -> str:
+        """ISO-8601 (offset form) cutoff for turns eligible to mine."""
+        return (
+            self._clock.now() - timedelta(minutes=self._settle_minutes)
+        ).isoformat()
 
     async def mine_all(self) -> int:
         """Mine all sessions with staged conversation turns. Returns total facts staged."""
@@ -122,7 +141,9 @@ class ConversationMiner:
             extra={"_fields": {"session_id": session_id, "message_limit": self._message_limit}},
         )
         turns = await self._bridge.recent_conversation_turns(
-            session_id=session_id, limit=self._message_limit
+            session_id=session_id,
+            limit=self._message_limit,
+            staged_before=self._settle_cutoff(),
         )
         # 2. DECISION
         if not turns:

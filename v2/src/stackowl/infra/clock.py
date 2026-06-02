@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 
@@ -37,6 +37,10 @@ class Clock(Protocol):
         """Return monotonic time in fractional seconds."""
         ...
 
+    def now(self) -> datetime:
+        """Return the current wall-clock time as a timezone-aware UTC datetime."""
+        ...
+
     async def async_sleep(self, seconds: float) -> None:
         """Async-compatible sleep for the given number of seconds."""
         ...
@@ -47,6 +51,9 @@ class WallClock:
 
     def monotonic(self) -> float:
         return time.monotonic()
+
+    def now(self) -> datetime:
+        return datetime.now(UTC)
 
     async def async_sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds)

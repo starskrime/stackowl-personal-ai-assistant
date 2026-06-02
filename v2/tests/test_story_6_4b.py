@@ -234,8 +234,10 @@ def test_migration_count_is_15(migration_runner: Any) -> None:
     # Migration 0020 (Story 7.5 webhook_events_log) raised it to 20;
     # Migration 0036 (E4 staged_facts agent_self source_type) raised it to 36;
     # this fixture's name is kept historical for log searchability.
+    # NOTE: this is the ACTUAL count of migration files — bump it by one every
+    # time a new migration is added (0041 dreamworker status → 41).
     results = migration_runner.run()
-    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns
+    assert len(results) == 41  # +0039 conversation_fact, +0040 occurrence idempotency, +0041 dreamworker status
 
 
 async def test_reindex_queue_table_present(tmp_path: Path) -> None:

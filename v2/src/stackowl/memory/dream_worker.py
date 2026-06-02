@@ -20,9 +20,13 @@ from stackowl.memory.dream_worker_helpers import (
     DreamWorkerCheckpoint,
     PhaseName,
     advance_phase,
+    count_stuck_eligible,
     finalize_run,
     load_committed_for_scan,
     mark_audit_contradictions,
+    mark_run_failed,
+    record_stuck_eligible,
+    retry_once_promotion,
     select_resumable_run,
 )
 from stackowl.scheduler.base import JobHandler
@@ -122,6 +126,10 @@ class DreamWorkerJobHandler(JobHandler):
                     }
                 },
             )
+            # Failure tracker — record the terminal status before surfacing.
+            await mark_run_failed(
+                db, checkpoint.run_id, phase=checkpoint.phase, error=str(exc)
+            )
             return JobResult(
                 job_id=job.job_id,
                 success=False,
@@ -129,6 +137,10 @@ class DreamWorkerJobHandler(JobHandler):
                 error=f"{checkpoint.phase}: {exc}",
                 duration_ms=duration_ms,
             )
+
+        # Outcome verification — confirm eligible memories actually moved
+        # short→long. Never fails the run (next cycle retries) but records loudly.
+        await self._verify_outcome(db, checkpoint)
 
         await finalize_run(db, checkpoint.run_id)
         duration_ms = (time.monotonic() - t0) * 1000.0
@@ -256,7 +268,9 @@ class DreamWorkerJobHandler(JobHandler):
     async def _phase_promotion(
         self, checkpoint: DreamWorkerCheckpoint
     ) -> DreamWorkerCheckpoint:
-        promoted = await self._promoter.promote_eligible()
+        # Bounded retry-once: a transient promotion failure self-heals; a second
+        # failure re-raises so the failure path records status='failed'.
+        promoted = await retry_once_promotion(self._promoter.promote_eligible)
         return checkpoint.model_copy(update={"facts_promoted": promoted})
 
     async def _phase_pruning(
@@ -284,6 +298,71 @@ class DreamWorkerJobHandler(JobHandler):
         self, db: DbPool, reports: list[ContradictionReport]
     ) -> None:
         await mark_audit_contradictions(db, reports)
+
+    async def _verify_outcome(
+        self, db: DbPool, checkpoint: DreamWorkerCheckpoint
+    ) -> None:
+        """Confirm eligible memories actually moved short→long this pass.
+
+        Mirrors the promoter's eligibility gate (incl. the settle cutoff) to
+        COUNT rows still ``status='staged'``. If any remain: record the count on
+        the run, re-promote once, and re-query. If still stuck, write a loud
+        loud ERROR is emitted. The run is NOT failed for stuck memories — the
+        next cadence cycle retries — but the signal is recorded on the run row
+        (``dreamworker_runs.stuck_eligible``) and surfaced at ERROR level.
+        """
+        # 1. ENTRY — the promoter must describe its gate so we mirror it exactly.
+        params_fn = getattr(self._promoter, "eligibility_params", None)
+        if params_fn is None:
+            # No-hidden-errors: a promoter that can't describe its gate can't be
+            # outcome-verified. Log LOUDLY and skip (the run still completes).
+            log.memory.warning(
+                "[memory] dream_worker.verify_outcome: promoter exposes no "
+                "eligibility_params — skipping outcome verification",
+                extra={"_fields": {"run_id": checkpoint.run_id}},
+            )
+            return
+        params = params_fn()
+        stuck = await count_stuck_eligible(db, **params)
+        if stuck == 0:
+            log.memory.debug(
+                "[memory] dream_worker.verify_outcome: no stuck eligible — ok",
+                extra={"_fields": {"run_id": checkpoint.run_id}},
+            )
+            return
+        # 2. DECISION — eligible memories did not move; retry promotion once.
+        log.memory.warning(
+            "[memory] dream_worker.verify_outcome: eligible memories not promoted — retrying",
+            extra={"_fields": {"run_id": checkpoint.run_id, "stuck": stuck}},
+        )
+        await record_stuck_eligible(db, checkpoint.run_id, stuck)
+        await self._promoter.promote_eligible()
+        # Re-query with a FRESH cutoff (clock may have advanced) — re-derive params.
+        remaining = await count_stuck_eligible(db, **params_fn())
+        await record_stuck_eligible(db, checkpoint.run_id, remaining)
+        if remaining > 0:
+            # 3. STEP — still stuck after the retry: record loudly (do not fail).
+            # The count is persisted on the run row (record_stuck_eligible above);
+            # here we surface the unresolved signal at ERROR so it is impossible
+            # to miss. No audit_log write: the audit chain has a single canonical
+            # writer (AuditLogger.append) and the run-row + ERROR fully satisfy
+            # the "record loudly + tracker" requirement.
+            log.memory.error(
+                "[memory] dream_worker.verify_outcome: eligible memories still stuck "
+                "after retry",
+                extra={"_fields": {"run_id": checkpoint.run_id, "stuck_eligible": remaining}},
+            )
+        # 4. EXIT
+        log.memory.info(
+            "[memory] dream_worker.verify_outcome: exit",
+            extra={
+                "_fields": {
+                    "run_id": checkpoint.run_id,
+                    "stuck_before": stuck,
+                    "stuck_after": remaining,
+                }
+            },
+        )
 
 
 __all__: list[str] = ["DreamWorkerJobHandler", "DreamWorkerCheckpoint"]
