@@ -186,7 +186,10 @@ class ConversationView(Widget):
                 self._active_trace_id = chunk.trace_id
                 container.mount(MessageRow(bubble, role="agent"))
                 opened += 1
-            self._active_bubble.append(self._renderer.render(chunk))
+            # new_turn guarantees an active bubble exists by here.
+            active = self._active_bubble
+            if active is not None:
+                active.append(self._renderer.render(chunk))
             # A final chunk closes the turn so the next chunk opens a fresh
             # bubble even if its trace id were to repeat.
             if chunk.is_final:
