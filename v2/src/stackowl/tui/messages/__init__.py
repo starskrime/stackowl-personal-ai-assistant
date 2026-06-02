@@ -6,7 +6,11 @@ from stackowl.tui.messages.compose import (
     AutocompleteSelectedMessage,
     ComposeSubmittedMessage,
 )
-from stackowl.tui.messages.conversation import FactCitation, ResponseChunkMessage
+from stackowl.tui.messages.conversation import (
+    FactCitation,
+    ResponseChunkMessage,
+    UserTurnMessage,
+)
 from stackowl.tui.messages.jobs import BudgetAlertMessage, JobPausedMessage
 from stackowl.tui.messages.layout import (
     ComposeAreaStateMessage,
@@ -56,4 +60,5 @@ __all__ = [
     "ResponseChunkMessage",
     "SynthesisArrivedMessage",
     "ToastRequestMessage",
+    "UserTurnMessage",
 ]

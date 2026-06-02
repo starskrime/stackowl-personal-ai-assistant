@@ -29,7 +29,7 @@ from textual.app import App, ComposeResult
 
 from stackowl.infra.observability import log
 from stackowl.tui.i18n_strings import install_default_translations
-from stackowl.tui.messages import ComposeSubmittedMessage
+from stackowl.tui.messages import ComposeSubmittedMessage, UserTurnMessage
 from stackowl.tui.widgets.banner import Banner
 from stackowl.tui.widgets.compose_area import ComposeArea
 from stackowl.tui.widgets.compose_helpers import CommandInfo
@@ -129,4 +129,22 @@ class StackOwlApp(App[None]):
             "[tui] StackOwlApp.on_compose_submitted_message: republishing",
             extra={"_fields": {"text_len": len(message.text)}},
         )
+        # Republish for CLIAdapter first — this must always run, even when the
+        # transcript widget isn't mounted (unit tests drive this directly).
         self._event_bus.emit(_COMPOSE_EVENT, {"text": message.text})
+        # Echo the user's own turn into the transcript so the conversation
+        # reads like a chat. Delivered by a direct handler call (the codebase
+        # idiom for FrozenMessage widgets — they are not pumped through
+        # Textual's message loop). Self-healing: a missing view never blocks
+        # input.
+        try:
+            view = self.query_one(ConversationView)
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] StackOwlApp.on_compose_submitted_message: "
+                "conversation view unavailable — user turn not echoed",
+                exc_info=exc,
+                extra={"_fields": {"text_len": len(message.text)}},
+            )
+            return
+        view.on_user_turn_message(UserTurnMessage(text=message.text))

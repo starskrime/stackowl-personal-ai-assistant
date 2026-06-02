@@ -42,3 +42,18 @@ class ResponseChunkMessage(FrozenMessage):
     is_synthesis: bool = False
     chunk_index: int = 0
     trace_id: str = ""
+
+
+@dataclass(frozen=True)
+class UserTurnMessage(FrozenMessage):
+    """Carries the user's own submitted turn to :class:`ConversationView`.
+
+    Previously the user's input was published straight to the engine and never
+    echoed back to the transcript.  This message lets the app render the user's
+    turn locally so the conversation reads like a chat.
+
+    Attributes:
+        text: The raw text the user submitted (rendered, never markup-parsed).
+    """
+
+    text: str

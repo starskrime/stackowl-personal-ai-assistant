@@ -15,6 +15,7 @@ from stackowl.tui.i18n import register_translations
 _EN: dict[str, str] = {
     "banner.tagline_primary": "Personal AI Assistant",
     "banner.tagline_secondary": "Challenge Everything",
+    "transcript.role.you": "you",
 }
 
 

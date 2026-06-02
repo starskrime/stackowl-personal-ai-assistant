@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.text import Text
 from textual.widget import Widget
 from textual.widgets import RichLog
 
 from stackowl.infra.observability import log
 from stackowl.tui.glyphs import GLYPH_SEPARATOR
-from stackowl.tui.messages import ResponseChunkMessage
+from stackowl.tui.i18n import localize
+from stackowl.tui.messages import ResponseChunkMessage, UserTurnMessage
 from stackowl.tui.widgets.conversation_helpers import (
     DEFAULT_FLUSH_INTERVAL_SEC,
     ChunkRenderer,
@@ -92,6 +94,36 @@ class ConversationView(Widget):
         self.set_interval(self._flush_interval_sec, self._flush_pending)
 
     # ------------------------------------------------------------------ messages
+
+    def on_user_turn_message(self, message: UserTurnMessage) -> None:
+        """Render the user's own submitted turn into the transcript.
+
+        Written as a right-justified :class:`~rich.text.Text` (never markup-
+        parsed) so arbitrary user input — including ``[`` — is rendered
+        verbatim and cannot inject Rich markup.  The interim right-justified
+        line previews the chat layout; the bubble rearchitecture supersedes it.
+        """
+        log.tui.debug(
+            "[tui] conversation_view.on_user_turn_message: entry",
+            extra={"_fields": {"text_len": len(message.text)}},
+        )
+        try:
+            log_widget = self.query_one(f"#{_LOG_ID}", RichLog)
+        except Exception as exc:  # widget not mounted yet (tests)
+            log.tui.warning(
+                "[tui] conversation_view.on_user_turn_message: log unavailable",
+                exc_info=exc,
+                extra={"_fields": {"text_len": len(message.text)}},
+            )
+            return
+        label = localize("transcript.role.you")
+        log_widget.write(Text(f"{label}  {message.text}", justify="right"))
+        if self._auto_scroll:
+            log_widget.scroll_end(animate=False)
+        log.tui.debug(
+            "[tui] conversation_view.on_user_turn_message: exit",
+            extra={"_fields": {"text_len": len(message.text)}},
+        )
 
     def on_response_chunk_message(self, message: ResponseChunkMessage) -> None:
         """Queue chunk for debounced write."""
