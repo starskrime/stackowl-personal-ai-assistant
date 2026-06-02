@@ -124,6 +124,26 @@ class StackowlHome:
         return cls.home() / "cache" / "browser"
 
     @classmethod
+    def models_dir(cls) -> Path:
+        """Downloaded model weights (TTS voices, local image/vision models).
+
+        Lives at the home ROOT (durable, never pruned) — weights are expensive to
+        re-download, not user deliverables. The agent auto-installs heavy weights
+        here ([[feedback_agent_auto_install]]); media tools read them lazily.
+        """
+        return cls.home() / "models"
+
+    @classmethod
+    def media_dir(cls) -> Path:
+        """Generated media artifacts (synthesized audio, generated images).
+
+        Lives UNDER the workspace (like ``downloads_dir``) so ``send_file`` can
+        deliver from it and the janitor can prune it on a schedule, kept apart from
+        the durable stores at the workspace root.
+        """
+        return cls.workspace() / "media"
+
+    @classmethod
     def ensure_exists(cls) -> None:
         """Create the full home tree. Idempotent."""
         for d in (
@@ -148,6 +168,8 @@ class StackowlHome:
             cls.browser_profiles_dir(),
             cls.downloads_dir(),
             cls.browser_cache_dir(),
+            cls.models_dir(),
+            cls.media_dir(),
         ):
             d.mkdir(parents=True, exist_ok=True)
         import contextlib

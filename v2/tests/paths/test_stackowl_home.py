@@ -84,6 +84,37 @@ def test_downloads_dir_is_under_workspace(tmp_path: Path, monkeypatch: pytest.Mo
     assert StackowlHome.workspace() in StackowlHome.downloads_dir().parents
 
 
+def test_models_dir_is_under_home_root_durable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Weights are durable (never pruned) → home root, NOT the workspace."""
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    from stackowl.paths import StackowlHome
+
+    assert StackowlHome.models_dir() == StackowlHome.home() / "models"
+
+
+def test_media_dir_is_under_workspace_deliverable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Generated media must be send_file-deliverable + janitor-prunable → under workspace."""
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    from stackowl.paths import StackowlHome
+
+    assert StackowlHome.media_dir() == StackowlHome.workspace() / "media"
+    assert StackowlHome.workspace() in StackowlHome.media_dir().parents
+
+
+def test_ensure_exists_creates_models_and_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("STACKOWL_HOME", str(home))
+    monkeypatch.delenv("STACKOWL_DATA_DIR", raising=False)
+    monkeypatch.delenv("STACKOWL_LOG_DIR", raising=False)
+    monkeypatch.delenv("STACKOWL_PID_FILE", raising=False)
+    from stackowl.paths import StackowlHome
+
+    StackowlHome.ensure_exists()
+    assert (home / "models").exists()
+    assert (home / "workspace" / "media").exists()
+
+
 def test_ensure_exists_creates_downloads_under_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
