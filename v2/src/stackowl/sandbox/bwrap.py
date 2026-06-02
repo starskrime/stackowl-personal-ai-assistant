@@ -228,17 +228,19 @@ class BwrapSandbox(SandboxBackend):
                 reason="oom", message="the run exceeded its memory cap and was OOM-killed",
                 backend_used=self.name, caps_applied=spec.caps, duration_ms=duration,
             )
-        # A negative returncode = killed by a SIGNAL (a late OOM whose oom_kill counter
-        # read raced the scope teardown, an external SIGKILL, a segfault) — that is NOT a
-        # clean exit and must NEVER be mis-classified as "ok".
-        if code is not None and code < 0:
+        # Killed by a SIGNAL (a late OOM whose oom_kill read raced teardown, a SIGKILL, a
+        # segfault) — NOT a clean exit, must NEVER read as "ok". Two conventions surface
+        # it: asyncio's negative returncode (-N) AND the 128+N convention (e.g. 137=128+9
+        # /SIGKILL) bwrap/systemd-run reports when the OOM read races — classify BOTH.
+        if code is not None and (code < 0 or code > 128):
+            signal_num = -code if code < 0 else code - 128
             log.tool.info(
                 "[sandbox.bwrap] _map_result: run killed by signal",
-                extra={"_fields": {"signal": -code}},
+                extra={"_fields": {"signal": signal_num}},
             )
             return ExecResult.error(
                 reason="killed",
-                message=f"the run was killed by signal {-code} (memory cap or external kill)",
+                message=f"the run was killed by signal {signal_num} (memory cap or external kill)",
                 backend_used=self.name, caps_applied=spec.caps, duration_ms=duration,
             )
         log.tool.debug(
