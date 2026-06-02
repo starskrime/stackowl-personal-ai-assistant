@@ -29,7 +29,21 @@ from textual.app import App, ComposeResult
 
 from stackowl.infra.observability import log
 from stackowl.tui.i18n_strings import install_default_translations
-from stackowl.tui.messages import ComposeSubmittedMessage, UserTurnMessage
+from stackowl.tui.messages import (
+    ComposeAreaStateMessage,
+    ComposeSubmittedMessage,
+    CostUpdatedMessage,
+    DegradedProviderMessage,
+    ParliamentClosedMessage,
+    ParliamentRoundMessage,
+    ParliamentRoundStartedMessage,
+    ParliamentStartedMessage,
+    PipelineStepMessage,
+    ProviderChangedMessage,
+    ResponseChunkMessage,
+    SynthesisArrivedMessage,
+    UserTurnMessage,
+)
 from stackowl.tui.widgets.banner import Banner
 from stackowl.tui.widgets.compose_area import ComposeArea
 from stackowl.tui.widgets.compose_helpers import CommandInfo
@@ -62,10 +76,37 @@ _DESIGN_TOKENS: dict[str, str] = {
 }
 
 if TYPE_CHECKING:
+    from textual.message import Message
+    from textual.widget import Widget
+
     from stackowl.events.bus import EventBus
 
 
 _COMPOSE_EVENT = "compose_submitted"
+
+# Explicit delivery routing: message type → (target widget class, handler name).
+# Messages are FrozenMessage dataclasses and CANNOT travel through Textual's
+# message pump (the pump mutates `_no_default_action`, which raises
+# FrozenInstanceError) and the pump does not propagate down to child widgets
+# anyway. Delivery is therefore a DIRECT handler call on the UI thread, routed
+# through this table by StackOwlApp.deliver().
+_DELIVERY_ROUTES: dict[type[Message], tuple[type[Widget], str]] = {
+    ResponseChunkMessage: (ConversationView, "on_response_chunk_message"),
+    UserTurnMessage: (ConversationView, "on_user_turn_message"),
+    PipelineStepMessage: (PipelineStrip, "on_pipeline_step_message"),
+    DegradedProviderMessage: (PipelineStrip, "on_degraded_provider_message"),
+    ProviderChangedMessage: (PipelineStrip, "on_provider_changed_message"),
+    CostUpdatedMessage: (PipelineStrip, "on_cost_updated_message"),
+    ParliamentStartedMessage: (ParliamentPanel, "on_parliament_started_message"),
+    ParliamentRoundStartedMessage: (
+        ParliamentPanel,
+        "on_parliament_round_started_message",
+    ),
+    ParliamentRoundMessage: (ParliamentPanel, "on_parliament_round_message"),
+    SynthesisArrivedMessage: (ParliamentPanel, "on_synthesis_arrived_message"),
+    ParliamentClosedMessage: (ParliamentPanel, "on_parliament_closed_message"),
+    ComposeAreaStateMessage: (ComposeArea, "on_compose_area_state_message"),
+}
 
 
 class StackOwlApp(App[None]):
@@ -118,6 +159,69 @@ class StackOwlApp(App[None]):
             owl_names=self._owl_names,
         )
 
+    def deliver(self, message: Message) -> None:
+        """Route a coordinator-built message to its target widget.
+
+        Delivery is a DIRECT handler invocation on the UI thread — NOT
+        ``post_message``. Textual's message pump does not propagate messages
+        down to child widgets (their ``on_*_message`` handlers would never
+        fire), and these messages are FrozenMessage dataclasses that raise
+        ``FrozenInstanceError`` if pumped through any handler-bearing loop.
+        The route table :data:`_DELIVERY_ROUTES` maps each message type to its
+        sink widget + handler. Self-healing: a missing widget (e.g. during
+        teardown) is logged and skipped, never crashes the UI.
+        """
+        msg_type = type(message)
+        log.tui.debug(
+            "[tui] StackOwlApp.deliver: entry",
+            extra={"_fields": {"message_type": msg_type.__name__}},
+        )
+        route = _DELIVERY_ROUTES.get(msg_type)
+        if route is None:
+            # Genuinely orphaned message type — no UI sink wired yet. Make the
+            # gap loud and honest rather than silently dropping the message.
+            log.tui.warning(
+                "[tui] StackOwlApp.deliver: no UI sink wired for message type "
+                "— see docs/tui-output-sinks-phase2-backlog.md",
+                extra={"_fields": {"message_type": msg_type.__name__}},
+            )
+            return
+        widget_cls, handler_name = route
+        log.tui.debug(
+            "[tui] StackOwlApp.deliver: route found",
+            extra={
+                "_fields": {
+                    "message_type": msg_type.__name__,
+                    "widget": widget_cls.__name__,
+                    "handler": handler_name,
+                }
+            },
+        )
+        try:
+            widget = self.query_one(widget_cls)
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] StackOwlApp.deliver: target widget unavailable — dropping",
+                exc_info=exc,
+                extra={
+                    "_fields": {
+                        "message_type": msg_type.__name__,
+                        "widget": widget_cls.__name__,
+                    }
+                },
+            )
+            return
+        getattr(widget, handler_name)(message)
+        log.tui.debug(
+            "[tui] StackOwlApp.deliver: exit",
+            extra={
+                "_fields": {
+                    "message_type": msg_type.__name__,
+                    "widget": widget_cls.__name__,
+                }
+            },
+        )
+
     def on_compose_submitted_message(self, message: ComposeSubmittedMessage) -> None:
         """ComposeArea bubble — republish on the EventBus for CLIAdapter to pick up.
 
@@ -132,19 +236,7 @@ class StackOwlApp(App[None]):
         # Republish for CLIAdapter first — this must always run, even when the
         # transcript widget isn't mounted (unit tests drive this directly).
         self._event_bus.emit(_COMPOSE_EVENT, {"text": message.text})
-        # Echo the user's own turn into the transcript so the conversation
-        # reads like a chat. Delivered by a direct handler call (the codebase
-        # idiom for FrozenMessage widgets — they are not pumped through
-        # Textual's message loop). Self-healing: a missing view never blocks
-        # input.
-        try:
-            view = self.query_one(ConversationView)
-        except Exception as exc:
-            log.tui.warning(
-                "[tui] StackOwlApp.on_compose_submitted_message: "
-                "conversation view unavailable — user turn not echoed",
-                exc_info=exc,
-                extra={"_fields": {"text_len": len(message.text)}},
-            )
-            return
-        view.on_user_turn_message(UserTurnMessage(text=message.text))
+        # Echo the user's own turn into the transcript through the single
+        # delivery path. deliver() self-heals on a missing view, so input is
+        # never blocked.
+        self.deliver(UserTurnMessage(text=message.text))

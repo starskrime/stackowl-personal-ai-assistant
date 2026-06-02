@@ -168,20 +168,25 @@ class UIStateCoordinator:
                 extra={"_fields": {"event": event_name}},
             )
             return
+        # Real StackOwlApp delivers via deliver() (direct handler call →
+        # renders). Fallback to post_message keeps fake-app coordinator tests
+        # (which only define post_message) working unchanged.
+        target = getattr(self._app, "deliver", None)
+        deliver = target if callable(target) else self._app.post_message
         post = getattr(self._app, "call_from_thread", None)
         if callable(post):
             try:
-                post(self._app.post_message, message)
+                post(deliver, message)
             except RuntimeError as exc:
-                # No running message loop (e.g. unit tests) — post directly.
+                # No running message loop (e.g. unit tests) — deliver directly.
                 log.tui.warning(
                     "[tui] coordinator._dispatch: call_from_thread unavailable",
                     exc_info=exc,
                     extra={"_fields": {"event": event_name}},
                 )
-                self._app.post_message(message)
+                deliver(message)
         else:
-            self._app.post_message(message)
+            deliver(message)
 
     def _build_message(
         self, event_name: str, payload: dict[str, Any]

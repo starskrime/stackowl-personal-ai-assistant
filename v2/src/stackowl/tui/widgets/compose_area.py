@@ -11,7 +11,7 @@ from textual.widgets import Input
 
 from stackowl.infra.observability import log
 from stackowl.tui.i18n import localize
-from stackowl.tui.messages import ComposeSubmittedMessage
+from stackowl.tui.messages import ComposeAreaStateMessage, ComposeSubmittedMessage
 from stackowl.tui.widgets.compose_helpers import (
     AutocompleteKind,
     AutocompleteState,
@@ -175,6 +175,18 @@ class ComposeArea(Widget):
         self.state = _STATE_IDLE
 
     # ------------------------------------------------------------------ state
+    def on_compose_area_state_message(self, message: ComposeAreaStateMessage) -> None:
+        """Apply an externally-pushed compose-area state (e.g. MCP spectator lock)."""
+        log.tui.debug(
+            "[tui] compose_area.on_compose_area_state_message: entry",
+            extra={"_fields": {"state": message.state}},
+        )
+        self.set_mcp_disabled(message.state == _STATE_MCP_DISABLED)
+        log.tui.debug(
+            "[tui] compose_area.on_compose_area_state_message: exit",
+            extra={"_fields": {"state": self.state}},
+        )
+
     def set_mcp_disabled(self, disabled: bool) -> None:
         """Toggle the MCP-disabled lockout state and update placeholder text."""
         log.tui.debug(
