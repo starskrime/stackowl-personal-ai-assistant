@@ -221,6 +221,19 @@ class BwrapSandbox(SandboxBackend):
                 reason="oom", message="the run exceeded its memory cap and was OOM-killed",
                 backend_used=self.name, caps_applied=spec.caps, duration_ms=duration,
             )
+        # A negative returncode = killed by a SIGNAL (a late OOM whose oom_kill counter
+        # read raced the scope teardown, an external SIGKILL, a segfault) — that is NOT a
+        # clean exit and must NEVER be mis-classified as "ok".
+        if code is not None and code < 0:
+            log.tool.info(
+                "[sandbox.bwrap] _map_result: run killed by signal",
+                extra={"_fields": {"signal": -code}},
+            )
+            return ExecResult.error(
+                reason="killed",
+                message=f"the run was killed by signal {-code} (memory cap or external kill)",
+                backend_used=self.name, caps_applied=spec.caps, duration_ms=duration,
+            )
         log.tool.debug(
             "[sandbox.bwrap] run: exit",
             extra={"_fields": {"exit_code": code, "duration_ms": duration, "stdout_len": len(stdout)}},
