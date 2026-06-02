@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from stackowl.owls.registry import OwlRegistry
     from stackowl.owls.session_registry import SessionRegistry
     from stackowl.pipeline.streaming import StreamRegistry
+    from stackowl.process.registry import ProcessRegistry
     from stackowl.providers.cost_tracker import CostTracker
     from stackowl.providers.registry import ProviderRegistry
     from stackowl.skills.store import SkillIndexStore
@@ -77,6 +78,12 @@ class StepServices:
     # a2a_queue wired above so a cleared/reaped session drains the right mailbox.
     # None → the tool degrades to a structured "sessions unavailable" result (B5).
     session_registry: SessionRegistry | None = field(default=None)
+    # E9-S0 — the process substrate. The (S1) process tool reads THIS instance off
+    # services at execute time (it never builds its own, so the concurrency cap /
+    # mandatory-TTL / aggregate-buffer / checkpoint rails stay a single source of
+    # truth). None → the tool degrades to a structured "process substrate
+    # unavailable" result (self-healing, B5).
+    process_registry: ProcessRegistry | None = field(default=None)
     # E8-S0cost — ONE shared CostTracker so the per-turn running total the
     # cost-pause guard reads is fed by the SAME instance MoA/router record into.
     # None → no shared tracker (tools fall back to building an ungated local one).

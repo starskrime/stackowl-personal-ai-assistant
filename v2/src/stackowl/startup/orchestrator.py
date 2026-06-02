@@ -434,6 +434,24 @@ class StartupOrchestrator:
         session_registry = SessionRegistry(a2a_queue=a2a_queue)
         register_session_sweep_handler(session_registry)
 
+        # E9-S0 — the process substrate. ONE DI singleton owning supervised OS-
+        # process lifecycle (bounded concurrency + a MANDATORY max lifetime,
+        # captured stdout/stderr, its OWN checkpoint). Clock-injected (ARCH-99) so
+        # the TTL sweep is deterministically testable. `reconcile()` at boot probes
+        # any pids the previous run checkpointed — re-adopting the alive ones and
+        # recording the dead. The recurring TTL/prune sweep is registered as a
+        # JobHandler here and seeded as a `process_sweep` job row in the scheduler
+        # assembly (every 10m). Wired onto StepServices so the (S1) process tool
+        # reaches THIS instance. clear_all() on shutdown terminates every process.
+        from stackowl.process.registry import ProcessRegistry
+        from stackowl.scheduler.handlers.process_sweep import (
+            register_process_sweep_handler,
+        )
+
+        process_registry = ProcessRegistry()
+        process_registry.reconcile()
+        register_process_sweep_handler(process_registry)
+
         # E8-S0cost — ONE shared CostTracker (per-turn running total feeds the soft
         # cost-pause) + the CostPauseGuard that asks the user "Continue?" via the
         # clarify gateway before the next expensive op once a turn crosses the soft
@@ -485,6 +503,7 @@ class StartupOrchestrator:
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
             session_registry=session_registry,
+            process_registry=process_registry,
             cost_tracker=cost_tracker,
             cost_pause_guard=cost_pause_guard,
         )
@@ -917,6 +936,10 @@ class StartupOrchestrator:
             # session or its A2A mailbox outlives the process.
             with contextlib.suppress(Exception):
                 session_registry.clear_all()
+            # E9-S0 — terminate every supervised OS process (and checkpoint) so no
+            # background process outlives the gateway.
+            with contextlib.suppress(Exception):
+                await process_registry.clear_all()
             if telegram_loop_task is not None:
                 telegram_loop_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):

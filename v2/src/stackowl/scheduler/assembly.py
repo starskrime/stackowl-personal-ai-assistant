@@ -261,6 +261,16 @@ class SchedulerAssembly:
             db, handler_name="session_sweep", schedule="every 10m",
             interval_minutes=10,
         )
+        # E9-S0 — process sweep drives the ProcessRegistry maintenance every
+        # SWEEP_INTERVAL_SECONDS (10m): auto-kills any process past its MANDATORY
+        # max lifetime, prunes dead handles past the prune TTL, and enforces the
+        # aggregate capture-buffer ceiling. The handler is registered in the gateway
+        # assembly (it needs the ProcessRegistry singleton); this only seeds the
+        # recurring jobs row so the scheduler actually dispatches it.
+        await _seed_minutes_schedule(
+            db, handler_name="process_sweep", schedule="every 10m",
+            interval_minutes=10,
+        )
         # Downloads janitor — prune the single workspace downloads folder every
         # 12h (720m), deleting files older than 2 days (the handler's default
         # retention). Scoped to that folder ONLY; never touches durable stores.
