@@ -11,7 +11,6 @@ same ``name`` field replaces the bundled entry.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any  # noqa: F401 (used in TYPE_CHECKING-style annotations)
@@ -45,6 +44,10 @@ class ProviderEntry:
     base_url: str
     default_model: str
     models: tuple[str, ...] = field(default_factory=tuple)
+    # Subset of ``models`` known to be vision/multimodal-capable (E10-S1). Lets the
+    # onboarding picker surface a vision-capable choice; the runtime capability flag
+    # is decided independently by ``providers.vision_models.is_vision_model``.
+    vision_models: tuple[str, ...] = field(default_factory=tuple)
     tier: str = "powerful"
     needs_api_key: bool = True
     is_local: bool = False
@@ -58,6 +61,7 @@ class ProviderEntry:
             )
         # Coerce list → tuple so the dataclass stays frozen/hashable
         object.__setattr__(self, "models", tuple(self.models))
+        object.__setattr__(self, "vision_models", tuple(self.vision_models))
 
 
 class ProviderCatalog:

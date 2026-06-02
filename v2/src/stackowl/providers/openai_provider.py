@@ -17,6 +17,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
+from stackowl.providers._blocks import message_has_blocks, openai_user_content
 from stackowl.providers._react import parse_react_action
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
@@ -25,6 +26,7 @@ from stackowl.providers._truncate import (
 )
 from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.vision_models import is_vision_model
 
 
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
@@ -77,6 +79,16 @@ class OpenAIProvider(ModelProvider):
     @property
     def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
         return "openai"
+
+    @property
+    def supports_vision(self) -> bool:
+        """True when the configured model is a known vision model.
+
+        Covers cloud OpenAI (gpt-4o, …) AND a self-hosted Ollama vision tag
+        (llava, llama3.2-vision, …) — both ride the OpenAI ``image_url`` data-URL
+        serialization in ``complete()``.
+        """
+        return is_vision_model(self._config.default_model)
 
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
         TestModeGuard.assert_not_test_mode("openai.stream")
@@ -360,7 +372,14 @@ class OpenAIProvider(ModelProvider):
         )
         t0 = time.monotonic()
         resolved_model = model or self._config.default_model
-        oai_msgs = [{"role": m.role, "content": m.content} for m in messages]
+        # A message with image blocks → multimodal content parts (data-URL image);
+        # a plain message keeps the cheap string form (B6 minimal change).
+        oai_msgs = [
+            {"role": m.role, "content": openai_user_content(m)}
+            if message_has_blocks(m)
+            else {"role": m.role, "content": m.content}
+            for m in messages
+        ]
         try:
             response = await self._client.chat.completions.create(
                 model=resolved_model,

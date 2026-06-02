@@ -11,6 +11,13 @@ models:
   - mistral
   - gemma2
   - deepseek-r1
+  - llama3.2-vision
+  - llava
+# Vision-capable local tags from the list above (E10-S1). Picking one of these as
+# default_model lets the vision substrate run fully self-hosted (no cloud egress).
+vision_models:
+  - llama3.2-vision
+  - llava
 tier: fast
 needs_api_key: false
 is_local: true

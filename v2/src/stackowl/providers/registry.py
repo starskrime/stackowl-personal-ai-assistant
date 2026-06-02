@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING
 from stackowl.exceptions import AllProvidersUnavailableError, ProviderNotFoundError
 from stackowl.health.status import HealthStatus
 from stackowl.infra.clock import Clock, WallClock
+from stackowl.infra.net.host_locality import is_local_url
 from stackowl.infra.observability import log
 from stackowl.providers.base import ModelProvider
 from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
 from stackowl.providers.cost_tracker_helpers import inject_cost_tracker
 from stackowl.providers.rate_limiter import RateLimiter
+from stackowl.providers.registry_accessors import RegistryAccessorsMixin
 
 if TYPE_CHECKING:
     from stackowl.config.provider import ProviderConfig
@@ -38,18 +40,23 @@ def _build_provider(config: ProviderConfig, api_key: str) -> ModelProvider:
     return OpenAIProvider(config, api_key)
 
 
-class ProviderRegistry:
+class ProviderRegistry(RegistryAccessorsMixin):
     """Holds ModelProvider references plus per-provider CircuitBreaker and RateLimiter.
 
     Implements HealthContributor structurally: calls health_check() on all providers.
     Cascade routing (get_with_cascade) selects the first non-OPEN provider across
     tiers fast → standard → powerful → local starting from the preferred tier.
+    Name/tier/locality/circuit accessors live in RegistryAccessorsMixin (B2 split).
     """
 
     def __init__(self, *, clock: Clock = WallClock()) -> None:
         self._clock: Clock = clock
         self._providers: dict[str, ModelProvider] = {}
         self._tiers: dict[str, str] = {}
+        # Locality (self-hosted vs cloud) is ORTHOGONAL to tier (a local Ollama is
+        # tier ``fast``); computed from the base_url host so the vision selector can
+        # prefer on-box backends without a config migration. Default False (cloud).
+        self._local: dict[str, bool] = {}
         self._breakers: dict[str, CircuitBreaker] = {}
         self._limiters: dict[str, RateLimiter] = {}
         # E8-S0cost — the ONE shared CostTracker; remembered so providers registered
@@ -89,6 +96,7 @@ class ProviderRegistry:
             registry._providers[config.name] = provider
             if hasattr(config, "tier") and config.tier:
                 registry._tiers[config.name] = config.tier
+            registry._local[config.name] = is_local_url(config.base_url)
             registry._breakers[config.name] = CircuitBreaker(
                 provider_name=config.name,
                 clock=clock,
@@ -248,10 +256,17 @@ class ProviderRegistry:
         mock: ModelProvider,
         *,
         tier: str = "fast",
+        base_url: str | None = None,
+        is_local: bool | None = None,
     ) -> None:
-        """Register a mock provider — for tests only. Bypasses config lookup."""
+        """Register a mock provider — for tests only. Bypasses config lookup.
+
+        ``base_url`` lets a test mirror the shipped config shape so locality is
+        inferred exactly as production does; ``is_local`` overrides it explicitly.
+        """
         self._providers[name] = mock
         self._tiers[name] = tier
+        self._local[name] = is_local if is_local is not None else is_local_url(base_url)
         self._breakers[name] = CircuitBreaker(provider_name=name, clock=self._clock)
         self._limiters[name] = RateLimiter.from_rpm(name, None, clock=self._clock)
         inject_cost_tracker(mock, self._cost_tracker)  # E8-S0cost single recording site

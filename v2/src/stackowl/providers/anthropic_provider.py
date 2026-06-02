@@ -13,6 +13,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
+from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
@@ -20,6 +21,7 @@ from stackowl.providers._truncate import (
 )
 from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.vision_models import is_vision_model
 
 
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
@@ -73,6 +75,16 @@ class AnthropicProvider(ModelProvider):
     @property
     def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
         return "anthropic"
+
+    @property
+    def supports_vision(self) -> bool:
+        """True when the configured Claude model is vision-capable (Claude 3+)."""
+        return is_vision_model(self._config.default_model)
+
+    @property
+    def supports_document(self) -> bool:
+        """A vision-capable Claude model also accepts PDF document blocks (Mode B)."""
+        return is_vision_model(self._config.default_model)
 
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
         TestModeGuard.assert_not_test_mode("anthropic.stream")
@@ -301,7 +313,15 @@ class AnthropicProvider(ModelProvider):
         )
         t0 = time.monotonic()
         system_parts = [m.content for m in messages if m.role == "system"]
-        chat_msgs = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
+        # A message carrying image/document blocks is serialized to native content
+        # blocks; a plain message keeps the cheap string form (B6 minimal change).
+        chat_msgs = [
+            {"role": m.role, "content": anthropic_user_content(m)}
+            if message_has_blocks(m)
+            else {"role": m.role, "content": m.content}
+            for m in messages
+            if m.role != "system"
+        ]
         resolved_model = model or self._config.default_model
         try:
             if system_parts:

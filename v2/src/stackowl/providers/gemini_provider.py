@@ -13,7 +13,9 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
+from stackowl.providers._blocks import gemini_user_parts, message_has_blocks
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.vision_models import is_vision_model
 
 
 def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
@@ -32,7 +34,10 @@ def _build_contents(messages: list[Message]) -> tuple[list[dict[str, Any]], str 
     for m in messages:
         if m.role == "system":
             continue
-        contents.append({"role": role_map.get(m.role, "user"), "parts": [{"text": m.content}]})
+        # A message with image/document blocks → multimodal inline_data parts;
+        # a plain message keeps the single text part (B6 minimal change).
+        parts = gemini_user_parts(m) if message_has_blocks(m) else [{"text": m.content}]
+        contents.append({"role": role_map.get(m.role, "user"), "parts": parts})
     return contents, system_instruction
 
 
@@ -55,6 +60,16 @@ class GeminiProvider(ModelProvider):
     @property
     def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
         return "gemini"
+
+    @property
+    def supports_vision(self) -> bool:
+        """True when the configured Gemini model is multimodal (1.5+/2.x)."""
+        return is_vision_model(self._config.default_model)
+
+    @property
+    def supports_document(self) -> bool:
+        """A multimodal Gemini model also accepts inline PDF document blocks (Mode B)."""
+        return is_vision_model(self._config.default_model)
 
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
         TestModeGuard.assert_not_test_mode("gemini.stream")

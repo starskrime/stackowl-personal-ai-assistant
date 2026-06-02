@@ -145,6 +145,19 @@ class ModelProvider(ABC):
         """
         return False
 
+    @property
+    def supports_vision(self) -> bool:
+        """Whether this provider's configured model can accept IMAGE blocks (E10-S1).
+
+        An image is carried as a :class:`DocumentBlock` whose ``media_type`` is
+        ``image/*`` (see ``providers._blocks``). Defaults **False** on the ABC so a
+        caller routing an image (the vision selector) checks this flag and reports
+        "no vision backend" rather than letting a text-only provider drop the
+        bytes. A provider whose ``default_model`` is a known vision/multimodal model
+        overrides this to True (see ``providers.vision_models.is_vision_model``).
+        """
+        return False
+
     @abstractmethod
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         """Run a non-streaming completion and return the full result."""
