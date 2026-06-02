@@ -298,6 +298,7 @@ class ToolRegistry:
         from stackowl.tools.knowledge.skills_list import SkillsListTool
         from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
         from stackowl.tools.knowledge.transcripts import TranscriptsTool
+        from stackowl.tools.media.image_generate import ImageGenerateTool
         from stackowl.tools.media.tts import TtsTool
         from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
         from stackowl.tools.meta.tool_build import ToolBuildTool
@@ -454,4 +455,15 @@ class ToolRegistry:
         # selector from Settings().tts at execute time (no constructor wiring);
         # self-healing → structured result, never raises. Severity read; group media.
         registry.register(TtsTool())
+        # image_generate — generate an image from a prompt on the LOCAL-FIRST image
+        # substrate (E10-S4). Composes the ImageSelector (a capability-PROBED local
+        # SDXL model first — only where x86+CUDA+enough memory/disk clears, so an
+        # incapable Tegra host NEVER pip-installs a multi-GB wheel the probe rejects;
+        # opt-in cloud fallback only when enabled + configured). The prompt stays
+        # on-box when local is available; a CLOUD fallback discloses egress + cost.
+        # Returns the image PATH under media_dir (send_file delivers it), never raw
+        # bytes. Builds its selector from Settings().image at execute time (no
+        # constructor wiring); self-healing → structured result, never raises.
+        # Severity read; group media.
+        registry.register(ImageGenerateTool())
         return registry

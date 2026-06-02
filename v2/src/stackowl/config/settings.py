@@ -32,7 +32,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -182,6 +182,70 @@ class TtsSettings(BaseModel):
     cloud_model: str = Field(
         default="tts-1",
         description="Model id sent to the cloud speech endpoint.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
+class ImageSettings(BaseModel):
+    """Image-generation configuration (E10-S4) — self-hosted-first, cloud opt-in.
+
+    LOCKED operator decision: local SDXL runs ONLY where a capability probe clears
+    (x86 + CUDA + enough memory/disk). On an incapable host (e.g. a Tegra/unified-
+    memory board) the probe says no and image generation is cloud-only IF a key is
+    configured, else an HONEST "unavailable". 'auto' (default) = probe → local-or-
+    cloud-or-unavailable; the cloud fallback is DISABLED unless ``cloud_enabled``
+    is True AND a key reference is configured (selector is local-first).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    engine: Literal["auto", "local", "cloud"] = Field(
+        default="auto",
+        description=(
+            "Image engine selection. 'auto' = probe → local SDXL if viable, else "
+            "the cloud fallback IF enabled + configured. 'local' = local-only "
+            "(never cloud). 'cloud' = cloud-only (skip the local probe)."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    model: str = Field(
+        default="stabilityai/sdxl-turbo",
+        description="Local OSS image model id (used only where the probe clears).",
+        json_schema_extra={"hot_reload": False},
+    )
+    size: str = Field(
+        default="1024x1024",
+        description="Default output size 'WIDTHxHEIGHT' (overridable per call).",
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_enabled: bool = Field(
+        default=False,
+        description=(
+            "Opt-in switch for the cloud image fallback. False (default) = local "
+            "only; the prompt never leaves the machine."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_api_key: str = Field(
+        default="",
+        description=(
+            "Secret REFERENCE for the cloud image endpoint key — an env-var name, "
+            "'keychain:<service>', or 'file:<path>' (resolved at use, never the raw "
+            "secret). Empty disables the cloud fallback regardless of cloud_enabled."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description=(
+            "Base URL of the OpenAI-compatible image endpoint for the cloud "
+            "fallback. Point this at a self-hosted endpoint to keep prompts on-prem."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_model: str = Field(
+        default="dall-e-3",
+        description="Model id sent to the cloud image endpoint.",
         json_schema_extra={"hot_reload": True},
     )
 
@@ -413,6 +477,7 @@ class Settings(BaseSettings):
     governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
     tts: TtsSettings = Field(default_factory=TtsSettings)
+    image: ImageSettings = Field(default_factory=ImageSettings)
 
     @classmethod
     def settings_customise_sources(

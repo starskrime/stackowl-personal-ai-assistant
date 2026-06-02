@@ -106,6 +106,12 @@ ignore_missing_imports = true
 module = ["piper", "piper.*"]
 ignore_missing_imports = true
 
+# Runtime-auto-installed image deps (NOT pyproject deps — installed at first use
+# only where the capability probe clears; absent on the Jetson/CI). E10-S4.
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "diffusers", "diffusers.*", "transformers", "transformers.*", "psutil", "psutil.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = ["mcp", "mcp.*"]
 ignore_missing_imports = true
