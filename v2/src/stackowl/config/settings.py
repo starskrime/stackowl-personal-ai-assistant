@@ -32,7 +32,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -434,6 +434,40 @@ class GovernanceSettings(BaseModel):
     )
 
 
+class SandboxSettings(BaseModel):
+    """Sandboxed code-execution backends (E11).
+
+    Two isolation backends: rootless ``bwrap`` (the PRIMARY — an escape stays inside
+    the unprivileged user) and ``docker`` (the network-capable tier). The host's
+    Docker is rootful, so a container escape can reach host root even with the full
+    hardening (seccomp default-deny + cap-drop + no-new-privileges + non-root user);
+    an operator may therefore prefer bwrap-only. Each flag gates whether that backend
+    is offered to the selector — a disabled backend is never picked, and a run that
+    needs it (e.g. a network run with ``docker_enabled=false``) gets an honest
+    structured refusal, never a silent downgrade of isolation.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    docker_enabled: bool = Field(
+        default=True,
+        description=(
+            "Allow the Docker sandbox backend (the network-capable tier). False = "
+            "bwrap-only; network-requiring code runs then refuse with a clear reason. "
+            "Docker here is ROOTFUL, so disable this for the tightest blast radius."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    bwrap_enabled: bool = Field(
+        default=True,
+        description=(
+            "Allow the rootless bubblewrap sandbox backend (the primary). False = "
+            "Docker-only; if both are false, code execution is unavailable."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+
+
 class Settings(BaseSettings):
     """Application-wide settings.
 
@@ -478,6 +512,7 @@ class Settings(BaseSettings):
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
     tts: TtsSettings = Field(default_factory=TtsSettings)
     image: ImageSettings = Field(default_factory=ImageSettings)
+    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
 
     @classmethod
     def settings_customise_sources(

@@ -55,6 +55,12 @@ class TestStructuredContract:
         if not avail.available:
             assert avail.reason
 
+    async def test_disabled_by_config_is_unavailable(self) -> None:
+        # settings.sandbox.bwrap_enabled=False → unavailable, short-circuits the probe.
+        avail = await BwrapSandbox(enabled=False).is_available()
+        assert avail.available is False
+        assert "disabled by config" in (avail.reason or "")
+
     async def test_network_request_refused_not_run(self, sandbox: BwrapSandbox) -> None:
         # invariant #3: a network=True spec to this no-network backend is REFUSED
         # (denied), never silently run — independent of host sandbox availability.

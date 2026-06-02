@@ -51,9 +51,12 @@ __all__ = ["BwrapSandbox"]
 class BwrapSandbox(SandboxBackend):
     """Rootless, no-network bubblewrap backend. The selector's primary choice."""
 
-    def __init__(self, *, clock: Clock | None = None) -> None:
+    def __init__(self, *, clock: Clock | None = None, enabled: bool = True) -> None:
         self._clock = clock if clock is not None else WallClock()
         self._argv = BwrapArgvBuilder()
+        # config gate (settings.sandbox.bwrap_enabled) — a disabled backend reports
+        # unavailable so the selector never picks it.
+        self._enabled = enabled
 
     # ------------------------------------------------------------- identity
     @property
@@ -73,6 +76,10 @@ class BwrapSandbox(SandboxBackend):
     async def is_available(self) -> SandboxAvailability:
         """bwrap present AND cgroup-v2 caps enforceable. Never raises (B5)."""
         log.tool.debug("[sandbox.bwrap] is_available: entry")
+        if not self._enabled:
+            return SandboxAvailability.no(
+                "bwrap sandbox backend disabled by config (sandbox.bwrap_enabled=false)"
+            )
         try:
             probe = SandboxCapability.probe()
             if not probe.bwrap_viable:
