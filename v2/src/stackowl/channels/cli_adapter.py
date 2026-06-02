@@ -156,6 +156,9 @@ class CLIAdapter(ChannelAdapter):
         log.cli.info("[cli] send: streaming chunks", extra={"_fields": {"session_id": self._session_id}})
         buffer = ""
         chunk_idx = 0
+        last_is_final = False
+        last_owl = ""
+        last_trace = ""
         async for chunk in chunks:
             buffer += chunk.content
             if self._mode == "fullzone" and self._event_bus is not None:
@@ -165,12 +168,31 @@ class CLIAdapter(ChannelAdapter):
                     "owl_name": chunk.owl_name,
                     "chunk_index": chunk_idx,
                     "trace_id": chunk.trace_id,
+                    "is_final": chunk.is_final,
                 })
                 chunk_idx += 1
+                last_is_final = chunk.is_final
+                last_owl = chunk.owl_name
+                last_trace = chunk.trace_id
             else:
                 # Legacy raw mode.
                 assert isinstance(self._app, _LegacyStackOwlApp)
                 self._app.write(chunk.content)
+        # Belt-and-suspenders: if the provider never flagged a final chunk,
+        # emit an empty terminal marker so the active bubble still closes.
+        if (
+            self._mode == "fullzone"
+            and self._event_bus is not None
+            and chunk_idx > 0
+            and not last_is_final
+        ):
+            self._event_bus.emit(_RESPONSE_EVENT, {
+                "text": "",
+                "owl_name": last_owl,
+                "chunk_index": chunk_idx,
+                "trace_id": last_trace,
+                "is_final": True,
+            })
         if self._mode == "raw" and buffer and not buffer.endswith("\n"):
             assert isinstance(self._app, _LegacyStackOwlApp)
             self._app.write("\n")

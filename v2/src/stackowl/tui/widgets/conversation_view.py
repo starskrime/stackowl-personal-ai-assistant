@@ -172,18 +172,27 @@ class ConversationView(Widget):
         )
         opened = 0
         for chunk in chunks:
+            # An empty terminal marker with nothing open closes nothing and must
+            # not spawn a stray empty bubble.
+            if chunk.is_final and not chunk.text and self._active_bubble is None:
+                continue
             new_turn = (
                 self._active_bubble is None
                 or chunk.trace_id != self._active_trace_id
                 or chunk.is_synthesis
             )
-            if new_turn or self._active_bubble is None:
+            if new_turn:
                 bubble = MessageBubble(role="agent", owl_name=chunk.owl_name)
                 self._active_bubble = bubble
                 self._active_trace_id = chunk.trace_id
                 container.mount(MessageRow(bubble, role="agent"))
                 opened += 1
             self._active_bubble.append(self._renderer.render(chunk))
+            # A final chunk closes the turn so the next chunk opens a fresh
+            # bubble even if its trace id were to repeat.
+            if chunk.is_final:
+                self._active_bubble = None
+                self._active_trace_id = None
         self._check_auto_scroll(container)
         if self._auto_scroll:
             container.scroll_end(animate=False)

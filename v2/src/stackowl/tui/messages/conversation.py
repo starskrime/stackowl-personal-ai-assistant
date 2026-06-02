@@ -33,6 +33,8 @@ class ResponseChunkMessage(FrozenMessage):
         is_synthesis: ``True`` when the chunk is the final synthesis turn.
         chunk_index: Monotonic chunk index from the underlying stream.
         trace_id: W3C-style trace identifier propagated from the request.
+        is_final: ``True`` on the last chunk of a turn — closes the active
+            bubble so the next chunk opens a fresh one.
     """
 
     text: str
@@ -42,6 +44,7 @@ class ResponseChunkMessage(FrozenMessage):
     is_synthesis: bool = False
     chunk_index: int = 0
     trace_id: str = ""
+    is_final: bool = False
 
 
 @dataclass(frozen=True)

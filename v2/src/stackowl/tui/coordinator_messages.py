@@ -131,6 +131,7 @@ def build_message(event_name: str, payload: dict[str, Any]) -> "Message | None":
             is_synthesis=bool(payload.get("is_synthesis", False)),
             chunk_index=int(payload.get("chunk_index", 0)),
             trace_id=str(payload.get("trace_id", "")),
+            is_final=bool(payload.get("is_final", False)),
         )
     if event_name == "mcp_spectator_active":
         return ComposeAreaStateMessage(state="mcp-disabled")
