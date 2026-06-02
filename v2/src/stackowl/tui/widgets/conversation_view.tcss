@@ -5,10 +5,10 @@ ConversationView {
     border: solid $color-border;
     height: 1fr;
 }
-ConversationView RichLog {
+ConversationView VerticalScroll {
     background: $color-bg;
     color: $color-text-primary;
 }
-ConversationView RichLog:focus {
+ConversationView VerticalScroll:focus {
     border: solid $color-accent;
 }

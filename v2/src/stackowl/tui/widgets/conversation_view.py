@@ -1,41 +1,41 @@
-"""ConversationView — streaming chat transcript with citations and auto-scroll."""
+"""ConversationView — streaming chat transcript of mounted bubbles + auto-scroll."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from rich.text import Text
+from textual.containers import VerticalScroll
 from textual.widget import Widget
-from textual.widgets import RichLog
 
 from stackowl.infra.observability import log
 from stackowl.tui.glyphs import GLYPH_SEPARATOR
-from stackowl.tui.i18n import localize
 from stackowl.tui.messages import ResponseChunkMessage, UserTurnMessage
 from stackowl.tui.widgets.conversation_helpers import (
     DEFAULT_FLUSH_INTERVAL_SEC,
     ChunkRenderer,
     ScrollState,
 )
+from stackowl.tui.widgets.message_bubble import MessageBubble, MessageRow
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from textual.app import ComposeResult
 
-_LOG_ID = "conversation_log"
+_TRANSCRIPT_ID = "transcript"
 
 
 class ConversationView(Widget):
-    """Chat transcript with streaming support, citations, and auto-scroll.
+    """Chat transcript built from mounted bubbles, with streaming + auto-scroll.
 
     Incoming :class:`ResponseChunkMessage` events are queued in
     ``_pending_chunks`` and flushed on a fixed interval (``DEFAULT_FLUSH_INTERVAL_SEC``)
     so a burst of streaming tokens never overwhelms the terminal render loop.
+    Each flush appends into the *active* agent bubble; a fresh bubble opens when
+    the trace id changes (turn end) or a synthesis chunk arrives.
 
-    When the user scrolls away from the bottom, auto-scroll is suspended and
-    a transient "new messages" hint is rendered.  Pressing ``End`` resumes
-    auto-scroll.
+    When the user scrolls away from the bottom, auto-scroll is suspended.
+    Pressing ``End`` resumes auto-scroll.
     """
 
     DEFAULT_CSS = """
@@ -45,7 +45,7 @@ class ConversationView(Widget):
         border: solid $color-border;
         background: $color-bg;
     }
-    ConversationView RichLog {
+    ConversationView VerticalScroll {
         background: $color-bg;
         color: $color-text-primary;
     }
@@ -74,17 +74,15 @@ class ConversationView(Widget):
         )
         self._scroll_state: ScrollState = ScrollState()
         self._pending_hint_shown: bool = False
+        # The agent bubble currently being streamed into, plus the trace id that
+        # owns it. A change of trace id (or a synthesis chunk) opens a new bubble.
+        self._active_bubble: MessageBubble | None = None
+        self._active_trace_id: str | None = None
 
     # ------------------------------------------------------------------ lifecycle
 
     def compose(self) -> ComposeResult:
-        yield RichLog(
-            highlight=True,
-            markup=True,
-            wrap=True,
-            auto_scroll=False,  # we drive scroll explicitly to honour user override
-            id=_LOG_ID,
-        )
+        yield VerticalScroll(id=_TRANSCRIPT_ID)
 
     def on_mount(self) -> None:
         log.tui.debug(
@@ -93,33 +91,47 @@ class ConversationView(Widget):
         )
         self.set_interval(self._flush_interval_sec, self._flush_pending)
 
+    # ------------------------------------------------------------------ helpers
+
+    def _container(self) -> VerticalScroll | None:
+        """Return the scrollable transcript container (self-healing)."""
+        try:
+            return self.query_one(f"#{_TRANSCRIPT_ID}", VerticalScroll)
+        except Exception as exc:  # not mounted yet (tests / teardown)
+            log.tui.warning(
+                "[tui] conversation_view._container: transcript unavailable",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
+            return None
+
     # ------------------------------------------------------------------ messages
 
     def on_user_turn_message(self, message: UserTurnMessage) -> None:
-        """Render the user's own submitted turn into the transcript.
+        """Mount the user's own submitted turn as a right-aligned bubble.
 
-        Written as a right-justified :class:`~rich.text.Text` (never markup-
-        parsed) so arbitrary user input — including ``[`` — is rendered
-        verbatim and cannot inject Rich markup.  The interim right-justified
-        line previews the chat layout; the bubble rearchitecture supersedes it.
+        The bubble body is rendered NON-markup so arbitrary user input —
+        including ``[`` — is shown verbatim and cannot inject Rich markup.
         """
         log.tui.debug(
             "[tui] conversation_view.on_user_turn_message: entry",
             extra={"_fields": {"text_len": len(message.text)}},
         )
-        try:
-            log_widget = self.query_one(f"#{_LOG_ID}", RichLog)
-        except Exception as exc:  # widget not mounted yet (tests)
+        # The user is speaking — any active agent bubble is now closed.
+        self._active_bubble = None
+        self._active_trace_id = None
+        container = self._container()
+        if container is None:
             log.tui.warning(
-                "[tui] conversation_view.on_user_turn_message: log unavailable",
-                exc_info=exc,
+                "[tui] conversation_view.on_user_turn_message: container unavailable",
                 extra={"_fields": {"text_len": len(message.text)}},
             )
             return
-        label = localize("transcript.role.you")
-        log_widget.write(Text(f"{label}  {message.text}", justify="right"))
+        bubble = MessageBubble(role="user", text=message.text)
+        row = MessageRow(bubble, role="user")
+        container.mount(row)
         if self._auto_scroll:
-            log_widget.scroll_end(animate=False)
+            container.scroll_end(animate=False)
         log.tui.debug(
             "[tui] conversation_view.on_user_turn_message: exit",
             extra={"_fields": {"text_len": len(message.text)}},
@@ -144,17 +156,12 @@ class ConversationView(Widget):
     # ------------------------------------------------------------------ flush
 
     def _flush_pending(self) -> None:
-        """Write queued chunks to RichLog (debounced)."""
+        """Append queued chunks into the active agent bubble (debounced)."""
         if not self._pending_chunks:
             return
-        try:
-            log_widget = self.query_one(f"#{_LOG_ID}", RichLog)
-        except Exception as exc:  # widget not mounted yet (tests)
-            log.tui.warning(
-                "[tui] conversation_view._flush_pending: log widget unavailable",
-                exc_info=exc,
-                extra={"_fields": {"pending": len(self._pending_chunks)}},
-            )
+        container = self._container()
+        if container is None:
+            # Widget unavailable — leave chunks queued; the next tick retries.
             return
 
         chunks: list[ResponseChunkMessage] = list(self._pending_chunks)
@@ -163,17 +170,29 @@ class ConversationView(Widget):
             "[tui] conversation_view._flush_pending: decision write_batch",
             extra={"_fields": {"count": len(chunks)}},
         )
+        opened = 0
         for chunk in chunks:
-            rendered = self._render_chunk(chunk)
-            log_widget.write(rendered)
-        self._check_auto_scroll(log_widget)
+            new_turn = (
+                self._active_bubble is None
+                or chunk.trace_id != self._active_trace_id
+                or chunk.is_synthesis
+            )
+            if new_turn or self._active_bubble is None:
+                bubble = MessageBubble(role="agent", owl_name=chunk.owl_name)
+                self._active_bubble = bubble
+                self._active_trace_id = chunk.trace_id
+                container.mount(MessageRow(bubble, role="agent"))
+                opened += 1
+            self._active_bubble.append(self._renderer.render(chunk))
+        self._check_auto_scroll(container)
         if self._auto_scroll:
-            log_widget.scroll_end(animate=False)
+            container.scroll_end(animate=False)
         log.tui.debug(
             "[tui] conversation_view._flush_pending: exit",
             extra={
                 "_fields": {
                     "written": len(chunks),
+                    "bubbles_opened": opened,
                     "auto_scroll": self._auto_scroll,
                 }
             },
@@ -190,13 +209,13 @@ class ConversationView(Widget):
 
     # ------------------------------------------------------------------ scroll
 
-    def _check_auto_scroll(self, log_widget: RichLog) -> None:
-        """Update :attr:`_auto_scroll` based on the user's current scroll position.
+    def _check_auto_scroll(self, container: VerticalScroll) -> None:
+        """Update :attr:`_auto_scroll` based on the user's scroll position.
 
-        If the user has scrolled away from the bottom, suspend auto-scroll and
-        emit a one-shot debug hint.  Resumption happens via :meth:`action_scroll_end`.
+        If the user has scrolled away from the bottom, suspend auto-scroll.
+        Resumption happens via :meth:`action_scroll_end`.
         """
-        at_bottom = self._scroll_state.is_at_bottom(log_widget)
+        at_bottom = self._scroll_state.is_at_bottom(container)
         if not at_bottom and self._auto_scroll:
             self._auto_scroll = False
             self._pending_hint_shown = True
@@ -222,16 +241,10 @@ class ConversationView(Widget):
         )
         self._auto_scroll = True
         self._pending_hint_shown = False
-        try:
-            log_widget = self.query_one(f"#{_LOG_ID}", RichLog)
-        except Exception as exc:
-            log.tui.warning(
-                "[tui] conversation_view.action_scroll_end: log widget unavailable",
-                exc_info=exc,
-                extra={"_fields": {}},
-            )
+        container = self._container()
+        if container is None:
             return
-        log_widget.scroll_end(animate=False)
+        container.scroll_end(animate=False)
 
     def action_scroll_home(self) -> None:
         log.tui.debug(
@@ -239,16 +252,10 @@ class ConversationView(Widget):
             extra={"_fields": {}},
         )
         self._auto_scroll = False
-        try:
-            log_widget = self.query_one(f"#{_LOG_ID}", RichLog)
-        except Exception as exc:
-            log.tui.warning(
-                "[tui] conversation_view.action_scroll_home: log widget unavailable",
-                exc_info=exc,
-                extra={"_fields": {}},
-            )
+        container = self._container()
+        if container is None:
             return
-        log_widget.scroll_home(animate=False)
+        container.scroll_home(animate=False)
 
     def action_scroll_up(self) -> None:
         self._delegate_scroll("scroll_up")
@@ -267,16 +274,10 @@ class ConversationView(Widget):
             "[tui] conversation_view._delegate_scroll: entry",
             extra={"_fields": {"method": method_name}},
         )
-        try:
-            log_widget = self.query_one(f"#{_LOG_ID}", RichLog)
-        except Exception as exc:
-            log.tui.warning(
-                "[tui] conversation_view._delegate_scroll: log widget unavailable",
-                exc_info=exc,
-                extra={"_fields": {"method": method_name}},
-            )
+        container = self._container()
+        if container is None:
             return
-        method = getattr(log_widget, method_name, None)
+        method = getattr(container, method_name, None)
         if method is None:
             log.tui.warning(
                 "[tui] conversation_view._delegate_scroll: unknown method",

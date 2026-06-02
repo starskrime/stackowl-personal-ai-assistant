@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
-from textual.widget import Widget
+from textual.containers import Vertical
 from textual.widgets import Static
 
 from stackowl.infra.observability import log
@@ -20,8 +20,14 @@ _RULE_GLYPH = "─"
 _FALLBACK_WIDTH = 80
 
 
-class Banner(Widget):
-    """Pinned wordmark banner docked to the top layer of the screen.
+class Banner(Vertical):
+    """Pinned wordmark banner docked to the top of the screen.
+
+    Subclasses :class:`~textual.containers.Vertical` (not a bare ``Widget``) so
+    its rule / art / tagline child Statics stack vertically — a plain ``Widget``
+    overlaps them at the same position. ``dock: top`` (without ``layer``) both
+    pins the banner and reserves its rows, so the transcript flows beneath it
+    rather than being overlaid.
 
     The ASCII art is ported verbatim from the legacy ``header.ts`` wordmark.
     The top half of the logo is rendered amber and the bottom half red; those
@@ -49,7 +55,6 @@ class Banner(Widget):
     DEFAULT_CSS = """
     Banner {
         dock: top;
-        layer: top;
         height: 9;
         width: 100%;
         overflow-x: hidden;

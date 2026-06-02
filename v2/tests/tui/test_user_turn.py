@@ -5,12 +5,13 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-from textual.widgets import RichLog
+from rich.text import Text
 
 from stackowl.events.bus import EventBus
 from stackowl.tui.app import StackOwlApp
 from stackowl.tui.messages import ComposeSubmittedMessage, UserTurnMessage
 from stackowl.tui.widgets.conversation_view import ConversationView
+from stackowl.tui.widgets.message_bubble import MessageBubble
 
 pytestmark = pytest.mark.tui
 
@@ -38,7 +39,7 @@ def test_submit_still_emits_event_when_view_unmounted() -> None:
 
 @pytest.mark.asyncio
 async def test_user_turn_rendered_verbatim_in_transcript() -> None:
-    """Submitting echoes the user's turn into the RichLog, markup NOT parsed."""
+    """Submitting mounts the user's turn as a bubble, markup NOT parsed."""
     bus = EventBus()
     received: list[dict[str, object]] = []
     bus.subscribe("compose_submitted", lambda payload: received.append(payload))
@@ -50,9 +51,17 @@ async def test_user_turn_rendered_verbatim_in_transcript() -> None:
         await pilot.pause()
 
         view = app.query_one(ConversationView)
-        log_widget = view.query_one("#conversation_log", RichLog)
-        rendered = "".join(strip.text for strip in log_widget.lines)
-        assert "hi [bot] there" in rendered  # verbatim, markup left intact
+        bubbles = list(view.query(MessageBubble))
+        user_bubbles = [b for b in bubbles if b.has_class("-user")]
+        assert len(user_bubbles) == 1
+        bubble = user_bubbles[0]
+        # Verbatim buffer — the '[' survives, markup left intact.
+        assert "hi [bot] there" in bubble._buffer
+        # The body is rendered as plain rich Text (no markup parsing), so the
+        # '[' cannot inject markup — the rendered body equals the raw text.
+        body = list(bubble.render().renderables)[1]  # type: ignore[attr-defined]
+        assert isinstance(body, Text)
+        assert body.plain == "hi [bot] there"
 
     # The CLIAdapter path is independent and must still receive the turn.
     assert received == [{"text": "hi [bot] there"}]

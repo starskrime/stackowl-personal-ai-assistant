@@ -54,10 +54,12 @@ def test_banner_brightness_split() -> None:
     assert bright_flags[3:] == [False, False, False]
 
 
-def test_banner_css_docks_top_layer_top_height_9() -> None:
+def test_banner_css_docks_top_height_9() -> None:
+    # dock:top alone pins the banner AND reserves its rows; layer:top would
+    # float it OVER the transcript (overlap bug), so it must NOT be present.
     css = Banner.DEFAULT_CSS
     assert "dock: top" in css
-    assert "layer: top" in css
+    assert "layer: top" not in css
     assert "height: 9" in css
 
 

@@ -23,8 +23,8 @@ from stackowl.tui.messages import (
 )
 from stackowl.tui.widgets.compose_area import ComposeArea
 from stackowl.tui.widgets.conversation_view import ConversationView
+from stackowl.tui.widgets.message_bubble import MessageBubble
 from stackowl.tui.widgets.pipeline_strip import PipelineStrip
-from textual.widgets import RichLog
 
 pytestmark = pytest.mark.tui
 
@@ -38,7 +38,7 @@ async def _pump(pilot: object) -> None:
 
 @pytest.mark.asyncio
 async def test_response_chunk_renders_in_conversation_view() -> None:
-    """THE proof the bug is fixed: an emitted response_chunk reaches the RichLog."""
+    """THE proof the bug is fixed: an emitted response_chunk reaches a bubble."""
     bus = EventBus()
     app = StackOwlApp(event_bus=bus)
     async with app.run_test(size=(100, 40)) as pilot:
@@ -49,9 +49,11 @@ async def test_response_chunk_renders_in_conversation_view() -> None:
             await _pump(pilot)
 
             view = app.query_one(ConversationView)
-            log_widget = view.query_one("#conversation_log", RichLog)
-            rendered = "".join(strip.text for strip in log_widget.lines)
-            assert "RENDER_ME" in rendered
+            agent_bubbles = [
+                b for b in view.query(MessageBubble) if b.has_class("-agent")
+            ]
+            assert len(agent_bubbles) == 1
+            assert "RENDER_ME" in agent_bubbles[0]._buffer
         finally:
             await coord.stop()
 

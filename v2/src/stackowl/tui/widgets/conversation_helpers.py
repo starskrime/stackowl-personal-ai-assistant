@@ -9,7 +9,7 @@ from stackowl.infra.observability import log
 from stackowl.tui.messages import ResponseChunkMessage
 
 if TYPE_CHECKING:
-    from textual.widgets import RichLog
+    from textual.widget import Widget
 
 #: Default debounce interval (~60fps) for flushing queued chunks.
 DEFAULT_FLUSH_INTERVAL_SEC: float = 0.016
@@ -41,20 +41,22 @@ class ChunkRenderer:
 
 
 class ScrollState:
-    """Tracks whether a :class:`textual.widgets.RichLog` is pinned at the bottom.
+    """Tracks whether a scrollable widget is pinned at the bottom.
 
-    Wrapping the check in a small object lets the widget hand a fake to tests
-    that doesn't require a full Textual layout pass.
+    Duck-typed on ``is_vertical_scroll_end`` so it works for any scrollable
+    container (RichLog, VerticalScroll, ...). Wrapping the check in a small
+    object lets the widget hand a fake to tests that doesn't require a full
+    Textual layout pass.
     """
 
-    def is_at_bottom(self, log_widget: RichLog) -> bool:
-        """Return ``True`` when the user is viewing the tail of the log."""
+    def is_at_bottom(self, widget: Widget) -> bool:
+        """Return ``True`` when the user is viewing the tail of the widget."""
         try:
-            return bool(getattr(log_widget, "is_vertical_scroll_end", True))
+            return bool(getattr(widget, "is_vertical_scroll_end", True))
         except Exception as exc:
             log.tui.warning(
                 "[tui] scroll_state.is_at_bottom: probe failed",
                 exc_info=exc,
-                extra={"_fields": {"widget": type(log_widget).__name__}},
+                extra={"_fields": {"widget": type(widget).__name__}},
             )
             return True
