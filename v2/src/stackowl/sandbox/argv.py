@@ -28,6 +28,7 @@ import subprocess
 from pathlib import Path
 
 from stackowl.sandbox.mounts import WORKSPACE_MOUNT, MountBuilder
+from stackowl.sandbox.ptc.protocol import PTC_SOCK_ENV, in_sandbox_sock_path
 from stackowl.sandbox.spec import ExecSpec
 
 __all__ = ["BwrapArgvBuilder"]
@@ -54,12 +55,18 @@ class BwrapArgvBuilder:
     def __init__(self) -> None:
         self._mounts = MountBuilder()
 
-    def build(self, spec: ExecSpec, workspace: Path) -> list[str]:
+    def build(self, spec: ExecSpec, workspace: Path, *, ptc_sock: Path | None = None) -> list[str]:
         """Assemble the bwrap command line (isolation + mounts + env + exec).
 
         ``workspace`` is the host scratch ``workspace`` dir bound RW at
         ``/workspace`` (the only writable mount). The returned argv ends with
         ``python3 /workspace/main.py``.
+
+        ``ptc_sock`` (E11-S4): the SHORT HOST path of the per-run PTC socket. When
+        given, the ONLY extra relaxation is ``--bind <host_sock> /workspace/.ptc.sock``
+        plus the ``OWL_PTC_SOCK`` env pointing the in-sandbox ``owl`` stub at it.
+        Network isolation (``--unshare-net``) is UNCHANGED; the socket is the single
+        controlled channel. ``None`` → no PTC wiring (the prior behaviour).
         """
         bwrap = shutil.which("bwrap") or "bwrap"
         argv = [bwrap, *_ISOLATION_FLAGS]
@@ -68,6 +75,11 @@ class BwrapArgvBuilder:
             argv += ["--cap-drop", "ALL"]
         # invariant #6: minimal read-only OS runtime + the RW scratch as /workspace.
         argv += self._mounts.build(workspace)
+        # PTC (optional): the SINGLE extra mount — bind the short host socket to the
+        # fixed in-sandbox path. Network stays denied (--unshare-net above unchanged).
+        in_sock = in_sandbox_sock_path(WORKSPACE_MOUNT)
+        if ptc_sock is not None:
+            argv += ["--bind", str(ptc_sock), in_sock]
         # invariant #4: clear the environment, then forward ONLY the allowlisted
         # names (host value passed through); HOME is pinned to the writable workspace.
         argv += ["--clearenv", "--setenv", "HOME", WORKSPACE_MOUNT]
@@ -77,6 +89,9 @@ class BwrapArgvBuilder:
             value = os.environ.get(name)
             if value is not None:
                 argv += ["--setenv", name, value]
+        # PTC: point the in-sandbox stub at the bind-mounted socket.
+        if ptc_sock is not None:
+            argv += ["--setenv", PTC_SOCK_ENV, in_sock]
         argv += ["--chdir", WORKSPACE_MOUNT, "python3", f"{WORKSPACE_MOUNT}/main.py"]
         return argv
 

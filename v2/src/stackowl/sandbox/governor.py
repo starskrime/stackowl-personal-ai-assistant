@@ -34,7 +34,7 @@ from stackowl.infra.observability import log
 from stackowl.sandbox.limits import MAX_CONCURRENT_SANDBOXES
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
-    from stackowl.sandbox.base import SandboxBackend
+    from stackowl.sandbox.base import PtcFactory, SandboxBackend
     from stackowl.sandbox.spec import ExecResult, ExecSpec
 
 __all__ = ["SandboxGovernor", "SandboxSaturatedError", "run_under_slot"]
@@ -141,6 +141,8 @@ async def run_under_slot(
     governor: SandboxGovernor | None,
     backend: SandboxBackend,
     spec: ExecSpec,
+    *,
+    ptc_factory: PtcFactory | None = None,
 ) -> ExecResult:
     """Run ``backend.run(spec)`` while holding a governor slot (if a governor is set).
 
@@ -148,8 +150,11 @@ async def run_under_slot(
     holds one slot for its whole duration; on saturation past the bounded wait the
     governor raises :class:`SandboxSaturatedError`, which the caller maps to a clean
     refusal — the backend is NEVER invoked in that case (nothing runs).
+
+    ``ptc_factory`` (E11-S4) is forwarded to ``backend.run`` to optionally enable the
+    host-tool callback for this run; ``None`` keeps the isolation-only path.
     """
     if governor is None:
-        return await backend.run(spec)
+        return await backend.run(spec, ptc_factory=ptc_factory)
     async with governor.slot():
-        return await backend.run(spec)
+        return await backend.run(spec, ptc_factory=ptc_factory)

@@ -33,22 +33,41 @@ host):
    ``--security-opt no-new-privileges`` + seccomp default-deny; bwrap: rootless
    user-namespace, no setuid). A backend that cannot guarantee this refuses.
 
-Future seam (E11-S4 PTC/RPC — NOT built here): a backend may later expose a
-host-tool callback channel so code inside the sandbox can call a curated set of
-host tools over RPC. The contract is shaped so that capability can be added as an
-OPTIONAL backend feature (a future ``rpc_channel`` accessor / a flag on the spec)
-WITHOUT changing :meth:`run`'s structured-result discipline — this story does not
-implement PTC.
+PTC/RPC seam (E11-S4 — BUILT): a backend MAY expose a host-tool callback channel so
+code inside the sandbox can call a CURATED, default-DENY allowlist of host tools over
+a per-run unix socket (:class:`~stackowl.sandbox.ptc.server.PtcServer`). It is an
+OPTIONAL feature wired through the kw-only ``ptc_factory`` parameter on :meth:`run`
+WITHOUT changing run()'s structured-result discipline: a run WITHOUT a factory is
+byte-for-byte the prior behaviour (the isolation invariants are untouched). When a
+factory IS supplied, the backend builds it against the run's own sandbox workspace,
+starts it before the launch, serves it concurrently, and tears it down in a
+``finally``. The per-run socket is a SHORT HOST path (the deep ``~/.stackowl`` scratch
+path exceeds the ~108-byte AF_UNIX limit) bind-mounted into the sandbox — that ONE
+extra mount is the ONLY relaxation; the network stays denied and no other host FS is
+exposed.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from stackowl.sandbox.spec import ExecResult, ExecSpec
 
-__all__ = ["SandboxAvailability", "SandboxBackend"]
+if TYPE_CHECKING:  # pragma: no cover — typing-only (avoids importing the ptc package)
+    from stackowl.sandbox.ptc.server import PtcServer
+
+__all__ = ["PtcFactory", "SandboxAvailability", "SandboxBackend"]
+
+# A factory that, given the run's SANDBOX workspace dir AND the HOST socket path the
+# backend chose (kept SHORT to respect the ~108-byte AF_UNIX limit, and bind-mounted
+# into the sandbox), returns a configured (but not yet started) PtcServer bound to that
+# workspace + the host tool registry. The backend owns start/serve/teardown. None → no
+# host-tool callback (the isolation-only path, unchanged).
+PtcFactory = Callable[[Path, Path], "PtcServer"]
 
 
 @dataclass(frozen=True)
@@ -109,7 +128,7 @@ class SandboxBackend(ABC):
         ...
 
     @abstractmethod
-    async def run(self, spec: ExecSpec) -> ExecResult:
+    async def run(self, spec: ExecSpec, *, ptc_factory: PtcFactory | None = None) -> ExecResult:
         """Execute ``spec`` in isolation and return a provenance-tagged result.
 
         MUST honour every module-level invariant. NEVER raises for an operational
@@ -117,5 +136,11 @@ class SandboxBackend(ABC):
         ``denied`` result when a cap cannot be enforced or a network request
         cannot be satisfied). Implemented by E11-S2 (Docker) / E11-S3 (bwrap);
         abstract here.
+
+        ``ptc_factory`` (E11-S4, optional): when supplied, the backend builds a
+        :class:`~stackowl.sandbox.ptc.server.PtcServer` against this run's sandbox
+        workspace, mounts its socket into the sandbox, injects the ``owl`` stub, and
+        serves the default-DENY host-tool callback during the run — then tears it
+        down. ``None`` → the isolation-only path, byte-for-byte unchanged.
         """
         ...

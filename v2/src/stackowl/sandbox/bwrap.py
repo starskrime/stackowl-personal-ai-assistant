@@ -30,19 +30,17 @@ auto-reaped by systemd when the payload exits).
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import shutil
-import uuid
 from pathlib import Path
 
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
-from stackowl.paths import StackowlHome
 from stackowl.process.kill_platform import terminate_tree
 from stackowl.sandbox.argv import BwrapArgvBuilder
-from stackowl.sandbox.base import SandboxAvailability, SandboxBackend
+from stackowl.sandbox.base import PtcFactory, SandboxAvailability, SandboxBackend
+from stackowl.sandbox.bwrap_scratch import BwrapScratch
 from stackowl.sandbox.capability import SandboxCapability
 from stackowl.sandbox.cgroup import CGROUP_MARKER, CgroupRecipe
+from stackowl.sandbox.ptc.lifecycle import PtcRunChannel
 from stackowl.sandbox.spec import ExecResult, ExecSpec
 
 __all__ = ["BwrapSandbox"]
@@ -97,8 +95,17 @@ class BwrapSandbox(SandboxBackend):
             return SandboxAvailability.no(f"bwrap availability check failed ({type(exc).__name__})")
 
     # ------------------------------------------------------------- run
-    async def run(self, spec: ExecSpec) -> ExecResult:
-        """Execute ``spec`` in an isolated bwrap+cgroup cage. Never raises (B5)."""
+    async def run(self, spec: ExecSpec, *, ptc_factory: PtcFactory | None = None) -> ExecResult:
+        """Execute ``spec`` in an isolated bwrap+cgroup cage. Never raises (B5).
+
+        ``ptc_factory`` (optional) enables the default-DENY host-tool callback for
+        this run: the per-run socket is a SHORT host path (the ``~/.stackowl`` scratch
+        path is too long for the ~108-byte AF_UNIX limit) bind-mounted into the sandbox
+        at ``/workspace/.ptc.sock`` — the ONE extra mount — alongside the OWL_PTC_SOCK
+        env, and the ``owl`` stub is injected into ``/workspace``. ``None`` → the
+        isolation-only path, byte-for-byte unchanged (no socket, no stub, no env). The
+        network stays denied either way (``--unshare-net``).
+        """
         started = self._clock.monotonic()
         # 1. ENTRY — log shape only, NEVER the code content (length only).
         log.tool.debug(
@@ -122,10 +129,16 @@ class BwrapSandbox(SandboxBackend):
             )
 
         scratch: Path | None = None
+        channel: PtcRunChannel | None = None
         try:
-            scratch = self._make_scratch(spec.session_id)
-            self._write_code(scratch, spec.code)
-            return await self._launch(spec, scratch, started)
+            scratch = BwrapScratch.make(spec.session_id)
+            BwrapScratch.write_code(scratch, spec.code)
+            # PTC (optional): inject the stub + start the per-run callback server in
+            # the RW workspace. No-op when ptc_factory is None (unchanged behaviour).
+            channel = PtcRunChannel(scratch / "workspace", ptc_factory)
+            ptc_live = await channel.start()
+            ptc_sock = channel.host_socket_path if ptc_live else None
+            return await self._launch(spec, scratch, started, ptc_sock=ptc_sock)
         except Exception as exc:  # B5 — any unexpected failure is structured, never raised.
             log.tool.error("[sandbox.bwrap] run: unexpected failure", exc_info=exc)
             return ExecResult.error(
@@ -136,16 +149,22 @@ class BwrapSandbox(SandboxBackend):
                 duration_ms=self._elapsed_ms(started),
             )
         finally:
-            self._cleanup_scratch(scratch)
+            if channel is not None:
+                await channel.aclose()
+            BwrapScratch.cleanup(scratch)
 
     # ------------------------------------------------------------- launch
-    async def _launch(self, spec: ExecSpec, scratch: Path, started: float) -> ExecResult:
+    async def _launch(
+        self, spec: ExecSpec, scratch: Path, started: float, *, ptc_sock: Path | None = None
+    ) -> ExecResult:
         """Build bwrap+cgroup argv, run it, and map the outcome to an ExecResult."""
         marker = scratch / CGROUP_MARKER
         # Only the ``workspace`` subdir is bound RW — the cgroup marker file lives
-        # in the scratch ROOT and is NOT exposed to the child (invariant #6).
-        bwrap_argv = self._argv.build(spec, scratch / "workspace")
-        unit = f"stackowl-sbx-{self._session_tag(spec.session_id)}"
+        # in the scratch ROOT and is NOT exposed to the child (invariant #6). When
+        # PTC is live the SINGLE extra relaxation is binding the short host socket to
+        # the fixed in-sandbox path + the OWL_PTC_SOCK env; net stays denied.
+        bwrap_argv = self._argv.build(spec, scratch / "workspace", ptc_sock=ptc_sock)
+        unit = f"stackowl-sbx-{BwrapScratch.session_tag(spec.session_id)}"
         argv = CgroupRecipe.build_command(
             caps=spec.caps, unit=unit, marker_path=marker, bwrap_argv=bwrap_argv
         )
@@ -252,33 +271,7 @@ class BwrapSandbox(SandboxBackend):
             backend_used=self.name, network_enabled=False, caps_applied=spec.caps, duration_ms=duration,
         )
 
-    # ------------------------------------------------------------- scratch + util
-    def _make_scratch(self, session_id: str) -> Path:
-        """Create the 0700 scratch + ``workspace`` subdir under ~/.stackowl/sandbox.
-
-        Returns the scratch ROOT (which holds ``workspace/`` and the cgroup marker);
-        the code goes in ``workspace/main.py`` and only ``workspace`` is bind-mounted.
-        """
-        root = StackowlHome.home() / "sandbox"
-        root.mkdir(parents=True, exist_ok=True)
-        scratch = root / (self._session_tag(session_id) or uuid.uuid4().hex)
-        (scratch / "workspace").mkdir(parents=True, exist_ok=True)
-        for d in (scratch, scratch / "workspace"):
-            with contextlib.suppress(OSError):
-                d.chmod(0o700)
-        return scratch
-
-    @staticmethod
-    def _write_code(scratch: Path, code: str) -> None:
-        """Write the run's python entrypoint into the scratch workspace."""
-        (scratch / "workspace" / "main.py").write_text(code, encoding="utf-8")
-
-    @staticmethod
-    def _session_tag(session_id: str) -> str:
-        """A filesystem-safe, collision-resistant tag for the scratch + cgroup unit."""
-        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:32]
-        return f"{safe}-{uuid.uuid4().hex[:8]}" if safe else uuid.uuid4().hex[:16]
-
+    # ------------------------------------------------------------- util
     @staticmethod
     async def _drain(proc: asyncio.subprocess.Process) -> tuple[bytes, bytes]:
         """Collect whatever output a killed process left behind. Never raises."""
@@ -286,15 +279,6 @@ class BwrapSandbox(SandboxBackend):
             return await asyncio.wait_for(proc.communicate(), timeout=2.0)
         except (TimeoutError, OSError, ValueError):
             return b"", b""
-
-    def _cleanup_scratch(self, scratch: Path | None) -> None:
-        """Remove the run's scratch tree. Never raises."""
-        if scratch is None:
-            return
-        try:
-            shutil.rmtree(scratch, ignore_errors=True)
-        except OSError as exc:
-            log.tool.debug("[sandbox.bwrap] _cleanup_scratch: rmtree failed", extra={"_fields": {"err": str(exc)}})
 
     def _elapsed_ms(self, started: float) -> int:
         return int((self._clock.monotonic() - started) * 1000)

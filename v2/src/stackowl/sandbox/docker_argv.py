@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from stackowl.sandbox.ptc.protocol import PTC_SOCK_ENV, in_sandbox_sock_path
 from stackowl.sandbox.spec import ExecSpec
 
 __all__ = ["DockerArgvBuilder"]
@@ -64,12 +65,18 @@ class DockerArgvBuilder:
         code_dir: Path,
         seccomp_profile: Path,
         docker_bin: str = "docker",
+        ptc_socket: Path | None = None,
     ) -> list[str]:
         """Assemble the full hardened argv.
 
         ``code_dir`` is the host dir holding ``main.py`` (bind-mounted READ-ONLY at
         ``/workspace``). ``seccomp_profile`` is the mandatory restrictive filter.
         The returned argv ends with ``<image> python /workspace/main.py``.
+
+        ``ptc_socket`` (E11-S4, optional): the HOST path of the per-run PTC socket.
+        When given, the ONLY extra mount is that single socket volume at
+        ``/work/.ptc.sock`` plus the ``OWL_PTC_SOCK`` env — ``--network=none`` is
+        unchanged. ``None`` → no PTC wiring at all (the prior behaviour).
         """
         caps = spec.caps
         # NOTE: deliberately NO ``--rm`` here. With ``--rm`` the daemon removes the
@@ -111,6 +118,12 @@ class DockerArgvBuilder:
             "--workdir", WORK_MOUNT,
         ]
 
+        # --- PTC (#optional): the SINGLE extra mount — the per-run socket — plus its
+        #     env pointer. The socket is mounted into the writable /work; net stays none.
+        if ptc_socket is not None:
+            in_sock = in_sandbox_sock_path(WORK_MOUNT)
+            argv += ["--volume", f"{ptc_socket}:{in_sock}"]
+
         # --- env (#4): allowlist-from-empty; HOME pinned to the writable scratch.
         argv += ["--env", f"HOME={WORK_MOUNT}"]
         for name in spec.env_allow:
@@ -119,6 +132,8 @@ class DockerArgvBuilder:
             value = os.environ.get(name)
             if value is not None:
                 argv += ["--env", f"{name}={value}"]
+        if ptc_socket is not None:
+            argv += ["--env", f"{PTC_SOCK_ENV}={in_sandbox_sock_path(WORK_MOUNT)}"]
 
         # --- exec: the interpreter runs the READ-ONLY mounted entrypoint.
         argv += [image, "python", f"{CODE_MOUNT}/{CODE_FILE}"]

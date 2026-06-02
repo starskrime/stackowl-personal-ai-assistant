@@ -55,13 +55,14 @@ class _FakeBackend(SandboxBackend):
     async def is_available(self) -> SandboxAvailability:
         return SandboxAvailability.ok()
 
-    async def run(self, spec: ExecSpec) -> ExecResult:
+    async def run(self, spec: ExecSpec, *, ptc_factory: object | None = None) -> ExecResult:
         self.ran_spec = spec
+        self.ran_ptc_factory = ptc_factory
         return self._result
 
 
 class _RaisingBackend(_FakeBackend):
-    async def run(self, spec: ExecSpec) -> ExecResult:
+    async def run(self, spec: ExecSpec, *, ptc_factory: object | None = None) -> ExecResult:
         self.ran_spec = spec
         raise RuntimeError("backend exploded")
 

@@ -150,8 +150,9 @@ class _FakeBackend:
     def name(self) -> str:
         return "fake"
 
-    async def run(self, spec: ExecSpec) -> ExecResult:
+    async def run(self, spec: ExecSpec, *, ptc_factory: object | None = None) -> ExecResult:
         self.ran = True
+        self.ran_ptc_factory = ptc_factory
         return self._result
 
 

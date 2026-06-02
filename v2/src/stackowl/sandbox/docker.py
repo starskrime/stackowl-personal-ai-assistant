@@ -36,11 +36,13 @@ from pathlib import Path
 
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
-from stackowl.sandbox.base import SandboxAvailability, SandboxBackend
+from stackowl.sandbox.base import PtcFactory, SandboxAvailability, SandboxBackend
 from stackowl.sandbox.capability import SandboxCapability
 from stackowl.sandbox.docker_argv import DockerArgvBuilder
 from stackowl.sandbox.docker_control import DockerControl
+from stackowl.sandbox.docker_result import classify_docker_outcome
 from stackowl.sandbox.docker_scratch import DockerScratch
+from stackowl.sandbox.ptc.lifecycle import PtcRunChannel
 from stackowl.sandbox.seccomp import SeccompProfile
 from stackowl.sandbox.spec import ExecResult, ExecSpec
 
@@ -48,10 +50,6 @@ __all__ = ["BASE_IMAGE", "DockerSandbox"]
 
 # Pinned minimal python base image (specific tag, never ``latest``; multi-arch).
 BASE_IMAGE = "python:3.12-slim"
-
-# Docker's exit code for a SIGKILL'd container (128 + 9); a hint for OOM/killed
-# classification alongside the authoritative inspect probe.
-_SIGKILL_EXIT = 137
 
 
 class DockerSandbox(SandboxBackend):
@@ -113,8 +111,15 @@ class DockerSandbox(SandboxBackend):
             )
 
     # ------------------------------------------------------------- run
-    async def run(self, spec: ExecSpec) -> ExecResult:
-        """Run ``spec`` in a hardened container under a wall-time budget. Never raises."""
+    async def run(self, spec: ExecSpec, *, ptc_factory: PtcFactory | None = None) -> ExecResult:
+        """Run ``spec`` in a hardened container under a wall-time budget. Never raises.
+
+        ``ptc_factory`` (optional, E11-S4): enables the default-DENY host-tool
+        callback — the ``owl`` stub is placed in the RO code mount, the per-run socket
+        is volume-mounted at ``/work/.ptc.sock`` (the ONLY extra mount), and
+        ``OWL_PTC_SOCK`` is set. ``None`` → byte-for-byte the prior behaviour (no
+        socket, no stub, no env). ``--network=none`` is unchanged either way.
+        """
         started = self._clock.monotonic()
         # 1. ENTRY — shape only, NEVER the code content (length only); no env values.
         log.tool.debug(
@@ -130,6 +135,7 @@ class DockerSandbox(SandboxBackend):
         )
         scratch: Path | None = None
         container = DockerScratch.container_name(spec.session_id)
+        channel: PtcRunChannel | None = None
         try:
             # MANDATORY seccomp (load-bearing on a rootful daemon): refuse if absent.
             profile = SeccompProfile.ensure()
@@ -146,6 +152,13 @@ class DockerSandbox(SandboxBackend):
 
             scratch = DockerScratch.make(spec.session_id)
             DockerScratch.write_code(scratch, spec.code)
+            # PTC (optional): inject the ``owl`` stub into the RO-mounted ``code`` dir +
+            # start the per-run server on a SHORT host socket (volume-mounted into the
+            # container). Shared with bwrap via PtcRunChannel — one PTC-lifecycle path.
+            # No-op when ptc_factory is None (byte-for-byte the prior no-PTC behaviour).
+            channel = PtcRunChannel(scratch / "code", ptc_factory)
+            ptc_live = await channel.start()
+            ptc_sock = channel.host_socket_path if ptc_live else None
             argv = self._argv.build(
                 spec=spec,
                 image=self._image,
@@ -153,6 +166,7 @@ class DockerSandbox(SandboxBackend):
                 code_dir=scratch / "code",
                 seccomp_profile=profile,
                 docker_bin=self._docker,
+                ptc_socket=ptc_sock,
             )
             return await self._launch(spec, argv, container, started)
         except Exception as exc:  # B5 — any unexpected failure is structured.
@@ -161,6 +175,8 @@ class DockerSandbox(SandboxBackend):
                 spec, started, f"sandbox setup failed ({type(exc).__name__}: {exc})"
             )
         finally:
+            if channel is not None:
+                await channel.aclose()
             # No --rm (so the OOM inspect reads State.OOMKilled before removal); this
             # force-reap always runs, so no container ever accumulates.
             await self._control.force_remove(container)
@@ -212,63 +228,12 @@ class DockerSandbox(SandboxBackend):
             await self._control.kill(container)
             out, err = await self._drain(proc)
 
-        return await self._map_result(spec, proc, container, out, err, timed_out, started)
-
-    # ------------------------------------------------------------- result mapping
-    async def _map_result(
-        self,
-        spec: ExecSpec,
-        proc: asyncio.subprocess.Process,
-        container: str,
-        out: bytes,
-        err: bytes,
-        timed_out: bool,
-        started: float,
-    ) -> ExecResult:
-        """Translate the docker outcome into a provenance-tagged ExecResult."""
-        duration = self._elapsed_ms(started)
-        stdout = out.decode("utf-8", errors="replace")
-        stderr = err.decode("utf-8", errors="replace")
-        code = proc.returncode
-
-        if timed_out:
-            return ExecResult.timed_out(
-                stdout=stdout, stderr=stderr, backend_used=self.name,
-                network_enabled=spec.network, caps_applied=spec.caps, duration_ms=duration,
-            )
-        # State.OOMKilled (docker inspect) is authoritative; a 137 without it = non-OOM.
-        if await self._control.was_oom_killed(container):
-            log.tool.info(
-                "[sandbox.docker] _map_result: container OOM-killed",
-                extra={"_fields": {"exit_code": code}},
-            )
-            return ExecResult.error(
-                reason="oom",
-                message="the run exceeded its memory cap and was OOM-killed",
-                backend_used=self.name, caps_applied=spec.caps,
-                network_enabled=spec.network, duration_ms=duration,
-            )
-        if code == _SIGKILL_EXIT or (code is not None and code < 0):
-            sig = -code if (code is not None and code < 0) else 9
-            log.tool.info(
-                "[sandbox.docker] _map_result: container killed by signal",
-                extra={"_fields": {"signal": sig, "exit_code": code}},
-            )
-            return ExecResult.error(
-                reason="killed",
-                message=f"the run was killed by signal {sig} (resource cap or external kill)",
-                backend_used=self.name, caps_applied=spec.caps,
-                network_enabled=spec.network, duration_ms=duration,
-            )
-
-        log.tool.debug(
-            "[sandbox.docker] run: exit",
-            extra={"_fields": {"exit_code": code, "duration_ms": duration, "stdout_len": len(stdout)}},
-        )
-        return ExecResult.ok(
-            stdout=stdout, stderr=stderr, exit_code=code if code is not None else -1,
-            backend_used=self.name, network_enabled=spec.network,
-            caps_applied=spec.caps, duration_ms=duration,
+        # Result classification lives in docker_result (B2 split); the authoritative
+        # OOM probe is awaited HERE and passed in (the helper stays pure of docker I/O).
+        oom = (not timed_out) and await self._control.was_oom_killed(container)
+        return classify_docker_outcome(
+            spec=spec, proc=proc, out=out, err=err, timed_out=timed_out,
+            oom_killed=oom, duration_ms=self._elapsed_ms(started), backend_name=self.name,
         )
 
     # ------------------------------------------------------------- util

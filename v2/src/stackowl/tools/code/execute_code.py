@@ -37,6 +37,7 @@ from stackowl.sandbox.governor import SandboxSaturatedError, run_under_slot
 from stackowl.sandbox.spec import ExecResult, ExecSpec, ResourceCaps
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.code._consent import bounded_code
+from stackowl.tools.code._ptc import build_ptc_factory, consent_callback_note
 
 __all__ = ["ExecuteCodeTool"]
 
@@ -136,8 +137,12 @@ class ExecuteCodeTool(Tool):
             language = str(call_args.get("language") or "python")
             network = bool(call_args.get("network"))
         net = "WITH network access" if network else "no network"
+        # PTC is enabled by default (read + sandbox-workspace-write only); disclose
+        # that the code may call a curated allowlist of host tools so the user
+        # consents to that capability, not just the raw run.
+        callback = consent_callback_note()
         return (
-            f"Run this {language} code in an isolated sandbox ({net}):\n"
+            f"Run this {language} code in an isolated sandbox ({net}).{callback}\n"
             f"```\n{bounded_code(code)}\n```"
         )
 
@@ -202,7 +207,8 @@ class ExecuteCodeTool(Tool):
         # structured result. Never deadlocks, never host-exec.
         try:
             result = await run_under_slot(
-                get_services().sandbox_governor, backend, spec
+                get_services().sandbox_governor, backend, spec,
+                ptc_factory=build_ptc_factory(spec),
             )
         except SandboxSaturatedError as exc:
             log.tool.warning(
