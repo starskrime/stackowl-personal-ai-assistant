@@ -56,6 +56,21 @@ class TestChildToolsetExclusion:
         assert "delegate_task" in _CHILD_EXCLUDED_TOOLS
         assert "sessions_spawn" in _CHILD_EXCLUDED_TOOLS
 
+    def test_process_excluded_from_children_e9_ff5(self) -> None:
+        """FF-E9-5: a delegated child must not spawn persistent OS processes —
+        `process` is child-excluded (presentation AND execution layer). `wait`
+        (read-only, no persistence) stays available to children."""
+        assert "process" in _CHILD_EXCLUDED_TOOLS
+        assert "wait" not in _CHILD_EXCLUDED_TOOLS
+        # Presentation: a depth>0 child's schema list drops `process`, keeps `wait`.
+        schemas: list[dict[str, object]] = [
+            {"name": "process"},
+            {"name": "wait"},
+            {"name": "read_file"},
+        ]
+        names = {_schema_tool_name(s) for s in _exclude_spawn_tools(schemas)}
+        assert names == {"wait", "read_file"}
+
     def test_schema_name_extraction_anthropic_shape(self) -> None:
         assert _schema_tool_name({"name": "delegate_task"}) == "delegate_task"
 
