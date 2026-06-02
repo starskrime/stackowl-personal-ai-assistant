@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from stackowl.tui.messages._base import FrozenMessage
 
 
-@dataclass(frozen=True)
+# NOT frozen: this message bubbles from the ComposeArea child widget up to the
+# App, and Textual's pump mutates internal bookkeeping (``_no_default_action``,
+# ``_stop_propagation``) during bubbling — which a frozen dataclass rejects,
+# crashing the pump.  Payload immutability is preserved by convention (set once
+# at construction); the FrozenMessage base permits only the pump's writes.
+@dataclass
 class ComposeSubmittedMessage(FrozenMessage):
     """Emitted when the user submits a composed line.
 

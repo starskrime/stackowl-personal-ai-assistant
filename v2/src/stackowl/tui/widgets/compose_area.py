@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import Static, TextArea
 
 from stackowl.infra.observability import log
 from stackowl.tui.i18n import localize
@@ -18,6 +18,7 @@ from stackowl.tui.widgets.compose_helpers import (
     CommandInfo,
     build_state,
 )
+from stackowl.tui.widgets.submit_text_area import SubmitTextArea
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
 
 _INPUT_ID = "compose_input"
+_PLACEHOLDER_ID = "compose_placeholder"
 
 _STATE_IDLE = "idle"
 _STATE_COMPOSING = "composing"
@@ -43,13 +45,25 @@ class ComposeArea(Widget):
 
     DEFAULT_CSS = """
     ComposeArea {
-        height: 3;
+        height: 5;
+        min-height: 3;
         background: $color-surface;
         border-top: solid $color-border;
+        layers: editor overlay;
     }
-    ComposeArea Input {
+    ComposeArea SubmitTextArea {
+        layer: editor;
+        height: 1fr;
         background: $color-bg-elevated;
         color: $color-text-primary;
+    }
+    ComposeArea .compose-placeholder {
+        layer: overlay;
+        offset: 1 0;
+        width: 1fr;
+        height: auto;
+        color: $color-text-muted;
+        background: transparent;
     }
     """
 
@@ -113,7 +127,14 @@ class ComposeArea(Widget):
 
     # ------------------------------------------------------------------ compose
     def compose(self) -> ComposeResult:
-        yield Input(id=_INPUT_ID, placeholder=localize("compose.placeholder"))
+        # TextArea has no placeholder property — render a dim overlay Static that
+        # is shown only while the editor is empty.
+        yield SubmitTextArea(id=_INPUT_ID)
+        yield Static(
+            localize("compose.placeholder"),
+            id=_PLACEHOLDER_ID,
+            classes="compose-placeholder",
+        )
 
     # ------------------------------------------------------------------ reactive
     def watch_state(self, new_state: str) -> None:
@@ -123,12 +144,14 @@ class ComposeArea(Widget):
         )
 
     # ------------------------------------------------------------------ events
-    def on_input_changed(self, event: Input.Changed) -> None:
-        value = event.value
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        value = event.text_area.text
         log.tui.debug(
-            "[tui] compose_area.on_input_changed: entry",
+            "[tui] compose_area.on_text_area_changed: entry",
             extra={"_fields": {"len": len(value)}},
         )
+        # Empty editor → show the placeholder overlay; otherwise hide it.
+        self._set_placeholder_visible(not value)
         if self.state == _STATE_MCP_DISABLED:
             return
         if value:
@@ -147,31 +170,34 @@ class ComposeArea(Widget):
         else:
             self._hide_autocomplete()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_submit_text_area_submitted(
+        self, event: SubmitTextArea.Submitted
+    ) -> None:
         log.tui.debug(
-            "[tui] compose_area.on_input_submitted: entry",
+            "[tui] compose_area.on_submit_text_area_submitted: entry",
             extra={"_fields": {"state": self.state}},
         )
         if self.state == _STATE_MCP_DISABLED:
             log.tui.warning(
-                "[tui] compose_area.on_input_submitted: blocked — mcp disabled",
+                "[tui] compose_area.on_submit_text_area_submitted: blocked — mcp disabled",
                 extra={"_fields": {}},
             )
             return
-        text = event.value.strip()
+        text = event.text.strip()
         if not text:
             return
         self.state = _STATE_SUBMITTING
         self.post_message(ComposeSubmittedMessage(text=text))
         try:
-            input_widget = self.query_one(f"#{_INPUT_ID}", Input)
-            input_widget.value = ""
+            editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
+            editor.text = ""
         except Exception as exc:
             log.tui.warning(
-                "[tui] compose_area.on_input_submitted: failed to clear input",
+                "[tui] compose_area.on_submit_text_area_submitted: failed to clear editor",
                 exc_info=exc,
                 extra={"_fields": {}},
             )
+        self._set_placeholder_visible(True)
         self.state = _STATE_IDLE
 
     # ------------------------------------------------------------------ state
@@ -194,24 +220,24 @@ class ComposeArea(Widget):
             extra={"_fields": {"disabled": disabled}},
         )
         try:
-            input_widget = self.query_one(f"#{_INPUT_ID}", Input)
+            editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
         except Exception as exc:
             log.tui.warning(
-                "[tui] compose_area.set_mcp_disabled: input not mounted",
+                "[tui] compose_area.set_mcp_disabled: editor not mounted",
                 exc_info=exc,
                 extra={"_fields": {"disabled": disabled}},
             )
-            input_widget = None
+            editor = None
         if disabled:
             self.state = _STATE_MCP_DISABLED
-            if input_widget is not None:
-                input_widget.placeholder = localize("compose.mcp_disabled")
-                input_widget.disabled = True
+            self._set_placeholder_text(localize("compose.mcp_disabled"))
+            if editor is not None:
+                editor.disabled = True
             return
         self.state = _STATE_IDLE
-        if input_widget is not None:
-            input_widget.placeholder = localize("compose.placeholder")
-            input_widget.disabled = False
+        self._set_placeholder_text(localize("compose.placeholder"))
+        if editor is not None:
+            editor.disabled = False
 
     def set_parliament_active(self, active: bool) -> None:
         """Swap placeholder hint when a parliament session is running."""
@@ -219,17 +245,43 @@ class ComposeArea(Widget):
             "[tui] compose_area.set_parliament_active: entry",
             extra={"_fields": {"active": active}},
         )
+        key = "compose.parliament_active" if active else "compose.placeholder"
+        self._set_placeholder_text(localize(key))
+
+    # ------------------------------------------------------------------ placeholder
+    def _set_placeholder_visible(self, visible: bool) -> None:
+        """Show/hide the overlay placeholder Static. Self-healing if unmounted."""
+        log.tui.debug(
+            "[tui] compose_area._set_placeholder_visible: step",
+            extra={"_fields": {"visible": visible}},
+        )
         try:
-            input_widget = self.query_one(f"#{_INPUT_ID}", Input)
+            placeholder = self.query_one(f"#{_PLACEHOLDER_ID}", Static)
         except Exception as exc:
             log.tui.warning(
-                "[tui] compose_area.set_parliament_active: input not mounted",
+                "[tui] compose_area._set_placeholder_visible: placeholder not mounted",
                 exc_info=exc,
-                extra={"_fields": {"active": active}},
+                extra={"_fields": {"visible": visible}},
             )
             return
-        key = "compose.parliament_active" if active else "compose.placeholder"
-        input_widget.placeholder = localize(key)
+        placeholder.display = visible
+
+    def _set_placeholder_text(self, text: str) -> None:
+        """Swap the overlay placeholder's content (TextArea has no placeholder)."""
+        log.tui.debug(
+            "[tui] compose_area._set_placeholder_text: step",
+            extra={"_fields": {"len": len(text)}},
+        )
+        try:
+            placeholder = self.query_one(f"#{_PLACEHOLDER_ID}", Static)
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] compose_area._set_placeholder_text: placeholder not mounted",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
+            return
+        placeholder.update(text)
 
     # ------------------------------------------------------------------ autocomplete
     def _show_command_autocomplete(self, prefix: str) -> None:
@@ -268,15 +320,16 @@ class ComposeArea(Widget):
             extra={"_fields": {"state": self.state}},
         )
         try:
-            input_widget = self.query_one(f"#{_INPUT_ID}", Input)
-            input_widget.value = ""
+            editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
+            editor.text = ""
         except Exception as exc:
             log.tui.warning(
-                "[tui] compose_area.action_clear_input: input not mounted",
+                "[tui] compose_area.action_clear_input: editor not mounted",
                 exc_info=exc,
                 extra={"_fields": {}},
             )
             return
+        self._set_placeholder_visible(True)
         self.state = _STATE_IDLE
         self._hide_autocomplete()
 

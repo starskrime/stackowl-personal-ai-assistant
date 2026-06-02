@@ -51,8 +51,8 @@ def test_compose_area_on_input_submitted_posts_compose_submitted_message() -> No
     area = ComposeArea()
     posted: list[Any] = []
     area.post_message = posted.append  # type: ignore[method-assign]
-    fake_event = type("E", (), {"value": "hello world  "})()
-    area.on_input_submitted(fake_event)  # type: ignore[arg-type]
+    fake_event = type("E", (), {"text": "hello world  "})()
+    area.on_submit_text_area_submitted(fake_event)  # type: ignore[arg-type]
     assert len(posted) == 1
     msg = posted[0]
     assert isinstance(msg, ComposeSubmittedMessage)
@@ -64,8 +64,8 @@ def test_compose_area_on_input_submitted_noop_when_mcp_disabled() -> None:
     area.set_mcp_disabled(True)
     posted: list[Any] = []
     area.post_message = posted.append  # type: ignore[method-assign]
-    fake_event = type("E", (), {"value": "hi"})()
-    area.on_input_submitted(fake_event)  # type: ignore[arg-type]
+    fake_event = type("E", (), {"text": "hi"})()
+    area.on_submit_text_area_submitted(fake_event)  # type: ignore[arg-type]
     assert posted == []
     assert area.state == "mcp-disabled"
 
@@ -74,8 +74,8 @@ def test_compose_area_on_input_submitted_noop_when_empty() -> None:
     area = ComposeArea()
     posted: list[Any] = []
     area.post_message = posted.append  # type: ignore[method-assign]
-    fake_event = type("E", (), {"value": "   "})()
-    area.on_input_submitted(fake_event)  # type: ignore[arg-type]
+    fake_event = type("E", (), {"text": "   "})()
+    area.on_submit_text_area_submitted(fake_event)  # type: ignore[arg-type]
     assert posted == []
 
 
@@ -84,12 +84,17 @@ def test_compose_area_on_input_submitted_noop_when_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _changed_event(text: str) -> Any:
+    """Build a fake ``TextArea.Changed`` whose ``text_area.text`` is ``text``."""
+    text_area = type("TA", (), {"text": text})()
+    return type("E", (), {"text_area": text_area})()
+
+
 def test_compose_area_on_input_changed_slash_triggers_command_autocomplete() -> None:
     area = ComposeArea(
         command_names=["help", "heat", "history", "halt"], owl_names=["secretary"]
     )
-    fake_event = type("E", (), {"value": "/he"})()
-    area.on_input_changed(fake_event)  # type: ignore[arg-type]
+    area.on_text_area_changed(_changed_event("/he"))  # type: ignore[arg-type]
     snap = area.autocomplete_state
     assert snap.kind == AutocompleteKind.COMMAND
     assert snap.prefix == "he"
@@ -104,8 +109,7 @@ def test_compose_area_on_input_changed_at_triggers_owl_autocomplete() -> None:
     area = ComposeArea(
         command_names=["help"], owl_names=["secretary", "second", "scout"]
     )
-    fake_event = type("E", (), {"value": "@sec"})()
-    area.on_input_changed(fake_event)  # type: ignore[arg-type]
+    area.on_text_area_changed(_changed_event("@sec"))  # type: ignore[arg-type]
     snap = area.autocomplete_state
     assert snap.kind == AutocompleteKind.OWL
     assert snap.prefix == "sec"
@@ -117,16 +121,14 @@ def test_compose_area_on_input_changed_at_triggers_owl_autocomplete() -> None:
 
 def test_compose_area_on_input_changed_no_trigger_hides_autocomplete() -> None:
     area = ComposeArea(command_names=["help"], owl_names=["secretary"])
-    fake_event = type("E", (), {"value": "hello world"})()
-    area.on_input_changed(fake_event)  # type: ignore[arg-type]
+    area.on_text_area_changed(_changed_event("hello world"))  # type: ignore[arg-type]
     assert area.autocomplete_state.kind == AutocompleteKind.NONE
     assert area.autocomplete_state.candidates == ()
 
 
 def test_compose_area_on_input_changed_at_after_space_triggers_owl_autocomplete() -> None:
     area = ComposeArea(owl_names=["secretary", "parrot"])
-    fake_event = type("E", (), {"value": "hello @par"})()
-    area.on_input_changed(fake_event)  # type: ignore[arg-type]
+    area.on_text_area_changed(_changed_event("hello @par"))  # type: ignore[arg-type]
     snap = area.autocomplete_state
     assert snap.kind == AutocompleteKind.OWL
     assert snap.prefix == "par"

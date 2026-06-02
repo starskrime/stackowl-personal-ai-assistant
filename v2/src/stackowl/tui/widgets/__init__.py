@@ -8,6 +8,7 @@ from stackowl.tui.widgets.constellation_view import ConstellationView, OwlCard
 from stackowl.tui.widgets.conversation_view import ConversationView
 from stackowl.tui.widgets.message_bubble import MessageBubble, MessageRow
 from stackowl.tui.widgets.pipeline_strip import PipelineStrip
+from stackowl.tui.widgets.submit_text_area import SubmitTextArea
 
 __all__ = [
     "Banner",
@@ -18,4 +19,5 @@ __all__ = [
     "MessageRow",
     "OwlCard",
     "PipelineStrip",
+    "SubmitTextArea",
 ]
