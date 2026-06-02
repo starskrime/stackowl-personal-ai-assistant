@@ -36,7 +36,11 @@ __all__ = ["PresentationConfig", "ToolPresentation"]
 # H4 adds tool_build (self-extension) to the base set so EVERY owl can mint a new
 # tool mid-turn; the cap is bumped by 1 in lockstep so base growth does NOT shrink
 # the discretionary per-turn headroom.
-_DEFAULT_CAP = 30
+# P1 adds memory (always-on agentic recall/preserve) to the base set so EVERY owl
+# can recall + durably preserve mid-turn regardless of its capability_profile; the
+# cap is bumped by 1 in lockstep so base growth does NOT shrink discretionary
+# per-turn headroom.
+_DEFAULT_CAP = 31
 # Guaranteed base set — read-only/foundation essentials every owl always has.
 # Phase B: the self-improvement trio (skill_manage / reflect_now /
 # synthesize_skills) joins the base set so EVERY owl can reach self-learning +
@@ -54,6 +58,9 @@ _DEFAULT_BASE = frozenset({
     # H4 — tool_build: every owl can author a new tool to overcome a capability
     # gap (consequential → still consent-gated at dispatch; surfacing ≠ bypass).
     "tool_build",
+    # P1 — memory: always-on agentic recall/preserve so every owl can recall what
+    # it knows and durably preserve on request, independent of its profile.
+    "memory",
 })
 _DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"})
 

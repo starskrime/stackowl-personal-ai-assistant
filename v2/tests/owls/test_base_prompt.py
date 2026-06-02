@@ -113,6 +113,38 @@ def test_charter_carries_direct_means_and_deliver_result() -> None:
         )
 
 
+def test_charter_carries_persistent_memory_principle() -> None:
+    """The charter must declare the assistant has PERSISTENT memory surviving
+    across conversations/restarts, and frame recalling-before-answering and
+    durably preserving on request as ACTIONS it takes.
+
+    Asserted on robust substrings (essence), not brittle full sentences, so the
+    wording can evolve. Must introduce no forbidden tool/domain token.
+    """
+    charter = behavioral_charter()
+    lowered = charter.lower()
+
+    assert "persistent" in lowered, (
+        "charter must declare the assistant has persistent memory"
+    )
+    assert "memory" in lowered, "charter must name its memory"
+    assert "across conversations" in lowered or "across sessions" in lowered, (
+        "charter must say the memory survives across conversations/sessions"
+    )
+    assert "recall" in lowered, (
+        "charter must instruct recalling what it knows before answering"
+    )
+    assert "remember" in lowered or "preserve" in lowered, (
+        "charter must instruct durably preserving what it is asked to remember"
+    )
+
+    # Essence still pure behaviour: no forbidden tool/domain tokens introduced.
+    for token in _FORBIDDEN_TOKENS:
+        assert token not in lowered, (
+            f"memory principle must NOT introduce case-specific token {token!r}"
+        )
+
+
 def test_adapter_has_date_and_protocol() -> None:
     """The adapter renders today's date human-readably (not raw isoformat) and
     teaches the ReAct call protocol."""
