@@ -271,6 +271,16 @@ class SchedulerAssembly:
             db, handler_name="process_sweep", schedule="every 10m",
             interval_minutes=10,
         )
+        # E11-S6 — sandbox sweep reaps LEAKED sandbox artifacts a crash/kill left
+        # behind: scratch dirs under ~/.stackowl/sandbox/ + stackowl-sbx-* docker
+        # containers + bwrap cgroup scopes, each older than SANDBOX_ARTIFACT_TTL_S
+        # (1h, ~120× the 30s max wall time so a LIVE run is never reaped). The
+        # handler is registered in the gateway assembly (stateless reaper); this only
+        # seeds the recurring jobs row so the scheduler actually dispatches it.
+        await _seed_minutes_schedule(
+            db, handler_name="sandbox_sweep", schedule="every 10m",
+            interval_minutes=10,
+        )
         # Downloads janitor — prune the single workspace downloads folder every
         # 12h (720m), deleting files older than 2 days (the handler's default
         # retention). Scoped to that folder ONLY; never touches durable stores.

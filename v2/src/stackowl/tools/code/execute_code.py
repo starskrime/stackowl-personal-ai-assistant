@@ -7,21 +7,20 @@ primary; Docker only for a network run), runs there, returns a structured result
 
 Load-bearing invariants:
 
-* **NEVER host-exec fallback.** No viable backend (selector unavailable / not
-  wired) → a structured "code execution unavailable" result; NOTHING runs on the
-  host. There is no degraded path.
+* **NEVER host-exec fallback.** No viable backend → a structured "code execution
+  unavailable" result; NOTHING runs on the host. There is no degraded path.
 * **Consent-gated (always-ask).** Consequential + on the always-ask list, so the
-  gate fires BEFORE ``execute`` and cannot be batch/window-relaxed. The tool does
-  not call the gate (dispatch does); it supplies a per-call :meth:`consent_summary`
-  (GAP-A) showing the language + a bounded code DIGEST + whether network is asked.
-* **Child-excluded (GAP-B).** A delegated sub-agent (depth>0) is refused this tool
-  at the dispatch layer (``_CHILD_EXCLUDED_TOOLS``).
+  gate fires BEFORE ``execute``. It supplies a per-call :meth:`consent_summary`
+  (GAP-A): language + a bounded code DIGEST + whether network is asked.
+* **Child-excluded (GAP-B).** A delegated sub-agent (depth>0) is refused this tool.
+* **Concurrency-capped (E11-S6).** A shared :class:`SandboxGovernor` bounds total
+  concurrent runs so N runs × the per-run memory cap cannot OOM the host; saturated
+  past a bounded wait it REFUSES (typed, never deadlocks) and nothing runs.
 * **Python-only (MVP)**; **self-healing (B5)** — selector-None / unavailable /
   backend error → structured result, logged, NEVER raises.
 
 Sensitive-data: logs record code LENGTH + language + network + backend, never the
-code content (the consent prompt is the one trusted place the code is shown). The
-returned stdout/stderr are the user's OWN output (byte-capped by ExecResult).
+code content (the consent prompt is the one trusted place the code is shown).
 """
 
 from __future__ import annotations
@@ -34,16 +33,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.services import get_services
+from stackowl.sandbox.governor import SandboxSaturatedError, run_under_slot
 from stackowl.sandbox.spec import ExecResult, ExecSpec, ResourceCaps
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.tools.code._consent import bounded_code
 
 __all__ = ["ExecuteCodeTool"]
 
 _TOOLSET_GROUP = "code"
-# Bounded code digest shown in the consent prompt (GAP-A): enough for the user to
-# judge what runs, never an unbounded dump. The gate truncates again defensively.
-_CONSENT_CODE_MAX_LINES = 40
-_CONSENT_CODE_MAX_CHARS = 1000
 
 
 class ExecuteCodeArgs(BaseModel):
@@ -141,24 +138,8 @@ class ExecuteCodeTool(Tool):
         net = "WITH network access" if network else "no network"
         return (
             f"Run this {language} code in an isolated sandbox ({net}):\n"
-            f"```\n{self._bounded_code(code)}\n```"
+            f"```\n{bounded_code(code)}\n```"
         )
-
-    @staticmethod
-    def _bounded_code(code: str) -> str:
-        """Bound the code to the first N lines / chars with an honest elision note."""
-        lines = code.splitlines()
-        clipped = False
-        if len(lines) > _CONSENT_CODE_MAX_LINES:
-            lines = lines[:_CONSENT_CODE_MAX_LINES]
-            clipped = True
-        digest = "\n".join(lines)
-        if len(digest) > _CONSENT_CODE_MAX_CHARS:
-            digest = digest[:_CONSENT_CODE_MAX_CHARS]
-            clipped = True
-        if clipped:
-            digest = f"{digest}\n…[code truncated for display]"
-        return digest
 
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
@@ -216,10 +197,23 @@ class ExecuteCodeTool(Tool):
             extra={"_fields": {"backend": backend.name, "network": spec.network}},
         )
 
-        # 3. STEP — run in the isolated backend. The backend NEVER raises (B5), but
-        # belt-and-braces wrap it so a contract breach degrades to a structured result.
+        # 3. STEP — run in the isolated backend UNDER a global concurrency slot (see
+        # run_under_slot): saturated → typed refusal (nothing runs); backend breach →
+        # structured result. Never deadlocks, never host-exec.
         try:
-            result = await backend.run(spec)
+            result = await run_under_slot(
+                get_services().sandbox_governor, backend, spec
+            )
+        except SandboxSaturatedError as exc:
+            log.tool.warning(
+                "execute_code.execute: governor saturated — refusing (nothing ran)",
+                extra={"_fields": {"detail": str(exc)}},
+            )
+            return self._err(
+                "too many code executions are running right now — nothing was run; "
+                "try again in a moment.",
+                t0,
+            )
         except Exception as exc:  # B5 — contract says never, but never trust+host-exec
             log.tool.error(
                 "execute_code.execute: backend.run raised — refusing (no host exec)",

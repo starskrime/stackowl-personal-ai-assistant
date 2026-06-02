@@ -470,6 +470,22 @@ class StartupOrchestrator:
             ]
         )
 
+        # E11-S6 — ONE shared SandboxGovernor: bounds total concurrent sandbox runs
+        # so N runs × the per-run memory cap cannot OOM the host. Injected onto
+        # StepServices so the execute_code tool acquires a slot around each run;
+        # saturated past a bounded wait it REFUSES (typed) and nothing runs. The
+        # recurring GC sweep (leaked scratch dirs / stackowl-sbx-* containers /
+        # cgroup scopes from crashes) is registered as a JobHandler here and seeded
+        # as a `sandbox_sweep` job row in the scheduler assembly (every 10m),
+        # mirroring process_sweep. Clock-injected so the reap TTL is deterministic.
+        from stackowl.sandbox.governor import SandboxGovernor
+        from stackowl.scheduler.handlers.sandbox_sweep import (
+            register_sandbox_sweep_handler,
+        )
+
+        sandbox_governor = SandboxGovernor()
+        register_sandbox_sweep_handler()
+
         # E8-S0cost — ONE shared CostTracker (per-turn running total feeds the soft
         # cost-pause) + the CostPauseGuard that asks the user "Continue?" via the
         # clarify gateway before the next expensive op once a turn crosses the soft
@@ -525,6 +541,7 @@ class StartupOrchestrator:
             cost_tracker=cost_tracker,
             cost_pause_guard=cost_pause_guard,
             sandbox_selector=sandbox_selector,
+            sandbox_governor=sandbox_governor,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto

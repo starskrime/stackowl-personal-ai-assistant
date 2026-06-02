@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from stackowl.process.registry import ProcessRegistry
     from stackowl.providers.cost_tracker import CostTracker
     from stackowl.providers.registry import ProviderRegistry
+    from stackowl.sandbox.governor import SandboxGovernor
     from stackowl.sandbox.selector import SandboxSelector
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.browser.runtime import CamoufoxRuntime
@@ -100,6 +101,12 @@ class StepServices:
     # execution unavailable — no sandbox backend" result and NEVER runs on the host
     # (self-healing, B5; the load-bearing safety invariant).
     sandbox_selector: SandboxSelector | None = field(default=None)
+    # E11-S6 — the global sandbox concurrency governor. ONE shared instance bounding
+    # total concurrent sandbox runs so N runs × the per-run memory cap cannot OOM the
+    # host. The execute_code tool reads THIS off services and acquires a slot around
+    # the run; saturated past a bounded wait it REFUSES (typed) and nothing runs.
+    # None → ungated (back-compat; the tool runs without a concurrency cap).
+    sandbox_governor: SandboxGovernor | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

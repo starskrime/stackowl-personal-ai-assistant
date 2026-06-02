@@ -228,3 +228,59 @@ async def test_invalid_args_are_refused() -> None:
     res = await _run(ExecuteCodeTool(), _services_with(None), code="x", bogus=True)
     assert res.success is False
     assert "invalid arguments" in (res.error or "")
+
+
+# --------------------------------------------------------------- governor (E11-S6)
+
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+from stackowl.sandbox.governor import SandboxGovernor, SandboxSaturatedError  # noqa: E402
+
+
+class _RefusingGovernor:
+    """A governor double whose slot() always REFUSES (saturated), like the real one
+    past its bounded wait. Never invokes the backend."""
+
+    @asynccontextmanager
+    async def slot(self, timeout=None):  # noqa: ANN001, ANN202
+        raise SandboxSaturatedError("saturated (test)")
+        yield  # pragma: no cover — unreachable, satisfies the cm protocol
+
+
+def _services_with_gov(selector, governor):  # noqa: ANN001, ANN202
+    return StepServices(sandbox_selector=selector, sandbox_governor=governor)
+
+
+async def test_governor_saturated_refuses_and_never_runs_backend() -> None:
+    backend = _FakeBackend(result=_ok_result())
+    selector = SandboxSelector([backend], probe=_StubProbe(bwrap=True, docker=False))  # type: ignore[arg-type]
+    res = await _run(
+        ExecuteCodeTool(),
+        _services_with_gov(selector, _RefusingGovernor()),
+        code="print(2+2)",
+    )
+    assert res.success is False
+    assert "too many code executions" in (res.error or "")
+    assert backend.ran_spec is None  # the backend was NEVER reached — nothing ran
+
+
+async def test_governor_with_a_free_slot_runs_normally() -> None:
+    backend = _FakeBackend(result=_ok_result("4\n"))
+    selector = SandboxSelector([backend], probe=_StubProbe(bwrap=True, docker=False))  # type: ignore[arg-type]
+    res = await _run(
+        ExecuteCodeTool(),
+        _services_with_gov(selector, SandboxGovernor(2)),
+        code="print(2+2)",
+    )
+    assert res.success is True
+    assert backend.ran_spec is not None  # acquired a slot and ran
+
+
+async def test_governor_none_runs_normally_backward_compat() -> None:
+    backend = _FakeBackend(result=_ok_result("4\n"))
+    selector = SandboxSelector([backend], probe=_StubProbe(bwrap=True, docker=False))  # type: ignore[arg-type]
+    # No governor wired (the default) → runs ungated, as before.
+    res = await _run(ExecuteCodeTool(), _services_with(selector), code="print(2+2)")
+    assert res.success is True
+    assert backend.ran_spec is not None

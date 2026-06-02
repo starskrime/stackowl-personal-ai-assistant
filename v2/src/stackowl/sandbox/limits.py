@@ -52,9 +52,26 @@ MAX_STDERR_BYTES = 10_000
 #     start broader. Secrets/tokens never appear here.
 DEFAULT_ENV_ALLOW: tuple[str, ...] = ("PATH", "HOME", "LANG")
 
-# --- Global concurrency cap PLACEHOLDER (enforced by the registry in E11-S6).
+# --- Global concurrency cap (enforced by the SandboxGovernor in E11-S6).
 #     A personal assistant rarely needs many parallel sandboxes; past this the
-#     S6 registry will refuse (structured, never raising) so a caller cannot
-#     exhaust the host with concurrent containers. Defined here so the number
-#     lives with the other rails; NOT enforced at this layer.
-MAX_CONCURRENT_SANDBOXES = 4
+#     governor REFUSES (structured/typed, never raising, never deadlocking) so a
+#     caller cannot exhaust the host with concurrent runs. Defined here so the
+#     number lives with the other rails.
+#
+#     The math (host-OOM rail): each concurrent run may use up to DEFAULT_MEM_MIB
+#     (2048 MiB). The aggregate worst-case memory is therefore
+#     N × DEFAULT_MEM_MIB. At N=3 that is 3 × 2048 MiB = 6 GiB — bounded and
+#     comfortably below a modest personal-assistant host's RAM, with headroom for
+#     the host itself and the assistant process. (N=4 → 8 GiB, which is too close
+#     to the edge on small hosts.) Capability-probed hosts may run smaller; this
+#     is the conservative ceiling, never larger by default.
+MAX_CONCURRENT_SANDBOXES = 3
+
+# --- TTL for reaping LEAKED sandbox artifacts (E11-S6 SandboxSweepHandler).
+#     A live run's scratch dir / container / cgroup scope exists only for the
+#     duration of the run, which a backend HARD-kills at DEFAULT_WALL_TIME_S
+#     (30s). This TTL must be comfortably PAST any possible live run so the
+#     sweeper never reaps an in-flight run's artifacts: 3600s is ~120× the max
+#     wall time. Anything older than this is, by construction, an orphan left by
+#     a crash/kill (the normal path cleans up its own scratch in a finally block).
+SANDBOX_ARTIFACT_TTL_S = 3600
