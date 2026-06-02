@@ -298,6 +298,7 @@ class ToolRegistry:
         from stackowl.tools.knowledge.skills_list import SkillsListTool
         from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
         from stackowl.tools.knowledge.transcripts import TranscriptsTool
+        from stackowl.tools.media.browser_vision import BrowserVisionTool
         from stackowl.tools.media.image_generate import ImageGenerateTool
         from stackowl.tools.media.tts import TtsTool
         from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
@@ -446,6 +447,16 @@ class ToolRegistry:
         # get_services().provider_registry at execute time (no constructor wiring);
         # self-healing → structured result, never raises. Severity read; group media.
         registry.register(VisionAnalyzeTool())
+        # browser_vision — screenshot the CURRENT browser page (the E2 mechanism:
+        # sessions.get_page + page.screenshot under screenshots_dir) and analyze it
+        # on the same LOCAL-FIRST vision substrate as vision_analyze (the shared
+        # analyze_image_bytes core). The screenshot lives outside the workspace, so
+        # the captured bytes are fed straight to the analyzer (not the workspace-
+        # confined ImageLoader). Returns the description + screenshot path; a CLOUD
+        # backend is disclosed (egress). Reads get_services() at execute time (no
+        # constructor wiring); self-healing → structured result, never raises.
+        # Severity read; group media.
+        registry.register(BrowserVisionTool())
         # tts — synthesize speech from text on the LOCAL-FIRST TTS substrate
         # (E10-S3). Composes the TtsSelector (local OSS engine first, opt-in cloud
         # fallback only when enabled + configured) over the media/tts backends. The

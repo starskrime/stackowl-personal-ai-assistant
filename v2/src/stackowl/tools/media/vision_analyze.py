@@ -35,10 +35,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
-from stackowl.providers.base import DocumentBlock, Message
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.vision.analyzer import analyze_image_bytes
 from stackowl.vision.loader import ImageLoader, LoadedImage
-from stackowl.vision.selector import VisionSelector
 
 _TOOLSET_GROUP = "media"
 _DEFAULT_QUESTION = "Describe this image in detail."
@@ -147,67 +146,22 @@ class VisionAnalyzeTool(Tool):
             extra={"_fields": {"size": loaded.size, "mime": loaded.media_type}},
         )
 
-        # 3. DECISION — resolve the provider registry; self-heal if absent (B5).
-        registry = get_services().provider_registry
-        if registry is None:
-            log.tool.warning("vision_analyze.execute: no provider_registry wired — unavailable")
-            return self._err(
-                "vision substrate unavailable (no provider registry configured)", t0
-            )
-
-        # Select a vision-capable provider LOCAL-FIRST; actionable if none.
-        selection = VisionSelector(registry).select()
-        if not selection.available or selection.provider is None:
-            reason = selection.reason or (
-                "No vision-capable model is available. Install a local vision model "
-                "(e.g. an Ollama llava / llama3.2-vision tag via `ollama pull llava`) "
-                "or configure a vision-capable provider."
-            )
-            log.tool.info("vision_analyze.execute: no vision provider — actionable result")
-            return self._err(reason, t0)
-
-        provider = selection.provider
-        log.tool.info(
-            "vision_analyze.execute: selected vision provider",
-            extra={"_fields": {"provider": provider.name, "local": selection.is_local}},
+        # 3-5. Analyze on the SHARED vision core (select→DocumentBlock→complete→
+        # egress-disclose). Identical behavior to browser_vision; the two tools
+        # differ ONLY in how they obtain the bytes (this one loaded a path/URL).
+        analysis = await analyze_image_bytes(
+            get_services().provider_registry,
+            data=loaded.data,
+            media_type=loaded.media_type,
+            question=args.question,
         )
-
-        # 4. STEP — call the vision model with the image carried as an image block.
-        block = DocumentBlock(data=loaded.data, media_type=loaded.media_type)
-        message = Message(role="user", content=args.question, documents=(block,))
-        try:
-            result = await provider.complete([message], model="")
-        except Exception as exc:  # provider failure → structured result, never raise (B5)
-            log.tool.error(
-                "vision_analyze.execute: vision provider call failed",
-                exc_info=exc,
-                extra={"_fields": {"provider": provider.name}},
-            )
-            return self._err(
-                f"vision provider '{provider.name}' failed: {type(exc).__name__}: {exc}", t0
-            )
-
-        # 5. EXIT — disclose egress IFF the backend is cloud (image left the box).
-        description = result.content
-        output = description
-        if not selection.is_local:
-            output = self._egress_header(provider.name) + description
-            log.tool.info(
-                "vision_analyze.execute: CLOUD backend — egress disclosed",
-                extra={"_fields": {"provider": provider.name, "image_bytes": loaded.size}},
-            )
-        return self._ok(output, t0, backend=provider.name, local=selection.is_local)
+        if not analysis.success:
+            return self._err(analysis.error or "vision analysis failed", t0)
+        return self._ok(
+            analysis.description, t0, backend=analysis.backend or "", local=analysis.is_local
+        )
 
     # ---------------------------------------------------------------- helpers
-    @staticmethod
-    def _egress_header(provider_name: str) -> str:
-        """The cloud-egress disclosure prepended to the output (mirrors pdf Mode B)."""
-        return (
-            f"[Cloud vision: analyzed via vision-capable provider '{provider_name}'. "
-            f"The image bytes were sent to that provider (it left this machine; no "
-            f"local vision model was available).]\n"
-        )
-
     def _ok(self, description: str, t0: float, *, backend: str, local: bool) -> ToolResult:
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
