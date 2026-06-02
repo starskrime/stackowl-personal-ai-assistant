@@ -1,7 +1,8 @@
-"""StackOwlApp — the 4-zone Textual application class.
+"""StackOwlApp — the 5-zone Textual application class.
 
-Mounts the four headline TUI widgets:
+Mounts the five headline TUI widgets:
 
+* :class:`Banner` — pinned StackOwl wordmark docked at the top of the screen
 * :class:`ParliamentPanel` — overlay shown during parliament sessions
 * :class:`ConversationView` — primary streaming response surface
 * :class:`PipelineStrip` — live pipeline-step status indicator
@@ -27,7 +28,9 @@ from typing import TYPE_CHECKING
 from textual.app import App, ComposeResult
 
 from stackowl.infra.observability import log
+from stackowl.tui.i18n_strings import install_default_translations
 from stackowl.tui.messages import ComposeSubmittedMessage
+from stackowl.tui.widgets.banner import Banner
 from stackowl.tui.widgets.compose_area import ComposeArea
 from stackowl.tui.widgets.conversation_view import ConversationView
 from stackowl.tui.widgets.parliament_panel import ParliamentPanel
@@ -52,6 +55,9 @@ _DESIGN_TOKENS: dict[str, str] = {
     "color-warning": "#d29922",
     "color-error": "#f85149",
     "color-parliament": "#bc8cff",
+    "color-banner-amber": "#d29922",
+    "color-banner-red": "#f85149",
+    "color-banner-rule": "#3fb950",
 }
 
 if TYPE_CHECKING:
@@ -62,7 +68,7 @@ _COMPOSE_EVENT = "compose_submitted"
 
 
 class StackOwlApp(App[None]):
-    """4-zone Textual app: parliament overlay + conversation + pipeline + compose."""
+    """5-zone Textual app: banner + parliament overlay + conversation + pipeline + compose."""
 
     def get_css_variables(self) -> dict[str, str]:
         """Merge our design tokens into Textual's variable table.
@@ -83,6 +89,7 @@ class StackOwlApp(App[None]):
         command_names: Iterable[str] | None = None,
         owl_names: Iterable[str] | None = None,
     ) -> None:
+        install_default_translations()
         super().__init__()
         self._event_bus = event_bus
         self._command_names: list[str] = list(command_names or [])
@@ -96,7 +103,8 @@ class StackOwlApp(App[None]):
         )
 
     def compose(self) -> ComposeResult:
-        """Yield the 4 widgets in display order (top → bottom)."""
+        """Yield the 5 widgets in display order (top → bottom)."""
+        yield Banner()
         yield ParliamentPanel()
         yield ConversationView()
         yield PipelineStrip()

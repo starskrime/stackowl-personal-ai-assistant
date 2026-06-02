@@ -12,6 +12,9 @@ $color-success: #3fb950;
 $color-warning: #d29922;
 $color-error: #f85149;
 $color-parliament: #bc8cff;
+$color-banner-amber: #d29922;
+$color-banner-red: #f85149;
+$color-banner-rule: #3fb950;
 /* $font-mono / $radius-sm / $radius-md removed — Textual CSS does not
  * accept comma-separated values in variables and none of these were
  * referenced by any widget DEFAULT_CSS. Restore as single-value tokens

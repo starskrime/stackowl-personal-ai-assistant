@@ -42,8 +42,9 @@ def test_build_attaches_coordinator_to_app() -> None:
     assert components.coordinator._event_bus is bus
 
 
-def test_app_compose_yields_four_widgets() -> None:
-    """ComposeArea + ConversationView + ParliamentPanel + PipelineStrip."""
+def test_app_compose_yields_five_widgets() -> None:
+    """Banner + ParliamentPanel + ConversationView + PipelineStrip + ComposeArea."""
+    from stackowl.tui.widgets.banner import Banner
     from stackowl.tui.widgets.compose_area import ComposeArea
     from stackowl.tui.widgets.conversation_view import ConversationView
     from stackowl.tui.widgets.parliament_panel import ParliamentPanel
@@ -53,11 +54,14 @@ def test_app_compose_yields_four_widgets() -> None:
     app = StackOwlApp(event_bus=bus)
     widgets = list(app.compose())
     types = {type(w) for w in widgets}
+    assert Banner in types
     assert ComposeArea in types
     assert ConversationView in types
     assert ParliamentPanel in types
     assert PipelineStrip in types
-    assert len(widgets) == 4
+    assert len(widgets) == 5
+    # Banner is the pinned top zone — must be yielded first.
+    assert isinstance(widgets[0], Banner)
 
 
 def test_compose_submitted_message_republishes_on_event_bus() -> None:
