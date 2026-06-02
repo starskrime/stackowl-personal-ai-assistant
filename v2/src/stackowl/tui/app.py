@@ -32,6 +32,7 @@ from stackowl.tui.i18n_strings import install_default_translations
 from stackowl.tui.messages import ComposeSubmittedMessage
 from stackowl.tui.widgets.banner import Banner
 from stackowl.tui.widgets.compose_area import ComposeArea
+from stackowl.tui.widgets.compose_helpers import CommandInfo
 from stackowl.tui.widgets.conversation_view import ConversationView
 from stackowl.tui.widgets.parliament_panel import ParliamentPanel
 from stackowl.tui.widgets.pipeline_strip import PipelineStrip
@@ -87,17 +88,20 @@ class StackOwlApp(App[None]):
         event_bus: EventBus,
         *,
         command_names: Iterable[str] | None = None,
+        command_infos: Iterable[CommandInfo] | None = None,
         owl_names: Iterable[str] | None = None,
     ) -> None:
         install_default_translations()
         super().__init__()
         self._event_bus = event_bus
         self._command_names: list[str] = list(command_names or [])
+        self._command_infos: list[CommandInfo] = list(command_infos or [])
         self._owl_names: list[str] = list(owl_names or [])
         log.tui.debug(
             "[tui] StackOwlApp.__init__",
             extra={"_fields": {
                 "command_count": len(self._command_names),
+                "command_info_count": len(self._command_infos),
                 "owl_count": len(self._owl_names),
             }},
         )
@@ -110,6 +114,7 @@ class StackOwlApp(App[None]):
         yield PipelineStrip()
         yield ComposeArea(
             command_names=self._command_names,
+            command_infos=self._command_infos,
             owl_names=self._owl_names,
         )
 

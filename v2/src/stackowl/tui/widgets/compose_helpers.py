@@ -63,6 +63,31 @@ def filter_candidates(prefix: str, names: list[str], limit: int = 8) -> tuple[st
     return tuple(matches[:limit])
 
 
+@dataclass(frozen=True)
+class CommandInfo:
+    """A slash command's name + one-line description (for the dropdown)."""
+
+    name: str
+    description: str
+
+
+def filter_command_infos(
+    prefix: str, infos: list[CommandInfo], limit: int = 8
+) -> tuple[CommandInfo, ...]:
+    """Up to ``limit`` CommandInfos whose ``name`` starts with ``prefix``.
+
+    Case-insensitive (``str.casefold``), Unicode-safe, preserves input order —
+    mirrors :func:`filter_candidates` but carries descriptions through.
+    """
+    if limit <= 0:
+        return ()
+    needle = prefix.casefold()
+    if not needle:
+        return tuple(infos[:limit])
+    matches = [ci for ci in infos if ci.name.casefold().startswith(needle)]
+    return tuple(matches[:limit])
+
+
 def build_state(
     value: str,
     command_names: list[str],

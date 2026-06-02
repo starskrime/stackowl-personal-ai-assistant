@@ -11,6 +11,7 @@ from stackowl.events.bus import EventBus
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.tui.app import StackOwlApp
 from stackowl.tui.assembly import TuiAssembly, TuiComponents
+from stackowl.tui.widgets.compose_helpers import CommandInfo
 
 pytestmark = pytest.mark.tui
 
@@ -33,6 +34,15 @@ def test_build_constructs_app_with_passed_autocomplete_names() -> None:
     assert isinstance(components.app, StackOwlApp)
     assert components.app._command_names == ["help", "memory", "tier"]
     assert components.app._owl_names == ["secretary", "scout"]
+
+
+def test_build_threads_command_infos() -> None:
+    bus = EventBus()
+    components = TuiAssembly.build(
+        event_bus=bus,
+        command_infos=[CommandInfo("help", "List commands")],
+    )
+    assert components.app._command_infos == [CommandInfo("help", "List commands")]
 
 
 def test_build_attaches_coordinator_to_app() -> None:

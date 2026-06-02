@@ -1,4 +1,4 @@
-"""TuiAssembly — factory that constructs the 4-zone Textual app + coordinator.
+"""TuiAssembly — factory that constructs the 5-zone Textual app + coordinator.
 
 Mirrors :class:`MemoryAssembly` and :class:`NotificationAssembly`. The
 ``tui`` package owns its own assembly contract; the startup orchestrator
@@ -29,6 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.events.bus import EventBus
     from stackowl.tui.app import StackOwlApp
     from stackowl.tui.coordinator import UIStateCoordinator
+    from stackowl.tui.widgets.compose_helpers import CommandInfo
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,7 @@ class TuiComponents:
 
 
 class TuiAssembly:
-    """Factory that constructs the 4-zone Textual app + UIStateCoordinator."""
+    """Factory that constructs the 5-zone Textual app + UIStateCoordinator."""
 
     @staticmethod
     def build(
@@ -48,6 +49,7 @@ class TuiAssembly:
         *,
         command_names: Iterable[str] | None = None,
         owl_names: Iterable[str] | None = None,
+        command_infos: Iterable[CommandInfo] | None = None,
         ui_settings: UISettings | None = None,
     ) -> TuiComponents:
         """Construct the app and coordinator. Neither is started here.
@@ -65,6 +67,7 @@ class TuiAssembly:
         app = StackOwlApp(
             event_bus=event_bus,
             command_names=command_names,
+            command_infos=command_infos,
             owl_names=owl_names,
         )
         # UIStateCoordinator's annotation is `App[object]` but Textual's

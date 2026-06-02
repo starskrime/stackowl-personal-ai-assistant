@@ -15,6 +15,7 @@ from stackowl.tui.messages import ComposeSubmittedMessage
 from stackowl.tui.widgets.compose_helpers import (
     AutocompleteKind,
     AutocompleteState,
+    CommandInfo,
     build_state,
 )
 
@@ -63,14 +64,25 @@ class ComposeArea(Widget):
         self,
         *,
         command_names: Iterable[str] | None = None,
+        command_infos: Iterable[CommandInfo] | None = None,
         owl_names: Iterable[str] | None = None,
     ) -> None:
         super().__init__()
+        infos: list[CommandInfo] = list(command_infos or [])
+        self._command_infos: list[CommandInfo] = infos
+        self._desc_by_name: dict[str, str] = {ci.name: ci.description for ci in infos}
+        self._command_names: list[str] = list(command_names or [])
+        # Passing only command_infos still powers name autocomplete; an
+        # explicit command_names wins for back-compat.
+        if command_names is None and infos:
+            self._command_names = [ci.name for ci in infos]
         log.tui.debug(
             "[tui] compose_area.__init__: entry",
-            extra={"_fields": {}},
+            extra={"_fields": {
+                "command_count": len(self._command_names),
+                "desc_count": len(self._desc_by_name),
+            }},
         )
-        self._command_names: list[str] = list(command_names or [])
         self._owl_names: list[str] = list(owl_names or [])
         self._autocomplete_state: AutocompleteState = AutocompleteState(
             kind=AutocompleteKind.NONE, prefix="", candidates=()

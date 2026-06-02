@@ -635,12 +635,18 @@ class StartupOrchestrator:
         # assembled components and routes input/output through the EventBus
         # singleton already wired in Commit C.
         from stackowl.tui.assembly import TuiAssembly
+        from stackowl.tui.widgets.compose_helpers import CommandInfo
 
-        command_names = [c.command for c in CommandRegistry.instance().list()]
+        _commands = CommandRegistry.instance().list()
+        command_names = [c.command for c in _commands]
+        command_infos = [
+            CommandInfo(name=c.command, description=c.description) for c in _commands
+        ]
         owl_names = [m.name for m in owl_registry.list()]
         tui_components = TuiAssembly.build(
             event_bus=event_bus,
             command_names=command_names,
+            command_infos=command_infos,
             owl_names=owl_names,
             ui_settings=self._settings.ui,
         )

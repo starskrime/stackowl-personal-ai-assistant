@@ -10,6 +10,7 @@ from stackowl.tui.messages import ComposeSubmittedMessage
 from stackowl.tui.widgets.compose_area import ComposeArea
 from stackowl.tui.widgets.compose_helpers import (
     AutocompleteKind,
+    CommandInfo,
     build_state,
     detect_kind,
     filter_candidates,
@@ -130,6 +131,28 @@ def test_compose_area_on_input_changed_at_after_space_triggers_owl_autocomplete(
     assert snap.kind == AutocompleteKind.OWL
     assert snap.prefix == "par"
     assert "parrot" in snap.candidates
+
+
+# ---------------------------------------------------------------------------
+# C2. ComposeArea command_infos threading (Story 2)
+# ---------------------------------------------------------------------------
+
+
+def test_compose_area_command_infos_populates_desc_by_name() -> None:
+    area = ComposeArea(command_infos=[CommandInfo("memory", "Memory mgmt")])
+    assert area._desc_by_name == {"memory": "Memory mgmt"}
+    # Names derived from infos when command_names not given.
+    assert area._command_names == ["memory"]
+
+
+def test_compose_area_explicit_command_names_wins_over_infos() -> None:
+    area = ComposeArea(
+        command_names=["help"],
+        command_infos=[CommandInfo("memory", "Memory mgmt")],
+    )
+    # Explicit names preserved for back-compat; descriptions still threaded.
+    assert area._command_names == ["help"]
+    assert area._desc_by_name == {"memory": "Memory mgmt"}
 
 
 # ---------------------------------------------------------------------------
