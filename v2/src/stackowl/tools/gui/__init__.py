@@ -31,6 +31,7 @@ from stackowl.tools.gui.safety import (
 )
 from stackowl.tools.gui.schema import GuiAction
 from stackowl.tools.gui.vision_routing import DesktopVisionRouter, DesktopVisionRouting
+from stackowl.tools.gui.xdo import XdoAdapter
 
 __all__ = [
     "BLOCKED_KEY_COMBOS",
@@ -48,6 +49,7 @@ __all__ = [
     "GuiPlatform",
     "SafetyDecision",
     "UIElement",
+    "XdoAdapter",
     "classify_action",
     "evaluate_action",
 ]

@@ -132,6 +132,10 @@ ignore_missing_imports = true
 module = ["camoufox", "camoufox.*", "trafilatura", "trafilatura.*", "pyvirtualdisplay", "pyvirtualdisplay.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["Xlib", "Xlib.*", "mss", "mss.*", "PIL", "PIL.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 src = ["src"]
 target-version = "py313"
