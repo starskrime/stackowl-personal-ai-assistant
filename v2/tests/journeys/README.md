@@ -10,7 +10,7 @@ gap a per-tool smoke can't catch. See `[[feedback_gateway_integration_tests]]`.
 A journey test that fails because a feature isn't wired end-to-end is a **real finding → STOP + inform**
 (`[[feedback_no_silent_integration_fix]]`); never patch the test to hide it.
 
-## Coverage matrix (J1–J8)
+## Coverage matrix (J1–J9)
 
 | Journey | User outcome | Tools / epics | Status | Test |
 |---------|--------------|---------------|--------|------|
@@ -22,6 +22,7 @@ A journey test that fails because a feature isn't wired end-to-end is a **real f
 | **J6** | Ambiguous request → agent asks → user answers → same turn resumes | clarify (E5) | ✅ **live** | `test_j6_clarify_pause_resume.py` |
 | **J7** | Control smart-home devices (with confirmation) | ha_call_service (E13) | ⛔ deferred (E13 not shipped) | — |
 | **J8** | Plan N consequential actions, approve as ONE batch, execute audited | batch_approve (J8) → cronjob/send_message (E7) | ✅ **live** | `test_j8_batch_approval.py` |
+| **J9** | Run a longer task, WAIT for it to finish (no busy-poll), then read its output | process (E9) → wait (E9) → process log | ✅ **live** | `test_j9_process_wait.py` |
 
 **live** = green end-to-end now · **partial** = shippable arc tested, unshipped steps `pytest.mark.skip` ·
 **deferred** = epic not shipped; this journey becomes that epic's acceptance test when it lands (no silent gap).

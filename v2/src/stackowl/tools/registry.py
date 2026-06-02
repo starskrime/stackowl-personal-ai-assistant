@@ -302,9 +302,10 @@ class ToolRegistry:
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
         from stackowl.tools.planning.store import PlanStore
-        from stackowl.tools.process.process_tool import ProcessTool
         from stackowl.tools.planning.todo import TodoTool
         from stackowl.tools.planning.update_plan import UpdatePlanTool
+        from stackowl.tools.process.process_tool import ProcessTool
+        from stackowl.tools.process.wait_tool import WaitTool
         from stackowl.tools.scheduling.cronjob import CronjobTool
         from stackowl.tools.scheduling.heartbeat_respond import HeartbeatRespondTool
         from stackowl.tools.scheduling.send_file import SendFileTool
@@ -428,4 +429,10 @@ class ToolRegistry:
         # cap + mandatory TTL live INSIDE the registry; the tool surfaces its
         # structured refusals as clean results. No constructor wiring; severity write.
         registry.register(ProcessTool())
+        # wait — pause the turn for a duration OR (the correct way to await a
+        # background process) block until a `process`-started process exits. A thin
+        # read-severity surface over get_services().process_registry (E9-S2): the
+        # deadline uses an injected Clock; the poll loop sleeps between polls (never
+        # a busy spin) and honors cancellation. No constructor wiring; severity read.
+        registry.register(WaitTool())
         return registry
