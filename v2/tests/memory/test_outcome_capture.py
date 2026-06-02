@@ -110,6 +110,56 @@ async def test_set_quality_score_sets_scored_at(tmp_db: DbPool) -> None:
     assert out2.scored_at is not None
 
 
+# --- TaskOutcomeStore.recent_for_session (live action recall) ----------------
+
+async def test_recent_for_session_returns_newest_first(tmp_db: DbPool) -> None:
+    store = TaskOutcomeStore(db=tmp_db)
+    # Insert oldest -> newest; captured_at is time.time() so insert order = age.
+    for tid in ("old", "mid", "new"):
+        await store.record(
+            trace_id=tid, session_id="sess", owl_name="x", channel="cli",
+            success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
+            step_durations={}, input_text=f"in-{tid}", response_text=f"out-{tid}",
+        )
+    recent = await store.recent_for_session("sess", limit=3)
+    assert [o.trace_id for o in recent] == ["new", "mid", "old"]
+
+
+async def test_recent_for_session_excludes_in_flight_trace(tmp_db: DbPool) -> None:
+    store = TaskOutcomeStore(db=tmp_db)
+    for tid in ("prior", "inflight"):
+        await store.record(
+            trace_id=tid, session_id="sess", owl_name="x", channel="cli",
+            success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
+            step_durations={}, input_text=f"in-{tid}", response_text="r",
+        )
+    recent = await store.recent_for_session(
+        "sess", limit=3, exclude_trace_id="inflight",
+    )
+    assert [o.trace_id for o in recent] == ["prior"]
+
+
+async def test_recent_for_session_empty_for_unknown_session(tmp_db: DbPool) -> None:
+    store = TaskOutcomeStore(db=tmp_db)
+    await store.record(
+        trace_id="t", session_id="known", owl_name="x", channel="cli",
+        success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
+        step_durations={}, input_text="i", response_text="r",
+    )
+    assert await store.recent_for_session("nope") == []
+
+
+async def test_recent_for_session_empty_for_nonpositive_limit(tmp_db: DbPool) -> None:
+    store = TaskOutcomeStore(db=tmp_db)
+    await store.record(
+        trace_id="t", session_id="sess", owl_name="x", channel="cli",
+        success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
+        step_durations={}, input_text="i", response_text="r",
+    )
+    assert await store.recent_for_session("sess", limit=0) == []
+    assert await store.recent_for_session("sess", limit=-1) == []
+
+
 # --- CriticPromptBuilder + parse_critic_response -----------------------------
 
 def test_critic_prompt_builds_two_messages_with_trace_summary() -> None:

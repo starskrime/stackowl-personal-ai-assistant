@@ -174,6 +174,74 @@ async def _gather_recent_reflections(owl_name: str, limit: int = 3) -> str:
     return result
 
 
+async def _gather_recent_actions(
+    session_id: str, trace_id: str, limit: int = 3,
+) -> str:
+    """Best-effort: surface what the agent DID on recent turns this session.
+
+    Live action recall — lets the agent answer "what did you just do?" by
+    reading back the task_outcomes (tool_sequence + response + success) it
+    captured on prior turns of the SAME session. ``trace_id`` is the in-flight
+    turn and is excluded so the agent never echoes the current question.
+
+    Returns "" when db_pool isn't wired (tests/dry-run), on any logged error,
+    or when there are no prior outcomes — the rest of classify proceeds.
+    """
+    # 1. ENTRY
+    log.engine.debug(
+        "[pipeline] classify._gather_recent_actions: entry",
+        extra={"_fields": {"session_id": session_id, "limit": limit}},
+    )
+    services = get_services()
+    db = services.db_pool
+    # 2. DECISION — db not wired (tests / dry-run) or nothing requested
+    if db is None or limit <= 0:
+        log.engine.debug(
+            "[pipeline] classify._gather_recent_actions: exit — no db_pool",
+        )
+        return ""
+    # 3. STEP — pull recent outcomes for this session (excluding in-flight)
+    try:
+        from stackowl.memory.outcome_store import TaskOutcomeStore
+
+        store = TaskOutcomeStore(db)
+        outcomes = await store.recent_for_session(
+            session_id, limit=limit, exclude_trace_id=trace_id,
+        )
+    except Exception as exc:  # B5 — never crash classify on a recall hiccup
+        log.engine.warning(
+            "[pipeline] classify._gather_recent_actions: lookup failed — skipping",
+            exc_info=exc, extra={"_fields": {"session_id": session_id}},
+        )
+        return ""
+    # 2. DECISION — nothing to surface
+    if not outcomes:
+        log.engine.debug(
+            "[pipeline] classify._gather_recent_actions: exit — no outcomes",
+            extra={"_fields": {"session_id": session_id}},
+        )
+        return ""
+    # 4. EXIT — fixed ascii header; user content sliced by codepoint (never tokenised)
+    lines = ["## What You Did Recently"]
+    for o in outcomes:
+        glyph = "✔" if o.success else "✘"
+        tools = ", ".join(o.tool_sequence) if o.tool_sequence else "(none)"
+        tag = f" [{o.failure_class}]" if o.failure_class else ""
+        lines.append(
+            f"- {glyph} {o.input_text[:100]} | tools: {tools}{tag}"
+            f" -> {o.response_text[:120]}",
+        )
+    result = "\n".join(lines)
+    log.engine.debug(
+        "[pipeline] classify._gather_recent_actions: exit",
+        extra={"_fields": {
+            "session_id": session_id, "n_outcomes": len(outcomes),
+            "block_len": len(result),
+        }},
+    )
+    return result
+
+
 async def _gather_relevant_skills(query: str, limit: int = 3) -> str:
     """Best-effort: surface up to K skills semantically relevant to ``query``.
 
@@ -371,6 +439,11 @@ async def run(state: PipelineState) -> PipelineState:
     prefs_block = await _gather_preferences(state.session_id)
     # Reflexion-style learnings from past failures (Commit 2).
     reflections_block = await _gather_recent_reflections(state.owl_name, limit=3)
+    # Live action recall — what the agent DID on prior turns this session
+    # (excludes the in-flight turn). Lets it answer "what did you just do?".
+    actions_block = await _gather_recent_actions(
+        state.session_id, state.trace_id, limit=3,
+    )
     # Voyager-style skills relevant to this query (Commit 3 sub-phase 3d).
     skills_block = await _gather_relevant_skills(state.input_text, limit=3)
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
@@ -384,7 +457,7 @@ async def run(state: PipelineState) -> PipelineState:
     parts = [
         p for p in (
             prefs_block, skills_block, lessons_block, reflections_block,
-            context, graph_context,
+            actions_block, context, graph_context,
         ) if p
     ]
     combined = "\n\n".join(parts)
@@ -398,6 +471,7 @@ async def run(state: PipelineState) -> PipelineState:
                 "skills_len": len(skills_block),
                 "lessons_len": len(lessons_block),
                 "reflections_len": len(reflections_block),
+                "actions_len": len(actions_block),
                 "history_len": len(history),
                 "graph_context_len": len(graph_context),
             }

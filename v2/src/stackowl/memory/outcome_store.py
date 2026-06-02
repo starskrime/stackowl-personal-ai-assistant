@@ -288,6 +288,57 @@ class TaskOutcomeStore:
         )
         return results
 
+    async def recent_for_session(
+        self, session_id: str, *, limit: int = 3,
+        exclude_trace_id: str | None = None,
+    ) -> list[TaskOutcome]:
+        """Return the most recent outcomes for ``session_id``, newest-first.
+
+        Powers live action recall ("what did you just do?") — surfaced
+        synchronously into the classify-built memory_context. ``exclude_trace_id``
+        drops the in-flight turn (which the backend captures before classify of
+        the NEXT turn runs, so without exclusion the agent could echo the very
+        question being asked). Uses idx_task_outcomes_session (migration 0029).
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] recent_for_session: entry",
+            extra={"_fields": {
+                "session_id": session_id, "limit": limit,
+                "has_exclude": exclude_trace_id is not None,
+            }},
+        )
+        # 2. DECISION — nonpositive limit yields nothing (avoid a needless query)
+        if limit <= 0:
+            log.memory.debug(
+                "[outcomes] recent_for_session: exit — nonpositive limit",
+                extra={"_fields": {"session_id": session_id, "limit": limit}},
+            )
+            return []
+        # 3. STEP — single indexed SELECT against idx_task_outcomes_session
+        sql = (
+            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+                      success, latency_ms, tool_call_count, failure_class,
+                      quality_score, step_durations, input_text, response_text,
+                      captured_at, scored_at, tool_sequence, dna_snapshot
+               FROM task_outcomes
+               WHERE session_id = ?"""
+        )
+        params: tuple[object, ...] = (session_id,)
+        if exclude_trace_id is not None:
+            sql += " AND trace_id != ?"
+            params += (exclude_trace_id,)
+        sql += " ORDER BY captured_at DESC LIMIT ?"
+        params += (limit,)
+        rows = await self._db.fetch_all(sql, params)
+        results = [_row_to_outcome(r) for r in rows]
+        # 4. EXIT
+        log.memory.debug(
+            "[outcomes] recent_for_session: exit",
+            extra={"_fields": {"session_id": session_id, "n": len(results)}},
+        )
+        return results
+
     async def get_by_trace_id(self, trace_id: str) -> TaskOutcome | None:
         # 1. ENTRY
         log.memory.debug(
