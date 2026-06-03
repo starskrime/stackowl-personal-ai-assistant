@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import getpass
-import stat
 import time
 
 import typer
 
+from stackowl.config.secret_writer import store_secret
 from stackowl.infra.observability import log
 from stackowl.paths import StackowlHome
 from stackowl.setup.localize import localize
@@ -16,53 +16,13 @@ from stackowl.setup.provider_catalog import ProviderCatalog, ProviderEntry
 
 
 def _store_secret(service_name: str, secret: str) -> tuple[str, str]:
-    """Persist *secret* under *service_name* and return ``(description, yaml_ref)``.
+    """Persist *secret* via the shared writer; returns ``(description, yaml_ref)``.
 
-    yaml_ref is understood by SecretResolver:
-    - ``keychain:{service_name}`` for OS keyring (get_password(service_name, service_name))
-    - ``file:{absolute_path}`` for file fallback
+    Thin delegate to :func:`stackowl.config.secret_writer.store_secret` so the
+    setup flow and the ``/provider`` command share one implementation (DRY).
+    Behaviour is identical: keyring first, mode-0600 file fallback.
     """
-    # 1. ENTRY
-    log.setup.debug(
-        "[minimal] _store_secret: entry",
-        extra={"_fields": {"service": service_name}},
-    )
-    # 2. DECISION — try keyring first
-    try:
-        import keyring
-
-        keyring.set_password(service_name, service_name, secret)
-        log.setup.debug(
-            "[minimal] _store_secret: exit — stored in OS keyring",
-            extra={"_fields": {"service": service_name}},
-        )
-        return "OS keyring", f"keychain:{service_name}"
-    except Exception as exc:  # noqa: BLE001
-        log.setup.debug(
-            "[minimal] _store_secret: keyring unavailable — falling back to file",
-            extra={"_fields": {"service": service_name, "reason": str(exc)}},
-        )
-
-    # 3. STEP — fall back to a mode-0600 file under ~/.stackowl/.secrets/
-    secrets_dir = StackowlHome.secrets_dir()
-    secrets_dir.mkdir(parents=True, exist_ok=True)
-    secret_file = secrets_dir / f"{service_name}.key"
-    secret_file.write_text(secret, encoding="utf-8")
-    try:
-        secret_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    except OSError as exc:
-        log.setup.warning(
-            "[minimal] _store_secret: could not set file permissions",
-            extra={"_fields": {"service": service_name, "reason": str(exc)}},
-        )
-
-    # 4. EXIT
-    yaml_ref = f"file:{secret_file}"
-    log.setup.debug(
-        "[minimal] _store_secret: exit — stored in secret file",
-        extra={"_fields": {"service": service_name}},
-    )
-    return f"file:{secret_file}", yaml_ref
+    return store_secret(service_name, secret)
 
 
 def _test_provider_connection(entry: ProviderEntry, api_key: str) -> bool:

@@ -55,9 +55,13 @@ class CommandRegistry:
     async def dispatch(self, name: str, args: str, state: PipelineState) -> str:
         if name not in self._commands:
             raise CommandNotFoundError(name)
+        # Log the LENGTH, never the raw args — a command's args can carry a
+        # secret (e.g. `/provider add … token=…`) and the field-key redactor
+        # can't scrub a secret embedded inside a value string. Mirrors the
+        # CLI adapter, which logs text_len rather than the text.
         log.gateway.debug(
             "[commands] registry.dispatch: dispatching",
-            extra={"_fields": {"command": name, "args": args[:80]}},
+            extra={"_fields": {"command": name, "args_len": len(args)}},
         )
         return await self._commands[name].handle(args, state)
 

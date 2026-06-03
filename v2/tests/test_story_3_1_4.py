@@ -110,6 +110,14 @@ class TestConfigSectionRegistry:
 class TestHelpCommand:
     @pytest.mark.asyncio
     async def test_lists_registered_commands(self) -> None:
+        # The CommandRegistry is a process-wide singleton that other tests
+        # reset() in teardown, leaving it empty; load_builtin_commands() can't
+        # restore it (modules already imported → register side-effects don't
+        # re-run). Register the command under test directly so this test is
+        # deterministic regardless of ordering.
+        from stackowl.commands.registry import CommandRegistry
+
+        CommandRegistry.instance().register(HelpCommand())
         out = await HelpCommand().handle("", _state())
         assert "Available commands" in out
         # Built-in registry includes /help itself once imported
