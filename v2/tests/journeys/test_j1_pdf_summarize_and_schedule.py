@@ -415,12 +415,12 @@ async def test_j1_summarize_pdf_and_schedule_reminder(
 
     env = await _build(tmp_db, pdf_path)
 
-    # The user asks — AS THE USER, over Telegram — for the J1 journey, and taps YES
-    # on the send_message confirmation consent prompt.
+    # The user asks — AS THE USER, over Telegram — for the J1 journey, and taps
+    # Approve (session scope) on the send_message confirmation consent prompt.
     await _turn(
         env,
         f"Summarize this contract {pdf_path} and remind me Friday to review the indemnity clause.",
-        tap="once",
+        tap="session",
     )
 
     # ===================================================================
