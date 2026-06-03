@@ -1,7 +1,7 @@
 """SendFileTool — agent-initiated outbound file/media over the channel registry (E8).
 
-The genuine missing channel primitive: the agent can DOWNLOAD a file (shell +
-yt-dlp) but, until now, could only send TEXT back to the user — never the bytes.
+The genuine missing channel primitive: the agent can DOWNLOAD a file via shell
+commands but, until now, could only send TEXT back to the user — never the bytes.
 Sending a binary file needs the bot API plus the live chat context, so this is a
 core tool (like ``send_message``), NOT something the agent assembles via shell.
 
