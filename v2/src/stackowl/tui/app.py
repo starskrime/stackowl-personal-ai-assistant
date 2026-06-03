@@ -112,6 +112,16 @@ _DELIVERY_ROUTES: dict[type[Message], tuple[type[Widget], str]] = {
 class StackOwlApp(App[None]):
     """5-zone Textual app: banner + parliament overlay + conversation + pipeline + compose."""
 
+    # The top-level layout is fully docked (banner top, compose bottom,
+    # conversation 1fr) and never needs to scroll, so the Screen must not show
+    # or reserve a vertical scrollbar — otherwise it eats the rightmost column
+    # and insets every bordered widget by one. App.CSS is always applied.
+    CSS = """
+    Screen {
+        overflow: hidden hidden;
+    }
+    """
+
     def get_css_variables(self) -> dict[str, str]:
         """Merge our design tokens into Textual's variable table.
 

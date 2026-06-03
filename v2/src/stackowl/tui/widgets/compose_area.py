@@ -395,7 +395,19 @@ class ComposeArea(Vertical):
         self._dropdown_open = False
         dropdown = self._dropdown()
         if dropdown is not None:
+            # Clear stale rows AND hide. Collapsing this in-flow palette leaves
+            # the conversation region it covered un-invalidated on a real
+            # terminal's incremental renderer (ghost text), so force a repaint.
+            dropdown.set_items([])
             dropdown.display = False
+        try:
+            self.screen.refresh(layout=True)
+        except Exception as exc:  # no screen yet (pre-mount / teardown)
+            log.tui.warning(
+                "[tui] compose_area._hide_autocomplete: screen refresh skipped",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
 
     def _handle_autocomplete_key(self, key: str) -> bool:
         """Nav-hook router — drive the dropdown while it is open.

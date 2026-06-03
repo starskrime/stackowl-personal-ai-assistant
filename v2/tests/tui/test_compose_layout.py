@@ -114,6 +114,34 @@ async def test_hint_doubles_as_state_indicator() -> None:
         assert localize("compose.hints") in str(hint.render())
 
 
+def test_screen_overflow_hidden_so_borders_are_flush() -> None:
+    # A reserved screen scrollbar column insets every right border by one;
+    # the fully-docked layout never scrolls, so the Screen overflow is hidden.
+    css = StackOwlApp.CSS
+    assert "Screen" in css
+    assert "overflow: hidden" in css
+
+
+@pytest.mark.asyncio
+async def test_hiding_palette_clears_items_and_hides() -> None:
+    """Closing the palette drops its rows (no ghost text) and hides it."""
+    app = _app()
+    async with app.run_test(size=(96, 30)) as pilot:
+        editor = app.query_one(SubmitTextArea)
+        editor.focus()
+        await pilot.press("/")
+        await _pump(pilot)
+        dropdown = app.query_one(AutocompleteDropdown)
+        assert dropdown.display is True
+        assert dropdown.count > 0
+
+        # Delete the '/', which dismisses the palette.
+        await pilot.press("backspace")
+        await _pump(pilot)
+        assert dropdown.display is False
+        assert dropdown.count == 0  # items cleared → nothing left to ghost
+
+
 @pytest.mark.asyncio
 async def test_editor_autogrows_with_content_clamped() -> None:
     app = _app()
