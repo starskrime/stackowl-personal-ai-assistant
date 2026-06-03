@@ -101,11 +101,20 @@ class _ToolEveryTimeCompletions:
                 raise RuntimeError("simulated provider failure on wrap-up call")
             return _FakeResponse(_FakeMessage(content="WRAPUP-ANSWER-PHASEF", tool_calls=None))
         if self._tool_call:
-            tc = _FakeToolCall(id=f"call_{self.create_count}", name="web_search", arguments='{"query":"x"}')
+            # Vary args per call so the loop-guard never fires (this test exercises
+            # max-iterations / Phase F, not the repeated-call guard).
+            tc = _FakeToolCall(
+                id=f"call_{self.create_count}",
+                name="web_search",
+                arguments=f'{{"query":"q{self.create_count}"}}',
+            )
             return _FakeResponse(_FakeMessage(content=None, tool_calls=[tc]))
-        # ReAct text action (no native tool_calls).
+        # ReAct text action (no native tool_calls) — vary query to avoid guard.
         return _FakeResponse(
-            _FakeMessage(content='ACTION: web_search\n```json\n{"query":"x"}\n```', tool_calls=None)
+            _FakeMessage(
+                content=f'ACTION: web_search\n```json\n{{"query":"q{self.create_count}"}}\n```',
+                tool_calls=None,
+            )
         )
 
 
@@ -284,9 +293,11 @@ class _AnthropicMessages:
         self.tools_seen.append(has_tools)
         if not has_tools:
             return _AResponse("end_turn", [_ABlock("text", text="WRAPUP-ANSWER-ANTHROPIC")])
+        # Vary args per call so the loop-guard never fires (this test exercises
+        # max-iterations / Phase F, not the repeated-call guard).
         return _AResponse(
             "tool_use",
-            [_ABlock("tool_use", id=f"tu_{self.create_count}", name="web_search", input={"query": "x"})],
+            [_ABlock("tool_use", id=f"tu_{self.create_count}", name="web_search", input={"query": f"q{self.create_count}"})],
         )
 
 

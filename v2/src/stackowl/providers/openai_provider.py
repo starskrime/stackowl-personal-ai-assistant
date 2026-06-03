@@ -18,7 +18,7 @@ from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.providers._blocks import message_has_blocks, openai_user_content
-from stackowl.providers._react import parse_react_action
+from stackowl.providers._react import LoopGuard, parse_react_action
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
@@ -197,6 +197,7 @@ class OpenAIProvider(ModelProvider):
             else CONTEXT_CHAR_BUDGET
         )
 
+        guard = LoopGuard()
         for _ in range(resolved_iterations):
             # Bound total context BEFORE the call: elide oldest tool observations
             # if the accumulated history would overflow the model's window.
@@ -248,7 +249,18 @@ class OpenAIProvider(ModelProvider):
                     # snapshot) can't blow the context window over iterations.
                     capped = truncate_observation(clean)
                     all_calls.append({"id": None, "name": name, "args": args, "result": capped, "failed": failed})
+                    react_directive = guard.observe(name, args)
+                    if guard.tripped():
+                        log.engine.warning(
+                            "[openai] complete_with_tools: loop guard tripped — "
+                            "repeated identical calls, breaking to wrap-up",
+                            extra={"_fields": {"provider": self._name}},
+                        )
+                        messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
+                        break
                     messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
+                    if react_directive:
+                        messages.append({"role": "user", "content": react_directive})
                     continue
                 # no action -> draft final answer. Phase D: before accepting it,
                 # ask the persistence judge whether the agent delivered or gave up.
@@ -277,6 +289,7 @@ class OpenAIProvider(ModelProvider):
             })
 
             # Dispatch and append tool results
+            iter_native_directives: list[str] = []
             for tc in choice.message.tool_calls:
                 fn_name = tc.function.name
                 try:
@@ -303,6 +316,18 @@ class OpenAIProvider(ModelProvider):
                 capped = truncate_observation(clean)
                 all_calls.append({"id": tc.id, "name": fn_name, "args": args, "result": capped, "failed": failed})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": capped})
+                directive = guard.observe(fn_name, args)
+                if directive:
+                    iter_native_directives.append(directive)
+            if guard.tripped():
+                log.engine.warning(
+                    "[openai] complete_with_tools: loop guard tripped — "
+                    "repeated identical calls, breaking to wrap-up",
+                    extra={"_fields": {"provider": self._name}},
+                )
+                break
+            if iter_native_directives:
+                messages.append({"role": "user", "content": iter_native_directives[0]})
 
         log.engine.warning(
             "[openai] complete_with_tools: max_iterations reached",

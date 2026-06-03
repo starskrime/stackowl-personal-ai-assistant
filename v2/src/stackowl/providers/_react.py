@@ -46,6 +46,48 @@ def parse_react_action(text: str | None) -> tuple[str, dict[str, Any]] | None:
     return (name, args)
 
 
+class LoopGuard:
+    """Detects a provider tool-loop spinning on identical (name, args) calls.
+
+    observe(name, args) is called once per dispatched tool call. It returns a
+    one-shot corrective directive string the moment a signature reaches
+    ``warn_at`` repeats (so the model is told to change approach), and None
+    otherwise. tripped() reports whether any signature has reached ``break_at``
+    repeats, so the loop can stop early and deliver its best answer instead of
+    burning the remaining iterations.
+    """
+
+    def __init__(self, warn_at: int = 3, break_at: int = 4) -> None:
+        self._warn_at = warn_at
+        self._break_at = break_at
+        self._counts: dict[str, int] = {}
+        self._warned: set[str] = set()
+
+    def _signature(self, name: str, args: Any) -> str:
+        try:
+            return f"{name}|{json.dumps(args, sort_keys=True, default=str)}"
+        except Exception:
+            return f"{name}|{args!r}"
+
+    def observe(self, name: str, args: Any) -> str | None:
+        """Record a dispatched tool call. Returns a one-shot directive at warn_at repeats, else None."""
+        try:
+            sig = self._signature(name, args)
+            self._counts[sig] = self._counts.get(sig, 0) + 1
+            count = self._counts[sig]
+            if count == self._warn_at and sig not in self._warned:
+                self._warned.add(sig)
+                from stackowl.providers._wrapup import LOOP_REPEAT_DIRECTIVE
+                return LOOP_REPEAT_DIRECTIVE
+        except Exception:
+            pass
+        return None
+
+    def tripped(self) -> bool:
+        """True when any signature has reached break_at repeats."""
+        return any(c >= self._break_at for c in self._counts.values())
+
+
 def _first_balanced_object(s: str) -> str | None:
     start = s.find("{")
     if start < 0:

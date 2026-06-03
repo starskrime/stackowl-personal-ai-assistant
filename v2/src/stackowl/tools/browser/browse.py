@@ -23,6 +23,10 @@ from stackowl.tools.browser._logging import truncate_for_error, url_path_only
 
 _DEFAULT_NAV_TIMEOUT_MS = 30_000
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)```", re.DOTALL)
+# Consecutive identical (page-state, action) repeats that count as "stuck".
+# The streak counts repeats after the first occurrence, so the loop breaks on
+# the (_NO_PROGRESS_LIMIT + 1)-th identical step.
+_NO_PROGRESS_LIMIT = 3
 
 
 def _extract_action_json(reply: str) -> dict[str, Any] | None:
@@ -228,6 +232,9 @@ class BrowserBrowseTool(Tool):
                 # Track last navigated URL so we can re-navigate after a recovery.
                 last_navigated_url = url_path_only(page.url) if target_url else None
 
+                prev_progress_sig: str | None = None
+                no_progress_streak = 0
+
                 for step_idx in range(max_steps):
                     # Re-fetch by handle (cheap dict lookup, no new page).
                     try:
@@ -341,6 +348,23 @@ class BrowserBrowseTool(Tool):
                         status = "complete"
                         final_summary = str(action.get("summary", ""))
                         break
+                    # No-progress guard: detect identical (page state, action) pairs.
+                    prog_sig = f"{hash(state_text)}|{json.dumps(action, sort_keys=True, default=str)}"
+                    if prog_sig == prev_progress_sig:
+                        no_progress_streak += 1
+                    else:
+                        no_progress_streak = 0
+                        prev_progress_sig = prog_sig
+                    if no_progress_streak >= _NO_PROGRESS_LIMIT:
+                        status = "no_progress"
+                        final_summary = (
+                            f"no progress: identical page state and action repeated at step {step_idx}"
+                        )
+                        log.tool.warning(
+                            "browser_browse: no-progress guard tripped — breaking early",
+                            extra={"_fields": {"step": step_idx, "action": name}},
+                        )
+                        break
                     if name == "navigate":
                         nav_url = str(action.get("url", ""))
                         if not is_domain_allowed(nav_url, allowed_domains):
@@ -442,7 +466,7 @@ class BrowserBrowseTool(Tool):
             "step_count": len(transcript),
         }
         return ToolResult(
-            success=status in ("complete", "max_steps_reached"),
+            success=status in ("complete", "max_steps_reached", "no_progress"),
             output=json.dumps(payload, default=str),
             error=None if status == "complete" else final_summary,
             duration_ms=duration_ms,

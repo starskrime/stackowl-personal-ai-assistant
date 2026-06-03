@@ -14,6 +14,7 @@ from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
+from stackowl.providers._react import LoopGuard
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
@@ -177,6 +178,7 @@ class AnthropicProvider(ModelProvider):
             else CONTEXT_CHAR_BUDGET
         )
 
+        guard = LoopGuard()
         for _ in range(resolved_iterations):
             # Bound total context BEFORE the call. Only tool_result CONTENT is
             # elided (never the message itself), so tool_use/tool_result pairing
@@ -229,6 +231,7 @@ class AnthropicProvider(ModelProvider):
 
             # Dispatch each tool call and append results as a user turn
             tool_results: list[dict[str, Any]] = []
+            iter_directives: list[str] = []
             for b in response.content:
                 if b.type != "tool_use":
                     continue
@@ -243,7 +246,19 @@ class AnthropicProvider(ModelProvider):
                 capped = truncate_observation(clean)
                 all_calls.append({"id": b.id, "name": b.name, "args": b.input, "result": capped, "failed": failed})
                 tool_results.append({"type": "tool_result", "tool_use_id": b.id, "content": capped})
+                directive = guard.observe(b.name, dict(b.input))
+                if directive:
+                    iter_directives.append(directive)
             messages.append({"role": "user", "content": tool_results})
+            if guard.tripped():
+                log.engine.warning(
+                    "[anthropic] complete_with_tools: loop guard tripped — "
+                    "repeated identical calls, breaking to wrap-up",
+                    extra={"_fields": {"provider": self._name}},
+                )
+                break
+            if iter_directives:
+                messages.append({"role": "user", "content": iter_directives[0]})
 
         log.engine.warning(
             "[anthropic] complete_with_tools: max_iterations reached",
