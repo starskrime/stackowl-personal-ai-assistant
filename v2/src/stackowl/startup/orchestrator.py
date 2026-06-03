@@ -977,6 +977,25 @@ class StartupOrchestrator:
         # 4. STEP — start the CLI loop and block on the adapter
         log.info("[startup] gateway: starting CLI adapter")
         loop_task = asyncio.create_task(_message_loop())
+        # Recover the scheduler's durable state from the prior run BEFORE the poll
+        # loop starts: reap jobs left 'running' by a crash and replay/realarm overdue
+        # ones, so an assigned task survives a restart instead of wedging forever.
+        # Fail-open: a recovery error must NOT block startup — the scheduler still runs.
+        # NOTE: a replay_missed=True job dispatches its handler INLINE here (before the
+        # watchdog notify below), so keep such handlers light or background them if
+        # replay handlers ever become heavy — else they delay startup readiness.
+        try:
+            recovered = await scheduler_components.scheduler.recover()
+            log.info(
+                "[startup] gateway: scheduler recovered prior state",
+                extra={"_fields": {"replayed": recovered}},
+            )
+        except Exception as exc:
+            log.error(
+                "[startup] gateway: scheduler.recover() failed — starting anyway",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
         # Start the scheduler under Supervisor so all registered handlers
         # (browser, dream worker, fact extraction, notification digest,
         # morning brief, etc.) actually dispatch.
