@@ -5,10 +5,12 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 
+from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
     OwlConcurrencyError,
     OwlTimeoutError,
     OwlTokenLimitError,
+    ProviderNotFoundError,
 )
 from stackowl.infra.observability import log
 from stackowl.owls.guards import OwlResourceGuard
@@ -17,6 +19,7 @@ from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message, ModelProvider
+from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.registry import ToolRegistry
 
 # E8-S0 — tools a delegated child (delegation_depth>0) must NOT see, so a child
@@ -343,6 +346,109 @@ def _open_stream(
     return guard.stream(provider, messages, model="")
 
 
+def _select_tool_provider(
+    registry: ProviderRegistry,
+    services: object,
+    state: PipelineState,
+) -> ModelProvider:
+    """Resolve the ModelProvider for the tool-use loop.
+
+    Precedence (highest → lowest):
+    1. Owl manifest ``provider_name`` pin — if set and registered, use it directly.
+       On ProviderNotFoundError warn and fall through to tier routing.
+    2. Desired tier = get_session_tier(session_id) OR manifest.model_tier OR "powerful".
+       Session pref beats manifest; manifest beats default.
+    3. Resolve via registry.get_by_tier(desired_tier). When no provider serves
+       that tier, get_by_tier itself emits a loud, actionable degrade warning.
+    """
+    log.engine.debug(
+        "[pipeline] execute: _select_tool_provider: entry",
+        extra={"_fields": {"owl": state.owl_name, "session": state.session_id}},
+    )
+
+    # --- Step 0: A provider registered under the owl's own name wins (a
+    # per-owl provider binding). This is the most specific pin. ---
+    try:
+        provider = registry.get(state.owl_name)
+        log.engine.info(
+            "[pipeline] execute: tool provider selected",
+            extra={"_fields": {
+                "owl": state.owl_name,
+                "chosen_provider_name": state.owl_name,
+                "source": "owl_named_provider",
+            }},
+        )
+        return provider
+    except ProviderNotFoundError:
+        pass  # no per-owl provider — fall through to manifest/tier routing
+
+    # --- Step 1: Fetch manifest (best-effort) ---
+    manifest: OwlAgentManifest | None = None
+    owl_reg = getattr(services, "owl_registry", None)
+    if owl_reg is not None:
+        try:
+            manifest = owl_reg.get(state.owl_name)
+        except Exception as exc:
+            # Expected for an unknown owl; logged (never silent) so a registry
+            # fault is distinguishable from a benign not-found.
+            log.engine.debug(
+                "[pipeline] execute: owl manifest lookup failed — tier routing only",
+                exc_info=exc,
+                extra={"_fields": {"owl": state.owl_name}},
+            )
+            manifest = None
+
+    # --- Step 2: Explicit provider pin ---
+    if manifest is not None and manifest.provider_name:
+        try:
+            provider = registry.get(manifest.provider_name)
+            log.engine.info(
+                "[pipeline] execute: tool provider selected",
+                extra={"_fields": {
+                    "owl": state.owl_name,
+                    "desired_tier": manifest.model_tier,
+                    "chosen_provider_name": manifest.provider_name,
+                    "source": "manifest_pin",
+                }},
+            )
+            return provider
+        except ProviderNotFoundError:
+            log.engine.warning(
+                "[pipeline] execute: manifest provider_name not registered — falling back to tier",
+                extra={"_fields": {"owl": state.owl_name, "provider_name": manifest.provider_name}},
+            )
+
+    # --- Step 3: Determine desired tier (session pref > manifest > default) ---
+    session_tier = get_session_tier(state.session_id)
+    if session_tier:
+        desired = session_tier
+        tier_source = "session"
+    elif manifest is not None and manifest.model_tier:
+        desired = manifest.model_tier
+        tier_source = "manifest"
+    else:
+        desired = "powerful"
+        tier_source = "default"
+        if manifest is None:
+            log.engine.warning(
+                "[pipeline] execute: unknown owl or no manifest — defaulting to 'powerful' tier",
+                extra={"_fields": {"owl": state.owl_name}},
+            )
+
+    # --- Step 4: Resolve by tier (get_by_tier warns loudly on a degraded miss) ---
+    provider = registry.get_by_tier(desired)
+    log.engine.info(
+        "[pipeline] execute: tool provider selected",
+        extra={"_fields": {
+            "owl": state.owl_name,
+            "desired_tier": desired,
+            "chosen_provider_name": getattr(provider, "name", type(provider).__name__),
+            "source": tier_source,
+        }},
+    )
+    return provider
+
+
 async def run(state: PipelineState) -> PipelineState:
     """Stream tokens from the assigned provider and build state.responses."""
     log.engine.info(
@@ -356,29 +462,7 @@ async def run(state: PipelineState) -> PipelineState:
         log.engine.warning("[pipeline] execute: no provider_registry — pass-through")
         return state
 
-    try:
-        provider = registry.get(state.owl_name)
-    except Exception as exc:
-        owl_registry = services.owl_registry
-        known_owl = False
-        if owl_registry is not None:
-            try:
-                owl_registry.get(state.owl_name)
-                known_owl = True
-            except Exception:
-                known_owl = False
-        if known_owl:
-            log.engine.info(
-                "[pipeline] execute: no per-owl provider — tier-routing to 'powerful'",
-                extra={"_fields": {"owl": state.owl_name}},
-            )
-        else:
-            log.engine.warning(
-                "[pipeline] execute: unknown owl_name — falling back to 'powerful' tier",
-                exc_info=exc,
-                extra={"_fields": {"owl": state.owl_name}},
-            )
-        provider = registry.get_by_tier("powerful")
+    provider = _select_tool_provider(registry, services, state)
 
     # Tool loop path: use complete_with_tools() when tools are available
     if tool_registry is not None and tool_registry.all():

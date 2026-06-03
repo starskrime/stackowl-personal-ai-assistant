@@ -128,7 +128,18 @@ class ProviderRegistry(RegistryAccessorsMixin):
             if provider_tier == tier and name in self._providers:
                 return self._providers[name]
         if self._providers:
-            return next(iter(self._providers.values()))
+            fallback_name = next(iter(self._providers))
+            # Loud, actionable degrade: a requested tier with no provider means
+            # the roster is incomplete (e.g. no capable model configured). Never
+            # silently substitute — surface it so the operator can add/relabel
+            # a provider for this tier.
+            log.engine.warning(
+                "[providers] get_by_tier: no provider serves this tier — "
+                "using the first registered provider (degraded); add or relabel "
+                "a provider for this tier to fix routing",
+                extra={"_fields": {"requested_tier": tier, "returned": fallback_name}},
+            )
+            return self._providers[fallback_name]
         raise ProviderNotFoundError(f"tier:{tier}")
 
     def get_with_cascade(self, preferred_tier: str) -> ModelProvider:
