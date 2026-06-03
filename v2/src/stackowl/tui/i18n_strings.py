@@ -22,6 +22,7 @@ _EN: dict[str, str] = {
     "compose.placeholder": "Message StackOwl…   ( /  commands  ·  Shift+Enter  newline )",
     "compose.mcp_disabled": "Input paused — an MCP spectator is connected",
     "compose.parliament_active": "Parliament in session…",
+    "compose.hints": "Enter ↵ send · Shift+Enter newline · / commands · @ owls",
     # Autocomplete
     "autocomplete.no_matches": "No matches",
     # Parliament

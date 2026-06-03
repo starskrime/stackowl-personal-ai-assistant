@@ -6,9 +6,10 @@ crucially — never steals focus from the compose editor: the user keeps typing 
 the dropdown filters in place.  A ``ListView`` would grab focus and break that
 ergonomic, so we re-render a Rich table on every index/items change instead.
 
-The widget is positioned ABOVE the compose box (which docks at the screen bottom)
-via ``dock: bottom`` + a negative ``offset-y`` so it floats over the conversation
-on the ``top`` layer.  Highlighting is a ``▶ `` prefix plus an accent style on the
+The widget lives IN-FLOW as the top child of the (auto-height) compose zone, so it
+renders directly above the input and is never clipped — an earlier version docked it
+with a negative offset on the ``top`` layer, which placed it outside the compose
+region so the parent clipped it (invisible).  Highlighting is a ``▶ `` prefix plus an accent style on the
 selected row.
 """
 
@@ -38,13 +39,9 @@ class AutocompleteDropdown(Static):
 
     DEFAULT_CSS = """
     AutocompleteDropdown {
-        layer: top;
-        dock: bottom;
-        offset-y: -6;
-        width: auto;
-        max-width: 60;
+        width: 100%;
         height: auto;
-        max-height: 8;
+        max-height: 10;
         border: round $color-accent;
         background: $color-bg-elevated;
         padding: 0 1;

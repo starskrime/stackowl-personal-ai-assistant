@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
 from stackowl.infra.observability import log
+from stackowl.tui.glyphs import GLYPH_PROMPT
 from stackowl.tui.i18n import localize
 from stackowl.tui.messages import (
     AutocompleteSelectedMessage,
@@ -33,8 +34,12 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
 
 _INPUT_ID = "compose_input"
-_PLACEHOLDER_ID = "compose_placeholder"
 _DROPDOWN_ID = "autocomplete_dropdown"
+_ROW_ID = "compose_row"
+_PROMPT_ID = "compose_prompt"
+_HINT_ID = "compose_hint"
+
+_MAX_INPUT_ROWS = 8
 
 _STATE_IDLE = "idle"
 _STATE_COMPOSING = "composing"
@@ -42,37 +47,53 @@ _STATE_SUBMITTING = "submitting"
 _STATE_MCP_DISABLED = "mcp-disabled"
 
 
-class ComposeArea(Widget):
-    """Bottom input area.
+class ComposeArea(Vertical):
+    """Bottom input zone — a minimal ``❯`` prompt over a thin rule.
 
-    Detects ``/`` and ``@`` triggers, runs a pure-function autocomplete
-    builder against optional command/owl name suppliers, and posts a
-    :class:`ComposeSubmittedMessage` on Enter.  When an MCP spectator is
-    connected the input is disabled wholesale.
+    An auto-height vertical zone docked at the screen bottom. Top→bottom it
+    stacks: the in-flow autocomplete palette (hidden until there are
+    candidates), a prompt row (``❯`` + an auto-growing multiline editor) with a
+    bottom rule, and a dim hint line that doubles as the MCP-disabled /
+    parliament-active state indicator. Detects ``/`` and ``@`` triggers, runs a
+    pure-function autocomplete builder, and posts a
+    :class:`ComposeSubmittedMessage` on Enter.
+
+    Subclasses :class:`~textual.containers.Vertical` so the children stack and
+    the zone auto-sizes — a bare ``Widget`` collapses stacked children to zero.
+    Keeping the palette IN-FLOW (rather than an offset overlay) is what makes it
+    actually visible: an earlier overlay version was clipped by the parent.
     """
 
     DEFAULT_CSS = """
     ComposeArea {
         dock: bottom;
-        height: 5;
-        min-height: 3;
+        height: auto;
         background: $color-surface;
         border-top: solid $color-border;
-        layers: editor overlay;
     }
-    ComposeArea SubmitTextArea {
-        layer: editor;
-        height: 1fr;
-        background: $color-bg-elevated;
-        color: $color-text-primary;
-    }
-    ComposeArea .compose-placeholder {
-        layer: overlay;
-        offset: 1 0;
-        width: 1fr;
+    ComposeArea #compose_row {
         height: auto;
+        border-bottom: solid $color-border;
+    }
+    ComposeArea #compose_prompt {
+        width: 2;
+        height: auto;
+        color: $color-accent;
+    }
+    ComposeArea SubmitTextArea,
+    ComposeArea SubmitTextArea:focus {
+        width: 1fr;
+        height: 1;
+        max-height: 8;
+        background: $color-surface;
+        color: $color-text-primary;
+        border: none;
+        padding: 0;
+    }
+    ComposeArea #compose_hint {
+        height: 1;
         color: $color-text-muted;
-        background: transparent;
+        padding: 0 1;
     }
     """
 
@@ -137,15 +158,14 @@ class ComposeArea(Widget):
 
     # ------------------------------------------------------------------ compose
     def compose(self) -> ComposeResult:
-        # TextArea has no placeholder property — render a dim overlay Static that
-        # is shown only while the editor is empty.
-        yield SubmitTextArea(id=_INPUT_ID)
-        yield Static(
-            localize("compose.placeholder"),
-            id=_PLACEHOLDER_ID,
-            classes="compose-placeholder",
-        )
+        # In-flow palette (top), then the prompt row, then the hint line. The
+        # palette is hidden until there are candidates; keeping it in flow (not
+        # an offset overlay) means it is never clipped by this zone.
         yield AutocompleteDropdown(id=_DROPDOWN_ID)
+        with Horizontal(id=_ROW_ID):
+            yield Static(f"{GLYPH_PROMPT} ", id=_PROMPT_ID)
+            yield SubmitTextArea(id=_INPUT_ID)
+        yield Static(localize("compose.hints"), id=_HINT_ID)
 
     def on_mount(self) -> None:
         """Wire the editor's nav hook to the dropdown router; start hidden."""
@@ -182,8 +202,8 @@ class ComposeArea(Widget):
             "[tui] compose_area.on_text_area_changed: entry",
             extra={"_fields": {"len": len(value)}},
         )
-        # Empty editor → show the placeholder overlay; otherwise hide it.
-        self._set_placeholder_visible(not value)
+        # Grow the editor with its content (compact when empty).
+        self._autogrow(event.text_area)
         if self.state == _STATE_MCP_DISABLED:
             return
         if value:
@@ -223,13 +243,13 @@ class ComposeArea(Widget):
         try:
             editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
             editor.text = ""
+            self._autogrow(editor)
         except Exception as exc:
             log.tui.warning(
                 "[tui] compose_area.on_submit_text_area_submitted: failed to clear editor",
                 exc_info=exc,
                 extra={"_fields": {}},
             )
-        self._set_placeholder_visible(True)
         self.state = _STATE_IDLE
 
     # ------------------------------------------------------------------ state
@@ -246,7 +266,7 @@ class ComposeArea(Widget):
         )
 
     def set_mcp_disabled(self, disabled: bool) -> None:
-        """Toggle the MCP-disabled lockout state and update placeholder text."""
+        """Toggle the MCP-disabled lockout and reflect it in the hint line."""
         log.tui.debug(
             "[tui] compose_area.set_mcp_disabled: entry",
             extra={"_fields": {"disabled": disabled}},
@@ -262,62 +282,63 @@ class ComposeArea(Widget):
             editor = None
         if disabled:
             self.state = _STATE_MCP_DISABLED
-            self._set_placeholder_text(localize("compose.mcp_disabled"))
+            self._set_hint_text(localize("compose.mcp_disabled"))
             if editor is not None:
                 editor.disabled = True
             return
         self.state = _STATE_IDLE
-        self._set_placeholder_text(localize("compose.placeholder"))
+        self._set_hint_text(localize("compose.hints"))
         if editor is not None:
             editor.disabled = False
 
     def set_parliament_active(self, active: bool) -> None:
-        """Swap placeholder hint when a parliament session is running."""
+        """Swap the hint line when a parliament session is running."""
         log.tui.debug(
             "[tui] compose_area.set_parliament_active: entry",
             extra={"_fields": {"active": active}},
         )
-        key = "compose.parliament_active" if active else "compose.placeholder"
-        self._set_placeholder_text(localize(key))
+        key = "compose.parliament_active" if active else "compose.hints"
+        self._set_hint_text(localize(key))
 
-    # ------------------------------------------------------------------ placeholder
-    def _set_placeholder_visible(self, visible: bool) -> None:
-        """Show/hide the overlay placeholder Static. Self-healing if unmounted."""
+    # ------------------------------------------------------------------ hint + autogrow
+    def _set_hint_text(self, text: str) -> None:
+        """Swap the hint line content (also the mcp/parliament state indicator)."""
         log.tui.debug(
-            "[tui] compose_area._set_placeholder_visible: step",
-            extra={"_fields": {"visible": visible}},
-        )
-        try:
-            placeholder = self.query_one(f"#{_PLACEHOLDER_ID}", Static)
-        except Exception as exc:
-            log.tui.warning(
-                "[tui] compose_area._set_placeholder_visible: placeholder not mounted",
-                exc_info=exc,
-                extra={"_fields": {"visible": visible}},
-            )
-            return
-        placeholder.display = visible
-
-    def _set_placeholder_text(self, text: str) -> None:
-        """Swap the overlay placeholder's content (TextArea has no placeholder)."""
-        log.tui.debug(
-            "[tui] compose_area._set_placeholder_text: step",
+            "[tui] compose_area._set_hint_text: step",
             extra={"_fields": {"len": len(text)}},
         )
         try:
-            placeholder = self.query_one(f"#{_PLACEHOLDER_ID}", Static)
+            hint = self.query_one(f"#{_HINT_ID}", Static)
         except Exception as exc:
             log.tui.warning(
-                "[tui] compose_area._set_placeholder_text: placeholder not mounted",
+                "[tui] compose_area._set_hint_text: hint not mounted",
                 exc_info=exc,
                 extra={"_fields": {}},
             )
             return
-        placeholder.update(text)
+        hint.update(text)
+
+    def _autogrow(self, editor: TextArea) -> None:
+        """Size the editor to its content height, clamped to ``_MAX_INPUT_ROWS``."""
+        try:
+            lines = editor.document.line_count
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] compose_area._autogrow: line count unavailable",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
+            return
+        rows = max(1, min(lines, _MAX_INPUT_ROWS))
+        editor.styles.height = rows
+        log.tui.debug(
+            "[tui] compose_area._autogrow: step",
+            extra={"_fields": {"lines": lines, "rows": rows}},
+        )
 
     # ------------------------------------------------------------------ autocomplete
     def _dropdown(self) -> AutocompleteDropdown | None:
-        """Self-healing accessor for the dropdown overlay."""
+        """Self-healing accessor for the in-flow autocomplete palette."""
         try:
             return self.query_one(f"#{_DROPDOWN_ID}", AutocompleteDropdown)
         except Exception as exc:
@@ -441,7 +462,7 @@ class ComposeArea(Widget):
             new_text = f"@{name} " if at_idx < 0 else f"{text[:at_idx]}@{name} "
         editor.text = new_text
         editor.move_cursor(editor.document.end)
-        self._set_placeholder_visible(not new_text)
+        self._autogrow(editor)
         self.post_message(
             AutocompleteSelectedMessage(selected=name, completion_type=completion_type)
         )
@@ -461,6 +482,7 @@ class ComposeArea(Widget):
         try:
             editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
             editor.text = ""
+            self._autogrow(editor)
         except Exception as exc:
             log.tui.warning(
                 "[tui] compose_area.action_clear_input: editor not mounted",
@@ -468,7 +490,6 @@ class ComposeArea(Widget):
                 extra={"_fields": {}},
             )
             return
-        self._set_placeholder_visible(True)
         self.state = _STATE_IDLE
         self._hide_autocomplete()
 

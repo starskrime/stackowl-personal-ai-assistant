@@ -16,9 +16,7 @@ class TerminalCapabilities:
         term = os.environ.get("TERM", "")
         if "UTF-8" in lc_all.upper() or "UTF-8" in lang.upper():
             return True
-        if "xterm" in term or "256color" in term:
-            return True
-        return False
+        return "xterm" in term or "256color" in term
 
 
 @dataclass(frozen=True)
@@ -47,4 +45,5 @@ GLYPH_STEP_EMPTY = Glyph("○", "o")  # WHITE CIRCLE
 GLYPH_SEPARATOR = Glyph("◆", "<>")  # BLACK DIAMOND
 GLYPH_PARLIAMENT = Glyph("◈", "<P>")  # WHITE DIAMOND CONTAINING BLACK SMALL DIAMOND
 GLYPH_PUSHBACK = Glyph("◈", "<!")  # WHITE DIAMOND CONTAINING BLACK SMALL DIAMOND
+GLYPH_PROMPT = Glyph("❯", ">")  # HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT
 GLYPH_DNA_BARS = [Glyph(c, str(i)) for i, c in enumerate("▁▂▃▄▅▆▇█")]
