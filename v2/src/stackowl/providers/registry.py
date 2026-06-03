@@ -59,6 +59,10 @@ class ProviderRegistry(RegistryAccessorsMixin):
         self._local: dict[str, bool] = {}
         self._breakers: dict[str, CircuitBreaker] = {}
         self._limiters: dict[str, RateLimiter] = {}
+        # The exact ProviderConfig used to build each provider. Lets a live
+        # apply_settings() diff old-vs-new per provider and PRESERVE the runtime
+        # state (breaker/limiter) of any provider whose config is unchanged.
+        self._configs: dict[str, ProviderConfig] = {}
         # E8-S0cost — the ONE shared CostTracker; remembered so providers registered
         # later (mocks, hot additions) still inherit it (single recording site).
         self._cost_tracker: CostTracker | None = None
@@ -77,8 +81,6 @@ class ProviderRegistry(RegistryAccessorsMixin):
     @classmethod
     def from_settings(cls, settings: Settings, *, clock: Clock = WallClock()) -> ProviderRegistry:
         """Build a ProviderRegistry from the Settings provider list."""
-        from stackowl.config.secret_resolver import SecretResolver
-
         registry = cls(clock=clock)
         for config in settings.providers:
             if not config.enabled:
@@ -91,20 +93,15 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 "[registry] constructing provider",
                 extra={"_fields": {"name": config.name, "protocol": config.protocol}},
             )
-            api_key = SecretResolver.resolve(config.api_key) if config.api_key else ""
-            provider = _build_provider(config, api_key)
-            registry._providers[config.name] = provider
-            if hasattr(config, "tier") and config.tier:
-                registry._tiers[config.name] = config.tier
-            registry._local[config.name] = is_local_url(config.base_url)
-            registry._breakers[config.name] = CircuitBreaker(
-                provider_name=config.name,
-                clock=clock,
-            )
-            registry._limiters[config.name] = RateLimiter.from_rpm(
-                provider_name=config.name,
-                rate_limit_rpm=config.rate_limit_rpm,
-                clock=clock,
+            registry._build_into(
+                config,
+                clock=registry._clock,
+                providers=registry._providers,
+                tiers=registry._tiers,
+                local=registry._local,
+                breakers=registry._breakers,
+                limiters=registry._limiters,
+                configs=registry._configs,
             )
         log.engine.info(
             "[registry] init: registry built",
@@ -112,11 +109,159 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         return registry
 
+    def _build_into(
+        self,
+        config: ProviderConfig,
+        *,
+        clock: Clock,
+        providers: dict[str, ModelProvider],
+        tiers: dict[str, str],
+        local: dict[str, bool],
+        breakers: dict[str, CircuitBreaker],
+        limiters: dict[str, RateLimiter],
+        configs: dict[str, ProviderConfig],
+    ) -> None:
+        """Construct one provider (+ breaker/limiter/locality) into the given maps.
+
+        Shared by ``from_settings`` (initial build) and ``apply_settings`` (live
+        rebuild of new/changed providers) so the build+register block stays DRY.
+        Injects the shared cost tracker so a hot-added provider is also a recording
+        site (single cost-recording site invariant).
+        """
+        from stackowl.config.secret_resolver import SecretResolver
+
+        api_key = SecretResolver.resolve(config.api_key) if config.api_key else ""
+        provider = _build_provider(config, api_key)
+        inject_cost_tracker(provider, self._cost_tracker)
+        providers[config.name] = provider
+        if hasattr(config, "tier") and config.tier:
+            tiers[config.name] = config.tier
+        local[config.name] = is_local_url(config.base_url)
+        breakers[config.name] = CircuitBreaker(provider_name=config.name, clock=clock)
+        limiters[config.name] = RateLimiter.from_rpm(
+            provider_name=config.name,
+            rate_limit_rpm=config.rate_limit_rpm,
+            clock=clock,
+        )
+        configs[config.name] = config
+
+    def apply_settings(self, settings: Settings) -> None:
+        """Rebuild the provider maps from a new Settings, IN PLACE and thread-safe.
+
+        Called on a ``settings_reloaded`` event (from the ConfigWatcher background
+        thread) so providers can be added/removed/changed WITHOUT a server restart.
+
+        Thread-safety: builds fresh local dicts and ATOMICALLY swaps the five
+        reference dicts at the end (assignment is atomic under the GIL), so a
+        concurrent reader on the asyncio loop sees either the fully-old or the
+        fully-new registry — never a half-built one. We mutate the SAME registry
+        object (callers captured this reference at startup), never rebind it.
+
+        Preservation: a provider whose ProviderConfig is byte-for-byte unchanged
+        keeps its EXISTING provider/breaker/limiter objects so circuit-breaker and
+        rate-limiter runtime state survives the reload.
+
+        Resilience: a single bad provider config is logged and skipped (a bad
+        hot-edit must NOT crash a running server). If the whole rebuild fails, the
+        old maps are KEPT (never left half-built).
+        """
+        log.engine.info(
+            "[registry] apply_settings: entry",
+            extra={"_fields": {"incoming_providers": len(settings.providers)}},
+        )
+        try:
+            new_providers: dict[str, ModelProvider] = {}
+            new_tiers: dict[str, str] = {}
+            new_local: dict[str, bool] = {}
+            new_breakers: dict[str, CircuitBreaker] = {}
+            new_limiters: dict[str, RateLimiter] = {}
+            new_configs: dict[str, ProviderConfig] = {}
+
+            added: list[str] = []
+            preserved: list[str] = []
+            for config in settings.providers:
+                if not config.enabled:
+                    log.engine.debug(
+                        "[registry] apply_settings: provider disabled — skipping",
+                        extra={"_fields": {"name": config.name}},
+                    )
+                    continue
+                name = config.name
+                if name in self._providers and self._configs.get(name) == config:
+                    # UNCHANGED — preserve provider + runtime state (breaker/limiter).
+                    # NOTE: equality is on the config (which holds the secret
+                    # *reference*, e.g. keychain:/file:). If the underlying secret
+                    # is rotated without editing the yaml, the provider is kept and
+                    # the already-resolved key stays in use — touch any yaml field
+                    # for that provider to force a rebuild + secret re-resolve.
+                    new_providers[name] = self._providers[name]
+                    new_tiers[name] = self._tiers.get(name, config.tier)
+                    new_local[name] = self._local[name]
+                    new_breakers[name] = self._breakers[name]
+                    new_limiters[name] = self._limiters[name]
+                    new_configs[name] = self._configs[name]
+                    preserved.append(name)
+                    continue
+                # NEW or CHANGED — build fresh (fresh breaker + limiter).
+                try:
+                    self._build_into(
+                        config,
+                        clock=self._clock,
+                        providers=new_providers,
+                        tiers=new_tiers,
+                        local=new_local,
+                        breakers=new_breakers,
+                        limiters=new_limiters,
+                        configs=new_configs,
+                    )
+                    added.append(name)
+                except Exception as exc:
+                    # A bad hot-edit for ONE provider must not crash the server or
+                    # abort the whole reload — log loudly and skip just this one.
+                    log.engine.error(
+                        "[registry] apply_settings: skipped bad provider config",
+                        exc_info=exc,
+                        extra={"_fields": {"name": name}},
+                    )
+
+            removed = [n for n in self._providers if n not in new_providers]
+
+            # ATOMIC SWAP — assign every reference at the end so a concurrent
+            # reader never observes a partially-rebuilt registry.
+            self._providers = new_providers
+            self._tiers = new_tiers
+            self._local = new_local
+            self._breakers = new_breakers
+            self._limiters = new_limiters
+            self._configs = new_configs
+
+            log.engine.info(
+                "[registry] apply_settings: exit",
+                extra={
+                    "_fields": {
+                        "added": added,
+                        "removed": removed,
+                        "preserved": preserved,
+                        "provider_count": len(new_providers),
+                    }
+                },
+            )
+        except Exception as exc:
+            # Whole-rebuild failure: KEEP the old maps (we only swapped at the very
+            # end, so self.* are still the old, fully-valid dicts).
+            log.engine.error(
+                "[registry] apply_settings: reload FAILED — keeping previous registry",
+                exc_info=exc,
+            )
+
     def get(self, name: str) -> ModelProvider:
         """Return the named provider or raise ProviderNotFoundError."""
-        if name not in self._providers:
+        # Snapshot the dict ref once: apply_settings() swaps it atomically from
+        # the watcher thread, so reading it twice could straddle a reload.
+        providers = self._providers
+        if name not in providers:
             raise ProviderNotFoundError(name)
-        return self._providers[name]
+        return providers[name]
 
     def get_by_tier(self, tier: str) -> ModelProvider:
         """Return the first provider matching the given tier (config order).
@@ -124,11 +269,15 @@ class ProviderRegistry(RegistryAccessorsMixin):
         Falls back to the first available provider when no exact match exists.
         Use get_with_cascade() for circuit-aware tier traversal.
         """
-        for name, provider_tier in self._tiers.items():
-            if provider_tier == tier and name in self._providers:
-                return self._providers[name]
-        if self._providers:
-            fallback_name = next(iter(self._providers))
+        # Snapshot both dict refs together so a concurrent apply_settings() swap
+        # (watcher thread) can't make us index a name absent from _providers.
+        providers = self._providers
+        tiers = self._tiers
+        for name, provider_tier in tiers.items():
+            if provider_tier == tier and name in providers:
+                return providers[name]
+        if providers:
+            fallback_name = next(iter(providers))
             # Loud, actionable degrade: a requested tier with no provider means
             # the roster is incomplete (e.g. no capable model configured). Never
             # silently substitute — surface it so the operator can add/relabel
@@ -139,7 +288,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 "a provider for this tier to fix routing",
                 extra={"_fields": {"requested_tier": tier, "returned": fallback_name}},
             )
-            return self._providers[fallback_name]
+            return providers[fallback_name]
         raise ProviderNotFoundError(f"tier:{tier}")
 
     def get_with_cascade(self, preferred_tier: str) -> ModelProvider:
@@ -164,12 +313,23 @@ class ProviderRegistry(RegistryAccessorsMixin):
             )
             tier_walk = _TIER_ORDER
 
+        # Snapshot the dict refs together: apply_settings() swaps them atomically
+        # from the watcher thread. Using locals + .get() means a name iterated
+        # from a stale _tiers can never KeyError against a freshly-swapped
+        # _providers (the provider is simply skipped if it was removed).
+        providers = self._providers
+        tiers = self._tiers
+        breakers = self._breakers
+
         details: list[str] = []
         for tier in tier_walk:
-            for name, provider_tier in self._tiers.items():
+            for name, provider_tier in tiers.items():
                 if provider_tier != tier:
                     continue
-                breaker = self._breakers.get(name)
+                prov = providers.get(name)
+                if prov is None:
+                    continue  # removed by a concurrent reload — skip
+                breaker = breakers.get(name)
                 if breaker is None:
                     log.engine.debug(
                         "[cascade] %s: selected (no breaker)",
@@ -182,7 +342,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         tier,
                         extra={"_fields": {"provider": name, "tier": tier}},
                     )
-                    return self._providers[name]
+                    return prov
                 state = breaker.state
                 if state is CircuitState.OPEN:
                     msg = f"{name}: skipped (circuit open)"
@@ -212,7 +372,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         }
                     },
                 )
-                return self._providers[name]
+                return prov
 
         log.engine.error(
             "[registry] get_with_cascade: exit — all providers unavailable",

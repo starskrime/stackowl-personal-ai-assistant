@@ -497,6 +497,30 @@ class StartupOrchestrator:
         # db_pool/event_bus built later than the registry). The router + MoA call
         # provider.complete, so they no longer record separately (no double-count).
         provider_registry.set_cost_tracker(cost_tracker)
+
+        # LIVE provider hot-reload — when stackowl.yaml changes (e.g. via the
+        # /provider command), pick up provider add/remove/change WITHOUT a restart.
+        # The ConfigWatcher polls the yaml on a daemon thread and emits
+        # `settings_reloaded` with the new Settings; the handler mutates the SAME
+        # registry object in place (callers captured this reference at startup).
+        # Gated by `settings_watch`. Started before the blocking adapter await and
+        # stopped in the `finally` block (so it never violates gateway-must-block).
+        config_watcher = None
+        if self._settings.settings_watch:
+            from stackowl.config.watcher import ConfigWatcher
+            from stackowl.startup.provider_reload import make_settings_reload_handler
+
+            event_bus.subscribe(
+                "settings_reloaded", make_settings_reload_handler(provider_registry)
+            )
+            config_watcher = ConfigWatcher(
+                config_path=StackowlHome.config_file(),
+                event_bus=event_bus,
+                settings_factory=lambda: Settings(),
+            )
+            config_watcher.start()
+            log.info("[startup] gateway: config watcher started (live provider reload)")
+
         cost_pause_guard = CostPauseGuard(
             cost_tracker=cost_tracker,
             clarify_gateway=clarify_gateway,
@@ -961,6 +985,11 @@ class StartupOrchestrator:
         try:
             await adapter.run()
         finally:
+            # Stop the live-config watcher daemon thread (guarded so a shutdown
+            # never raises out of the finally block).
+            if config_watcher is not None:
+                with contextlib.suppress(Exception):
+                    config_watcher.stop()
             # E5 — drop any pending clarifies (wakes parked blocking waiters so
             # their turns end cleanly rather than hanging on the park timeout).
             with contextlib.suppress(Exception):

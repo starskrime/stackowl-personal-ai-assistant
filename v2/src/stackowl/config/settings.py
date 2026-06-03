@@ -484,7 +484,7 @@ class Settings(BaseSettings):
 
     providers: list[ProviderConfig] = []
     test_mode: bool = False
-    settings_watch: bool = False
+    settings_watch: bool = True
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
     parliament: ParliamentSettings = Field(default_factory=ParliamentSettings)
