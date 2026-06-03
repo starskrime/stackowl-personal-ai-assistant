@@ -33,6 +33,12 @@ _EN: dict[str, str] = {
     "parliament.tip": "Tip",
     # Evolution inspection
     "evolution.inspection.no_changes": "No trait changes",
+    # Consent prompt (Telegram + any channel rendering the consent keyboard)
+    "consent.prompt.title": "⚠ Approval needed",
+    "consent.btn.approve_once": "✅ Approve once",
+    "consent.btn.deny": "🚫 Deny",
+    "consent.btn.approve_session": "✅ Approve for this session",
+    "consent.btn.trust_window": "🕒 Trust for 15 min",
 }
 
 

@@ -31,12 +31,12 @@ def localize(key: str, lang: str = "auto") -> str:
 
 
 def register_translations(lang: str, translations: dict[str, str]) -> None:
-    """Install a translation table for ``lang`` (overwrites prior entries)."""
+    """Install a translation table for ``lang`` (merges into prior entries)."""
     log.tui.debug(
         "[tui] i18n.register_translations: entry",
         extra={"_fields": {"lang": lang, "count": len(translations)}},
     )
-    _TRANSLATIONS[lang] = dict(translations)
+    _TRANSLATIONS.setdefault(lang, {}).update(translations)
     log.tui.debug(
         "[tui] i18n.register_translations: exit",
         extra={"_fields": {"lang": lang, "total_langs": len(_TRANSLATIONS)}},

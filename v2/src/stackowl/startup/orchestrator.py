@@ -352,20 +352,11 @@ class StartupOrchestrator:
         # its adapter starts (below). CLI gets the TTY prompter immediately.
         from stackowl.tools.consent import ConsentPolicy, RoutingPrompter, TtyConsentPrompter
         from stackowl.tools.registry import ConsequentialActionGate
-        from stackowl.tui.i18n import register_translations
+        from stackowl.tui.i18n_strings import install_default_translations
 
-        # Consent button/label catalog — English copy lives here (i18n catalog is
-        # the one place English belongs); other locales can be registered later.
-        register_translations(
-            "en",
-            {
-                "consent.prompt.title": "⚠ Approval needed",
-                "consent.btn.approve_once": "✅ Approve once",
-                "consent.btn.deny": "🚫 Deny",
-                "consent.btn.approve_session": "✅ Approve for this session",
-                "consent.btn.trust_window": "🕒 Trust for 15 min",
-            },
-        )
+        # Consent button/label catalog — English copy lives in the i18n catalog
+        # (single source of truth); other locales can be registered later.
+        install_default_translations()
 
         consent_routing = RoutingPrompter()
         consent_routing.register("cli", TtyConsentPrompter())
