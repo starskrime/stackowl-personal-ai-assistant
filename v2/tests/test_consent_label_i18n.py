@@ -73,6 +73,7 @@ async def test_consent_buttons_show_real_labels_not_keys() -> None:
     This is the clobber regression: previously the consent keys were registered
     in orchestrator.py BEFORE install_default_translations() clobbered them.
     The fix embeds consent keys inside _EN so they survive one-shot registration.
+    New 2-button contract: exactly Approve + Deny.
     """
     clear_translations()
     install_default_translations()
@@ -84,7 +85,7 @@ async def test_consent_buttons_show_real_labels_not_keys() -> None:
     assert adapter.sent, "No keyboard was sent"
     keyboard = adapter.sent[0][1]
     buttons = _buttons(keyboard)
-    assert len(buttons) == 4, f"Expected 4 buttons, got {len(buttons)}: {buttons}"
+    assert len(buttons) == 2, f"Expected 2 buttons, got {len(buttons)}: {buttons}"
 
     for btn in buttons:
         label = btn["text"]
@@ -93,16 +94,14 @@ async def test_consent_buttons_show_real_labels_not_keys() -> None:
         )
         # The real check: known raw keys must NOT appear as labels
         raw_keys = {
-            "consent.btn.approve_once",
+            "consent.btn.approve",
             "consent.btn.deny",
-            "consent.btn.approve_session",
-            "consent.btn.trust_window",
         }
         assert label not in raw_keys, f"Button has raw key as label: {label!r}"
 
 
 async def test_consent_labels_without_relaxation_are_real() -> None:
-    """Consent buttons with allow_relaxation=False also show real labels."""
+    """Consent buttons with allow_relaxation=False also show real labels (still 2)."""
     clear_translations()
     install_default_translations()
 
@@ -113,7 +112,7 @@ async def test_consent_labels_without_relaxation_are_real() -> None:
     assert adapter.sent, "No keyboard was sent"
     buttons = _buttons(adapter.sent[0][1])
     assert len(buttons) == 2, f"Expected 2 buttons, got {len(buttons)}"
-    raw_keys = {"consent.btn.approve_once", "consent.btn.deny"}
+    raw_keys = {"consent.btn.approve", "consent.btn.deny"}
     for btn in buttons:
         assert btn["text"] not in raw_keys, f"Raw key as label: {btn['text']!r}"
         assert not btn["text"].startswith("consent."), f"Raw key as label: {btn['text']!r}"
@@ -149,10 +148,11 @@ def test_every_consent_prompter_key_lives_in_catalog() -> None:
 
     Guards against re-orphaning consent copy: if a future change moves these
     keys back out of the consolidated table (the original bug), this fails.
+    The 2-button world renders exactly: consent.prompt.title, consent.btn.approve,
+    consent.btn.deny.
     """
-    from stackowl.channels.telegram.consent import _LABEL_KEYS
     from stackowl.tui.i18n_strings import _EN
 
-    required = {"consent.prompt.title", *(_LABEL_KEYS.values())}
+    required = {"consent.prompt.title", "consent.btn.approve", "consent.btn.deny"}
     missing = sorted(k for k in required if k not in _EN)
     assert not missing, f"Consent keys missing from the consolidated _EN catalog: {missing}"

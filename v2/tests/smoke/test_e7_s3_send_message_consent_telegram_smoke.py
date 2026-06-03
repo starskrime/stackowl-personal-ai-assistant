@@ -266,13 +266,13 @@ async def test_smoke_send_message_consent_yes_delivers(tmp_db: DbPool, tmp_path:
     env.provider.script.append(
         ("send_message", {"action": "send", "text": SEND_TEXT, "target": "telegram"})
     )
-    await _turn(env, "let me know when the deploy is done", tap="once")
+    await _turn(env, "let me know when the deploy is done", tap="session")
 
     # 1) The consent prompt reached Telegram with an inline keyboard, to the user.
     kb = [m for m in env.bot.messages if m["reply_markup"] is not None]
     assert kb, [m["text"] for m in env.bot.messages]
     assert kb[0]["chat_id"] == USER_ID, kb[0]
-    assert _cd_for(kb[-1]["reply_markup"], "once"), "no YES button on consent keyboard"
+    assert _cd_for(kb[-1]["reply_markup"], "session"), "no Approve button on consent keyboard"
 
     # 2) YES tap let the tool proceed → it reports the REAL deliverer's outcome.
     record = json.loads(env.provider.results[0])["record"]
@@ -307,7 +307,7 @@ async def test_smoke_send_message_consent_no_blocks_delivery(
         ("send_message", {"action": "send", "text": SEND_TEXT, "target": "telegram"})
     )
     # Same flow, but the user taps NO on the inline keyboard.
-    await _turn(env, "let me know when the deploy is done", tap="deny")
+    await _turn(env, "let me know when the deploy is done", tap="deny_session")
 
     # The consent prompt still reached Telegram (the gate fired)...
     kb = [m for m in env.bot.messages if m["reply_markup"] is not None]

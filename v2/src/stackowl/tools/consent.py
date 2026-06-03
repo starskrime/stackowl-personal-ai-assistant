@@ -57,6 +57,7 @@ class ConsentScope(StrEnum):
     SESSION = "session"  # allow all of this tool for the rest of the session
     WINDOW = "window"  # allow this tool for a time window
     DENY = "deny"  # refuse
+    DENY_SESSION = "deny_session"  # refuse this and all of this tool for the session
 
 
 class TrustTier(StrEnum):
@@ -181,6 +182,7 @@ class ConsentPolicy:
 
     # ephemeral grant state
     _session_batch: dict[str, set[str]] = field(default_factory=dict, init=False)
+    _session_deny: dict[str, set[str]] = field(default_factory=dict, init=False)
     _windows: dict[tuple[str, str], float] = field(default_factory=dict, init=False)
 
     async def request(
@@ -204,6 +206,9 @@ class ConsentPolicy:
         # 2. DECISION — hard tiers and standing grants short-circuit the prompt.
         if tier is TrustTier.NEVER:
             return self._finalize(False, tool_name, channel, session_id, category, "tier_never", None)
+
+        if session_id and tool_name in self._session_deny.get(session_id, set()):
+            return self._finalize(False, tool_name, channel, session_id, category, "session_deny", None)
 
         if not excluded:
             if tier is TrustTier.AUTO:
@@ -234,6 +239,15 @@ class ConsentPolicy:
 
         if scope is ConsentScope.DENY:
             return self._finalize(False, tool_name, channel, session_id, category, "user_denied", scope)
+
+        if scope is ConsentScope.DENY_SESSION:
+            if session_id:
+                self._session_deny.setdefault(session_id, set()).add(tool_name)
+                log.tool.debug(
+                    "[consent] policy.request: recorded session-deny grant",
+                    extra={"_fields": {"tool": tool_name, "session": session_id}},
+                )
+            return self._finalize(False, tool_name, channel, session_id, category, "user_deny_session", scope)
 
         # Record any standing grant — but NEVER for excluded tools/categories,
         # and never under an empty session_id (which would collapse every

@@ -758,7 +758,7 @@ async def test_smoke_send_file_consent_yes_uploads_document(
         env.provider.script.append(
             ("send_file", {"file_path": str(sent_file), "caption": "your report", "target": "telegram"})
         )
-        await _turn(env, "send me the report file", tap="once")
+        await _turn(env, "send me the report file", tap="session")
 
         # 1) consent prompt reached Telegram with an inline keyboard, to the user.
         kb = [m for m in env.bot.messages if m["reply_markup"] is not None]

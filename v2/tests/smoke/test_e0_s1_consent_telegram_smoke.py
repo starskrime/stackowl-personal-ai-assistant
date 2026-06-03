@@ -262,7 +262,8 @@ def _audit_decisions(audit: AuditLogger) -> list[dict]:
 async def test_smoke_user_denies_blocks_tool_and_audits(tmp_db: DbPool, tmp_path: Path) -> None:
     tool = _DangerTool()
     env = await _build_env(tmp_db, tmp_path / "audit.db", tool)
-    out = await _turn(env, "run the dangerous thing", tap="deny")
+    # Deny button now carries deny_session scope
+    out = await _turn(env, "run the dangerous thing", tap="deny_session")
 
     assert tool.executed is False, "tool must NOT run after a deny"
     assert "DANGERDONE" not in out
@@ -279,7 +280,8 @@ async def test_smoke_user_denies_blocks_tool_and_audits(tmp_db: DbPool, tmp_path
 async def test_smoke_user_approves_runs_tool_and_delivers(tmp_db: DbPool, tmp_path: Path) -> None:
     tool = _DangerTool()
     env = await _build_env(tmp_db, tmp_path / "audit.db", tool)
-    out = await _turn(env, "run the dangerous thing", tap="once")
+    # Approve button for non-excluded tools now carries session scope
+    out = await _turn(env, "run the dangerous thing", tap="session")
 
     assert tool.executed is True, "tool must run after an approve"
     assert "DANGERDONE" in out

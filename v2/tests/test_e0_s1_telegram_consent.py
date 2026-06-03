@@ -87,28 +87,31 @@ def _req(allow_relaxation: bool = True) -> ConsentRequest:
 
 
 async def test_prompt_resolves_to_scope_on_callback() -> None:
+    """Approve button on a relaxable request carries 'session' scope."""
     adapter = _FakeAdapter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
 
     async def _resolve() -> None:
         await adapter.sent_event.wait()
-        cd = _cd_for(adapter.sent[0][1], "once")
+        # allow_relaxation=True → approve button is 'session'
+        cd = _cd_for(adapter.sent[0][1], "session")
         await prompter.handle_callback("cb-1", cd)
 
     results = await asyncio.gather(prompter.prompt(_req()), _resolve())
-    assert results[0] is ConsentScope.ONCE
+    assert results[0] is ConsentScope.SESSION
 
 
-async def test_prompt_resolves_session_scope() -> None:
+async def test_prompt_resolves_once_scope_for_excluded_tool() -> None:
+    """For always-ask tools (allow_relaxation=False) the approve button is 'once'."""
     adapter = _FakeAdapter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
 
     async def _resolve() -> None:
         await adapter.sent_event.wait()
-        await prompter.handle_callback("cb-2", _cd_for(adapter.sent[0][1], "session"))
+        await prompter.handle_callback("cb-2", _cd_for(adapter.sent[0][1], "once"))
 
-    results = await asyncio.gather(prompter.prompt(_req()), _resolve())
-    assert results[0] is ConsentScope.SESSION
+    results = await asyncio.gather(prompter.prompt(_req(allow_relaxation=False)), _resolve())
+    assert results[0] is ConsentScope.ONCE
 
 
 async def test_prompt_times_out_to_deny() -> None:
@@ -123,16 +126,39 @@ async def test_prompt_send_failure_denies() -> None:
     assert await prompter.prompt(_req()) is ConsentScope.DENY
 
 
-async def test_keyboard_offers_relaxation_only_when_allowed() -> None:
+async def test_keyboard_always_has_exactly_two_buttons() -> None:
+    """New 2-button contract: always Approve + Deny, never 3 or 4 buttons."""
     adapter = _FakeAdapter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=0.05)
     await prompter.prompt(_req(allow_relaxation=True))
-    assert len(_buttons(adapter.sent[0][1])) == 4  # once/deny/session/window
+    assert len(_buttons(adapter.sent[0][1])) == 2  # approve(session) + deny(deny_session)
 
     adapter2 = _FakeAdapter()
     prompter2 = TelegramConsentPrompter(adapter2, timeout_seconds=0.05)
     await prompter2.prompt(_req(allow_relaxation=False))
-    assert len(_buttons(adapter2.sent[0][1])) == 2  # once/deny only
+    assert len(_buttons(adapter2.sent[0][1])) == 2  # approve(once) + deny(deny_session)
+
+
+async def test_approve_button_scope_depends_on_allow_relaxation() -> None:
+    """With relaxation=True the approve callback carries 'session'; without it 'once'."""
+    adapter = _FakeAdapter()
+    prompter = TelegramConsentPrompter(adapter, timeout_seconds=0.05)
+    await prompter.prompt(_req(allow_relaxation=True))
+    cds = [b["callback_data"] for b in _buttons(adapter.sent[0][1])]
+    # First button is Approve → scope must be 'session' (relaxation allowed)
+    assert cds[0].endswith(":session"), f"Expected approve:session, got {cds[0]}"
+    # Second button is Deny → scope must be 'deny_session'
+    assert cds[1].endswith(":deny_session"), f"Expected deny:deny_session, got {cds[1]}"
+
+
+async def test_approve_scope_is_once_when_relaxation_not_allowed() -> None:
+    """always-ask tools: approve must use 'once', not 'session'."""
+    adapter = _FakeAdapter()
+    prompter = TelegramConsentPrompter(adapter, timeout_seconds=0.05)
+    await prompter.prompt(_req(allow_relaxation=False))
+    cds = [b["callback_data"] for b in _buttons(adapter.sent[0][1])]
+    assert cds[0].endswith(":once"), f"Expected approve:once, got {cds[0]}"
+    assert cds[1].endswith(":deny_session"), f"Expected deny:deny_session, got {cds[1]}"
 
 
 async def test_excluded_keyboard_has_no_session_or_window_button() -> None:
@@ -195,19 +221,26 @@ async def test_malformed_callback_does_not_resolve() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _drive(adapter: _FakeAdapter, scope: str, prompter: TelegramConsentPrompter) -> ConsentScope:
+async def _drive(
+    adapter: _FakeAdapter,
+    scope: str,
+    prompter: TelegramConsentPrompter,
+    allow_relaxation: bool = True,
+) -> ConsentScope:
     async def _resolve() -> None:
         await adapter.sent_event.wait()
         await prompter.handle_callback("cb", _cd_for(adapter.sent[0][1], scope))
 
-    results = await asyncio.gather(prompter.prompt(_req()), _resolve())
+    results = await asyncio.gather(prompter.prompt(_req(allow_relaxation)), _resolve())
     return results[0]
 
 
 async def test_tap_edits_message_to_allow_symbol() -> None:
+    """Approve on an always-ask tool → ONCE scope → ✅ symbol."""
     adapter = _FakeAdapter(message_id=4242)
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
-    scope = await _drive(adapter, "once", prompter)
+    # allow_relaxation=False → approve button scope is 'once'
+    scope = await _drive(adapter, "once", prompter, allow_relaxation=False)
     assert scope is ConsentScope.ONCE
     assert len(adapter.edits) == 1
     chat_id, message_id, text, reply_markup = adapter.edits[0]
@@ -219,6 +252,7 @@ async def test_tap_edits_message_to_allow_symbol() -> None:
 
 
 async def test_tap_edits_message_to_session_symbol() -> None:
+    """Approve on a relaxable request → SESSION scope → 🔒 symbol."""
     adapter = _FakeAdapter(message_id=11)
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
     scope = await _drive(adapter, "session", prompter)
@@ -228,29 +262,31 @@ async def test_tap_edits_message_to_session_symbol() -> None:
     assert adapter.edits[0][2].startswith("🔒")
 
 
-async def test_tap_edits_message_to_deny_symbol() -> None:
+async def test_tap_edits_message_to_deny_session_symbol() -> None:
+    """Deny button now carries deny_session scope → ❌ symbol."""
     adapter = _FakeAdapter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
-    scope = await _drive(adapter, "deny", prompter)
-    assert scope is ConsentScope.DENY
+    scope = await _drive(adapter, "deny_session", prompter)
+    assert scope is ConsentScope.DENY_SESSION
     assert adapter.edits[0][3] is None
     assert adapter.edits[0][2].startswith("❌")
 
 
-async def test_tap_edits_message_to_window_symbol() -> None:
+async def test_tap_edits_message_to_deny_session_symbol_excluded_tool() -> None:
+    """Deny on always-ask tool → deny_session → ❌ symbol."""
     adapter = _FakeAdapter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
-    scope = await _drive(adapter, "window", prompter)
-    assert scope is ConsentScope.WINDOW
-    assert adapter.edits[0][3] is None
-    assert adapter.edits[0][2].startswith("🔒")
+    scope = await _drive(adapter, "deny_session", prompter, allow_relaxation=False)
+    assert scope is ConsentScope.DENY_SESSION
+    assert adapter.edits[0][2].startswith("❌")
 
 
 async def test_edit_failure_does_not_lose_the_decision() -> None:
     """Fail-open UX: if edit_message RAISES, the consent decision is still returned."""
     adapter = _FakeAdapter(edit_raises=True)
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
-    scope = await _drive(adapter, "once", prompter)
+    # allow_relaxation=False → approve button is 'once'
+    scope = await _drive(adapter, "once", prompter, allow_relaxation=False)
     # The future was resolved BEFORE the (failing) edit — decision is never lost.
     assert scope is ConsentScope.ONCE
     assert adapter.edits == []  # edit raised, recorded nothing

@@ -218,7 +218,7 @@ async def test_smoke_skill_manage_create_via_telegram_consent(
 ) -> None:
     env, store = await _build(tmp_db, tmp_path, monkeypatch)
 
-    await _turn(env, "create a polite greeting skill", tap="once")
+    await _turn(env, "create a polite greeting skill", tap="session")
 
     # 1) consent keyboard reached the user (consequential self-edit gated).
     kb = [m for m in env.bot.messages if m["reply_markup"] is not None]
@@ -237,7 +237,7 @@ async def test_smoke_skill_manage_denied_does_not_create(
 ) -> None:
     env, store = await _build(tmp_db, tmp_path, monkeypatch)
 
-    await _turn(env, "create a polite greeting skill", tap="deny")
+    await _turn(env, "create a polite greeting skill", tap="deny_session")
 
     # Denied → the self-edit must NOT happen: no skill, no file, no audit.
     md = StackowlHome.skills_dir() / "learned" / "greet-politely" / "SKILL.md"

@@ -1,7 +1,7 @@
 """Telegram consent prompter — inline-keyboard round-trip for the consent gate.
 
 The acting pipeline coroutine calls :meth:`TelegramConsentPrompter.prompt`,
-which sends a yes/no(/approve-session/trust-window) inline keyboard and then
+which sends a two-button (Approve / Deny) inline keyboard and then
 suspends on an :class:`asyncio.Future`. When the user taps a button the
 Telegram callback-query handler calls :meth:`handle_callback`, which resolves
 the Future with the chosen :class:`~stackowl.tools.consent.ConsentScope`.
@@ -28,19 +28,6 @@ _CALLBACK_PREFIX = "consent"
 # Default time a consent prompt stays open before failing closed.
 _DEFAULT_TIMEOUT_SECONDS = 120.0
 
-# Which scopes get a button, in display order, keyed by whether relaxation
-# (batch/window) is permitted for this request.
-_BASE_SCOPES = (ConsentScope.ONCE, ConsentScope.DENY)
-_RELAXATION_SCOPES = (ConsentScope.SESSION, ConsentScope.WINDOW)
-
-# Stable i18n keys (labels render via localize; English copy lives in catalogs).
-_LABEL_KEYS = {
-    ConsentScope.ONCE: "consent.btn.approve_once",
-    ConsentScope.DENY: "consent.btn.deny",
-    ConsentScope.SESSION: "consent.btn.approve_session",
-    ConsentScope.WINDOW: "consent.btn.trust_window",
-}
-
 # Decision → leading symbol, mapped once over the whole ConsentScope enum.
 # Language-neutral on purpose (the platform is multilingual): a glyph conveys
 # the outcome — ✅ granted, 🔒 scoped/conditional allow, ❌ refused — without
@@ -50,6 +37,7 @@ _DECISION_SYMBOLS = {
     ConsentScope.SESSION: "🔒",
     ConsentScope.WINDOW: "🔒",
     ConsentScope.DENY: "❌",
+    ConsentScope.DENY_SESSION: "❌",
 }
 # Fallback symbol for any scope not explicitly mapped (defensive — keeps the
 # edit best-effort rather than raising a KeyError mid-resolution).
@@ -244,13 +232,16 @@ class TelegramConsentPrompter:
     # ------------------------------------------------------------------
 
     def _build_keyboard(self, rid: str, req: ConsentRequest) -> dict[str, object]:
-        scopes = list(_BASE_SCOPES)
-        if req.allow_relaxation:
-            scopes.extend(_RELAXATION_SCOPES)
+        approve_scope = ConsentScope.SESSION if req.allow_relaxation else ConsentScope.ONCE
         builder = InlineKeyboardBuilder()
-        for scope in scopes:
-            label = localize(_LABEL_KEYS[scope], self._lang)
-            builder.add_button(label, f"{_CALLBACK_PREFIX}:{rid}:{scope.value}")
+        builder.add_button(
+            localize("consent.btn.approve", self._lang),
+            f"{_CALLBACK_PREFIX}:{rid}:{approve_scope.value}",
+        )
+        builder.add_button(
+            localize("consent.btn.deny", self._lang),
+            f"{_CALLBACK_PREFIX}:{rid}:{ConsentScope.DENY_SESSION.value}",
+        )
         return builder.build()
 
     def _build_text(self, req: ConsentRequest) -> str:
