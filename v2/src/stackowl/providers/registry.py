@@ -63,6 +63,11 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # apply_settings() diff old-vs-new per provider and PRESERVE the runtime
         # state (breaker/limiter) of any provider whose config is unchanged.
         self._configs: dict[str, ProviderConfig] = {}
+        # The RESOLVED secret per provider (NEVER logged). The config only holds the
+        # secret *reference* (keychain:/file:); apply_settings re-resolves on reload
+        # and rebuilds a provider whose resolved key changed even when the yaml ref
+        # is byte-identical (secret rotation), so a hot-reload picks up a rotated key.
+        self._resolved_keys: dict[str, str] = {}
         # E8-S0cost — the ONE shared CostTracker; remembered so providers registered
         # later (mocks, hot additions) still inherit it (single recording site).
         self._cost_tracker: CostTracker | None = None
@@ -102,6 +107,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 breakers=registry._breakers,
                 limiters=registry._limiters,
                 configs=registry._configs,
+                resolved_keys=registry._resolved_keys,
             )
         log.engine.info(
             "[registry] init: registry built",
@@ -120,6 +126,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         breakers: dict[str, CircuitBreaker],
         limiters: dict[str, RateLimiter],
         configs: dict[str, ProviderConfig],
+        resolved_keys: dict[str, str],
     ) -> None:
         """Construct one provider (+ breaker/limiter/locality) into the given maps.
 
@@ -144,6 +151,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
             clock=clock,
         )
         configs[config.name] = config
+        # Remember the RESOLVED secret (value NEVER logged) so a later reload can
+        # detect a rotated secret behind an unchanged yaml reference.
+        resolved_keys[config.name] = api_key
 
     def apply_settings(self, settings: Settings) -> None:
         """Rebuild the provider maps from a new Settings, IN PLACE and thread-safe.
@@ -158,13 +168,20 @@ class ProviderRegistry(RegistryAccessorsMixin):
         object (callers captured this reference at startup), never rebind it.
 
         Preservation: a provider whose ProviderConfig is byte-for-byte unchanged
-        keeps its EXISTING provider/breaker/limiter objects so circuit-breaker and
-        rate-limiter runtime state survives the reload.
+        AND whose underlying secret resolves to the same value keeps its EXISTING
+        provider/breaker/limiter objects so circuit-breaker and rate-limiter runtime
+        state survives the reload.
+
+        Secret rotation: if the config is unchanged but the secret behind its
+        reference (keychain:/file:) was rotated, the provider client is REBUILT with
+        the freshly-resolved key while the breaker + limiter are CARRIED OVER (so
+        the rotation does not reset circuit/rate state).
 
         Resilience: a single bad provider config is logged and skipped (a bad
         hot-edit must NOT crash a running server). If the whole rebuild fails, the
         old maps are KEPT (never left half-built).
         """
+        from stackowl.config.secret_resolver import SecretResolver
         log.engine.info(
             "[registry] apply_settings: entry",
             extra={"_fields": {"incoming_providers": len(settings.providers)}},
@@ -176,9 +193,11 @@ class ProviderRegistry(RegistryAccessorsMixin):
             new_breakers: dict[str, CircuitBreaker] = {}
             new_limiters: dict[str, RateLimiter] = {}
             new_configs: dict[str, ProviderConfig] = {}
+            new_resolved_keys: dict[str, str] = {}
 
             added: list[str] = []
             preserved: list[str] = []
+            rotated: list[str] = []
             for config in settings.providers:
                 if not config.enabled:
                     log.engine.debug(
@@ -187,20 +206,75 @@ class ProviderRegistry(RegistryAccessorsMixin):
                     )
                     continue
                 name = config.name
+                # Re-resolve the secret behind the (possibly unchanged) reference so a
+                # ROTATED secret is detected even when the yaml ref is byte-identical.
+                # A resolve failure (e.g. a momentarily missing secret file) must NOT
+                # abort the whole reload — keep the existing provider (transient), or
+                # skip a brand-new one. Mirrors the per-provider resilience contract.
+                try:
+                    new_key = SecretResolver.resolve(config.api_key) if config.api_key else ""
+                except Exception as exc:
+                    if name in self._providers:
+                        new_providers[name] = self._providers[name]
+                        new_tiers[name] = self._tiers.get(name, config.tier)
+                        new_local[name] = self._local[name]
+                        new_breakers[name] = self._breakers[name]
+                        new_limiters[name] = self._limiters[name]
+                        new_configs[name] = self._configs.get(name, config)
+                        new_resolved_keys[name] = self._resolved_keys.get(name, "")
+                        preserved.append(name)
+                        log.engine.warning(
+                            "[registry] apply_settings: secret re-resolve failed — "
+                            "keeping the existing provider with its current key",
+                            exc_info=exc,
+                            extra={"_fields": {"name": name}},
+                        )
+                    else:
+                        log.engine.error(
+                            "[registry] apply_settings: secret resolve failed for a new "
+                            "provider — skipping it this reload",
+                            exc_info=exc,
+                            extra={"_fields": {"name": name}},
+                        )
+                    continue
                 if name in self._providers and self._configs.get(name) == config:
-                    # UNCHANGED — preserve provider + runtime state (breaker/limiter).
-                    # NOTE: equality is on the config (which holds the secret
-                    # *reference*, e.g. keychain:/file:). If the underlying secret
-                    # is rotated without editing the yaml, the provider is kept and
-                    # the already-resolved key stays in use — touch any yaml field
-                    # for that provider to force a rebuild + secret re-resolve.
-                    new_providers[name] = self._providers[name]
-                    new_tiers[name] = self._tiers.get(name, config.tier)
-                    new_local[name] = self._local[name]
-                    new_breakers[name] = self._breakers[name]
-                    new_limiters[name] = self._limiters[name]
-                    new_configs[name] = self._configs[name]
-                    preserved.append(name)
+                    if self._resolved_keys.get(name) == new_key:
+                        # FULLY UNCHANGED — config AND resolved secret identical;
+                        # preserve provider + runtime state (breaker/limiter).
+                        new_providers[name] = self._providers[name]
+                        new_tiers[name] = self._tiers.get(name, config.tier)
+                        new_local[name] = self._local[name]
+                        new_breakers[name] = self._breakers[name]
+                        new_limiters[name] = self._limiters[name]
+                        new_configs[name] = self._configs[name]
+                        new_resolved_keys[name] = self._resolved_keys[name]
+                        preserved.append(name)
+                        continue
+                    # SECRET ROTATED — same yaml ref, different resolved value.
+                    # Rebuild the (immutable) provider client with the new key but
+                    # CARRY OVER breaker + limiter so circuit/rate state survives.
+                    try:
+                        provider = _build_provider(config, new_key)
+                        inject_cost_tracker(provider, self._cost_tracker)
+                        new_providers[name] = provider
+                        new_tiers[name] = self._tiers.get(name, config.tier)
+                        new_local[name] = self._local[name]
+                        new_breakers[name] = self._breakers[name]
+                        new_limiters[name] = self._limiters[name]
+                        new_configs[name] = config
+                        new_resolved_keys[name] = new_key  # value NEVER logged
+                        rotated.append(name)
+                        log.engine.info(
+                            "[registry] apply_settings: secret rotation applied — "
+                            "rebuilt provider client, preserved circuit/rate state",
+                            extra={"_fields": {"name": name}},
+                        )
+                    except Exception as exc:
+                        log.engine.error(
+                            "[registry] apply_settings: skipped provider on secret rotation",
+                            exc_info=exc,
+                            extra={"_fields": {"name": name}},
+                        )
                     continue
                 # NEW or CHANGED — build fresh (fresh breaker + limiter).
                 try:
@@ -213,6 +287,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         breakers=new_breakers,
                         limiters=new_limiters,
                         configs=new_configs,
+                        resolved_keys=new_resolved_keys,
                     )
                     added.append(name)
                 except Exception as exc:
@@ -234,6 +309,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
             self._breakers = new_breakers
             self._limiters = new_limiters
             self._configs = new_configs
+            self._resolved_keys = new_resolved_keys
 
             log.engine.info(
                 "[registry] apply_settings: exit",
@@ -242,6 +318,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         "added": added,
                         "removed": removed,
                         "preserved": preserved,
+                        "rotated": rotated,
                         "provider_count": len(new_providers),
                     }
                 },

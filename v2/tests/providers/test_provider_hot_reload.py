@@ -38,7 +38,9 @@ def _isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return cfg
 
 
-def _provider(name: str, *, tier: str = "fast", model: str = "m1") -> ProviderConfig:
+def _provider(
+    name: str, *, tier: str = "fast", model: str = "m1", api_key: str | None = None
+) -> ProviderConfig:
     return ProviderConfig(
         name=name,
         protocol="openai",
@@ -46,6 +48,7 @@ def _provider(name: str, *, tier: str = "fast", model: str = "m1") -> ProviderCo
         base_url="http://localhost:1234",
         default_model=model,
         tier=tier,
+        api_key=api_key,
     )
 
 
@@ -138,6 +141,83 @@ def test_apply_settings_injects_cost_tracker_into_new_provider(_isolated_config:
     new_provider = registry._providers["b"]
     # OpenAIProvider stores the tracker via set_cost_tracker.
     assert getattr(new_provider, "_cost_tracker", None) is tracker
+
+
+# ---------------------------------------------------------------------------
+# Part 1b — secret ROTATION (yaml ref unchanged, underlying secret changed)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_settings_secret_rotation_rebuilds_but_preserves_runtime_state(
+    _isolated_config: Path, tmp_path: Path
+) -> None:
+    """A byte-identical config whose RESOLVED secret changed must rebuild the
+    provider client (fresh key) while PRESERVING breaker + limiter state."""
+    cfg = _isolated_config
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("OLD-KEY", encoding="utf-8")
+    ref = f"file:{secret_file}"
+
+    registry = ProviderRegistry.from_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+    old_provider = registry._providers["a"]
+    old_breaker = registry._breakers["a"]
+    old_limiter = registry._limiters["a"]
+    assert registry._resolved_keys["a"] == "OLD-KEY"
+
+    # Rotate the underlying secret; the yaml ref is byte-identical.
+    secret_file.write_text("NEW-KEY", encoding="utf-8")
+    registry.apply_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+
+    # Provider client was REBUILT with the new key...
+    assert registry._providers["a"] is not old_provider
+    assert registry._resolved_keys["a"] == "NEW-KEY"
+    # ...but circuit-breaker + rate-limiter runtime state survived (same objects).
+    assert registry._breakers["a"] is old_breaker
+    assert registry._limiters["a"] is old_limiter
+
+
+def test_apply_settings_unchanged_secret_fully_preserves_provider(
+    _isolated_config: Path, tmp_path: Path
+) -> None:
+    """Config AND resolved secret unchanged => no needless rebuild (same provider object)."""
+    cfg = _isolated_config
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("STABLE-KEY", encoding="utf-8")
+    ref = f"file:{secret_file}"
+
+    registry = ProviderRegistry.from_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+    old_provider = registry._providers["a"]
+    old_breaker = registry._breakers["a"]
+    old_limiter = registry._limiters["a"]
+
+    # Secret file untouched; re-resolve must NOT trigger a rebuild.
+    registry.apply_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+
+    assert registry._providers["a"] is old_provider
+    assert registry._breakers["a"] is old_breaker
+    assert registry._limiters["a"] is old_limiter
+
+
+def test_apply_settings_secret_rotation_never_logs_resolved_key(
+    _isolated_config: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The resolved secret value must never appear in logs during a rotation reload."""
+    import logging
+
+    cfg = _isolated_config
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("OLD-SECRET-VALUE", encoding="utf-8")
+    ref = f"file:{secret_file}"
+
+    registry = ProviderRegistry.from_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+
+    secret_file.write_text("ROTATED-SECRET-VALUE", encoding="utf-8")
+    with caplog.at_level(logging.DEBUG):
+        registry.apply_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "ROTATED-SECRET-VALUE" not in blob
+    assert "OLD-SECRET-VALUE" not in blob
 
 
 # ---------------------------------------------------------------------------
@@ -318,3 +398,32 @@ def test_concurrent_reads_during_reload_never_crash(_isolated_config: Path) -> N
         t.join(timeout=5.0)
 
     assert not errors, f"concurrent read during reload raised: {errors[:3]}"
+
+
+def test_apply_settings_secret_resolve_failure_does_not_abort_reload(
+    _isolated_config: Path, tmp_path: Path
+) -> None:
+    """A resolve failure for ONE provider must not discard the whole reload:
+    the failing provider is preserved (transient), and other hot-edits still land."""
+    cfg = _isolated_config
+    secret_file = tmp_path / "a.key"
+    secret_file.write_text("A-KEY", encoding="utf-8")
+    ref = f"file:{secret_file}"
+
+    registry = ProviderRegistry.from_settings(
+        _write_settings(cfg, _provider("a", api_key=ref), _provider("b"))
+    )
+    old_a = registry._providers["a"]
+
+    # The secret file vanishes (rotation in progress / transient), while the same
+    # reload adds a brand-new provider "c".
+    secret_file.unlink()
+    registry.apply_settings(
+        _write_settings(cfg, _provider("a", api_key=ref), _provider("b"), _provider("c", tier="standard"))
+    )
+
+    # Reload was NOT aborted: the new provider landed and "b" survived.
+    assert registry.get("c") is not None
+    assert "b" in registry._providers
+    # "a" (whose secret failed to resolve) is preserved with its working client.
+    assert registry._providers["a"] is old_a
