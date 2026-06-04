@@ -413,6 +413,44 @@ class DurableReplayUncertain(DomainError):
         )
 
 
+class CheckpointSchemaError(DomainError):
+    """Raised when a serialized ReActCheckpoint blob carries an unknown schema version.
+
+    A blob whose ``schema_version`` is greater than the current code's known
+    version (a forward-incompatible checkpoint, e.g. written by a newer build)
+    cannot be safely restored, so it fails loud rather than silently dropping
+    fields.  A blob with the field *absent* is treated as version 1 for
+    backward-compatibility (legacy blobs) and does NOT raise.
+    """
+
+    def __init__(self, found_version: object, current_version: int) -> None:
+        self.found_version = found_version
+        self.current_version = current_version
+        super().__init__(
+            f"Unknown ReActCheckpoint schema_version {found_version!r}: this build "
+            f"understands up to version {current_version}. Refusing to restore a "
+            "forward-incompatible checkpoint."
+        )
+
+
+class ResumeTranscriptError(DomainError):
+    """Raised when a durable-ReAct resume transcript is malformed.
+
+    Defense-in-depth: a resume transcript fed into a provider's tool loop must be
+    a coherent, replayable conversation.  A bad transcript (empty, a stray
+    Anthropic system turn, a dangling unanswered tool call, or an unmatched
+    tool-call/result pair) would otherwise surface as an opaque provider 400.
+    This typed error fails loud at the top of the resume branch with the
+    offending detail (e.g. dangling tool-call ids) so the cause is unambiguous.
+    """
+
+    def __init__(self, reason: str, *, dangling_ids: list[str] | None = None) -> None:
+        self.reason = reason
+        self.dangling_ids = dangling_ids or []
+        detail = f" (dangling tool-call ids: {self.dangling_ids})" if self.dangling_ids else ""
+        super().__init__(f"Invalid resume transcript: {reason}{detail}")
+
+
 class PidFileExistsError(StackOwlError):
     """Raised when a PID file already exists and the recorded process is still alive."""
 

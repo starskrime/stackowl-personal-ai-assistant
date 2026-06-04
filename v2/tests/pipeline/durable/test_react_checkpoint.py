@@ -15,13 +15,14 @@ import json
 
 import pytest
 
+from stackowl.exceptions import CheckpointSchemaError
 from stackowl.pipeline.durable.react_checkpoint import (
+    CHECKPOINT_SCHEMA_VERSION,
     ReActCheckpoint,
     ReActCheckpointDecodeError,
     deserialize,
     serialize,
 )
-
 
 # ---------------------------------------------------------------------------
 # Round-trip tests
@@ -169,3 +170,50 @@ def test_serialize_non_json_serializable_raises_decode_error() -> None:
     )
     with pytest.raises(ReActCheckpointDecodeError, match="not JSON-serializable"):
         serialize(cp)
+
+
+# ---------------------------------------------------------------------------
+# schema_version — versioned durable contract (Winston)
+# ---------------------------------------------------------------------------
+
+
+def test_schema_version_round_trips() -> None:
+    """serialize() includes schema_version and deserialize() restores it."""
+    cp = ReActCheckpoint(iteration=2, messages=[{"role": "user", "content": "x"}])
+    assert cp.schema_version == CHECKPOINT_SCHEMA_VERSION
+    blob = serialize(cp)
+    assert '"schema_version"' in blob
+    restored = deserialize(blob)
+    assert restored.schema_version == CHECKPOINT_SCHEMA_VERSION
+
+
+def test_legacy_blob_without_version_loads_as_v1() -> None:
+    """A pre-versioning blob (no schema_version field) loads as version 1 (back-compat)."""
+    blob = json.dumps({"iteration": 1, "messages": [], "tool_call_records": []})
+    cp = deserialize(blob)
+    assert cp.schema_version == 1
+
+
+def test_unknown_future_version_raises_checkpoint_schema_error() -> None:
+    """A blob from a newer build (version > current) fails loud, not silently."""
+    blob = json.dumps(
+        {
+            "schema_version": CHECKPOINT_SCHEMA_VERSION + 1,
+            "iteration": 0,
+            "messages": [],
+            "tool_call_records": [],
+        }
+    )
+    with pytest.raises(CheckpointSchemaError) as exc_info:
+        deserialize(blob)
+    assert exc_info.value.found_version == CHECKPOINT_SCHEMA_VERSION + 1
+    assert exc_info.value.current_version == CHECKPOINT_SCHEMA_VERSION
+
+
+def test_non_int_version_raises_checkpoint_schema_error() -> None:
+    """A non-integer schema_version is rejected loud."""
+    blob = json.dumps(
+        {"schema_version": "garbage", "iteration": 0, "messages": [], "tool_call_records": []}
+    )
+    with pytest.raises(CheckpointSchemaError):
+        deserialize(blob)

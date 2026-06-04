@@ -23,6 +23,7 @@ from stackowl.providers._truncate import (
 from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
+from stackowl.providers.resume_validation import validate_resume_transcript
 from stackowl.providers.vision_models import is_vision_model
 
 
@@ -126,6 +127,8 @@ class AnthropicProvider(ModelProvider):
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
         on_iteration_complete: IterationCallback | None = None,
+        resume_messages: list[dict[str, Any]] | None = None,
+        resume_tool_calls: list[dict[str, Any]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Anthropic native tool-use loop using content blocks."""
         TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
@@ -136,15 +139,37 @@ class AnthropicProvider(ModelProvider):
                 "provider": self._name,
                 "tool_count": len(tool_schemas),
                 "max_iterations": resolved_iterations,
+                "resuming": resume_messages is not None,
             }},
         )
-        history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
-        messages: list[dict[str, Any]] = [
-            *history_dicts,
-            {"role": "user", "content": user_text},
-        ]
+        # B1 — durable-ReAct resume seam.  When resume_messages is None (default,
+        # always today) build the initial list from history + user_text exactly as
+        # before.  When provided, seed the loop directly from the checkpoint
+        # transcript — do NOT re-prepend history or user_text (they are already in
+        # the transcript).  The system prompt always stays in system_kwargs
+        # (separate from the messages list) regardless of the resume path, so
+        # there is no double-injection risk for Anthropic.
+        if resume_messages is not None:
+            # Fail loud on a malformed transcript (empty / stray system turn /
+            # dangling unanswered tool call / unmatched pair) BEFORE the first API
+            # call, so the cause is a typed ResumeTranscriptError instead of an
+            # opaque ProviderError 400.  Defense-in-depth: a well-formed checkpoint
+            # (written after tool results are appended) never dangles; this guards
+            # future/cross-provider/hand-crafted transcripts.
+            validate_resume_transcript(resume_messages, provider_kind="anthropic")
+            messages: list[dict[str, Any]] = list(resume_messages)
+        else:
+            history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
+            messages = [
+                *history_dicts,
+                {"role": "user", "content": user_text},
+            ]
         system_kwargs: dict[str, Any] = {"system": system_text} if system_text else {}
-        all_calls: list[dict[str, Any]] = []
+        # B1 hardening — seed all_calls from the prior tool history on resume so the
+        # returned records, the persistence give-up judge, and the iteration
+        # callback all see prior+new work (not just post-resume calls).  Default
+        # None => empty list (unchanged).
+        all_calls: list[dict[str, Any]] = list(resume_tool_calls) if resume_tool_calls else []
         # Phase D — bounded persistence enforcement: at most 2 corrective nudges
         # per turn, so a stubborn give-up cannot explode cost/loops.
         nudge_budget = 2

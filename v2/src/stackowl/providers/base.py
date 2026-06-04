@@ -179,6 +179,8 @@ class ModelProvider(ABC):
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
         on_iteration_complete: IterationCallback | None = None,
+        resume_messages: list[dict[str, Any]] | None = None,
+        resume_tool_calls: list[dict[str, Any]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run a multi-turn tool loop; return (final_response_text, tool_invocation_records).
 
@@ -196,6 +198,28 @@ class ModelProvider(ABC):
         loop so this callback is never invoked here; concrete providers with a real
         ReAct loop call it at each iteration bottom.  If the callback raises the
         exception propagates — providers do NOT swallow it.
+
+        ``resume_messages`` (B1) is the durable-ReAct resume seam.  When ``None``
+        (the default, always today's behavior) the loop builds its initial
+        ``messages`` list from ``user_text`` + ``system_text`` + ``history``
+        exactly as before — byte-for-byte unchanged.  When provided it is a
+        pre-built mid-loop transcript (a :class:`ReActCheckpoint`\'s ``messages``
+        field) that is used DIRECTLY as the loop's starting ``messages`` list;
+        ``user_text``, ``system_text``, and ``history`` are NOT re-injected so the
+        checkpoint is restored without duplication.  For OpenAI the system prompt
+        is already embedded at ``resume_messages[0]``; for Anthropic the system
+        prompt is always in ``system_kwargs`` (separate from the messages list) so
+        ``resume_messages`` contains only conversation turns.
+
+        ``resume_tool_calls`` (B1 hardening) is the companion of ``resume_messages``:
+        the ``tool_call_records`` accumulated BEFORE the crash (a
+        :class:`ReActCheckpoint`\'s ``tool_call_records`` field).  When ``None``
+        (default) the loop's ``all_calls`` accumulator starts empty as before.
+        When provided it SEEDS ``all_calls`` so the returned records, the
+        persistence give-up judge (which reads ``summarize_tool_outcomes(all_calls)``),
+        and the per-iteration callback all see the FULL prior-plus-new tool history
+        instead of only the post-resume calls.  Pass it together with
+        ``resume_messages`` on resume.
 
         Default: falls back to a single complete() ignoring tools.
         Providers that support tool use override this method.

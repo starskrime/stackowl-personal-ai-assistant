@@ -17,6 +17,7 @@ consumes them is intentionally out of scope for this pass.
 
 from __future__ import annotations
 
+from stackowl.exceptions import CheckpointSchemaError
 from stackowl.pipeline.durable.checkpoint_callback import make_checkpoint_callback
 from stackowl.pipeline.durable.context import (
     DurableReActContext,
@@ -37,6 +38,7 @@ from stackowl.pipeline.durable.ledger import (
 )
 from stackowl.pipeline.durable.ledger_guard import ledger_guard
 from stackowl.pipeline.durable.react_checkpoint import (
+    CHECKPOINT_SCHEMA_VERSION,
     ReActCheckpoint,
     ReActCheckpointDecodeError,
     deserialize,
@@ -47,7 +49,9 @@ from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
 
 __all__ = [
+    "CHECKPOINT_SCHEMA_VERSION",
     "CallableStep",
+    "CheckpointSchemaError",
     "DurableExecutor",
     "DurableReActContext",
     "DurableReActRunner",

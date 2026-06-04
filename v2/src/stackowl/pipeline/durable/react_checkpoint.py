@@ -40,7 +40,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from stackowl.exceptions import CheckpointSchemaError
+
 log = logging.getLogger("stackowl.tasks")
+
+#: Current on-disk schema version for serialized :class:`ReActCheckpoint` blobs.
+#: Bump this whenever the persisted shape changes incompatibly; ``deserialize``
+#: rejects any blob whose ``schema_version`` is greater than this value.
+CHECKPOINT_SCHEMA_VERSION = 1
 
 
 class ReActCheckpointDecodeError(ValueError):
@@ -73,6 +80,14 @@ class ReActCheckpoint(BaseModel, frozen=True):
         Provider-agnostic (OpenAI uses ``id=None``; Anthropic uses a string id).
     """
 
+    schema_version: int = Field(
+        default=CHECKPOINT_SCHEMA_VERSION,
+        ge=1,
+        description=(
+            "Durable-contract version of this serialized shape (Winston). "
+            "Absent in legacy blobs => treated as version 1 (back-compat)."
+        ),
+    )
     iteration: int = Field(..., ge=0, description="Completed LLM round count (monotonic).")
     messages: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -144,6 +159,21 @@ def deserialize(blob: str) -> ReActCheckpoint:
         raise ReActCheckpointDecodeError(
             f"checkpoint blob is not valid JSON: {exc}"
         ) from exc
+    # 2b. VERSION GATE (Winston) — a versionless durable contract is unsafe.
+    # Absent field => legacy blob => treat as version 1 (back-compat, no raise).
+    # A version GREATER than this build's known version is forward-incompatible
+    # and must fail loud rather than silently drop fields.
+    if isinstance(raw, dict):
+        found_version = raw.get("schema_version", CHECKPOINT_SCHEMA_VERSION)
+        if not isinstance(found_version, int) or found_version > CHECKPOINT_SCHEMA_VERSION:
+            log.error(
+                "[tasks] react_checkpoint.deserialize: unknown schema_version — refusing restore",
+                extra={"_fields": {
+                    "found_version": found_version,
+                    "current_version": CHECKPOINT_SCHEMA_VERSION,
+                }},
+            )
+            raise CheckpointSchemaError(found_version, CHECKPOINT_SCHEMA_VERSION)
     # 3. STEP — Pydantic model validation (catches missing/wrong-typed fields)
     try:
         cp = ReActCheckpoint(**raw)

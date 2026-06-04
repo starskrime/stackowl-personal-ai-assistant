@@ -27,6 +27,7 @@ from stackowl.providers._truncate import (
 from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
+from stackowl.providers.resume_validation import validate_resume_transcript
 from stackowl.providers.vision_models import is_vision_model
 
 
@@ -129,6 +130,8 @@ class OpenAIProvider(ModelProvider):
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
         on_iteration_complete: IterationCallback | None = None,
+        resume_messages: list[dict[str, Any]] | None = None,
+        resume_tool_calls: list[dict[str, Any]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """OpenAI function-calling tool-use loop."""
         import json
@@ -142,23 +145,51 @@ class OpenAIProvider(ModelProvider):
                     "provider": self._name,
                     "tool_count": len(tool_schemas),
                     "max_iterations": resolved_iterations,
+                    "resuming": resume_messages is not None,
                 }
             },
         )
-        history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
-        messages: list[dict[str, Any]] = []
-        # Text-protocol fallback: teach the model how to call tools via ACTION:/json
-        # text, so weak models without native tool_calls can still act (parsed back
-        # by parse_react_action below). Native tool_calls still take priority.
-        catalog = _render_tool_catalog(tool_schemas) if tool_schemas else ""
-        if catalog:
-            system_text = f"{system_text}\n\n{catalog}" if system_text else catalog
-        if system_text:
-            messages.append({"role": "system", "content": system_text})
-        messages.extend(history_dicts)
-        messages.append({"role": "user", "content": user_text})
+        # B1 — durable-ReAct resume seam.  When resume_messages is None (default,
+        # always today) build the initial list from system_text + catalog + history
+        # + user_text exactly as before.  When provided, seed the loop directly
+        # from the checkpoint transcript — the system message (including any
+        # tool catalog) is already at messages[0] so we must NOT re-prepend it
+        # (that would cause the double-injection the S5 caveat warns about).
+        if resume_messages is not None:
+            # Fail loud on a malformed transcript (empty / dangling unanswered
+            # tool call / unmatched pair) BEFORE the first API call, so the cause
+            # is a typed ResumeTranscriptError rather than an opaque ProviderError
+            # 400.  Defense-in-depth: a well-formed checkpoint (written after tool
+            # results are appended) never dangles; this guards future/cross-provider
+            # /hand-crafted transcripts.
+            validate_resume_transcript(resume_messages, provider_kind="openai")
+            # B3-TODO (catalog staleness): on resume the text-protocol tool catalog
+            # is embedded in messages[0] (system) from the ORIGINAL run.  If
+            # tool_schemas have changed between the crashed run and this resume, that
+            # embedded catalog is STALE.  Native tool_calls are unaffected — they use
+            # the fresh `tools=` registry passed to create() below — so only the
+            # weak-model text-protocol fallback (parse_react_action) sees stale tool
+            # docs.  Revisit in B3 (re-render + splice messages[0] on resume).
+            messages: list[dict[str, Any]] = list(resume_messages)
+        else:
+            history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
+            messages = []
+            # Text-protocol fallback: teach the model how to call tools via ACTION:/json
+            # text, so weak models without native tool_calls can still act (parsed back
+            # by parse_react_action below). Native tool_calls still take priority.
+            catalog = _render_tool_catalog(tool_schemas) if tool_schemas else ""
+            if catalog:
+                system_text = f"{system_text}\n\n{catalog}" if system_text else catalog
+            if system_text:
+                messages.append({"role": "system", "content": system_text})
+            messages.extend(history_dicts)
+            messages.append({"role": "user", "content": user_text})
         resolved_model = self._config.default_model
-        all_calls: list[dict[str, Any]] = []
+        # B1 hardening — seed all_calls from the prior tool history on resume so the
+        # returned records, the persistence give-up judge, and the iteration
+        # callback all see prior+new work (not just post-resume calls).  Default
+        # None => empty list (unchanged).
+        all_calls: list[dict[str, Any]] = list(resume_tool_calls) if resume_tool_calls else []
         # Phase D — bounded persistence enforcement: at most 2 corrective nudges
         # per turn, so a stubborn give-up cannot explode cost/loops.
         nudge_budget = 2
