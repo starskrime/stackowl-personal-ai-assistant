@@ -42,6 +42,7 @@ from stackowl.pipeline.durable.react_checkpoint import (
     deserialize,
     serialize,
 )
+from stackowl.pipeline.durable.react_runner import DurableReActRunner, ReactDrive
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
 
@@ -49,12 +50,14 @@ __all__ = [
     "CallableStep",
     "DurableExecutor",
     "DurableReActContext",
+    "DurableReActRunner",
     "DurableTask",
     "DurableTaskStore",
     "LedgerDecision",
     "LedgerOutcome",
     "ReActCheckpoint",
     "ReActCheckpointDecodeError",
+    "ReactDrive",
     "SideEffectLedger",
     "TaskStatus",
     "TaskStep",
