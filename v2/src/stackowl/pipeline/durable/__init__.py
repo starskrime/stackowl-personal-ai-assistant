@@ -17,6 +17,7 @@ consumes them is intentionally out of scope for this pass.
 
 from __future__ import annotations
 
+from stackowl.pipeline.durable.checkpoint_callback import make_checkpoint_callback
 from stackowl.pipeline.durable.context import (
     DurableReActContext,
     activate,
@@ -63,5 +64,6 @@ __all__ = [
     "idempotency_key",
     "is_side_effecting",
     "ledger_guard",
+    "make_checkpoint_callback",
     "serialize",
 ]
