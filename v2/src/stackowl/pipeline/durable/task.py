@@ -1,0 +1,41 @@
+"""DurableTask — the persisted unit of long-running agentic work (Pass 3a).
+
+A :class:`DurableTask` is the durable-state record for one goal that the
+executor (wired in a later pass) drives across crashes and restarts. It is
+owner-scoped: every task belongs to exactly one principal via ``owner_id``.
+
+This module defines ONLY the immutable-ish domain model + its status
+vocabulary. Persistence lives in :mod:`stackowl.pipeline.durable.store`; the
+executor/graph wiring is explicitly out of scope for this pass.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+#: Lifecycle of a durable task.
+#:
+#: ``pending``   created, not yet started.
+#: ``running``   actively executing a step.
+#: ``parked``    suspended awaiting an external signal (e.g. human/approval).
+#: ``completed`` finished successfully (``result`` populated).
+#: ``failed``    terminated with an unrecoverable error (``result`` = reason).
+TaskStatus = Literal["pending", "running", "parked", "completed", "failed"]
+
+
+class DurableTask(BaseModel):
+    """A single durable goal tracked across the agent's lifetime."""
+
+    task_id: str = Field(..., min_length=1)
+    owner_id: str = Field(..., min_length=1)
+    goal: str = Field(..., min_length=1)
+    status: TaskStatus
+    current_step: int = 0
+    #: LangGraph checkpoint thread id — set by the executor in a later pass.
+    thread_id: str | None = None
+    result: str | None = None
+    created_at: datetime
+    updated_at: datetime

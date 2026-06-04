@@ -383,6 +383,14 @@ class PrincipalNotFoundError(DomainError):
         self.principal_id = principal_id
 
 
+class DurableTaskNotFoundError(DomainError):
+    """Raised when a durable task id is not present for the current owner."""
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__(f"Durable task not found: '{task_id}'")
+        self.task_id = task_id
+
+
 class PidFileExistsError(StackOwlError):
     """Raised when a PID file already exists and the recorded process is still alive."""
 
