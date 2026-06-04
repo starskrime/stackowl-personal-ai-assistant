@@ -391,6 +391,28 @@ class DurableTaskNotFoundError(DomainError):
         self.task_id = task_id
 
 
+class DurableReplayUncertain(DomainError):
+    """Raised when a ledger ``begin`` returns ``uncertain`` on replay.
+
+    An ``intent`` ledger row exists for a side-effecting tool call without a
+    matching ``commit`` — a prior attempt may have died *after* writing the
+    intent but *before* the side effect (or its commit) completed.  The
+    ledger-guarded dispatch must NOT blindly re-run a possibly half-done side
+    effect, so it surfaces this so the caller/executor can park the task for
+    human review (design §2.2/§2.3).
+    """
+
+    def __init__(self, task_id: str, step_index: int, tool_name: str) -> None:
+        self.task_id = task_id
+        self.step_index = step_index
+        self.tool_name = tool_name
+        super().__init__(
+            f"Durable replay uncertain for task '{task_id}' step {step_index} "
+            f"tool '{tool_name}': an intent exists without a commit — refusing to "
+            "re-run a possibly half-done side effect (park for review)."
+        )
+
+
 class PidFileExistsError(StackOwlError):
     """Raised when a PID file already exists and the recorded process is still alive."""
 

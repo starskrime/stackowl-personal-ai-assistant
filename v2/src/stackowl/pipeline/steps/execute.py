@@ -175,7 +175,13 @@ async def _run_with_tools(
                 f"The action '{name}' requires your approval and was not run because consent "
                 "was declined or not granted. Ask the user to approve it if they want it to proceed."
             )
-        tr = await t(**args)
+        # S2 durable-react — route the real tool call through the exactly-once
+        # ledger guard. DORMANT: with no active DurableReActContext (every path
+        # today) this is a transparent `await t(**args)`. Only a side-effecting
+        # tool under an active durable task is ledger-guarded (exactly-once).
+        from stackowl.pipeline.durable.ledger_guard import ledger_guard
+
+        tr = await ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args))
         # Learning Commit 5 — post-execute heuristic match + event emission.
         # Zero behavior change; downstream subscribers (classify, future hooks)
         # see "tool.heuristic_match" when a known-bad pattern fires.

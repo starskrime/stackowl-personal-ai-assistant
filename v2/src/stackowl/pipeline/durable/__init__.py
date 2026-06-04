@@ -17,6 +17,11 @@ consumes them is intentionally out of scope for this pass.
 
 from __future__ import annotations
 
+from stackowl.pipeline.durable.context import (
+    DurableReActContext,
+    activate,
+    get_active,
+)
 from stackowl.pipeline.durable.executor import (
     CallableStep,
     DurableExecutor,
@@ -29,6 +34,7 @@ from stackowl.pipeline.durable.ledger import (
     idempotency_key,
     is_side_effecting,
 )
+from stackowl.pipeline.durable.ledger_guard import ledger_guard
 from stackowl.pipeline.durable.react_checkpoint import (
     ReActCheckpoint,
     ReActCheckpointDecodeError,
@@ -41,6 +47,7 @@ from stackowl.pipeline.durable.task import DurableTask, TaskStatus
 __all__ = [
     "CallableStep",
     "DurableExecutor",
+    "DurableReActContext",
     "DurableTask",
     "DurableTaskStore",
     "LedgerDecision",
@@ -50,8 +57,11 @@ __all__ = [
     "SideEffectLedger",
     "TaskStatus",
     "TaskStep",
+    "activate",
     "deserialize",
+    "get_active",
     "idempotency_key",
     "is_side_effecting",
+    "ledger_guard",
     "serialize",
 ]
