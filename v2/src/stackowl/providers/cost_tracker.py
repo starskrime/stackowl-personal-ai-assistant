@@ -12,6 +12,7 @@ from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.providers.cost_tracker_helpers import _MAX_TRACKED_TURNS, TurnCostLedger
 from stackowl.providers.pricing.loader import PricingLoader
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 # Re-exported (the bound lives on TurnCostLedger now, B2 split) so callers/tests
 # that import ``_MAX_TRACKED_TURNS`` from this module keep working.
@@ -46,14 +47,20 @@ class DailySummary(BaseModel):
     call_count: int
 
 
-class CostTracker:
+class CostTracker(OwnedRepository):
     """Records token usage and estimated cost per LLM call.
 
     Persists each call to SQLite (`cost_records` table) and enforces an
     optional daily USD budget. Emits `budget_80pct_alert` and
     `budget_exceeded` events on the EventBus when thresholds are crossed.
     Subsequent record() calls after budget_exceeded raise ProviderError.
+
+    Owner-scoped: cost rows are stamped with ``owner_id`` and daily totals are
+    constrained to it (defaults to the single-user :data:`DEFAULT_PRINCIPAL_ID`,
+    so existing behavior is unchanged).
     """
+
+    _table = "cost_records"
 
     def __init__(
         self,
@@ -61,12 +68,13 @@ class CostTracker:
         event_bus: EventBus,
         daily_limit_usd: float | None = None,
         pricing: PricingLoader | None = None,
+        owner_id: str = DEFAULT_PRINCIPAL_ID,
     ) -> None:
         log.engine.debug(
             "[cost_tracker] init: entry",
             extra={"_fields": {"daily_limit_usd": daily_limit_usd}},
         )
-        self._db: DbPool = db
+        super().__init__(db, owner_id)
         self._bus: EventBus = event_bus
         self._daily_limit_usd: float | None = daily_limit_usd
         self._pricing: PricingLoader = pricing or PricingLoader()
@@ -133,13 +141,13 @@ class CostTracker:
                 """
                 INSERT INTO cost_records (
                     provider_name, model, input_tokens, output_tokens,
-                    cost_usd, trace_id, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    cost_usd, trace_id, recorded_at, owner_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.provider_name, record.model, record.input_tokens,
                     record.output_tokens, record.cost_usd, record.trace_id,
-                    record.recorded_at,
+                    record.recorded_at, self._owner_id,
                 ),
             )
         except Exception as exc:
@@ -228,9 +236,9 @@ class CostTracker:
             """
             SELECT provider_name, model, cost_usd
             FROM cost_records
-            WHERE substr(recorded_at, 1, 10) = ?
+            WHERE owner_id = ? AND substr(recorded_at, 1, 10) = ?
             """,
-            (target,),
+            (self._owner_id, target),
         )
         total = 0.0
         by_provider: dict[str, float] = {}

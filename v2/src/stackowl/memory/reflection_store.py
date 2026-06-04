@@ -18,6 +18,7 @@ from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcome
 from stackowl.memory.sqlite_helpers import pack_embedding, unpack_embedding
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 
 @dataclass(frozen=True)
@@ -47,8 +48,9 @@ SELECT o.trace_id, o.session_id, o.owl_name, o.channel,
        o.captured_at, o.scored_at, o.outcome_id, o.tool_sequence,
        o.dna_snapshot
 FROM task_outcomes o
-LEFT JOIN reflections r ON r.trace_id = o.trace_id
-WHERE r.reflection_id IS NULL
+LEFT JOIN reflections r ON r.trace_id = o.trace_id AND r.owner_id = o.owner_id
+WHERE o.owner_id = ?
+  AND r.reflection_id IS NULL
   AND o.quality_score IS NOT NULL
   AND (o.failure_class IS NOT NULL OR o.quality_score < {_LOW_QUALITY_THRESHOLD})
 ORDER BY o.captured_at ASC
@@ -58,17 +60,24 @@ LIMIT ?
 _INSERT_SQL = """
 INSERT INTO reflections (
     trace_id, owl_name, summary, suggested_strategy,
-    failure_class, quality_score, embedding, embedding_model, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    failure_class, quality_score, embedding, embedding_model, created_at,
+    owner_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(trace_id) DO NOTHING
 """
 
 
-class ReflectionStore:
-    """Async SQLite wrapper for the reflections table (migration 0030)."""
+class ReflectionStore(OwnedRepository):
+    """Async SQLite wrapper for the reflections table (migration 0030).
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    Owner-scoped: reads/writes are constrained to ``owner_id`` (defaults to the
+    single-user :data:`DEFAULT_PRINCIPAL_ID`, so existing behavior is unchanged).
+    """
+
+    _table = "reflections"
+
+    def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
+        super().__init__(db, owner_id)
         log.memory.debug("[reflections] store.init: ready")
 
     async def list_pending(self, limit: int = 10) -> list[TaskOutcome]:
@@ -83,7 +92,7 @@ class ReflectionStore:
             extra={"_fields": {"limit": limit, "low_quality_threshold": _LOW_QUALITY_THRESHOLD}},
         )
         # 3. STEP — LEFT JOIN against reflections gives us only unreflected rows
-        rows = await self._db.fetch_all(_LIST_PENDING_SQL, (limit,))
+        rows = await self._db.fetch_all(_LIST_PENDING_SQL, (self._owner_id, limit))
         # Hand-build TaskOutcome objects so we don't depend on outcome_store's
         # internal _row_to_outcome (different SQL alias shape).
         results: list[TaskOutcome] = []
@@ -169,7 +178,7 @@ class ReflectionStore:
             (
                 trace_id, owl_name, summary[:4000], suggested_strategy[:4000],
                 failure_class, quality_score, embedding_blob, embedding_model,
-                time.time(),
+                time.time(), self._owner_id,
             ),
         )
         # 4. EXIT
@@ -187,8 +196,8 @@ class ReflectionStore:
         rows = await self._db.fetch_all(
             """SELECT reflection_id, trace_id, owl_name, summary, suggested_strategy,
                       failure_class, quality_score, embedding, embedding_model, created_at
-               FROM reflections WHERE trace_id = ?""",
-            (trace_id,),
+               FROM reflections WHERE owner_id = ? AND trace_id = ?""",
+            (self._owner_id, trace_id),
         )
         # 2. DECISION + 4. EXIT
         if not rows:
@@ -219,9 +228,9 @@ class ReflectionStore:
         rows = await self._db.fetch_all(
             """SELECT reflection_id, trace_id, owl_name, summary, suggested_strategy,
                       failure_class, quality_score, embedding, embedding_model, created_at
-               FROM reflections WHERE owl_name = ?
+               FROM reflections WHERE owner_id = ? AND owl_name = ?
                ORDER BY created_at DESC LIMIT ?""",
-            (owl_name, limit),
+            (self._owner_id, owl_name, limit),
         )
         results = [_row_to_reflection(r) for r in rows]
         log.memory.debug(

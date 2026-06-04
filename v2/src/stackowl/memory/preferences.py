@@ -16,16 +16,22 @@ import time
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 
-class PreferenceStore:
+class PreferenceStore(OwnedRepository):
     """Thin async SQLite wrapper for user_preferences (migration 0028).
 
     Always scopes queries by owner_key — preferences NEVER leak across owners.
+    Additionally owner-scoped by the tenancy ``owner_id`` (distinct from the
+    per-channel ``owner_key``); defaults to the single-user
+    :data:`DEFAULT_PRINCIPAL_ID`, so existing behavior is unchanged.
     """
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    _table = "user_preferences"
+
+    def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
+        super().__init__(db, owner_id)
         log.memory.debug("[preferences] store.init: ready")
 
     async def get(self, owner_key: str, key: str) -> str | None:
@@ -35,8 +41,9 @@ class PreferenceStore:
             extra={"_fields": {"owner_key": owner_key, "key": key}},
         )
         rows = await self._db.fetch_all(
-            "SELECT value FROM user_preferences WHERE owner_key = ? AND key = ?",
-            (owner_key, key),
+            "SELECT value FROM user_preferences "
+            "WHERE owner_id = ? AND owner_key = ? AND key = ?",
+            (self._owner_id, owner_key, key),
         )
         value = rows[0]["value"] if rows else None
         log.memory.debug(
@@ -52,12 +59,12 @@ class PreferenceStore:
             extra={"_fields": {"owner_key": owner_key, "key": key, "value_len": len(value)}},
         )
         await self._db.execute(
-            """INSERT INTO user_preferences (owner_key, key, value, updated_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(owner_key, key) DO UPDATE SET
+            """INSERT INTO user_preferences (owner_key, key, value, updated_at, owner_id)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(owner_id, owner_key, key) DO UPDATE SET
                    value = excluded.value,
                    updated_at = excluded.updated_at""",
-            (owner_key, key, value, time.time()),
+            (owner_key, key, value, time.time(), self._owner_id),
         )
         log.memory.info(
             "[preferences] set: exit",
@@ -66,8 +73,9 @@ class PreferenceStore:
 
     async def delete(self, owner_key: str, key: str) -> None:
         await self._db.execute(
-            "DELETE FROM user_preferences WHERE owner_key = ? AND key = ?",
-            (owner_key, key),
+            "DELETE FROM user_preferences "
+            "WHERE owner_id = ? AND owner_key = ? AND key = ?",
+            (self._owner_id, owner_key, key),
         )
         log.memory.info(
             "[preferences] delete: ok",
@@ -81,8 +89,9 @@ class PreferenceStore:
             extra={"_fields": {"owner_key": owner_key}},
         )
         rows = await self._db.fetch_all(
-            "SELECT key, value FROM user_preferences WHERE owner_key = ?",
-            (owner_key,),
+            "SELECT key, value FROM user_preferences "
+            "WHERE owner_id = ? AND owner_key = ?",
+            (self._owner_id, owner_key),
         )
         result = {row["key"]: row["value"] for row in rows}
         log.memory.debug(

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _EXC_NAME_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:")
 
@@ -66,11 +67,18 @@ def classify_failure(errors: tuple[str, ...]) -> str | None:
     return errors[0][:120]
 
 
-class TaskOutcomeStore:
-    """Async SQLite wrapper for the task_outcomes table (migration 0029)."""
+class TaskOutcomeStore(OwnedRepository):
+    """Async SQLite wrapper for the task_outcomes table (migration 0029).
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    Owner-scoped: every read/write is constrained to ``owner_id`` (defaults to
+    the single-user :data:`DEFAULT_PRINCIPAL_ID`, so existing behavior is
+    unchanged).
+    """
+
+    _table = "task_outcomes"
+
+    def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
+        super().__init__(db, owner_id)
         log.memory.debug("[outcomes] store.init: ready")
 
     async def record(
@@ -109,8 +117,8 @@ class TaskOutcomeStore:
                    trace_id, session_id, owl_name, channel, success,
                    latency_ms, tool_call_count, failure_class,
                    step_durations, input_text, response_text, captured_at,
-                   tool_sequence, dna_snapshot
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   tool_sequence, dna_snapshot, owner_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_id, owl_name, channel, int(success),
@@ -119,6 +127,7 @@ class TaskOutcomeStore:
                 input_text[:8000], response_text[:8000], time.time(),
                 json.dumps(list(tool_sequence), separators=(",", ":")),
                 json.dumps(dna_snapshot or {}, separators=(",", ":")),
+                self._owner_id,
             ),
         )
         log.memory.info(
@@ -144,10 +153,10 @@ class TaskOutcomeStore:
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
                FROM task_outcomes
-               WHERE quality_score IS NULL
+               WHERE owner_id = ? AND quality_score IS NULL
                ORDER BY captured_at ASC
                LIMIT ?""",
-            (limit,),
+            (self._owner_id, limit),
         )
         results = [_row_to_outcome(r) for r in rows]
         # 4. EXIT
@@ -166,8 +175,9 @@ class TaskOutcomeStore:
         )
         # 3. STEP
         await self._db.execute(
-            "UPDATE task_outcomes SET quality_score = ?, scored_at = ? WHERE outcome_id = ?",
-            (score, time.time(), outcome_id),
+            "UPDATE task_outcomes SET quality_score = ?, scored_at = ? "
+            "WHERE outcome_id = ? AND owner_id = ?",
+            (score, time.time(), outcome_id, self._owner_id),
         )
         # 4. EXIT
         log.memory.info(
@@ -195,11 +205,12 @@ class TaskOutcomeStore:
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
                FROM task_outcomes
-               WHERE quality_score IS NOT NULL
+               WHERE owner_id = ?
+                 AND quality_score IS NOT NULL
                  AND captured_at >= ?
                ORDER BY captured_at DESC
                LIMIT ?""",
-            (since_epoch, limit),
+            (self._owner_id, since_epoch, limit),
         )
         results = [_row_to_outcome(r) for r in rows]
         # 4. EXIT
@@ -232,12 +243,13 @@ class TaskOutcomeStore:
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
                FROM task_outcomes
-               WHERE owl_name = ?
+               WHERE owner_id = ?
+                 AND owl_name = ?
                  AND quality_score IS NOT NULL
                  AND captured_at >= ?
                ORDER BY captured_at DESC
                LIMIT ?""",
-            (owl_name, since_epoch, limit),
+            (self._owner_id, owl_name, since_epoch, limit),
         )
         results = [_row_to_outcome(r) for r in rows]
         # 4. EXIT
@@ -272,13 +284,14 @@ class TaskOutcomeStore:
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
                FROM task_outcomes
-               WHERE quality_score IS NOT NULL
+               WHERE owner_id = ?
+                 AND quality_score IS NOT NULL
                  AND quality_score >= ?
                  AND captured_at >= ?
                  AND tool_sequence != '[]'
                ORDER BY captured_at ASC
                LIMIT ?""",
-            (min_quality, since_epoch, limit),
+            (self._owner_id, min_quality, since_epoch, limit),
         )
         results = [_row_to_outcome(r) for r in rows]
         # 4. EXIT
@@ -322,9 +335,9 @@ class TaskOutcomeStore:
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
                FROM task_outcomes
-               WHERE session_id = ?"""
+               WHERE owner_id = ? AND session_id = ?"""
         )
-        params: tuple[object, ...] = (session_id,)
+        params: tuple[object, ...] = (self._owner_id, session_id)
         if exclude_trace_id is not None:
             sql += " AND trace_id != ?"
             params += (exclude_trace_id,)
@@ -350,8 +363,8 @@ class TaskOutcomeStore:
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
-               FROM task_outcomes WHERE trace_id = ?""",
-            (trace_id,),
+               FROM task_outcomes WHERE owner_id = ? AND trace_id = ?""",
+            (self._owner_id, trace_id),
         )
         # 2. DECISION + 4. EXIT
         if not rows:

@@ -11,30 +11,32 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import InfrastructureError
 from stackowl.infra.observability import log
 from stackowl.parliament.models import ParliamentRound, ParliamentSession
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _INSERT_SQL = """
 INSERT INTO parliament_sessions (
     session_id, topic, owl_names, rounds, synthesis, status,
-    started_at, completed_at, interjections
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    started_at, completed_at, interjections, owner_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _UPDATE_FINAL_SQL = """
 UPDATE parliament_sessions
    SET status = ?, completed_at = ?, synthesis = ?, rounds = ?, interjections = ?
- WHERE session_id = ?
+ WHERE session_id = ? AND owner_id = ?
 """
 
 _UPDATE_ROUNDS_SQL = """
 UPDATE parliament_sessions
    SET rounds = ?, interjections = ?
- WHERE session_id = ?
+ WHERE session_id = ? AND owner_id = ?
 """
 
 _SELECT_RECENT_SQL = """
 SELECT session_id, topic, owl_names, rounds, synthesis, status,
        started_at, completed_at, interjections
   FROM parliament_sessions
+ WHERE owner_id = ?
  ORDER BY started_at DESC
  LIMIT ?
 """
@@ -43,20 +45,24 @@ _SELECT_BY_ID_SQL = """
 SELECT session_id, topic, owl_names, rounds, synthesis, status,
        started_at, completed_at, interjections
   FROM parliament_sessions
- WHERE session_id = ?
+ WHERE owner_id = ? AND session_id = ?
 """
 
 
-class SessionStore:
+class SessionStore(OwnedRepository):
     """Persists ParliamentSession records to SQLite.
 
     All operations are 4-point logged. Serialisation is JSON for list/dict
     fields; datetimes are ISO 8601 strings. The store never raises bare
-    Exception — DB faults surface as InfrastructureError.
+    Exception — DB faults surface as InfrastructureError. Owner-scoped: every
+    read/write is constrained to ``owner_id`` (defaults to the single-user
+    :data:`DEFAULT_PRINCIPAL_ID`, so existing behavior is unchanged).
     """
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    _table = "parliament_sessions"
+
+    def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
+        super().__init__(db, owner_id)
 
     async def create(self, session: ParliamentSession) -> None:
         """Insert a new session row."""
@@ -102,6 +108,7 @@ class SessionStore:
             json.dumps([r.model_dump() for r in session.rounds]),
             json.dumps(session.interjections),
             session.session_id,
+            self._owner_id,
         )
         try:
             await self._db.execute(_UPDATE_ROUNDS_SQL, params)
@@ -141,6 +148,7 @@ class SessionStore:
             json.dumps([r.model_dump() for r in session.rounds]),
             json.dumps(session.interjections),
             session.session_id,
+            self._owner_id,
         )
         try:
             await self._db.execute(_UPDATE_FINAL_SQL, params)
@@ -169,7 +177,7 @@ class SessionStore:
         )
         t0 = time.monotonic()
         try:
-            rows = await self._db.fetch_all(_SELECT_RECENT_SQL, (limit,))
+            rows = await self._db.fetch_all(_SELECT_RECENT_SQL, (self._owner_id, limit))
         except Exception as exc:
             log.parliament.warning(
                 "[parliament] session_store.list_recent: query failed",
@@ -197,7 +205,7 @@ class SessionStore:
         )
         t0 = time.monotonic()
         try:
-            rows = await self._db.fetch_all(_SELECT_BY_ID_SQL, (session_id,))
+            rows = await self._db.fetch_all(_SELECT_BY_ID_SQL, (self._owner_id, session_id))
         except Exception as exc:
             log.parliament.warning(
                 "[parliament] session_store.get_by_id: query failed",
@@ -234,6 +242,7 @@ class SessionStore:
             session.started_at.isoformat(),
             session.completed_at.isoformat() if session.completed_at else None,
             json.dumps(session.interjections),
+            self._owner_id,
         )
 
     def _row_to_session(self, row: dict[str, Any]) -> ParliamentSession:

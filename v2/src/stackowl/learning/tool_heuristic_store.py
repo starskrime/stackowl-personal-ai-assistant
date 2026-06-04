@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 
 @dataclass(frozen=True)
@@ -36,9 +37,9 @@ _INSERT_SQL = """
 INSERT INTO tool_heuristics
     (tool_name, condition_kind, condition_value, predicted_outcome,
      evidence_count, mean_quality, failure_class,
-     last_seen_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(tool_name, condition_kind, condition_value, predicted_outcome) DO UPDATE SET
+     last_seen_at, created_at, updated_at, owner_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(owner_id, tool_name, condition_kind, condition_value, predicted_outcome) DO UPDATE SET
     evidence_count = excluded.evidence_count,
     mean_quality = excluded.mean_quality,
     failure_class = excluded.failure_class,
@@ -53,11 +54,17 @@ _SELECT_FIELDS = """
 """
 
 
-class ToolHeuristicStore:
-    """Async SQLite wrapper for ``tool_heuristics`` (migration 0035)."""
+class ToolHeuristicStore(OwnedRepository):
+    """Async SQLite wrapper for ``tool_heuristics`` (migration 0035).
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    Owner-scoped: reads/writes are constrained to ``owner_id`` (defaults to the
+    single-user :data:`DEFAULT_PRINCIPAL_ID`, so existing behavior is unchanged).
+    """
+
+    _table = "tool_heuristics"
+
+    def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
+        super().__init__(db, owner_id)
         log.memory.debug("[heuristic] store.init: ready")
 
     async def upsert(
@@ -86,14 +93,14 @@ class ToolHeuristicStore:
             (
                 tool_name, condition_kind, condition_value, predicted_outcome,
                 evidence_count, mean_quality, failure_class,
-                now, now, now,
+                now, now, now, self._owner_id,
             ),
         )
         rows = await self._db.fetch_all(
             """SELECT heuristic_id FROM tool_heuristics
-               WHERE tool_name = ? AND condition_kind = ?
+               WHERE owner_id = ? AND tool_name = ? AND condition_kind = ?
                  AND condition_value = ? AND predicted_outcome = ?""",
-            (tool_name, condition_kind, condition_value, predicted_outcome),
+            (self._owner_id, tool_name, condition_kind, condition_value, predicted_outcome),
         )
         hid = int(str(rows[0]["heuristic_id"])) if rows else -1
         # 4. EXIT
@@ -113,9 +120,9 @@ class ToolHeuristicStore:
         )
         rows = await self._db.fetch_all(
             f"SELECT {_SELECT_FIELDS} FROM tool_heuristics "
-            "WHERE tool_name = ? AND evidence_count >= ? "
+            "WHERE owner_id = ? AND tool_name = ? AND evidence_count >= ? "
             "ORDER BY evidence_count DESC LIMIT 50",
-            (tool_name, min_evidence),
+            (self._owner_id, tool_name, min_evidence),
         )
         results = [_row_to_heuristic(r) for r in rows]
         log.memory.debug(
@@ -128,9 +135,9 @@ class ToolHeuristicStore:
         """Every heuristic with at least ``min_evidence`` occurrences."""
         rows = await self._db.fetch_all(
             f"SELECT {_SELECT_FIELDS} FROM tool_heuristics "
-            "WHERE evidence_count >= ? "
+            "WHERE owner_id = ? AND evidence_count >= ? "
             "ORDER BY tool_name, evidence_count DESC",
-            (min_evidence,),
+            (self._owner_id, min_evidence),
         )
         return [_row_to_heuristic(r) for r in rows]
 

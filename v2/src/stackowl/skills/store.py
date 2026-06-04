@@ -19,6 +19,7 @@ from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.memory.sqlite_helpers import pack_embedding, unpack_embedding
 from stackowl.skills.manifest import SkillSource
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 if TYPE_CHECKING:
     from stackowl.skills.loader import LoadedSkill
@@ -68,9 +69,9 @@ _UPSERT_SQL = """
 INSERT INTO skills (
     name, source, path, description, when_to_use, version, enabled,
     success_rate, n_executions, parent_traces, embedding, embedding_model,
-    manifest_json, body_text, loaded_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(source, name) DO UPDATE SET
+    manifest_json, body_text, loaded_at, updated_at, owner_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(owner_id, source, name) DO UPDATE SET
     path = excluded.path,
     description = excluded.description,
     when_to_use = excluded.when_to_use,
@@ -89,11 +90,19 @@ _SELECT_FIELDS = """
 """
 
 
-class SkillIndexStore:
-    """Async SQLite wrapper for the ``skills`` + ``skill_audit`` tables (migration 0031)."""
+class SkillIndexStore(OwnedRepository):
+    """Async SQLite wrapper for the ``skills`` + ``skill_audit`` tables (migration 0031).
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    Owner-scoped on the ``skills`` table: reads/writes are constrained to
+    ``owner_id`` (defaults to the single-user :data:`DEFAULT_PRINCIPAL_ID`, so
+    existing behavior is unchanged). The ``skill_audit`` forensic trail has no
+    ``owner_id`` column and is left unscoped.
+    """
+
+    _table = "skills"
+
+    def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
+        super().__init__(db, owner_id)
         log.skills.debug("[skills] store.init: ready")
 
     async def upsert(self, loaded: LoadedSkill) -> int:
@@ -119,13 +128,13 @@ class SkillIndexStore:
                 m.name, m.source, str(loaded.path), m.description, m.when_to_use,
                 m.version, int(m.enabled), m.success_rate, m.n_executions,
                 parent_traces, None, m.embedding_model, manifest_json,
-                loaded.body, now, now,
+                loaded.body, now, now, self._owner_id,
             ),
         )
         # Find the row id for the row we just upserted (caller may need it).
         rows = await self._db.fetch_all(
-            "SELECT skill_id FROM skills WHERE source = ? AND name = ?",
-            (m.source, m.name),
+            "SELECT skill_id FROM skills WHERE owner_id = ? AND source = ? AND name = ?",
+            (self._owner_id, m.source, m.name),
         )
         skill_id = int(str(rows[0]["skill_id"])) if rows else -1
         # 4. EXIT
@@ -141,8 +150,9 @@ class SkillIndexStore:
         log.skills.debug("[skills] store.list_for_source: entry",
                   extra={"_fields": {"source": source}})
         rows = await self._db.fetch_all(
-            f"SELECT {_SELECT_FIELDS} FROM skills WHERE source = ? ORDER BY name",
-            (source,),
+            f"SELECT {_SELECT_FIELDS} FROM skills "
+            "WHERE owner_id = ? AND source = ? ORDER BY name",
+            (self._owner_id, source),
         )
         results = [_row_to_skill(r) for r in rows]
         # 4. EXIT
@@ -155,7 +165,9 @@ class SkillIndexStore:
         # 1. ENTRY
         log.skills.debug("[skills] store.list_enabled: entry")
         rows = await self._db.fetch_all(
-            f"SELECT {_SELECT_FIELDS} FROM skills WHERE enabled = 1 ORDER BY source, name",
+            f"SELECT {_SELECT_FIELDS} FROM skills "
+            "WHERE owner_id = ? AND enabled = 1 ORDER BY source, name",
+            (self._owner_id,),
         )
         results = [_row_to_skill(r) for r in rows]
         # 4. EXIT
@@ -169,8 +181,9 @@ class SkillIndexStore:
         log.skills.debug("[skills] store.get: entry",
                   extra={"_fields": {"source": source, "name": name}})
         rows = await self._db.fetch_all(
-            f"SELECT {_SELECT_FIELDS} FROM skills WHERE source = ? AND name = ?",
-            (source, name),
+            f"SELECT {_SELECT_FIELDS} FROM skills "
+            "WHERE owner_id = ? AND source = ? AND name = ?",
+            (self._owner_id, source, name),
         )
         # 2. DECISION + 4. EXIT
         if not rows:
@@ -188,8 +201,9 @@ class SkillIndexStore:
         log.skills.debug("[skills] store.set_enabled: entry",
                   extra={"_fields": {"skill_id": skill_id, "enabled": enabled}})
         await self._db.execute(
-            "UPDATE skills SET enabled = ?, updated_at = ? WHERE skill_id = ?",
-            (int(enabled), time.time(), skill_id),
+            "UPDATE skills SET enabled = ?, updated_at = ? "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (int(enabled), time.time(), skill_id, self._owner_id),
         )
         # 4. EXIT
         log.skills.info("[skills] store.set_enabled: stored",
@@ -210,8 +224,8 @@ class SkillIndexStore:
         blob = pack_embedding(embedding) if embedding else None
         await self._db.execute(
             "UPDATE skills SET embedding = ?, embedding_model = ?, updated_at = ? "
-            "WHERE skill_id = ?",
-            (blob, model, time.time(), skill_id),
+            "WHERE skill_id = ? AND owner_id = ?",
+            (blob, model, time.time(), skill_id, self._owner_id),
         )
         # 4. EXIT
         log.skills.info("[skills] store.set_embedding: stored",
@@ -224,8 +238,8 @@ class SkillIndexStore:
                   extra={"_fields": {"skill_id": skill_id}})
         await self._db.execute(
             "UPDATE skills SET n_executions = n_executions + 1, updated_at = ? "
-            "WHERE skill_id = ?",
-            (time.time(), skill_id),
+            "WHERE skill_id = ? AND owner_id = ?",
+            (time.time(), skill_id, self._owner_id),
         )
         # 4. EXIT
         log.skills.debug("[skills] store.increment_n_executions: exit",
@@ -243,8 +257,9 @@ class SkillIndexStore:
             )
             rate = max(0.0, min(1.0, rate))
         await self._db.execute(
-            "UPDATE skills SET success_rate = ?, updated_at = ? WHERE skill_id = ?",
-            (rate, time.time(), skill_id),
+            "UPDATE skills SET success_rate = ?, updated_at = ? "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (rate, time.time(), skill_id, self._owner_id),
         )
         # 4. EXIT
         log.skills.info("[skills] store.set_success_rate: stored",
@@ -273,7 +288,8 @@ class SkillIndexStore:
         )
         rows = await self._db.fetch_all(
             f"SELECT {_SELECT_FIELDS} FROM skills "
-            "WHERE enabled = 1 AND embedding IS NOT NULL",
+            "WHERE owner_id = ? AND enabled = 1 AND embedding IS NOT NULL",
+            (self._owner_id,),
         )
         if not rows:
             log.skills.debug("[skills] store.semantic_recall: exit — no candidates")
@@ -316,7 +332,10 @@ class SkillIndexStore:
         # 1. ENTRY
         log.skills.debug("[skills] store.delete: entry",
                   extra={"_fields": {"skill_id": skill_id}})
-        await self._db.execute("DELETE FROM skills WHERE skill_id = ?", (skill_id,))
+        await self._db.execute(
+            "DELETE FROM skills WHERE skill_id = ? AND owner_id = ?",
+            (skill_id, self._owner_id),
+        )
         # 4. EXIT
         log.skills.info("[skills] store.delete: deleted",
                  extra={"_fields": {"skill_id": skill_id}})
@@ -449,7 +468,11 @@ def _row_to_skill(row: dict[str, object]) -> Skill:
     if isinstance(emb_raw, bytes | bytearray | memoryview):
         try:
             embedding = unpack_embedding(bytes(emb_raw))
-        except Exception:
+        except Exception as exc:
+            log.skills.warning(
+                "[skills] store._row_to_skill: embedding unpack failed, dropping embedding",
+                exc_info=exc,
+            )
             embedding = None
     sr_raw = row.get("success_rate")
     return Skill(
