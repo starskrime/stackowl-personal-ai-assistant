@@ -48,6 +48,13 @@ class PipelineState(BaseModel, frozen=True):
     # fork-bomb cap), and the S1 delegate_task tool refuses past
     # MAX_DELEGATION_DEPTH (defense-in-depth).
     delegation_depth: int = 0
+    # ID of the durable task this pipeline turn belongs to, or None for an
+    # ephemeral (non-durable) turn. Carried across evolve() like every other
+    # field. Consumed by the langgraph backend to isolate per-task checkpoints
+    # (thread_id = "session::task_id") so a durable task's resume replays its own
+    # checkpoint, not a sibling turn's. Additive — default None preserves the
+    # exact prior behavior for every non-durable turn.
+    task_id: str | None = None
     # ID of an in-flight clarify question awaiting a user answer for this run.
     # The Event itself lives in the (out-of-band) clarify registry — a frozen
     # model cannot hold an asyncio.Event — so only the id is carried in state.

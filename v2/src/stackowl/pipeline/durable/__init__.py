@@ -14,6 +14,11 @@ consumes them is intentionally out of scope for this pass.
 
 from __future__ import annotations
 
+from stackowl.pipeline.durable.executor import (
+    CallableStep,
+    DurableExecutor,
+    TaskStep,
+)
 from stackowl.pipeline.durable.ledger import (
     LedgerDecision,
     LedgerOutcome,
@@ -25,12 +30,15 @@ from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
 
 __all__ = [
+    "CallableStep",
+    "DurableExecutor",
     "DurableTask",
     "DurableTaskStore",
     "LedgerDecision",
     "LedgerOutcome",
     "SideEffectLedger",
     "TaskStatus",
+    "TaskStep",
     "idempotency_key",
     "is_side_effecting",
 ]

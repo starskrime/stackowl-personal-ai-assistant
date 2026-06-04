@@ -112,8 +112,16 @@ class LangGraphBackend(OrchestratorBackend):
         )
         try:
             compiled = await self._ensure_compiled()
+            # Isolate per-task checkpoints: a durable task gets its own thread so
+            # its resume replays the right checkpoint. Falls back to the plain
+            # session id (exact prior behavior) when no task_id is set.
+            thread_id = (
+                f"{state.session_id}::{state.task_id}"
+                if state.task_id
+                else state.session_id
+            )
             config: dict[str, Any] = {
-                "configurable": {"thread_id": state.session_id},
+                "configurable": {"thread_id": thread_id},
                 "metadata": {"trace_id": TraceContext.get().get("trace_id") or state.trace_id},
                 "callbacks": [LoggingCallback()],
                 "recursion_limit": 50,

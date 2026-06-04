@@ -996,6 +996,23 @@ class StartupOrchestrator:
                 exc_info=exc,
                 extra={"_fields": {}},
             )
+        # Durable-task recovery: reap tasks left 'running' by a crash and surface
+        # them (park) so an interrupted multi-step task is not silently lost.
+        # Fail-OPEN: a recovery error must NOT block startup.
+        try:
+            from stackowl.pipeline.durable.executor import DurableExecutor
+
+            durable_recovered = await DurableExecutor(db_pool).recover()
+            log.info(
+                "[startup] gateway: durable-task recovery complete",
+                extra={"_fields": {"recovered": durable_recovered}},
+            )
+        except Exception as exc:
+            log.error(
+                "[startup] gateway: durable-task recovery failed — starting anyway",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
         # Start the scheduler under Supervisor so all registered handlers
         # (browser, dream worker, fact extraction, notification digest,
         # morning brief, etc.) actually dispatch.
