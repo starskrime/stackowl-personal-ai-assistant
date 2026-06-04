@@ -26,6 +26,11 @@ _SELECT_FIELDS = (
     "thread_id, result, created_at, updated_at"
 )
 
+# Minimal fields for checkpoint read — avoids pulling the full task row when
+# only the blob is needed (future optimisation hook; currently the full row is
+# fetched and the checkpoint_blob column is read off it).
+_CHECKPOINT_BLOB_FIELD = "checkpoint_blob"
+
 
 class DurableTaskStore(OwnedRepository):
     """Owner-scoped persistence for :class:`DurableTask` rows."""
@@ -165,6 +170,78 @@ class DurableTaskStore(OwnedRepository):
                 "task_id": task_id, "owner_id": self._owner_id, "status": status,
             }},
         )
+
+
+    async def save_checkpoint(self, task_id: str, blob: str) -> None:
+        """Persist the serialised :class:`~stackowl.pipeline.durable.react_checkpoint.ReActCheckpoint`
+        blob on the task row (owner-scoped UPDATE).
+
+        The column ``checkpoint_blob`` is written unconditionally — each call
+        overwrites the previous snapshot.  The ``updated_at`` timestamp is NOT
+        refreshed here because a checkpoint write is a sub-step event (not a
+        status transition); callers that want to advance ``current_step`` use
+        :meth:`update_status`.
+
+        The UPDATE carries ``owner_id`` in its WHERE clause so
+        :meth:`~stackowl.tenancy.OwnedRepository._execute_owned` accepts it and
+        a task owned by a different principal can never be written.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.save_checkpoint: entry",
+            extra={"_fields": {
+                "task_id": task_id, "owner_id": self._owner_id,
+                "blob_len": len(blob),
+            }},
+        )
+        # 2. DECISION — unconditional overwrite; owner predicate enforces isolation
+        sql = (
+            f"UPDATE {self._table} SET checkpoint_blob = ? "  # noqa: S608 — table from class
+            "WHERE owner_id = ? AND task_id = ?"
+        )
+        # 3. STEP — owner-scoped write
+        await self._execute_owned(sql, [blob, self._owner_id, task_id])
+        # 4. EXIT
+        log.tasks.info(
+            "[tasks] store.save_checkpoint: saved",
+            extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+        )
+
+    async def load_checkpoint(self, task_id: str) -> str | None:
+        """Return the raw checkpoint blob for ``task_id``, or ``None`` if no
+        checkpoint has been saved yet.
+
+        Owner-scoped: only the row belonging to the bound owner is readable.
+        A task that exists but has no checkpoint (``checkpoint_blob IS NULL``)
+        returns ``None`` — not an error.  A task that does not exist for the
+        bound owner also returns ``None`` (invisible-is-missing semantics,
+        consistent with the exactly-once / replay contract).
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.load_checkpoint: entry",
+            extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+        )
+        # 2. DECISION — fetch the task row scoped to this owner; missing = None
+        rows = await self._fetch_owned(self._table, "task_id = ?", (task_id,))
+        if not rows:
+            log.tasks.debug(
+                "[tasks] store.load_checkpoint: task not found for owner — returning None",
+                extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+            )
+            return None
+        # 3. STEP — extract the blob (may be NULL in the DB)
+        raw = rows[0].get(_CHECKPOINT_BLOB_FIELD)
+        blob: str | None = None if raw is None else str(raw)
+        # 4. EXIT
+        log.tasks.debug(
+            "[tasks] store.load_checkpoint: exit",
+            extra={"_fields": {
+                "task_id": task_id, "owner_id": self._owner_id,
+                "has_blob": blob is not None,
+            }},
+        )
+        return blob
 
 
 def _row_to_task(row: dict[str, Any]) -> DurableTask:

@@ -1,0 +1,24 @@
+-- Migration 0046 — per-iteration ReAct checkpoint blob (S1, durable-react).
+--
+-- Adds a nullable checkpoint_blob TEXT column to the existing tasks table.
+-- The column stores the serialised ReActCheckpoint JSON produced by
+-- react_checkpoint.serialize() after each completed LLM iteration, enabling
+-- the loop to resume from the last snapshot without restarting from scratch.
+--
+-- Design choices:
+--   Additive only: existing rows gain a NULL value — no data is touched.
+--   Nullable: the column is absent (NULL) until the first iteration completes.
+--   Owner-scoped: the tasks table's composite PK (owner_id, task_id) already
+--   enforces owner isolation, so no new owner column is needed here.
+--   The column name checkpoint_blob is distinct from the existing result column
+--   (which carries the human-readable final answer / partial aggregate) so the
+--   two blobs never collide.
+--
+-- Idempotent: ALTER TABLE ADD COLUMN is safe to re-run on SQLite because the
+-- column-already-exists check below makes the whole migration a no-op on
+-- subsequent runs (the MigrationRunner tracks version strings, but belt-and-
+-- suspenders makes the SQL itself safe). Note SQLite does not support
+-- ADD COLUMN IF NOT EXISTS natively, so we use the schema_migrations version
+-- tracking as the gate (the runner skips a version already recorded).
+
+ALTER TABLE tasks ADD COLUMN checkpoint_blob TEXT;
