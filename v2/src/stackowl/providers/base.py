@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.providers.react_callback import IterationCallback
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.providers.cost_tracker import CostTracker
@@ -177,6 +178,7 @@ class ModelProvider(ABC):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
+        on_iteration_complete: IterationCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run a multi-turn tool loop; return (final_response_text, tool_invocation_records).
 
@@ -186,6 +188,14 @@ class ModelProvider(ABC):
         non-empty directive string the provider must inject it and CONTINUE the loop
         (bounded, fail-open) instead of returning. The default impl below ignores
         tools entirely, so it ignores this hook too.
+
+        ``on_iteration_complete`` (S3) is an optional per-iteration callback fired
+        once at the bottom of each completed ReAct iteration (after that iteration's
+        tool calls + observations have been appended to messages).  Default ``None``
+        → exact current behavior; no loop, no I/O.  The base default below has no
+        loop so this callback is never invoked here; concrete providers with a real
+        ReAct loop call it at each iteration bottom.  If the callback raises the
+        exception propagates — providers do NOT swallow it.
 
         Default: falls back to a single complete() ignoring tools.
         Providers that support tool use override this method.

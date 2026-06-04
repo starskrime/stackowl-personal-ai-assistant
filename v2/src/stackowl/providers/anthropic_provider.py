@@ -22,6 +22,7 @@ from stackowl.providers._truncate import (
 )
 from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.vision_models import is_vision_model
 
 
@@ -124,6 +125,7 @@ class AnthropicProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
+        on_iteration_complete: IterationCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Anthropic native tool-use loop using content blocks."""
         TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
@@ -179,7 +181,7 @@ class AnthropicProvider(ModelProvider):
         )
 
         guard = LoopGuard()
-        for _ in range(resolved_iterations):
+        for _iter_idx in range(resolved_iterations):
             # Bound total context BEFORE the call. Only tool_result CONTENT is
             # elided (never the message itself), so tool_use/tool_result pairing
             # stays valid for the Anthropic API.
@@ -218,6 +220,17 @@ class AnthropicProvider(ModelProvider):
                     "[anthropic] complete_with_tools: exit",
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
                 )
+                # S3 — fire per-iteration callback for this terminal iteration
+                # (the final answer round), then return.  Fires even when there
+                # were no tool calls so the checkpoint captures the final state.
+                if on_iteration_complete is not None:
+                    await on_iteration_complete(
+                        ReActIterationState(
+                            iteration=_iter_idx,
+                            messages=list(messages),
+                            tool_call_records=list(all_calls),
+                        )
+                    )
                 return text, all_calls
 
             # Build assistant turn with all content blocks
@@ -250,6 +263,17 @@ class AnthropicProvider(ModelProvider):
                 if directive:
                     iter_directives.append(directive)
             messages.append({"role": "user", "content": tool_results})
+            # S3 — fire per-iteration callback after tool calls + observations are
+            # appended but BEFORE advancing to the next LLM round (or breaking).
+            # Shallow-copy both lists so the callback cannot mutate loop state.
+            if on_iteration_complete is not None:
+                await on_iteration_complete(
+                    ReActIterationState(
+                        iteration=_iter_idx,
+                        messages=list(messages),
+                        tool_call_records=list(all_calls),
+                    )
+                )
             if guard.tripped():
                 log.engine.warning(
                     "[anthropic] complete_with_tools: loop guard tripped — "

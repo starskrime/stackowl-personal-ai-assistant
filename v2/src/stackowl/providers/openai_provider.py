@@ -26,6 +26,7 @@ from stackowl.providers._truncate import (
 )
 from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.vision_models import is_vision_model
 
 
@@ -127,6 +128,7 @@ class OpenAIProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
+        on_iteration_complete: IterationCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """OpenAI function-calling tool-use loop."""
         import json
@@ -198,7 +200,7 @@ class OpenAIProvider(ModelProvider):
         )
 
         guard = LoopGuard()
-        for _ in range(resolved_iterations):
+        for _iter_idx in range(resolved_iterations):
             # Bound total context BEFORE the call: elide oldest tool observations
             # if the accumulated history would overflow the model's window.
             messages = trim_messages_to_budget(messages, budget)
@@ -257,10 +259,30 @@ class OpenAIProvider(ModelProvider):
                             extra={"_fields": {"provider": self._name}},
                         )
                         messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
+                        # S3 — guard trip on ReAct path: fire before break so
+                        # the checkpoint captures the observation that caused it.
+                        if on_iteration_complete is not None:
+                            await on_iteration_complete(
+                                ReActIterationState(
+                                    iteration=_iter_idx,
+                                    messages=list(messages),
+                                    tool_call_records=list(all_calls),
+                                )
+                            )
                         break
                     messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
                     if react_directive:
                         messages.append({"role": "user", "content": react_directive})
+                    # S3 — fire per-iteration callback after OBSERVATION appended
+                    # (ReAct text path), before continuing to the next LLM round.
+                    if on_iteration_complete is not None:
+                        await on_iteration_complete(
+                            ReActIterationState(
+                                iteration=_iter_idx,
+                                messages=list(messages),
+                                tool_call_records=list(all_calls),
+                            )
+                        )
                     continue
                 # no action -> draft final answer. Phase D: before accepting it,
                 # ask the persistence judge whether the agent delivered or gave up.
@@ -272,6 +294,16 @@ class OpenAIProvider(ModelProvider):
                     "[openai] complete_with_tools: exit",
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
                 )
+                # S3 — fire per-iteration callback for this terminal iteration
+                # (the final answer round, no tool calls), then return.
+                if on_iteration_complete is not None:
+                    await on_iteration_complete(
+                        ReActIterationState(
+                            iteration=_iter_idx,
+                            messages=list(messages),
+                            tool_call_records=list(all_calls),
+                        )
+                    )
                 return content, all_calls
 
             # Append assistant turn with tool_calls
@@ -319,6 +351,17 @@ class OpenAIProvider(ModelProvider):
                 directive = guard.observe(fn_name, args)
                 if directive:
                     iter_native_directives.append(directive)
+            # S3 — fire per-iteration callback after all native tool results are
+            # appended (before guard check / directives), so the checkpoint captures
+            # the complete state of this iteration including all tool observations.
+            if on_iteration_complete is not None:
+                await on_iteration_complete(
+                    ReActIterationState(
+                        iteration=_iter_idx,
+                        messages=list(messages),
+                        tool_call_records=list(all_calls),
+                    )
+                )
             if guard.tripped():
                 log.engine.warning(
                     "[openai] complete_with_tools: loop guard tripped — "
