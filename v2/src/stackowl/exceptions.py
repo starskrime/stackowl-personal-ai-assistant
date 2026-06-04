@@ -375,6 +375,14 @@ class UnsupportedActionError(DomainError):
         self.action = action
 
 
+class PrincipalNotFoundError(DomainError):
+    """Raised when a requested owner principal is not in the principals table."""
+
+    def __init__(self, principal_id: str) -> None:
+        super().__init__(f"Principal not found: '{principal_id}'")
+        self.principal_id = principal_id
+
+
 class PidFileExistsError(StackOwlError):
     """Raised when a PID file already exists and the recorded process is still alive."""
 

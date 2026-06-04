@@ -142,6 +142,7 @@ class _Loggers:
     infra = logging.getLogger("stackowl.infra")
     setup = logging.getLogger("stackowl.setup")
     security = logging.getLogger("stackowl.security")
+    tenancy = logging.getLogger("stackowl.tenancy")
 
 
 log = _Loggers()
