@@ -94,3 +94,13 @@ def test_child_floor_unknown_owl_with_ceiling_returns_ceiling() -> None:
     reg = OwlRegistry()  # "parent" not registered
     result = child_floor("parent", ceiling, reg)
     assert result == ceiling
+
+
+def test_task_envelope_is_ignored_by_enforcement() -> None:
+    # E2-S3 — task_envelope is telemetry/presentation only; enforcement is owl ∩ ceiling.
+    s = _state(
+        creation_ceiling=None,
+        task_envelope=BoundsSpec(tools=frozenset({"a"})),  # would narrow if folded
+    )
+    eff = compute_effective_bounds(s, _reg(BoundsSpec(tools=frozenset({"a", "b"}))))
+    assert eff.tools == frozenset({"a", "b"})  # NOT narrowed by the envelope

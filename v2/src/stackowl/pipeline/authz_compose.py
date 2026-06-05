@@ -58,11 +58,18 @@ def child_floor(
 def compute_effective_bounds(
     state: PipelineState, owl_registry: OwlRegistry | None
 ) -> BoundsSpec | None:
-    """effective = owl.bounds(now) ∩ creation_ceiling ∩ task_envelope.
+    """effective = owl.bounds(now) ∩ creation_ceiling.
 
     Fail-closed contract for the CALLER: a non-OwlNotFound exception propagates so
     the dispatch seam denies (never falls through on an error in a security path).
-    A genuinely unbounded owl with no envelope returns None (unrestricted) — S1.
+    A genuinely unbounded owl with no ceiling returns None (unrestricted) — S1.
+
+    Note: task_envelope is intentionally excluded from enforcement (E2-S3). It is a
+    least-privilege DEFAULT used for presentation + drift telemetry only; the hard
+    boundary must not depend on an LLM-derived hint.
     """
     owl_bounds = resolve_owl_bounds(state.owl_name, owl_registry)
-    return effective_bounds(owl_bounds, state.creation_ceiling, state.task_envelope)
+    # E2-S3 — enforcement is owl ∩ creation_ceiling ONLY. task_envelope is a
+    # least-privilege DEFAULT used for presentation + drift telemetry, never for
+    # enforcement (the hard boundary must not depend on an LLM-derived hint).
+    return effective_bounds(owl_bounds, state.creation_ceiling)
