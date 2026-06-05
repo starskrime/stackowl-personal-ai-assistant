@@ -57,5 +57,8 @@ class DurableTask(BaseModel):
     #: ceiling (E2-S2). NULL on legacy rows (pre-0048) and on a task created under
     #: an unbounded owl → None → resume uses the owl's current bounds.
     creation_ceiling: BoundsSpec | None = None
+    #: Preflight-planner least-privilege envelope (E2-S3). NULL when the planner
+    #: declined/failed or for legacy rows. Telemetry + presentation only.
+    task_envelope: BoundsSpec | None = None
     created_at: datetime
     updated_at: datetime

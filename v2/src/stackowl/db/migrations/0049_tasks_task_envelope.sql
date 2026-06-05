@@ -1,0 +1,30 @@
+-- Migration 0049 — persist preflight-planner task_envelope on tasks (E2-S3).
+--
+-- Adds a nullable TEXT column holding a JSON-serialised BoundsSpec that
+-- captures the least-privilege envelope computed by the preflight planner at
+-- task creation time. This envelope is telemetry + presentation data — it is
+-- NOT an enforcement boundary — the live BoundsSpec on the owl is authoritative
+-- for enforcement. Storing it gives the system visibility into what was
+-- planned and lets a durable task carry its original envelope through resumes.
+--
+-- task_envelope
+--   JSON-serialised BoundsSpec (model_dump_json) if the preflight planner
+--   produced an envelope at creation time. NULL on legacy rows (pre-0049)
+--   and when the planner declined or failed — the task runs under the owl's
+--   current bounds in either case. NULL is also written for a task created
+--   without a planner run (non-durable or planner-disabled paths).
+--
+-- Design choices:
+--   Additive only: existing rows gain NULL values — no data is touched.
+--   Nullable: legacy rows and planner-absent rows read back NULL, which the
+--   store maps to Python None without calling model_validate_json.
+--   Owner-scoped: the tasks composite PK (owner_id, task_id) already enforces
+--   owner isolation, so no new owner column is needed here.
+--
+-- Idempotent: the MigrationRunner records applied versions in schema_migrations
+-- and skips a version already recorded, so this ADD COLUMN DDL runs exactly
+-- once. SQLite has no ADD COLUMN IF NOT EXISTS, so the runner's version gate is
+-- the idempotency mechanism. NOTE no semicolons inside comments per the runner
+-- gotcha.
+
+ALTER TABLE tasks ADD COLUMN task_envelope TEXT;

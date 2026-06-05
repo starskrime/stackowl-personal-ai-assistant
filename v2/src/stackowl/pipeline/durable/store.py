@@ -24,7 +24,7 @@ from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _SELECT_FIELDS = (
     "task_id, owner_id, goal, status, current_step, "
-    "thread_id, result, owl_name, channel, creation_ceiling, created_at, updated_at"
+    "thread_id, result, owl_name, channel, creation_ceiling, task_envelope, created_at, updated_at"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -90,6 +90,11 @@ class DurableTaskStore(OwnedRepository):
             "creation_ceiling": (
                 task.creation_ceiling.model_dump_json()
                 if task.creation_ceiling is not None
+                else None
+            ),
+            "task_envelope": (
+                task.task_envelope.model_dump_json()
+                if task.task_envelope is not None
                 else None
             ),
             "created_at": task.created_at.isoformat(),
@@ -348,6 +353,12 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         if raw_ceiling is not None
         else None
     )
+    raw_env = row.get("task_envelope")
+    envelope: BoundsSpec | None = (
+        BoundsSpec.model_validate_json(str(raw_env))
+        if raw_env is not None
+        else None
+    )
     return DurableTask(
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
@@ -359,6 +370,7 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         owl_name=None if raw_owl is None else str(raw_owl),
         channel=None if raw_channel is None else str(raw_channel),
         creation_ceiling=ceiling,
+        task_envelope=envelope,
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )
