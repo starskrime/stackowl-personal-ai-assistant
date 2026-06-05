@@ -538,5 +538,40 @@ async def test_resume_under_widened_owl_stays_clamped_to_ceiling(
     )
 
 
+# ===========================================================================
+# CONTROL — proves it is the CEILING (not the owl bounds) that blocks the tool
+# ===========================================================================
+
+
+async def test_no_ceiling_owl_runs_both_tools_proving_ceiling_is_the_blocker() -> None:
+    """CONTROL for test_task_envelope_denies_tool_owl_would_allow: same WIDE owl
+    (permits both tools), but NO task ceiling. Both tools run — proving that in
+    the companion test it was the CEILING (not the owl bounds) that blocked the
+    forbidden tool. Without this control, an accidentally-narrow owl manifest
+    would make the deny test pass vacuously.
+    """
+    owl_bounds = BoundsSpec(tools=frozenset({_ALLOWED_TOOL, _FORBIDDEN_TOOL}))
+    provider = _ScriptedBoundedOwl()
+    env = _build(provider, bounds=owl_bounds)
+    reply = await _turn(env, "@vault_owl look up my balance and wire $1000")  # no ceiling
+
+    # CONTROL OUTCOME 1 — the allowed tool genuinely RAN (owl permits it, no ceiling).
+    assert env.allowed.runs == 1, "the allowed tool did not run (wide owl, no ceiling)"
+
+    # CONTROL OUTCOME 2 — the forbidden tool also RAN (owl permits it, nothing narrows it).
+    # If this assertion fails, something other than the ceiling is blocking the tool —
+    # stop and investigate before trusting the companion deny test.
+    assert env.forbidden.runs == 1, (
+        "CONTROL FAILURE: the forbidden tool's execute() did not run under a wide owl "
+        "with no task ceiling.  This means something other than the ceiling is blocking "
+        "it, which would make test_task_envelope_denies_tool_owl_would_allow vacuous."
+    )
+
+    # CONTROL OUTCOME 3 — the session delivered a final reply (sanity check).
+    assert _REPLY_FRAGMENT in reply, (
+        f"The turn did not deliver a final reply (wide owl, no ceiling). Got: {reply!r}"
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
