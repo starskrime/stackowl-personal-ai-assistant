@@ -1,10 +1,16 @@
-"""bounds_guard — enforce the TOOLS bounds axis at the dispatch seam (E2-S1, FR33).
+"""bounds_guard — pure bounds narrowing and effective-bounds checking (E2-S1/S2, FR33).
 
-A single pure helper, :func:`check_tool_bounds`, decides whether the acting owl's
-bounds permit a dispatched tool. It returns a clean, user-facing block-reason
-string when the tool is refused, or ``None`` when dispatch may proceed. It never
-raises — a tool outside bounds is *reported cleanly* (FR33: "stays within them and
-reports cleanly when blocked"), not crashed.
+This module provides two core primitives:
+- :func:`effective_bounds` — fold N optional bounds specs into one via intersection
+  (narrowing-only composition of owl bounds ∩ creation_ceiling ∩ task_envelope)
+- :func:`check_effective_bounds` — return a block-reason if effective bounds forbid
+  a tool, or None when dispatch may proceed. Never raises — a tool outside bounds
+  is *reported cleanly* (FR33: "stays within them and reports cleanly when blocked"),
+  not crashed.
+
+The dispatch seam (in :mod:`stackowl.pipeline.authz_compose`) calls these to compose
+and enforce EFFECTIVE bounds. For non-seam callers, :func:`check_tool_bounds` is a
+legacy owl-only convenience wrapper that delegates to effective_bounds/check_effective_bounds.
 
 Relationship to consent: bounds are a HARD capability allowlist (the owl cannot
 use the tool at all). Consent is human approval for a consequential tool. Bounds

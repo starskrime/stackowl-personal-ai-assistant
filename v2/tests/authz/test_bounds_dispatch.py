@@ -277,9 +277,8 @@ async def test_out_of_bounds_tool_never_reaches_consent() -> None:
 
     The bounds check short-circuits in _dispatch before the gate.check() call,
     so the recording gate must never see the forbidden_tool name.
-    Note: _RecordingTool uses action_severity="read" so the gate would not fire
-    anyway for a read-severity tool — but the point of this test is that bounds
-    returns BEFORE the gate code path is reached at all, regardless of severity.
+    # The consent gate receives ALL in-bounds tools regardless of severity; this test
+    # proves bounds returns BEFORE the gate code path is reached for forbidden_tool.
     """
     owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool", "forbidden_tool"}))
     ceiling = BoundsSpec(tools=frozenset({"allowed_tool"}))
