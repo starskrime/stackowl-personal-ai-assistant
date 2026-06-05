@@ -18,12 +18,19 @@ from pydantic import BaseModel, Field
 
 #: Lifecycle of a durable task.
 #:
-#: ``pending``   created, not yet started.
-#: ``running``   actively executing a step.
-#: ``parked``    suspended awaiting an external signal (e.g. human/approval).
-#: ``completed`` finished successfully (``result`` populated).
-#: ``failed``    terminated with an unrecoverable error (``result`` = reason).
-TaskStatus = Literal["pending", "running", "parked", "completed", "failed"]
+#: ``pending``    created, not yet started.
+#: ``running``    actively executing a step.
+#: ``recovering`` CLAIMED by startup crash-recovery (B4) for re-drive — a
+#:                transient ownership latch atomically taken from ``running`` so
+#:                a second worker can never double-recover the same orphan. The
+#:                claimant transitions it back to ``running`` before resuming and
+#:                finalizes it to a terminal status from there.
+#: ``parked``     suspended awaiting an external signal (e.g. human/approval).
+#: ``completed``  finished successfully (``result`` populated).
+#: ``failed``     terminated with an unrecoverable error (``result`` = reason).
+TaskStatus = Literal[
+    "pending", "running", "recovering", "parked", "completed", "failed"
+]
 
 
 class DurableTask(BaseModel):
@@ -37,5 +44,12 @@ class DurableTask(BaseModel):
     #: LangGraph checkpoint thread id — set by the executor in a later pass.
     thread_id: str | None = None
     result: str | None = None
+    #: Originating owl persona (threaded from the creating PipelineState). NULL
+    #: on legacy rows created before migration 0047 — B4 recovery falls back to
+    #: the documented 'secretary' default when this is None.
+    owl_name: str | None = None
+    #: Originating channel (cli/telegram/...) of the durable goal. NULL on legacy
+    #: rows — B4 recovery falls back to the documented 'cli' default when None.
+    channel: str | None = None
     created_at: datetime
     updated_at: datetime

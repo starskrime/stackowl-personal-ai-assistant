@@ -79,12 +79,19 @@ class DurableTaskRunner:
             }},
         )
         now = datetime.now(tz=UTC)
+        # Persist the ORIGINATING owl/channel from the creating state so B4
+        # crash-recovery reconstructs the real owl/channel instead of hardcoding
+        # 'secretary'/'cli' (the latent wrong-owl bug). Empty strings are coerced
+        # to None so recovery's NULL-fallback (legacy rows) and an explicitly
+        # contextless drive behave identically.
         await self._store.create(
             DurableTask(
                 task_id=task_id,
                 owner_id=owner_id,
                 goal=goal,
                 status="running",
+                owl_name=state.owl_name or None,
+                channel=state.channel or None,
                 created_at=now,
                 updated_at=now,
             )

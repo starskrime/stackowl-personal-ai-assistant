@@ -195,6 +195,51 @@ class DbPool:
         )
         log.debug("[db] pool.execute: exit — committed")
 
+    async def execute_returning_rowcount(
+        self, sql: str, params: Sequence[Any] = ()
+    ) -> int:
+        """Execute a write statement, commit, and return rows-affected.
+
+        Unlike :meth:`execute` (which discards the cursor), this surfaces the
+        cursor's ``rowcount`` so callers can build a compare-and-swap claim — an
+        ``UPDATE ... WHERE status='running'`` that reports whether IT won the
+        race (1 row) or another worker already claimed the row (0 rows). Used by
+        B4 crash-recovery to atomically latch one orphaned task at a time.
+        Self-heals on connection death exactly like :meth:`execute`.
+        """
+        # 1. ENTRY
+        log.debug(
+            "[db] pool.execute_returning_rowcount: entry — sql_len=%d params_count=%d",
+            len(sql), len(params),
+        )
+        await self.ensure_available()
+
+        async def _do() -> int:
+            if self._conn is None:
+                raise RuntimeError("DbPool: connection unexpectedly None")
+            try:
+                cursor = await self._conn.execute(sql, params)
+                # 3. STEP — capture rowcount BEFORE commit (sqlite keeps it valid).
+                affected = cursor.rowcount
+                await self._conn.commit()
+                return int(affected)
+            except Exception as exc:
+                if self._looks_dead(exc):
+                    self._mark_dead(
+                        f"execute_returning_rowcount failed: {type(exc).__name__}: {exc}"
+                    )
+                raise
+
+        result = await retry_once_on_dead_handle(
+            _do, self, op_name="db.execute_returning_rowcount",
+            dead_markers=_SQLITE_DEAD_MARKERS,
+        )
+        # 4. EXIT
+        log.debug(
+            "[db] pool.execute_returning_rowcount: exit — rows_affected=%d", result
+        )
+        return result
+
     async def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         """Execute a read statement and return all rows as dicts. Self-heals."""
         log.debug("[db] pool.fetch_all: entry — sql_len=%d", len(sql))

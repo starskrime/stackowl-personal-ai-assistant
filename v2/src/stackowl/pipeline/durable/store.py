@@ -23,7 +23,7 @@ from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _SELECT_FIELDS = (
     "task_id, owner_id, goal, status, current_step, "
-    "thread_id, result, created_at, updated_at"
+    "thread_id, result, owl_name, channel, created_at, updated_at"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -84,6 +84,8 @@ class DurableTaskStore(OwnedRepository):
             "current_step": task.current_step,
             "thread_id": task.thread_id,
             "result": task.result,
+            "owl_name": task.owl_name,
+            "channel": task.channel,
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
         })
@@ -200,6 +202,58 @@ class DurableTaskStore(OwnedRepository):
         )
 
 
+    async def claim_for_recovery(self, task_id: str) -> bool:
+        """Atomically CLAIM an orphaned task for crash-recovery.
+
+        A compare-and-swap: ``UPDATE tasks SET status='recovering' WHERE
+        owner_id=? AND task_id=? AND status IN ('running','recovering')``.
+        Exactly one caller can win — the row only transitions out of the claimed
+        set once (an idempotent ``recovering -> recovering`` still costs the WHERE
+        match, so a concurrent second writer sees rows-affected=0 and must skip).
+
+        Both ``running`` AND ``recovering`` are claimable because at STARTUP the
+        prior process is DEAD: there are no concurrent live drives, so a
+        ``recovering`` row is necessarily a STALE orphan left when a process was
+        killed BETWEEN the claim (running -> recovering) and the resume. Without
+        claiming ``recovering`` such a task would be stuck forever (the old sweep
+        listed only ``running``). This is still atomic, still owner-scoped, and a
+        single CAS winner. Returns ``True`` iff THIS call claimed the row.
+
+        Owner-scoped: the WHERE carries ``owner_id`` so a row owned by a
+        different principal can never be claimed through this store.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.claim_for_recovery: entry",
+            extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+        )
+        sql = (
+            f"UPDATE {self._table} SET status = ?, updated_at = ? "  # noqa: S608 — table from class
+            "WHERE owner_id = ? AND task_id = ? AND status IN ('running', 'recovering')"
+        )
+        params = [
+            "recovering",
+            datetime.now(tz=UTC).isoformat(),
+            self._owner_id,
+            task_id,
+        ]
+        # 2. DECISION — the helper rejects SQL lacking an owner_id predicate; this
+        #    one carries it, so the CAS is structurally owner-scoped.
+        if "owner_id" not in sql.lower():  # pragma: no cover — defensive
+            raise ValueError("claim_for_recovery SQL must carry an owner_id predicate")
+        # 3. STEP — atomic CAS; rows-affected tells us if WE won the race.
+        affected = await self._db.execute_returning_rowcount(sql, params)
+        claimed = affected == 1
+        # 4. EXIT
+        log.tasks.info(
+            "[tasks] store.claim_for_recovery: exit",
+            extra={"_fields": {
+                "task_id": task_id, "owner_id": self._owner_id,
+                "claimed": claimed, "rows_affected": affected,
+            }},
+        )
+        return claimed
+
     async def save_checkpoint(self, task_id: str, blob: str) -> None:
         """Persist the serialised :class:`~stackowl.pipeline.durable.react_checkpoint.ReActCheckpoint`
         blob on the task row (owner-scoped UPDATE).
@@ -280,6 +334,8 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
     """Map one ``tasks`` row dict to a :class:`DurableTask`."""
     raw_thread = row.get("thread_id")
     raw_result = row.get("result")
+    raw_owl = row.get("owl_name")
+    raw_channel = row.get("channel")
     return DurableTask(
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
@@ -288,6 +344,8 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         current_step=int(row["current_step"]),
         thread_id=None if raw_thread is None else str(raw_thread),
         result=None if raw_result is None else str(raw_result),
+        owl_name=None if raw_owl is None else str(raw_owl),
+        channel=None if raw_channel is None else str(raw_channel),
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )

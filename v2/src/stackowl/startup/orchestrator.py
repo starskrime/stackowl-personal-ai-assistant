@@ -996,16 +996,28 @@ class StartupOrchestrator:
                 exc_info=exc,
                 extra={"_fields": {}},
             )
-        # Durable-task recovery: reap tasks left 'running' by a crash and surface
-        # them (park) so an interrupted multi-step task is not silently lost.
-        # Fail-OPEN: a recovery error must NOT block startup.
+        # Durable-task recovery (B4): reap tasks left 'running' OR 'recovering' by
+        # a crash (at startup the prior process is dead, so both are orphans). The
+        # AWAITED fast pass atomically claims each (CAS) and reconstructs its
+        # PipelineState from the persisted ReAct checkpoint; each task's actual
+        # resume DRIVE then runs as a BACKGROUND task so the gateway becomes
+        # available immediately instead of blocking N x a full ReAct drive.
+        # Committed side-effects replay from the ledger (exactly-once survives the
+        # crash) and the runner finalizes through its idempotent terminal-status
+        # guard. Recovery is fail-OPEN per task, each background drive is fail-OPEN,
+        # and this whole block is fail-OPEN, so a recovery error never blocks
+        # startup; the non-durable path is unaffected (no orphans => no-op). The
+        # returned recoverer is held in a local that OUTLIVES the await below: it
+        # owns the strong refs to the in-flight drives, so they are not GC'd.
+        durable_recoverer = None
         try:
-            from stackowl.pipeline.durable.executor import DurableExecutor
+            from stackowl.pipeline.durable.recovery import recover_durable_tasks
 
-            durable_recovered = await DurableExecutor(db_pool).recover()
+            durable_recoverer = await recover_durable_tasks(db_pool, backend)
             log.info(
-                "[startup] gateway: durable-task recovery complete",
-                extra={"_fields": {"recovered": durable_recovered}},
+                "[startup] gateway: launched %d durable-task recoveries in background",
+                durable_recoverer.launched,
+                extra={"_fields": {"launched": durable_recoverer.launched}},
             )
         except Exception as exc:
             log.error(
@@ -1063,6 +1075,12 @@ class StartupOrchestrator:
             if browser_runtime is not None:
                 with contextlib.suppress(Exception):
                     await browser_runtime.stop()
+            # B4 — let any in-flight background durable recoveries finish (or be
+            # awaited) BEFORE the pool closes, so a drive never writes through a
+            # dead handle. drain() is itself fail-open (drives are fail-open).
+            if durable_recoverer is not None:
+                with contextlib.suppress(Exception):
+                    await durable_recoverer.drain()
             with contextlib.suppress(Exception):
                 await db_pool.close()
 

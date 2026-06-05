@@ -1,0 +1,32 @@
+-- Migration 0047 — persist recovery context (owl_name, channel) on tasks (B4).
+--
+-- Adds two nullable TEXT columns to the existing tasks table so crash-recovery
+-- can reconstruct the ORIGINATING owl/channel of a durable goal instead of
+-- hardcoding 'secretary'/'cli'. Before this, a recovered task was always
+-- re-driven as the scheduler secretary on the cli channel — a latent wrong-owl
+-- bug the moment a non-secretary owl (or a non-cli channel) owns a durable goal.
+--
+-- owl_name
+--   The owl persona that originated the durable goal (from the PipelineState
+--   the task was created with). NULL on legacy rows created before this
+--   migration — recovery falls back to the documented 'secretary' default.
+--
+-- channel
+--   The channel the durable goal originated on (cli/telegram/...). NULL on
+--   legacy rows — recovery falls back to the documented 'cli' default.
+--
+-- Design choices:
+--   Additive only: existing rows gain NULL values — no data is touched.
+--   Nullable: legacy rows (and any row created before the populate is wired)
+--   read back NULL, which recovery treats as "use the documented default".
+--   Owner-scoped: the tasks composite PK (owner_id, task_id) already enforces
+--   owner isolation, so no new owner column is needed here.
+--
+-- Idempotent: the MigrationRunner records applied versions in schema_migrations
+-- and skips a version already recorded, so this ADD COLUMN DDL runs exactly
+-- once. SQLite has no ADD COLUMN IF NOT EXISTS, so the runner's version gate is
+-- the idempotency mechanism. NOTE no semicolons inside comments per the runner
+-- gotcha.
+
+ALTER TABLE tasks ADD COLUMN owl_name TEXT;
+ALTER TABLE tasks ADD COLUMN channel TEXT;
