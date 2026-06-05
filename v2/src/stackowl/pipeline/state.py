@@ -56,8 +56,8 @@ class PipelineState(BaseModel, frozen=True):
     # checkpoint, not a sibling turn's. Additive — default None preserves the
     # exact prior behavior for every non-durable turn.
     task_id: str | None = None
-    # E2-S2 — the task-scoped authorization envelope, a three-way narrowing:
-    # effective = owl.bounds(now) ∩ creation_ceiling ∩ task_envelope.
+    # E2-S2/S3 — the task-scoped authorization fields.
+    # ENFORCEMENT formula: effective = owl.bounds(now) ∩ creation_ceiling
     #
     # creation_ceiling — a snapshot of the owl's bounds taken at DURABLE task
     # creation, persisted on the task row. It narrows nothing on a normal run
@@ -67,9 +67,10 @@ class PipelineState(BaseModel, frozen=True):
     # non-durable turn — no clamp. A missing ceiling is therefore NEVER
     # global-unrestricted, because owl.bounds(now) always remains a factor.
     creation_ceiling: BoundsSpec | None = None
-    # task_envelope — the least-privilege-per-task slot. ALWAYS None in S2; the
-    # E2-S3 preflight planner fills it with a goal-derived (tighter) spec. Carried
-    # here now so S3 populates an existing field rather than re-threading.
+    # task_envelope — the least-privilege-per-task slot. NOT enforced (E2-S3).
+    # Drives presentation restrict_to and drift telemetry only. ALWAYS None in S2;
+    # the E2-S3 preflight planner fills it with a goal-derived (tighter) spec.
+    # Carried here now so S3 populates an existing field rather than re-threading.
     task_envelope: BoundsSpec | None = None
     # B2 durable-react — additive carriers for the durable activation in the
     # execute step. ALL default None so a non-durable turn (task_id is None) is

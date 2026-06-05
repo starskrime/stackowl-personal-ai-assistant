@@ -2,11 +2,11 @@
 
 This module provides two core primitives:
 - :func:`effective_bounds` — fold N optional bounds specs into one via intersection
-  (narrowing-only composition of owl bounds ∩ creation_ceiling ∩ task_envelope)
+  (narrowing-only composition of owl bounds ∩ creation_ceiling; enforcement only)
 - :func:`check_effective_bounds` — return a block-reason if effective bounds forbid
   a tool, or None when dispatch may proceed. Never raises — a tool outside bounds
   is *reported cleanly* (FR33: "stays within them and reports cleanly when blocked"),
-  not crashed.
+  not crashed. task_envelope is excluded from enforcement (E2-S3: telemetry/presentation only).
 
 The dispatch seam (in :mod:`stackowl.pipeline.authz_compose`) calls these to compose
 and enforce EFFECTIVE bounds. For non-seam callers, :func:`check_tool_bounds` is a

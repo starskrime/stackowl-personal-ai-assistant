@@ -141,10 +141,11 @@ async def _run_with_tools(
                 f"limit reached). Complete the task yourself and return your result."
             )
         # E2-S2 (FR33/FR35-adjacent) — BOUNDS check against EFFECTIVE bounds:
-        # owl.bounds(now) ∩ state.creation_ceiling ∩ state.task_envelope. Checked
+        # owl.bounds(now) ∩ state.creation_ceiling (enforcement). Checked
         # before consent/execution. Fail-closed: a bounded-owl computation error
-        # DENIES (never falls through on a security path); an unbounded owl with
-        # no envelope yields None → unchanged (byte-for-byte S1).
+        # DENIES (never falls through on a security path); an unbounded owl yields
+        # None → unchanged (byte-for-byte S1). task_envelope is NOT enforced here
+        # (E2-S3: it drives presentation + drift telemetry only).
         from stackowl.authz.bounds_guard import check_effective_bounds
         from stackowl.pipeline.authz_compose import compute_effective_bounds
 
