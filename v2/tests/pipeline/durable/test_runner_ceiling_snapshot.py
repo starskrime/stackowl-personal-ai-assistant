@@ -15,7 +15,6 @@ from stackowl.db.pool import DbPool
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.durable.store import DurableTaskStore
-from stackowl.pipeline.durable.task import DurableTask
 from stackowl.pipeline.durable.task_runner import DurableTaskRunner
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
