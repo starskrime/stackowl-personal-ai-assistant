@@ -24,10 +24,43 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from stackowl.authz.bounds import BoundsSpec
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:
     from stackowl.owls.manifest import OwlAgentManifest
+
+
+def effective_bounds(*specs: BoundsSpec | None) -> BoundsSpec | None:
+    """Fold N optional bounds specs into one, narrowing-only.
+
+    None terms are skipped (an absent constraint never widens). With no defined
+    term the result is None (genuinely unbounded). Otherwise the defined terms
+    are intersected left-to-right via BoundsSpec.intersect (TOOLS axis composed
+    for real; other axes keep self, per S1). Total + narrowing: every defined
+    term can only tighten. A SINGLE defined term is returned unchanged (identity)
+    — the back-compat wrapper depends on this.
+    """
+    acc: BoundsSpec | None = None
+    for spec in specs:
+        if spec is None:
+            continue
+        acc = spec if acc is None else acc.intersect(spec)
+    return acc
+
+
+def check_effective_bounds(effective: BoundsSpec | None, tool_name: str) -> str | None:
+    """Return a block-reason if effective bounds forbid the tool, else None.
+
+    None effective bounds (no constraint anywhere) → unrestricted → None.
+    """
+    if effective is None or effective.permits_tool(tool_name):
+        return None
+    return (
+        f"The action '{tool_name}' is not permitted by this owl's bounds and was "
+        "not run. This owl is restricted to a fixed set of tools; choose one of its "
+        "permitted tools or answer the user directly."
+    )
 
 
 def check_tool_bounds(
@@ -56,31 +89,17 @@ def check_tool_bounds(
             extra={"_fields": {"tool": tool_name}},
         )
         return None
-
-    bounds = owl_manifest.bounds
-
-    # 3. STEP — consult the tools axis. None tools axis = unrestricted.
-    if bounds.permits_tool(tool_name):
+    # 3+4. Delegate to the shared combiner+checker. effective_bounds(single) is
+    # identity, so this is byte-for-byte the prior owl-only verdict.
+    block = check_effective_bounds(effective_bounds(owl_manifest.bounds), tool_name)
+    if block is None:
         log.engine.debug(
             "[authz] bounds_guard.check: tool permitted by bounds",
             extra={"_fields": {"tool": tool_name, "owl": owl_manifest.name}},
         )
-        return None
-
-    # 4. EXIT — BLOCKED. A clean report is returned. The single authoritative
-    # block log (WARNING, with trace_id) is emitted by the dispatch caller in
-    # execute.py — this DEBUG keeps the pure helper non-silent without duplicating
-    # that line (the consolidated double-log fix).
-    log.engine.debug(
-        "[authz] bounds_guard.check: tool outside owl bounds — blocking",
-        extra={"_fields": {
-            "tool": tool_name,
-            "owl": owl_manifest.name,
-            "axis": "tools",
-        }},
-    )
-    return (
-        f"The action '{tool_name}' is not permitted by this owl's bounds and was "
-        "not run. This owl is restricted to a fixed set of tools; choose one of its "
-        "permitted tools or answer the user directly."
-    )
+    else:
+        log.engine.debug(
+            "[authz] bounds_guard.check: tool outside owl bounds — blocking",
+            extra={"_fields": {"tool": tool_name, "owl": owl_manifest.name, "axis": "tools"}},
+        )
+    return block
