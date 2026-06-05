@@ -21,6 +21,7 @@ import pytest
 
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
+from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.pipeline.durable.react_checkpoint import ReActCheckpoint, serialize
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask
@@ -139,12 +140,13 @@ async def test_each_owner_has_independent_checkpoint(pool: DbPool) -> None:
 
 
 async def test_cross_owner_write_cannot_corrupt_original(pool: DbPool) -> None:
-    """Bob calling save_checkpoint on Alice's task_id must match 0 rows (write isolation).
+    """Bob calling save_checkpoint on Alice's task_id must fail loud (write isolation).
 
     Alice creates a task and saves a checkpoint.  Bob (a different owner) then
-    attempts to overwrite that same task_id.  Because save_checkpoint carries an
-    owner_id predicate, Bob's UPDATE matches no rows and Alice's original blob
-    must be intact afterward.
+    attempts to overwrite that same task_id.  Alice's row is invisible to Bob's
+    owner-scoped store, so the write now fails LOUD
+    (DurableTaskNotFoundError) instead of silently matching 0 rows — and
+    Alice's original blob is left intact.
     """
     alice = DurableTaskStore(pool, "principal-alice")
     bob = DurableTaskStore(pool, "principal-bob")
@@ -154,9 +156,10 @@ async def test_cross_owner_write_cannot_corrupt_original(pool: DbPool) -> None:
     original_blob = _blob(iteration=7)
     await alice.save_checkpoint("alice-task-id", original_blob)
 
-    # Bob attempts to overwrite Alice's task checkpoint (should silently match 0 rows).
+    # Bob attempts to overwrite Alice's task checkpoint — fails loud (0 visible rows).
     evil_blob = _blob(iteration=99)
-    await bob.save_checkpoint("alice-task-id", evil_blob)
+    with pytest.raises(DurableTaskNotFoundError):
+        await bob.save_checkpoint("alice-task-id", evil_blob)
 
     # Alice's checkpoint must be unchanged.
     assert await alice.load_checkpoint("alice-task-id") == original_blob

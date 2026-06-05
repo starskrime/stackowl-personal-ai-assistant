@@ -45,6 +45,10 @@ from stackowl.pipeline.durable.react_checkpoint import (
     serialize,
 )
 from stackowl.pipeline.durable.react_runner import DurableReActRunner, ReactDrive
+from stackowl.pipeline.durable.session import (
+    DurableSession,
+    durable_session_for_state,
+)
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
 
@@ -55,6 +59,7 @@ __all__ = [
     "DurableExecutor",
     "DurableReActContext",
     "DurableReActRunner",
+    "DurableSession",
     "DurableTask",
     "DurableTaskStore",
     "LedgerDecision",
@@ -67,6 +72,7 @@ __all__ = [
     "TaskStep",
     "activate",
     "deserialize",
+    "durable_session_for_state",
     "get_active",
     "idempotency_key",
     "is_side_effecting",

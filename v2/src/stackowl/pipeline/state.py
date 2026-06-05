@@ -55,6 +55,26 @@ class PipelineState(BaseModel, frozen=True):
     # checkpoint, not a sibling turn's. Additive — default None preserves the
     # exact prior behavior for every non-durable turn.
     task_id: str | None = None
+    # B2 durable-react — additive carriers for the durable activation in the
+    # execute step. ALL default None so a non-durable turn (task_id is None) is
+    # byte-for-byte unchanged. `durable_owner_id` is the owning principal whose
+    # ledger/store rows this drive writes (falls back to DEFAULT_PRINCIPAL_ID when
+    # None). The `durable_resume_*` trio is populated later by the B4 checkpoint
+    # reconstruction and forwarded verbatim into complete_with_tools; in B2 they
+    # are merely carried across evolve() like every other field.
+    durable_owner_id: str | None = None
+    durable_resume_messages: list[dict[str, Any]] | None = None
+    durable_resume_tool_calls: list[dict[str, Any]] | None = None
+    durable_resume_iteration: int | None = None
+    # B2 durable-react — PARK signal. Set True when a durable drive hit a
+    # DurableReplayUncertain (an `intent` ledger row without a matching commit:
+    # a prior attempt may have half-run a side effect, so the guard refuses to
+    # re-run it). This is a STRUCTURED park signal distinct from a transient
+    # failure: the B3 router reads `durable_parked` to decide park-vs-retry,
+    # rather than string-matching state.errors. Additive — default False keeps
+    # every non-durable turn (and every durable turn that did not park)
+    # byte-for-byte unchanged.
+    durable_parked: bool = False
     # ID of an in-flight clarify question awaiting a user answer for this run.
     # The Event itself lives in the (out-of-band) clarify registry — a frozen
     # model cannot hold an asyncio.Event — so only the id is carried in state.

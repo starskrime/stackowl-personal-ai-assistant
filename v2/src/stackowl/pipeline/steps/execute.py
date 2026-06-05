@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
+    DurableReplayUncertain,
     OwlConcurrencyError,
     OwlTimeoutError,
     OwlTokenLimitError,
@@ -258,9 +260,16 @@ async def _run_with_tools(
     # Only forward persistence_check when it is actually enabled (interactive,
     # depth 0). Omitting the kwarg otherwise keeps the call backward-compatible
     # with every provider implementation (no new kwarg on the non-interactive path).
-    try:
+    #
+    # B2 durable-react — when state.task_id is set this turn belongs to a durable
+    # task: activate a DurableReActContext for the drive so the (dormant) S2
+    # ledger_guard becomes live (side-effecting tools → exactly-once) and pass the
+    # per-iteration checkpoint callback so each ReAct round is persisted. When
+    # task_id is None (every non-durable turn) NONE of this runs and the call is
+    # made EXACTLY as before (no context, no extra kwargs) — byte-for-byte.
+    async def _call_default() -> tuple[str, list[dict[str, Any]]]:
         if persistence_check is not None:
-            final_text, raw_calls = await provider.complete_with_tools(
+            return await provider.complete_with_tools(
                 user_text=state.input_text,
                 system_text=state.system_prompt,
                 tool_schemas=tool_schemas,
@@ -268,14 +277,128 @@ async def _run_with_tools(
                 history=list(state.history),
                 persistence_check=persistence_check,
             )
-        else:
-            final_text, raw_calls = await provider.complete_with_tools(
-                user_text=state.input_text,
-                system_text=state.system_prompt,
-                tool_schemas=tool_schemas,
-                tool_dispatcher=_dispatch,
-                history=list(state.history),
+        return await provider.complete_with_tools(
+            user_text=state.input_text,
+            system_text=state.system_prompt,
+            tool_schemas=tool_schemas,
+            tool_dispatcher=_dispatch,
+            history=list(state.history),
+        )
+
+    async def _call_durable(task_id: str) -> tuple[str, list[dict[str, Any]]]:
+        # Imports are local so the default path never pays the durable cost.
+        from stackowl.pipeline.durable.checkpoint_callback import (
+            make_checkpoint_callback,
+        )
+        from stackowl.pipeline.durable.context import activate
+        from stackowl.pipeline.durable.session import durable_session_for_state
+        from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+
+        # 1. ENTRY
+        owner_id = state.durable_owner_id or DEFAULT_PRINCIPAL_ID
+        log.tasks.info(
+            "[tasks] execute: durable drive entry",
+            extra={"_fields": {
+                "task_id": task_id,
+                "owner_id": owner_id,
+                "trace_id": state.trace_id,
+                "owl": state.owl_name,
+                "resume_iteration": state.durable_resume_iteration,
+                "resuming": state.durable_resume_messages is not None,
+            }},
+        )
+        # 2. DECISION — a durable task MUST have a real DbPool; fail loud rather
+        #    than silently running a "durable" task non-durably (no ledger guard,
+        #    no checkpoints = lost exactly-once + no resume).
+        db = get_services().db_pool
+        if db is None:
+            log.tasks.error(
+                "[tasks] execute: durable task but NO db_pool wired — refusing",
+                extra={"_fields": {"task_id": task_id, "owner_id": owner_id,
+                                   "trace_id": state.trace_id}},
             )
+            raise RuntimeError(
+                f"durable task {task_id!r} requested but no DbPool is available; "
+                "refusing to run a durable task without its durability layer"
+            )
+        # Assemble the ledger/store/ctx via the shared factory so B3/B4 build the
+        # durable scope identically (owner resolution + iteration seeding live
+        # there, fixing the `or 0` resume-at-0 bug).
+        session = durable_session_for_state(state, db)
+        ctx = session.ctx
+        cb = make_checkpoint_callback(ctx, session.store)
+        log.tasks.debug(
+            "[tasks] execute: durable context built — activating",
+            extra={"_fields": {"task_id": task_id, "owner_id": owner_id,
+                               "start_iteration": ctx.iteration}},
+        )
+        # 3. STEP — drive the provider loop under the active durable context so the
+        #    S2 ledger_guard is live and each iteration is checkpointed.
+        with activate(ctx):
+            if persistence_check is not None:
+                result = await provider.complete_with_tools(
+                    user_text=state.input_text,
+                    system_text=state.system_prompt,
+                    tool_schemas=tool_schemas,
+                    tool_dispatcher=_dispatch,
+                    history=list(state.history),
+                    persistence_check=persistence_check,
+                    on_iteration_complete=cb,
+                    resume_messages=state.durable_resume_messages,
+                    resume_tool_calls=state.durable_resume_tool_calls,
+                )
+            else:
+                result = await provider.complete_with_tools(
+                    user_text=state.input_text,
+                    system_text=state.system_prompt,
+                    tool_schemas=tool_schemas,
+                    tool_dispatcher=_dispatch,
+                    history=list(state.history),
+                    on_iteration_complete=cb,
+                    resume_messages=state.durable_resume_messages,
+                    resume_tool_calls=state.durable_resume_tool_calls,
+                )
+        # 4. EXIT
+        log.tasks.info(
+            "[tasks] execute: durable drive exit",
+            extra={"_fields": {"task_id": task_id, "owner_id": owner_id,
+                               "final_iteration": ctx.iteration,
+                               "tool_calls": len(result[1])}},
+        )
+        return result
+
+    try:
+        if state.task_id is None:
+            # DEFAULT PATH — all current traffic. Unchanged from prior behavior.
+            final_text, raw_calls = await _call_default()
+        else:
+            final_text, raw_calls = await _call_durable(state.task_id)
+    except DurableReplayUncertain as exc:
+        # STRUCTURED PARK — the ledger returned `uncertain` (an `intent` row with
+        # no matching commit): a prior attempt may have HALF-RUN a side effect, so
+        # the guard refused to re-run it. This is NOT a transient failure — it must
+        # be distinguishable so the B3 router can decide park-vs-retry rather than
+        # blindly retrying. Mark the state parked AND record a structured marker in
+        # errors (so the existing error-recording shape is preserved). The tool was
+        # NOT re-run. Caught BEFORE the bare except below, which keeps handling all
+        # other exceptions exactly as before.
+        log.tasks.warning(
+            "[tasks] execute: durable replay uncertain — parking task",
+            exc_info=exc,
+            extra={"_fields": {
+                "trace_id": state.trace_id, "owl": state.owl_name,
+                "task_id": exc.task_id, "step_index": exc.step_index,
+                "tool": exc.tool_name,
+            }},
+        )
+        marker = (
+            f"durable:park:uncertain:task={exc.task_id}:"
+            f"iteration={exc.step_index}:tool={exc.tool_name}"
+        )
+        return state.evolve(
+            durable_parked=True,
+            errors=(*state.errors, marker),
+        )
     except Exception as exc:
         log.engine.error(
             "[pipeline] execute: tool_loop failed",

@@ -105,11 +105,39 @@ async def test_update_status_is_owner_scoped(pool: DbPool) -> None:
     alice = DurableTaskStore(pool, "principal-alice")
     bob = DurableTaskStore(pool, "principal-bob")
     await alice.create(_task("t1", "principal-alice"))
-    # Bob updating "t1" must NOT touch alice's row (no matching owner row).
-    await bob.update_status("t1", "failed", result="hijack")
+    # Bob updating "t1" must NOT touch alice's row. The cross-owner row is
+    # invisible to bob's owner-scoped store, so the write now fails LOUD
+    # (DurableTaskNotFoundError) rather than silently no-opping — a "durable"
+    # write against a non-visible row must never look like a success.
+    with pytest.raises(DurableTaskNotFoundError):
+        await bob.update_status("t1", "failed", result="hijack")
+    # Alice's row is untouched.
     still = await alice.get("t1")
     assert still.status == "pending"
     assert still.result is None
+
+
+async def test_update_status_missing_task_fails_loud(pool: DbPool) -> None:
+    """update_status on a non-existent task_id raises (no silent no-op)."""
+    store = DurableTaskStore(pool, "principal-alice")
+    with pytest.raises(DurableTaskNotFoundError):
+        await store.update_status("ghost", "running", current_step=1)
+
+
+async def test_save_checkpoint_missing_task_fails_loud(pool: DbPool) -> None:
+    """save_checkpoint on a non-existent task_id raises (no silent no-op)."""
+    store = DurableTaskStore(pool, "principal-alice")
+    with pytest.raises(DurableTaskNotFoundError):
+        await store.save_checkpoint("ghost", "blob")
+
+
+async def test_save_checkpoint_cross_owner_fails_loud(pool: DbPool) -> None:
+    """A checkpoint write against another owner's task is invisible → raises."""
+    alice = DurableTaskStore(pool, "principal-alice")
+    bob = DurableTaskStore(pool, "principal-bob")
+    await alice.create(_task("t1", "principal-alice"))
+    with pytest.raises(DurableTaskNotFoundError):
+        await bob.save_checkpoint("t1", "blob")
 
 
 async def test_different_owners_can_share_same_task_id(pool: DbPool) -> None:

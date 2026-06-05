@@ -40,6 +40,28 @@ class DurableTaskStore(OwnedRepository):
     def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
         super().__init__(db, owner_id)
 
+    async def _require_owned(self, task_id: str, *, op: str) -> None:
+        """Fail loud unless ``task_id`` exists for the bound owner.
+
+        :class:`~stackowl.db.pool.DbPool.execute` returns no rows-affected count,
+        so an owner-scoped UPDATE against a non-existent (or cross-owner) row
+        silently no-ops. The owner-scoped UPDATEs in :meth:`update_status` /
+        :meth:`save_checkpoint` call this FIRST so a durable write against a
+        missing task raises :class:`DurableTaskNotFoundError` instead of
+        completing a "durable" drive with no persisted state. Reuses the same
+        owner-scoped ``_fetch_owned`` predicate :meth:`get` uses, so a row owned
+        by a different principal is invisible and therefore also raises.
+        """
+        rows = await self._fetch_owned(self._table, "task_id = ?", (task_id,))
+        if not rows:
+            log.tasks.error(
+                "[tasks] store: owner-scoped write on a missing task — raising",
+                extra={"_fields": {
+                    "task_id": task_id, "owner_id": self._owner_id, "op": op,
+                }},
+            )
+            raise DurableTaskNotFoundError(task_id)
+
     async def create(self, task: DurableTask) -> None:
         """Insert a new task. ``owner_id`` is stamped from the bound owner.
 
@@ -161,6 +183,12 @@ class DurableTaskStore(OwnedRepository):
             "WHERE owner_id = ? AND task_id = ?"
         )
         params.extend((self._owner_id, task_id))
+        # 2b. DECISION — fail loud on a missing/wrong-owner row. DbPool.execute
+        #     reports no rowcount, so an owner-scoped UPDATE against a row that
+        #     does not exist (or belongs to another principal) would silently
+        #     no-op — a "durable" drive would advance with NO status change and
+        #     NO error. Verify existence under the bound owner FIRST and raise.
+        await self._require_owned(task_id, op="update_status")
         # 3. STEP — owner-scoped write (helper rejects SQL lacking owner_id)
         await self._execute_owned(sql, params)
         # 4. EXIT
@@ -199,6 +227,10 @@ class DurableTaskStore(OwnedRepository):
             f"UPDATE {self._table} SET checkpoint_blob = ? "  # noqa: S608 — table from class
             "WHERE owner_id = ? AND task_id = ?"
         )
+        # 2b. DECISION — fail loud on a missing/wrong-owner row (see
+        #     update_status). Without a rowcount, a no-op UPDATE would otherwise
+        #     leave a "durable" drive with NO persisted checkpoint and NO error.
+        await self._require_owned(task_id, op="save_checkpoint")
         # 3. STEP — owner-scoped write
         await self._execute_owned(sql, [blob, self._owner_id, task_id])
         # 4. EXIT
