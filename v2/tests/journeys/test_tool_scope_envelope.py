@@ -12,19 +12,16 @@ JOURNEY 1 — task-scope deny end-to-end
   task-scope envelope axis.
 
 JOURNEY 2 — resume-under-widened-owl stays clamped to the creation ceiling
-  (security-critical monotonicity proof)
-  A durable task is created when the owl's bounds are NARROW {_ALLOWED}.  The
-  persisted ``creation_ceiling`` captures those narrow bounds.  The owl registry
-  is then WIDENED to {_ALLOWED, _FORBIDDEN}.  The resumed drive runs under the
-  WIDE owl manifest but the NARROW persisted ceiling.  The effective bounds are
+  (security-critical monotonicity / TOCTOU proof)
+  A durable task is persisted into a REAL migrated store with a NARROW
+  ``creation_ceiling`` {_ALLOWED}.  The owl registry is then WIDENED to
+  {_ALLOWED, _FORBIDDEN}.  ``DurableTaskRecoverer._reconstruct_state`` is
+  called to produce the resumed ``PipelineState`` from the real persisted row
+  — the ceiling comes back FROM DISK.  The resumed drive runs under the WIDE
+  owl manifest but the NARROW persisted ceiling.  The effective bounds are
   ``wide_owl ∩ narrow_ceiling = {_ALLOWED}``, so the newly-granted tool is
-  denied even though the live owl would permit it.
-
-  Option B (fully deterministic) is used: rather than driving the full
-  adapter + recovery loop, it seeds a ``PipelineState`` with the narrow
-  ``creation_ceiling`` (exactly what recovery._reconstruct_state would produce)
-  and drives ``_run_with_tools`` with a wide-owl registry — the same security
-  guarantee, proven deterministically without the full adapter machinery.
+  denied even though the live owl would permit it.  This proves the full
+  persist → reconstruct → enforce chain in one test.
 
 Scaffolding is adapted from ``test_j4_tools_bounds.py`` (the J4-tools journey
 template).  The Telegram adapter doubles (_FakeBot, _FakeBotApp, _ScriptedBoundedOwl,
@@ -35,7 +32,10 @@ this file stands alone, matching the J4 style precisely.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -44,10 +44,15 @@ from stackowl.authz import BoundsSpec
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.db.migrations.runner import MigrationRunner
+from stackowl.db.pool import DbPool
 from stackowl.gateway.scanner import GatewayScanner
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
+from stackowl.pipeline.durable.recovery import DurableTaskRecoverer
+from stackowl.pipeline.durable.store import DurableTaskStore
+from stackowl.pipeline.durable.task import DurableTask
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import _run_with_tools
@@ -334,16 +339,22 @@ async def test_task_envelope_denies_tool_owl_would_allow() -> None:
 # ===========================================================================
 # JOURNEY 2 — resume-under-widened-owl stays clamped to the creation ceiling
 #
-# Option B (fully deterministic) — drives _run_with_tools directly.
+# End-to-end monotonicity proof through the REAL recovery path:
+#   persist → DurableTaskRecoverer._reconstruct_state → enforce.
 #
-# Rationale for Option B: the full adapter+recovery-loop machinery is not
-# needed to prove the security property.  The critical invariant is that when
-# a resumed PipelineState carries ``creation_ceiling = NARROW`` and the live
-# owl registry is WIDE, the execute-step's effective-bounds computation produces
-# ``NARROW``.  This is exercised deterministically by seeding the state (exactly
-# as recovery._reconstruct_state does) and driving _run_with_tools directly,
-# which is the real dispatch seam that enforces the effective bounds.
+# The test seeds a DurableTask into a REAL migrated store, calls
+# _reconstruct_state to pull the narrow ceiling BACK FROM DISK, then drives
+# _run_with_tools with a WIDE owl registry — proving the full chain in one shot.
 # ===========================================================================
+
+_RECOVERY_OWNER = "principal-default"
+
+
+class _NullBackend:
+    """OrchestratorBackend stub — _reconstruct_state never calls backend.run."""
+
+    async def run(self, state: PipelineState) -> PipelineState:  # pragma: no cover
+        return state
 
 
 class _RecordingDispatchTool(Tool):
@@ -398,38 +409,86 @@ class _WideOwlProvider:
         return ("done", [])
 
 
-async def test_resume_under_widened_owl_stays_clamped_to_ceiling() -> None:
+@pytest.fixture()
+async def _recovery_pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
+    """Real migrated DbPool for the monotonicity journey test."""
+    db_path = tmp_path / "envelope_recovery.db"
+    MigrationRunner(db_path=db_path).run()
+    pool = DbPool(db_path=db_path)
+    await pool.open()
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+async def test_resume_under_widened_owl_stays_clamped_to_ceiling(
+    _recovery_pool: DbPool,
+) -> None:
     """Resume monotonicity: a widened owl cannot gain new tool permissions mid-task.
 
-    Scenario (the security-critical invariant):
-      * A durable task was CREATED when the owl had narrow bounds: {_ALLOWED}.
-        At creation time, ``DurableTaskRunner.run`` snapshots the owl's bounds into
-        ``creation_ceiling`` = {_ALLOWED} and threads it into PipelineState.
-      * Between creation and resume, the owl's manifest is WIDENED to
-        {_ALLOWED, _FORBIDDEN}.  The live owl registry now permits _FORBIDDEN.
-      * On RESUME, ``recovery._reconstruct_state`` re-threads the PERSISTED
-        ceiling (NOT the current owl bounds) into the PipelineState.  This test
-        seeds the state with that narrow ceiling (exactly as _reconstruct_state
-        would produce it) and drives it through the REAL dispatch seam with the
-        WIDE owl registry in scope.
+    TOCTOU / resume-monotonicity guarantee proven through the REAL
+    ``DurableTaskRecoverer._reconstruct_state`` reconstruction path.
 
-    Expected outcome:
-      effective = wide_owl_bounds ∩ narrow_ceiling = {_ALLOWED}
-      → _ALLOWED_TOOL: RUNS (within both owl and ceiling)
+    Scenario (the security-critical invariant):
+      * A durable task is PERSISTED into a real migrated store with
+        ``creation_ceiling = {_ALLOWED}`` — the narrow snapshot taken when the
+        owl had narrow bounds at task creation time.
+      * The owl registry is then WIDENED to {_ALLOWED, _FORBIDDEN}: the live
+        owl manifest now permits _FORBIDDEN.
+      * ``DurableTaskRecoverer._reconstruct_state`` is called with the real
+        persisted task row — it reads the narrow ceiling BACK FROM DISK and
+        threads it into the resumed ``PipelineState``.
+      * The resumed drive is run through ``_run_with_tools`` with the WIDE owl
+        registry in scope and a scripted provider that calls BOTH tools.
+
+    Expected outcome (effective = wide_owl ∩ narrow_ceiling = {_ALLOWED}):
+      → _ALLOWED_TOOL: RUNS (within both owl bounds AND the ceiling)
       → _FORBIDDEN_TOOL: BLOCKED (ceiling excludes it even though owl now allows it)
+
+    This proves the full persist → reconstruct → enforce chain in one test,
+    closing the TOCTOU window: widening an owl's live manifest between task
+    creation and task resume MUST NOT grant additional tool access to that task.
     """
     _ALLOWED = _ALLOWED_TOOL
     _FORBIDDEN = _FORBIDDEN_TOOL
 
-    # --- Set up tools ---
-    allowed = _RecordingDispatchTool(_ALLOWED)
-    forbidden = _RecordingDispatchTool(_FORBIDDEN)
-    registry = ToolRegistry()
-    registry.register(allowed)
-    registry.register(forbidden)
+    # --- 1. Persist a real DurableTask carrying the narrow creation ceiling ---
+    # Mirrors the seeding pattern from tests/pipeline/durable/test_recovery_ceiling.py.
+    narrow_ceiling = BoundsSpec(tools=frozenset({_ALLOWED}))
+    task_id = "monotonicity-journey-1"
+    now = datetime.now(tz=UTC)
+    task = DurableTask(
+        task_id=task_id,
+        owner_id=_RECOVERY_OWNER,
+        goal="continue the goal",
+        status="running",
+        owl_name="vault_owl",
+        channel="cli",
+        creation_ceiling=narrow_ceiling,
+        created_at=now,
+        updated_at=now,
+    )
+    store = DurableTaskStore(_recovery_pool, _RECOVERY_OWNER)
+    await store.create(task)
 
-    # --- WIDE owl registry (post-widening state) ---
-    # The owl now permits BOTH tools — this is the widened live manifest.
+    # --- 2. Reconstruct the state through the REAL recovery path ---
+    # DurableTaskRecoverer._reconstruct_state reads the ceiling FROM DISK and
+    # threads it into the returned PipelineState — no checkpoint branch (task
+    # crashed before iteration 0 completed; the no-checkpoint branch is the
+    # simplest and sufficient to prove the ceiling roundtrip).
+    recovery = DurableTaskRecoverer(_recovery_pool, _NullBackend(), owner_id=_RECOVERY_OWNER)
+    persisted_task = await store.get(task_id)
+    state = await recovery._reconstruct_state(persisted_task)
+
+    # Sanity: the ceiling survived the persist → reconstruct round-trip.
+    assert state.creation_ceiling == narrow_ceiling, (
+        f"ceiling lost during persist→reconstruct: got {state.creation_ceiling!r}"
+    )
+
+    # --- 3. Build the WIDE owl registry (post-widening, live state) ---
+    # The owl now permits BOTH tools in the live manifest — this simulates the
+    # owl's bounds having been widened between task creation and task resume.
     wide_bounds = BoundsSpec(tools=frozenset({_ALLOWED, _FORBIDDEN}))
     owl_registry = OwlRegistry()
     owl_registry.register(OwlAgentManifest(
@@ -440,43 +499,34 @@ async def test_resume_under_widened_owl_stays_clamped_to_ceiling() -> None:
         bounds=wide_bounds,
     ))
 
-    # --- NARROW ceiling (persisted at creation time, re-threaded by recovery) ---
-    # This is the snapshot taken when the owl had narrow bounds {_ALLOWED}.
-    narrow_ceiling = BoundsSpec(tools=frozenset({_ALLOWED}))
+    # --- 4. Set up tools and drive the REAL dispatch seam ---
+    allowed = _RecordingDispatchTool(_ALLOWED)
+    forbidden = _RecordingDispatchTool(_FORBIDDEN)
+    registry = ToolRegistry()
+    registry.register(allowed)
+    registry.register(forbidden)
 
-    # --- Seed the state as recovery._reconstruct_state would produce it ---
-    # The ceiling is stamped onto the PipelineState, matching the recovery seam
-    # (see DurableTaskRecoverer._reconstruct_state and test_recovery_ceiling.py).
-    state = PipelineState(
-        trace_id="resume-monotonicity",
-        session_id="resume-monotonicity",
-        input_text="continue the goal",
-        channel="cli",
-        owl_name="vault_owl",
-        pipeline_step="execute",
-        creation_ceiling=narrow_ceiling,
-    )
-
-    # --- Drive the REAL dispatch seam with the wide registry ---
     provider = _WideOwlProvider()
     token = set_services(StepServices(
         tool_registry=registry,
         owl_registry=owl_registry,
+        db_pool=_recovery_pool,
     ))
     try:
         await _run_with_tools(state, provider, registry)  # type: ignore[arg-type]
     finally:
         reset_services(token)
 
-    # --- Security assertions: the narrow ceiling held the line ---
+    # --- 5. Security assertions: the narrow ceiling held the line ---
 
     # The allowed tool ran — it is within BOTH wide_owl_bounds AND narrow_ceiling.
     assert allowed.executed is True, (
         "The allowed tool should have run (it is within both owl bounds and the ceiling)"
     )
 
-    # CRITICAL: the newly-granted tool is DENIED because the ceiling excludes it,
-    # even though the live owl manifest now allows it.
+    # CRITICAL: the newly-granted tool is DENIED because the ceiling (read back
+    # from disk by _reconstruct_state) excludes it, even though the live owl
+    # manifest now allows it.  runs==0 proves execute() never fired.
     assert forbidden.executed is False, (
         "MONOTONICITY BREACH: the forbidden tool ran under a resumed state "
         "even though the persisted ceiling excludes it.  Widening the owl's "
