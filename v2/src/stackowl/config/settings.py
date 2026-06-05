@@ -266,6 +266,31 @@ class OrchestratorSettings(BaseModel):
     )
 
 
+class DurableSettings(BaseModel):
+    """Feature flags for the durable-ReAct execution substrate (agentic-os Stage 1).
+
+    The durable substrate (DurableTask + side-effect ledger + per-iteration
+    checkpoints) is gated OFF by default so every current code path is
+    byte-for-byte unchanged. Turning ``goals`` ON routes scheduled owl goals
+    (:class:`~stackowl.scheduler.handlers.goal_execution.GoalExecutionHandler`)
+    through the durable pipeline: a task row is created, the drive is
+    checkpointed + exactly-once-guarded, and the task ends
+    ``completed``/``parked``/``failed``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    goals: bool = Field(
+        default=False,
+        description=(
+            "Route scheduled owl goals through the durable pipeline (checkpointed, "
+            "exactly-once, resumable). OFF by default — flag-off goal execution is "
+            "byte-for-byte the legacy ephemeral path."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+
+
 class ParliamentSettings(BaseModel):
     """Configuration for multi-owl Parliament debate sessions."""
 
@@ -487,6 +512,7 @@ class Settings(BaseSettings):
     settings_watch: bool = True
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
+    durable: DurableSettings = Field(default_factory=DurableSettings)
     parliament: ParliamentSettings = Field(default_factory=ParliamentSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)

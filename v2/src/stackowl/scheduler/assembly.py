@@ -142,7 +142,9 @@ class SchedulerAssembly:
         tool_pruning_handler = ToolPruningHandler()
         HandlerRegistry.instance().register(tool_pruning_handler)
 
-        goal_execution_handler = GoalExecutionHandler(backend=backend, db=db)
+        goal_execution_handler = GoalExecutionHandler(
+            backend=backend, db=db, settings=settings,
+        )
         HandlerRegistry.instance().register(goal_execution_handler)
 
         # Evolution uses its own register factory (which owns the import + DI).

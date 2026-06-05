@@ -30,6 +30,7 @@ from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
+    from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.pipeline.backends.base import OrchestratorBackend
 
@@ -48,9 +49,14 @@ class GoalExecutionHandler(JobHandler):
         self,
         backend: OrchestratorBackend | None = None,
         db: DbPool | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._backend = backend
         self._db = db
+        # ``settings`` gates the durable-pipeline routing. When None (the Story
+        # 7.1/7.2 test surface) or ``settings.durable.goals`` is False, goal
+        # execution stays on the legacy ephemeral path — byte-for-byte unchanged.
+        self._settings = settings
 
     @property
     def handler_name(self) -> str:
@@ -131,6 +137,16 @@ class GoalExecutionHandler(JobHandler):
             # scheduler worker slot waiting for an answer that cannot come.
             interactive=False,
         )
+
+        # 2. DECISION — durable routing. ONLY when settings.durable.goals is True
+        #    AND a real DbPool is wired does the goal drive durably: a DurableTask
+        #    is created, state.task_id is stamped (so the B2 execute step runs the
+        #    drive checkpointed + exactly-once ledger-guarded), and the task is
+        #    finalized completed/parked/failed. That whole task lifecycle is owned
+        #    by DurableTaskRunner (shared with the B4 recovery/resume path). When
+        #    the flag is False (default) OR no db is available, the pipeline runs
+        #    the legacy ephemeral path — byte-for-byte unchanged below.
+        durable = self._durable_enabled()
         log.scheduler.debug(
             "[scheduler] goal_execution.execute: pipeline submitted",
             extra={
@@ -138,12 +154,20 @@ class GoalExecutionHandler(JobHandler):
                     "job_id": job.job_id,
                     "trace_id": trace_id,
                     "session_id": session_id,
+                    "durable": durable,
                 }
             },
         )
 
         try:
-            final_state = await self._backend.run(state)
+            if durable:
+                # DURABLE PATH — DurableTaskRunner owns create→drive→finalize so
+                # this handler and the future B4 recovery path share ONE lifecycle
+                # implementation (incl. the idempotent terminal-status guard).
+                final_state = await self._run_durable(goal, state)
+            else:
+                # EPHEMERAL PATH — legacy, byte-for-byte unchanged.
+                final_state = await self._backend.run(state)
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             log.scheduler.error(
@@ -168,6 +192,10 @@ class GoalExecutionHandler(JobHandler):
         duration_ms = (time.monotonic() - t0) * 1000
         response_text = "".join(c.content for c in final_state.responses)
         success = not bool(final_state.errors)
+        # A durable PARK is NOT a plain failure: the side effect was refused
+        # (replay-uncertain), the task awaits a resume. Surface it distinctly so
+        # /agents log reads "parked awaiting input", never a bare "failed".
+        parked = final_state.durable_parked
         log.scheduler.info(
             "[scheduler] goal_execution.execute: pipeline complete",
             extra={
@@ -175,34 +203,55 @@ class GoalExecutionHandler(JobHandler):
                     "job_id": job.job_id,
                     "response_len": len(response_text),
                     "errors": len(final_state.errors),
+                    "durable_parked": parked,
                 }
             },
         )
 
-        # 3. STEP — persist row in job_results so /agents log can show history.
-        status = "completed" if success else "failed"
-        await self._record_result(
-            job.job_id,
-            status,
-            response_text or ("; ".join(final_state.errors) if final_state.errors else None),
-            duration_ms,
-        )
+        # 3. STEP — persist row in job_results so /agents log can show history. A
+        #    parked durable task is recorded distinctly (status "parked" + a clear
+        #    blocker line) rather than a generic "failed".
+        if parked:
+            blocker = "; ".join(final_state.errors) or "durable replay uncertain"
+            status = "parked"
+            result_text: str | None = f"PARKED awaiting input — {blocker}"
+        else:
+            status = "completed" if success else "failed"
+            result_text = response_text or (
+                "; ".join(final_state.errors) if final_state.errors else None
+            )
+        await self._record_result(job.job_id, status, result_text, duration_ms)
 
         # 3. STEP — fire-and-forget agents delete themselves after a successful run.
         if success and bool(job.params.get("run_once")):
             await self._delete_job(job.job_id)
 
-        # 4. EXIT
+        # 4. EXIT — a parked durable task surfaces a distinct, unambiguous signal
+        #    (output says PARKED + the blocker; metadata.parked True) so /agents
+        #    log never shows a bare "failed" for work that is merely awaiting a
+        #    resume. The ephemeral (flag-off) path never parks, so this branch is
+        #    inert there and the legacy JobResult shape is preserved.
         log.scheduler.info(
             "[scheduler] goal_execution.execute: exit",
             extra={
                 "_fields": {
                     "job_id": job.job_id,
                     "success": success,
+                    "parked": parked,
                     "duration_ms": duration_ms,
                 }
             },
         )
+        if parked:
+            blocker = "; ".join(final_state.errors) or "durable replay uncertain"
+            return JobResult(
+                job_id=job.job_id,
+                success=False,
+                output=f"PARKED awaiting input — {blocker}",
+                error=None,
+                duration_ms=duration_ms,
+                metadata={"goal": goal[:100], "parked": True, "blocker": blocker},
+            )
         return JobResult(
             job_id=job.job_id,
             success=success,
@@ -213,6 +262,54 @@ class GoalExecutionHandler(JobHandler):
         )
 
     # ------------------------------------------------------------------ helpers
+
+    def _durable_enabled(self) -> bool:
+        """True iff durable goal routing is switched on AND a DbPool is wired.
+
+        Hot-reload friendly: reads ``settings.durable.goals`` live on every call
+        rather than caching, so an in-place settings swap takes effect on the next
+        goal without re-wiring the handler.
+        """
+        if self._settings is None or self._db is None:
+            return False
+        return bool(self._settings.durable.goals)
+
+    async def _run_durable(self, goal: str, state: PipelineState) -> PipelineState:
+        """Drive ``goal`` through the durable lifecycle and return the final state.
+
+        Delegates the WHOLE task lifecycle (create ``running`` task → stamp the
+        durable scope on ``state`` → drive the pipeline → finalize
+        completed/parked/failed via the idempotent terminal-status guard) to
+        :class:`DurableTaskRunner`, so this handler and the future B4 recovery
+        path share ONE lifecycle implementation. Only reached when
+        :meth:`_durable_enabled` is True, so ``self._db`` is guaranteed wired.
+
+        Fails LOUD: a create/finalize/backend error propagates to ``execute``'s
+        handler (which records the failure + builds the failure JobResult) — a
+        "durable" goal is never silently downgraded to a non-durable run.
+        """
+        assert self._db is not None  # narrowed by _durable_enabled()
+        assert self._backend is not None  # execute() returns early when None
+        from stackowl.pipeline.durable.store import DurableTaskStore
+        from stackowl.pipeline.durable.task_runner import DurableTaskRunner
+        from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+
+        # Owner: DEFAULT_PRINCIPAL_ID for now. Multi-tenant goals (per-user
+        # assignment) thread a real owning principal in here later (FR13).
+        log.scheduler.info(
+            "[scheduler] goal_execution: durable routing ON — delegating to runner",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        store = DurableTaskStore(self._db, DEFAULT_PRINCIPAL_ID)
+        runner = DurableTaskRunner(store, self._backend)
+        final_state, task_id = await runner.run(goal=goal, state=state)
+        log.scheduler.debug(
+            "[scheduler] goal_execution: durable runner returned",
+            extra={"_fields": {
+                "task_id": task_id, "parked": final_state.durable_parked,
+            }},
+        )
+        return final_state
 
     async def _record_result(
         self,
