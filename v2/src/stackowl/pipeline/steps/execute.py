@@ -72,15 +72,14 @@ async def _run_with_tools(
     # reachable. The consent gate (not gating) is the real access-control boundary.
     profile: list[str] | None = None
     pins: list[str] | None = None
-    # E2-S1 (FR33) — the acting owl's manifest, captured for the bounds check in
-    # _dispatch below. None (unknown owl / no registry) → unbounded, so dispatch is
-    # byte-for-byte unchanged.
-    acting_owl_manifest: OwlAgentManifest | None = None
+    # E1-S4 — capability_profile gating: a per-owl presented tool set (base ∪ groups
+    # ∪ pins ∪ tool_search). The BOUNDS check (effective = owl ∩ ceiling ∩ envelope)
+    # is now in _dispatch via compute_effective_bounds (E2-S2); this block is ONLY for
+    # DNA-gated presentation (a different, weaker control — presentation, not authz).
     owl_registry = get_services().owl_registry
     if owl_registry is not None:
         try:
             owl_manifest = owl_registry.get(state.owl_name)
-            acting_owl_manifest = owl_manifest
             if owl_manifest.capability_profile:
                 profile = list(owl_manifest.capability_profile)
                 pins = list(owl_manifest.tools)
@@ -141,27 +140,45 @@ async def _run_with_tools(
                 f"'{name}' is not available to a delegated sub-agent (delegation depth "
                 f"limit reached). Complete the task yourself and return your result."
             )
-        # E2-S1 (FR33) — BOUNDS check (TOOLS axis). A hard capability allowlist,
-        # checked before consent/execution (the delegation-depth cap above runs
-        # first): a tool outside the acting owl's bounds is refused here and
-        # reported cleanly (never raised/crashed). An owl with no bounds (or a
-        # None tools axis) yields None → unchanged.
-        from stackowl.authz.bounds_guard import check_tool_bounds
+        # E2-S2 (FR33/FR35-adjacent) — BOUNDS check against EFFECTIVE bounds:
+        # owl.bounds(now) ∩ state.creation_ceiling ∩ state.task_envelope. Checked
+        # before consent/execution. Fail-closed: a bounded-owl computation error
+        # DENIES (never falls through on a security path); an unbounded owl with
+        # no envelope yields None → unchanged (byte-for-byte S1).
+        from stackowl.authz.bounds_guard import check_effective_bounds
+        from stackowl.pipeline.authz_compose import compute_effective_bounds
 
-        bounds_block = check_tool_bounds(acting_owl_manifest, name)
-        if bounds_block is not None:
-            # Loop prevention (matches the consent-denial path): record the blocked
-            # tool in denied_this_run so a model that stubbornly re-calls a
-            # forbidden tool gets the short-circuit on the next iteration instead
-            # of a fresh full bounds-check every loop. This is the SINGLE
-            # authoritative block log (WARNING, with trace_id); the bounds_guard
-            # helper logs only at DEBUG to avoid a duplicate line.
+        try:
+            effective = compute_effective_bounds(state, get_services().owl_registry)
+        except Exception as exc:
             denied_this_run.add(name)
+            log.engine.error(
+                "[pipeline] execute: bounds computation failed — denying (fail closed)",
+                exc_info=exc,
+                extra={"_fields": {"tool": name, "owl": state.owl_name, "trace_id": state.trace_id}},
+            )
+            return (
+                f"The action '{name}' could not be authorized (bounds check failed) and "
+                "was not run. Respond to the user instead."
+            )
+        bounds_block = check_effective_bounds(effective, name)
+        if bounds_block is not None:
+            denied_this_run.add(name)
+            # Provenance on the deny branch only (no per-dispatch recompute on the
+            # allow path): owl-only verdict tells us whether the TASK was the narrower.
+            owl_only = check_effective_bounds(
+                compute_effective_bounds(
+                    state.evolve(creation_ceiling=None, task_envelope=None),
+                    get_services().owl_registry,
+                ),
+                name,
+            )
+            denied_by = "owl" if owl_only is not None else "task"
             log.engine.warning(
-                "[pipeline] execute: tool refused by owl bounds",
+                "[pipeline] execute: tool refused by bounds",
                 extra={"_fields": {
                     "tool": name, "owl": state.owl_name, "trace_id": state.trace_id,
-                    "axis": "tools",
+                    "axis": "tools", "denied_by": denied_by,
                 }},
             )
             return bounds_block

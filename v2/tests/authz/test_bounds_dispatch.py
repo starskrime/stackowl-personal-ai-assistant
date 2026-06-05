@@ -76,7 +76,39 @@ def _manifest(name: str, bounds: BoundsSpec | None) -> OwlAgentManifest:
     )
 
 
-async def _drive(bounds: BoundsSpec | None) -> tuple[_RecordingTool, _RecordingTool, _TwoToolProvider]:
+class _RecordingConsentGate:
+    """Records tool names passed to check(); always approves.
+
+    Matches the real ConsequentialActionGate.check() positional + keyword
+    signature as called by the dispatch seam:
+      gate.check(t, channel=..., session_id=..., call_args=...)
+    """
+
+    def __init__(self) -> None:
+        self.checked: list[str] = []
+
+    async def check(
+        self,
+        tool: object,
+        *,
+        channel: str | None = None,
+        session_id: str | None = None,
+        category: str | None = None,
+        call_args: dict[str, object] | None = None,
+    ) -> bool:
+        from stackowl.tools.base import Tool
+
+        if isinstance(tool, Tool):
+            self.checked.append(tool.manifest.name)
+        return True
+
+
+async def _drive(
+    bounds: BoundsSpec | None,
+    *,
+    ceiling: BoundsSpec | None = None,
+    consent_gate: object = None,
+) -> tuple[_RecordingTool, _RecordingTool, _TwoToolProvider]:
     allowed = _RecordingTool("allowed_tool")
     forbidden = _RecordingTool("forbidden_tool")
     registry = ToolRegistry()
@@ -85,9 +117,15 @@ async def _drive(bounds: BoundsSpec | None) -> tuple[_RecordingTool, _RecordingT
     owl_registry = OwlRegistry()
     owl_registry.register(_manifest("bounded_owl", bounds))
     provider = _TwoToolProvider()
-    token = set_services(StepServices(tool_registry=registry, owl_registry=owl_registry))
+    state = _state()
+    if ceiling is not None:
+        state = state.evolve(creation_ceiling=ceiling)
+    services_kwargs: dict[str, object] = dict(tool_registry=registry, owl_registry=owl_registry)
+    if consent_gate is not None:
+        services_kwargs["consent_gate"] = consent_gate
+    token = set_services(StepServices(**services_kwargs))  # type: ignore[arg-type]
     try:
-        await _run_with_tools(_state(), provider, registry)  # type: ignore[arg-type]
+        await _run_with_tools(state, provider, registry)  # type: ignore[arg-type]
     finally:
         reset_services(token)
     return allowed, forbidden, provider
@@ -214,3 +252,38 @@ async def test_empty_allowlist_blocks_even_discovery_meta_tools() -> None:
         reason = provider.results[name]
         assert reason.strip() != ""
         assert "not permitted by this owl's bounds" in reason
+
+
+# --- E2-S2: ceiling narrows the effective bounds below the owl's own bounds ---
+
+
+async def test_ceiling_narrows_below_owl_bounds() -> None:
+    """A creation_ceiling tighter than the owl's own bounds is enforced at dispatch.
+
+    The owl permits {allowed_tool, forbidden_tool}; the ceiling restricts to
+    {allowed_tool} only. Effective = owl ∩ ceiling = {allowed_tool}, so
+    forbidden_tool must be blocked even though the owl itself allows it.
+    """
+    owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool", "forbidden_tool"}))
+    ceiling = BoundsSpec(tools=frozenset({"allowed_tool"}))
+    allowed, forbidden, provider = await _drive(owl_bounds, ceiling=ceiling)
+    assert allowed.executed is True
+    assert forbidden.executed is False
+    assert "not permitted by this owl's bounds" in provider.results["forbidden_tool"]
+
+
+async def test_out_of_bounds_tool_never_reaches_consent() -> None:
+    """A tool blocked by effective bounds is refused BEFORE the consent gate is consulted.
+
+    The bounds check short-circuits in _dispatch before the gate.check() call,
+    so the recording gate must never see the forbidden_tool name.
+    Note: _RecordingTool uses action_severity="read" so the gate would not fire
+    anyway for a read-severity tool — but the point of this test is that bounds
+    returns BEFORE the gate code path is reached at all, regardless of severity.
+    """
+    owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool", "forbidden_tool"}))
+    ceiling = BoundsSpec(tools=frozenset({"allowed_tool"}))
+    gate = _RecordingConsentGate()
+    allowed, forbidden, provider = await _drive(owl_bounds, ceiling=ceiling, consent_gate=gate)
+    assert forbidden.executed is False
+    assert "forbidden_tool" not in gate.checked

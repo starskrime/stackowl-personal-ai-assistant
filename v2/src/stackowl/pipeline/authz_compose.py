@@ -1,0 +1,54 @@
+"""authz_compose — resolve an owl's live bounds and compose effective bounds.
+
+Lives in the PIPELINE layer (not authz) because it reads the OwlRegistry; the
+pure narrowing math stays in authz.bounds_guard (no services import). The single
+source of truth for "what bounds apply to this dispatch", reused by the dispatch
+seam AND the delegation-floor at child-spawn sites.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from stackowl.authz.bounds_guard import effective_bounds
+from stackowl.infra.observability import log
+
+if TYPE_CHECKING:  # pragma: no cover
+    from stackowl.authz.bounds import BoundsSpec
+    from stackowl.owls.registry import OwlRegistry
+    from stackowl.pipeline.state import PipelineState
+
+
+def resolve_owl_bounds(owl_name: str, owl_registry: OwlRegistry | None) -> BoundsSpec | None:
+    """Best-effort live bounds for an owl. None registry / unknown owl → None.
+
+    A genuine lookup is attempted; an UNKNOWN owl (not registered) is treated as
+    unbounded (None) — byte-for-byte S1 for unknown owls. This does NOT swallow
+    arbitrary faults: OwlNotFoundError means "unknown owl"; any other exception
+    propagates (the caller decides fail-closed).
+    """
+    if owl_registry is None:
+        return None
+    from stackowl.exceptions import OwlNotFoundError
+
+    try:
+        return owl_registry.get(owl_name).bounds
+    except OwlNotFoundError:
+        log.engine.debug(
+            "[authz] compose.resolve: unknown owl — unbounded",
+            extra={"_fields": {"owl": owl_name}},
+        )
+        return None
+
+
+def compute_effective_bounds(
+    state: PipelineState, owl_registry: OwlRegistry | None
+) -> BoundsSpec | None:
+    """effective = owl.bounds(now) ∩ creation_ceiling ∩ task_envelope.
+
+    Fail-closed contract for the CALLER: a non-OwlNotFound exception propagates so
+    the dispatch seam denies (never falls through on an error in a security path).
+    A genuinely unbounded owl with no envelope returns None (unrestricted) — S1.
+    """
+    owl_bounds = resolve_owl_bounds(state.owl_name, owl_registry)
+    return effective_bounds(owl_bounds, state.creation_ceiling, state.task_envelope)
