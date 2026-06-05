@@ -21,7 +21,7 @@ OWL = BoundsSpec(tools=frozenset({"note_search", "summarize_text", "shell", "too
 async def test_unions_mandatory_discovery() -> None:
     env = await PreflightPlanner(_Proposer(frozenset({"note_search"}))).plan("g", OWL, CATALOG)
     assert env is not None
-    assert MANDATORY_DISCOVERY <= env.tools
+    assert env.tools >= MANDATORY_DISCOVERY
     assert "note_search" in env.tools
 
 
