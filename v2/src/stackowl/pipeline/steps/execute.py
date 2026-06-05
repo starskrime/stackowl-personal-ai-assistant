@@ -111,6 +111,8 @@ async def _run_with_tools(
     # F3.1 — within a single run, a tool denied once must not re-prompt the user
     # if the model stubbornly re-calls it; short-circuit subsequent calls.
     denied_this_run: set[str] = set()
+    # E2-S3 — off-plan tools already drift-logged this run (de-duplicate per tool).
+    drift_audited: set[str] = set()
 
     async def _dispatch(name: str, args: dict[str, object]) -> str:
         # F3.1 / E2-S1 loop-stop — a tool already denied this run (by consent OR by
@@ -189,6 +191,17 @@ async def _run_with_tools(
                 }},
             )
             return bounds_block
+        # E2-S3 — drift telemetry (OBSERVE-ONLY). A durable task carries a
+        # least-privilege task_envelope; a tool outside it still runs (the hard
+        # boundary owl∩ceiling already permitted it) but is logged once as drift.
+        # Honest-case telemetry, NOT adversarial detection. Never blocks.
+        te = state.task_envelope
+        if te is not None and te.tools is not None and name not in te.tools and name not in drift_audited:
+            drift_audited.add(name)
+            log.engine.warning(
+                "[authz] drift: off-plan tool used",
+                extra={"_fields": {"tool": name, "owl": state.owl_name, "trace_id": state.trace_id}},
+            )
         t = tool_registry.get(name)
         if t is None:
             log.engine.warning("[pipeline] execute: unknown tool in dispatch", extra={"_fields": {"tool": name}})
