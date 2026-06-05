@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from stackowl.authz.bounds import BoundsSpec
 from stackowl.owls.dna import OwlDNA
 
 _NAME_RE = re.compile(r"^\w+$", re.UNICODE)
@@ -34,6 +35,11 @@ class OwlAgentManifest(BaseModel):
     # presented-set selection (ADR-11). Additive + defaulted: existing manifests
     # without it remain valid. Empty means "no capability gating" (all tools).
     capability_profile: list[str] = []
+    # E2-S1 (FR33) — the owl's capability bounds (closed enumeration). Additive +
+    # defaulted: ``None`` means UNBOUNDED, so every existing owl is byte-for-byte
+    # unchanged. The owl-builder (Epic 5) sets safe-by-construction bounds; the
+    # tools axis is enforced at the dispatch seam, the rest by their own layers.
+    bounds: BoundsSpec | None = None
 
     @field_validator("name")
     @classmethod

@@ -72,10 +72,15 @@ async def _run_with_tools(
     # reachable. The consent gate (not gating) is the real access-control boundary.
     profile: list[str] | None = None
     pins: list[str] | None = None
+    # E2-S1 (FR33) — the acting owl's manifest, captured for the bounds check in
+    # _dispatch below. None (unknown owl / no registry) → unbounded, so dispatch is
+    # byte-for-byte unchanged.
+    acting_owl_manifest: OwlAgentManifest | None = None
     owl_registry = get_services().owl_registry
     if owl_registry is not None:
         try:
             owl_manifest = owl_registry.get(state.owl_name)
+            acting_owl_manifest = owl_manifest
             if owl_manifest.capability_profile:
                 profile = list(owl_manifest.capability_profile)
                 pins = list(owl_manifest.tools)
@@ -109,6 +114,19 @@ async def _run_with_tools(
     denied_this_run: set[str] = set()
 
     async def _dispatch(name: str, args: dict[str, object]) -> str:
+        # F3.1 / E2-S1 loop-stop — a tool already denied this run (by consent OR by
+        # bounds) short-circuits HERE before any re-check, so a model that
+        # stubbornly re-calls a refused tool gets a stable "already declined"
+        # signal instead of a fresh full check every iteration (no loop).
+        if name in denied_this_run:
+            log.engine.info(
+                "[pipeline] execute: tool already declined this run — not re-prompting",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+            )
+            return (
+                f"The action '{name}' was already declined this turn. Do not call it again — "
+                "respond to the user instead."
+            )
         # E8-S0 — EXECUTION-layer fork-bomb cap (not just presentation). A delegated
         # child (delegation_depth>0) is refused these tools even if it names one the
         # presented schema omitted: presentation gating is not authorization, so the
@@ -123,19 +141,34 @@ async def _run_with_tools(
                 f"'{name}' is not available to a delegated sub-agent (delegation depth "
                 f"limit reached). Complete the task yourself and return your result."
             )
+        # E2-S1 (FR33) — BOUNDS check (TOOLS axis). A hard capability allowlist,
+        # checked before consent/execution (the delegation-depth cap above runs
+        # first): a tool outside the acting owl's bounds is refused here and
+        # reported cleanly (never raised/crashed). An owl with no bounds (or a
+        # None tools axis) yields None → unchanged.
+        from stackowl.authz.bounds_guard import check_tool_bounds
+
+        bounds_block = check_tool_bounds(acting_owl_manifest, name)
+        if bounds_block is not None:
+            # Loop prevention (matches the consent-denial path): record the blocked
+            # tool in denied_this_run so a model that stubbornly re-calls a
+            # forbidden tool gets the short-circuit on the next iteration instead
+            # of a fresh full bounds-check every loop. This is the SINGLE
+            # authoritative block log (WARNING, with trace_id); the bounds_guard
+            # helper logs only at DEBUG to avoid a duplicate line.
+            denied_this_run.add(name)
+            log.engine.warning(
+                "[pipeline] execute: tool refused by owl bounds",
+                extra={"_fields": {
+                    "tool": name, "owl": state.owl_name, "trace_id": state.trace_id,
+                    "axis": "tools",
+                }},
+            )
+            return bounds_block
         t = tool_registry.get(name)
         if t is None:
             log.engine.warning("[pipeline] execute: unknown tool in dispatch", extra={"_fields": {"tool": name}})
             return f"Tool not found: {name}"
-        if name in denied_this_run:
-            log.engine.info(
-                "[pipeline] execute: tool already declined this run — not re-prompting",
-                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
-            )
-            return (
-                f"The action '{name}' was already declined this turn. Do not call it again — "
-                "respond to the user instead."
-            )
         # E0-S1 — consent gate runs BEFORE execution for consequential tools.
         # The category is derived inside gate.check() from the TRUSTED manifest,
         # never from LLM-supplied args. Fail closed: a gate error, OR a missing
