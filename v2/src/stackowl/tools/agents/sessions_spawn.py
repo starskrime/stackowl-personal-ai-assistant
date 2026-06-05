@@ -38,6 +38,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.owls.delegation_limits import GOVERNOR_ACQUIRE_TIMEOUT_SECONDS
 from stackowl.owls.session_registry import SessionRegistryError
+from stackowl.pipeline.authz_compose import resolve_owl_bounds
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
@@ -168,6 +169,7 @@ class SessionsSpawnTool(Tool):
             status = await self._run_initial_task(
                 label=args.label,
                 owl_name=owl_name,
+                invoking_owl=caller,
                 initial_task=args.initial_task,
                 trace_id=trace_id,
                 channel=str(ctx.get("channel") or "internal"),
@@ -183,6 +185,7 @@ class SessionsSpawnTool(Tool):
         *,
         label: str,
         owl_name: str,
+        invoking_owl: str,
         initial_task: str,
         trace_id: str,
         channel: str,
@@ -197,11 +200,11 @@ class SessionsSpawnTool(Tool):
         ``'spawned_initial_failed'`` so the model knows the seed run produced
         nothing rather than inventing a result.
         """
-        services = get_services()
         # A2A sub-pipeline: no user channel binding (default-deny clarify), and
         # delegation_depth=1 so the child cannot itself spawn/delegate (S0 cap).
         # session_id is the SESSION's id (NOT the caller's) so the seed turn lands
         # in the bridge under this session — consolidate persists it (no depth skip).
+        services = get_services()
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-spawn",
             session_id=f"session:{label}",
@@ -211,6 +214,10 @@ class SessionsSpawnTool(Tool):
             pipeline_step="dispatch",
             interactive=False,
             delegation_depth=1,
+            # E2-S2 delegation floor — the session child cannot exceed the INVOKING
+            # owl's bounds even if its own persona is broader (FR35-runtime).
+            # Best-effort: invoking owl unbounded → None (no clamp).
+            creation_ceiling=resolve_owl_bounds(invoking_owl, services.owl_registry),
         )
         backend = AsyncioBackend(services=services)
         try:

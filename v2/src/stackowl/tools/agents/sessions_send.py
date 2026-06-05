@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.owls.session_registry import SessionRegistry
+from stackowl.pipeline.authz_compose import resolve_owl_bounds
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
@@ -187,6 +188,7 @@ class SessionsSendTool(Tool):
             registry=registry,
             label=args.label,
             owl_name=session.owl_name,
+            invoking_owl=caller,
             message=args.message,
             wait=args.wait,
             trace_id=trace_id,
@@ -201,6 +203,7 @@ class SessionsSendTool(Tool):
         registry: SessionRegistry,
         label: str,
         owl_name: str,
+        invoking_owl: str,
         message: str,
         wait: bool,
         trace_id: str,
@@ -220,6 +223,7 @@ class SessionsSendTool(Tool):
         # turns from the bridge by session_id and OVERWRITES it. depth=1, non-
         # interactive (no user channel binding to answer a clarify — clarify
         # default-denies, never parks).
+        services = get_services()
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-send",
             session_id=f"session:{label}",
@@ -230,8 +234,11 @@ class SessionsSendTool(Tool):
             interactive=False,
             delegation_depth=1,
             history=(),
+            # E2-S2 delegation floor — the session child cannot exceed the INVOKING
+            # owl's bounds even if its own persona is broader (FR35-runtime).
+            # Best-effort: invoking owl unbounded → None (no clamp).
+            creation_ceiling=resolve_owl_bounds(invoking_owl, services.owl_registry),
         )
-        services = get_services()
         backend = AsyncioBackend(services=services)
         try:
             final_state = await asyncio.wait_for(
