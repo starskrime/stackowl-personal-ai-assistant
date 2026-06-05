@@ -33,7 +33,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.pipeline.authz_compose import resolve_owl_bounds
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
+from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
@@ -79,6 +81,9 @@ class DurableTaskRunner:
             }},
         )
         now = datetime.now(tz=UTC)
+        # E2-S2 — snapshot the acting owl's bounds as the resume-monotonicity
+        # ceiling. Best-effort: no registry / unbounded owl → None (no clamp).
+        creation_ceiling = resolve_owl_bounds(state.owl_name, get_services().owl_registry)
         # Persist the ORIGINATING owl/channel from the creating state so B4
         # crash-recovery reconstructs the real owl/channel instead of hardcoding
         # 'secretary'/'cli' (the latent wrong-owl bug). Empty strings are coerced
@@ -92,12 +97,15 @@ class DurableTaskRunner:
                 status="running",
                 owl_name=state.owl_name or None,
                 channel=state.channel or None,
+                creation_ceiling=creation_ceiling,
                 created_at=now,
                 updated_at=now,
             )
         )
         # 2. DECISION — stamp the durable scope so the B2 execute step drives durably.
-        durable_state = state.evolve(task_id=task_id, durable_owner_id=owner_id)
+        durable_state = state.evolve(
+            task_id=task_id, durable_owner_id=owner_id, creation_ceiling=creation_ceiling,
+        )
         return await self._drive(task_id, durable_state)
 
     async def resume(

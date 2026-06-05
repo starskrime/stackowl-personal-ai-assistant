@@ -367,7 +367,11 @@ class DurableTaskRecoverer:
                 "[tasks] recovery: no checkpoint — resuming from a fresh state",
                 extra={"_fields": {"task_id": task_id}},
             )
-            return base.evolve(task_id=task_id, durable_owner_id=self._owner_id)
+            return base.evolve(
+                task_id=task_id,
+                durable_owner_id=self._owner_id,
+                creation_ceiling=task.creation_ceiling,
+            )
         # A checkpoint exists — continue the transcript from the next iteration.
         cp = deserialize(blob)
         log.tasks.info(
@@ -382,6 +386,7 @@ class DurableTaskRecoverer:
         return base.evolve(
             task_id=task_id,
             durable_owner_id=self._owner_id,
+            creation_ceiling=task.creation_ceiling,
             durable_resume_messages=cp.messages,
             durable_resume_tool_calls=cp.tool_call_records,
             durable_resume_iteration=cp.iteration + 1,
