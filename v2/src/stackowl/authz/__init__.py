@@ -14,12 +14,18 @@ from stackowl.authz.bounds import (
     NetworkRule,
     ResourceCaps,
 )
-from stackowl.authz.bounds_guard import check_tool_bounds
+from stackowl.authz.bounds_guard import (
+    check_effective_bounds,
+    check_tool_bounds,
+    effective_bounds,
+)
 
 __all__ = [
     "BoundsSpec",
     "BoundsViolation",
     "NetworkRule",
     "ResourceCaps",
+    "check_effective_bounds",
     "check_tool_bounds",
+    "effective_bounds",
 ]
