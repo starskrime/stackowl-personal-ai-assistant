@@ -66,10 +66,13 @@ class _TwoToolProvider:
 
     def __init__(self) -> None:
         self.results: dict[str, str] = {}
+        self.seen_schemas: list[dict[str, object]] | None = None
 
     async def complete_with_tools(  # noqa: ANN001
         self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None,
+        **_kwargs: object,
     ):
+        self.seen_schemas = list(tool_schemas) if tool_schemas is not None else []
         self.results["allowed_tool"] = await tool_dispatcher("allowed_tool", {})
         self.results["forbidden_tool"] = await tool_dispatcher("forbidden_tool", {})
         return ("done", [])
@@ -211,4 +214,50 @@ async def test_no_envelope_no_drift(
     assert not drift_records, (
         f"Unexpected drift warnings when no envelope is set: "
         f"{[r.getMessage() for r in drift_records]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# E2-S3 — least-privilege PRESENTATION tests
+# ---------------------------------------------------------------------------
+
+def _schema_names(schemas: list[dict[str, object]] | None) -> set[str]:
+    """Extract tool names from either anthropic or openai protocol schemas."""
+    out: set[str] = set()
+    for s in schemas or []:
+        n = s.get("name")
+        if isinstance(n, str):
+            out.add(n)
+            continue
+        fn = s.get("function")
+        if isinstance(fn, dict):
+            inner = fn.get("name")
+            if isinstance(inner, str):
+                out.add(inner)
+    return out
+
+
+@pytest.mark.asyncio
+async def test_presentation_restricted_when_envelope_set() -> None:
+    """When task_envelope is set, forbidden_tool is hidden from the schema."""
+    owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool", "forbidden_tool"}))
+    envelope = BoundsSpec(tools=frozenset({"allowed_tool"}))
+    _a, _f, provider = await _drive(owl_bounds, task_envelope=envelope)
+    presented = _schema_names(provider.seen_schemas)
+    assert "forbidden_tool" not in presented, (
+        f"forbidden_tool should be hidden when off-plan, but presented={presented}"
+    )
+    assert "allowed_tool" in presented, (
+        f"allowed_tool should be visible (on-plan), but presented={presented}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_presentation_parity_when_no_envelope() -> None:
+    """When no task_envelope is set, full toolset is presented (S2 parity)."""
+    owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool", "forbidden_tool"}))
+    _a, _f, provider = await _drive(owl_bounds, task_envelope=None)
+    presented = _schema_names(provider.seen_schemas)
+    assert {"allowed_tool", "forbidden_tool"} <= presented, (
+        f"Both tools must be presented when no envelope is set, but presented={presented}"
     )

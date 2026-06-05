@@ -88,7 +88,13 @@ async def _run_with_tools(
                 "[pipeline] execute: owl profile lookup failed — full catalog",
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
-    tool_schemas = tool_registry.to_provider_schema(provider.protocol, profile=profile, pins=pins)
+    # E2-S3 — least-privilege presentation: when the task has a planned
+    # envelope, restrict the presented set to plan ∪ discovery (drift
+    # prevention). None envelope → restrict_to=None → byte-for-byte S2.
+    restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
+    tool_schemas = tool_registry.to_provider_schema(
+        provider.protocol, profile=profile, pins=pins, restrict_to=restrict_to
+    )
     # E8-S0 — child-toolset exclusion (PRIMARY fork-bomb cap): a delegated child
     # (delegation_depth>0) may not itself spawn/delegate, so remove those two
     # tools from the PRESENTED set. Excluded by NAME defensively so it is correct
