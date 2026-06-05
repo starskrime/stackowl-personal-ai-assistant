@@ -11,10 +11,10 @@ import pytest
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
+from stackowl.pipeline.durable.react_checkpoint import ReActCheckpoint, serialize
 from stackowl.pipeline.durable.recovery import DurableTaskRecoverer
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask
-from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.state import PipelineState
 
 # ---------------------------------------------------------------------------
@@ -117,3 +117,45 @@ async def test_reconstruct_deny_all_ceiling_roundtrips(
     state = await recovery._reconstruct_state(await store.get("task-rec-3"))
     assert state.creation_ceiling is not None
     assert state.creation_ceiling.tools == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Tests — checkpoint-loaded branch (COMMON resume case: task killed mid-run).
+# ---------------------------------------------------------------------------
+
+
+async def test_reconstruct_threads_ceiling_on_checkpoint_branch(
+    store: DurableTaskStore, recovery: DurableTaskRecoverer
+) -> None:
+    """The COMMON resume case: a task killed mid-run HAS a checkpoint.
+
+    The ceiling must survive the checkpoint-loaded reconstruction branch too
+    (no fail-open).  A resumed task without its ceiling would run unbounded —
+    a security-critical invariant that is distinct from the no-checkpoint branch.
+    """
+    ceiling = BoundsSpec(tools=frozenset({"a"}))
+    # 1. Seed a 'running' task carrying the ceiling.
+    task = _running_task("task-rec-cp-1", ceiling)
+    await store.create(task)
+
+    # 2. Save a checkpoint blob so _reconstruct_state takes the mid-transcript branch.
+    cp = ReActCheckpoint(
+        iteration=2,
+        messages=[{"role": "user", "content": "turn 2"}],
+        tool_call_records=[{"id": "c1", "name": "read_file", "args": {}, "result": "ok", "failed": False}],
+    )
+    await store.save_checkpoint("task-rec-cp-1", serialize(cp))
+
+    # 3. Reconstruct and assert BOTH the resume markers AND the ceiling survive.
+    state = await recovery._reconstruct_state(await store.get("task-rec-cp-1"))
+
+    # Ceiling must not be silently dropped — fail-open would let resumed tasks
+    # run unbounded.
+    assert state.creation_ceiling == ceiling
+
+    # Resume markers must be populated — this proves the mid-transcript branch
+    # ran (not the no-checkpoint branch which leaves them None).
+    assert state.durable_resume_messages is not None
+    assert state.durable_resume_messages == cp.messages
+    assert state.durable_resume_tool_calls == cp.tool_call_records
+    assert state.durable_resume_iteration == cp.iteration + 1
