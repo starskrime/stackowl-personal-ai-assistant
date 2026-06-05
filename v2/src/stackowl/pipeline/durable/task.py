@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from stackowl.authz.bounds import BoundsSpec
+
 #: Lifecycle of a durable task.
 #:
 #: ``pending``    created, not yet started.
@@ -51,5 +53,9 @@ class DurableTask(BaseModel):
     #: Originating channel (cli/telegram/...) of the durable goal. NULL on legacy
     #: rows — B4 recovery falls back to the documented 'cli' default when None.
     channel: str | None = None
+    #: Snapshot of the owl's bounds at task CREATION — the resume-monotonicity
+    #: ceiling (E2-S2). NULL on legacy rows (pre-0048) and on a task created under
+    #: an unbounded owl → None → resume uses the owl's current bounds.
+    creation_ceiling: BoundsSpec | None = None
     created_at: datetime
     updated_at: datetime

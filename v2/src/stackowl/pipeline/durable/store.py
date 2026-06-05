@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from stackowl.authz.bounds import BoundsSpec
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
@@ -23,7 +24,7 @@ from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _SELECT_FIELDS = (
     "task_id, owner_id, goal, status, current_step, "
-    "thread_id, result, owl_name, channel, created_at, updated_at"
+    "thread_id, result, owl_name, channel, creation_ceiling, created_at, updated_at"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -86,6 +87,11 @@ class DurableTaskStore(OwnedRepository):
             "result": task.result,
             "owl_name": task.owl_name,
             "channel": task.channel,
+            "creation_ceiling": (
+                task.creation_ceiling.model_dump_json()
+                if task.creation_ceiling is not None
+                else None
+            ),
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
         })
@@ -336,6 +342,12 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
     raw_result = row.get("result")
     raw_owl = row.get("owl_name")
     raw_channel = row.get("channel")
+    raw_ceiling = row.get("creation_ceiling")
+    ceiling: BoundsSpec | None = (
+        BoundsSpec.model_validate_json(str(raw_ceiling))
+        if raw_ceiling is not None
+        else None
+    )
     return DurableTask(
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
@@ -346,6 +358,7 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         result=None if raw_result is None else str(raw_result),
         owl_name=None if raw_owl is None else str(raw_owl),
         channel=None if raw_channel is None else str(raw_channel),
+        creation_ceiling=ceiling,
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )

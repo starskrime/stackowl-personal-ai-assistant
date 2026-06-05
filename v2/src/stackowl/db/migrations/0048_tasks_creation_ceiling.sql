@@ -1,0 +1,32 @@
+-- Migration 0048 — persist creation-time bounds snapshot (creation_ceiling) on tasks (E2-S2).
+--
+-- Adds a nullable TEXT column holding a JSON-serialised BoundsSpec that captures
+-- the owl's effective bounds at the moment the durable task was created. This
+-- snapshot is the resume-monotonicity ceiling: when a task is resumed after a
+-- crash, the system may intersect the owl's CURRENT bounds with this ceiling so
+-- that bounds can only TIGHTEN over a resume cycle, never widen (privilege
+-- escalation prevention, FR35-adjacent).
+--
+-- creation_ceiling
+--   JSON-serialised BoundsSpec (model_dump_json) if a ceiling was captured at
+--   creation time. NULL on legacy rows created before this migration — on resume
+--   the task runs under the owl's CURRENT bounds (never global-unrestricted,
+--   because owl.bounds(now) is always a factor of effective bounds). NULL is
+--   ALSO written when the task was created under an unbounded owl (bounds=None)
+--   since there is nothing to snapshot: a None ceiling is semantically
+--   "no constraint recorded".
+--
+-- Design choices:
+--   Additive only: existing rows gain NULL values — no data is touched.
+--   Nullable: legacy rows (and rows created by an unbounded owl) read back NULL,
+--   which the store maps to Python None without calling model_validate_json.
+--   Owner-scoped: the tasks composite PK (owner_id, task_id) already enforces
+--   owner isolation, so no new owner column is needed here.
+--
+-- Idempotent: the MigrationRunner records applied versions in schema_migrations
+-- and skips a version already recorded, so this ADD COLUMN DDL runs exactly
+-- once. SQLite has no ADD COLUMN IF NOT EXISTS, so the runner's version gate is
+-- the idempotency mechanism. NOTE no semicolons inside comments per the runner
+-- gotcha.
+
+ALTER TABLE tasks ADD COLUMN creation_ceiling TEXT;
