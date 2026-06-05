@@ -40,3 +40,18 @@ async def test_proposer_raising_returns_none() -> None:
         async def propose(self, goal, catalog):
             raise RuntimeError("x")
     assert await PreflightPlanner(_Boom()).plan("g", OWL, CATALOG) is None
+
+
+async def test_honesty_guard_failure_returns_none(monkeypatch) -> None:  # noqa: ANN001
+    # Defensive: if a future planner produced a non-tools-axis narrowing, the
+    # honesty guard raises DomainError and the planner fails open to None.
+    from stackowl.exceptions import DomainError
+
+    def _raise(owl, task):  # noqa: ANN001, ANN202
+        raise DomainError("non-tools axis narrowed")
+
+    monkeypatch.setattr(
+        "stackowl.pipeline.planner.planner.assert_task_narrowing_enforceable", _raise
+    )
+    env = await PreflightPlanner(_Proposer(frozenset({"note_search"}))).plan("g", OWL, CATALOG)
+    assert env is None
