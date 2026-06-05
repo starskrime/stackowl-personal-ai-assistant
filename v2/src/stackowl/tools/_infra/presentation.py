@@ -87,10 +87,26 @@ class ToolPresentation:
         profile: list[str] | None,
         pins: list[str] | None,
         hydrated: set[str] | None,
+        restrict_to: frozenset[str] | None = None,
     ) -> list[Tool]:
         """Return the ordered, capped presented set (deterministic, self-healing)."""
         cfg = self._cfg
         by_name = {t.name: t for t in all_tools}
+
+        # E2-S3 — least-privilege presentation. When a plan exists, present ONLY
+        # discovery (always_present) + the planned set ∩ catalog. The broad base
+        # set + profile groups are dropped for this turn; always_present stays
+        # non-evictable. `is not None`, NOT truthiness — an empty plan yields
+        # discovery-only, never a fall back to base+groups.
+        if restrict_to is not None:
+            always = sorted(n for n in cfg.always_present if n in by_name)
+            taken = set(always)
+            planned = sorted(n for n in restrict_to if n in by_name and n not in taken)
+            ordered = list(always)
+            budget = max(cfg.cap - len(ordered), 0)
+            ordered.extend(planned[:budget])
+            return [by_name[n] for n in ordered]
+
         profile_groups = {g for g in (profile or []) if isinstance(g, str)}
         pin_names = {p for p in (pins or []) if isinstance(p, str)}
         hydrated_names = hydrated or set()

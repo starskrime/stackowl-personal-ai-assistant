@@ -233,6 +233,7 @@ class ToolRegistry:
         profile: list[str] | None = None,
         pins: list[str] | None = None,
         hydrated: set[str] | None = None,
+        restrict_to: frozenset[str] | None = None,
     ) -> list[dict[str, object]]:
         """Emit tool schemas for the given provider protocol.
 
@@ -240,8 +241,21 @@ class ToolRegistry:
         backward-compatible. When ``profile``/``pins``/``hydrated`` are supplied
         (the per-owl path, E1-S4), the presented set is DNA-gated and capped via
         :class:`ToolPresentation`; overflow stays reachable through tool_search.
+
+        ``restrict_to`` (E2-S3): when a task has a planned envelope, pass the
+        frozenset of planned tool names here. The presented set is narrowed to
+        ``always_present`` (discovery) ∪ (``restrict_to`` ∩ catalog). The broad
+        base set + profile groups are dropped for this turn. ``is not None``,
+        NOT truthiness — ``frozenset()`` yields discovery-only, never base+groups.
         """
-        if profile is None and pins is None and hydrated is None:
+        if restrict_to is not None:
+            from stackowl.tools._infra.presentation import ToolPresentation
+
+            tools = ToolPresentation().select(
+                all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
+                restrict_to=restrict_to,
+            )
+        elif profile is None and pins is None and hydrated is None:
             tools = self.all()
         else:
             from stackowl.tools._infra.presentation import ToolPresentation
