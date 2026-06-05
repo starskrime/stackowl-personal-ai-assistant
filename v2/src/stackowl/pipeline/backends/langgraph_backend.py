@@ -109,6 +109,7 @@ class LangGraphBackend(OrchestratorBackend):
             channel=state.channel,
             delegation_depth=state.delegation_depth,
             owl_name=state.owl_name,
+            creation_ceiling=state.creation_ceiling,
         )
         try:
             compiled = await self._ensure_compiled()

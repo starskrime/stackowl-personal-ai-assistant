@@ -17,13 +17,15 @@ use the tool at all). Consent is human approval for a consequential tool. Bounds
 are checked before consent/execution; a tool outside bounds is refused regardless
 of consent.
 
-FR35 DELEGATION GAP (tracked, NOT fixed here — lands in Epic 3): a DELEGATED
-sub-owl currently runs under ITS OWN bounds, not the parent's. There is no
-parent∩child bounds intersection at the delegation seam yet, so a sub-owl could
-in principle hold a tool the parent lacks. The narrowing-only composition
-primitive for that fix already exists (:meth:`BoundsSpec.intersect`); wiring it
-into the delegation dispatch (no-escalation-via-delegation) is the FR35 follow-up
-in Epic 3. Documented here so the gap is explicit, never silent.
+FR35 DELEGATION — runtime floor wired in E2-S2: a delegated child is clamped to
+the PARENT'S EFFECTIVE bounds (parent_owl ∩ parent_creation_ceiling) at every
+child-spawn site (delegate_task, sessions_spawn, sessions_send) via
+:func:`stackowl.pipeline.authz_compose.child_floor`, threaded through
+:class:`stackowl.infra.trace.TraceContext`. This closes the TOCTOU-delegation
+gap: a resumed parent whose owl was widened after creation still restricts its
+delegated children to the persisted ceiling. The remaining Epic 3 FR35 work is
+the manifest-layer parent_owl ∩ child_owl reconciliation (no-escalation when the
+child manifest itself has wider bounds than the parent manifest).
 """
 
 from __future__ import annotations

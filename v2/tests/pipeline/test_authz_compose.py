@@ -1,4 +1,4 @@
-"""E2-S2 — compute_effective_bounds: owl(now) ∩ ceiling ∩ envelope, fail-closed."""
+"""E2-S2 — compute_effective_bounds and child_floor: owl(now) ∩ ceiling ∩ envelope."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import pytest
 from stackowl.authz import BoundsSpec
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.authz_compose import compute_effective_bounds
+from stackowl.pipeline.authz_compose import child_floor, compute_effective_bounds
 from stackowl.pipeline.state import PipelineState
 
 
@@ -57,3 +57,40 @@ def test_bounded_owl_compute_error_raises_for_deny(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(reg, "get", boom)
     with pytest.raises(RuntimeError):
         compute_effective_bounds(_state(), reg)
+
+
+# ---------------------------------------------------------------- child_floor
+
+
+def _reg_parent(parent_bounds: BoundsSpec | None) -> OwlRegistry:
+    r = OwlRegistry()
+    r.register(OwlAgentManifest(name="parent", role="r", system_prompt="s",
+                                model_tier="fast", bounds=parent_bounds))
+    return r
+
+
+def test_child_floor_toctou_case() -> None:
+    """TOCTOU gap: parent owl is WIDE {a,b} but ceiling is NARROW {a}.
+    child_floor must return {a} (the narrow ceiling wins, not the wide owl bounds)."""
+    wide_owl_bounds = BoundsSpec(tools=frozenset({"a", "b"}))
+    narrow_ceiling = BoundsSpec(tools=frozenset({"a"}))
+    reg = _reg_parent(wide_owl_bounds)
+    result = child_floor("parent", narrow_ceiling, reg)
+    assert result is not None
+    assert result.tools == frozenset({"a"})
+
+
+def test_child_floor_none_ceiling_back_compat() -> None:
+    """No parent ceiling → child_floor equals resolve_owl_bounds (prior behavior)."""
+    from stackowl.pipeline.authz_compose import resolve_owl_bounds
+    parent_bounds = BoundsSpec(tools=frozenset({"a", "b"}))
+    reg = _reg_parent(parent_bounds)
+    assert child_floor("parent", None, reg) == resolve_owl_bounds("parent", reg)
+
+
+def test_child_floor_unknown_owl_with_ceiling_returns_ceiling() -> None:
+    """Unknown parent owl (None bounds) ∩ ceiling → ceiling (None ∩ ceiling = ceiling)."""
+    ceiling = BoundsSpec(tools=frozenset({"a"}))
+    reg = OwlRegistry()  # "parent" not registered
+    result = child_floor("parent", ceiling, reg)
+    assert result == ceiling

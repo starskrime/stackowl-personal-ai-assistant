@@ -5,8 +5,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar, Token
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from uuid import uuid4
+
+if TYPE_CHECKING:  # pragma: no cover
+    from stackowl.authz.bounds import BoundsSpec
 
 
 class _TraceToken(NamedTuple):
@@ -18,6 +21,7 @@ class _TraceToken(NamedTuple):
     channel: Token[str | None]
     delegation_depth: Token[int]
     owl_name: Token[str | None]
+    creation_ceiling: Token[Any]
 
 
 class TraceContext:
@@ -39,6 +43,12 @@ class TraceContext:
     # avoiding mis-attribution + a self-delegation loop when a non-secretary owl
     # delegates. Mirrors the delegation_depth propagation. Default None.
     _owl_name: ContextVar[str | None] = ContextVar("owl_name", default=None)
+    # E2-S2 — the parent's creation_ceiling (a BoundsSpec | None). Carried so
+    # child-spawn sites (delegate_task, sessions_spawn, sessions_send) can clamp
+    # the delegated child to the PARENT'S EFFECTIVE bounds (owl ∩ ceiling), not just
+    # the current owl bounds. Typed loosely (Any) to avoid a layering cycle with
+    # authz; the TYPE_CHECKING import above provides the annotation for mypy.
+    _creation_ceiling: ContextVar[Any] = ContextVar("creation_ceiling", default=None)
 
     @classmethod
     def start(
@@ -50,6 +60,7 @@ class TraceContext:
         channel: str | None = None,
         delegation_depth: int = 0,
         owl_name: str | None = None,
+        creation_ceiling: BoundsSpec | None = None,
     ) -> _TraceToken:
         """Set trace context for the current async task; return a token to reset later.
 
@@ -73,6 +84,7 @@ class TraceContext:
             channel=cls._channel.set(channel),
             delegation_depth=cls._delegation_depth.set(delegation_depth),
             owl_name=cls._owl_name.set(owl_name),
+            creation_ceiling=cls._creation_ceiling.set(creation_ceiling),
         )
 
     @classmethod
@@ -86,6 +98,7 @@ class TraceContext:
         cls._channel.reset(token.channel)
         cls._delegation_depth.reset(token.delegation_depth)
         cls._owl_name.reset(token.owl_name)
+        cls._creation_ceiling.reset(token.creation_ceiling)
 
     @classmethod
     @asynccontextmanager
@@ -99,6 +112,17 @@ class TraceContext:
         finally:
             cls._span_id.reset(new_span_token)
             cls._parent_span_id.reset(parent_token)
+
+    @classmethod
+    def creation_ceiling(cls) -> BoundsSpec | None:
+        """The acting turn's creation_ceiling (parent ceiling for delegated children).
+
+        Read by child-spawn sites (delegate_task, sessions_spawn, sessions_send) to
+        clamp the delegated child to the PARENT'S EFFECTIVE bounds (owl ∩ ceiling),
+        closing the TOCTOU-delegation gap. Not included in get() — a BoundsSpec
+        object must not appear in log records.
+        """
+        return cast("BoundsSpec | None", cls._creation_ceiling.get())
 
     @classmethod
     def get(cls) -> dict[str, Any]:

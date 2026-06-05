@@ -41,6 +41,20 @@ def resolve_owl_bounds(owl_name: str, owl_registry: OwlRegistry | None) -> Bound
         return None
 
 
+def child_floor(
+    parent_owl_name: str,
+    parent_creation_ceiling: BoundsSpec | None,
+    owl_registry: OwlRegistry | None,
+) -> BoundsSpec | None:
+    """The ceiling a delegated child inherits: the parent's EFFECTIVE bounds =
+    parent_owl(now) ∩ parent_creation_ceiling. Equals compute_effective_bounds of
+    the parent's state (task_envelope is None in S2). Closes the TOCTOU-delegation
+    gap: a resumed parent whose owl widened still clamps children to its persisted
+    ceiling. When the parent has no ceiling, this is just the parent owl's bounds
+    (the prior behavior)."""
+    return effective_bounds(resolve_owl_bounds(parent_owl_name, owl_registry), parent_creation_ceiling)
+
+
 def compute_effective_bounds(
     state: PipelineState, owl_registry: OwlRegistry | None
 ) -> BoundsSpec | None:

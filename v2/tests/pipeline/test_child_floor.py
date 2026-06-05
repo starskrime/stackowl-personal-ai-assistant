@@ -1,4 +1,4 @@
-"""E2-S2 — a delegated child inherits the parent owl's bounds as its ceiling floor.
+"""E2-S2 — a delegated child inherits the parent's EFFECTIVE bounds as its ceiling floor.
 
 Tests:
 1. resolve_owl_bounds returns the registered owl's bounds (unit).
@@ -7,6 +7,8 @@ Tests:
    bounds when an initial_task is supplied.
 4. sessions_send sets child PipelineState.creation_ceiling to the invoking owl's
    bounds on the continue-run state.
+5. TOCTOU-delegation gap: delegate_task stamps the NARROW context ceiling, not the
+   wide current-owl bounds, when the parent owl was widened after creation.
 """
 
 from __future__ import annotations
@@ -235,3 +237,52 @@ async def test_sessions_send_sets_child_ceiling_to_invoking_owl_bounds() -> None
     child_state = captured[0]
     # The child's creation_ceiling must equal the INVOKING owl's bounds.
     assert child_state.creation_ceiling == _CALLER_BOUNDS
+
+
+# --------------------------------- TOCTOU-delegation gap: narrow ceiling wins
+
+
+_NARROW_CEILING = BoundsSpec(tools=frozenset({"read_file"}))
+_WIDE_OWL_BOUNDS = BoundsSpec(tools=frozenset({"read_file", "shell"}))
+
+
+async def test_delegate_task_toctou_narrow_ceiling_wins() -> None:
+    """TOCTOU-delegation gap test: the parent owl is registered with WIDE bounds
+    {read_file, shell}, but the context creation_ceiling is NARROW {read_file}
+    (as would occur after a durable task resumes with a widened owl).
+    The child's creation_ceiling must be the NARROW {read_file} — NOT the wide
+    owl bounds. This verifies child_floor uses owl ∩ ceiling = ceiling (narrow wins)."""
+    delegator = _CapturingDelegator()
+    reg = OwlRegistry.with_default_secretary()
+    reg.register(OwlAgentManifest(
+        name="caller_owl", role="caller-role", system_prompt="I call.",
+        model_tier="fast", bounds=_WIDE_OWL_BOUNDS,
+    ))
+    reg.register(OwlAgentManifest(
+        name="scout", role="research-scout", system_prompt="I research.",
+        model_tier="standard",
+    ))
+    services = StepServices(a2a_delegator=delegator, owl_registry=reg)  # type: ignore[arg-type]
+    token = set_services(services)
+    # Stamp the parent context with the NARROW persisted ceiling (simulates a resumed
+    # durable task whose owl was widened after creation).
+    trace = TraceContext.start(
+        "sess", trace_id="tr-toctou", channel="cli",
+        owl_name="caller_owl",
+        creation_ceiling=_NARROW_CEILING,
+    )
+    try:
+        res = await DelegateTaskTool().execute(goal="sub-task", to_owl="scout")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success
+    assert len(delegator.captured_states) == 1
+    child_state = delegator.captured_states[0]
+    # The narrow ceiling must win over the wide owl bounds.
+    assert child_state.creation_ceiling is not None
+    assert child_state.creation_ceiling.tools == frozenset({"read_file"}), (
+        f"Expected narrow ceiling {{read_file}}, got {child_state.creation_ceiling.tools!r} — "
+        "TOCTOU-delegation gap: child received the wide owl bounds instead of the narrow ceiling"
+    )

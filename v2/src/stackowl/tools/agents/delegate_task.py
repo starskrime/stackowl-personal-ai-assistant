@@ -41,7 +41,7 @@ from stackowl.owls.delegation_limits import (
     MAX_CONCURRENT_DELEGATIONS,
     MAX_DELEGATION_DEPTH,
 )
-from stackowl.pipeline.authz_compose import resolve_owl_bounds
+from stackowl.pipeline.authz_compose import child_floor
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.tools.agents.resolver import resolve_target_owl
@@ -239,10 +239,13 @@ class DelegateTaskTool(Tool):
         parent_state = PipelineState(
             trace_id=trace_id or "delegate-task", session_id=session_id, input_text=sub_task,
             channel=channel, owl_name=caller, pipeline_step="dispatch", delegation_depth=depth,
-            # E2-S2 delegation floor — the child cannot exceed the PARENT owl's
-            # bounds even if its own owl is broader (no-escalation-via-delegation,
-            # FR35-runtime). Best-effort: parent unbounded → None (no clamp).
-            creation_ceiling=resolve_owl_bounds(caller, get_services().owl_registry),
+            # E2-S2 delegation floor — clamp to parent EFFECTIVE bounds (owl ∩ ceiling)
+            # — closes TOCTOU-delegation: a resumed parent whose owl was widened after
+            # creation still clamps children to its persisted ceiling (FR35-runtime).
+            # Back-compat: unstamped context ceiling (None) → owl bounds only (prior behavior).
+            creation_ceiling=child_floor(
+                caller, TraceContext.creation_ceiling(), get_services().owl_registry
+            ),
         )
         log.tool.debug(
             "delegate_task._run_delegation: dispatching",
