@@ -286,4 +286,5 @@ async def test_out_of_bounds_tool_never_reaches_consent() -> None:
     gate = _RecordingConsentGate()
     allowed, forbidden, provider = await _drive(owl_bounds, ceiling=ceiling, consent_gate=gate)
     assert forbidden.executed is False
-    assert "forbidden_tool" not in gate.checked
+    assert "allowed_tool" in gate.checked   # gate IS consulted for in-bounds tools
+    assert "forbidden_tool" not in gate.checked  # bounds short-circuits before consent

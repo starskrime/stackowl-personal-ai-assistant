@@ -164,16 +164,22 @@ async def _run_with_tools(
         bounds_block = check_effective_bounds(effective, name)
         if bounds_block is not None:
             denied_this_run.add(name)
-            # Provenance on the deny branch only (no per-dispatch recompute on the
-            # allow path): owl-only verdict tells us whether the TASK was the narrower.
-            owl_only = check_effective_bounds(
-                compute_effective_bounds(
-                    state.evolve(creation_ceiling=None, task_envelope=None),
-                    get_services().owl_registry,
-                ),
-                name,
-            )
-            denied_by = "owl" if owl_only is not None else "task"
+            # Provenance for the log only (deny branch only — no per-dispatch
+            # recompute on the allow path). Guarded: a transient fault while
+            # recomputing the owl-only verdict must NOT abort the turn — the tool
+            # is already denied; fall back to "unknown" provenance and return the
+            # clean deny.
+            try:
+                owl_only = check_effective_bounds(
+                    compute_effective_bounds(
+                        state.evolve(creation_ceiling=None, task_envelope=None),
+                        get_services().owl_registry,
+                    ),
+                    name,
+                )
+                denied_by = "owl" if owl_only is not None else "task"
+            except Exception:  # noqa: BLE001 — provenance is best-effort, never fatal
+                denied_by = "unknown"
             log.engine.warning(
                 "[pipeline] execute: tool refused by bounds",
                 extra={"_fields": {
