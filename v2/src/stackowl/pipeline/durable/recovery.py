@@ -371,6 +371,7 @@ class DurableTaskRecoverer:
                 task_id=task_id,
                 durable_owner_id=self._owner_id,
                 creation_ceiling=task.creation_ceiling,
+                task_envelope=task.task_envelope,
             )
         # A checkpoint exists — continue the transcript from the next iteration.
         cp = deserialize(blob)
@@ -387,6 +388,7 @@ class DurableTaskRecoverer:
             task_id=task_id,
             durable_owner_id=self._owner_id,
             creation_ceiling=task.creation_ceiling,
+            task_envelope=task.task_envelope,
             durable_resume_messages=cp.messages,
             durable_resume_tool_calls=cp.tool_call_records,
             durable_resume_iteration=cp.iteration + 1,

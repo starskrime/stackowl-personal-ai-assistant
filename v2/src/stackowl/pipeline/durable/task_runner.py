@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 from stackowl.pipeline.authz_compose import resolve_owl_bounds
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
+from stackowl.pipeline.planner import PreflightPlanner, ToolProposer
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 
@@ -84,6 +85,19 @@ class DurableTaskRunner:
         # E2-S2 — snapshot the acting owl's bounds as the resume-monotonicity
         # ceiling. Best-effort: no registry / unbounded owl → None (no clamp).
         creation_ceiling = resolve_owl_bounds(state.owl_name, get_services().owl_registry)
+        # E2-S3 — preflight plan a least-privilege envelope (durable tasks only).
+        # Best-effort, fail-open: any failure → None → byte-for-byte S2 (no plan).
+        task_envelope = None
+        try:
+            services = get_services()
+            tool_registry = services.tool_registry
+            if tool_registry is not None and services.provider_registry is not None:
+                catalog = [(t.name, t.description) for t in tool_registry.all()]
+                planner = PreflightPlanner(ToolProposer(services.provider_registry))
+                task_envelope = await planner.plan(goal, creation_ceiling, catalog)
+        except Exception as exc:  # noqa: BLE001 — never block task creation on planning
+            log.tasks.warning("[tasks] runner.run: planner failed — no envelope", exc_info=exc)
+            task_envelope = None
         # Persist the ORIGINATING owl/channel from the creating state so B4
         # crash-recovery reconstructs the real owl/channel instead of hardcoding
         # 'secretary'/'cli' (the latent wrong-owl bug). Empty strings are coerced
@@ -98,13 +112,17 @@ class DurableTaskRunner:
                 owl_name=state.owl_name or None,
                 channel=state.channel or None,
                 creation_ceiling=creation_ceiling,
+                task_envelope=task_envelope,
                 created_at=now,
                 updated_at=now,
             )
         )
         # 2. DECISION — stamp the durable scope so the B2 execute step drives durably.
         durable_state = state.evolve(
-            task_id=task_id, durable_owner_id=owner_id, creation_ceiling=creation_ceiling,
+            task_id=task_id,
+            durable_owner_id=owner_id,
+            creation_ceiling=creation_ceiling,
+            task_envelope=task_envelope,
         )
         return await self._drive(task_id, durable_state)
 
