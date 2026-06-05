@@ -1,4 +1,4 @@
-"""E2-S2 — compute_effective_bounds and child_floor: owl(now) ∩ ceiling ∩ envelope."""
+"""E2-S2/S3 — compute_effective_bounds and child_floor: owl(now) ∩ ceiling (enforcement only)."""
 
 from __future__ import annotations
 
