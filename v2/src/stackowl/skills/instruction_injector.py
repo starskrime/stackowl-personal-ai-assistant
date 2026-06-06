@@ -28,6 +28,11 @@ def _resolve_text(sk: _SkillLike) -> str:
 
 
 def _neutralize(text: str) -> str:
+    # Strip angle brackets FIRST so an untrusted body can never close the
+    # <skill_reference> fence or forge a trusted one (e.g. a summary containing
+    # "</skill_reference> ... <skill_reference trust=\"trusted\">"). Without this
+    # the fence is escapable and the whole trust-tier defense is void.
+    text = text.replace("<", "").replace(">", "")
     text = _HEADER_RE.sub("", text)            # drop heading/role markers
     text = " ".join(text.split())              # collapse newlines/whitespace -> prose
     return text[:_PER_SKILL_NEUTRALIZE_CAP]
