@@ -257,4 +257,12 @@ def manifest_to_yaml_entry(manifest: OwlAgentManifest) -> dict[str, Any]:
         entry["provider_name"] = manifest.provider_name
     if manifest.tools:
         entry["tools"] = list(manifest.tools)
+    if manifest.capability_profile:
+        entry["capability_profile"] = list(manifest.capability_profile)
+    if manifest.skills:
+        entry["skills"] = list(manifest.skills)
+    if manifest.bounds is not None:
+        # model_dump(mode="json") turns frozenset/tuple into list — ruamel cannot
+        # represent frozenset/tuple and would raise RepresenterError otherwise.
+        entry["bounds"] = manifest.bounds.model_dump(mode="json", exclude_none=True)
     return entry
