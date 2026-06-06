@@ -24,10 +24,14 @@ class _StubProviderRegistry:
     def get_with_cascade(self, tier): return self._p
 
 
-def _write(root: Path, name="alpha", body="long body to summarize"):
+def _write(root: Path, name="alpha", body="long body to summarize", summary=None):
     d = root / "user" / name
     d.mkdir(parents=True)
-    (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\n{body}\n", encoding="utf-8")
+    fm = f"---\nname: {name}\ndescription: d\n"
+    if summary is not None:
+        fm += f"summary: {summary}\n"
+    fm += f"---\n{body}\n"
+    (d / "SKILL.md").write_text(fm, encoding="utf-8")
 
 
 async def _build(tmp_db, root, provider):
@@ -64,3 +68,15 @@ async def test_empty_output_leaves_summary_null(tmp_db, tmp_path: Path):
     comp = await _build(tmp_db, tmp_path, _StubProvider(out="   "))
     sk = await comp.store.get("user", "alpha")
     assert sk.summary is None
+
+
+@pytest.mark.asyncio
+async def test_author_summary_never_overwritten_by_generation(tmp_db, tmp_path: Path):
+    # an authored summary must never be regenerated/overwritten by the back-fill
+    _write(tmp_path, summary="AUTHORED PLAYBOOK")
+    prov = _StubProvider(out="GENERATED — should not appear")
+    comp = await _build(tmp_db, tmp_path, prov)
+    sk = await comp.store.get("user", "alpha")
+    assert sk.summary == "AUTHORED PLAYBOOK"
+    assert sk.summary_source == "author"
+    assert prov.calls == 0  # provider never invoked for an authored skill
