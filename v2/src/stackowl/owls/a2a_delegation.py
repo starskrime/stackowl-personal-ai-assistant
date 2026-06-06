@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict
 
 from stackowl.exceptions import A2ATimeoutError, StackOwlError
 from stackowl.infra.observability import log
+from stackowl.mcp._tool import sanitize_mcp_text as _sanitize
 from stackowl.messaging.a2a import A2AMessage, A2AQueue
 from stackowl.owls.delegation_limits import GOVERNOR_ACQUIRE_TIMEOUT_SECONDS
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
@@ -76,10 +77,12 @@ class A2ADelegator:
         to_owl: str,
         sub_task: str,
         parent_state: PipelineState,
-    ) -> str:
-        """Run a Secretary-to-specialist round trip and return the response text.
+    ) -> A2AResult:
+        """Run a Secretary-to-specialist round trip and return a structured result.
 
-        Returns the specialist's joined response chunks, or ``""`` on timeout.
+        Returns an :class:`A2AResult` whose ``status`` is governor-decided from
+        observed facts (timeout / exception / empty / child errors) — never parsed
+        from child output text so the child cannot spoof a status.
         """
         log.engine.debug(
             "[a2a-delegator] delegate: entry",
@@ -135,7 +138,7 @@ class A2ADelegator:
                     }
                 },
             )
-            return ""
+            return A2AResult(status="timeout", resolved_owl=to_owl)
         except StackOwlError as exc:
             specialist_task.cancel()
             log.engine.error(
@@ -143,7 +146,7 @@ class A2ADelegator:
                 exc_info=exc,
                 extra={"_fields": {"trace_id": parent_state.trace_id, "from": from_owl, "to": to_owl}},
             )
-            return ""
+            return A2AResult(status="child_error", resolved_owl=to_owl, child_detail=_sanitize(str(exc)))
 
         duration_ms = (time.monotonic() - t0) * 1000
         # Ensure specialist task wrapped up cleanly (it should have, since it sent the reply).
@@ -157,6 +160,18 @@ class A2ADelegator:
                     extra={"_fields": {"trace_id": parent_state.trace_id, "to": to_owl}},
                 )
 
+        # Governor-decided status: prefer the child-reported status when present;
+        # otherwise derive from observed facts (content present → ok, blank → empty).
+        # Status is NEVER parsed from content text.
+        _known: set[str] = {
+            "ok", "empty", "timeout", "child_error",
+            "truncated", "refused", "cycle", "target_not_found",
+        }
+        status: DelegationStatus = (
+            response.status  # type: ignore[assignment]
+            if response.status in _known
+            else ("empty" if not response.content.strip() else "ok")
+        )
         log.engine.info(
             "[a2a-delegator] delegate: exit",
             extra={
@@ -165,12 +180,18 @@ class A2ADelegator:
                     "from": from_owl,
                     "to": to_owl,
                     "duration_ms": duration_ms,
+                    "status": status,
                     "response_len": len(response.content),
                     "trace_id_match": response.trace_id == parent_state.trace_id,
                 }
             },
         )
-        return response.content
+        return A2AResult(
+            status=status,
+            content=response.content,
+            child_detail=_sanitize(response.error or ""),
+            resolved_owl=to_owl,
+        )
 
     async def _run_under_governor(
         self,
@@ -226,30 +247,46 @@ class A2ADelegator:
             # child-toolset exclusion (depth>0) and the S1 depth refusal read
             # this; it is the structural fork-bomb cap.
             delegation_depth=parent_state.delegation_depth + 1,
+            # T3 — append this hop to the audit chain so every child state
+            # carries the full ancestry (parent chain + its own owl name).
+            delegation_chain=parent_state.delegation_chain + (to_owl,),
         )
         backend = AsyncioBackend(services=self._services)
 
         response_text = ""
+        reply_status: str = "ok"
+        reply_detail: str = ""
         try:
             final_state = await self._run_under_governor(backend, sub_state)
             response_text = "".join(chunk.content for chunk in final_state.responses)
+            # Governor-decide the child outcome from observed facts — never from content.
             if final_state.errors:
+                if any(e.startswith("budget:stop:") for e in final_state.errors):
+                    reply_status = "truncated"
+                else:
+                    reply_status = "child_error"
+                reply_detail = _sanitize("; ".join(final_state.errors))
                 log.engine.warning(
                     "[a2a-delegator] _run_specialist: specialist reported errors",
                     extra={
                         "_fields": {
                             "trace_id": parent_state.trace_id,
                             "to": to_owl,
+                            "reply_status": reply_status,
                             "errors": list(final_state.errors),
                         }
                     },
                 )
+            elif not response_text.strip():
+                reply_status = "empty"
         except StackOwlError as exc:
             log.engine.error(
                 "[a2a-delegator] _run_specialist: sub-pipeline failed",
                 exc_info=exc,
                 extra={"_fields": {"trace_id": parent_state.trace_id, "to": to_owl}},
             )
+            reply_status = "child_error"
+            reply_detail = _sanitize(str(exc))
         except asyncio.CancelledError:
             log.engine.warning(
                 "[a2a-delegator] _run_specialist: cancelled",
@@ -263,6 +300,8 @@ class A2ADelegator:
             content=response_text,
             message_type="response",
             trace_id=parent_state.trace_id,
+            status=reply_status,
+            error=reply_detail or None,
         )
         self._a2a_queue.send(reply)
         log.engine.debug(

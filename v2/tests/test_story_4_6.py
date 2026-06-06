@@ -294,7 +294,8 @@ class TestA2ADelegator:
         )
 
         # MockProvider streams each whitespace-separated word + " "
-        assert response.strip() == "research result"
+        # delegate() now returns A2AResult — check .content (T3 widening).
+        assert response.content.strip() == "research result"
 
     async def test_delegate_preserves_trace_id_in_messages(self) -> None:
         queue = A2AQueue()
@@ -341,7 +342,7 @@ class TestA2ADelegator:
         )
 
     async def test_delegate_returns_empty_on_timeout(self) -> None:
-        """If the specialist never replies, delegate returns '' and logs a warning."""
+        """If the specialist never replies, delegate returns A2AResult(status='timeout') and logs a warning."""
 
         class _BlockingProvider(MockProvider):
             async def stream(  # type: ignore[override]
@@ -375,7 +376,9 @@ class TestA2ADelegator:
             parent_state=parent,
         )
 
-        assert response == ""
+        # delegate() now returns A2AResult — timeout yields status="timeout" (T3 widening).
+        assert response.status == "timeout"
+        assert response.content == ""
 
     async def test_timeout_seconds_property_exposed(self) -> None:
         delegator = A2ADelegator(
