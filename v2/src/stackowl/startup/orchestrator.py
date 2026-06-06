@@ -202,6 +202,7 @@ class StartupOrchestrator:
             db=db_pool, tool_registry=tool_registry, owl_registry=owl_registry,
             embedding_registry=memory_components.embedding_registry,
             lessons_index=memory_components.lessons_index,
+            provider_registry=provider_registry,
         )
         log.info(
             "[startup] gateway: skills loaded",
