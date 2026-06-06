@@ -73,7 +73,7 @@ class SkillAuditEntry:
 _SUMMARY_SANITIZER_VERSION = "1"
 
 
-def _summary_hash(loaded: "LoadedSkill", override: str | None) -> str:
+def _summary_hash(loaded: LoadedSkill, override: str | None) -> str:
     """Stable content hash for a skill's body + override text.
 
     Used by the author write (T5) and the back-fill path (T6) so both produce
@@ -81,9 +81,12 @@ def _summary_hash(loaded: "LoadedSkill", override: str | None) -> str:
     """
     h = hashlib.sha256()
     h.update(loaded.body.encode("utf-8"))
-    h.update(b"\x00"); h.update((override or "").encode("utf-8"))
-    h.update(b"\x00"); h.update(loaded.manifest.source.encode("utf-8"))
-    h.update(b"\x00"); h.update(_SUMMARY_SANITIZER_VERSION.encode("utf-8"))
+    h.update(b"\x00")
+    h.update((override or "").encode("utf-8"))
+    h.update(b"\x00")
+    h.update(loaded.manifest.source.encode("utf-8"))
+    h.update(b"\x00")
+    h.update(_SUMMARY_SANITIZER_VERSION.encode("utf-8"))
     return h.hexdigest()
 
 

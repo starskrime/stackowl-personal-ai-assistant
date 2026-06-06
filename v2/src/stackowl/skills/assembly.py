@@ -235,7 +235,7 @@ _SUMMARY_BODY_CAP = 4000
 async def _summarize_missing(
     loaded: list[LoadedSkill],
     store: SkillIndexStore,
-    provider_registry: object,
+    provider_registry: ProviderRegistry,
 ) -> None:
     """Generate + cache a condensed summary for skills lacking one (mirror _embed_missing).
 

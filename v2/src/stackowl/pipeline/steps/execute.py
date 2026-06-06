@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from stackowl.authz.bounds import ResourceCaps
 from stackowl.commands.tier_command import get_session_tier
@@ -29,6 +29,9 @@ from stackowl.providers.react_callback import ReActIterationState
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.registry import ToolRegistry
 
+if TYPE_CHECKING:
+    from stackowl.skills.store import SkillIndexStore
+
 # E8-S0 — tools a delegated child (delegation_depth>0) must NOT see, so a child
 # cannot recurse into a fork-bomb. Names are matched defensively (the tools are
 # registered by later stories S1/S3); excluding by name is correct ahead of them.
@@ -46,7 +49,7 @@ _CHILD_EXCLUDED_TOOLS = frozenset(
 async def _compute_presented_pins(
     base_pins: list[str],
     owned_skill_names: tuple[str, ...],
-    skill_store: object,
+    skill_store: SkillIndexStore | None,
 ) -> list[str]:
     """presented_pins = base owl tools ∪ owned skills' tool names. PRESENTATION ONLY —
     the dispatch seam enforces owl.bounds ∩ creation_ceiling independently (see

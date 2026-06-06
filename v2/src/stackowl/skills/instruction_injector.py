@@ -5,6 +5,7 @@ instructions (the body reaches system role every turn — a prompt-injection sur
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Protocol
 
 from stackowl.infra.observability import log
@@ -16,11 +17,19 @@ _HEADER_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s.*$")   # strip markdown headers (
 
 
 class _SkillLike(Protocol):
-    name: str
-    source: str
-    summary: str | None
-    description: str
-    when_to_use: str
+    # Read-only (property) members so the Protocol is covariant in its field types:
+    # a concrete Skill whose `source` is the narrower SkillSource literal still
+    # satisfies `source -> str`. Mutable attribute members would be invariant and reject it.
+    @property
+    def name(self) -> str: ...
+    @property
+    def source(self) -> str: ...
+    @property
+    def summary(self) -> str | None: ...
+    @property
+    def description(self) -> str: ...
+    @property
+    def when_to_use(self) -> str: ...
 
 
 def _resolve_text(sk: _SkillLike) -> str:
@@ -42,7 +51,7 @@ class SkillInstructionInjector:
     """Render owned-skill playbooks. Trusted (builtin) sources injected plainly;
     untrusted sources fenced in <skill_reference trust="untrusted"> + neutralized."""
 
-    def render(self, owl_name: str, skills: list[_SkillLike], *, cap: int = _DEFAULT_CAP) -> str:
+    def render(self, owl_name: str, skills: Sequence[_SkillLike], *, cap: int = _DEFAULT_CAP) -> str:
         log.engine.debug("[skills] injector.render: entry", extra={"_fields": {"owl": owl_name, "n": len(skills)}})
         if not skills:
             return ""
