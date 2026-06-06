@@ -242,7 +242,9 @@ async def _gather_recent_actions(
     return result
 
 
-async def _gather_relevant_skills(query: str, limit: int = 3) -> str:
+async def _gather_relevant_skills(
+    query: str, limit: int = 3, owned: set[str] | None = None
+) -> str:
     """Best-effort: surface up to K skills semantically relevant to ``query``.
 
     Per the Commit 3 sub-phase 3d operator vote:
@@ -294,6 +296,15 @@ async def _gather_relevant_skills(query: str, limit: int = 3) -> str:
     if not hits:
         log.engine.debug(
             "[pipeline] classify._gather_relevant_skills: exit — no matches",
+        )
+        return ""
+    # Filter owned skills so they don't appear at two altitudes (owned-playbook
+    # section AND relevant-skills block → weak-model repetition loops).
+    if owned:
+        hits = [(sk, sim) for sk, sim in hits if sk.name not in owned]
+    if not hits:
+        log.engine.debug(
+            "[pipeline] classify._gather_relevant_skills: exit — all hits owned",
         )
         return ""
     # 4. EXIT — format the prompt block
@@ -445,7 +456,15 @@ async def run(state: PipelineState) -> PipelineState:
         state.session_id, state.trace_id, limit=3,
     )
     # Voyager-style skills relevant to this query (Commit 3 sub-phase 3d).
-    skills_block = await _gather_relevant_skills(state.input_text, limit=3)
+    # Suppress owned skills so they don't appear at two altitudes.
+    owned: set[str] = set()
+    _reg = get_services().owl_registry
+    if _reg is not None:
+        try:
+            owned = set(_reg.get(state.owl_name).skills)
+        except Exception:
+            owned = set()
+    skills_block = await _gather_relevant_skills(state.input_text, limit=3, owned=owned)
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
     # pellets from the unified LanceDB lessons index.
     lessons_block = await _gather_lessons(state.input_text, limit=3)
