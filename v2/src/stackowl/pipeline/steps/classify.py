@@ -462,7 +462,11 @@ async def run(state: PipelineState) -> PipelineState:
     if _reg is not None:
         try:
             owned = set(_reg.get(state.owl_name).skills)
-        except Exception:
+        except Exception as exc:  # unknown owl / lookup failure → no suppression (safe)
+            log.engine.debug(
+                "[pipeline] classify: owned-skill lookup failed — no suppression",
+                exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
+            )
             owned = set()
     skills_block = await _gather_relevant_skills(state.input_text, limit=3, owned=owned)
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
