@@ -43,6 +43,48 @@ _CHILD_EXCLUDED_TOOLS = frozenset(
 )
 
 
+async def _compute_presented_pins(
+    base_pins: list[str],
+    owned_skill_names: tuple[str, ...],
+    skill_store: object,
+) -> list[str]:
+    """presented_pins = base owl tools ∪ owned skills' tool names. PRESENTATION ONLY —
+    the dispatch seam enforces owl.bounds ∩ creation_ceiling independently (see
+    compute_effective_bounds), so a coupled tool is visible but still DENIED unless
+    bounds permit. Never an authorization widening."""
+    # 1. ENTRY
+    log.engine.debug(
+        "[pipeline] execute: _compute_presented_pins: entry",
+        extra={"_fields": {"base_pins": len(base_pins), "owned_skills": list(owned_skill_names)}},
+    )
+    pins = list(base_pins)
+    if owned_skill_names and skill_store is not None:
+        try:
+            # 2. DECISION — fetch owned skills and union their tool_names
+            skills = await skill_store.get_many_by_name(tuple(owned_skill_names))
+            log.engine.debug(
+                "[pipeline] execute: _compute_presented_pins: fetched skills",
+                extra={"_fields": {"fetched": len(skills)}},
+            )
+            # 3. STEP — merge tool names, deduplicating
+            for sk in skills:
+                for tn in sk.tool_names:
+                    if tn not in pins:
+                        pins.append(tn)
+        except Exception as exc:  # B5 — coupling is best-effort, never break the turn
+            log.engine.warning(
+                "[pipeline] execute: skill pin augmentation failed",
+                exc_info=exc,
+                extra={"_fields": {"owl_skills": list(owned_skill_names)}},
+            )
+    # 4. EXIT
+    log.engine.debug(
+        "[pipeline] execute: _compute_presented_pins: exit",
+        extra={"_fields": {"total_pins": len(pins)}},
+    )
+    return pins
+
+
 def _schema_tool_name(schema: dict[str, object]) -> str:
     """Extract the tool name from a provider schema (anthropic or openai shape)."""
     name = schema.get("name")
@@ -87,7 +129,11 @@ async def _run_with_tools(
             owl_manifest = owl_registry.get(state.owl_name)
             if owl_manifest.capability_profile:
                 profile = list(owl_manifest.capability_profile)
-                pins = list(owl_manifest.tools)
+                # Presentation-only: presented_pins = base tools ∪ owned-skill tool names.
+                # Enforcement (owl.bounds ∩ creation_ceiling) is independent in _dispatch.
+                pins = await _compute_presented_pins(
+                    owl_manifest.tools, owl_manifest.skills, get_services().skill_store
+                )
         except Exception as exc:  # unknown owl / lookup failure → no gating (safe)
             log.engine.debug(
                 "[pipeline] execute: owl profile lookup failed — full catalog",
