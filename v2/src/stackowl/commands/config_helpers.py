@@ -6,6 +6,8 @@ and helpers can be unit-tested in isolation.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -44,9 +46,19 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def save_yaml(path: Path, data: dict[str, Any]) -> None:
+    """Atomically persist *data* as YAML: serialize to a temp file in the same
+    directory, then ``os.replace`` over the target. A serialization failure or
+    crash never leaves a half-written config that would corrupt every owl."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        _yaml().dump(data, fh)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            _yaml().dump(data, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def resolve_field(settings_cls: type[BaseModel], key: str) -> tuple[type[BaseModel] | None, str, Any, dict[str, Any]]:
