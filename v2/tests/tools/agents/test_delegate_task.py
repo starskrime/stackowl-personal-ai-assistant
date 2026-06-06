@@ -227,7 +227,10 @@ async def test_empty_result_becomes_structured_empty_status() -> None:
     record = _record(res.output)
     assert record["status"] == "empty"  # refined from old "timeout_or_empty"
     assert record["result"] == ""  # NOT a bare empty string at the tool boundary
-    assert len(fake.calls) == 1  # delegate WAS called (it just returned nothing)
+    # T7 recovery ladder: "empty" is retriable, so delegate is called twice
+    # (initial attempt + retry-once). Fallback to secretary is skipped because
+    # caller==secretary. Two calls is the correct bounded behavior.
+    assert len(fake.calls) == 2  # initial + retry (fallback skipped: caller is secretary)
 
 
 # -------------------------------------------------------------- self-healing edges
@@ -413,3 +416,121 @@ async def test_child_error_status_mapped() -> None:
         reset_services(token)
     rec = _record(res.output)
     assert rec["status"] == "child_error"
+
+
+# -------------------------------------------------------- T7: bounded recovery ladder
+
+
+class _ScriptedDelegator:
+    """Returns successive A2AResults from a script list and records every call."""
+
+    def __init__(self, results: list[A2AResult]) -> None:
+        self._results = list(results)
+        self.calls: list[dict[str, object]] = []
+
+    async def delegate(
+        self, *, from_owl: str, to_owl: str, sub_task: str, parent_state: PipelineState
+    ) -> A2AResult:
+        self.calls.append({"to_owl": to_owl, "depth": parent_state.delegation_depth})
+        return self._results.pop(0)
+
+
+def _registry_with_three_owls() -> OwlRegistry:
+    """Secretary + scout + analyst — needed for fallback tests where caller != secretary."""
+    reg = OwlRegistry.with_default_secretary()
+    reg.register(
+        OwlAgentManifest(
+            name="scout",
+            role="research-scout",
+            system_prompt="You research things.",
+            model_tier="standard",
+        )
+    )
+    reg.register(
+        OwlAgentManifest(
+            name="analyst",
+            role="data-analyst",
+            system_prompt="You analyse data.",
+            model_tier="standard",
+        )
+    )
+    return reg
+
+
+@pytest.mark.asyncio
+async def test_retry_then_fallback_recovers() -> None:
+    """Retry-once + fallback-to-secretary: 3 calls total, recovered_via_secretary status.
+
+    Scenario: caller=scout delegates to analyst (fails twice) → fallback to secretary (ok).
+    Depth is IDENTICAL across all 3 attempts (parent_state reused; no re-increment).
+    """
+    fake = _ScriptedDelegator([
+        A2AResult(status="timeout", resolved_owl="analyst"),
+        A2AResult(status="timeout", resolved_owl="analyst"),
+        A2AResult(status="ok", content="done", resolved_owl="secretary"),
+    ])
+    reg = _registry_with_three_owls()
+    token = set_services(_services(fake, reg))
+    # caller=scout (non-secretary) delegates to analyst; fallback will go to secretary
+    trace = TraceContext.start("s", trace_id="t-ladder", channel="cli", owl_name="scout")
+    try:
+        res = await DelegateTaskTool().execute(goal="g", to_owl="analyst")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    rec = _record(res.output)
+    assert rec["status"] == "recovered_via_secretary"
+    assert "done" in str(rec["result"])
+    assert len(fake.calls) == 3  # initial + retry + fallback
+    assert [c["to_owl"] for c in fake.calls] == ["analyst", "analyst", "secretary"]
+    # Depth must be identical across all attempts (parent_state NOT re-built per attempt).
+    depths = [c["depth"] for c in fake.calls]
+    assert depths[0] == depths[1] == depths[2], f"depths differ: {depths}"
+
+
+@pytest.mark.asyncio
+async def test_fallback_skipped_when_caller_is_secretary() -> None:
+    """Secretary is the caller → no self-fallback; only initial + retry (2 calls max)."""
+    fake = _ScriptedDelegator([
+        A2AResult(status="child_error", resolved_owl="scout"),
+        A2AResult(status="child_error", resolved_owl="scout"),
+    ])
+    token = set_services(_services(fake, _registry_with_three_owls()))
+    trace = TraceContext.start("s", trace_id="t-noselffall", channel="cli", owl_name="secretary")
+    try:
+        res = await DelegateTaskTool().execute(goal="g", to_owl="scout")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    rec = _record(res.output)
+    # No fallback fires; final status is the terminal child_error.
+    assert rec["status"] == "child_error"
+    assert len(fake.calls) == 2  # initial + retry, NO fallback
+    assert all(c["to_owl"] == "scout" for c in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_fallback_skipped_when_secretary_in_chain() -> None:
+    """Secretary already in delegation chain → fallback would create a cycle; skip it."""
+    fake = _ScriptedDelegator([
+        A2AResult(status="child_error", resolved_owl="analyst"),
+        A2AResult(status="child_error", resolved_owl="analyst"),
+    ])
+    token = set_services(_services(fake, _registry_with_three_owls()))
+    # secretary is in the chain → fallback must be skipped
+    trace = TraceContext.start(
+        "s", trace_id="t-inchain", channel="cli",
+        owl_name="scout", delegation_chain=("secretary",),
+    )
+    try:
+        res = await DelegateTaskTool().execute(goal="g", to_owl="analyst")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    rec = _record(res.output)
+    # Falls through to honest terminal — no fallback attempted.
+    assert rec["status"] == "child_error"
+    assert len(fake.calls) == 2  # initial + retry only

@@ -39,6 +39,7 @@ from stackowl.infra.trace import TraceContext
 from stackowl.interaction.cost_pause import gate_or_continue
 from stackowl.owls.delegation_limits import (
     MAX_CONCURRENT_DELEGATIONS,
+    MAX_DELEGATION_ATTEMPTS_PER_TURN,
     MAX_DELEGATION_DEPTH,
 )
 from stackowl.pipeline.authz_compose import child_floor
@@ -52,6 +53,7 @@ from stackowl.tools.agents.results import (
     error_result,
     ok_result,
     provenance_footer,
+    recovered_result,
     refusal_result,
     target_not_found_result,
     truncated_result,
@@ -86,8 +88,15 @@ class DelegateTaskTool(Tool):
         ``_active`` is a process-lifetime per-``trace_id`` in-flight counter for
         the width cap, guarded by a lock because concurrent ``delegate_task`` calls
         in the same turn (fan-out) mutate it from different tasks.
+
+        ``_attempts`` is a cumulative per-``trace_id`` counter for the global
+        per-turn attempt budget (``MAX_DELEGATION_ATTEMPTS_PER_TURN``). It bounds
+        all delegate() calls (initial + retries + fallbacks) within one turn so a
+        crafted prompt cannot walk an unbounded delegation tree. Bounded to 256
+        entries to prevent an unbounded leak across turns.
         """
         self._active: dict[str, int] = {}
+        self._attempts: dict[str, int] = {}
         self._lock = threading.Lock()
 
     @property
@@ -238,6 +247,9 @@ class DelegateTaskTool(Tool):
 
     # ---------------------------------------------------------------- helpers
 
+    # Statuses that are transient failures worth retrying/falling back on.
+    _RETRIABLE = frozenset({"timeout", "empty", "child_error"})
+
     async def _run_delegation(
         self,
         *,
@@ -251,39 +263,140 @@ class DelegateTaskTool(Tool):
         channel: str,
         t0: float,
     ) -> ToolResult:
-        """Build parent_state, call delegate(), and shape the structured result."""
+        """Build parent_state once, then run the bounded recovery ladder.
+
+        Ladder: initial attempt → retry-once (same target) → fallback to secretary.
+
+        The SAME ``parent_state`` (and therefore the SAME ``child_floor``) is
+        reused for every attempt — no re-computation, no escalation of bounds.
+        The width slot is held by the ``execute`` finally-block; this method NEVER
+        calls ``_try_acquire``. Depth is NOT incremented between attempts.
+
+        1. ENTRY — log inputs.
+        2. DECISION — build parent_state once; inner _attempt() checks budget.
+        3. STEP — run up to 3 delegate() calls (initial + retry + fallback).
+        4. EXIT — return shaped ToolResult.
+        """
+        # 1. ENTRY
+        log.tool.debug(
+            "delegate_task._run_delegation: entry",
+            extra={"_fields": {"trace_id": trace_id, "from": caller, "to": target, "depth": depth}},
+        )
+
+        # 2. DECISION — build parent_state ONCE; reused for all attempts.
         sub_task = compose_sub_task(args.goal, args.context)
+        chain = tuple(TraceContext.get().get("delegation_chain") or ())
         parent_state = PipelineState(
             trace_id=trace_id or "delegate-task", session_id=session_id, input_text=sub_task,
             channel=channel, owl_name=caller, pipeline_step="dispatch", delegation_depth=depth,
-            delegation_chain=tuple(TraceContext.get().get("delegation_chain") or ()),
-            # E2-S2 delegation floor — clamp to parent EFFECTIVE bounds (owl ∩ ceiling)
-            # — closes TOCTOU-delegation: a resumed parent whose owl was widened after
-            # creation still clamps children to its persisted ceiling (FR35-runtime).
-            # Back-compat: unstamped context ceiling (None) → owl bounds only (prior behavior).
+            delegation_chain=chain,
+            # E2-S2 delegation floor — clamp to parent EFFECTIVE bounds (owl ∩ ceiling).
+            # Reused for ALL attempts so the fallback cannot escalate the creation_ceiling.
             creation_ceiling=child_floor(
                 caller, TraceContext.creation_ceiling(), get_services().owl_registry
             ),
         )
         log.tool.debug(
-            "delegate_task._run_delegation: dispatching",
-            extra={"_fields": {"trace_id": trace_id, "from": caller, "to": target, "depth": depth}},
+            "delegate_task._run_delegation: parent_state built, beginning ladder",
+            extra={"_fields": {"trace_id": trace_id, "target": target, "chain": chain}},
         )
-        try:
-            result = await delegator.delegate(  # type: ignore[attr-defined]
-                from_owl=caller, to_owl=target, sub_task=sub_task, parent_state=parent_state,
-            )
-        except Exception as exc:  # B5 — delegate is contracted not to raise; belt-and-braces.
-            log.tool.error(
-                "delegate_task._run_delegation: delegate raised — structured error",
-                exc_info=exc,
-                extra={"_fields": {"trace_id": trace_id, "to": target}},
-            )
-            return ok_result(
-                {"status": "error", "to_owl": target, "detail": str(exc)},
-                t0, note=f"delegation to {target} failed",
-            )
 
+        async def _attempt(to_owl: str) -> object:
+            """Charge one attempt unit then call delegate(); returns A2AResult or raises."""
+            if not self._charge_attempt(trace_id):
+                log.tool.warning(
+                    "delegate_task._run_delegation: attempt budget exhausted — short-circuit",
+                    extra={"_fields": {"trace_id": trace_id, "cap": MAX_DELEGATION_ATTEMPTS_PER_TURN}},
+                )
+                from stackowl.owls.a2a_delegation import A2AResult  # local import avoids circular dep
+                return A2AResult(status="refused", resolved_owl=to_owl)
+            try:
+                return await delegator.delegate(  # type: ignore[attr-defined]
+                    from_owl=caller, to_owl=to_owl, sub_task=sub_task, parent_state=parent_state,
+                )
+            except Exception as exc:  # B5 — delegate is contracted not to raise; belt-and-braces.
+                log.tool.error(
+                    "delegate_task._run_delegation: delegate raised — structured error",
+                    exc_info=exc,
+                    extra={"_fields": {"trace_id": trace_id, "to": to_owl}},
+                )
+                return ok_result(
+                    {"status": "error", "to_owl": to_owl, "detail": str(exc)},
+                    t0, note=f"delegation to {to_owl} failed",
+                )
+
+        # 3. STEP — initial attempt.
+        result = await _attempt(target)
+        # If _attempt() caught an exception it already returned a ToolResult.
+        if isinstance(result, ToolResult):
+            return result
+
+        log.tool.debug(
+            "delegate_task._run_delegation: initial attempt done",
+            extra={"_fields": {"trace_id": trace_id, "status": getattr(result, "status", "?")}},
+        )
+
+        # Retry-once on retriable failure (same target, same parent_state, same floor).
+        if getattr(result, "status", None) in self._RETRIABLE:
+            log.tool.debug(
+                "delegate_task._run_delegation: retry-once",
+                extra={"_fields": {"trace_id": trace_id, "target": target, "prev_status": result.status}},  # type: ignore[union-attr]
+            )
+            result = await _attempt(target)
+            if isinstance(result, ToolResult):
+                return result
+
+        # Fallback to secretary if still failing and conditions allow.
+        if getattr(result, "status", None) in self._RETRIABLE:
+            registry = get_services().owl_registry
+            secretary = registry.secretary_name() if registry is not None else None
+            # Skip self-fallback and in-chain fallback.
+            if (
+                secretary is not None
+                and secretary != caller
+                and secretary != target
+                and secretary not in chain
+            ):
+                log.tool.debug(
+                    "delegate_task._run_delegation: fallback to secretary",
+                    extra={"_fields": {"trace_id": trace_id, "via": secretary, "original": target}},
+                )
+                fb = await _attempt(secretary)
+                if isinstance(fb, ToolResult):
+                    return fb
+                if getattr(fb, "status", None) == "ok":
+                    log.tool.info(
+                        "delegate_task._run_delegation: recovered via secretary",
+                        extra={"_fields": {"trace_id": trace_id, "via": secretary, "original": target}},
+                    )
+                    # 4. EXIT — recovered path.
+                    return recovered_result(t0, original=target, via=secretary, result=fb.content)  # type: ignore[union-attr]
+                # Fallback also failed — keep the better terminal to report.
+                log.tool.warning(
+                    "delegate_task._run_delegation: fallback also failed",
+                    extra={"_fields": {
+                        "trace_id": trace_id, "via": secretary,
+                        "fb_status": getattr(fb, "status", "?"),
+                    }},
+                )
+                if getattr(fb, "status", None) not in self._RETRIABLE:
+                    result = fb
+            else:
+                log.tool.debug(
+                    "delegate_task._run_delegation: fallback skipped",
+                    extra={"_fields": {
+                        "trace_id": trace_id, "secretary": secretary,
+                        "caller": caller, "target": target,
+                        "reason": (
+                            "caller_is_secretary" if secretary == caller
+                            else "target_is_secretary" if secretary == target
+                            else "secretary_in_chain" if secretary in chain
+                            else "no_secretary"
+                        ),
+                    }},
+                )
+
+        # 4. EXIT — map terminal A2AResult to ToolResult.
         return self._map_terminal(result, target, t0)
 
     def _map_terminal(self, result: object, target: str, t0: float) -> ToolResult:
@@ -340,3 +453,18 @@ class DelegateTaskTool(Tool):
                 self._active.pop(trace_id, None)
             else:
                 self._active[trace_id] = current - 1
+
+    def _charge_attempt(self, trace_id: str) -> bool:
+        """Increment the per-trace cumulative attempt counter; return False past budget.
+
+        Mirrors ``_try_acquire`` structure (same lock, same pattern). Bounded to 256
+        entries to prevent an unbounded memory leak across turns/traces.
+        """
+        with self._lock:
+            if len(self._attempts) > 256:
+                self._attempts.clear()
+            current = self._attempts.get(trace_id, 0)
+            if current >= MAX_DELEGATION_ATTEMPTS_PER_TURN:
+                return False
+            self._attempts[trace_id] = current + 1
+            return True

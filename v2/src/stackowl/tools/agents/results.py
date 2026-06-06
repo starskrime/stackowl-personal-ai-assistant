@@ -112,6 +112,25 @@ def truncated_result(t0: float, *, target: str, result: str, detail: str) -> Too
     )
 
 
+def recovered_result(t0: float, *, original: str, via: str, result: str) -> ToolResult:
+    """Original target was unavailable; the fallback specialist handled it instead.
+
+    Attributed lead-in flags the substitution so the model can surface it if relevant.
+    English model-facing note (i18n for user-visible text is T9).
+    """
+    lead = f"[{original} was unavailable, so {via} handled this instead:]\n"
+    return ok_result(
+        {
+            "status": "recovered_via_secretary",
+            "to_owl": via,
+            "original": original,
+            "result": lead + result + provenance_footer(via),
+        },
+        t0,
+        note=f"recovered: {via} handled the sub-task after {original} failed",
+    )
+
+
 def error_result(msg: str, t0: float) -> ToolResult:
     """A failed ToolResult for invalid-argument / hard-error cases (logs exit)."""
     duration_ms = (time.monotonic() - t0) * 1000
