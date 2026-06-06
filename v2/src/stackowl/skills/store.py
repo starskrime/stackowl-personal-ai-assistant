@@ -42,6 +42,10 @@ class Skill:
     parent_traces: list[str]
     embedding: list[float] | None
     embedding_model: str | None
+    summary: str | None
+    summary_source: str | None
+    summary_body_hash: str | None
+    tool_names: tuple[str, ...]
     body_text: str
     manifest_json: dict[str, object]
     loaded_at: float
@@ -86,7 +90,8 @@ ON CONFLICT(owner_id, source, name) DO UPDATE SET
 _SELECT_FIELDS = """
     skill_id, name, source, path, description, when_to_use, version, enabled,
     success_rate, n_executions, parent_traces, embedding, embedding_model,
-    manifest_json, body_text, loaded_at, updated_at
+    manifest_json, body_text, loaded_at, updated_at,
+    summary, summary_source, summary_body_hash, tool_names
 """
 
 
@@ -489,6 +494,10 @@ def _row_to_skill(row: dict[str, object]) -> Skill:
         parent_traces=list(parent_traces),
         embedding=embedding,
         embedding_model=str(row["embedding_model"]) if row.get("embedding_model") else None,
+        summary=str(row["summary"]) if row.get("summary") is not None else None,
+        summary_source=str(row["summary_source"]) if row.get("summary_source") is not None else None,
+        summary_body_hash=str(row["summary_body_hash"]) if row.get("summary_body_hash") is not None else None,
+        tool_names=tuple(json.loads(str(row.get("tool_names") or "[]"))),
         body_text=str(row.get("body_text", "")),
         manifest_json=manifest_dict,
         loaded_at=float(str(row["loaded_at"])),
