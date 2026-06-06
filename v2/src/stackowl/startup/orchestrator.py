@@ -284,6 +284,18 @@ class StartupOrchestrator:
             embedding_registry=memory_components.embedding_registry,
         )
 
+        # `/owls` slash command — owl persona management + the owl-builder
+        # (add/edit specialists with bounds). Wired with the live owl + tool
+        # registries so preset/explicit toolsets validate against the real catalog.
+        from stackowl.commands.owls_command import OwlsCommand
+
+        OwlsCommand.create_and_register(
+            owl_registry=owl_registry,
+            db=db_pool,
+            event_bus=event_bus,
+            tool_registry=tool_registry,
+        )
+
         notification_components = await NotificationAssembly.build(
             db=db_pool,
             settings=self._settings,
