@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
-from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.manifest import ModelTier, OwlAgentManifest
 from stackowl.owls.tool_presets import PRESETS, ROUTER_TOOLS
 
 
@@ -28,7 +28,7 @@ class OwlSpec:
 
     name: str
     role: str
-    model_tier: str
+    model_tier: ModelTier
     preset: str | None = None
     explicit_tools: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
@@ -94,7 +94,7 @@ class SpecialistOwlBuilder:
             model_tier=spec.model_tier,
             provider_name=spec.provider_name,
             temperature=spec.temperature,
-            tools=sorted(bounds.tools) if bounds is not None else [],
+            tools=sorted(bounds.tools) if bounds is not None and bounds.tools is not None else [],
             capability_profile=capability_profile,
             skills=spec.skills,
             bounds=bounds,

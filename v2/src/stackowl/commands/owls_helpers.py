@@ -8,15 +8,17 @@ total and side-effect-free.
 from __future__ import annotations
 
 import shlex
-from typing import Any
+from typing import Any, get_args
 
 from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
 from stackowl.owls.builder import OwlSpec, SpecialistOwlBuilder
 from stackowl.owls.dna import OwlDNA
-from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.manifest import ModelTier, OwlAgentManifest
 
-_VALID_TIERS: frozenset[str] = frozenset({"fast", "standard", "powerful", "local"})
+# Derived from the manifest's ModelTier Literal so the CLI allowlist can never
+# drift from the field's accepted values (single source of truth).
+_VALID_TIERS: frozenset[str] = frozenset(get_args(ModelTier))
 
 _DNA_TRAITS: tuple[str, ...] = (
     "challenge_level",

@@ -14,6 +14,11 @@ from stackowl.owls.dna import OwlDNA
 _NAME_RE = re.compile(r"^\w+$", re.UNICODE)
 _MAX_NAME_LEN = 16
 
+# The single source of truth for an owl's model tier. Reused by the owl-builder
+# (OwlSpec) and command parsing (`_VALID_TIERS = get_args(ModelTier)`) so the
+# allowlist can never drift from the field's accepted values.
+ModelTier = Literal["fast", "standard", "powerful", "local"]
+
 
 class OwlAgentManifest(BaseModel):
     """Defines an owl persona — loaded from stackowl.yaml at startup."""
@@ -23,7 +28,7 @@ class OwlAgentManifest(BaseModel):
     name: str
     role: str
     system_prompt: str
-    model_tier: Literal["fast", "standard", "powerful", "local"]
+    model_tier: ModelTier
     provider_name: str | None = None
     tools: list[str] = []
     # Skills this owl owns (records ownership; feeds capability_profile). A tuple
