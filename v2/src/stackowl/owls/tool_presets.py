@@ -25,7 +25,7 @@ class OwlPreset:
 
 PRESETS: dict[str, OwlPreset] = {
     "researcher": OwlPreset(
-        tools=frozenset({"read_file", "session_search", "web_search", "web_fetch"}),
+        tools=frozenset({"read_file", "memory", "web_search", "web_fetch"}),
         specialty="research and information gathering",
         capability_profile=("research",),
     ),
@@ -40,7 +40,7 @@ PRESETS: dict[str, OwlPreset] = {
         capability_profile=("writing",),
     ),
     "analyst": OwlPreset(
-        tools=frozenset({"read_file", "search_files", "web_search", "web_fetch", "session_search"}),
+        tools=frozenset({"read_file", "search_files", "web_search", "web_fetch", "memory"}),
         specialty="analysis and synthesis",
         capability_profile=("analysis",),
     ),

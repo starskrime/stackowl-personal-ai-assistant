@@ -22,3 +22,11 @@ def test_router_tools_are_delegate_and_discovery():
 def test_each_preset_declares_specialty_and_capability_profile():
     for p in PRESETS.values():
         assert p.specialty and p.capability_profile
+
+
+def test_knowledge_roles_use_durable_memory_recall():
+    # researcher/analyst recall durable cross-session knowledge via `memory`
+    # (hybrid vector+FTS), NOT `session_search` (verbatim current-session turns).
+    assert "memory" in PRESETS["researcher"].tools
+    assert "memory" in PRESETS["analyst"].tools
+    assert "session_search" not in PRESETS["researcher"].tools
