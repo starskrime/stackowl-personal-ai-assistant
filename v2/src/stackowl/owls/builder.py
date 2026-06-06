@@ -8,7 +8,7 @@ and self-healing rather than a dead-end."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.infra.observability import log
@@ -20,7 +20,11 @@ from stackowl.owls.tool_presets import PRESETS, ROUTER_TOOLS
 @dataclass(frozen=True)
 class OwlSpec:
     """A build request. Provide a ``preset`` OR ``explicit_tools`` (not both);
-    neither => an unbounded general owl (today's bare ``/owls add``)."""
+    neither => an unbounded general owl (today's bare ``/owls add``).
+
+    NOTE: an empty ``explicit_tools=()`` is treated as "no tools given" (=>
+    unbounded), NOT as an explicit deny-all toolset. A deny-all owl is not a
+    builder use-case in S1."""
 
     name: str
     role: str
@@ -33,7 +37,7 @@ class OwlSpec:
     temperature: float = 0.7
     system_prompt: str | None = None
     specialty: str | None = None
-    valid_tools: frozenset[str] | None = field(default=None)
+    valid_tools: frozenset[str] | None = None
 
 
 def generate_persona(name: str, role: str, specialty: str) -> str:

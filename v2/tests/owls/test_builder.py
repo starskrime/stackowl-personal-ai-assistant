@@ -52,3 +52,8 @@ def test_explicit_system_prompt_overrides_generated_persona():
 def test_requires_preset_xor_explicit():
     with pytest.raises(ValueError):
         _build(name="x", preset="researcher", explicit_tools=("read_file",))
+
+
+def test_unknown_preset_raises():
+    with pytest.raises(ValueError):
+        _build(name="x", preset="nonexistent")
