@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 
 
 _VALID_SOURCES: tuple[SkillSource, ...] = ("builtin", "installed", "user", "learned")
+_OWL_TRUSTED_SOURCES: frozenset[str] = frozenset({"builtin", "user"})
 _SKILL_MD_FILENAME = "SKILL.md"
 
 
@@ -200,7 +201,13 @@ class SkillLoader:
         owls_count = 0
         owls_manifest = _resolve_owls_manifest(skill_dir)
         if owls_manifest is not None and self._owl_registry is not None:
-            owls_count = self._load_owls(owls_manifest, manifest.name)
+            if source in _OWL_TRUSTED_SOURCES:
+                owls_count = self._load_owls(owls_manifest, manifest.name)
+            else:
+                log.skills.warning(
+                    "[skills] loader: refusing owls.yaml from untrusted source",
+                    extra={"_fields": {"source": source, "skill": manifest.name}},
+                )
 
         # 4. EXIT
         log.skills.info(
