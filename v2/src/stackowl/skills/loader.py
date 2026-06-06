@@ -56,6 +56,7 @@ class LoadedSkill:
     body: str
     tools_registered: int
     owls_registered: int
+    tool_names: tuple[str, ...] = ()
 
 
 class SkillLoadError(Exception):
@@ -191,10 +192,10 @@ class SkillLoader:
             ) from exc
 
         # 3. STEP — optional StackOwl extension sidecars
-        tools_count = 0
+        tool_names: tuple[str, ...] = ()
         tools_dir = skill_dir / "tools"
         if tools_dir.exists() and self._tool_registry is not None:
-            tools_count = self._load_tools(tools_dir, manifest.name)
+            tool_names = self._load_tools(tools_dir, manifest.name)
 
         owls_count = 0
         owls_manifest = _resolve_owls_manifest(skill_dir)
@@ -206,25 +207,29 @@ class SkillLoader:
             "[skills] loader._load_one: registered",
             extra={"_fields": {
                 "name": manifest.name, "source": source,
-                "tools": tools_count, "owls": owls_count,
+                "tools": len(tool_names), "owls": owls_count,
                 "body_len": len(parsed.body),
             }},
         )
         return LoadedSkill(
             manifest=manifest, path=skill_dir, body=parsed.body,
-            tools_registered=tools_count, owls_registered=owls_count,
+            tools_registered=len(tool_names), owls_registered=owls_count,
+            tool_names=tool_names,
         )
 
-    def _load_tools(self, tools_dir: Path, source_name: str) -> int:
-        """Import every ``.py`` under tools_dir, register Tool subclasses found."""
+    def _load_tools(self, tools_dir: Path, source_name: str) -> tuple[str, ...]:
+        """Import every ``.py`` under tools_dir, register Tool subclasses found.
+
+        Returns a tuple of successfully registered tool names (one per tool).
+        """
         # 1. ENTRY
         log.skills.debug(
             "[skills] loader._load_tools: entry",
             extra={"_fields": {"dir": str(tools_dir), "source": source_name}},
         )
         if self._tool_registry is None:
-            return 0
-        count = 0
+            return ()
+        names: list[str] = []
         for py_file in sorted(tools_dir.glob("*.py")):
             if py_file.name.startswith("_"):
                 continue
@@ -251,7 +256,7 @@ class SkillLoader:
                     try:
                         instance = obj()
                         self._tool_registry.register(instance, source_name=source_name)
-                        count += 1
+                        names.append(instance.name)
                     except Exception as exc:  # B5
                         log.skills.error(
                             "[skills] loader._load_tools: tool registration failed",
@@ -261,9 +266,9 @@ class SkillLoader:
         # 4. EXIT
         log.skills.debug(
             "[skills] loader._load_tools: exit",
-            extra={"_fields": {"source": source_name, "registered": count}},
+            extra={"_fields": {"source": source_name, "registered": len(names)}},
         )
-        return count
+        return tuple(names)
 
     def _load_owls(self, owls_yaml: Path, source_name: str) -> int:
         """Parse owls.yaml + register each OwlAgentManifest with the registry."""
