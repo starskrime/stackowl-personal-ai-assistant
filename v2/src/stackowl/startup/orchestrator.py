@@ -177,6 +177,9 @@ class StartupOrchestrator:
         load_builtin_commands()
         db_pool = DbPool(default_db_path())
         await db_pool.open()
+        from stackowl.owls.dna_hydrator import hydrate_dna
+
+        await hydrate_dna(owl_registry, db_pool)
         # Memory subsystem assembly — wires the entire consolidation stack
         # (bridge, preference store, Kuzu adapter, DreamWorker, FactExtractor)
         # via the MemoryAssembly factory. See plan: gleaming-finding-puppy.md
