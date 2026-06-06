@@ -49,6 +49,9 @@ class PipelineState(BaseModel, frozen=True):
     # fork-bomb cap), and the S1 delegate_task tool refuses past
     # MAX_DELEGATION_DEPTH (defense-in-depth).
     delegation_depth: int = 0
+    # Owl-name ancestry of the current delegation (governor-stamped, model-untouchable).
+    # Powers cycle detection (refuse if a target is already in the chain). len() == delegation_depth.
+    delegation_chain: tuple[str, ...] = ()
     # ID of the durable task this pipeline turn belongs to, or None for an
     # ephemeral (non-durable) turn. Carried across evolve() like every other
     # field. Consumed by the langgraph backend to isolate per-task checkpoints

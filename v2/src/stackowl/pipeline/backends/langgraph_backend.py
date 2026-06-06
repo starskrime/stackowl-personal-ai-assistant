@@ -108,6 +108,7 @@ class LangGraphBackend(OrchestratorBackend):
             interactive=state.interactive,
             channel=state.channel,
             delegation_depth=state.delegation_depth,
+            delegation_chain=state.delegation_chain,
             owl_name=state.owl_name,
             creation_ceiling=state.creation_ceiling,
         )

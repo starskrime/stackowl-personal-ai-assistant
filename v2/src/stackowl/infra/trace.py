@@ -20,6 +20,7 @@ class _TraceToken(NamedTuple):
     interactive: Token[bool]
     channel: Token[str | None]
     delegation_depth: Token[int]
+    delegation_chain: Token[tuple[str, ...]]
     owl_name: Token[str | None]
     creation_ceiling: Token[Any]
 
@@ -49,6 +50,11 @@ class TraceContext:
     # the current owl bounds. Typed loosely (Any) to avoid a layering cycle with
     # authz; the TYPE_CHECKING import above provides the annotation for mypy.
     _creation_ceiling: ContextVar[Any] = ContextVar("creation_ceiling", default=None)
+    # E8-S1 — the ordered list of owl names that delegated to the current turn,
+    # oldest-first (e.g. ["secretary", "scout"]). len() == delegation_depth.
+    # Powers cycle detection: delegate_task refuses if the target is already in the
+    # chain. Governor-stamped and model-untouchable. Default empty tuple.
+    _delegation_chain: ContextVar[tuple[str, ...]] = ContextVar("delegation_chain", default=())
 
     @classmethod
     def start(
@@ -59,6 +65,7 @@ class TraceContext:
         interactive: bool = False,
         channel: str | None = None,
         delegation_depth: int = 0,
+        delegation_chain: tuple[str, ...] = (),
         owl_name: str | None = None,
         creation_ceiling: BoundsSpec | None = None,
     ) -> _TraceToken:
@@ -83,6 +90,7 @@ class TraceContext:
             interactive=cls._interactive.set(interactive),
             channel=cls._channel.set(channel),
             delegation_depth=cls._delegation_depth.set(delegation_depth),
+            delegation_chain=cls._delegation_chain.set(delegation_chain),
             owl_name=cls._owl_name.set(owl_name),
             creation_ceiling=cls._creation_ceiling.set(creation_ceiling),
         )
@@ -97,6 +105,7 @@ class TraceContext:
         cls._interactive.reset(token.interactive)
         cls._channel.reset(token.channel)
         cls._delegation_depth.reset(token.delegation_depth)
+        cls._delegation_chain.reset(token.delegation_chain)
         cls._owl_name.reset(token.owl_name)
         cls._creation_ceiling.reset(token.creation_ceiling)
 
@@ -135,5 +144,6 @@ class TraceContext:
             "interactive": cls._interactive.get(),
             "channel": cls._channel.get(),
             "delegation_depth": cls._delegation_depth.get(),
+            "delegation_chain": cls._delegation_chain.get(),
             "owl_name": cls._owl_name.get(),
         }
