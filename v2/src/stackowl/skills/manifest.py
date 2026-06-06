@@ -47,6 +47,11 @@ class SkillManifest(BaseModel):
     # Optional author / license fields for shareable packs.
     author: str | None = None
     license: str | None = None
+    # Condensed operational playbook injected into an owning owl's system prompt
+    # (Owl Capability arc, Story 2). Author override from SKILL.md frontmatter; when
+    # absent the SkillIndexStore back-fill generates + caches one. Additive/defaulted
+    # so existing SKILL.md (no `summary:`) still validate under extra="forbid".
+    summary: str | None = None
 
     @field_validator("version")
     @classmethod
