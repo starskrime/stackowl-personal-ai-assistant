@@ -19,6 +19,7 @@ from stackowl.commands.owls_helpers import (
     format_owl_table,
     manifest_to_yaml_entry,
     parse_add_args,
+    parse_edit_args,
 )
 from stackowl.commands.registry import CommandRegistry
 from stackowl.exceptions import (
@@ -36,9 +37,10 @@ if TYPE_CHECKING:
     from stackowl.tools.registry import ToolRegistry
 
 _USAGE = (
-    "Usage: /owls <list|add|remove|health|dna> [args]\n"
+    "Usage: /owls <list|add|edit|remove|health|dna> [args]\n"
     "  /owls list                              — show registered owls\n"
     "  /owls add <name> --role <r> --tier <t>  — register a new owl\n"
+    "  /owls edit <name> [--tier <t> ...]      — update fields on an existing owl\n"
     "  /owls remove <name>                     — start removal (asks for YES)\n"
     "  /owls health                            — report registry health\n"
     "  /owls dna <name>                        — show DNA traits"
@@ -91,6 +93,8 @@ class OwlsCommand(SlashCommand):
                 result = self._list()
             elif sub == "add":
                 result = await self._add(rest)
+            elif sub == "edit":
+                result = await self._edit(rest)
             elif sub == "remove":
                 result = await self._remove(rest)
             elif sub == "health":
@@ -157,6 +161,39 @@ class OwlsCommand(SlashCommand):
             extra={"_fields": {"name": manifest.name, "role": manifest.role}},
         )
         return f"✓ owl '{manifest.name}' registered (role={manifest.role}, tier={manifest.model_tier})"
+
+    # ------------------------------------------------------------------ edit
+    async def _edit(self, rest: str) -> str:
+        log.gateway.debug(
+            "[commands] owls.edit: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._registry is None:
+            return _NO_REGISTRY
+        changes = parse_edit_args(rest)
+        name = changes.pop("name")
+        from stackowl.owls.registry import _SECRETARY_NAME  # noqa: PLC0415
+        if name == _SECRETARY_NAME:
+            log.gateway.warning(
+                "[commands] owls.edit: secretary edit refused",
+                extra={"_fields": {"name": name}},
+            )
+            return f"✗ /owls edit: {name} is mandatory and cannot be edited"
+        current = self._registry.get(name)  # raises OwlNotFoundError → handled in handle()
+        log.gateway.debug(
+            "[commands] owls.edit: applying changes",
+            extra={"_fields": {"name": name, "fields": list(changes.keys())}},
+        )
+        updated = current.model_copy(update=changes)  # bounds/skills/capability_profile carried automatically
+        self._registry.replace(updated)
+        self._upsert_to_yaml(manifest_to_yaml_entry(updated))
+        if self._bus is not None:
+            self._bus.emit("owl_edited", {"name": updated.name})
+        log.gateway.info(
+            "[commands] owls.edit: exit",
+            extra={"_fields": {"name": updated.name, "tier": updated.model_tier}},
+        )
+        return f"✓ owl '{updated.name}' updated (tier={updated.model_tier})"
 
     # ---------------------------------------------------------------- remove
     async def _remove(self, rest: str) -> str:

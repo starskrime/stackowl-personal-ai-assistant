@@ -96,3 +96,36 @@ async def test_add_without_tool_registry_still_works(tmp_yaml: Path):
     assert "✓" in out
     owls = _load(tmp_yaml)["owls"]
     assert any(e["name"] == "scout" for e in owls)
+
+
+# ---------------------------------------------------------------------------
+# /owls edit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_changes_field_and_repersists(tmp_yaml: Path):
+    reg = OwlRegistry()
+    cmd = OwlsCommand(owl_registry=reg)
+    await cmd.handle("add rsr --role research --tier fast --preset researcher", _state())
+    out = await cmd.handle("edit rsr --tier powerful", _state())
+    assert "✓" in out
+    assert reg.get("rsr").model_tier == "powerful"
+    assert reg.get("rsr").bounds is not None and "delegate_task" in reg.get("rsr").bounds.tools
+    entry = next(e for e in _load(tmp_yaml)["owls"] if e["name"] == "rsr")
+    assert entry["model_tier"] == "powerful"
+
+
+@pytest.mark.asyncio
+async def test_edit_secretary_rejected(tmp_yaml: Path):
+    reg = OwlRegistry.with_default_secretary()
+    cmd = OwlsCommand(owl_registry=reg)
+    from stackowl.owls.registry import _SECRETARY_NAME
+    out = await cmd.handle(f"edit {_SECRETARY_NAME} --tier fast", _state())
+    assert "✗" in out
+
+
+@pytest.mark.asyncio
+async def test_edit_unknown_owl_errors(tmp_yaml: Path):
+    out = await OwlsCommand(owl_registry=OwlRegistry()).handle("edit ghost --tier fast", _state())
+    assert "✗" in out

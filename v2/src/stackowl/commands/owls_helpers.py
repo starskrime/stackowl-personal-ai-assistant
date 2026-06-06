@@ -223,6 +223,57 @@ def parse_add_args(rest: str) -> dict[str, Any]:
     return params
 
 
+def parse_edit_args(rest: str) -> dict[str, Any]:
+    """Parse ``/owls edit <name> [--flag value ...]`` — every flag optional.
+
+    Raises :class:`CommandParseError` on malformed input or unknown flags.
+    """
+    log.gateway.debug(
+        "[commands] owls.parse_edit_args: entry",
+        extra={"_fields": {"rest_len": len(rest)}},
+    )
+    try:
+        tokens = shlex.split(rest)
+    except ValueError as exc:
+        raise CommandParseError("owls edit", f"could not tokenise arguments: {exc}") from exc
+    if not tokens:
+        raise CommandParseError("owls edit", "missing owl name")
+    name, flags = tokens[0], tokens[1:]
+    if len(flags) % 2 != 0:
+        raise CommandParseError("owls edit", "every --flag requires a value")
+    changes: dict[str, Any] = {"name": name}
+    mapping = {
+        "--role": "role",
+        "--tier": "model_tier",
+        "--provider": "provider_name",
+        "--system-prompt": "system_prompt",
+    }
+    i = 0
+    while i < len(flags):
+        key, value = flags[i], flags[i + 1]
+        if key in mapping:
+            changes[mapping[key]] = value
+        elif key == "--temperature":
+            try:
+                changes["temperature"] = float(value)
+            except ValueError as exc:
+                raise CommandParseError("owls edit", f"--temperature must be float, got {value!r}") from exc
+        elif key == "--skills":
+            changes["skills"] = tuple(s.strip() for s in value.split(",") if s.strip())
+        elif key == "--capability-profile":
+            changes["capability_profile"] = [s.strip() for s in value.split(",") if s.strip()]
+        else:
+            raise CommandParseError("owls edit", f"unknown flag: {key}")
+        i += 2
+    if changes.get("model_tier") and changes["model_tier"] not in _VALID_TIERS:
+        raise CommandParseError("owls edit", f"--tier must be one of {sorted(_VALID_TIERS)}")
+    log.gateway.debug(
+        "[commands] owls.parse_edit_args: exit",
+        extra={"_fields": {"name": name, "fields_changed": list(changes.keys())}},
+    )
+    return changes
+
+
 def build_owl_manifest(
     params: dict[str, Any], *, valid_tools: frozenset[str] | None = None
 ) -> OwlAgentManifest:
