@@ -12,6 +12,7 @@ from stackowl.memory.sqlite_helpers import row_to_staged
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
+    from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.models import StagedFact
 
@@ -71,6 +72,7 @@ class FactPromoter:
         lancedb: LanceDBAdapter | None = None,
         clock: Clock | None = None,
         settle_minutes: int = 0,
+        embedding_registry: EmbeddingRegistry | None = None,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
@@ -81,6 +83,7 @@ class FactPromoter:
                     "reinforcement_required": reinforcement_required,
                     "conversation_fact_reinforcement_required": conversation_fact_reinforcement_required,
                     "has_lancedb": lancedb is not None,
+                    "has_embedding_registry": embedding_registry is not None,
                     "settle_minutes": settle_minutes,
                 }
             },
@@ -90,6 +93,7 @@ class FactPromoter:
         self._reinforcement_required = reinforcement_required
         self._conversation_fact_reinforcement_required = conversation_fact_reinforcement_required
         self._lancedb = lancedb
+        self._embedding_registry = embedding_registry
         # Injected time source (ARCH-99) — never call datetime.now() directly so
         # the settle window is deterministically testable.
         self._clock: Clock = clock or WallClock()
@@ -204,6 +208,25 @@ class FactPromoter:
 
     async def _promote_one(self, fact: StagedFact) -> None:
         from stackowl.memory.sqlite_helpers import pack_embedding
+
+        # Self-heal: if the fact arrived without an embedding (e.g. miner-staged),
+        # compute one now so it becomes SEMANTICALLY recallable.  Fail-open: when
+        # no registry is wired or the embed call errors, vec is None and the fact
+        # promotes FTS-only — identical to the pre-existing path.
+        if fact.embedding is None and self._embedding_registry is not None:
+            from stackowl.commands.memory_helpers import _best_effort_embed  # local import avoids cycle
+
+            log.memory.debug(
+                "[memory] fact_promoter._promote_one: computing missing embedding",
+                extra={"_fields": {"fact_id": fact.fact_id}},
+            )
+            vec, model = await _best_effort_embed(fact.content, self._embedding_registry)
+            if vec is not None:
+                fact = fact.model_copy(update={"embedding": vec, "embedding_model": model})
+                log.memory.debug(
+                    "[memory] fact_promoter._promote_one: embedding computed",
+                    extra={"_fields": {"fact_id": fact.fact_id, "model": model}},
+                )
 
         embedding_blob = pack_embedding(fact.embedding) if fact.embedding else b""
         embedding_model = fact.embedding_model or ""

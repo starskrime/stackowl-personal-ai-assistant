@@ -186,7 +186,7 @@ class MemoryTool(Tool):
         # committed fact's vector is upserted for SEMANTIC recall; falls back to
         # None for bridges that don't expose one (FTS recall still works).
         lancedb = getattr(bridge, "lancedb", None)
-        promoter = FactPromoter(db, lancedb=lancedb)
+        promoter = FactPromoter(db, lancedb=lancedb, embedding_registry=get_services().embedding_registry)
         # Route through the shared chokepoint — agent_self provenance + audit.
         # Pass the embedding registry so the fact is embedded at remember time.
         fact_id = await remember_fact(

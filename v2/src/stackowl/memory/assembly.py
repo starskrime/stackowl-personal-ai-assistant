@@ -159,6 +159,7 @@ class MemoryAssembly:
             conversation_fact_reinforcement_required=mem.conversation_fact_reinforcement_required,
             clock=clock,
             settle_minutes=mem.dream_worker_settle_minutes,
+            embedding_registry=embedding_registry,
         )
         pruner = MemoryPruner(
             db=db,
