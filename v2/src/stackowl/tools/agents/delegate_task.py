@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -63,6 +64,9 @@ from stackowl.tools.agents.schema import (
     DELEGATE_TASK_PARAMETERS,
 )
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
+
+if TYPE_CHECKING:
+    from stackowl.owls.a2a_delegation import A2AResult
 
 _TOOLSET_GROUP = "agents"
 _DEFAULT_CALLER = "secretary"
@@ -301,8 +305,9 @@ class DelegateTaskTool(Tool):
             extra={"_fields": {"trace_id": trace_id, "target": target, "chain": chain}},
         )
 
-        async def _attempt(to_owl: str) -> object:
-            """Charge one attempt unit then call delegate(); returns A2AResult or raises."""
+        async def _attempt(to_owl: str) -> A2AResult | ToolResult:
+            """Charge one attempt unit then call delegate(); returns A2AResult (or a
+            ToolResult on the belt-and-braces exception path)."""
             if not self._charge_attempt(trace_id):
                 log.tool.warning(
                     "delegate_task._run_delegation: attempt budget exhausted — short-circuit",
@@ -311,7 +316,7 @@ class DelegateTaskTool(Tool):
                 from stackowl.owls.a2a_delegation import A2AResult  # local import avoids circular dep
                 return A2AResult(status="refused", resolved_owl=to_owl)
             try:
-                return await delegator.delegate(  # type: ignore[attr-defined]
+                return await delegator.delegate(  # type: ignore[attr-defined, no-any-return]
                     from_owl=caller, to_owl=to_owl, sub_task=sub_task, parent_state=parent_state,
                 )
             except Exception as exc:  # B5 — delegate is contracted not to raise; belt-and-braces.
@@ -340,7 +345,7 @@ class DelegateTaskTool(Tool):
         if getattr(result, "status", None) in self._RETRIABLE:
             log.tool.debug(
                 "delegate_task._run_delegation: retry-once",
-                extra={"_fields": {"trace_id": trace_id, "target": target, "prev_status": result.status}},  # type: ignore[union-attr]
+                extra={"_fields": {"trace_id": trace_id, "target": target, "prev_status": result.status}},
             )
             result = await _attempt(target)
             if isinstance(result, ToolResult):
@@ -370,7 +375,7 @@ class DelegateTaskTool(Tool):
                         extra={"_fields": {"trace_id": trace_id, "via": secretary, "original": target}},
                     )
                     # 4. EXIT — recovered path.
-                    return recovered_result(t0, original=target, via=secretary, result=fb.content)  # type: ignore[union-attr]
+                    return recovered_result(t0, original=target, via=secretary, result=fb.content)
                 # Fallback also failed — keep the better terminal to report.
                 log.tool.warning(
                     "delegate_task._run_delegation: fallback also failed",
