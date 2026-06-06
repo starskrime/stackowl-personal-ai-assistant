@@ -26,6 +26,10 @@ class OwlAgentManifest(BaseModel):
     model_tier: Literal["fast", "standard", "powerful", "local"]
     provider_name: str | None = None
     tools: list[str] = []
+    # Skills this owl owns (records ownership; feeds capability_profile). A tuple
+    # for frozen-model hashability. Additive + defaulted: owls predating this
+    # field load unchanged. Skill INSTRUCTION-injection is a later story.
+    skills: tuple[str, ...] = ()
     max_tokens: int = 4096
     temperature: float = 0.7
     timeout_seconds: float = Field(default=30.0, gt=0.0)
