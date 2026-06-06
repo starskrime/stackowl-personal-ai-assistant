@@ -17,11 +17,16 @@ tool names into the presented set, and the real Epic-2 bounds enforcement seam
     system instructions).
 
   Journey B — PRESENTATION ≠ AUTHORIZATION (LOAD-BEARING security proof): an owl
-    owns a skill whose ``tool_names`` include ``shell``. The owl has a
-    ``capability_profile`` (so the coupling/pins branch runs) and ``bounds`` that
-    EXCLUDE ``shell``. Through the REAL turn: ``shell`` is PRESENTED to the model
-    (the coupling unioned it into the presented schemas) YET a ``shell`` call is
-    DENIED at the REAL dispatch seam (the recording tool's execute never ran, the
+    owns a skill whose ``tool_names`` include ``skill_only_tool`` — a tool chosen
+    so it is presented ONLY via skill coupling (it is NOT in the presentation
+    base/always set, NOT in the owl's manifest.tools base pins, and its
+    toolset_group is OUTSIDE the owl's capability_profile, so neither base nor the
+    profile/group tier ever surfaces it). The owl has a ``capability_profile`` (so
+    the coupling/pins branch runs) and ``bounds`` that EXCLUDE ``skill_only_tool``.
+    Through the REAL turn: ``skill_only_tool`` is PRESENTED to the model (ONLY the
+    coupling could have unioned it into the presented schemas — so the PRESENTED
+    assertion is load-bearing: remove coupling and the tool vanishes) YET the call
+    is DENIED at the REAL dispatch seam (the recording tool's execute never ran, the
     model got the canonical "not permitted by this owl's bounds" reason). A
     companion variant proves ``bounds=None`` (unbounded) still does not authorize
     the coupled tool by itself — the coupled tool runs there ONLY because nothing
@@ -77,10 +82,20 @@ from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 USER_ID = 818181
 
 _OWL = "spec"  # the specialist owl that OWNS the skill under test
-_SHELL_TOOL = "shell"  # the coupled, out-of-bounds tool (journey B)
+# Journey B's coupled tool. CHOSEN so it is reachable ONLY via skill coupling
+# (_compute_presented_pins → pins_tier). It is NOT in the presentation base/always
+# set (_DEFAULT_BASE / _DEFAULT_ALWAYS in tools/_infra/presentation.py), NOT in the
+# owl's manifest.tools (base pins, which the specialist leaves empty), and its
+# toolset_group (_SKILL_TOOL_GROUP) is NOT in the owl's capability_profile
+# (["research"]) so the profile/group tier never surfaces it either. The ONLY way
+# it lands in the presented schemas is the owned skill's tool_names coupling.
+_SKILL_ONLY_TOOL = "skill_only_tool"
+# A toolset_group the specialist owl's capability_profile (["research"]) does NOT
+# select — guarantees the group tier never presents _SKILL_ONLY_TOOL.
+_SKILL_TOOL_GROUP = "sysadmin"
 _IN_BOUNDS_TOOL = "web_fetch"
-_FINAL_REPLY = "Done; I'm not permitted to run shell, so I stopped there."
-_REPLY_FRAGMENT = "not permitted to run shell"
+_FINAL_REPLY = "Done; I'm not permitted to run that tool, so I stopped there."
+_REPLY_FRAGMENT = "not permitted to run that tool"
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +161,10 @@ class _FakeBotApp:
 
 
 class _RecordingTool(Tool):
-    def __init__(self, name: str, output: str) -> None:
+    def __init__(self, name: str, output: str, *, toolset_group: str | None = None) -> None:
         self._name = name
         self._output = output
+        self._toolset_group = toolset_group
         self.runs = 0
 
     @property
@@ -168,6 +184,7 @@ class _RecordingTool(Tool):
         return ToolManifest(
             name=self._name, description=self.description,
             parameters=self.parameters, action_severity="read",
+            toolset_group=self._toolset_group,
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -185,11 +202,11 @@ class _RecordingTool(Tool):
 class _ScriptedSpecialist:
     protocol = "anthropic"
 
-    def __init__(self, *, call_shell: bool = False) -> None:
-        self._call_shell = call_shell
+    def __init__(self, *, call_coupled: bool = False) -> None:
+        self._call_coupled = call_coupled
         self.presented_tool_names: list[str] = []
         self.system_text: str = ""
-        self.shell_out: str = ""
+        self.coupled_out: str = ""
 
     @property
     def name(self) -> str:
@@ -200,8 +217,8 @@ class _ScriptedSpecialist:
     ):
         self.system_text = system_text or ""
         self.presented_tool_names = [_schema_name(s) for s in (tool_schemas or [])]
-        if self._call_shell:
-            self.shell_out = await tool_dispatcher(_SHELL_TOOL, {})
+        if self._call_coupled:
+            self.coupled_out = await tool_dispatcher(_SKILL_ONLY_TOOL, {})
         return (_FINAL_REPLY, [])
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
@@ -254,7 +271,7 @@ class _Env:
     owl_registry: OwlRegistry
     tool_registry: ToolRegistry
     services: StepServices
-    shell_tool: _RecordingTool
+    coupled_tool: _RecordingTool
 
 
 @pytest.fixture(autouse=True)
@@ -272,9 +289,13 @@ def _build(provider: _ScriptedSpecialist, *, skill_store: object, owl_registry: 
     adapter._bot_user_id = 999
     adapter._bot_username = ""
 
-    shell_tool = _RecordingTool(_SHELL_TOOL, "SHOULD-NEVER-APPEAR")
+    # The coupled tool under test: a non-base tool in a toolset_group OUTSIDE the
+    # owl's capability_profile, so it is presented ONLY if skill coupling pins it.
+    coupled_tool = _RecordingTool(
+        _SKILL_ONLY_TOOL, "SHOULD-NEVER-APPEAR", toolset_group=_SKILL_TOOL_GROUP
+    )
     tool_registry = ToolRegistry()
-    tool_registry.register(shell_tool)
+    tool_registry.register(coupled_tool)
     tool_registry.register(_RecordingTool(_IN_BOUNDS_TOOL, "FETCHED"))
     for extra_name in ("read_file", "memory", "web_search", "delegate_task",
                        "tool_search", "tool_describe"):
@@ -294,7 +315,7 @@ def _build(provider: _ScriptedSpecialist, *, skill_store: object, owl_registry: 
         backend=AsyncioBackend(services=services),  # type: ignore[arg-type]
         stream_registry=services.stream_registry, provider=provider,
         owl_registry=owl_registry, tool_registry=tool_registry,
-        services=services, shell_tool=shell_tool,
+        services=services, coupled_tool=coupled_tool,
     )
 
 
@@ -393,7 +414,7 @@ async def test_journey_a_owned_skill_summary_trust_wrapped_in_prompt(
     owl_registry = OwlRegistry.with_default_secretary()
     owl_registry.register(_specialist_manifest(skills=("image_resize",), bounds=None))
 
-    provider = _ScriptedSpecialist(call_shell=False)
+    provider = _ScriptedSpecialist(call_coupled=False)
     env = _build(provider, skill_store=store, owl_registry=owl_registry)
 
     _ = await _turn(env, f"@{_OWL} please help")
@@ -421,66 +442,77 @@ async def test_journey_a_owned_skill_summary_trust_wrapped_in_prompt(
 # ===========================================================================
 
 
-async def test_journey_b_coupled_shell_presented_but_denied_by_bounds(
+async def test_journey_b_coupled_tool_presented_but_denied_by_bounds(
     tmp_db: DbPool, tmp_path: Path,
 ) -> None:
-    """The load-bearing proof: an owned skill couples ``shell`` into the
-    PRESENTED set (the model sees it) YET the owl's bounds EXCLUDE ``shell`` so a
-    ``shell`` call is DENIED at the REAL dispatch seam. Presentation made it
-    visible; bounds still denied execution."""
+    """The load-bearing proof: an owned skill couples ``skill_only_tool`` into the
+    PRESENTED set (the model sees it) YET the owl's bounds EXCLUDE it so the call is
+    DENIED at the REAL dispatch seam. Presentation made it visible; bounds still
+    denied execution.
+
+    The coupled tool is chosen so coupling is the ONLY thing that could present it
+    (not in the base/always presentation set, not in manifest.tools, toolset_group
+    outside the owl's capability_profile) — so ``skill_only_tool in
+    presented_tool_names`` is a real, falsifiable proof that coupling presents it.
+    """
     skills_root = tmp_path / "ws" / "skills"
     _write_skill_md(
         skills_root, "installed", "ops_helper",
-        description="operational helper that shells out",
-        summary="runs operational shell commands for the user",
+        description="operational helper that uses a specialized tool",
+        summary="runs a specialized operation for the user",
     )
     store = await _build_store(tmp_db, skills_root)
 
-    # Populate the owned skill's tool_names == ("shell",) via the REAL store write
-    # (the same upsert the loader uses). This is the coupling source execute reads.
+    # Populate the owned skill's tool_names == ("skill_only_tool",) via the REAL
+    # store write (the same upsert the loader uses). This is the coupling source
+    # execute reads.
     sk = await store.get("installed", "ops_helper")
     assert sk is not None
     loaded = LoadedSkill(
         manifest=SkillManifest(
-            name="ops_helper", description="operational helper that shells out",
+            name="ops_helper", description="operational helper that uses a specialized tool",
             source="installed",
-            summary="runs operational shell commands for the user",
+            summary="runs a specialized operation for the user",
         ),
         path=Path(sk.path), body=sk.body_text, tools_registered=1, owls_registered=0,
-        tool_names=(_SHELL_TOOL,),
+        tool_names=(_SKILL_ONLY_TOOL,),
     )
     await store.upsert(loaded)
     requeried = await store.get_many_by_name(("ops_helper",))
-    assert requeried and requeried[0].tool_names == (_SHELL_TOOL,), (
+    assert requeried and requeried[0].tool_names == (_SKILL_ONLY_TOOL,), (
         f"store did not record the coupled tool_names; got {requeried!r}"
     )
 
-    # Owl OWNS the skill, has a capability_profile, and bounds EXCLUDE shell.
+    # Owl OWNS the skill, has a capability_profile, and bounds EXCLUDE the tool.
     bounds = BoundsSpec(tools=frozenset({_IN_BOUNDS_TOOL, "delegate_task", "tool_search"}))
-    assert _SHELL_TOOL not in bounds.tools  # guard: the test's premise
+    assert _SKILL_ONLY_TOOL not in bounds.tools  # guard: the test's premise
     owl_registry = OwlRegistry.with_default_secretary()
     owl_registry.register(_specialist_manifest(skills=("ops_helper",), bounds=bounds))
 
-    provider = _ScriptedSpecialist(call_shell=True)
+    provider = _ScriptedSpecialist(call_coupled=True)
     env = _build(provider, skill_store=store, owl_registry=owl_registry)
 
-    reply = await _turn(env, f"@{_OWL} run a shell command for me")
+    reply = await _turn(env, f"@{_OWL} run the specialized operation for me")
 
-    # --- PRESENTED: the coupling unioned shell into the presented schemas -------
-    assert _SHELL_TOOL in provider.presented_tool_names, (
-        "COUPLING FAILURE: 'shell' was NOT presented to the model even though the "
-        f"owned skill couples it; presented={sorted(provider.presented_tool_names)}"
+    # --- PRESENTED: coupling is the ONLY thing that could have unioned it in -----
+    # (not base/always, not manifest.tools, toolset_group outside the profile).
+    assert _SKILL_ONLY_TOOL in provider.presented_tool_names, (
+        "COUPLING FAILURE: 'skill_only_tool' was NOT presented to the model even "
+        "though the owned skill couples it; since it is not in the base/always set, "
+        "not in the owl's manifest.tools, and its toolset_group is outside the owl's "
+        f"capability_profile, ONLY coupling could present it. presented="
+        f"{sorted(provider.presented_tool_names)}"
     )
 
     # --- DENIED: at the REAL dispatch seam, by the owl's OWN bounds -------------
-    assert env.shell_tool.runs == 0, (
+    assert env.coupled_tool.runs == 0, (
         "AUTHORIZATION BREACH: presentation authorized execution — the coupled "
-        "'shell' tool's execute ran even though the owl's bounds exclude it"
+        "'skill_only_tool' execute ran even though the owl's bounds exclude it"
     )
-    assert "not permitted by this owl's bounds" in provider.shell_out, (
-        f"expected the canonical bounds-deny reason; got: {provider.shell_out!r}"
+    assert "not permitted by this owl's bounds" in provider.coupled_out, (
+        f"expected the canonical bounds-deny reason; got: {provider.coupled_out!r}"
     )
-    assert "SHOULD-NEVER-APPEAR" not in provider.shell_out
+    assert "SHOULD-NEVER-APPEAR" not in provider.coupled_out
     # The turn still delivered a clean final reply (a bounds block is not a crash).
     assert _REPLY_FRAGMENT in reply, f"turn did not deliver a final reply; got: {reply!r}"
 
@@ -489,15 +521,17 @@ async def test_journey_b_control_unbounded_owl_does_not_authorize_via_coupling(
     tmp_db: DbPool, tmp_path: Path,
 ) -> None:
     """CONTROL / variant: with ``bounds=None`` (unbounded) the SAME coupled
-    ``shell`` runs — proving that in the bounded journey it was the BOUNDS (not a
-    missing 'shell' registration) that denied it. The coupling alone never
-    authorizes: shell runs here only because nothing narrows an unbounded owl, and
-    the dispatch seam (compute_effective_bounds → None) leaves it unchanged."""
+    ``skill_only_tool`` runs — proving that in the bounded journey it was the BOUNDS
+    (not a missing registration) that denied it. The coupling alone never
+    authorizes: the tool runs here only because nothing narrows an unbounded owl,
+    and the dispatch seam (compute_effective_bounds → None) leaves it unchanged.
+    The ``.runs == 1`` assertion is also load-bearing on coupling: the tool can
+    only execute if it was first PRESENTED, and only coupling presents it."""
     skills_root = tmp_path / "ws" / "skills"
     _write_skill_md(
         skills_root, "installed", "ops_helper",
-        description="operational helper that shells out",
-        summary="runs operational shell commands",
+        description="operational helper that uses a specialized tool",
+        summary="runs a specialized operation",
     )
     store = await _build_store(tmp_db, skills_root)
     sk = await store.get("installed", "ops_helper")
@@ -505,27 +539,31 @@ async def test_journey_b_control_unbounded_owl_does_not_authorize_via_coupling(
     await store.upsert(
         LoadedSkill(
             manifest=SkillManifest(
-                name="ops_helper", description="operational helper that shells out",
-                source="installed", summary="runs operational shell commands",
+                name="ops_helper", description="operational helper that uses a specialized tool",
+                source="installed", summary="runs a specialized operation",
             ),
             path=Path(sk.path), body=sk.body_text, tools_registered=1, owls_registered=0,
-            tool_names=(_SHELL_TOOL,),
+            tool_names=(_SKILL_ONLY_TOOL,),
         )
     )
 
     owl_registry = OwlRegistry.with_default_secretary()
     owl_registry.register(_specialist_manifest(skills=("ops_helper",), bounds=None))
 
-    provider = _ScriptedSpecialist(call_shell=True)
+    provider = _ScriptedSpecialist(call_coupled=True)
     env = _build(provider, skill_store=store, owl_registry=owl_registry)
 
-    _ = await _turn(env, f"@{_OWL} run a shell command for me")
+    _ = await _turn(env, f"@{_OWL} run the specialized operation for me")
 
-    assert _SHELL_TOOL in provider.presented_tool_names
-    assert env.shell_tool.runs == 1, (
-        "CONTROL FAILURE: coupled 'shell' did not run under an UNBOUNDED owl — "
-        "something other than bounds is blocking it, which would make the bounded "
-        "deny test vacuous."
+    assert _SKILL_ONLY_TOOL in provider.presented_tool_names, (
+        "COUPLING FAILURE: 'skill_only_tool' was NOT presented even though the "
+        "owned skill couples it; only coupling could present it. presented="
+        f"{sorted(provider.presented_tool_names)}"
+    )
+    assert env.coupled_tool.runs == 1, (
+        "CONTROL FAILURE: coupled 'skill_only_tool' did not run under an UNBOUNDED "
+        "owl — something other than bounds is blocking it, which would make the "
+        "bounded deny test vacuous."
     )
 
 
