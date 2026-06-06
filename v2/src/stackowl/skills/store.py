@@ -383,6 +383,46 @@ class SkillIndexStore(OwnedRepository):
         )
         return results
 
+    _SOURCE_PRIORITY: dict[str, int] = {"user": 0, "learned": 1, "installed": 2, "builtin": 3}
+
+    async def get_many_by_name(self, names: tuple[str, ...]) -> list[Skill]:
+        """Resolve bare skill names -> Skills (one owner-scoped query).
+
+        When a name exists under multiple sources, pick by _SOURCE_PRIORITY
+        (lower = higher priority). Request order preserved; unknown names
+        dropped. Reused by assemble (summaries) + execute (tool_names) in T9/T11.
+        """
+        # 1. ENTRY
+        log.skills.debug(
+            "[skills] store.get_many_by_name: entry",
+            extra={"_fields": {"n": len(names)}},
+        )
+        if not names:
+            return []
+        # 2. DECISION — single IN query; dedup by source priority in Python
+        placeholders = ",".join("?" for _ in names)
+        # 3. STEP — fetch all matching rows across sources in one query
+        rows = await self._db.fetch_all(
+            f"SELECT {_SELECT_FIELDS} FROM skills WHERE owner_id = ? AND name IN ({placeholders})",
+            (self._owner_id, *names),
+        )
+        by_name: dict[str, Skill] = {}
+        for r in rows:
+            sk = _row_to_skill(r)
+            cur = by_name.get(sk.name)
+            if cur is None or (
+                self._SOURCE_PRIORITY.get(sk.source, 9)
+                < self._SOURCE_PRIORITY.get(cur.source, 9)
+            ):
+                by_name[sk.name] = sk
+        result = [by_name[n] for n in names if n in by_name]
+        # 4. EXIT
+        log.skills.debug(
+            "[skills] store.get_many_by_name: exit",
+            extra={"_fields": {"resolved": len(result)}},
+        )
+        return result
+
     async def delete(self, skill_id: int) -> None:
         """Remove the index row. File system deletion is the caller's job."""
         # 1. ENTRY
