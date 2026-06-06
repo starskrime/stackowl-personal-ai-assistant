@@ -118,6 +118,21 @@ class OwlRegistry:
             extra={"_fields": {"name": manifest.name, "role": manifest.role, "source": source_name}},
         )
 
+    def replace(self, manifest: OwlAgentManifest) -> None:
+        """Atomically swap an existing owl's manifest (the edit path).
+
+        Guards existence (the dual of ``register``'s duplicate guard). A single
+        dict assignment — the owl is never absent mid-edit (no deregister+register
+        empty window). The mandatory-Secretary policy is enforced one layer up at
+        the command, not here (``replace`` is a general verb)."""
+        if manifest.name not in self._owls:
+            raise OwlNotFoundError(manifest.name)
+        self._owls[manifest.name] = manifest
+        log.startup.debug(
+            "[owls] registry.replace: owl replaced",
+            extra={"_fields": {"name": manifest.name, "role": manifest.role}},
+        )
+
     def unregister_source(self, source_name: str) -> int:
         """Remove all owls registered under source_name. Returns count removed."""
         log.startup.debug(
