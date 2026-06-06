@@ -124,7 +124,15 @@ class OwlRegistry:
         Guards existence (the dual of ``register``'s duplicate guard). A single
         dict assignment — the owl is never absent mid-edit (no deregister+register
         empty window). The mandatory-Secretary policy is enforced one layer up at
-        the command, not here (``replace`` is a general verb)."""
+        the command, not here (``replace`` is a general verb).
+
+        ``_source_map`` provenance is intentionally NOT updated: an edited owl
+        keeps its original source. A caller that changes an owl's source ownership
+        must ``deregister`` + ``register`` instead."""
+        log.startup.debug(
+            "[owls] registry.replace: entry",
+            extra={"_fields": {"name": manifest.name}},
+        )
         if manifest.name not in self._owls:
             raise OwlNotFoundError(manifest.name)
         self._owls[manifest.name] = manifest
