@@ -264,5 +264,10 @@ def manifest_to_yaml_entry(manifest: OwlAgentManifest) -> dict[str, Any]:
     if manifest.bounds is not None:
         # model_dump(mode="json") turns frozenset/tuple into list — ruamel cannot
         # represent frozenset/tuple and would raise RepresenterError otherwise.
-        entry["bounds"] = manifest.bounds.model_dump(mode="json", exclude_none=True)
+        bounds = manifest.bounds.model_dump(mode="json", exclude_none=True)
+        # The tools axis is a frozenset → its dumped list order is non-deterministic
+        # across processes; sort it so re-saving a manifest yields stable yaml diffs.
+        if isinstance(bounds.get("tools"), list):
+            bounds["tools"] = sorted(bounds["tools"])
+        entry["bounds"] = bounds
     return entry
