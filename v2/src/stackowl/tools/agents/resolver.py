@@ -7,14 +7,18 @@ Resolves the specialist an owl should delegate a sub-task to, in priority order:
    case-fold equality; no hardcoded English keyword branching).
 3. Default — the first non-caller specialist in the registry.
 
-Returns ``None`` when nothing resolves (no registry, or only the caller is
-registered) so the caller can surface a structured "unresolved target" refusal
-rather than guessing. Pure function — no I/O, no raise — to keep
-``delegate_task.py`` under the B2 line cap and isolate the resolution policy.
+:func:`resolve_target` returns a :class:`TargetResolution` that distinguishes
+an explicitly-named-but-missing owl (``target_not_found``) from a genuine
+no-candidate situation (``unresolved``) — it never silently swaps an unknown
+explicit target for a different owl.
+
+:func:`resolve_target_owl` is a compatibility shim for existing callers that
+have not yet migrated to the structured result; it unwraps ``.name``.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stackowl.exceptions import OwlNotFoundError
@@ -24,28 +28,48 @@ if TYPE_CHECKING:
     from stackowl.owls.registry import OwlRegistry
 
 
-def resolve_target_owl(
+@dataclass(frozen=True)
+class TargetResolution:
+    """Structured result from :func:`resolve_target`.
+
+    Attributes:
+        name:   The resolved owl name, or ``None`` when resolution failed.
+        reason: ``None`` on success; ``"target_not_found"`` when an explicit
+                ``to_owl`` was supplied but not in the registry;
+                ``"unresolved"`` when no non-caller candidate exists at all.
+    """
+
+    name: str | None
+    reason: str | None  # None=ok | "target_not_found" | "unresolved"
+
+
+def resolve_target(
     *,
     registry: OwlRegistry | None,
     to_owl: str | None,
     role: str | None,
     caller: str,
-) -> str | None:
-    """Return the name of the specialist to delegate to, or ``None`` if unresolvable."""
+) -> TargetResolution:
+    """Resolve the delegation target; never silently swaps an explicit-but-missing owl.
+
+    Distinguishes ``target_not_found`` (explicit ``to_owl`` named but absent)
+    from ``unresolved`` (no non-caller candidate available).
+    """
     if registry is None:
         log.tool.warning("delegate_task.resolve: no owl_registry — cannot resolve target")
-        return None
+        return TargetResolution(None, "unresolved")
 
-    # 1. Explicit name wins when it exists.
+    # 1. Explicit name wins when it exists; fail structurally when it does not.
     if to_owl:
         try:
             registry.get(to_owl)
-            return to_owl
+            return TargetResolution(to_owl, None)
         except OwlNotFoundError:
             log.tool.warning(
                 "delegate_task.resolve: requested to_owl not found",
                 extra={"_fields": {"to_owl": to_owl}},
             )
+            return TargetResolution(None, "target_not_found")  # do NOT fall through
 
     candidates = [m for m in registry.list() if m.name != caller]
 
@@ -54,7 +78,7 @@ def resolve_target_owl(
         wanted = role.casefold()
         for manifest in candidates:
             if manifest.role.casefold() == wanted:
-                return manifest.name
+                return TargetResolution(manifest.name, None)
         log.tool.warning(
             "delegate_task.resolve: no owl matched role",
             extra={"_fields": {"role": role}},
@@ -62,7 +86,23 @@ def resolve_target_owl(
 
     # 3. Default — first available non-caller specialist.
     if candidates:
-        return candidates[0].name
+        return TargetResolution(candidates[0].name, None)
 
     log.tool.warning("delegate_task.resolve: no non-caller specialist available")
-    return None
+    return TargetResolution(None, "unresolved")
+
+
+def resolve_target_owl(
+    *,
+    registry: OwlRegistry | None,
+    to_owl: str | None,
+    role: str | None,
+    caller: str,
+) -> str | None:
+    """Compatibility shim — unwraps :func:`resolve_target` to a plain name.
+
+    Existing callers (``delegate_task``, ``sessions_spawn``) continue to work
+    unchanged. Migrate them to :func:`resolve_target` to gain structured error
+    handling (T5).
+    """
+    return resolve_target(registry=registry, to_owl=to_owl, role=role, caller=caller).name
