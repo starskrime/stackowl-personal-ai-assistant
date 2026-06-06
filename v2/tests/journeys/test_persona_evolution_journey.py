@@ -315,6 +315,28 @@ async def test_cross_session_fact_recall(db: DbPool) -> None:
     assert any("vault path alpha-7" in r.content for r in records)
 
 
+@pytest.mark.asyncio
+async def test_negative_control_no_registry_means_no_vector(db: DbPool) -> None:
+    # Negative control: WITHOUT an embedding_registry, promoting an embedding-less
+    # fact yields ZERO ANN upserts (FTS-only) — proving the PE5 embed in the main
+    # journey is load-bearing, not incidental, AND that promotion is fail-open.
+    spy_lance = _SpyLanceDB()
+    bridge = SqliteMemoryBridge(db, lancedb=spy_lance)  # type: ignore[arg-type]
+    staged = StagedFact(
+        fact_id=str(uuid.uuid4()), content="a fact with no vector", source_type="manual",
+        source_ref="sess-N", confidence=1.0, reinforcement_count=3,
+        embedding=None, embedding_model=None,
+    )
+    await bridge.stage(staged)
+    promoter = FactPromoter(
+        db, confidence_threshold=0.8, reinforcement_required=3,
+        lancedb=spy_lance, embedding_registry=None, settle_minutes=0,  # type: ignore[arg-type]
+    )
+    promoted = await promoter.promote_eligible()
+    assert promoted == 1                 # fail-open: still promotes (FTS-only)
+    assert spy_lance.upserts == []       # no registry → no computed vector → no ANN upsert
+
+
 # ---------------------------------------------------------------------------
 # (B) DNA loop — live mutation (governor-bounded) + survives a restart
 # ---------------------------------------------------------------------------
