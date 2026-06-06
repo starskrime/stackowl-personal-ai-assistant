@@ -63,11 +63,13 @@ async def test_hydrate_skips_orphan(tmp_db: object) -> None:
     assert await hydrate_dna(r, tmp_db) == 0                    # ghost not in registry  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
-async def test_hydrate_failsafe_on_nan(tmp_db: object) -> None:
-    # NaN passes Pydantic float; the v != v guard must keep the authored default (0.5)
-    r = _reg()
-    await _insert(tmp_db, "scout", curiosity=float("nan"))
-    await hydrate_dna(r, tmp_db)                                # must NOT crash / inject NaN  # type: ignore[arg-type]
-    cur = r.get("scout").dna.curiosity
-    assert cur == cur and cur == 0.5                            # not NaN; kept authored default
+def test_coerce_dna_nan_inf_missing_keep_base() -> None:
+    # the load-bearing guard: NaN/inf/missing/None never inject — keep the base value.
+    # (SQLite coerces NaN→NULL, so exercise _coerce_dna directly with a raw NaN/inf.)
+    from stackowl.owls.dna_hydrator import _coerce_dna
+
+    base = OwlDNA(curiosity=0.5, formality=0.5, verbosity=0.5)
+    out = _coerce_dna(base, {"curiosity": float("nan"), "formality": float("inf")})
+    assert out.curiosity == 0.5 and out.formality == 0.5       # NaN/inf → base kept (not NaN)
+    out2 = _coerce_dna(base, {"verbosity": None})              # missing/None → base kept
+    assert out2.verbosity == 0.5
