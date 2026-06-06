@@ -23,6 +23,8 @@ message and it NEVER raises into the backend.
 
 from __future__ import annotations
 
+import json
+
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
@@ -32,6 +34,14 @@ from stackowl.providers.base import Message
 # The answer-producing step(s). A failure here with no usable response is what
 # leaves the user in silence; non-critical steps self-heal and stay silent.
 _CRITICAL_STEPS: frozenset[str] = frozenset({"execute"})
+
+# Delegation statuses that mean the parent received NO usable sub-task answer.
+# ``ok`` and ``recovered_via_secretary`` indicate the model DID get content.
+# ``truncated`` has partial content — treat as an answer; do not surface.
+# ``refused`` is a safety rail the model recovers from inline; do not surface.
+_DELEGATION_TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {"timeout", "child_error", "empty", "cycle", "target_not_found"}
+)
 
 # Tier to start the apology cascade from. A different/healthy provider in the
 # cascade may answer even when the owl's own provider tripped its breaker.
@@ -68,16 +78,49 @@ def _critical_failure_classes(state: PipelineState) -> list[str]:
     return classes
 
 
-def detect_critical_failure(state: PipelineState) -> bool:
-    """True when a CRITICAL step recorded an error AND there is no usable response.
+def _delegation_failed_with_no_answer(state: PipelineState) -> bool:
+    """True when a delegate_task call recorded a terminal status AND the parent
+    produced no usable answer — the swallowed-delegation failure case.
 
-    Both conditions are required: a critical step that errored but still produced
-    a partial answer (e.g. token-limit truncation) is NOT silence, so we don't
-    inject an apology over a real (if partial) response.
+    Guards:
+    * Returns False immediately if the parent has any usable response (the model
+      recovered on its own — do NOT inject an apology over a real answer).
+    * Scans ``state.tool_calls`` for records whose parsed JSON carries
+      ``{"record": {"status": <terminal>}}``; returns True on the first match.
+    * JSON parsing is DEFENSIVE — any parse error or unexpected shape is skipped;
+      the helper never raises (B5: the safety net must not crash the pipeline).
     """
     if _has_usable_response(state):
         return False
-    return bool(_critical_failure_classes(state))
+    for tc in state.tool_calls:
+        if tc.result is None:
+            continue
+        try:
+            parsed = json.loads(tc.result)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        record = parsed.get("record")
+        if not isinstance(record, dict):
+            continue
+        status = record.get("status")
+        if status in _DELEGATION_TERMINAL_STATUSES:
+            return True
+    return False
+
+
+def detect_critical_failure(state: PipelineState) -> bool:
+    """True when a CRITICAL step recorded an error AND there is no usable response,
+    OR when a delegate_task call swallowed a terminal failure with no parent answer.
+
+    Both conditions for the execute-error path are required: a critical step that
+    errored but still produced a partial answer (e.g. token-limit truncation) is
+    NOT silence, so we don't inject an apology over a real (if partial) response.
+    The delegation-failure predicate applies the same guard (``_has_usable_response``
+    is the first check in both helpers).
+    """
+    if _has_usable_response(state):
+        return False
+    return bool(_critical_failure_classes(state)) or _delegation_failed_with_no_answer(state)
 
 
 async def _generate_localized_apology(
