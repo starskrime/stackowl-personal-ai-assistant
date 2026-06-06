@@ -16,7 +16,11 @@ from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import FactExtractionParseError
 from stackowl.memory.extraction_handler import FactExtractionJobHandler
-from stackowl.memory.fact_extractor import ExtractedFactDraft, FactExtractor
+from stackowl.memory.fact_extractor import (
+    EXTRACTED_FACT_SOURCE_TYPE,
+    ExtractedFactDraft,
+    FactExtractor,
+)
 from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.fact_reinforcer import FactReinforcer
 from stackowl.memory.models import StagedFact
@@ -25,7 +29,6 @@ from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.memory.sqlite_helpers import pack_embedding
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.scheduler.job import Job
-
 
 # ---------------------------------------------------------------------------
 # Fixtures & doubles
@@ -41,7 +44,7 @@ def no_test_mode_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-async def db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
+async def db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "story63.db"
     MigrationRunner(db_path=db_path).run()
     pool = DbPool(db_path=db_path)
@@ -243,7 +246,10 @@ async def test_fact_extractor_sets_source_type_conversation() -> None:
     facts = await extractor.extract(
         [Message(role="user", content="anything")], session_id="sess-A"
     )
-    assert facts[0].source_type == "conversation"
+    # Extracted facts are tagged conversation_fact (commit 6c6ec0c) — distinct from raw
+    # 'conversation' turns so they don't pollute Plan A short-term history. Assert against
+    # the canonical constant so this can't go stale again.
+    assert facts[0].source_type == EXTRACTED_FACT_SOURCE_TYPE  # "conversation_fact"
     assert facts[0].source_ref == "sess-A"
 
 
