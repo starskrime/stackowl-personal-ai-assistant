@@ -20,12 +20,14 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcomeStore
-from stackowl.owls.dna import OwlDNA
+from stackowl.owls.dna import _MUTABLE_TRAITS, OwlDNA
 from stackowl.owls.dna_attribution import (
     AttributionReport,
     DnaAttributor,
     lookback_epoch,
 )
+from stackowl.owls.dna_governor import bound_dna
+from stackowl.owls.dna_hydrator import apply_dna_overlay
 from stackowl.owls.dna_storage import DNACheckpointer
 from stackowl.owls.evolution_prompt import EvolutionPromptBuilder
 from stackowl.owls.manifest import OwlAgentManifest
@@ -284,7 +286,24 @@ class EvolutionCoordinator(JobHandler):
                 "[dna] %s: %s %.3f → %.3f (delta %+.3f, src=%s)",
                 manifest.name, trait, previous, current, delta, evolution_source,
             )
-        await self._persist_dna(manifest.name, new_dna)
+        safe_dna = bound_dna(manifest.dna, new_dna)               # governor: clamp once
+        await self._persist_dna(manifest.name, safe_dna)          # DB = source of truth (persist FIRST)
+        apply_dna_overlay(self._owl_registry, manifest.name, safe_dna)  # live refresh (next turn sees it)
+        for trait in _MUTABLE_TRAITS:                              # audit (drift detectable + reversible)
+            old_val = float(getattr(manifest.dna, trait))
+            new_val = float(getattr(safe_dna, trait))
+            if old_val != new_val:
+                log.engine.info(
+                    "[owls] evolution.delta",
+                    extra={"_fields": {
+                        "owl": manifest.name,
+                        "trait": trait,
+                        "old": old_val,
+                        "new": new_val,
+                        "delta": round(new_val - old_val, 4),
+                        "source": evolution_source,
+                    }},
+                )
         # 4. EXIT
         log.engine.info(
             "[dna] coordinator.evolve_one: mutations applied",
