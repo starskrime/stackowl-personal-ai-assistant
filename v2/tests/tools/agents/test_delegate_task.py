@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from stackowl.infra.trace import TraceContext
+from stackowl.owls.a2a_delegation import A2AResult
 from stackowl.owls.delegation_limits import (
     MAX_CONCURRENT_DELEGATIONS,
     MAX_DELEGATION_DEPTH,
@@ -25,15 +28,17 @@ from stackowl.tools.registry import ToolRegistry
 
 
 class _FakeDelegator:
-    """Records delegate() calls and returns a canned result string."""
+    """Records delegate() calls and returns a canned A2AResult."""
 
-    def __init__(self, result: str = "specialist answer") -> None:
-        self.result = result
+    def __init__(self, result: A2AResult | None = None) -> None:
+        self.result: A2AResult = result or A2AResult(
+            status="ok", content="specialist answer", resolved_owl="scout"
+        )
         self.calls: list[dict[str, object]] = []
 
     async def delegate(
         self, *, from_owl: str, to_owl: str, sub_task: str, parent_state: PipelineState
-    ) -> str:
+    ) -> A2AResult:
         self.calls.append(
             {
                 "from_owl": from_owl,
@@ -79,7 +84,7 @@ async def test_non_secretary_caller_attributed_and_no_self_delegation() -> None:
             system_prompt="You analyse data.", model_tier="standard",
         )
     )
-    fake = _FakeDelegator("done")
+    fake = _FakeDelegator(A2AResult(status="ok", content="done", resolved_owl="analyst"))
     token = set_services(_services(fake, reg))
     # The pipeline propagates state.owl_name → TraceContext.owl_name; simulate scout.
     trace = TraceContext.start("s", trace_id="tr-caller", channel="cli", owl_name="scout")
@@ -98,7 +103,7 @@ async def test_non_secretary_caller_attributed_and_no_self_delegation() -> None:
 
 
 async def test_happy_returns_result_with_provenance_footer() -> None:
-    fake = _FakeDelegator("the answer")
+    fake = _FakeDelegator(A2AResult(status="ok", content="the answer", resolved_owl="scout"))
     token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start("sess-1", trace_id="tr-1", channel="cli")
     try:
@@ -120,7 +125,7 @@ async def test_happy_returns_result_with_provenance_footer() -> None:
 
 
 async def test_target_resolved_by_role_when_no_to_owl() -> None:
-    fake = _FakeDelegator()
+    fake = _FakeDelegator(A2AResult(status="ok", content="result", resolved_owl="scout"))
     token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start("s", trace_id="tr-role", channel="cli")
     try:
@@ -137,7 +142,7 @@ async def test_target_resolved_by_role_when_no_to_owl() -> None:
 
 
 async def test_depth_backstop_refuses_without_calling_delegate() -> None:
-    fake = _FakeDelegator()
+    fake = _FakeDelegator(A2AResult(status="ok", content="x", resolved_owl="scout"))
     token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start(
         "s", trace_id="tr-depth", channel="cli", delegation_depth=MAX_DELEGATION_DEPTH
@@ -168,7 +173,7 @@ async def test_width_cap_refuses_fifth_concurrent_and_counter_decrements() -> No
     # The (cap+1)th is refused.
     assert tool._try_acquire(trace_id) is False
 
-    fake = _FakeDelegator()
+    fake = _FakeDelegator(A2AResult(status="ok", content="x", resolved_owl="scout"))
     token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start("s", trace_id=trace_id, channel="cli")
     try:
@@ -191,7 +196,7 @@ async def test_width_cap_refuses_fifth_concurrent_and_counter_decrements() -> No
 
 
 async def test_width_slot_released_after_successful_delegation() -> None:
-    fake = _FakeDelegator()
+    fake = _FakeDelegator(A2AResult(status="ok", content="x", resolved_owl="scout"))
     tool = DelegateTaskTool()
     token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start("s", trace_id="tr-rel", channel="cli")
@@ -207,8 +212,9 @@ async def test_width_slot_released_after_successful_delegation() -> None:
 # ------------------------------------------------------------------ timeout/empty
 
 
-async def test_empty_result_becomes_structured_timeout_status() -> None:
-    fake = _FakeDelegator(result="")  # A2ADelegator returns "" on timeout/failure
+async def test_empty_result_becomes_structured_empty_status() -> None:
+    # A2ADelegator now returns A2AResult(status="empty") for a no-content response.
+    fake = _FakeDelegator(A2AResult(status="empty", content="", resolved_owl="scout"))
     token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start("s", trace_id="tr-empty", channel="cli")
     try:
@@ -219,7 +225,7 @@ async def test_empty_result_becomes_structured_timeout_status() -> None:
 
     assert res.success
     record = _record(res.output)
-    assert record["status"] == "timeout_or_empty"
+    assert record["status"] == "empty"  # refined from old "timeout_or_empty"
     assert record["result"] == ""  # NOT a bare empty string at the tool boundary
     assert len(fake.calls) == 1  # delegate WAS called (it just returned nothing)
 
@@ -240,13 +246,31 @@ async def test_no_delegator_wired_is_structured_not_raised() -> None:
     assert _record(res.output)["reason"] == "unavailable"
 
 
-async def test_unresolvable_target_is_structured_refusal() -> None:
-    fake = _FakeDelegator()
-    # Registry with ONLY the secretary (caller) → no non-caller specialist.
-    token = set_services(_services(fake, OwlRegistry.with_default_secretary()))
+async def test_named_missing_owl_is_target_not_found() -> None:
+    """An explicit to_owl that does not exist in the registry → target_not_found (not refused)."""
+    fake = _FakeDelegator(A2AResult(status="ok", content="x", resolved_owl="scout"))
+    token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start("s", trace_id="tr-unres", channel="cli")
     try:
-        res = await DelegateTaskTool().execute(goal="task", to_owl="ghost", role="nobody")
+        res = await DelegateTaskTool().execute(goal="task", to_owl="ghost")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success
+    record = _record(res.output)
+    assert record["status"] == "target_not_found"
+    assert fake.calls == []
+
+
+async def test_no_candidate_specialist_is_structured_refusal() -> None:
+    """Registry with only the caller → no non-caller candidate → refused/unresolved_target."""
+    fake = _FakeDelegator(A2AResult(status="ok", content="x", resolved_owl="scout"))
+    # Registry with ONLY the secretary (caller) → no non-caller specialist.
+    token = set_services(_services(fake, OwlRegistry.with_default_secretary()))
+    trace = TraceContext.start("s", trace_id="tr-nocandidate", channel="cli")
+    try:
+        res = await DelegateTaskTool().execute(goal="task", role="nobody")
     finally:
         TraceContext.reset(trace)
         reset_services(token)
@@ -338,3 +362,54 @@ async def test_backend_propagates_state_depth_to_trace_context() -> None:
         ab.PIPELINE_STEPS = original  # type: ignore[assignment]
 
     assert seen["depth"] == 1
+
+
+# ------------------------------------------------------------ T5: cycle / target_not_found / child_error
+
+
+@pytest.mark.asyncio
+async def test_cycle_refused_before_spawn() -> None:
+    """Cycle detected after resolve — refused BEFORE width-acquire (fake.calls == [])."""
+    fake = _FakeDelegator(A2AResult(status="ok", content="x", resolved_owl="scout"))
+    token = set_services(_services(fake, _registry_with_specialist()))
+    trace = TraceContext.start("s", trace_id="t", channel="cli",
+                               owl_name="secretary", delegation_chain=("scout",))
+    try:
+        res = await DelegateTaskTool().execute(goal="g", to_owl="scout")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+    rec = _record(res.output)
+    assert rec["status"] == "cycle"
+    assert fake.calls == []  # refused PRE-spawn
+
+
+@pytest.mark.asyncio
+async def test_target_not_found_distinct_no_spawn() -> None:
+    """A named owl that does not exist → target_not_found, no spawn."""
+    fake = _FakeDelegator(A2AResult(status="ok", content="x", resolved_owl="x"))
+    token = set_services(_services(fake, _registry_with_specialist()))
+    trace = TraceContext.start("s", trace_id="t", channel="cli", owl_name="secretary")
+    try:
+        res = await DelegateTaskTool().execute(goal="g", to_owl="ghost")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+    rec = _record(res.output)
+    assert rec["status"] == "target_not_found"
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_child_error_status_mapped() -> None:
+    """A2AResult(status='child_error') maps to record status 'child_error'."""
+    fake = _FakeDelegator(A2AResult(status="child_error", child_detail="boom", resolved_owl="scout"))
+    token = set_services(_services(fake, _registry_with_specialist()))
+    trace = TraceContext.start("s", trace_id="t", channel="cli", owl_name="secretary")
+    try:
+        res = await DelegateTaskTool().execute(goal="g", to_owl="scout")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+    rec = _record(res.output)
+    assert rec["status"] == "child_error"

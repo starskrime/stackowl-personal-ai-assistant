@@ -19,7 +19,11 @@ DELEGATE_TASK_DESCRIPTION = (
     "means a safety limit (delegation depth or width) was hit — handle the "
     "sub-task yourself. LANE: offloading a focused chunk to a better-suited "
     "owl. ANTI-LANE: do NOT delegate the user's whole request, and do NOT "
-    "chain delegations deeply (there is a hard depth cap)."
+    "chain delegations deeply (there is a hard depth cap). "
+    "If a result status is 'cycle', 'target_not_found', 'child_error', 'timeout', or 'empty', "
+    "the delegation FAILED — do NOT call delegate_task again for this request; "
+    "do the work yourself or tell the user plainly. "
+    "Prefer giving 'to_owl' explicitly."
 )
 
 DELEGATE_TASK_PARAMETERS: dict[str, object] = {

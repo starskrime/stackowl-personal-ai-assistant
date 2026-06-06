@@ -44,6 +44,74 @@ def refusal_result(t0: float, *, reason: str, detail: str) -> ToolResult:
     return ok_result({"status": "refused", "reason": reason, "detail": detail}, t0, note=detail)
 
 
+def cycle_result(t0: float, *, target: str, chain: tuple[str, ...]) -> ToolResult:
+    """Delegation would form a cycle — refuse before acquiring any slot."""
+    return ok_result(
+        {
+            "status": "cycle",
+            "to_owl": target,
+            "detail": (
+                f"delegating to '{target}' would loop "
+                f"({' -> '.join(chain)} -> {target}); "
+                "do NOT delegate again — answer the user directly or say you cannot."
+            ),
+        },
+        t0,
+        note="delegation cycle prevented",
+    )
+
+
+def target_not_found_result(t0: float, *, to_owl: str) -> ToolResult:
+    """Named target owl does not exist in the registry."""
+    return ok_result(
+        {
+            "status": "target_not_found",
+            "to_owl": to_owl,
+            "detail": (
+                f"no owl named '{to_owl}' exists; do NOT delegate again — "
+                "answer directly or tell the user you cannot."
+            ),
+        },
+        t0,
+        note="delegation target not found",
+    )
+
+
+def child_error_result(t0: float, *, target: str, detail: str) -> ToolResult:
+    """Specialist ran but terminated with an error."""
+    return ok_result(
+        {
+            "status": "child_error",
+            "to_owl": target,
+            "detail": (
+                f"specialist '{target}' failed "
+                f"(specialist detail (untrusted): {detail}); "
+                "do NOT delegate again — handle it yourself or tell the user."
+            ),
+            "result": "",
+        },
+        t0,
+        note=f"{target} failed",
+    )
+
+
+def truncated_result(t0: float, *, target: str, result: str, detail: str) -> ToolResult:
+    """Specialist answered but the answer was cut off by a resource cap."""
+    return ok_result(
+        {
+            "status": "truncated",
+            "to_owl": target,
+            "result": result,
+            "detail": (
+                f"{target}'s answer was cut off by a resource cap; "
+                "treat as INCOMPLETE."
+            ),
+        },
+        t0,
+        note=f"{target} answer truncated",
+    )
+
+
 def error_result(msg: str, t0: float) -> ToolResult:
     """A failed ToolResult for invalid-argument / hard-error cases (logs exit)."""
     duration_ms = (time.monotonic() - t0) * 1000
