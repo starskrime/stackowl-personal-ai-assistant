@@ -34,6 +34,11 @@ MAX_CONCURRENT_DELEGATIONS = 4
 # receive timeout so the child surrenders before the parent gives up.
 GOVERNOR_ACQUIRE_TIMEOUT_SECONDS = 45.0
 
+# Cumulative delegate() attempts per turn (per trace), INCLUDING retries + fallbacks.
+# An amplification ceiling ABOVE the structural depth x width x ladder bound — a crafted
+# prompt cannot walk an unbounded delegation tree within a single turn.
+MAX_DELEGATION_ATTEMPTS_PER_TURN = 12
+
 # E8-S3 — hard cap on concurrently-live named owl sessions in the SessionRegistry.
 # A personal assistant rarely needs more than a handful of parallel persistent
 # sub-conversations; past this the `sessions_spawn` tool refuses (structured,

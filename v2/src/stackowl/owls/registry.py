@@ -224,6 +224,13 @@ class OwlRegistry:
     def has_secretary(self) -> bool:
         return _SECRETARY_NAME in self._owls
 
+    def secretary_name(self) -> str | None:
+        """The mandatory generalist owl's name, or None if not registered.
+
+        The canonical fallback target for delegation self-healing — reuses the
+        single source of truth (``_SECRETARY_NAME``) so no caller hardcodes the literal."""
+        return _SECRETARY_NAME if self.has_secretary() else None
+
     @property
     def contributor_name(self) -> str:
         return "owl_registry"
