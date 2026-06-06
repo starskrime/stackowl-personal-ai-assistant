@@ -61,3 +61,13 @@ async def test_hydrate_skips_orphan(tmp_db: object) -> None:
     r = _reg()
     await _insert(tmp_db, "ghost", curiosity=0.6)
     assert await hydrate_dna(r, tmp_db) == 0                    # ghost not in registry  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_failsafe_on_nan(tmp_db: object) -> None:
+    # NaN passes Pydantic float; the v != v guard must keep the authored default (0.5)
+    r = _reg()
+    await _insert(tmp_db, "scout", curiosity=float("nan"))
+    await hydrate_dna(r, tmp_db)                                # must NOT crash / inject NaN  # type: ignore[arg-type]
+    cur = r.get("scout").dna.curiosity
+    assert cur == cur and cur == 0.5                            # not NaN; kept authored default

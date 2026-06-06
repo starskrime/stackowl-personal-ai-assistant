@@ -105,7 +105,7 @@ async def hydrate_dna(registry: OwlRegistry, db: DbPool) -> int:
             continue
         try:
             coerced = _coerce_dna(current.dna, traits)
-            registry.replace(current.model_copy(update={"dna": coerced}))
+            apply_dna_overlay(registry, name, coerced)  # single shared overlay path
             hydrated += 1
             log.startup.debug(
                 "[owls] hydrate_dna: owl hydrated",
