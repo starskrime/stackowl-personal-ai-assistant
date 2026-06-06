@@ -6,8 +6,10 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from stackowl.authz.bounds import ResourceCaps
 from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
+    BudgetBreach,
     DurableReplayUncertain,
     OwlConcurrencyError,
     OwlTimeoutError,
@@ -17,10 +19,13 @@ from stackowl.exceptions import (
 from stackowl.infra.observability import log
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.pipeline.authz_compose import compute_effective_bounds
+from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message, ModelProvider
+from stackowl.providers.react_callback import ReActIterationState
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.registry import ToolRegistry
 
@@ -332,6 +337,32 @@ async def _run_with_tools(
 
         persistence_check = _persistence_check
 
+    # E2-S4 — budget governor: enforce the acting owl's effective caps (cost best-
+    # effort, steps + time) once per ReAct iteration via on_iteration_complete.
+    # No caps / unbounded owl → a no-op gate (every current turn unchanged).
+    _services = get_services()
+    try:
+        _eff = compute_effective_bounds(state, _services.owl_registry)
+    except Exception:  # noqa: BLE001 — budget is best-effort; never block the turn on bounds
+        _eff = None
+    _caps = _eff.caps if _eff is not None else ResourceCaps()
+    # When caps is None (owl carries no caps axis) treat as all-None ResourceCaps.
+    if _caps is None:
+        _caps = ResourceCaps()
+
+    class _MonotonicClock:
+        def monotonic(self) -> float:
+            return time.monotonic()
+
+    _governor = BudgetGovernor(
+        _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
+        started_monotonic=time.monotonic(), clock=_MonotonicClock(),
+    )
+    _budget_cb = make_budget_callback(
+        _governor, interactive=state.interactive, clarify=_services.clarify_gateway,
+        session_id=state.session_id, channel=state.channel,
+    )
+
     t0 = time.monotonic()
     # Only forward persistence_check when it is actually enabled (interactive,
     # depth 0). Omitting the kwarg otherwise keeps the call backward-compatible
@@ -352,6 +383,7 @@ async def _run_with_tools(
                 tool_dispatcher=_dispatch,
                 history=list(state.history),
                 persistence_check=persistence_check,
+                on_iteration_complete=_budget_cb,
             )
         return await provider.complete_with_tools(
             user_text=state.input_text,
@@ -359,6 +391,7 @@ async def _run_with_tools(
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,
             history=list(state.history),
+            on_iteration_complete=_budget_cb,
         )
 
     async def _call_durable(task_id: str) -> tuple[str, list[dict[str, Any]]]:
@@ -403,6 +436,13 @@ async def _run_with_tools(
         session = durable_session_for_state(state, db)
         ctx = session.ctx
         cb = make_checkpoint_callback(ctx, session.store)
+        # E2-S4 — compose: checkpoint the completed iteration first, then gate budget.
+        # Order matters: checkpoint before budget so a breached turn is still
+        # durably recorded (the resume seam can replay from it on a Raise).
+        async def _cb_with_budget(s: ReActIterationState) -> None:
+            await cb(s)
+            await _budget_cb(s)
+
         log.tasks.debug(
             "[tasks] execute: durable context built — activating",
             extra={"_fields": {"task_id": task_id, "owner_id": owner_id,
@@ -419,7 +459,7 @@ async def _run_with_tools(
                     tool_dispatcher=_dispatch,
                     history=list(state.history),
                     persistence_check=persistence_check,
-                    on_iteration_complete=cb,
+                    on_iteration_complete=_cb_with_budget,
                     resume_messages=state.durable_resume_messages,
                     resume_tool_calls=state.durable_resume_tool_calls,
                 )
@@ -430,7 +470,7 @@ async def _run_with_tools(
                     tool_schemas=tool_schemas,
                     tool_dispatcher=_dispatch,
                     history=list(state.history),
-                    on_iteration_complete=cb,
+                    on_iteration_complete=_cb_with_budget,
                     resume_messages=state.durable_resume_messages,
                     resume_tool_calls=state.durable_resume_tool_calls,
                 )
@@ -473,6 +513,34 @@ async def _run_with_tools(
         )
         return state.evolve(
             durable_parked=True,
+            errors=(*state.errors, marker),
+        )
+    except BudgetBreach as exc:
+        log.engine.info(
+            "[pipeline] execute: budget cap reached — stopping with partial",
+            extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name,
+                               "cap": exc.cap, "limit": exc.limit, "actual": exc.actual}},
+        )
+        note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
+        _breach_chunks = (ResponseChunk(
+            content=(exc.partial_text + note), is_final=False, chunk_index=0,
+            trace_id=state.trace_id, owl_name=state.owl_name,
+        ),)
+        _breach_raw: list[dict[str, Any]] = exc.tool_call_records
+        _breach_tool_records = tuple(
+            ToolCall(
+                tool_name=str(rc.get("name", "")),
+                args=dict(rc.get("args") or {}),
+                result=str(rc.get("result", "")),
+                error=None,
+                duration_ms=0.0,
+            )
+            for rc in _breach_raw
+        )
+        marker = f"budget:stop:{exc.cap}:limit={exc.limit}:actual={exc.actual}"
+        return state.evolve(
+            responses=(*state.responses, *_breach_chunks),
+            tool_calls=(*state.tool_calls, *_breach_tool_records),
             errors=(*state.errors, marker),
         )
     except Exception as exc:

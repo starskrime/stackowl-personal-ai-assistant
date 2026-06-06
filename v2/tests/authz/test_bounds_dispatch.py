@@ -57,7 +57,7 @@ class _TwoToolProvider:
     def __init__(self) -> None:
         self.results: dict[str, str] = {}
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001, E501
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None, **_kwargs: object):  # noqa: ANN001, E501
         self.results["allowed_tool"] = await tool_dispatcher("allowed_tool", {})
         self.results["forbidden_tool"] = await tool_dispatcher("forbidden_tool", {})
         return ("done", [])
@@ -174,7 +174,7 @@ class _RepeatForbiddenProvider:
     def __init__(self) -> None:
         self.results: list[str] = []
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001, E501
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None, **_kwargs: object):  # noqa: ANN001, E501
         self.results.append(await tool_dispatcher("forbidden_tool", {}))
         self.results.append(await tool_dispatcher("forbidden_tool", {}))
         return ("done", [])
@@ -216,7 +216,7 @@ class _MetaToolProvider:
     def __init__(self) -> None:
         self.results: dict[str, str] = {}
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001, E501
+    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None, **_kwargs: object):  # noqa: ANN001, E501
         self.results["tool_search"] = await tool_dispatcher("tool_search", {})
         self.results["tool_describe"] = await tool_dispatcher("tool_describe", {})
         return ("done", [])
