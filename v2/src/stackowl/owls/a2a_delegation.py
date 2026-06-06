@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from stackowl.exceptions import A2ATimeoutError, StackOwlError
 from stackowl.infra.observability import log
@@ -27,6 +30,25 @@ from stackowl.owls.delegation_limits import GOVERNOR_ACQUIRE_TIMEOUT_SECONDS
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
+
+DelegationStatus = Literal[
+    "ok", "empty", "timeout", "child_error", "truncated", "refused", "cycle", "target_not_found"
+]
+
+
+class A2AResult(BaseModel):
+    """Structured outcome of one delegation round-trip (replaces the bare ``str`` return).
+
+    ``status`` is GOVERNOR-DECIDED from observed facts (exception / timeout / empty /
+    final_state.errors) — never parsed from child output, so a child cannot fake a status
+    to steer the recovery ladder. ``child_detail`` is sanitized untrusted data."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: DelegationStatus
+    content: str = ""
+    child_detail: str = ""
+    resolved_owl: str = ""
 
 
 class A2ADelegator:

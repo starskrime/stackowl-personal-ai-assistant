@@ -26,6 +26,8 @@ class A2AMessage(BaseModel):
     message_type: Literal["request", "response", "event"]
     trace_id: str
     timestamp: str  # ISO-8601 UTC
+    status: str | None = None
+    error: str | None = None
 
     @property
     def sent_at(self) -> datetime:
@@ -41,6 +43,8 @@ class A2AMessage(BaseModel):
         content: str,
         message_type: Literal["request", "response", "event"],
         trace_id: str,
+        status: str | None = None,
+        error: str | None = None,
     ) -> A2AMessage:
         """Convenience constructor that stamps the current UTC timestamp."""
         return cls(
@@ -50,6 +54,8 @@ class A2AMessage(BaseModel):
             message_type=message_type,
             trace_id=trace_id,
             timestamp=datetime.now(UTC).isoformat(),
+            status=status,
+            error=error,
         )
 
 
