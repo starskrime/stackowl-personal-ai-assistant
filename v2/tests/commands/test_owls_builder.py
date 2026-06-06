@@ -129,3 +129,12 @@ async def test_edit_secretary_rejected(tmp_yaml: Path):
 async def test_edit_unknown_owl_errors(tmp_yaml: Path):
     out = await OwlsCommand(owl_registry=OwlRegistry()).handle("edit ghost --tier fast", _state())
     assert "✗" in out
+
+
+@pytest.mark.asyncio
+async def test_edit_with_no_fields_is_rejected(tmp_yaml: Path):
+    reg = OwlRegistry()
+    cmd = OwlsCommand(owl_registry=reg)
+    await cmd.handle("add rsr --role research --tier fast --preset researcher", _state())
+    out = await cmd.handle("edit rsr", _state())
+    assert "✗" in out  # no silent no-op success / needless yaml rewrite

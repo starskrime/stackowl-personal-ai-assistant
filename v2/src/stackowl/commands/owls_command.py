@@ -28,6 +28,7 @@ from stackowl.exceptions import (
     OwlNotFoundError,
 )
 from stackowl.infra.observability import log
+from stackowl.owls.registry import _SECRETARY_NAME
 
 if TYPE_CHECKING:
     from stackowl.db.pool import DbPool
@@ -172,19 +173,24 @@ class OwlsCommand(SlashCommand):
             return _NO_REGISTRY
         changes = parse_edit_args(rest)
         name = changes.pop("name")
-        from stackowl.owls.registry import _SECRETARY_NAME  # noqa: PLC0415
         if name == _SECRETARY_NAME:
             log.gateway.warning(
                 "[commands] owls.edit: secretary edit refused",
                 extra={"_fields": {"name": name}},
             )
             return f"✗ /owls edit: {name} is mandatory and cannot be edited"
+        if not changes:
+            return f"✗ /owls edit: no fields given for '{name}' (try --tier/--role/...)"
         current = self._registry.get(name)  # raises OwlNotFoundError → handled in handle()
         log.gateway.debug(
             "[commands] owls.edit: applying changes",
             extra={"_fields": {"name": name, "fields": list(changes.keys())}},
         )
-        updated = current.model_copy(update=changes)  # bounds/skills/capability_profile carried automatically
+        # Re-validate the WHOLE manifest: model_copy(update=...) skips validation on a
+        # frozen model, so an invalid edit could land silently. Merging the current
+        # dump with changes and re-validating carries bounds/skills/capability_profile
+        # over unchanged while enforcing every field constraint (e.g. the tier Literal).
+        updated = type(current).model_validate({**current.model_dump(), **changes})
         self._registry.replace(updated)
         self._upsert_to_yaml(manifest_to_yaml_entry(updated))
         if self._bus is not None:
