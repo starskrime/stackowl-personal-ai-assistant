@@ -354,14 +354,20 @@ async def _run_with_tools(
         def monotonic(self) -> float:
             return time.monotonic()
 
-    _governor = BudgetGovernor(
-        _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
-        started_monotonic=time.monotonic(), clock=_MonotonicClock(),
+    _has_caps = any(
+        c is not None for c in (_caps.max_steps, _caps.max_time_s, _caps.max_cost_usd)
     )
-    _budget_cb = make_budget_callback(
-        _governor, interactive=state.interactive, clarify=_services.clarify_gateway,
-        session_id=state.session_id, channel=state.channel,
-    )
+    if _has_caps:
+        _governor = BudgetGovernor(
+            _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
+            started_monotonic=time.monotonic(), clock=_MonotonicClock(),
+        )
+        _budget_cb = make_budget_callback(
+            _governor, interactive=state.interactive, clarify=_services.clarify_gateway,
+            session_id=state.session_id, channel=state.channel,
+        )
+    else:
+        _budget_cb = None
 
     t0 = time.monotonic()
     # Only forward persistence_check when it is actually enabled (interactive,
@@ -375,23 +381,18 @@ async def _run_with_tools(
     # task_id is None (every non-durable turn) NONE of this runs and the call is
     # made EXACTLY as before (no context, no extra kwargs) — byte-for-byte.
     async def _call_default() -> tuple[str, list[dict[str, Any]]]:
+        _extra: dict[str, Any] = {}
         if persistence_check is not None:
-            return await provider.complete_with_tools(
-                user_text=state.input_text,
-                system_text=state.system_prompt,
-                tool_schemas=tool_schemas,
-                tool_dispatcher=_dispatch,
-                history=list(state.history),
-                persistence_check=persistence_check,
-                on_iteration_complete=_budget_cb,
-            )
+            _extra["persistence_check"] = persistence_check
+        if _budget_cb is not None:
+            _extra["on_iteration_complete"] = _budget_cb
         return await provider.complete_with_tools(
             user_text=state.input_text,
             system_text=state.system_prompt,
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,
             history=list(state.history),
-            on_iteration_complete=_budget_cb,
+            **_extra,
         )
 
     async def _call_durable(task_id: str) -> tuple[str, list[dict[str, Any]]]:
@@ -441,7 +442,9 @@ async def _run_with_tools(
         # durably recorded (the resume seam can replay from it on a Raise).
         async def _cb_with_budget(s: ReActIterationState) -> None:
             await cb(s)
-            await _budget_cb(s)
+            await _budget_cb(s)  # type: ignore[misc]  # only selected when _budget_cb is not None
+
+        _iter_cb = _cb_with_budget if _budget_cb is not None else cb
 
         log.tasks.debug(
             "[tasks] execute: durable context built — activating",
@@ -451,29 +454,20 @@ async def _run_with_tools(
         # 3. STEP — drive the provider loop under the active durable context so the
         #    S2 ledger_guard is live and each iteration is checkpointed.
         with activate(ctx):
+            _durable_extra: dict[str, Any] = {}
             if persistence_check is not None:
-                result = await provider.complete_with_tools(
-                    user_text=state.input_text,
-                    system_text=state.system_prompt,
-                    tool_schemas=tool_schemas,
-                    tool_dispatcher=_dispatch,
-                    history=list(state.history),
-                    persistence_check=persistence_check,
-                    on_iteration_complete=_cb_with_budget,
-                    resume_messages=state.durable_resume_messages,
-                    resume_tool_calls=state.durable_resume_tool_calls,
-                )
-            else:
-                result = await provider.complete_with_tools(
-                    user_text=state.input_text,
-                    system_text=state.system_prompt,
-                    tool_schemas=tool_schemas,
-                    tool_dispatcher=_dispatch,
-                    history=list(state.history),
-                    on_iteration_complete=_cb_with_budget,
-                    resume_messages=state.durable_resume_messages,
-                    resume_tool_calls=state.durable_resume_tool_calls,
-                )
+                _durable_extra["persistence_check"] = persistence_check
+            result = await provider.complete_with_tools(
+                user_text=state.input_text,
+                system_text=state.system_prompt,
+                tool_schemas=tool_schemas,
+                tool_dispatcher=_dispatch,
+                history=list(state.history),
+                on_iteration_complete=_iter_cb,
+                resume_messages=state.durable_resume_messages,
+                resume_tool_calls=state.durable_resume_tool_calls,
+                **_durable_extra,
+            )
         # 4. EXIT
         log.tasks.info(
             "[tasks] execute: durable drive exit",
