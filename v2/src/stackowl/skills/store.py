@@ -10,6 +10,7 @@ edit. Mirrors :class:`TaskOutcomeStore` (Commit 1) and :class:`ReflectionStore`
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -69,12 +70,29 @@ class SkillAuditEntry:
     ts: float
 
 
+_SUMMARY_SANITIZER_VERSION = "1"
+
+
+def _summary_hash(loaded: "LoadedSkill", override: str | None) -> str:
+    """Stable content hash for a skill's body + override text.
+
+    Used by the author write (T5) and the back-fill path (T6) so both produce
+    the same hash for identical content and the back-fill can skip already-current rows.
+    """
+    h = hashlib.sha256()
+    h.update(loaded.body.encode("utf-8"))
+    h.update(b"\x00"); h.update((override or "").encode("utf-8"))
+    h.update(b"\x00"); h.update(loaded.manifest.source.encode("utf-8"))
+    h.update(b"\x00"); h.update(_SUMMARY_SANITIZER_VERSION.encode("utf-8"))
+    return h.hexdigest()
+
+
 _UPSERT_SQL = """
 INSERT INTO skills (
     name, source, path, description, when_to_use, version, enabled,
     success_rate, n_executions, parent_traces, embedding, embedding_model,
-    manifest_json, body_text, loaded_at, updated_at, owner_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    manifest_json, body_text, loaded_at, updated_at, owner_id, tool_names
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(owner_id, source, name) DO UPDATE SET
     path = excluded.path,
     description = excluded.description,
@@ -84,7 +102,8 @@ ON CONFLICT(owner_id, source, name) DO UPDATE SET
     parent_traces = excluded.parent_traces,
     manifest_json = excluded.manifest_json,
     body_text = excluded.body_text,
-    updated_at = excluded.updated_at
+    updated_at = excluded.updated_at,
+    tool_names = excluded.tool_names
 """
 
 _SELECT_FIELDS = """
@@ -127,13 +146,14 @@ class SkillIndexStore(OwnedRepository):
         manifest_json = json.dumps(m.model_dump(mode="json"), separators=(",", ":"))
         parent_traces = json.dumps(list(m.parent_traces), separators=(",", ":"))
         now = time.time()
+        tool_names_json = json.dumps(list(loaded.tool_names), separators=(",", ":"))
         await self._db.execute(
             _UPSERT_SQL,
             (
                 m.name, m.source, str(loaded.path), m.description, m.when_to_use,
                 m.version, int(m.enabled), m.success_rate, m.n_executions,
                 parent_traces, None, m.embedding_model, manifest_json,
-                loaded.body, now, now, self._owner_id,
+                loaded.body, now, now, self._owner_id, tool_names_json,
             ),
         )
         # Find the row id for the row we just upserted (caller may need it).
@@ -142,6 +162,13 @@ class SkillIndexStore(OwnedRepository):
             (self._owner_id, m.source, m.name),
         )
         skill_id = int(str(rows[0]["skill_id"])) if rows else -1
+        # 2. DECISION — persist author summary when the manifest carries one
+        if m.summary is not None and skill_id != -1:
+            log.skills.debug(
+                "[skills] store.upsert: author summary present — persisting",
+                extra={"_fields": {"name": m.name, "source": m.source}},
+            )
+            await self.set_summary(skill_id, m.summary, "author", _summary_hash(loaded, m.summary))
         # 4. EXIT
         log.skills.info(
             "[skills] store.upsert: stored",
@@ -235,6 +262,30 @@ class SkillIndexStore(OwnedRepository):
         # 4. EXIT
         log.skills.info("[skills] store.set_embedding: stored",
                  extra={"_fields": {"skill_id": skill_id}})
+
+    async def set_summary(
+        self,
+        skill_id: int,
+        summary: str | None,
+        source: str,
+        body_hash: str | None,
+    ) -> None:
+        """Store-owned write of the resolved summary (author or generated). Mirrors set_embedding."""
+        # 1. ENTRY
+        log.skills.debug(
+            "[skills] store.set_summary: entry",
+            extra={"_fields": {"skill_id": skill_id, "source": source}},
+        )
+        await self._db.execute(
+            "UPDATE skills SET summary = ?, summary_source = ?, summary_body_hash = ?, updated_at = ? "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (summary, source, body_hash, time.time(), skill_id, self._owner_id),
+        )
+        # 4. EXIT
+        log.skills.debug(
+            "[skills] store.set_summary: exit",
+            extra={"_fields": {"skill_id": skill_id}},
+        )
 
     async def increment_n_executions(self, skill_id: int) -> None:
         """Bump n_executions by 1. Called when the agent uses a skill."""
