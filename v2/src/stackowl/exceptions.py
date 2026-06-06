@@ -457,3 +457,27 @@ class PidFileExistsError(StackOwlError):
     def __init__(self, pid: int) -> None:
         self.pid = pid
         super().__init__(f"StackOwl is already running (PID {pid})")
+
+
+class BudgetBreach(Exception):
+    """Raised (via on_iteration_complete) when a run exceeds a resource cap (E2-S4).
+
+    Carries the breached cap + the partial work so the execute step can deliver a
+    partial result + a breach note. A control-flow signal, not an error.
+    """
+
+    def __init__(
+        self,
+        cap: str,
+        limit: float,
+        actual: float,
+        *,
+        partial_text: str = "",
+        tool_call_records: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.cap = cap
+        self.limit = limit
+        self.actual = actual
+        self.partial_text = partial_text
+        self.tool_call_records = tool_call_records or []
+        super().__init__(f"budget cap reached: {cap} limit={limit} actual={actual}")
