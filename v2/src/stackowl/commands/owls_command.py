@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from stackowl.events.bus import EventBus
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.state import PipelineState
+    from stackowl.tools.registry import ToolRegistry
 
 _USAGE = (
     "Usage: /owls <list|add|remove|health|dna> [args]\n"
@@ -62,10 +63,12 @@ class OwlsCommand(SlashCommand):
         owl_registry: OwlRegistry | None = None,
         db: DbPool | None = None,
         event_bus: EventBus | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._registry = owl_registry
         self._db = db
         self._bus = event_bus
+        self._tool_registry = tool_registry
 
     @property
     def command(self) -> str:
@@ -140,9 +143,13 @@ class OwlsCommand(SlashCommand):
         if self._registry is None:
             return _NO_REGISTRY
         params = parse_add_args(rest)
-        manifest = build_owl_manifest(params)
+        valid = (
+            frozenset(t.name for t in self._tool_registry.all())
+            if self._tool_registry is not None else None
+        )
+        manifest = build_owl_manifest(params, valid_tools=valid)
         self._registry.register(manifest)  # may raise ManifestValidationError
-        self._append_to_yaml(manifest_to_yaml_entry(manifest))
+        self._upsert_to_yaml(manifest_to_yaml_entry(manifest))
         if self._bus is not None:
             self._bus.emit("owl_added", {"name": manifest.name, "role": manifest.role})
         log.gateway.info(
@@ -222,19 +229,27 @@ class OwlsCommand(SlashCommand):
         return result
 
     # ----------------------------------------------------------- yaml helpers
-    def _append_to_yaml(self, entry: dict[str, Any]) -> None:
-        """Append an owl entry to ``stackowl.yaml``'s ``owls:`` list."""
+    def _upsert_to_yaml(self, entry: dict[str, Any]) -> None:
+        """Insert or replace an owl entry in ``stackowl.yaml``'s ``owls:`` list (by name)."""
         path = config_path()
         data = load_yaml(path)
         owls_list = data.get("owls")
         if not isinstance(owls_list, list):
             owls_list = []
-        owls_list.append(entry)
+        name = entry.get("name")
+        replaced = False
+        for i, e in enumerate(owls_list):
+            if isinstance(e, dict) and e.get("name") == name:
+                owls_list[i] = entry
+                replaced = True
+                break
+        if not replaced:
+            owls_list.append(entry)
         data["owls"] = owls_list
         save_yaml(path, data)
         log.gateway.debug(
-            "[commands] owls._append_to_yaml: written",
-            extra={"_fields": {"path": str(path), "name": entry.get("name")}},
+            "[commands] owls._upsert_to_yaml: written",
+            extra={"_fields": {"path": str(path), "name": name, "replaced": replaced}},
         )
 
     def _remove_from_yaml(self, name: str) -> None:
@@ -287,8 +302,9 @@ class OwlsCommand(SlashCommand):
         owl_registry: OwlRegistry | None = None,
         db: DbPool | None = None,
         event_bus: EventBus | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> OwlsCommand:
         """Construct an :class:`OwlsCommand` and register it on the singleton."""
-        cmd = cls(owl_registry=owl_registry, db=db, event_bus=event_bus)
+        cmd = cls(owl_registry=owl_registry, db=db, event_bus=event_bus, tool_registry=tool_registry)
         CommandRegistry.instance().register(cmd)
         return cmd
