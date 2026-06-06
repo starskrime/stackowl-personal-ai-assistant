@@ -15,8 +15,10 @@ from stackowl.owls.base_prompt import build_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+from stackowl.skills.instruction_injector import SkillInstructionInjector
 
 _injector = DNAPromptInjector()
+_skill_injector = SkillInstructionInjector()
 
 
 async def run(state: PipelineState) -> PipelineState:
@@ -25,6 +27,7 @@ async def run(state: PipelineState) -> PipelineState:
     )
     services = get_services()
     registry = services.owl_registry
+    manifest = None
     persona = ""
     if registry is not None:
         try:
@@ -51,6 +54,22 @@ async def run(state: PipelineState) -> PipelineState:
             "[pipeline] assemble: no owl_registry wired — memory-only prompt",
             extra={"_fields": {"owl": state.owl_name}},
         )
+    # Inject owned-skill playbooks — fail-open (never crash the turn).
+    skills_block = ""
+    store = services.skill_store
+    if store is not None and manifest is not None and manifest.skills:
+        try:
+            owned = await store.get_many_by_name(manifest.skills)
+            skills_block = _skill_injector.render(state.owl_name, owned)
+            log.engine.debug(
+                "[pipeline] assemble: skills block rendered",
+                extra={"_fields": {"owl": state.owl_name, "skills_len": len(skills_block)}},
+            )
+        except Exception as exc:  # no-hidden-errors: never crash the turn
+            log.engine.error(
+                "[pipeline] assemble: skill injection FAILED — skipped",
+                exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
+            )
     try:
         base = build_base_prompt(now_local())
     except Exception as exc:  # no-hidden-errors: never let prompt-building crash the turn
@@ -59,7 +78,7 @@ async def run(state: PipelineState) -> PipelineState:
             exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
         )
         base = ""
-    parts = [p for p in (base, persona, state.memory_context) if p]
+    parts = [p for p in (base, persona, skills_block, state.memory_context) if p]
     system_prompt = "\n\n".join(parts) or None
     log.engine.debug(
         "[pipeline] assemble: exit",
