@@ -8,8 +8,9 @@ The :class:`A2ADelegator` orchestrates the full request/response loop:
 3. When the specialist's pipeline terminates, post a ``response``
    :class:`A2AMessage` back to the caller's mailbox.
 4. Caller awaits via :meth:`A2AQueue.receive` with a configurable timeout.
-5. Timeouts log at warning level and return an empty string — they never
-   propagate, so the Secretary can degrade gracefully.
+5. Timeouts/child errors log at warning/error level and return a structured
+   ``A2AResult`` (status ``timeout``/``child_error``) — they never propagate as
+   exceptions, so the caller degrades gracefully with an honest status.
 
 Round-trip metadata (latency, trace_id continuity, mailbox depths) is logged
 on every hop to support post-mortem analysis.
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
@@ -35,6 +36,8 @@ from stackowl.pipeline.state import PipelineState
 DelegationStatus = Literal[
     "ok", "empty", "timeout", "child_error", "truncated", "refused", "cycle", "target_not_found"
 ]
+# Derived from the Literal so the runtime whitelist can never drift from the type.
+_KNOWN_STATUSES: frozenset[str] = frozenset(get_args(DelegationStatus))
 
 
 class A2AResult(BaseModel):
@@ -163,13 +166,9 @@ class A2ADelegator:
         # Governor-decided status: prefer the child-reported status when present;
         # otherwise derive from observed facts (content present → ok, blank → empty).
         # Status is NEVER parsed from content text.
-        _known: set[str] = {
-            "ok", "empty", "timeout", "child_error",
-            "truncated", "refused", "cycle", "target_not_found",
-        }
         status: DelegationStatus = (
             response.status  # type: ignore[assignment]
-            if response.status in _known
+            if response.status in _KNOWN_STATUSES
             else ("empty" if not response.content.strip() else "ok")
         )
         log.engine.info(
