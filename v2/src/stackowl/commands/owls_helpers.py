@@ -12,6 +12,7 @@ from typing import Any
 
 from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
+from stackowl.owls.builder import OwlSpec, SpecialistOwlBuilder
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.manifest import OwlAgentManifest
 
@@ -174,6 +175,10 @@ def parse_add_args(rest: str) -> dict[str, Any]:
         "provider": None,
         "temperature": None,
         "tools": [],
+        "preset": None,
+        "skills": [],
+        "capability_profile": [],
+        "system_prompt": None,
     }
     i = 0
     while i < len(flags):
@@ -191,6 +196,14 @@ def parse_add_args(rest: str) -> dict[str, Any]:
                 raise CommandParseError("owls add", f"--temperature must be float, got {value!r}") from exc
         elif key == "--tools":
             params["tools"] = [tool.strip() for tool in value.split(",") if tool.strip()]
+        elif key == "--preset":
+            params["preset"] = value
+        elif key == "--skills":
+            params["skills"] = [s.strip() for s in value.split(",") if s.strip()]
+        elif key == "--capability-profile":
+            params["capability_profile"] = [s.strip() for s in value.split(",") if s.strip()]
+        elif key == "--system-prompt":
+            params["system_prompt"] = value
         else:
             raise CommandParseError("owls add", f"unknown flag: {key}")
         i += 2
@@ -210,33 +223,34 @@ def parse_add_args(rest: str) -> dict[str, Any]:
     return params
 
 
-def build_owl_manifest(params: dict[str, Any]) -> OwlAgentManifest:
-    """Construct an :class:`OwlAgentManifest` from parsed CLI parameters.
+def build_owl_manifest(
+    params: dict[str, Any], *, valid_tools: frozenset[str] | None = None
+) -> OwlAgentManifest:
+    """Adapter: parsed CLI params -> OwlSpec -> the single SpecialistOwlBuilder.
 
-    A default system prompt is auto-generated when ``params`` carries none —
-    deliberately language-neutral so users in non-English locales are not
-    penalised (rule: no hardcoded English keywords).
-    """
+    No manifest is constructed here — the builder is the one constructor (DRY)."""
     log.gateway.debug(
         "[commands] owls.build_owl_manifest: entry",
-        extra={"_fields": {"name": params.get("name"), "tier": params.get("tier")}},
-    )
-    system_prompt = params.get("system_prompt") or (
-        f"Persona: {params['name']}. Role: {params['role']}. "
-        "Respond clearly in the language of the user."
+        extra={"_fields": {"name": params.get("name"), "preset": params.get("preset")}},
     )
     temperature_raw = params.get("temperature")
-    temperature = float(temperature_raw) if temperature_raw is not None else 0.7
-    manifest = OwlAgentManifest(
+    spec = OwlSpec(
         name=params["name"],
         role=params["role"],
-        system_prompt=system_prompt,
         model_tier=params["tier"],
+        preset=params.get("preset"),
+        explicit_tools=tuple(params.get("tools") or ()),
+        skills=tuple(params.get("skills") or ()),
+        capability_profile=tuple(params.get("capability_profile") or ()),
         provider_name=params.get("provider"),
-        temperature=temperature,
-        tools=list(params.get("tools") or []),
-        dna=OwlDNA(),
+        temperature=float(temperature_raw) if temperature_raw is not None else 0.7,
+        system_prompt=params.get("system_prompt"),
+        valid_tools=valid_tools,
     )
+    try:
+        manifest = SpecialistOwlBuilder().build(spec)
+    except ValueError as exc:
+        raise CommandParseError("owls add", str(exc)) from exc
     log.gateway.debug(
         "[commands] owls.build_owl_manifest: exit",
         extra={"_fields": {"name": manifest.name}},
