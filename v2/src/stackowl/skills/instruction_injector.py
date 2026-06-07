@@ -4,21 +4,16 @@ Untrusted sources are fenced + neutralized so a skill body cannot inject system
 instructions (the body reaches system role every turn — a prompt-injection surface)."""
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from enum import Enum
 from typing import Protocol
 
 from stackowl.infra.observability import log
+from stackowl.infra.prompt_safety import neutralize as _neutralize_shared
 
 _DEFAULT_CAP = 4000
 _PER_SKILL_NEUTRALIZE_CAP = 600
 _TRUSTED = {"builtin"}
-_HEADER_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s.*$")   # strip markdown headers (structural, no English keywords)
-# After newlines collapse to one line, a header/directive marker (#{1,6} + space)
-# can survive mid-prose; strip the marker token wherever it appears so an
-# injected body can never reintroduce a heading/role marker (structural, no keywords).
-_INLINE_MARKER_RE = re.compile(r"#{1,6}\s")
 
 FULL_FLOOR = 0.40     # score >= this -> eligible for ACTIVE (FULL)
 SUMMARY_FLOOR = 0.20  # SUMMARY_FLOOR <= score < FULL_FLOOR -> AVAILABLE (SUMMARY)
@@ -59,20 +54,8 @@ def _resolve_text(sk: _SkillLike) -> str:
 
 
 def _neutralize(text: str) -> str:
-    # Strip angle brackets FIRST so an untrusted body can never close the
-    # <skill_reference> fence or forge a trusted one (e.g. a summary containing
-    # "</skill_reference> ... <skill_reference trust=\"trusted\">"). Without this
-    # the fence is escapable and the whole trust-tier defense is void.
-    text = text.replace("<", "").replace(">", "")
-    # Strip double-quotes too: without them an injected body cannot re-form an
-    # attribute (e.g. trust="trusted") inside the fence, so it can never forge a
-    # tag's attribute syntax even after the angle brackets are gone (structural,
-    # no English keywords).
-    text = text.replace('"', "")
-    text = _HEADER_RE.sub("", text)            # drop line-start heading/role markers
-    text = " ".join(text.split())              # collapse newlines/whitespace -> prose
-    text = _INLINE_MARKER_RE.sub("", text)     # drop any marker that survived the collapse
-    return text[:_PER_SKILL_NEUTRALIZE_CAP]
+    """Thin skill-layer wrapper: delegates to the shared neutralizer with the skill cap."""
+    return _neutralize_shared(text, cap=_PER_SKILL_NEUTRALIZE_CAP)
 
 
 def assign_tiers(
