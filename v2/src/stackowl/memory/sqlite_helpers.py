@@ -217,4 +217,7 @@ def row_to_staged(row: dict[str, Any]) -> StagedFact:
         status=row["status"],
         embedding=embedding,
         embedding_model=row.get("embedding_model"),
+        # Task 8 promoter SELECTs don't yet include trust; .get() avoids KeyError.
+        # Once Task 8 adds trust to those SELECTs, this will also read the real value.
+        trust=row.get("trust", "untrusted"),
     )

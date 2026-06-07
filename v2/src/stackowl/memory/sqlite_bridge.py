@@ -17,6 +17,7 @@ from stackowl.memory.sqlite_helpers import (
     row_to_staged,
     semantic_recall,
 )
+from stackowl.memory.trust import trust_for_source
 
 if TYPE_CHECKING:  # pragma: no cover
     from stackowl.db.pool import DbPool
@@ -115,6 +116,7 @@ class SqliteMemoryBridge(MemoryBridge):
             source_type="conversation",
             source_ref=session_id,
             confidence=0.5,
+            trust=trust_for_source("conversation"),
         )
         # 3. STEP
         await self.stage(fact)
@@ -139,8 +141,9 @@ class SqliteMemoryBridge(MemoryBridge):
             await self._db.execute(
                 """INSERT INTO staged_facts (
                        fact_id, content, source_type, source_ref, confidence,
-                       staged_at, reinforcement_count, status, embedding, embedding_model
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       staged_at, reinforcement_count, status, embedding, embedding_model,
+                       trust
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     fact.fact_id,
                     fact.content,
@@ -152,6 +155,7 @@ class SqliteMemoryBridge(MemoryBridge):
                     fact.status,
                     embedding_blob,
                     fact.embedding_model,
+                    fact.trust,
                 ),
             )
         except aiosqlite.IntegrityError as exc:
@@ -255,7 +259,8 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         rows = await self._db.fetch_all(
             """SELECT fact_id, content, source_type, source_ref, confidence,
-                      staged_at, reinforcement_count, status, embedding, embedding_model
+                      staged_at, reinforcement_count, status, embedding, embedding_model,
+                      trust
                FROM staged_facts
                WHERE status = ?
                ORDER BY staged_at DESC""",
@@ -294,7 +299,8 @@ class SqliteMemoryBridge(MemoryBridge):
         if staged_before is None:
             rows = await self._db.fetch_all(
                 """SELECT fact_id, content, source_type, source_ref, confidence,
-                          staged_at, reinforcement_count, status, embedding, embedding_model
+                          staged_at, reinforcement_count, status, embedding, embedding_model,
+                          trust
                    FROM staged_facts
                    WHERE source_type = 'conversation' AND source_ref = ?
                    ORDER BY staged_at DESC
@@ -304,7 +310,8 @@ class SqliteMemoryBridge(MemoryBridge):
         else:
             rows = await self._db.fetch_all(
                 """SELECT fact_id, content, source_type, source_ref, confidence,
-                          staged_at, reinforcement_count, status, embedding, embedding_model
+                          staged_at, reinforcement_count, status, embedding, embedding_model,
+                          trust
                    FROM staged_facts
                    WHERE source_type = 'conversation' AND source_ref = ?
                      AND staged_at <= ?

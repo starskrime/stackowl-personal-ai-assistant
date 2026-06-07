@@ -194,6 +194,7 @@ class WebFetchTool(Tool):
                 source_type="webpage",
                 source_ref=url_path_only(url),
                 confidence=0.4,
+                trust="untrusted",
             )
             await bridge.stage(fact)
         except Exception as exc:

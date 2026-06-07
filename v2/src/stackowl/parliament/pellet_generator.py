@@ -140,6 +140,7 @@ class KnowledgePelletGenerator:
                         source_ref=f"parliament:{session.session_id}",
                         confidence=0.7,
                         reinforcement_count=0,
+                        trust="self",
                     )
                     await self._bridge.stage(fact)
                 else:

@@ -14,6 +14,7 @@ from stackowl.exceptions import CommandParseError, DuplicateFactError
 from stackowl.infra.observability import log
 from stackowl.memory.models import StagedFact
 from stackowl.memory.sqlite_helpers import unpack_embedding
+from stackowl.memory.trust import trust_for_source
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.audit.logger import AuditLogger
@@ -177,6 +178,7 @@ async def remember_fact(
         reinforcement_count=3,
         embedding=embedding,
         embedding_model=embedding_model,
+        trust=trust_for_source(source_type),
     )
     try:
         await bridge.stage(fact)
