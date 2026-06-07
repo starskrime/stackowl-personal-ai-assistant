@@ -34,6 +34,17 @@ def test_agent_owl_without_ceiling_fails_closed_to_empty_bounds():
     assert reg.get("ghost").bounds.tools == frozenset()
 
 
+def test_agent_owl_with_unbounded_ceiling_fails_closed():
+    # A PRESENT but tools-unbounded ceiling is a corruption signal for an agent owl
+    # (the mint path always persists a concrete-tools ceiling) -> deny-all.
+    rogue = _m("wide", origin="agent", created_by="x",
+               creation_ceiling=BoundsSpec(tools=None),
+               bounds=BoundsSpec(tools=frozenset({"shell", "read_file"})))
+    reg = _reg(rogue)
+    revalidate_agent_owls(reg)
+    assert reg.get("wide").bounds.tools == frozenset()
+
+
 def test_human_and_builtin_owls_untouched():
     human = _m("h", origin="human", bounds=BoundsSpec(tools=frozenset({"shell"})))
     builtin = _m("b", origin="builtin", bounds=None)

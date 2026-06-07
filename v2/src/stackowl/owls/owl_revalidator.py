@@ -44,12 +44,13 @@ def revalidate_agent_owls(registry: OwlRegistry) -> int:
             continue
         name = manifest.name
         try:
-            if manifest.creation_ceiling is None:
-                # FAIL CLOSED: agent owl with no ceiling is a corruption/tamper
-                # signal (owl_build always persists one). Deny everything.
+            if manifest.creation_ceiling is None or manifest.creation_ceiling.tools is None:
+                # FAIL CLOSED: an agent owl with a missing OR tools-unbounded ceiling
+                # is a corruption/tamper signal (owl_build always persists a
+                # concrete-tools ceiling). Deny everything.
                 log.engine.error(
-                    "[owls] revalidate_agent_owls: agent owl has no creation_ceiling "
-                    "— forcing deny-all bounds (fail-closed)",
+                    "[owls] revalidate_agent_owls: agent owl has missing or unbounded "
+                    "creation_ceiling — forcing deny-all bounds (fail-closed)",
                     extra={"_fields": {"owl": name, "created_by": manifest.created_by}},
                 )
                 if manifest.bounds != _DENY_ALL:
