@@ -38,13 +38,14 @@ if TYPE_CHECKING:
     from stackowl.tools.registry import ToolRegistry
 
 _USAGE = (
-    "Usage: /owls <list|add|edit|remove|health|dna> [args]\n"
+    "Usage: /owls <list|add|edit|remove|health|dna|reset-dna> [args]\n"
     "  /owls list                              — show registered owls\n"
     "  /owls add <name> --role <r> --tier <t>  — register a new owl\n"
     "  /owls edit <name> [--tier <t> ...]      — update fields on an existing owl\n"
     "  /owls remove <name>                     — start removal (asks for YES)\n"
     "  /owls health                            — report registry health\n"
-    "  /owls dna <name>                        — show DNA traits"
+    "  /owls dna <name>                        — show DNA traits (current vs authored)\n"
+    "  /owls reset-dna <name> YES              — revert evolved DNA to authored baseline"
 )
 
 _NO_REGISTRY = "(no owl registry wired — start StackOwl normally to manage owls)"
@@ -102,6 +103,8 @@ class OwlsCommand(SlashCommand):
                 result = await self._health()
             elif sub == "dna":
                 result = await self._dna(rest)
+            elif sub == "reset-dna":
+                result = await self._reset_dna(rest)
             else:
                 log.gateway.debug(
                     "[commands] owls.handle: unknown subcommand",
@@ -269,12 +272,61 @@ class OwlsCommand(SlashCommand):
         if self._db is not None:
             rows = await self._db.fetch_all(_SELECT_DNA_SQL, (name,))
             db_row = rows[0] if rows else None
-        result = format_dna_display(name, manifest.dna, db_row)
+        authored = None
+        if self._db is not None:
+            from stackowl.owls.dna_authored import read_authored_dna
+            authored = await read_authored_dna(self._db, name)
+        result = format_dna_display(name, manifest.dna, db_row, authored=authored)
         log.gateway.debug(
             "[commands] owls.dna: exit",
             extra={"_fields": {"name": name, "has_db_row": db_row is not None}},
         )
         return result
+
+    # -------------------------------------------------------------- reset-dna
+    async def _reset_dna(self, rest: str) -> str:
+        log.gateway.debug(
+            "[commands] owls.reset_dna: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._registry is None:
+            return _NO_REGISTRY
+        tokens = rest.split()
+        if not tokens:
+            return "Usage: /owls reset-dna <name> YES"
+        name = tokens[0]
+        _ = self._registry.get(name)  # raises OwlNotFoundError on miss → handled by handle()
+        confirmed = len(tokens) > 1 and tokens[1] == "YES"
+        if not confirmed:
+            log.gateway.debug(
+                "[commands] owls.reset_dna: awaiting confirmation",
+                extra={"_fields": {"name": name}},
+            )
+            return (
+                f"⚠ This reverts owl '{name}' DNA to its authored baseline (evolution discarded).\n"
+                f"   Type: /owls reset-dna {name} YES to confirm."
+            )
+        if self._db is None:
+            return "DNA store unavailable."
+        from stackowl.owls.directive_latch import DIRECTIVE_LATCH
+        from stackowl.owls.dna_authored import read_authored_dna
+        from stackowl.owls.dna_hydrator import apply_dna_overlay
+        from stackowl.owls.dna_storage import upsert_owl_dna
+        authored = await read_authored_dna(self._db, name)
+        if authored is None:
+            log.gateway.debug(
+                "[commands] owls.reset_dna: no authored baseline",
+                extra={"_fields": {"name": name}},
+            )
+            return f"No authored baseline recorded for '{name}' — nothing to reset to."
+        await upsert_owl_dna(self._db, name, authored, table="owl_dna")
+        apply_dna_overlay(self._registry, name, authored)
+        DIRECTIVE_LATCH.reset_owl(name)
+        log.gateway.info(
+            "[commands] owls.reset_dna: exit — DNA reset to authored baseline",
+            extra={"_fields": {"name": name}},
+        )
+        return f"✓ Owl '{name}' DNA reset to authored baseline."
 
     # ----------------------------------------------------------- yaml helpers
     def _upsert_to_yaml(self, entry: dict[str, Any]) -> None:

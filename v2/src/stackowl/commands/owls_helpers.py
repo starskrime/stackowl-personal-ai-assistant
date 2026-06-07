@@ -116,22 +116,46 @@ def _bar(value: float, width: int = 10) -> str:
     return "▓" * filled + "░" * (width - filled)
 
 
-def format_dna_display(owl_name: str, dna: OwlDNA, db_row: dict[str, Any] | None) -> str:
+def format_dna_display(
+    owl_name: str,
+    dna: OwlDNA,
+    db_row: dict[str, Any] | None,
+    authored: OwlDNA | None = None,
+) -> str:
     """Render DNA traits as a vertical table with bar visualisation.
 
     ``db_row`` is the row fetched from ``owl_dna`` (or ``None`` if the owl has
     never been persisted — uses manifest-level defaults).  The footer reports
     the timestamp of the last persisted mutation or a "not yet persisted" hint.
+
+    When ``authored`` is provided, a second column shows the authored baseline
+    value alongside the current value so divergence is immediately visible.
+    Existing callers that omit ``authored`` are unaffected.
     """
     log.gateway.debug(
         "[commands] owls.format_dna_display: entry",
-        extra={"_fields": {"owl": owl_name, "has_db_row": db_row is not None}},
+        extra={"_fields": {"owl": owl_name, "has_db_row": db_row is not None, "has_authored": authored is not None}},
     )
     lines: list[str] = [f"DNA for owl: {owl_name}", "-" * 48]
-    for trait in _DNA_TRAITS:
-        value = float(db_row[trait]) if db_row is not None and trait in db_row else float(getattr(dna, trait))
-        clamped = max(0.0, min(1.0, value))
-        lines.append(f"  {_pad(trait, 16)}: {clamped:.2f} [{_bar(clamped)}]")
+    if authored is not None:
+        lines.append("  Trait             Current  Authored")
+        lines.append("  " + "-" * 38)
+        for trait in _DNA_TRAITS:
+            current_val = float(db_row[trait]) if db_row is not None and trait in db_row else float(getattr(dna, trait))
+            current_val = max(0.0, min(1.0, current_val))
+            authored_val = max(0.0, min(1.0, float(getattr(authored, trait))))
+            marker = " *" if abs(current_val - authored_val) > 0.01 else "  "
+            lines.append(
+                f"  {_pad(trait, 16)}: {current_val:.2f} [{_bar(current_val)}]"
+                f"  authored={authored_val:.2f}{marker}"
+            )
+        lines.append("")
+        lines.append("  (* trait has drifted from authored baseline)")
+    else:
+        for trait in _DNA_TRAITS:
+            value = float(db_row[trait]) if db_row is not None and trait in db_row else float(getattr(dna, trait))
+            clamped = max(0.0, min(1.0, value))
+            lines.append(f"  {_pad(trait, 16)}: {clamped:.2f} [{_bar(clamped)}]")
     if db_row is not None and db_row.get("updated_at"):
         lines.append("")
         lines.append(f"  updated_at: {db_row['updated_at']}")
