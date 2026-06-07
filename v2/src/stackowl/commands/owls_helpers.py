@@ -337,4 +337,12 @@ def manifest_to_yaml_entry(manifest: OwlAgentManifest) -> dict[str, Any]:
         if isinstance(bounds.get("tools"), list):
             bounds["tools"] = sorted(bounds["tools"])
         entry["bounds"] = bounds
+    entry["origin"] = manifest.origin
+    if manifest.created_by is not None:
+        entry["created_by"] = manifest.created_by
+    if manifest.creation_ceiling is not None:
+        ceiling = manifest.creation_ceiling.model_dump(mode="json", exclude_none=True)
+        if isinstance(ceiling.get("tools"), list):
+            ceiling["tools"] = sorted(ceiling["tools"])
+        entry["creation_ceiling"] = ceiling
     return entry
