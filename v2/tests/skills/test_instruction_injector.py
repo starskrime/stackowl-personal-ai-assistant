@@ -107,3 +107,18 @@ def test_oversized_full_is_capped_not_dumped():
 
 def test_empty_returns_empty():
     assert SkillInstructionInjector().render("owl", []) == ""
+
+
+def test_catalog_is_budget_bounded():
+    inj = SkillInstructionInjector()
+    big = [(_SkillStub(f"name{i}" + "x" * 200, "user"), SkillTier.CATALOG, False) for i in range(500)]
+    out = inj.render("owl", big, cap=2000)
+    assert len(out) < 4000          # bounded near cap, not 500*200 chars
+    assert "more" in out            # truncation surfaced, not silent
+
+
+def test_catalog_shows_at_least_one_when_huge():
+    inj = SkillInstructionInjector()
+    huge = _SkillStub("n" * 5000, "user")
+    out = inj.render("owl", [(huge, SkillTier.CATALOG, False)], cap=100)
+    assert out  # non-empty: at least the (neutralized) name appears

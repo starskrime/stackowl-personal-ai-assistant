@@ -188,7 +188,24 @@ class SkillInstructionInjector:
             parts.extend(summary)
         if catalog:
             parts.append(_CATALOG_HEADER)
-            parts.append(", ".join(catalog))
+            remaining = max(0, cap - used)
+            shown: list[str] = []
+            length = 0
+            for nm in catalog:
+                add = len(nm) + 2  # name + ", "
+                if length + add > remaining and shown:
+                    break
+                shown.append(nm)
+                length += add
+            dropped = len(catalog) - len(shown)
+            line = ", ".join(shown)
+            if dropped > 0:
+                line += f" (+{dropped} more — skill_view to list)"
+                log.engine.warning(
+                    "skill injection: catalog truncated by budget",
+                    extra={"_fields": {"owl": owl_name, "dropped": dropped}},
+                )
+            parts.append(line)
         result = "\n".join(parts)
         log.engine.debug(
             "[skills] injector.render: exit",
