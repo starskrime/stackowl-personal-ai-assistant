@@ -43,7 +43,7 @@ from stackowl.owls.delegation_limits import (
     MAX_DELEGATION_ATTEMPTS_PER_TURN,
     MAX_DELEGATION_DEPTH,
 )
-from stackowl.pipeline.authz_compose import child_floor
+from stackowl.pipeline.authz_compose import child_floor, resolve_owl_bounds
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.tools.agents.resolver import resolve_target
@@ -70,6 +70,34 @@ if TYPE_CHECKING:
 
 _TOOLSET_GROUP = "agents"
 _DEFAULT_CALLER = "secretary"
+
+_SIDE_EFFECT_SEVERITIES: frozenset[str] = frozenset({"write", "consequential"})
+
+
+def _can_side_effect(owl_name: str) -> bool:
+    """True if the owl could run a write/consequential tool.
+
+    Used by the delegation ladder to decide whether a child's work can be safely
+    re-delegated — a write-capable child may have already acted, so re-delegation
+    is not safe.
+
+    Conservative: if unverifiable (no registry, unknown owl, or unrestricted
+    bounds), returns True (treat as side-effecting).
+    """
+    svc = get_services()
+    bounds = resolve_owl_bounds(owl_name, svc.owl_registry)
+    if bounds is None or bounds.tools is None:
+        # Unknown owl or unrestricted bounds → could side-effect → conservative True
+        return True
+    treg = svc.tool_registry
+    if treg is None:
+        # Cannot verify severities → conservative True
+        return True
+    for name in bounds.tools:
+        tool = treg.get(name)
+        if tool is not None and tool.manifest.action_severity in _SIDE_EFFECT_SEVERITIES:
+            return True
+    return False
 
 
 class DelegateTaskArgs(BaseModel):
