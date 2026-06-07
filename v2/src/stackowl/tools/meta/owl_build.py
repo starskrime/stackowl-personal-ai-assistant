@@ -347,7 +347,13 @@ class OwlBuildTool(Tool):
                 f"failed to register owl '{manifest.name}' ({exc}) — rolled back.", t0
             )
 
-        # 9. Success.
+        # 9. Capture authored DNA baseline (fail-safe — won't break creation).
+        if svc.db_pool is not None:
+            from stackowl.owls.dna_authored import capture_one_authored
+
+            await capture_one_authored(svc.db_pool, manifest.name, manifest.dna)
+
+        # 10. Success.
         tools_str = ", ".join(sorted(resolved_tools)) or "(none)"
         msg = (
             f"Created owl '{manifest.name}' ({manifest.role}). Tools: {tools_str}."

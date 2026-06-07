@@ -155,6 +155,10 @@ class OwlsCommand(SlashCommand):
         manifest = build_owl_manifest(params, valid_tools=valid)
         manifest = manifest.model_copy(update={"origin": "human"})
         self._registry.register(manifest)  # may raise ManifestValidationError
+        if self._db is not None:
+            from stackowl.owls.dna_authored import capture_one_authored
+
+            await capture_one_authored(self._db, manifest.name, manifest.dna)
         self._upsert_to_yaml(manifest_to_yaml_entry(manifest))
         if self._bus is not None:
             self._bus.emit("owl_added", {"name": manifest.name, "role": manifest.role})
