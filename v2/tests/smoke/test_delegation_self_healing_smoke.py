@@ -70,6 +70,7 @@ from stackowl.owls.concurrency import ConcurrencyGovernor
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
+from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import StreamRegistry
@@ -318,21 +319,28 @@ def _tools(*extra: Tool) -> ToolRegistry:
 
 @pytest.mark.asyncio
 async def test_child_failure_surfaces_honestly(tmp_db: DbPool) -> None:
-    """A delegated child fails (empty sub-run, twice) → the parent surfaces an
-    HONEST, non-empty message to the user (the model status OR the safety-net),
-    never a silent swallow nor a fabricated answer."""
+    """A delegated child fails (empty sub-run) → the parent surfaces an HONEST,
+    non-empty FAILED message to the user, never a silent swallow nor a fabricated
+    answer.
+
+    New contract (D2): an unbounded child (bounds=None) is conservatively treated as
+    write-capable by ``_can_side_effect`` → on failure the delegation halts with an
+    honest-uncertain FAILED terminal (``success=False``, prose in ``tr.error``,
+    marker-prefixed by the dispatch seam). The parent reads the prose directly
+    (not a JSON envelope).
+    """
 
     async def script(prov: _ScriptedProvider, owl: str, dispatch):  # noqa: ANN001
         if owl == "scout":
             # CHILD: produce NO answer → governor decides status "empty".
             return ("", [])
-        # PARENT (secretary): delegate to scout, then surface the record verbatim
-        # so the model does NOT fabricate an answer over the failure.
+        # PARENT (secretary): delegate to scout. Under the new contract, the
+        # observation for a FAILED delegation is honest FAILED prose (marker-prefixed),
+        # NOT a JSON envelope — the parent relays it verbatim so no text is invented.
         out = await dispatch("delegate_task", {"goal": "research X", "to_owl": "scout"})
         prov.parent_results.append(out)
-        record = json.loads(out).get("record", {})
-        # The honest model behavior: relay the structured failure, not invent text.
-        return (str(record.get("detail") or record.get("result") or out), [
+        prose = out.replace(TOOL_FAILED_MARKER, "")
+        return (prose or out, [
             {"name": "delegate_task", "args": {"to_owl": "scout"}, "result": out},
         ])
 
@@ -343,10 +351,16 @@ async def test_child_failure_surfaces_honestly(tmp_db: DbPool) -> None:
 
     delivered = await _turn(env, "research X for me")
 
-    # The delegate record carries an honest terminal status (not "ok").
+    # The failed delegation surfaces as honest FAILED prose (not a JSON envelope).
     assert env.provider.parent_results, "parent never reached delegate_task"
-    record = json.loads(env.provider.parent_results[0])["record"]
-    assert record["status"] in {"empty", "child_error", "timeout"}, record
+    observation = env.provider.parent_results[0]
+    # The dispatch seam prepends TOOL_FAILED_MARKER when success=False.
+    assert TOOL_FAILED_MARKER in observation, (
+        f"expected FAILED marker in observation — delegation did not return honest failure:\n{observation!r}"
+    )
+    assert "FAILED" in observation, (
+        f"honest FAILED prose missing from observation:\n{observation!r}"
+    )
 
     # The child sub-pipeline genuinely ran (real delegation round-trip).
     assert "scout" in env.provider.owls_run, env.provider.owls_run
@@ -367,16 +381,25 @@ async def test_fallback_to_secretary_recovers_with_attribution(tmp_db: DbPool) -
     """Caller is a NON-secretary specialist (analyst). It delegates to scout which
     fails twice (empty) → the recovery ladder falls back to the Secretary, which
     answers → record status ``recovered_via_secretary`` and the user gets the
-    secretary's answer WITH the attributed lead-in."""
+    secretary's answer WITH the attributed lead-in.
+
+    New contract (D2): to exercise the recovery/fallback path the child MUST be
+    READ-ONLY (``bounds`` restricted to read-severity tools only). An unbounded child
+    is conservatively write-capable → halts with honest FAILED terminal (no fallback).
+    Scout is given explicit read-only bounds so ``_can_side_effect`` returns False and
+    the self-healing ladder (same-owl retry + secretary fallback) runs as intended.
+    Intent preserved: a safe (read-only) delegation self-heals via the secretary.
+    """
 
     secretary_answer = "Secretary's recovered answer: 42."
 
     async def script(prov: _ScriptedProvider, owl: str, dispatch):  # noqa: ANN001
         if owl == "scout":
-            return ("", [])  # specialist fails → empty (retriable)
+            return ("", [])  # read-only specialist fails → empty (retriable)
         if owl == "secretary":
             return (secretary_answer, [])  # fallback succeeds
         # PARENT (owl=analyst, a non-secretary specialist): delegate to scout.
+        # Recovery produces a success=True JSON envelope (recovered_via_secretary).
         out = await dispatch("delegate_task", {"goal": "do the thing", "to_owl": "scout"})
         prov.parent_results.append(out)
         record = json.loads(out).get("record", {})
@@ -385,7 +408,10 @@ async def test_fallback_to_secretary_recovers_with_attribution(tmp_db: DbPool) -
         ])
 
     reg = OwlRegistry.with_default_secretary()
-    reg.register(_specialist("scout", "research-scout"))
+    # Scout is READ-ONLY: bounds restricted to web_search (action_severity="read") so
+    # _can_side_effect("scout") returns False → retry/fallback ladder is allowed.
+    reg.register(_specialist("scout", "research-scout",
+                             bounds=BoundsSpec(tools=frozenset({"web_search"}))))
     reg.register(_specialist("analyst", "data-analyst"))
     env = _build(tmp_db=tmp_db, provider=_ScriptedProvider(script),
                  owl_registry=reg, tool_registry=_tools())
@@ -439,7 +465,14 @@ async def test_narrow_fallback_cannot_escalate_shell(tmp_db: DbPool) -> None:
     assert "shell" not in narrow_bounds.tools  # premise guard
     reg = OwlRegistry.with_default_secretary()
     reg.register(_specialist("narrow", "narrow-specialist", bounds=narrow_bounds))
-    reg.register(_specialist("worker", "worker"))  # the (failing) delegate target
+    # Worker is given explicit READ-ONLY bounds (restricted to the recording 'shell'
+    # tool which has action_severity="read" in this test's _RecordingTool). This makes
+    # _can_side_effect("worker") return False so the delegation ladder allows the
+    # secretary fallback to run — both child AND secretary are then clamped to the
+    # narrow floor and denied the forbidden shell. This is the new D2 contract:
+    # only a read-only child enables the fallback/retry ladder.
+    worker_bounds = BoundsSpec(tools=frozenset({"shell"}))
+    reg.register(_specialist("worker", "worker", bounds=worker_bounds))
 
     async def script(prov: _ScriptedProvider, owl: str, dispatch):  # noqa: ANN001
         if owl in {"worker", "secretary"}:
@@ -454,11 +487,13 @@ async def test_narrow_fallback_cannot_escalate_shell(tmp_db: DbPool) -> None:
             out = await dispatch("shell", {})
             prov.parent_results.append(f"{owl}:{out}")
             return ("", [])
-        # PARENT (owl=narrow): delegate a shell-needing task to worker.
+        # PARENT (owl=narrow): delegate a shell-needing task to worker. Under the new
+        # contract, when the entire ladder exhausts without recovery the outcome is an
+        # honest FAILED prose (success=False, marker-prefixed) — NOT a JSON envelope.
         out = await dispatch("delegate_task", {"goal": "run a shell command", "to_owl": "worker"})
         prov.parent_results.append(f"narrow:{out}")
-        record = json.loads(out).get("record", {})
-        return (str(record.get("detail") or record.get("result") or out), [
+        prose = out.replace(TOOL_FAILED_MARKER, "")
+        return (prose or out, [
             {"name": "delegate_task", "args": {"to_owl": "worker"}, "result": out},
         ])
 
@@ -485,10 +520,18 @@ async def test_narrow_fallback_cannot_escalate_shell(tmp_db: DbPool) -> None:
     # --- the secretary genuinely ran as the fallback (clamped to the floor) -----
     assert "secretary" in env.provider.owls_run, env.provider.owls_run
 
-    # --- the parent delegate record is an HONEST terminal failure (not "ok") ----
+    # --- the parent sees an HONEST FAILED terminal (prose, not JSON) ------------
+    # After worker+secretary both fail, honest_irrelevant_result returns success=False
+    # prose. The parent_results entry for "narrow:" contains the raw dispatch output
+    # (marker-prefixed FAILED prose).
     parent_out = next(r for r in env.provider.parent_results if r.startswith("narrow:"))
-    parent_record = json.loads(parent_out.split("narrow:", 1)[1])["record"]
-    assert parent_record["status"] in {"empty", "child_error", "timeout"}, parent_record
+    raw_delegation = parent_out.split("narrow:", 1)[1]
+    assert TOOL_FAILED_MARKER in raw_delegation, (
+        f"expected FAILED marker in parent delegation observation:\n{raw_delegation!r}"
+    )
+    assert "FAILED" in raw_delegation, (
+        f"honest FAILED prose missing from parent delegation observation:\n{raw_delegation!r}"
+    )
 
     # --- the user gets a NON-EMPTY honest message (no silent swallow) -----------
     assert delivered.strip(), f"silent swallow on a denied-tool failure; got {delivered!r}"
