@@ -35,6 +35,9 @@ class OwlAgentManifest(BaseModel):
     # for frozen-model hashability. Additive + defaulted: owls predating this
     # field load unchanged. Skill INSTRUCTION-injection is a later story.
     skills: tuple[str, ...] = ()
+    # Owl-pinned skills: always FULL-injected regardless of relevance (must be a
+    # subset of `skills`; non-owned pins are ignored at injection time). Story B.
+    pinned_skills: tuple[str, ...] = ()
     max_tokens: int = 4096
     temperature: float = 0.7
     timeout_seconds: float = Field(default=30.0, gt=0.0)
