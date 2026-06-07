@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from stackowl.authz.bounds import BoundsSpec
 from stackowl.infra.trace import TraceContext
 from stackowl.owls.a2a_delegation import A2AResult
 from stackowl.owls.delegation_limits import (
@@ -23,6 +24,13 @@ from stackowl.pipeline.services import StepServices, reset_services, set_service
 from stackowl.pipeline.state import PipelineState
 from stackowl.tools.agents.delegate_task import DelegateTaskTool
 from stackowl.tools.registry import ToolRegistry
+
+# Read-only bounds: an owl restricted to read_file (action_severity="read") cannot
+# side-effect → under the unified re-delegation gate it is SAFE to retry/fallback.
+_READONLY = BoundsSpec(tools=frozenset({"read_file"}))
+# Write-capable bounds: edit has action_severity="write" → may have already acted
+# → the gate HALTS (no retry, no fallback) on failure or off-topic.
+_WRITE_CAPABLE = BoundsSpec(tools=frozenset({"edit"}))
 
 # ----------------------------------------------------------------- fakes/fixtures
 
@@ -50,7 +58,7 @@ class _FakeDelegator:
         return self.result
 
 
-def _registry_with_specialist() -> OwlRegistry:
+def _registry_with_specialist(bounds: BoundsSpec | None = None) -> OwlRegistry:
     reg = OwlRegistry.with_default_secretary()
     reg.register(
         OwlAgentManifest(
@@ -58,13 +66,20 @@ def _registry_with_specialist() -> OwlRegistry:
             role="research-scout",
             system_prompt="You research things.",
             model_tier="standard",
+            bounds=bounds,
         )
     )
     return reg
 
 
 def _services(delegator: object | None, registry: OwlRegistry | None) -> StepServices:
-    return StepServices(a2a_delegator=delegator, owl_registry=registry)  # type: ignore[arg-type]
+    # tool_registry wired so the unified gate's _can_side_effect can verify
+    # per-owl tool severities (without it, the helper is conservatively True).
+    return StepServices(
+        a2a_delegator=delegator,  # type: ignore[arg-type]
+        owl_registry=registry,  # type: ignore[arg-type]
+        tool_registry=ToolRegistry.with_defaults(),
+    )
 
 
 def _record(res_output: str) -> dict[str, object]:
@@ -213,9 +228,13 @@ async def test_width_slot_released_after_successful_delegation() -> None:
 
 
 async def test_empty_result_becomes_structured_empty_status() -> None:
-    # A2ADelegator now returns A2AResult(status="empty") for a no-content response.
+    # A2ADelegator returns A2AResult(status="empty") for a no-content response.
+    # scout is READ-ONLY → under the unified gate the retriable "empty" status is
+    # safely re-delegated (initial + retry). Both fail; the fallback to secretary is
+    # skipped (caller==secretary) → the gate emits an HONEST IRRELEVANT terminal
+    # (a structured FAILED record), never a bare empty string masquerading as success.
     fake = _FakeDelegator(A2AResult(status="empty", content="", resolved_owl="scout"))
-    token = set_services(_services(fake, _registry_with_specialist()))
+    token = set_services(_services(fake, _registry_with_specialist(_READONLY)))
     trace = TraceContext.start("s", trace_id="tr-empty", channel="cli")
     try:
         res = await DelegateTaskTool().execute(goal="task", to_owl="scout")
@@ -223,13 +242,12 @@ async def test_empty_result_becomes_structured_empty_status() -> None:
         TraceContext.reset(trace)
         reset_services(token)
 
-    assert res.success
+    assert res.success is False  # honest FAILED terminal, not a masked success
     record = _record(res.output)
-    assert record["status"] == "empty"  # refined from old "timeout_or_empty"
-    assert record["result"] == ""  # NOT a bare empty string at the tool boundary
-    # T7 recovery ladder: "empty" is retriable, so delegate is called twice
-    # (initial attempt + retry-once). Fallback to secretary is skipped because
-    # caller==secretary. Two calls is the correct bounded behavior.
+    assert record["status"] == "irrelevant"
+    assert "FAILED" in str(record["result"])  # structured, not a bare empty string
+    # "empty" is retriable, so delegate is called twice (initial + retry-once).
+    # Fallback to secretary is skipped because caller==secretary.
     assert len(fake.calls) == 2  # initial + retry (fallback skipped: caller is secretary)
 
 
@@ -405,17 +423,21 @@ async def test_target_not_found_distinct_no_spawn() -> None:
 
 @pytest.mark.asyncio
 async def test_child_error_status_mapped() -> None:
-    """A2AResult(status='child_error') maps to record status 'child_error'."""
+    """A2AResult(status='child_error') from a READ-ONLY child is retriable: it is
+    retried (caller is the secretary so no fallback fires) and, with no recovery,
+    the unified gate returns the HONEST IRRELEVANT terminal — never a masked success.
+    """
     fake = _FakeDelegator(A2AResult(status="child_error", child_detail="boom", resolved_owl="scout"))
-    token = set_services(_services(fake, _registry_with_specialist()))
+    token = set_services(_services(fake, _registry_with_specialist(_READONLY)))
     trace = TraceContext.start("s", trace_id="t", channel="cli", owl_name="secretary")
     try:
         res = await DelegateTaskTool().execute(goal="g", to_owl="scout")
     finally:
         TraceContext.reset(trace)
         reset_services(token)
+    assert res.success is False
     rec = _record(res.output)
-    assert rec["status"] == "child_error"
+    assert rec["status"] == "irrelevant"
 
 
 # -------------------------------------------------------- T7: bounded recovery ladder
@@ -435,8 +457,13 @@ class _ScriptedDelegator:
         return self._results.pop(0)
 
 
-def _registry_with_three_owls() -> OwlRegistry:
-    """Secretary + scout + analyst — needed for fallback tests where caller != secretary."""
+def _registry_with_three_owls(bounds: BoundsSpec | None = None) -> OwlRegistry:
+    """Secretary + scout + analyst — needed for fallback tests where caller != secretary.
+
+    ``bounds`` is applied to BOTH scout and analyst so ladder tests can make the
+    target/fallback owls READ-ONLY (re-delegation safe) or write-capable (gate halts).
+    The secretary keeps its default (unrestricted) bounds.
+    """
     reg = OwlRegistry.with_default_secretary()
     reg.register(
         OwlAgentManifest(
@@ -444,6 +471,7 @@ def _registry_with_three_owls() -> OwlRegistry:
             role="research-scout",
             system_prompt="You research things.",
             model_tier="standard",
+            bounds=bounds,
         )
     )
     reg.register(
@@ -452,6 +480,7 @@ def _registry_with_three_owls() -> OwlRegistry:
             role="data-analyst",
             system_prompt="You analyse data.",
             model_tier="standard",
+            bounds=bounds,
         )
     )
     return reg
@@ -463,13 +492,16 @@ async def test_retry_then_fallback_recovers() -> None:
 
     Scenario: caller=scout delegates to analyst (fails twice) → fallback to secretary (ok).
     Depth is IDENTICAL across all 3 attempts (parent_state reused; no re-increment).
+
+    analyst is READ-ONLY → under the unified re-delegation gate the retriable
+    "timeout" is safe to retry + fall back (it cannot have side-effected).
     """
     fake = _ScriptedDelegator([
         A2AResult(status="timeout", resolved_owl="analyst"),
         A2AResult(status="timeout", resolved_owl="analyst"),
         A2AResult(status="ok", content="done", resolved_owl="secretary"),
     ])
-    reg = _registry_with_three_owls()
+    reg = _registry_with_three_owls(_READONLY)
     token = set_services(_services(fake, reg))
     # caller=scout (non-secretary) delegates to analyst; fallback will go to secretary
     trace = TraceContext.start("s", trace_id="t-ladder", channel="cli", owl_name="scout")
@@ -491,12 +523,18 @@ async def test_retry_then_fallback_recovers() -> None:
 
 @pytest.mark.asyncio
 async def test_fallback_skipped_when_caller_is_secretary() -> None:
-    """Secretary is the caller → no self-fallback; only initial + retry (2 calls max)."""
+    """Secretary is the caller → no self-fallback; only initial + retry (2 calls max).
+
+    scout is READ-ONLY → the retriable child_error is safe to retry; fallback is
+    then skipped because the caller IS the secretary. With no eligible fallback the
+    unified gate returns the HONEST IRRELEVANT terminal (a FAILED record), never a
+    masked child_error success.
+    """
     fake = _ScriptedDelegator([
         A2AResult(status="child_error", resolved_owl="scout"),
         A2AResult(status="child_error", resolved_owl="scout"),
     ])
-    token = set_services(_services(fake, _registry_with_three_owls()))
+    token = set_services(_services(fake, _registry_with_three_owls(_READONLY)))
     trace = TraceContext.start("s", trace_id="t-noselffall", channel="cli", owl_name="secretary")
     try:
         res = await DelegateTaskTool().execute(goal="g", to_owl="scout")
@@ -504,21 +542,25 @@ async def test_fallback_skipped_when_caller_is_secretary() -> None:
         TraceContext.reset(trace)
         reset_services(token)
 
+    assert res.success is False  # honest FAILED terminal, not a masked success
     rec = _record(res.output)
-    # No fallback fires; final status is the terminal child_error.
-    assert rec["status"] == "child_error"
+    assert rec["status"] == "irrelevant"
     assert len(fake.calls) == 2  # initial + retry, NO fallback
     assert all(c["to_owl"] == "scout" for c in fake.calls)
 
 
 @pytest.mark.asyncio
 async def test_fallback_skipped_when_secretary_in_chain() -> None:
-    """Secretary already in delegation chain → fallback would create a cycle; skip it."""
+    """Secretary already in delegation chain → fallback would create a cycle; skip it.
+
+    analyst is READ-ONLY → the retriable child_error is safely retried; fallback is
+    then skipped because the secretary is already in the chain.
+    """
     fake = _ScriptedDelegator([
         A2AResult(status="child_error", resolved_owl="analyst"),
         A2AResult(status="child_error", resolved_owl="analyst"),
     ])
-    token = set_services(_services(fake, _registry_with_three_owls()))
+    token = set_services(_services(fake, _registry_with_three_owls(_READONLY)))
     # secretary is in the chain → fallback must be skipped
     trace = TraceContext.start(
         "s", trace_id="t-inchain", channel="cli",
@@ -530,10 +572,161 @@ async def test_fallback_skipped_when_secretary_in_chain() -> None:
         TraceContext.reset(trace)
         reset_services(token)
 
+    assert res.success is False  # honest FAILED terminal, not a masked success
     rec = _record(res.output)
-    # Falls through to honest terminal — no fallback attempted.
-    assert rec["status"] == "child_error"
+    # Falls through to the honest irrelevant terminal — no fallback attempted.
+    assert rec["status"] == "irrelevant"
     assert len(fake.calls) == 2  # initial + retry only
+
+
+# ------------------------------- D2 unified re-delegation gate (write-capable halt)
+
+
+@pytest.mark.asyncio
+async def test_write_capable_transport_failure_halts_no_retry() -> None:
+    """A WRITE-CAPABLE target that fails with a retriable transport error (timeout)
+    must HALT: NO retry, NO fallback. It may have already acted, so re-delegation is
+    unsafe. Terminal is the honest-uncertain FAILED record; delegate() called ONCE.
+    """
+    fake = _ScriptedDelegator([
+        A2AResult(status="timeout", resolved_owl="analyst"),
+        # No further scripted results: a second call would raise IndexError, proving
+        # the gate did NOT retry.
+    ])
+    reg = _registry_with_three_owls(_WRITE_CAPABLE)
+    token = set_services(_services(fake, reg))
+    trace = TraceContext.start("s", trace_id="t-wcap-timeout", channel="cli", owl_name="scout")
+    try:
+        res = await DelegateTaskTool().execute(goal="g", to_owl="analyst")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success is False  # honest FAILED terminal, not a masked success
+    rec = _record(res.output)
+    assert rec["status"] == "uncertain"
+    assert "FAILED" in str(rec["result"])
+    # No double side-effect: delegate() invoked EXACTLY ONCE (no retry, no fallback).
+    assert len(fake.calls) == 1
+    assert [c["to_owl"] for c in fake.calls] == ["analyst"]
+
+
+@pytest.mark.asyncio
+async def test_write_capable_off_topic_halts_no_redelegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A WRITE-CAPABLE target whose child returns ok but the judge demotes to
+    off_topic must HALT: NO fallback. It may have already acted. Terminal is the
+    honest-off-topic-write FAILED record; delegate() called ONCE.
+    """
+    import stackowl.tools.agents.delegate_task as dt
+
+    async def _fake_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+        return (False, "off topic: did not address the request")
+
+    monkeypatch.setattr(dt, "judge_relevance", _fake_judge)
+
+    substantive = "x" * 60  # passes the structural pre-filter → judge fires
+    fake = _ScriptedDelegator([
+        A2AResult(status="ok", content=substantive, resolved_owl="analyst"),
+    ])
+    reg = _registry_with_three_owls(_WRITE_CAPABLE)
+    token = set_services(
+        _services_with_provider(fake, reg, _FakeProviderRegistry())
+    )
+    trace = TraceContext.start("s", trace_id="t-wcap-offtopic", channel="cli", owl_name="scout")
+    try:
+        res = await DelegateTaskTool().execute(goal="find X", to_owl="analyst")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success is False
+    rec = _record(res.output)
+    assert rec["status"] == "off_topic"
+    assert "FAILED" in str(rec["result"])
+    # No fallback: delegate() called EXACTLY ONCE.
+    assert len(fake.calls) == 1
+    assert [c["to_owl"] for c in fake.calls] == ["analyst"]
+
+
+@pytest.mark.asyncio
+async def test_readonly_off_topic_routes_to_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A READ-ONLY target whose child is ok-but-off-topic must SKIP the same-owl
+    retry (off_topic is not a transport failure) and go straight to the fallback
+    secretary, which returns a relevant ok → recovered_via_secretary.
+
+    The judge demotes the analyst's answer but passes the secretary's. delegate()
+    is called for analyst (off-topic) then the secretary (ok) — NO same-owl retry.
+    """
+    import stackowl.tools.agents.delegate_task as dt
+
+    async def _selective_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+        # The analyst's off-topic answer fails; the secretary's relevant answer passes.
+        return ("relevant answer" in content, "judge verdict")
+
+    monkeypatch.setattr(dt, "judge_relevance", _selective_judge)
+
+    fake = _ScriptedDelegator([
+        A2AResult(status="ok", content="y" * 60, resolved_owl="analyst"),  # off-topic
+        A2AResult(status="ok", content="relevant answer here", resolved_owl="secretary"),
+    ])
+    reg = _registry_with_three_owls(_READONLY)
+    token = set_services(
+        _services_with_provider(fake, reg, _FakeProviderRegistry())
+    )
+    trace = TraceContext.start("s", trace_id="t-ro-offtopic", channel="cli", owl_name="scout")
+    try:
+        res = await DelegateTaskTool().execute(goal="find X", to_owl="analyst")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success
+    rec = _record(res.output)
+    assert rec["status"] == "recovered_via_secretary"
+    assert "relevant answer" in str(rec["result"])
+    # off_topic SKIPS the same-owl retry → exactly 2 calls: analyst then secretary.
+    assert [c["to_owl"] for c in fake.calls] == ["analyst", "secretary"]
+
+
+@pytest.mark.asyncio
+async def test_readonly_all_off_topic_honest_irrelevant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A READ-ONLY target AND the fallback secretary both go off-topic → honest
+    irrelevant terminal (a FAILED record), never a false ok.
+    """
+    import stackowl.tools.agents.delegate_task as dt
+
+    async def _always_offtopic(provider: object, ask: str, content: str) -> tuple[bool, str]:
+        return (False, "off topic")
+
+    monkeypatch.setattr(dt, "judge_relevance", _always_offtopic)
+
+    fake = _ScriptedDelegator([
+        A2AResult(status="ok", content="a" * 60, resolved_owl="analyst"),  # off-topic
+        A2AResult(status="ok", content="b" * 60, resolved_owl="secretary"),  # off-topic
+    ])
+    reg = _registry_with_three_owls(_READONLY)
+    token = set_services(
+        _services_with_provider(fake, reg, _FakeProviderRegistry())
+    )
+    trace = TraceContext.start("s", trace_id="t-ro-allofftopic", channel="cli", owl_name="scout")
+    try:
+        res = await DelegateTaskTool().execute(goal="find X", to_owl="analyst")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success is False
+    rec = _record(res.output)
+    assert rec["status"] == "irrelevant"
+    assert "FAILED" in str(rec["result"])
+    # No same-owl retry on off_topic → analyst then secretary fallback (both off-topic).
+    assert [c["to_owl"] for c in fake.calls] == ["analyst", "secretary"]
 
 
 # ------------------------------------------------ D2: in-ladder dedup + normalize
@@ -759,6 +952,7 @@ def _services_with_provider(
         a2a_delegator=delegator,  # type: ignore[arg-type]
         owl_registry=registry,  # type: ignore[arg-type]
         provider_registry=provider_registry,  # type: ignore[arg-type]
+        tool_registry=ToolRegistry.with_defaults(),
     )
 
 
@@ -767,8 +961,10 @@ async def test_relevance_gate_demotes_off_topic_via_judge(monkeypatch: pytest.Mo
     """D3: when the LLM judge returns (False, ...) the ok result is demoted to off_topic.
 
     The child returns substantive ok content (passes structural pre-filter).
-    The judge is monkeypatched to always rule off-topic.
-    We verify the demotion reached _map_terminal (result is NOT ok).
+    The judge is monkeypatched to always rule off-topic. scout has unrestricted
+    (None) bounds → write-capable → the unified gate emits the honest off-topic-write
+    terminal (a structured FAILED record). We verify the demotion reached the terminal
+    (status is NOT ok) and the result is structured, not a crash.
     """
     import stackowl.tools.agents.delegate_task as dt
 
@@ -791,7 +987,8 @@ async def test_relevance_gate_demotes_off_topic_via_judge(monkeypatch: pytest.Mo
         TraceContext.reset(trace)
         reset_services(token)
 
-    assert res.success  # structured result, not a crash
+    # Structured terminal (not a crash); write-capable off-topic is an honest FAILED.
+    assert res.success is False
     record = _record(res.output)
     # Demoted result must NOT appear as plain ok.
     assert record["status"] != "ok", f"expected demotion, got ok: {record}"
@@ -801,7 +998,9 @@ async def test_relevance_gate_demotes_off_topic_via_judge(monkeypatch: pytest.Mo
 async def test_structural_prefilter_demotes_without_calling_judge(monkeypatch: pytest.MonkeyPatch) -> None:
     """D3: empty/trivial content triggers the structural pre-filter → demote without LLM.
 
-    judge_relevance must NOT be called when the pre-filter fires.
+    judge_relevance must NOT be called when the pre-filter fires. scout has
+    unrestricted (None) bounds → write-capable → the demoted off_topic becomes an
+    honest off-topic-write terminal (a structured FAILED record, not a crash).
     """
     import stackowl.tools.agents.delegate_task as dt
 
@@ -826,7 +1025,8 @@ async def test_structural_prefilter_demotes_without_calling_judge(monkeypatch: p
         TraceContext.reset(trace)
         reset_services(token)
 
-    assert res.success
+    # Structured terminal (not a crash); write-capable off-topic is an honest FAILED.
+    assert res.success is False
     record = _record(res.output)
     assert record["status"] != "ok", f"expected demotion, got ok: {record}"
     assert called["judge"] is False, "judge_relevance must NOT be called when structural pre-filter fires"

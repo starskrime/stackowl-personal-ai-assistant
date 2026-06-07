@@ -54,6 +54,9 @@ from stackowl.tools.agents.results import (
     compose_sub_task,
     cycle_result,
     error_result,
+    honest_irrelevant_result,
+    honest_offtopic_write_result,
+    honest_uncertain_result,
     ok_result,
     provenance_footer,
     recovered_result,
@@ -440,68 +443,97 @@ class DelegateTaskTool(Tool):
             extra={"_fields": {"trace_id": trace_id, "status": getattr(result, "status", "?")}},
         )
 
-        # Retry-once on retriable failure (same target, same parent_state, same floor).
-        if getattr(result, "status", None) in self._RETRIABLE:
+        # ---- UNIFIED RE-DELEGATION CAPABILITY GATE (D2) -------------------------
+        # Invariant: ONLY a READ-ONLY child is ever re-delegated (retry or fallback).
+        # A write-capable/unverifiable child that FAILED (retriable) or returned an
+        # off-topic ok (demoted) may have ALREADY ACTED → an HONEST TERMINAL, never a
+        # re-delegation (no double side-effect, no false success).
+
+        # (1) D3-passed success → immediate terminal.
+        if result.status == "ok":
+            return self._map_terminal(result, target, t0)
+
+        redelegatable = result.status == "off_topic" or result.status in self._RETRIABLE
+        if not redelegatable:
+            # refused / cycle / target_not_found / truncated → terminal as-is.
+            return self._map_terminal(result, target, t0)
+
+        # (2) Capability gate: a write-capable target may have already acted → HALT.
+        if _can_side_effect(target):
+            log.tool.warning(
+                "delegate_task._run_delegation: write-capable child not re-delegated (may have acted)",
+                extra={"_fields": {"trace_id": trace_id, "target": target, "status": result.status}},
+            )
+            if result.status == "off_topic":
+                return honest_offtopic_write_result(target, t0)
+            return honest_uncertain_result(target, t0)
+
+        # ---- read-only target → safe to re-delegate -----------------------------
+        # (3) Transport failure → ONE same-owl retry. off_topic SKIPS the retry
+        # (it is not a transport failure) and proceeds straight to fallback.
+        if result.status in self._RETRIABLE:
             log.tool.debug(
-                "delegate_task._run_delegation: retry-once",
+                "delegate_task._run_delegation: read-only retry-once",
                 extra={"_fields": {"trace_id": trace_id, "target": target, "prev_status": result.status}},
             )
             result = await _attempt(target)
             if isinstance(result, ToolResult):
                 return result
+            if result.status == "ok":
+                return self._map_terminal(result, target, t0)
+            if not (result.status == "off_topic" or result.status in self._RETRIABLE):
+                # Retry produced a hard terminal (refused/etc.) → report it as-is.
+                return self._map_terminal(result, target, t0)
 
-        # Fallback to secretary if still failing and conditions allow.
-        if getattr(result, "status", None) in self._RETRIABLE:
-            registry = get_services().owl_registry
-            secretary = registry.secretary_name() if registry is not None else None
-            # Skip self-fallback and in-chain fallback.
-            if (
-                secretary is not None
-                and secretary != caller
-                and secretary != target
-                and secretary not in chain
-            ):
-                log.tool.debug(
-                    "delegate_task._run_delegation: fallback to secretary",
+        # off_topic OR transport-retry-exhausted → fallback to a DIFFERENT owl.
+        registry = get_services().owl_registry
+        secretary = registry.secretary_name() if registry is not None else None
+        # Skip self-fallback and in-chain fallback (preserves the no-escalation rule).
+        if (
+            secretary is not None
+            and secretary != caller
+            and secretary != target
+            and secretary not in chain
+        ):
+            log.tool.debug(
+                "delegate_task._run_delegation: fallback to secretary",
+                extra={"_fields": {"trace_id": trace_id, "via": secretary, "original": target}},
+            )
+            fb = await _attempt(secretary)
+            if isinstance(fb, ToolResult):
+                return fb
+            if fb.status == "ok":
+                log.tool.info(
+                    "delegate_task._run_delegation: recovered via secretary",
                     extra={"_fields": {"trace_id": trace_id, "via": secretary, "original": target}},
                 )
-                fb = await _attempt(secretary)
-                if isinstance(fb, ToolResult):
-                    return fb
-                if getattr(fb, "status", None) == "ok":
-                    log.tool.info(
-                        "delegate_task._run_delegation: recovered via secretary",
-                        extra={"_fields": {"trace_id": trace_id, "via": secretary, "original": target}},
-                    )
-                    # 4. EXIT — recovered path.
-                    return recovered_result(t0, original=target, via=secretary, result=fb.content)
-                # Fallback also failed — keep the better terminal to report.
-                log.tool.warning(
-                    "delegate_task._run_delegation: fallback also failed",
-                    extra={"_fields": {
-                        "trace_id": trace_id, "via": secretary,
-                        "fb_status": getattr(fb, "status", "?"),
-                    }},
-                )
-                if getattr(fb, "status", None) not in self._RETRIABLE:
-                    result = fb
-            else:
-                log.tool.debug(
-                    "delegate_task._run_delegation: fallback skipped",
-                    extra={"_fields": {
-                        "trace_id": trace_id, "secretary": secretary,
-                        "caller": caller, "target": target,
-                        "reason": (
-                            "caller_is_secretary" if secretary == caller
-                            else "target_is_secretary" if secretary == target
-                            else "secretary_in_chain" if secretary in chain
-                            else "no_secretary"
-                        ),
-                    }},
-                )
+                # 4. EXIT — recovered path.
+                return recovered_result(t0, original=target, via=secretary, result=fb.content)
+            # Fallback also failed (off-topic / retriable / hard) → honest irrelevant.
+            log.tool.warning(
+                "delegate_task._run_delegation: fallback also failed — honest irrelevant",
+                extra={"_fields": {
+                    "trace_id": trace_id, "via": secretary,
+                    "fb_status": getattr(fb, "status", "?"),
+                }},
+            )
+            return honest_irrelevant_result(t0)
 
-        # 4. EXIT — map terminal A2AResult to ToolResult.
-        return self._map_terminal(result, target, t0)
+        log.tool.debug(
+            "delegate_task._run_delegation: fallback skipped — honest irrelevant",
+            extra={"_fields": {
+                "trace_id": trace_id, "secretary": secretary,
+                "caller": caller, "target": target,
+                "reason": (
+                    "caller_is_secretary" if secretary == caller
+                    else "target_is_secretary" if secretary == target
+                    else "secretary_in_chain" if secretary in chain
+                    else "no_secretary"
+                ),
+            }},
+        )
+        # 4. EXIT — no eligible fallback owl → honest irrelevant terminal.
+        return honest_irrelevant_result(t0)
 
     def _map_terminal(self, result: object, target: str, t0: float) -> ToolResult:
         """Map an ``A2AResult`` status to a structured ToolResult (T7 reuses this)."""
@@ -529,12 +561,9 @@ class DelegateTaskTool(Tool):
             return truncated_result(
                 t0, target=target, result=result.content, detail=result.child_detail,
             )
-        # off_topic — minimal non-crashing fallthrough; Task 6 adds honest routing.
-        if result.status == "off_topic":
-            return child_error_result(
-                t0, target=target, detail=result.child_detail or "off_topic",
-            )
-        # timeout / child_error / refused
+        # off_topic is now routed by the unified gate in _run_delegation (honest
+        # terminals) and never reaches here; the default below is a safe catch-all.
+        # timeout / child_error / refused / off_topic
         return child_error_result(t0, target=target, detail=result.child_detail or result.status)
 
     @staticmethod
