@@ -49,6 +49,11 @@ class OwlAgentManifest(BaseModel):
     # unchanged. The owl-builder (Epic 5) sets safe-by-construction bounds; the
     # tools axis is enforced at the dispatch seam, the rest by their own layers.
     bounds: BoundsSpec | None = None
+    # Provenance + authority (Phase-2 owl_build). Default keeps legacy owls trusted:
+    # the security gates key on origin == "agent", which the default is not.
+    origin: Literal["human", "builtin", "agent"] = "human"
+    created_by: str | None = None  # the owl that minted this owl (agent origin only)
+    creation_ceiling: BoundsSpec | None = None  # creator's effective bounds at mint
 
     @field_validator("name")
     @classmethod
