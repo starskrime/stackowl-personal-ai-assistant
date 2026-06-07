@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from stackowl.infra.observability import log
+from stackowl.memory.trust import Trust
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.models import MemoryRecord, StagedFact
@@ -42,8 +43,13 @@ class MemoryBridge(ABC):
         ...
 
     @abstractmethod
-    async def store(self, content: str, session_id: str) -> None:
-        """Persist content for future retrieval."""
+    async def store(self, content: str, session_id: str, *, trust: Trust | None = None) -> None:
+        """Persist content for future retrieval.
+
+        ``trust`` overrides the default trust level for this source type.  When
+        ``None`` (the default) the implementation uses its own default mapping —
+        backward-compatible for all existing callers.
+        """
         ...
 
     # --- knowledge-pipeline contract -------------------------------------------------
@@ -102,10 +108,10 @@ class NullMemoryBridge(MemoryBridge):
         )
         return ""
 
-    async def store(self, content: str, session_id: str) -> None:
+    async def store(self, content: str, session_id: str, *, trust: Trust | None = None) -> None:
         log.memory.debug(
             "[memory] NullMemoryBridge.store: noop",
-            extra={"_fields": {"session_id": session_id, "content_len": len(content)}},
+            extra={"_fields": {"session_id": session_id, "content_len": len(content), "trust_override": trust}},
         )
 
     async def stage(self, fact: StagedFact) -> None:

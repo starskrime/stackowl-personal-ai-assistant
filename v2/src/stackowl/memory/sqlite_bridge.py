@@ -17,7 +17,7 @@ from stackowl.memory.sqlite_helpers import (
     row_to_staged,
     semantic_recall,
 )
-from stackowl.memory.trust import trust_for_source
+from stackowl.memory.trust import Trust, trust_for_source
 
 if TYPE_CHECKING:  # pragma: no cover
     from stackowl.db.pool import DbPool
@@ -104,19 +104,25 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return out
 
-    async def store(self, content: str, session_id: str) -> None:
-        """Store conversation content as a staged fact (source_type=conversation)."""
+    async def store(self, content: str, session_id: str, *, trust: Trust | None = None) -> None:
+        """Store conversation content as a staged fact (source_type=conversation).
+
+        ``trust`` overrides the default trust level for this source type.  When
+        ``None`` (the default) the standard ``trust_for_source("conversation")``
+        value is used — backward-compatible with all existing callers.
+        """
         # 1. ENTRY
         log.memory.debug(
             "[memory] sqlite_bridge.store: entry",
-            extra={"_fields": {"session_id": session_id, "content_len": len(content)}},
+            extra={"_fields": {"session_id": session_id, "content_len": len(content), "trust_override": trust}},
         )
+        resolved_trust = trust if trust is not None else trust_for_source("conversation")
         fact = StagedFact(
             content=content,
             source_type="conversation",
             source_ref=session_id,
             confidence=0.5,
-            trust=trust_for_source("conversation"),
+            trust=resolved_trust,
         )
         # 3. STEP
         await self.stage(fact)
