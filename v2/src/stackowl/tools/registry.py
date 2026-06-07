@@ -354,6 +354,7 @@ class ToolRegistry:
         from stackowl.tools.media.image_generate import ImageGenerateTool
         from stackowl.tools.media.tts import TtsTool
         from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
+        from stackowl.tools.meta.owl_build import OwlBuildTool
         from stackowl.tools.meta.tool_build import ToolBuildTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
@@ -448,6 +449,9 @@ class ToolRegistry:
         # allowlisted shell argv boundary (no in-process eval). Consequential:
         # consent-gated at dispatch + a second internal consent at the persist step.
         registry.register(ToolBuildTool())
+        # owl_build — self-extending owl-builder (Phase-2 A): create/edit/retire a
+        # specialist owl (consent-gated, depth-0 only, child-excluded at dispatch).
+        registry.register(OwlBuildTool())
         registry.register(MemoryTool())
         registry.register(SkillManageTool())
         registry.register(SkillViewTool())

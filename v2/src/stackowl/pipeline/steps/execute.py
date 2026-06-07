@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 # arbitrary code in a sandbox. The top-level owl runs code under the consent gate;
 # a child handles its sub-task and returns, never recursing into code execution.
 _CHILD_EXCLUDED_TOOLS = frozenset(
-    {"delegate_task", "sessions_spawn", "sessions_send", "process", "execute_code"}
+    {"delegate_task", "sessions_spawn", "sessions_send", "process", "execute_code", "owl_build"}
 )
 
 
