@@ -31,6 +31,8 @@ class StagedFact(BaseModel):
     status: Literal["staged", "committed", "rejected"] = "staged"
     embedding: list[float] | None = None
     embedding_model: str | None = None
+    # Provenance trust tier (Story E). Default 'untrusted' = fail-safe (a forgotten stamp recalls fenced).
+    trust: Literal["trusted", "self", "untrusted"] = "untrusted"
 
 
 class MemoryRecord(BaseModel):
@@ -46,3 +48,5 @@ class MemoryRecord(BaseModel):
     source_type: str
     source_ref: str
     tags: list[str] = Field(default_factory=list)
+    # Provenance trust tier (Story E). Default 'untrusted' = fail-safe (a forgotten stamp recalls fenced).
+    trust: Literal["trusted", "self", "untrusted"] = "untrusted"
