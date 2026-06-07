@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 from stackowl.infra.observability import log
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.io.path_guard import is_within_root as _guard  # shared guard (E3)
 from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve  # workspace anchoring
 
@@ -20,6 +20,22 @@ class WriteFileTool(Tool):
     @property
     def description(self) -> str:
         return "Write content to a file. Path must be inside STACKOWL_DATA_DIR."
+
+    @property
+    def manifest(self) -> ToolManifest:
+        """Writing a file MUTATES the world → 'write' severity.
+
+        'write' (not 'consequential') so the durable ledger marks it
+        side-effecting and the delegation gate treats a write_file-capable owl as
+        already-acted, WITHOUT adding a consent prompt (the gate fires only on
+        'consequential').
+        """
+        return ToolManifest(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters,
+            action_severity="write",
+        )
 
     @property
     def parameters(self) -> dict[str, object]:

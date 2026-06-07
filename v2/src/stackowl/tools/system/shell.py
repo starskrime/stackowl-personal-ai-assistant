@@ -22,7 +22,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 # Default per-command timeout. Raised from the old 30s so an agent-requested
 # self-install / longer build / download can complete (Phase D). A per-call
@@ -372,6 +372,22 @@ class ShellTool(Tool):
             "(rm -rf on a system/home root, dd/mkfs/shred/wipefs on a device, "
             "recursive chmod/chown on a system root, fork bombs) require the user's "
             "explicit approval; if no user is present to approve, they are refused."
+        )
+
+    @property
+    def manifest(self) -> ToolManifest:
+        """Shell genuinely MUTATES the world (installs, writes, network) → 'write'.
+
+        'write' (not 'consequential') so the ledger marks shell side-effecting and
+        the delegation gate treats a shell-capable owl as already-acted, WITHOUT
+        adding a consent prompt (the gate fires only on 'consequential'; the
+        narrow catastrophic-shape consent path is separate, inside run_argv).
+        """
+        return ToolManifest(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters,
+            action_severity="write",
         )
 
     @property

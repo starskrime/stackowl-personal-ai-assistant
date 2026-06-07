@@ -3,7 +3,7 @@
 Tool severity reality (confirmed by recon):
   - read_file: inherits default action_severity="read" (no manifest override)
   - edit:      explicit action_severity="write"
-  - shell:     inherits default action_severity="read" (no manifest override)
+  - shell:     explicit action_severity="write" (it genuinely mutates the world)
 """
 
 from __future__ import annotations
