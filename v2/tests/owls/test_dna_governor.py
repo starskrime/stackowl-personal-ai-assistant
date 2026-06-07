@@ -40,10 +40,15 @@ def test_decay_rate_field_untouched():
 
 
 def test_envelope_recenters_on_anchor():
-    # authored 0.75 → band [0.45,1.0]; current 0.74, proposed 0.95 rate-caps (+0.05) to 0.79, INSIDE the band
-    # (under the OLD neutral envelope [0.2,0.8] this would clamp to 0.8 — proving re-anchor)
-    out = bound_dna(OwlDNA(challenge_level=0.74), OwlDNA(challenge_level=0.95), OwlDNA(challenge_level=0.75))
-    assert abs(out.challenge_level - 0.79) < 1e-9
+    # authored 0.9 → band [0.6, 1.0]. current 0.85 (already above the legacy 0.8 ceiling),
+    # proposed 0.95 → rate-capped to 0.90, which stays in the ANCHORED band [0.6,1.0].
+    # Under the OLD neutral envelope [0.2,0.8] this same input clamps DOWN to 0.8 — so the
+    # two differ here, genuinely proving the re-anchor.
+    out = bound_dna(OwlDNA(challenge_level=0.85), OwlDNA(challenge_level=0.95), OwlDNA(challenge_level=0.9))
+    assert abs(out.challenge_level - 0.90) < 1e-9
+    # same inputs under a NEUTRAL anchor clamp down to the legacy 0.8 ceiling — proving the difference
+    neutral = bound_dna(OwlDNA(challenge_level=0.85), OwlDNA(challenge_level=0.95), OwlDNA())
+    assert abs(neutral.challenge_level - 0.8) < 1e-9
 
 
 def test_anchor_floor_defers_to_author_below_floor():
