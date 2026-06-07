@@ -72,7 +72,7 @@ assemble step (the prompt builder; NO embedder import):
 **Budget — one running budget, priority order, with a reserved summary floor (Winston):**
 - One budget `_DEFAULT_CAP = 4000` chars (unchanged). Consumed in strict priority order:
   `pinned-FULL → relevance-FULL (score desc) → AVAILABLE summaries → CATALOG (free, unbudgeted)`.
-- **Reserve `_SUMMARY_BUDGET_FLOOR` (default 800 chars)** that the FULL tiers cannot consume, so the summary tier is never starved by a greedy ACTIVE block. FULL tiers spend against `budget − floor`; summaries spend the floor plus whatever FULL left unused. CATALOG (a name list) is unbudgeted.
+- **Reserve `_SUMMARY_BUDGET_FLOOR` (default 800 chars)** that the FULL tiers cannot consume, so the summary tier is never starved by a greedy ACTIVE block. FULL tiers spend against `budget − floor`; summaries spend the floor plus whatever FULL left unused. CATALOG (a name list) is **bounded by the remaining budget too** (revised from "unbudgeted" — an owl owning thousands of skills would otherwise blow the context window): names are emitted until the remaining budget is exhausted, then a loud `"+N more — skill_view to list"` suffix + a `log.engine.warning` (no silent cap). At least one name is always shown.
 - Per-skill untrusted cap stays at `_PER_SKILL_NEUTRALIZE_CAP = 600` (unchanged), applied in every tier.
 
 **Pins (always-FULL, but subordinate to budget & trust):**
