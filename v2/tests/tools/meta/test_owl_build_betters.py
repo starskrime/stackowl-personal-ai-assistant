@@ -1,0 +1,34 @@
+"""Unit tests for owl_build's no-edit-your-betters guard (``can_modify``).
+
+``can_modify`` only reads ``.origin`` / ``.created_by`` / ``.name`` so a duck-typed
+stand-in is sufficient — no full manifest construction needed.
+"""
+
+from stackowl.tools.meta.owl_build import can_modify
+
+
+class _Owl:
+    def __init__(self, origin, created_by, name="x"):
+        self.origin = origin
+        self.created_by = created_by
+        self.name = name
+
+
+def test_cannot_edit_secretary():
+    assert can_modify(_Owl("builtin", None, "secretary"), caller="secretary", target_name="secretary") is not None
+
+
+def test_cannot_edit_human_owl():
+    assert can_modify(_Owl("human", None, "planner"), caller="secretary", target_name="planner") is not None
+
+
+def test_cannot_edit_builtin_owl():
+    assert can_modify(_Owl("builtin", None, "scribe"), caller="secretary", target_name="scribe") is not None
+
+
+def test_cannot_edit_another_agents_owl():
+    assert can_modify(_Owl("agent", "other_owl", "scout"), caller="secretary", target_name="scout") is not None
+
+
+def test_can_edit_own_agent_owl():
+    assert can_modify(_Owl("agent", "secretary", "scout"), caller="secretary", target_name="scout") is None

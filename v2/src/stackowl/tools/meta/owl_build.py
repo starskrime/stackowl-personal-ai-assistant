@@ -24,7 +24,7 @@ from stackowl.infra.trace import TraceContext
 from stackowl.owls.registry import _SECRETARY_NAME
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
-from stackowl.tools.meta.owl_build_authz import build_agent_manifest
+from stackowl.tools.meta.owl_build_authz import build_agent_manifest, clamp_bounds
 from stackowl.tools.meta.owl_build_existence import existing_near_match
 from stackowl.tools.meta.owl_build_guards import (
     MAX_AGENT_OWLS,
@@ -50,6 +50,24 @@ _AUDIT_SOURCE: SkillSource = "learned"
 _ACTOR = "agent_self:owl_build"
 
 _VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire")
+
+
+def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None:
+    """no-edit-your-betters: only an ``origin='agent'`` owl YOU minted may be edited/retired.
+
+    Returns a refusal string when the modification is forbidden, or ``None`` when it
+    is allowed. Refuses if the target is the Secretary, is a human/builtin owl, or
+    was created by a different owl. An edit can never launder authority through an
+    owl it does not own.
+    """
+    if target_name.lower() == _SECRETARY_NAME:
+        return "the secretary owl cannot be modified or retired."
+    origin = getattr(manifest, "origin", None)
+    if origin != "agent":
+        return f"'{target_name}' is a {origin} owl and cannot be modified by owl_build."
+    if getattr(manifest, "created_by", None) != caller:
+        return f"'{target_name}' was created by another owl — you may only modify owls you created."
+    return None
 
 
 class OwlBuildTool(Tool):
@@ -413,11 +431,145 @@ class OwlBuildTool(Tool):
                 extra={"_fields": {"owl": name, "op": op}},
             )
 
-    async def _edit(self, spec: OwlBuildSpec, t0: float) -> ToolResult:  # noqa: ARG002
-        raise NotImplementedError
+    async def _edit(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
+        """Edit an agent-minted owl YOU created. Security order: no-edit-your-betters
+        → re-forge (clamps to CURRENT floor) → MONOTONE re-clamp against the owl's
+        ORIGINAL creation_ceiling (an edit cannot widen past the mint clamp) →
+        re-consent only when the edit ADDS a tool → persist+register with rollback."""
+        svc = get_services()
+        registry = svc.owl_registry
+        if registry is None:
+            log.tool.error(
+                "owl_build.execute: no owl registry wired — cannot edit",
+                exc_info=None,
+                extra={"_fields": {"name": spec.name}},
+            )
+            return self._err("owl registry unavailable — cannot edit an owl.", t0)
 
-    async def _retire(self, spec: OwlBuildSpec, t0: float) -> ToolResult:  # noqa: ARG002
-        raise NotImplementedError
+        ctx = TraceContext.get()
+        creator = str(ctx.get("owl_name") or _SECRETARY_NAME)
+
+        # 1. Load the current owl (OwlNotFoundError → not present).
+        try:
+            current = registry.get(spec.name)
+        except Exception:  # OwlNotFoundError — the not-found path is expected
+            return self._err(f"no owl named '{spec.name}' to edit.", t0)
+
+        # 2. no-edit-your-betters — only an agent owl YOU minted.
+        guard = can_modify(current, caller=creator, target_name=spec.name)
+        if guard is not None:
+            return self._err(guard, t0)
+
+        # 3. Re-forge — clamps to the creator's CURRENT floor (authority forced server-side).
+        rebuilt, dropped = build_agent_manifest(
+            spec,
+            creator=creator,
+            parent_ceiling=TraceContext.creation_ceiling(),
+            registry=registry,
+        )
+
+        # 4. MONOTONE RATCHET — re-clamp against the owl's ORIGINAL creation_ceiling so an
+        #    edit can never widen authority past what was approved at mint time. Keep the
+        #    original ceiling on the manifest (the ratchet point never moves outward).
+        if current.creation_ceiling is not None:
+            clamped, more = clamp_bounds(
+                rebuilt.bounds or current.creation_ceiling, current.creation_ceiling
+            )
+            rebuilt = rebuilt.model_copy(
+                update={
+                    "bounds": clamped,
+                    "tools": sorted(clamped.tools or frozenset()),
+                    "creation_ceiling": current.creation_ceiling,
+                }
+            )
+            dropped = dropped | more
+
+        # 5. Re-consent ONLY on widening — a bounds-narrowing-only edit skips consent.
+        old_tools = (current.bounds.tools or frozenset()) if current.bounds else frozenset()
+        new_tools = (rebuilt.bounds.tools or frozenset()) if rebuilt.bounds else frozenset()
+        widening = new_tools - old_tools
+        if widening:
+            summary = consent_summary(
+                name=rebuilt.name,
+                role=rebuilt.role,
+                resolved_tools=new_tools,
+                dropped=dropped,
+                roster=tuple(m.name for m in registry.all() if m.origin == "agent"),
+                why=f"edit adds: {sorted(widening)}",
+            )
+            refusal = await self._consent_or_refuse(summary, rebuilt.name)
+            if refusal is not None:
+                return self._err(refusal, t0)
+
+        # 6. Persist + register with snapshot rollback (atomic — never a half state).
+        snapshot = self._yaml_snapshot()
+        try:
+            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
+            registry.replace(rebuilt)
+        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
+            log.tool.error(
+                "owl_build.execute: edit persist/register failed — rolling back yaml",
+                exc_info=exc,
+                extra={"_fields": {"owl": rebuilt.name}},
+            )
+            self._yaml_restore(snapshot)
+            return self._err(
+                f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0
+            )
+
+        await self._audit("edit", rebuilt.name, creator)
+
+        tools_str = ", ".join(sorted(new_tools)) or "(none)"
+        msg = f"Updated owl '{rebuilt.name}'. Tools: {tools_str}."
+        if dropped:
+            msg += f" Dropped above your authority: {', '.join(sorted(dropped))}."
+        return self._ok(msg, t0, extra={"owl": rebuilt.name, "op": "edit"})
+
+    async def _retire(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
+        """Retire an agent-minted owl YOU created: no-edit-your-betters → deregister +
+        remove from yaml with snapshot rollback (atomic — never a half state)."""
+        svc = get_services()
+        registry = svc.owl_registry
+        if registry is None:
+            log.tool.error(
+                "owl_build.execute: no owl registry wired — cannot retire",
+                exc_info=None,
+                extra={"_fields": {"name": spec.name}},
+            )
+            return self._err("owl registry unavailable — cannot retire an owl.", t0)
+
+        ctx = TraceContext.get()
+        creator = str(ctx.get("owl_name") or _SECRETARY_NAME)
+
+        # 1. Load the current owl (OwlNotFoundError → not present).
+        try:
+            current = registry.get(spec.name)
+        except Exception:  # OwlNotFoundError — the not-found path is expected
+            return self._err(f"no owl named '{spec.name}' to retire.", t0)
+
+        # 2. no-edit-your-betters — only an agent owl YOU minted.
+        guard = can_modify(current, caller=creator, target_name=spec.name)
+        if guard is not None:
+            return self._err(guard, t0)
+
+        # 3. Deregister + remove from yaml with snapshot rollback.
+        snapshot = self._yaml_snapshot()
+        try:
+            registry.deregister(spec.name)
+            OwlsCommand()._remove_from_yaml(spec.name)  # noqa: SLF001
+        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
+            log.tool.error(
+                "owl_build.execute: retire failed — rolling back yaml",
+                exc_info=exc,
+                extra={"_fields": {"owl": spec.name}},
+            )
+            self._yaml_restore(snapshot)
+            return self._err(
+                f"failed to retire owl '{spec.name}' ({exc}) — rolled back.", t0
+            )
+
+        await self._audit("retire", spec.name, creator)
+        return self._ok(f"Retired owl '{spec.name}'.", t0, extra={"owl": spec.name, "op": "retire"})
 
     # ------------------------------------------------------------------ results
 
