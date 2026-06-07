@@ -26,6 +26,7 @@ from stackowl.owls.dna_attribution import (
     DnaAttributor,
     lookback_epoch,
 )
+from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.owls.dna_governor import bound_dna
 from stackowl.owls.dna_hydrator import apply_dna_overlay
 from stackowl.owls.dna_storage import DNACheckpointer
@@ -74,16 +75,7 @@ LIMIT ?
 class DeltaValidator:
     """Validate and parse LLM-suggested trait deltas."""
 
-    _TRAITS: frozenset[str] = frozenset(
-        {
-            "challenge_level",
-            "verbosity",
-            "curiosity",
-            "formality",
-            "creativity",
-            "precision",
-        }
-    )
+    _TRAITS: frozenset[str] = frozenset(TRAIT_NAMES)
 
     def validate(self, raw: str) -> dict[str, float]:
         """Parse ``raw`` (LLM response) and return ``{trait: delta}`` for valid entries."""

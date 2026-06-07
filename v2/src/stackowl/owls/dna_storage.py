@@ -10,6 +10,7 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import ManifestValidationError
 from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
+from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _INSERT_SQL = """
@@ -34,14 +35,7 @@ ORDER BY created_at DESC
 LIMIT ?
 """
 
-_DNA_FIELDS: tuple[str, ...] = (
-    "challenge_level",
-    "verbosity",
-    "curiosity",
-    "formality",
-    "creativity",
-    "precision",
-)
+_DNA_FIELDS: tuple[str, ...] = TRAIT_NAMES
 
 
 class DNACheckpointer(OwnedRepository):

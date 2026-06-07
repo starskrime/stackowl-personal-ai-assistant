@@ -6,15 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stackowl.exceptions import ManifestValidationError
 from stackowl.infra.observability import log
+from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 
-_MUTABLE_TRAITS: tuple[str, ...] = (
-    "challenge_level",
-    "verbosity",
-    "curiosity",
-    "formality",
-    "creativity",
-    "precision",
-)
+_MUTABLE_TRAITS: tuple[str, ...] = TRAIT_NAMES
 
 
 class OwlDNA(BaseModel):
@@ -27,12 +21,12 @@ class OwlDNA(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    challenge_level: float = Field(default=0.5, ge=0.0, le=1.0)
-    verbosity: float = Field(default=0.5, ge=0.0, le=1.0)
-    curiosity: float = Field(default=0.5, ge=0.0, le=1.0)
-    formality: float = Field(default=0.5, ge=0.0, le=1.0)
-    creativity: float = Field(default=0.5, ge=0.0, le=1.0)
-    precision: float = Field(default=0.5, ge=0.0, le=1.0)
+    challenge_level: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
+    verbosity: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
+    curiosity: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
+    formality: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
+    creativity: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
+    precision: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
     decay_rate_per_week: float = Field(default=0.05, ge=0.0, le=1.0)
 
     def mutate(self, trait: str, delta: float) -> OwlDNA:
@@ -83,7 +77,8 @@ class OwlDNA(BaseModel):
             )
             n = 0
         deviations: list[tuple[str, float, float]] = [
-            (trait, float(getattr(self, trait)), abs(float(getattr(self, trait)) - 0.5)) for trait in _MUTABLE_TRAITS
+            (trait, float(getattr(self, trait)), abs(float(getattr(self, trait)) - NEUTRAL))
+            for trait in _MUTABLE_TRAITS
         ]
         deviations.sort(key=lambda item: item[2], reverse=True)
         result = [(trait, value) for trait, value, _dev in deviations[:n]]
