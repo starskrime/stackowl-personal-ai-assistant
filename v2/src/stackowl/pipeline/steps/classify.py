@@ -468,6 +468,24 @@ async def run(state: PipelineState) -> PipelineState:
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
             owned = set()
+    # Compute the query embedding once (semantic-guarded) and stash on state so the
+    # assemble step can score owned skills without re-embedding. Story B.
+    # NOTE: _gather_relevant_skills will also embed internally — accepted double-embed
+    # since changing its signature would risk breaking existing tests (small call site,
+    # low cost, correctness first).
+    query_embedding: tuple[float, ...] | None = None
+    emb_reg = get_services().embedding_registry
+    if emb_reg is not None and getattr(emb_reg, "is_semantic", False) and state.input_text.strip():
+        try:
+            vecs = await emb_reg.get().embed([state.input_text])
+            if vecs and vecs[0]:
+                query_embedding = tuple(float(x) for x in vecs[0])
+        except Exception as exc:  # no-hidden-errors: degrade to no-relevance (fallback)
+            log.engine.error(
+                "[pipeline] classify: query embed failed — skill tiering will fall back",
+                exc_info=exc,
+                extra={"_fields": {"owl": state.owl_name}},
+            )
     skills_block = await _gather_relevant_skills(state.input_text, limit=3, owned=owned)
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
     # pellets from the unified LanceDB lessons index.
@@ -500,4 +518,4 @@ async def run(state: PipelineState) -> PipelineState:
             }
         },
     )
-    return state.evolve(memory_context=combined or None, history=tuple(history))
+    return state.evolve(memory_context=combined or None, history=tuple(history), query_embedding=query_embedding)

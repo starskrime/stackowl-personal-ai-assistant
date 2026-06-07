@@ -102,6 +102,9 @@ class PipelineState(BaseModel, frozen=True):
     responses: tuple[ResponseChunk, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
     memory_context: str | None = None
+    # Query embedding computed once in classify (semantic only), forwarded so assemble
+    # can score owned skills without re-embedding. None = no usable relevance signal. Story B.
+    query_embedding: tuple[float, ...] | None = None
     # Real prior conversation turns (user/assistant), oldest-first. Populated by
     # the classify step from staged conversation rows and threaded into the
     # provider messages array by execute. Empty for the first turn / non-chat
