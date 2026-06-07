@@ -139,3 +139,74 @@ def error_result(msg: str, t0: float) -> ToolResult:
         extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
     )
     return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+
+
+def _honest_failed_result(record: dict[str, object], msg: str, t0: float) -> ToolResult:
+    """Internal helper: success=False terminal result with msg in both error and record.
+
+    Mirrors child_error_result's record placement (JSON payload in output) but
+    sets success=False because these builders represent delegations that did NOT
+    deliver a usable answer, and PREFERRED to be honest failures rather than
+    masked successes.
+    """
+    duration_ms = (time.monotonic() - t0) * 1000
+    log.tool.info(
+        "delegate_task.execute: exit",
+        extra={"_fields": {"success": False, "status": record.get("status"), "duration_ms": duration_ms}},
+    )
+    payload = json.dumps({"record": record}, ensure_ascii=False)
+    return ToolResult(success=False, output=payload, error=msg, duration_ms=duration_ms)
+
+
+def honest_uncertain_result(target: str, t0: float) -> ToolResult:
+    """Delegation did not complete and may have partially performed a consequential action.
+
+    Used when a timeout or ambiguous failure occurs mid-flight — we cannot know whether
+    the specialist acted, so the parent must NOT auto-retry.
+    """
+    msg = (
+        f"FAILED — delegation to '{target}' did not complete and may have partially performed a "
+        "consequential action; it was NOT retried to avoid duplicating it. Do NOT retry "
+        "automatically — verify state, or re-issue explicitly if safe."
+    )
+    return _honest_failed_result(
+        {"status": "uncertain", "to_owl": target, "result": msg},
+        msg,
+        t0,
+    )
+
+
+def honest_offtopic_write_result(target: str, t0: float) -> ToolResult:
+    """Specialist completed but its response did not address the request.
+
+    Because the specialist can perform consequential (write) actions it was NOT
+    re-delegated — it may have already acted.  Parent must verify state before retrying.
+    """
+    msg = (
+        f"FAILED — '{target}' completed but its response did not address your request, and because "
+        "it can perform consequential actions it was NOT re-delegated (it may have already acted). "
+        "Verify state before retrying; do NOT auto-retry."
+    )
+    return _honest_failed_result(
+        {"status": "off_topic", "to_owl": target, "result": msg},
+        msg,
+        t0,
+    )
+
+
+def honest_irrelevant_result(t0: float) -> ToolResult:
+    """No available specialist could address the request at all.
+
+    The parent should handle it directly with its own knowledge/tools or rephrase
+    the sub-task — do NOT retry this delegation.
+    """
+    msg = (
+        "FAILED — the delegated response(s) did not address your request and no available specialist "
+        "could answer it. Do NOT retry this delegation. Handle it directly with your own "
+        "knowledge/tools, or rephrase the sub-task more concretely."
+    )
+    return _honest_failed_result(
+        {"status": "irrelevant", "result": msg},
+        msg,
+        t0,
+    )

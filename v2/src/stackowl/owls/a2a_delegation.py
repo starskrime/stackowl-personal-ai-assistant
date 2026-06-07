@@ -34,7 +34,8 @@ from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 
 DelegationStatus = Literal[
-    "ok", "empty", "timeout", "child_error", "truncated", "refused", "cycle", "target_not_found"
+    "ok", "empty", "timeout", "child_error", "truncated", "refused",
+    "cycle", "target_not_found", "off_topic",
 ]
 # Derived from the Literal so the runtime whitelist can never drift from the type.
 _KNOWN_STATUSES: frozenset[str] = frozenset(get_args(DelegationStatus))
