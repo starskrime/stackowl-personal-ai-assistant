@@ -14,12 +14,28 @@ creation_ceiling / bounds are forced server-side in the action handlers. ``creat
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
+from stackowl.commands.config_helpers import config_path
+from stackowl.commands.owls_command import OwlsCommand
+from stackowl.commands.owls_helpers import manifest_to_yaml_entry
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.owls.registry import _SECRETARY_NAME
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.tools.meta.owl_build_authz import build_agent_manifest
+from stackowl.tools.meta.owl_build_existence import existing_near_match
+from stackowl.tools.meta.owl_build_guards import (
+    MAX_AGENT_OWLS,
+    consent_summary,
+    count_agent_owls,
+    name_quality_error,
+)
 from stackowl.tools.meta.owl_build_spec import OwlBuildSpec, validate_owl_build_spec
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.skills.manifest import SkillSource
 
 # Isolated toolset group so a read-only / non-admin owl never gets owl-administration
 # hydrated into its presented toolset.
@@ -28,6 +44,10 @@ _TOOLSET_GROUP = "owl_admin"
 _CONSENT_CATEGORY = "owl_build"
 # Source name under which agent-minted owls register (so they survive/unregister cleanly).
 _SOURCE_NAME = "agent_owls"
+# Audit source — reuses the skills audit sink's "learned" lane for provenance (DRY with
+# tool_build), so owl create/edit/retire is provenance-tracked the same way.
+_AUDIT_SOURCE: SkillSource = "learned"
+_ACTOR = "agent_self:owl_build"
 
 _VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire")
 
@@ -207,8 +227,191 @@ class OwlBuildTool(Tool):
 
     # ------------------------------------------------------------------ actions
 
-    async def _create(self, spec: OwlBuildSpec, t0: float) -> ToolResult:  # noqa: ARG002
-        raise NotImplementedError
+    async def _create(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
+        """Mint a NEW specialist owl. Security order: collision/name-quality (before
+        forge) → soft-cap (HARD gate before consent) → existence-redirect → forge →
+        consent → persist+register with rollback. Nothing persists before consent."""
+        svc = get_services()
+        registry = svc.owl_registry
+        if registry is None:
+            log.tool.error(
+                "owl_build.execute: no owl registry wired — cannot create",
+                exc_info=None,
+                extra={"_fields": {"name": spec.name}},
+            )
+            return self._err("owl registry unavailable — cannot create an owl.", t0)
+
+        ctx = TraceContext.get()
+        creator = str(ctx.get("owl_name") or _SECRETARY_NAME)
+
+        # 1. Collision / reserved — never shadow Secretary or an existing owl.
+        if spec.name.strip().lower() == _SECRETARY_NAME or self._exists(registry, spec.name):
+            return self._err(
+                f"an owl named '{spec.name}' already exists (or is reserved).", t0
+            )
+
+        # 2. Name quality (structural, language-neutral) — before any forge.
+        nq = name_quality_error(spec.name, registry)
+        if nq is not None:
+            return self._err(nq, t0)
+
+        # 3. Soft cap — a HARD gate BEFORE consent (the human shouldn't be asked to
+        #    approve an owl we'd refuse anyway).
+        current = count_agent_owls(registry)
+        if current >= MAX_AGENT_OWLS:
+            return self._err(
+                f"you already have {current} agent-created owls (cap {MAX_AGENT_OWLS}) — "
+                "retire one (action='retire') or delegate_task to an existing owl instead.",
+                t0,
+            )
+
+        # 4. Existence redirect — a near-identical owl is a delegation opportunity.
+        match = await existing_near_match(spec, registry, svc)
+        if match is not None:
+            return self._err(
+                f"an existing owl '{match}' already covers this — delegate_task to it "
+                "instead of minting a near-duplicate.",
+                t0,
+            )
+
+        # 5. Forge — authority forced server-side (origin/created_by/creation_ceiling).
+        manifest, dropped = build_agent_manifest(
+            spec,
+            creator=creator,
+            parent_ceiling=TraceContext.creation_ceiling(),
+            registry=registry,
+        )
+
+        # 6. Consent — the real clamp. Surface tools, drops and the existing roster.
+        resolved_tools = (
+            (manifest.bounds.tools or frozenset()) if manifest.bounds else frozenset()
+        )
+        summary = consent_summary(
+            name=manifest.name,
+            role=manifest.role,
+            resolved_tools=resolved_tools,
+            dropped=dropped,
+            roster=tuple(m.name for m in registry.all() if m.origin == "agent"),
+            why=spec.specialty or "",
+        )
+        refusal = await self._consent_or_refuse(summary, manifest.name)
+        if refusal is not None:
+            return self._err(refusal, t0)
+
+        # 7. Persist with rollback. Snapshot the yaml first so a failed register can
+        #    restore the exact prior bytes (10k-DB-safe: never leave a half state).
+        snapshot = self._yaml_snapshot()
+        try:
+            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(manifest))  # noqa: SLF001
+        except Exception as exc:  # B5 — no-hidden-errors
+            log.tool.error(
+                "owl_build.execute: persist failed — nothing registered",
+                exc_info=exc,
+                extra={"_fields": {"owl": manifest.name}},
+            )
+            self._yaml_restore(snapshot)
+            return self._err(f"failed to persist owl '{manifest.name}': {exc}", t0)
+
+        await self._audit("create", manifest.name, creator)
+
+        # 8. Register LIVE — on failure restore the yaml snapshot (atomic rollback).
+        try:
+            registry.register(manifest, source_name=_SOURCE_NAME)
+        except Exception as exc:  # B5 — roll back the persisted yaml
+            log.tool.error(
+                "owl_build.execute: live registration failed — rolling back yaml",
+                exc_info=exc,
+                extra={"_fields": {"owl": manifest.name}},
+            )
+            self._yaml_restore(snapshot)
+            await self._audit("delete", manifest.name, creator)
+            return self._err(
+                f"failed to register owl '{manifest.name}' ({exc}) — rolled back.", t0
+            )
+
+        # 9. Success.
+        tools_str = ", ".join(sorted(resolved_tools)) or "(none)"
+        msg = (
+            f"Created owl '{manifest.name}' ({manifest.role}). Tools: {tools_str}."
+        )
+        if dropped:
+            msg += f" Dropped above your authority: {', '.join(sorted(dropped))}."
+        msg += " Delegate to it with delegate_task."
+        return self._ok(msg, t0, extra={"owl": manifest.name, "op": "create"})
+
+    # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _exists(registry: object, name: str) -> bool:
+        """True if an owl named ``name`` is already registered (case-sensitive get)."""
+        getter = getattr(registry, "get", None)
+        if getter is None:
+            return False
+        try:
+            getter(name)
+            return True
+        except Exception:  # OwlNotFoundError — the not-found path is expected
+            return False
+
+    @staticmethod
+    def _yaml_snapshot() -> bytes | None:
+        """Read the owls yaml file's raw bytes (the same file ``_upsert_to_yaml``
+        writes), or None if it is absent. Logs + returns None on read error."""
+        path = config_path()
+        if not path.exists():
+            return None
+        try:
+            return path.read_bytes()
+        except OSError as exc:
+            log.tool.error(
+                "owl_build.execute: yaml snapshot read failed",
+                exc_info=exc,
+                extra={"_fields": {"path": str(path)}},
+            )
+            return None
+
+    @staticmethod
+    def _yaml_restore(snapshot: bytes | None) -> None:
+        """Restore the owls yaml to ``snapshot`` (or unlink if it had not existed)."""
+        path = config_path()
+        try:
+            if snapshot is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(snapshot)
+        except OSError as exc:
+            log.tool.error(
+                "owl_build.execute: yaml rollback failed — manual cleanup may be needed",
+                exc_info=exc,
+                extra={"_fields": {"path": str(path)}},
+            )
+
+    async def _audit(self, op: str, name: str, actor: str) -> None:
+        """Append a provenance audit row via the skills audit sink (best-effort).
+
+        Mirrors :meth:`tool_build._audit` (source='learned'); a missing store
+        degrades to a log line — the yaml persist already succeeded. Never raises."""
+        store = get_services().skill_store
+        if store is None:
+            log.tool.info(
+                "owl_build.execute: no skill store — audit skipped (owl still persisted)",
+                extra={"_fields": {"owl": name, "op": op}},
+            )
+            return
+        try:
+            await store.audit_write(
+                skill_name=name,
+                source=_AUDIT_SOURCE,
+                op=op,
+                actor=actor,
+                details={"kind": "agent_owl", "created_by": actor},
+            )
+        except Exception as exc:  # B5 — never fail the build on an audit hiccup
+            log.tool.warning(
+                "owl_build.execute: audit_write failed — owl persisted, audit pending",
+                exc_info=exc,
+                extra={"_fields": {"owl": name, "op": op}},
+            )
 
     async def _edit(self, spec: OwlBuildSpec, t0: float) -> ToolResult:  # noqa: ARG002
         raise NotImplementedError
