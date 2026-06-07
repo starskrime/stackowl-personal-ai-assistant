@@ -471,18 +471,31 @@ class OwlBuildTool(Tool):
         # 4. MONOTONE RATCHET — re-clamp against the owl's ORIGINAL creation_ceiling so an
         #    edit can never widen authority past what was approved at mint time. Keep the
         #    original ceiling on the manifest (the ratchet point never moves outward).
-        if current.creation_ceiling is not None:
-            clamped, more = clamp_bounds(
-                rebuilt.bounds or current.creation_ceiling, current.creation_ceiling
+        #    Defense-in-depth: an agent owl with NO recorded ceiling is corrupt/unsafe
+        #    (boot revalidator deny-alls these; _create always stamps one) — refuse loudly
+        #    rather than fall through to the floor-only clamp (a no-reboot escalation window).
+        if current.creation_ceiling is None:
+            log.tool.error(
+                "owl_build._edit: agent owl missing creation_ceiling — refusing edit (fail closed)",
+                exc_info=None,
+                extra={"_fields": {"owl": spec.name}},
             )
-            rebuilt = rebuilt.model_copy(
-                update={
-                    "bounds": clamped,
-                    "tools": sorted(clamped.tools or frozenset()),
-                    "creation_ceiling": current.creation_ceiling,
-                }
+            return self._err(
+                f"owl '{spec.name}' has no recorded creation ceiling (corrupt/unsafe) — "
+                "retire and recreate it instead of editing.",
+                t0,
             )
-            dropped = dropped | more
+        clamped, more = clamp_bounds(
+            rebuilt.bounds or current.creation_ceiling, current.creation_ceiling
+        )
+        rebuilt = rebuilt.model_copy(
+            update={
+                "bounds": clamped,
+                "tools": sorted(clamped.tools or frozenset()),
+                "creation_ceiling": current.creation_ceiling,
+            }
+        )
+        dropped = dropped | more
 
         # 5. Re-consent ONLY on widening — a bounds-narrowing-only edit skips consent.
         old_tools = (current.bounds.tools or frozenset()) if current.bounds else frozenset()
@@ -552,11 +565,15 @@ class OwlBuildTool(Tool):
         if guard is not None:
             return self._err(guard, t0)
 
-        # 3. Deregister + remove from yaml with snapshot rollback.
+        # 3. Remove from yaml (DURABLE) FIRST, then deregister (in-memory), with snapshot
+        #    rollback. Durable store leads: if the yaml remove fails nothing changed in
+        #    memory → clean error. If deregister fails after a successful yaml remove, the
+        #    next boot simply won't re-register it (consistent — the durable store already
+        #    dropped it), never a yaml-present/registry-absent zombie that resurrects.
         snapshot = self._yaml_snapshot()
         try:
+            OwlsCommand()._remove_from_yaml(spec.name)  # noqa: SLF001  # durable first
             registry.deregister(spec.name)
-            OwlsCommand()._remove_from_yaml(spec.name)  # noqa: SLF001
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
             log.tool.error(
                 "owl_build.execute: retire failed — rolling back yaml",
