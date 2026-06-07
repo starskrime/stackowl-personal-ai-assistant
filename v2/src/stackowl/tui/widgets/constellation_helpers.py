@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from stackowl.owls.dna_defaults import NEUTRAL
 from stackowl.tui.glyphs import GLYPH_DNA_BARS, GLYPH_STEP_COMPLETE
 
 _AVATAR_WIDTH = 2
-_NEUTRAL_TRAIT = 0.5
+_NEUTRAL_TRAIT = NEUTRAL
 
 
 @dataclass(frozen=True)

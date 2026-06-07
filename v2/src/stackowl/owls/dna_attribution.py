@@ -36,15 +36,13 @@ from dataclasses import dataclass
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcome
 from stackowl.owls.dna import OwlDNA
+from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 
-_MUTABLE_TRAITS: tuple[str, ...] = (
-    "challenge_level", "verbosity", "curiosity",
-    "formality", "creativity", "precision",
-)
+_MUTABLE_TRAITS: tuple[str, ...] = TRAIT_NAMES
 
 _BAND_EDGES: tuple[float, float] = (0.3, 0.7)  # < .3 = low, [.3,.7) = mid, ≥.7 = high
 _BAND_NAMES: tuple[str, str, str] = ("low", "mid", "high")
-_BAND_CENTERS: dict[str, float] = {"low": 0.15, "mid": 0.5, "high": 0.85}
+_BAND_CENTERS: dict[str, float] = {"low": 0.15, "mid": NEUTRAL, "high": 0.85}
 
 _MIN_BAND_SAMPLES = 3        # need ≥3 outcomes in a band for that mean to count
 _MIN_BAND_GAP = 0.10         # winning-band quality must beat losing-band by 0.10

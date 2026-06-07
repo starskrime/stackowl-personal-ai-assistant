@@ -14,20 +14,14 @@ from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
 from stackowl.owls.builder import OwlSpec, SpecialistOwlBuilder
 from stackowl.owls.dna import OwlDNA
+from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 from stackowl.owls.manifest import ModelTier, OwlAgentManifest
 
 # Derived from the manifest's ModelTier Literal so the CLI allowlist can never
 # drift from the field's accepted values (single source of truth).
 _VALID_TIERS: frozenset[str] = frozenset(get_args(ModelTier))
 
-_DNA_TRAITS: tuple[str, ...] = (
-    "challenge_level",
-    "verbosity",
-    "curiosity",
-    "formality",
-    "creativity",
-    "precision",
-)
+_DNA_TRAITS: tuple[str, ...] = TRAIT_NAMES
 
 # A trait that deviates less than this from 0.5 is considered "neutral".
 _NEUTRAL_EPSILON = 0.05
@@ -50,7 +44,7 @@ def _dna_summary(dna: OwlDNA) -> str:
     dominant_dev: float = 0.0
     for trait in _DNA_TRAITS:
         value = float(getattr(dna, trait))
-        deviation = abs(value - 0.5)
+        deviation = abs(value - NEUTRAL)
         if deviation < _NEUTRAL_EPSILON:
             continue
         if deviation > dominant_dev:
@@ -58,7 +52,7 @@ def _dna_summary(dna: OwlDNA) -> str:
             dominant_trait = trait
     if dominant_trait is None:
         return "neutral"
-    direction = "+" if float(getattr(dna, dominant_trait)) > 0.5 else "-"
+    direction = "+" if float(getattr(dna, dominant_trait)) > NEUTRAL else "-"
     return f"{_TRAIT_ABBR[dominant_trait]}{direction}"
 
 
