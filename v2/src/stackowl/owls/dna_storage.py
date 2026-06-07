@@ -1,4 +1,10 @@
-"""DNACheckpointer — persists OwlDNA snapshots to SQLite for rollback."""
+"""DNACheckpointer — persists OwlDNA snapshots to SQLite for rollback.
+
+Also exports :func:`upsert_owl_dna`, the single shared helper that writes the 6
+trait columns into either ``owl_dna`` (evolved store) or ``owl_dna_authored``
+(baseline/authored store). Centralising the upsert here removes the duplicate
+``_UPSERT_DNA_SQL`` / ``_persist_dna`` logic from ``evolution.py`` (DRY).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +18,63 @@ from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
+
+# ---------------------------------------------------------------------------
+# Shared upsert helper — owl_dna and owl_dna_authored
+# ---------------------------------------------------------------------------
+
+_ALLOWED_DNA_TABLES: frozenset[str] = frozenset({"owl_dna", "owl_dna_authored"})
+
+
+async def upsert_owl_dna(
+    db: DbPool,
+    owl_name: str,
+    dna: OwlDNA,
+    *,
+    table: str = "owl_dna",
+) -> None:
+    """Upsert the 6 trait columns + updated_at for an owl into *table*.
+
+    *table* must be one of ``"owl_dna"`` (evolved store) or
+    ``"owl_dna_authored"`` (authored/baseline store). The column order follows
+    the canonical :data:`~stackowl.owls.dna_defaults.TRAIT_NAMES` tuple so
+    positional transposition is impossible.
+
+    Raises :class:`ValueError` for any unknown table name (SQL-injection guard).
+    """
+    log.engine.debug(
+        "[dna] upsert_owl_dna: entry",
+        extra={"_fields": {"owl": owl_name, "table": table}},
+    )
+    if table not in _ALLOWED_DNA_TABLES:
+        raise ValueError(f"upsert_owl_dna: unknown table {table!r}")
+
+    cols = ", ".join(TRAIT_NAMES)
+    placeholders = ", ".join("?" for _ in TRAIT_NAMES)
+    set_clause = ", ".join(f"{t} = excluded.{t}" for t in TRAIT_NAMES)
+    sql = (
+        f"INSERT INTO {table} (owl_name, {cols}, updated_at) "
+        f"VALUES (?, {placeholders}, ?) "
+        f"ON CONFLICT(owl_name) DO UPDATE SET {set_clause}, updated_at = excluded.updated_at"
+    )
+    values = (
+        owl_name,
+        *(float(getattr(dna, t)) for t in TRAIT_NAMES),
+        datetime.now(UTC).isoformat(),
+    )
+    try:
+        await db.execute(sql, values)
+    except Exception as exc:
+        log.engine.error(
+            "[dna] upsert_owl_dna: db write failed",
+            exc_info=exc,
+            extra={"_fields": {"owl": owl_name, "table": table}},
+        )
+        raise
+    log.engine.debug(
+        "[dna] upsert_owl_dna: exit",
+        extra={"_fields": {"owl": owl_name, "table": table}},
+    )
 
 _INSERT_SQL = """
 INSERT INTO dna_checkpoints (

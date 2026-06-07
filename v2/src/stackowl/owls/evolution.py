@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import UTC, datetime
 from typing import Any
 
 from stackowl.config.test_mode import TestModeGuard
@@ -29,7 +28,7 @@ from stackowl.owls.dna_attribution import (
 from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.owls.dna_governor import bound_dna
 from stackowl.owls.dna_hydrator import apply_dna_overlay
-from stackowl.owls.dna_storage import DNACheckpointer
+from stackowl.owls.dna_storage import DNACheckpointer, upsert_owl_dna
 from stackowl.owls.evolution_prompt import EvolutionPromptBuilder
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
@@ -46,21 +45,6 @@ __all__ = [
 _DELTA_LOWER = -0.1
 _DELTA_UPPER = 0.1
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.UNICODE)
-
-_UPSERT_DNA_SQL = """
-INSERT INTO owl_dna (
-    owl_name, challenge_level, verbosity, curiosity,
-    formality, creativity, precision, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(owl_name) DO UPDATE SET
-    challenge_level = excluded.challenge_level,
-    verbosity = excluded.verbosity,
-    curiosity = excluded.curiosity,
-    formality = excluded.formality,
-    creativity = excluded.creativity,
-    precision = excluded.precision,
-    updated_at = excluded.updated_at
-"""
 
 _FETCH_EXCERPTS_SQL = """
 SELECT m.content
@@ -404,19 +388,7 @@ class EvolutionCoordinator(JobHandler):
 
 
     async def _persist_dna(self, owl_name: str, dna: OwlDNA) -> None:
-        await self._db.execute(
-            _UPSERT_DNA_SQL,
-            (
-                owl_name,
-                dna.challenge_level,
-                dna.verbosity,
-                dna.curiosity,
-                dna.formality,
-                dna.creativity,
-                dna.precision,
-                datetime.now(UTC).isoformat(),
-            ),
-        )
+        await upsert_owl_dna(self._db, owl_name, dna, table="owl_dna")
 
 
 def _attribution_to_stats_summary(report: AttributionReport) -> dict[str, object]:
