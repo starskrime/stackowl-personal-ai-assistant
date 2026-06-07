@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from enum import Enum
 from typing import Protocol
 
 from stackowl.infra.observability import log
@@ -14,6 +15,15 @@ _DEFAULT_CAP = 4000
 _PER_SKILL_NEUTRALIZE_CAP = 600
 _TRUSTED = {"builtin"}
 _HEADER_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s.*$")   # strip markdown headers (structural, no English keywords)
+
+FULL_FLOOR = 0.40     # score >= this -> eligible for ACTIVE (FULL)
+SUMMARY_FLOOR = 0.20  # SUMMARY_FLOOR <= score < FULL_FLOOR -> AVAILABLE (SUMMARY)
+
+
+class SkillTier(Enum):
+    FULL = "full"
+    SUMMARY = "summary"
+    CATALOG = "catalog"
 
 
 class _SkillLike(Protocol):
@@ -45,6 +55,40 @@ def _neutralize(text: str) -> str:
     text = _HEADER_RE.sub("", text)            # drop heading/role markers
     text = " ".join(text.split())              # collapse newlines/whitespace -> prose
     return text[:_PER_SKILL_NEUTRALIZE_CAP]
+
+
+def assign_tiers(
+    owned: Sequence[_SkillLike],
+    scores: dict[str, float] | None,
+    *,
+    pinned: set[str],
+) -> list[tuple[_SkillLike, SkillTier, bool]]:
+    """Map relevance scores -> desired tiers. PURE (no budget math — render enforces budget).
+
+    - scores is None -> FALLBACK: every owned skill -> FULL in manifest order (today's behavior).
+    - pinned skills (owned-only; caller pre-intersects) -> FULL, sorted first.
+    - else: score >= FULL_FLOOR -> FULL; >= SUMMARY_FLOOR -> SUMMARY; else CATALOG; sorted by score desc.
+    """
+    if scores is None:
+        return [(sk, SkillTier.FULL, sk.name in pinned) for sk in owned]
+
+    def tier_of(name: str) -> SkillTier:
+        s = scores.get(name, -1.0)
+        if s >= FULL_FLOOR:
+            return SkillTier.FULL
+        if s >= SUMMARY_FLOOR:
+            return SkillTier.SUMMARY
+        return SkillTier.CATALOG
+
+    pins = [sk for sk in owned if sk.name in pinned]
+    rest = [sk for sk in owned if sk.name not in pinned]
+    rest.sort(key=lambda sk: scores.get(sk.name, -1.0), reverse=True)
+    items: list[tuple[_SkillLike, SkillTier, bool]] = []
+    for sk in pins:
+        items.append((sk, SkillTier.FULL, True))
+    for sk in rest:
+        items.append((sk, tier_of(sk.name), False))
+    return items
 
 
 class SkillInstructionInjector:
