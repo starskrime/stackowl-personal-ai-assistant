@@ -735,3 +735,145 @@ async def test_dedup_memo_hit_within_ladder_does_not_charge_attempt() -> None:
     assert len(fake.calls) == 1
     # The attempt counter for this trace should be exactly 1 (one charge).
     assert tool._attempts.get("tr-charge", 0) == 1
+
+
+# -------------------------------------------------------- D3: relevance gate
+
+
+class _FakeProviderRegistry:
+    """Minimal fake ProviderRegistry that returns a sentinel provider from get_with_cascade."""
+
+    def __init__(self, provider: object = None) -> None:
+        self._provider = provider or object()
+
+    def get_with_cascade(self, tier: str) -> object:
+        return self._provider
+
+
+def _services_with_provider(
+    delegator: object | None,
+    registry: OwlRegistry | None,
+    provider_registry: object | None = None,
+) -> StepServices:
+    return StepServices(
+        a2a_delegator=delegator,  # type: ignore[arg-type]
+        owl_registry=registry,  # type: ignore[arg-type]
+        provider_registry=provider_registry,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_demotes_off_topic_via_judge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D3: when the LLM judge returns (False, ...) the ok result is demoted to off_topic.
+
+    The child returns substantive ok content (passes structural pre-filter).
+    The judge is monkeypatched to always rule off-topic.
+    We verify the demotion reached _map_terminal (result is NOT ok).
+    """
+    import stackowl.tools.agents.delegate_task as dt
+
+    async def _fake_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+        return (False, "off topic: unrelated answer")
+
+    monkeypatch.setattr(dt, "judge_relevance", _fake_judge)
+
+    # Substantive content so structural pre-filter passes.
+    substantive_content = "x" * 60  # well above _MIN_RELEVANT_CHARS
+    fake = _FakeDelegator(A2AResult(status="ok", content=substantive_content, resolved_owl="scout"))
+    # Wire a fake provider_registry so fast_provider is not None — judge fires.
+    token = set_services(
+        _services_with_provider(fake, _registry_with_specialist(), _FakeProviderRegistry())
+    )
+    trace = TraceContext.start("s", trace_id="tr-d3-judge", channel="cli")
+    try:
+        res = await DelegateTaskTool().execute(goal="find X", to_owl="scout")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success  # structured result, not a crash
+    record = _record(res.output)
+    # Demoted result must NOT appear as plain ok.
+    assert record["status"] != "ok", f"expected demotion, got ok: {record}"
+
+
+@pytest.mark.asyncio
+async def test_structural_prefilter_demotes_without_calling_judge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D3: empty/trivial content triggers the structural pre-filter → demote without LLM.
+
+    judge_relevance must NOT be called when the pre-filter fires.
+    """
+    import stackowl.tools.agents.delegate_task as dt
+
+    called: dict[str, bool] = {"judge": False}
+
+    async def _spy_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+        called["judge"] = True
+        return (True, "")
+
+    monkeypatch.setattr(dt, "judge_relevance", _spy_judge)
+
+    # Empty content — structural pre-filter fires before the judge.
+    # Wire a provider_registry so the code path WOULD call the judge if structural didn't block it.
+    fake = _FakeDelegator(A2AResult(status="ok", content="", resolved_owl="scout"))
+    token = set_services(
+        _services_with_provider(fake, _registry_with_specialist(), _FakeProviderRegistry())
+    )
+    trace = TraceContext.start("s", trace_id="tr-d3-struct", channel="cli")
+    try:
+        res = await DelegateTaskTool().execute(goal="find X", to_owl="scout")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success
+    record = _record(res.output)
+    assert record["status"] != "ok", f"expected demotion, got ok: {record}"
+    assert called["judge"] is False, "judge_relevance must NOT be called when structural pre-filter fires"
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D3 unit: _relevance_gate directly — demotes an ok result when judge says off-topic."""
+    import stackowl.tools.agents.delegate_task as dt
+
+    async def _fake_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+        return (False, "wrong topic")
+
+    monkeypatch.setattr(dt, "judge_relevance", _fake_judge)
+
+    original = A2AResult(status="ok", content="x" * 60, resolved_owl="scout")
+    fake_provider = object()  # provider existence; judge is monkeypatched
+    result = await dt._relevance_gate(original, "scout", "find X", fake_provider)  # type: ignore[arg-type]
+
+    assert result.status == "off_topic"
+    assert result is not original  # model_copy produced a new object
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_passes_through_when_judge_says_relevant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D3 unit: _relevance_gate returns the original result unchanged when relevant."""
+    import stackowl.tools.agents.delegate_task as dt
+
+    async def _relevant_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+        return (True, "on topic")
+
+    monkeypatch.setattr(dt, "judge_relevance", _relevant_judge)
+
+    original = A2AResult(status="ok", content="x" * 60, resolved_owl="scout")
+    result = await dt._relevance_gate(original, "scout", "find X", object())  # type: ignore[arg-type]
+
+    assert result.status == "ok"
+    assert result is original  # no copy when no demotion
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_failopen_when_no_provider() -> None:
+    """D3: no fast provider → gate skips LLM judge, returns result unchanged (fail-open)."""
+    import stackowl.tools.agents.delegate_task as dt
+
+    original = A2AResult(status="ok", content="x" * 60, resolved_owl="scout")
+    result = await dt._relevance_gate(original, "scout", "find X", None)
+
+    assert result.status == "ok"
+    assert result is original

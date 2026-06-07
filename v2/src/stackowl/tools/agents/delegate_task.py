@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from stackowl.exceptions import AllProvidersUnavailableError
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.cost_pause import gate_or_continue
@@ -44,6 +45,7 @@ from stackowl.owls.delegation_limits import (
     MAX_DELEGATION_DEPTH,
 )
 from stackowl.pipeline.authz_compose import child_floor, resolve_owl_bounds
+from stackowl.pipeline.persistence import _structurally_irrelevant, judge_relevance
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.tools.agents.resolver import resolve_target
@@ -103,6 +105,38 @@ def _can_side_effect(owl_name: str) -> bool:
         if tool is not None and tool.manifest.action_severity in _SIDE_EFFECT_SEVERITIES:
             return True
     return False
+
+
+async def _relevance_gate(
+    res: A2AResult,
+    to_owl: str,
+    sub_task: str,
+    fast_provider: object,
+) -> A2AResult:
+    """Two-stage relevance gate: structural pre-filter (always) → LLM judge (if substantive + provider).
+
+    Off-topic → demote to status="off_topic" via model_copy.  Fail-open: if
+    ``fast_provider`` is None the LLM stage is skipped and the result is returned
+    unchanged.  The structural stage always runs regardless of provider availability.
+    References the module-level ``judge_relevance`` symbol so monkeypatching via
+    ``dt.judge_relevance`` works in tests.
+    """
+    if _structurally_irrelevant(res.content):
+        log.tool.info(
+            "delegate: ok demoted by structural pre-filter",
+            extra={"_fields": {"owl": to_owl}},
+        )
+        return res.model_copy(update={"status": "off_topic", "child_detail": "structural"})
+    if fast_provider is None:
+        return res
+    relevant, reason = await judge_relevance(fast_provider, sub_task, res.content)  # type: ignore[arg-type]
+    if not relevant:
+        log.tool.warning(
+            "delegate: ok judged off-topic -> demote",
+            extra={"_fields": {"owl": to_owl, "reason": reason[:120]}},
+        )
+        return res.model_copy(update={"status": "off_topic", "child_detail": reason[:200]})
+    return res
 
 
 class DelegateTaskArgs(BaseModel):
@@ -322,6 +356,16 @@ class DelegateTaskTool(Tool):
 
         # 2. DECISION — build parent_state ONCE; reused for all attempts.
         sub_task = compose_sub_task(args.goal, args.context)
+        # D3 — resolve the fast provider ONCE per ladder; fail-open if roster is dead.
+        fast_provider: object = None
+        try:
+            fast_provider = get_services().provider_registry.get_with_cascade("fast")  # type: ignore[union-attr]
+        except (AllProvidersUnavailableError, Exception) as exc:
+            log.tool.warning(
+                "delegate: no fast provider for relevance judge — structural pre-filter only",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
         # D2 in-ladder dedup memo — local to this _run_delegation call, discarded on return.
         # Key: (target_owl, normalized_sub_task). Hit only on status=="ok" to avoid
         # suppressing a retry that should surface a different terminal status.
@@ -379,6 +423,9 @@ class DelegateTaskTool(Tool):
                     {"status": "error", "to_owl": to_owl, "detail": str(exc)},
                     t0, note=f"delegation to {to_owl} failed",
                 )
+            # D3 — relevance gate: structural pre-filter → LLM judge → demote if off-topic.
+            if res.status == "ok":
+                res = await _relevance_gate(res, to_owl, sub_task, fast_provider)
             memo[key] = res  # D2: store result; future same-key ok hits will use this.
             return res
 
@@ -481,6 +528,11 @@ class DelegateTaskTool(Tool):
         if result.status == "truncated":
             return truncated_result(
                 t0, target=target, result=result.content, detail=result.child_detail,
+            )
+        # off_topic — minimal non-crashing fallthrough; Task 6 adds honest routing.
+        if result.status == "off_topic":
+            return child_error_result(
+                t0, target=target, detail=result.child_detail or "off_topic",
             )
         # timeout / child_error / refused
         return child_error_result(t0, target=target, detail=result.child_detail or result.status)
