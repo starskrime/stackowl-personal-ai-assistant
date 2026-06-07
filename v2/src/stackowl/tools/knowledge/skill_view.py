@@ -44,8 +44,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, get_args
 
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.services import get_services
 from stackowl.skills.manifest import SkillSource
+from stackowl.skills.skill_focus import FOCUS_TRACKER
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -145,6 +147,13 @@ class SkillViewTool(Tool):
                     t0,
                 )
             output = self._render(skill)
+            # Hysteresis: record this view so the skill stays stickier next turn.
+            ctx = TraceContext.get()
+            owl = ctx.get("owl_name")
+            session = ctx.get("session_id")
+            if owl and session:
+                turn = FOCUS_TRACKER.begin_turn(owl, session)
+                FOCUS_TRACKER.mark_viewed(owl, session, skill.name, turn)
             # 4. EXIT
             return self._ok(
                 output, t0,
