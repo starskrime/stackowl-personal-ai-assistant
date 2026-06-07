@@ -294,6 +294,7 @@ class OwlRegistry:
             manifest = factory()
             if manifest.name in self._owls:
                 continue
+            manifest = manifest.model_copy(update={"origin": "builtin"})
             self.register(manifest)
             added += 1
         log.startup.info(

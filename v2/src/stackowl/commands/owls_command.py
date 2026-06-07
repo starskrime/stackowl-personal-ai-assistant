@@ -153,6 +153,7 @@ class OwlsCommand(SlashCommand):
             if self._tool_registry is not None else None
         )
         manifest = build_owl_manifest(params, valid_tools=valid)
+        manifest = manifest.model_copy(update={"origin": "human"})
         self._registry.register(manifest)  # may raise ManifestValidationError
         self._upsert_to_yaml(manifest_to_yaml_entry(manifest))
         if self._bus is not None:
