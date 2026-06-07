@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -15,6 +15,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import FactExtractionParseError
 from stackowl.infra.observability import log
 from stackowl.memory.models import StagedFact
+from stackowl.memory.trust import Trust, trust_for_source
 from stackowl.providers.base import Message
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -23,7 +24,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.providers.base import ModelProvider
 
 
-EXTRACTED_FACT_SOURCE_TYPE = "conversation_fact"
+EXTRACTED_FACT_SOURCE_TYPE: Literal["conversation_fact"] = "conversation_fact"
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 _TEMPLATE_NAME = "fact_extraction.j2"
@@ -145,6 +146,21 @@ class FactExtractor:
         # 3. STEP — embed remaining facts
         embeddings = await self._embed_drafts(kept)
 
+        # 2. DECISION — coarse batch-level trust: any tool-role message means external
+        # data touched the conversation, so we taint the entire batch as untrusted.
+        has_tool_role = any(getattr(m, "role", "") == "tool" for m in conversation)
+        batch_trust: Trust = "untrusted" if has_tool_role else trust_for_source(EXTRACTED_FACT_SOURCE_TYPE)
+        log.memory.debug(
+            "[memory] fact_extractor.extract: batch trust determined",
+            extra={
+                "_fields": {
+                    "session_id": session_id,
+                    "has_tool_role": has_tool_role,
+                    "batch_trust": batch_trust,
+                }
+            },
+        )
+
         facts: list[StagedFact] = []
         for draft, embedding in zip(kept, embeddings, strict=True):
             facts.append(
@@ -153,6 +169,7 @@ class FactExtractor:
                     source_type=EXTRACTED_FACT_SOURCE_TYPE,
                     source_ref=session_id,
                     confidence=draft.confidence,
+                    trust=batch_trust,
                     embedding=embedding,
                     embedding_model=self._embeddings.get().model_name
                     if self._embeddings is not None and embedding is not None
