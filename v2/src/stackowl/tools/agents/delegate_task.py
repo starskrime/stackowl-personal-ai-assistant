@@ -71,6 +71,11 @@ if TYPE_CHECKING:
 _TOOLSET_GROUP = "agents"
 _DEFAULT_CALLER = "secretary"
 
+
+def _normalize_subtask(s: str) -> str:
+    """Collapse whitespace only.  NO casefold — sub_tasks can be code/paths where case is semantic."""
+    return " ".join(s.split())
+
 _SIDE_EFFECT_SEVERITIES: frozenset[str] = frozenset({"write", "consequential"})
 
 
@@ -317,6 +322,11 @@ class DelegateTaskTool(Tool):
 
         # 2. DECISION — build parent_state ONCE; reused for all attempts.
         sub_task = compose_sub_task(args.goal, args.context)
+        # D2 in-ladder dedup memo — local to this _run_delegation call, discarded on return.
+        # Key: (target_owl, normalized_sub_task). Hit only on status=="ok" to avoid
+        # suppressing a retry that should surface a different terminal status.
+        from stackowl.owls.a2a_delegation import A2AResult as _A2AResult  # local avoids circular dep
+        memo: dict[tuple[str, str], _A2AResult] = {}
         chain = tuple(TraceContext.get().get("delegation_chain") or ())
         parent_state = PipelineState(
             trace_id=trace_id or "delegate-task", session_id=session_id, input_text=sub_task,
@@ -335,7 +345,19 @@ class DelegateTaskTool(Tool):
 
         async def _attempt(to_owl: str) -> A2AResult | ToolResult:
             """Charge one attempt unit then call delegate(); returns A2AResult (or a
-            ToolResult on the belt-and-braces exception path)."""
+            ToolResult on the belt-and-braces exception path).
+
+            D2 dedup: check memo BEFORE _charge_attempt so a replay is free.
+            """
+            key = (to_owl, _normalize_subtask(sub_task))
+            cached = memo.get(key)
+            if cached is not None and cached.status == "ok":
+                # D2 dedup: never re-run a child that already succeeded in this ladder.
+                log.tool.debug(
+                    "delegate_task._attempt: memo hit — reusing ok result",
+                    extra={"_fields": {"trace_id": trace_id, "to_owl": to_owl}},
+                )
+                return cached
             if not self._charge_attempt(trace_id):
                 log.tool.warning(
                     "delegate_task._run_delegation: attempt budget exhausted — short-circuit",
@@ -344,7 +366,7 @@ class DelegateTaskTool(Tool):
                 from stackowl.owls.a2a_delegation import A2AResult  # local import avoids circular dep
                 return A2AResult(status="refused", resolved_owl=to_owl)
             try:
-                return await delegator.delegate(  # type: ignore[attr-defined, no-any-return]
+                res: _A2AResult = await delegator.delegate(  # type: ignore[attr-defined]
                     from_owl=caller, to_owl=to_owl, sub_task=sub_task, parent_state=parent_state,
                 )
             except Exception as exc:  # B5 — delegate is contracted not to raise; belt-and-braces.
@@ -357,6 +379,8 @@ class DelegateTaskTool(Tool):
                     {"status": "error", "to_owl": to_owl, "detail": str(exc)},
                     t0, note=f"delegation to {to_owl} failed",
                 )
+            memo[key] = res  # D2: store result; future same-key ok hits will use this.
+            return res
 
         # 3. STEP — initial attempt.
         result = await _attempt(target)
