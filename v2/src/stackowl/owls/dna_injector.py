@@ -59,6 +59,8 @@ class DNAPromptInjector:
 
     def inject(self, manifest: OwlAgentManifest, dna: OwlDNA) -> str:
         """Return ``manifest.system_prompt`` with DNA-driven directives appended."""
+        from stackowl.owls.directive_latch import DIRECTIVE_LATCH
+
         log.engine.debug(
             "[dna] injector.inject: entry",
             extra={"_fields": {"owl": manifest.name}},
@@ -66,11 +68,11 @@ class DNAPromptInjector:
         directives: list[str] = []
         for trait, directive in _HIGH_DIRECTIVES:
             value = float(getattr(dna, trait))
-            if value > _HIGH_THRESHOLD:
+            if DIRECTIVE_LATCH.high_state(manifest.name, trait, value):
                 directives.append(directive)
         for trait, directive in _LOW_DIRECTIVES:
             value = float(getattr(dna, trait))
-            if value < _LOW_THRESHOLD:
+            if DIRECTIVE_LATCH.low_state(manifest.name, trait, value):
                 directives.append(directive)
         if not directives:
             log.engine.debug(
