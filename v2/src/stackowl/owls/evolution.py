@@ -25,6 +25,7 @@ from stackowl.owls.dna_attribution import (
     DnaAttributor,
     lookback_epoch,
 )
+from stackowl.owls.dna_authored import read_authored_dna
 from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.owls.dna_governor import bound_dna
 from stackowl.owls.dna_hydrator import apply_dna_overlay
@@ -262,7 +263,8 @@ class EvolutionCoordinator(JobHandler):
                 "[dna] %s: %s %.3f → %.3f (delta %+.3f, src=%s)",
                 manifest.name, trait, previous, current, delta, evolution_source,
             )
-        safe_dna = bound_dna(manifest.dna, new_dna)               # governor: clamp once
+        anchor = await read_authored_dna(self._db, manifest.name) or OwlDNA()
+        safe_dna = bound_dna(manifest.dna, new_dna, anchor)       # governor: clamp once
         await self._persist_dna(manifest.name, safe_dna)          # DB = source of truth (persist FIRST)
         apply_dna_overlay(self._owl_registry, manifest.name, safe_dna)  # live refresh (next turn sees it)
         for trait in _MUTABLE_TRAITS:                              # audit (drift detectable + reversible)

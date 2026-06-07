@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from stackowl.owls.dna import _MUTABLE_TRAITS, OwlDNA
 from stackowl.owls.evolution_limits import (
-    DNA_NEUTRAL,
     ENVELOPE,
     FLOOR_TRAITS,
     MAX_DELTA,
@@ -16,17 +15,17 @@ from stackowl.owls.evolution_limits import (
 )
 
 
-def bound_dna(current: OwlDNA, proposed: OwlDNA) -> OwlDNA:
-    """Return a safe DNA: per mutable trait cap the move to +/-MAX_DELTA, clamp into
-    DNA_NEUTRAL +/- ENVELOPE, and hold the floor on judgment traits."""
+def bound_dna(current: OwlDNA, proposed: OwlDNA, anchor: OwlDNA) -> OwlDNA:
+    """Rate-cap + clamp into the per-owl envelope [anchor±ENVELOPE] + author-deferring floor."""
     updates: dict[str, float] = {}
-    lo, hi = DNA_NEUTRAL - ENVELOPE, DNA_NEUTRAL + ENVELOPE
     for trait in _MUTABLE_TRAITS:
         cur = float(getattr(current, trait))
         prop = float(getattr(proposed, trait))
-        delta = max(-MAX_DELTA, min(MAX_DELTA, prop - cur))   # rate cap
-        moved = max(lo, min(hi, cur + delta))                  # envelope (range cap)
+        anc = float(getattr(anchor, trait))
+        delta = max(-MAX_DELTA, min(MAX_DELTA, prop - cur))
+        lo, hi = max(0.0, anc - ENVELOPE), min(1.0, anc + ENVELOPE)
+        moved = max(lo, min(hi, cur + delta))
         if trait in FLOOR_TRAITS:
-            moved = max(TRAIT_FLOOR, moved)                    # safety floor
+            moved = max(min(TRAIT_FLOOR, anc), moved)
         updates[trait] = moved
     return current.model_copy(update=updates)
