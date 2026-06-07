@@ -15,7 +15,13 @@ from stackowl.owls.base_prompt import build_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
-from stackowl.skills.instruction_injector import SkillInstructionInjector
+from stackowl.skills.instruction_injector import (
+    SkillInstructionInjector,
+    SkillTier,
+    assign_tiers,
+)
+from stackowl.skills.skill_focus import FOCUS_TRACKER
+from stackowl.skills.skill_relevance import score_owned_skills
 
 _injector = DNAPromptInjector()
 _skill_injector = SkillInstructionInjector()
@@ -60,7 +66,20 @@ async def run(state: PipelineState) -> PipelineState:
     if store is not None and manifest is not None and manifest.skills:
         try:
             owned = await store.get_many_by_name(manifest.skills)
-            skills_block = _skill_injector.render(state.owl_name, owned)
+            pinned = set(manifest.pinned_skills) & set(manifest.skills)  # owned-only pins
+            scores = None
+            turn = None
+            if state.query_embedding is not None:
+                turn = FOCUS_TRACKER.begin_turn(state.owl_name, state.session_id)
+                scores = score_owned_skills(
+                    owned, query_embedding=state.query_embedding, tracker=FOCUS_TRACKER,
+                    owl=state.owl_name, session=state.session_id, turn=turn,
+                )
+            tiered = assign_tiers(owned, scores, pinned=pinned)
+            skills_block = _skill_injector.render(state.owl_name, tiered)
+            if scores is not None and turn is not None:
+                full_names = [sk.name for sk, tier, _p in tiered if tier is SkillTier.FULL]
+                FOCUS_TRACKER.mark_active(state.owl_name, state.session_id, full_names, turn)
             log.engine.debug(
                 "[pipeline] assemble: skills block rendered",
                 extra={"_fields": {"owl": state.owl_name, "skills_len": len(skills_block)}},

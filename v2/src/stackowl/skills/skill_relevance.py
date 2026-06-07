@@ -2,6 +2,7 @@
 hysteresis bonus. Pure-ish (no I/O beyond the in-memory tracker). Feeds assign_tiers()."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from stackowl.memory.sqlite_helpers import cosine_similarity
@@ -16,7 +17,7 @@ class _Embeddable(Protocol):
 
 
 def score_owned_skills(
-    owned: list[_Embeddable],
+    owned: Sequence[_Embeddable],
     *,
     query_embedding: tuple[float, ...],
     tracker: SkillFocusTracker,
