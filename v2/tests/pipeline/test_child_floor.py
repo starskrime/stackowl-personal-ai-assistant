@@ -17,6 +17,7 @@ import json
 
 from stackowl.authz import BoundsSpec
 from stackowl.infra.trace import TraceContext
+from stackowl.owls.a2a_delegation import A2AResult
 from stackowl.owls.concurrency import ConcurrencyGovernor
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
@@ -28,7 +29,6 @@ from stackowl.tools.agents.delegate_task import DelegateTaskTool
 from stackowl.tools.agents.sessions_send import SessionsSendTool
 from stackowl.tools.agents.sessions_spawn import SessionsSpawnTool
 from stackowl.tools.registry import ToolRegistry
-
 
 # ----------------------------------------------------------------- unit: resolve
 
@@ -78,9 +78,9 @@ class _CapturingDelegator:
 
     async def delegate(
         self, *, from_owl: str, to_owl: str, sub_task: str, parent_state: PipelineState
-    ) -> str:
+    ) -> A2AResult:
         self.captured_states.append(parent_state)
-        return "ok"
+        return A2AResult(status="ok", content="sub-task completed successfully", resolved_owl=to_owl)
 
 
 class _ScriptedProvider:

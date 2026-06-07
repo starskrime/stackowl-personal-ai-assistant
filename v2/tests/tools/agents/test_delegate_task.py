@@ -771,13 +771,13 @@ async def test_dedup_memo_prevents_second_delegate_call_for_same_ok_key() -> Non
             channel: str,
             t0: float,
         ) -> object:
-            from stackowl.tools.agents.delegate_task import DelegateTaskArgs, compose_sub_task
             from stackowl.infra.trace import TraceContext
-            from stackowl.pipeline.authz_compose import child_floor, resolve_owl_bounds
+            from stackowl.owls.a2a_delegation import A2AResult
+            from stackowl.pipeline.authz_compose import child_floor
             from stackowl.pipeline.services import get_services
             from stackowl.pipeline.state import PipelineState
+            from stackowl.tools.agents.delegate_task import DelegateTaskArgs, compose_sub_task
             from stackowl.tools.agents.results import ok_result
-            from stackowl.owls.a2a_delegation import A2AResult
 
             assert isinstance(args, DelegateTaskArgs)
             sub_task = compose_sub_task(args.goal, args.context)

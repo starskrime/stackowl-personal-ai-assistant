@@ -426,6 +426,17 @@ class DelegateTaskTool(Tool):
                     {"status": "error", "to_owl": to_owl, "detail": str(exc)},
                     t0, note=f"delegation to {to_owl} failed",
                 )
+            # Type guard — a misbehaving delegator returning a non-A2AResult (e.g. a bare
+            # string) must never cause _attempt to raise AttributeError on res.status.
+            # Coerce to an honest child_error so the ladder can handle it structurally.
+            if not isinstance(res, _A2AResult):
+                log.tool.error(
+                    "delegate: delegator returned non-A2AResult — coercing to child_error",
+                    exc_info=None,
+                    extra={"_fields": {"owl": to_owl, "type": type(res).__name__}},
+                )
+                res = _A2AResult(status="child_error", resolved_owl=to_owl,
+                                 child_detail="non-A2AResult return")
             # D3 — relevance gate: structural pre-filter → LLM judge → demote if off-topic.
             if res.status == "ok":
                 res = await _relevance_gate(res, to_owl, sub_task, fast_provider)
