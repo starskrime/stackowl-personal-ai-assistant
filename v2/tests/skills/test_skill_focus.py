@@ -52,3 +52,26 @@ def test_singleton_exists_and_clears():
     FOCUS_TRACKER.clear_all()
     turn = FOCUS_TRACKER.begin_turn("o", "s")
     assert FOCUS_TRACKER.bonus_for("o", "s", "x", turn) == 0.0
+
+
+def test_current_turn_does_not_increment():
+    t = SkillFocusTracker()
+    assert t.current_turn("o", "s") == 0
+    assert t.current_turn("o", "s") == 0   # repeated reads never advance
+    t.begin_turn("o", "s")                 # only begin_turn advances
+    assert t.current_turn("o", "s") == 1
+    assert t.current_turn("o", "s") == 1
+
+
+def test_skill_view_pattern_does_not_shorten_decay():
+    # simulate: assemble turn 1 marks 'a' active; model views 'b' 5x mid-turn (current_turn, no inc);
+    # assemble turn 2 -> 'a' should still be within its decay window (diff==1, full bonus).
+    t = SkillFocusTracker()
+    turn1 = t.begin_turn("o", "s")           # user turn 1
+    t.mark_active("o", "s", ["a"], turn1)
+    for _ in range(5):                        # 5 skill_view calls in turn 1 (must NOT advance)
+        cur = t.current_turn("o", "s")
+        t.mark_viewed("o", "s", "b", cur)
+    turn2 = t.begin_turn("o", "s")           # user turn 2
+    from stackowl.skills.skill_focus import ACTIVE_BONUS
+    assert abs(t.bonus_for("o", "s", "a", turn2) - ACTIVE_BONUS) < 1e-9  # 'a' stickiness intact

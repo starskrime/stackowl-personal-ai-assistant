@@ -62,6 +62,24 @@ class SkillFocusTracker:
             )
             return 0
 
+    def current_turn(self, owl: str, session: str) -> int:
+        """Return the current per-(owl, session) turn counter WITHOUT incrementing.
+
+        Creates the key at turn 0 if absent (matching begin_turn's fail-safe
+        semantics). Returns 0 on any error — safe to call any number of times in
+        one user turn (used by skill_view so it never advances the decay clock).
+        """
+        try:
+            with self._lock:
+                return self._get(owl, session).turn
+        except Exception as exc:
+            log.engine.error(
+                "[skill_focus] current_turn failed",
+                exc_info=exc,
+                extra={"_fields": {"owl": owl}},
+            )
+            return 0
+
     def bonus_for(self, owl: str, session: str, name: str, current_turn: int) -> float:
         try:
             with self._lock:

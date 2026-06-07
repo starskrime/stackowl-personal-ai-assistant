@@ -152,7 +152,7 @@ class SkillViewTool(Tool):
             owl = ctx.get("owl_name")
             session = ctx.get("session_id")
             if owl and session:
-                turn = FOCUS_TRACKER.begin_turn(owl, session)
+                turn = FOCUS_TRACKER.current_turn(owl, session)
                 FOCUS_TRACKER.mark_viewed(owl, session, skill.name, turn)
             # 4. EXIT
             return self._ok(
