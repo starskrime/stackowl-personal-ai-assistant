@@ -36,6 +36,7 @@ _EXPECTED_SEVERITY = {
     "browser_tab_open": "read",
     "browser_type": "write",
     "browser_upload": "consequential",
+    "browser_vision": "read",
     "browser_wait_for": "read",
 }
 
@@ -47,7 +48,13 @@ def _browser_tools() -> dict[str, object]:
 
 def test_every_browser_tool_is_grouped() -> None:
     tools = _browser_tools()
-    ungrouped = [n for n, t in tools.items() if t.manifest.toolset_group != "browser"]  # type: ignore[attr-defined]
+    # browser_vision is a media/vision composite (toolset_group="media") whose name
+    # starts with "browser_"; it is intentionally in the "media" group.
+    _MEDIA_CROSSOVERS = {"browser_vision"}
+    ungrouped = [
+        n for n, t in tools.items()
+        if t.manifest.toolset_group != "browser" and n not in _MEDIA_CROSSOVERS  # type: ignore[attr-defined]
+    ]
     assert ungrouped == [], f"browser tools missing toolset_group='browser': {ungrouped}"
 
 
