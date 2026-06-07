@@ -180,6 +180,9 @@ class StartupOrchestrator:
         from stackowl.owls.dna_hydrator import hydrate_dna
 
         await hydrate_dna(owl_registry, db_pool)
+        from stackowl.owls.owl_revalidator import revalidate_agent_owls
+
+        revalidate_agent_owls(owl_registry)
         # Memory subsystem assembly — wires the entire consolidation stack
         # (bridge, preference store, Kuzu adapter, DreamWorker, FactExtractor)
         # via the MemoryAssembly factory. See plan: gleaming-finding-puppy.md
