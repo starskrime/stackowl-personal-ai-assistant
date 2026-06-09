@@ -22,3 +22,30 @@ def test_child_id_is_a_stable_prefixed_string() -> None:
     cid = derive_child_task_id(dk)
     assert cid.startswith("child-")
     assert len(cid) == len("child-") + 32
+
+
+def test_ancestor_depth_root_is_zero() -> None:
+    from stackowl.pipeline.durable.delegation_link import ancestor_depth
+    # root has no parent
+    assert ancestor_depth("root", lambda _tid: None) == 0
+
+
+def test_ancestor_depth_child_is_one() -> None:
+    from stackowl.pipeline.durable.delegation_link import ancestor_depth
+    parents = {"child": "root", "root": None}
+    assert ancestor_depth("child", parents.get) == 1
+
+
+def test_ancestor_depth_grandchild_is_two() -> None:
+    from stackowl.pipeline.durable.delegation_link import ancestor_depth
+    parents = {"grand": "child", "child": "root", "root": None}
+    assert ancestor_depth("grand", parents.get) == 2
+
+
+def test_ancestor_depth_breaks_on_cycle_defensively() -> None:
+    from stackowl.pipeline.durable.delegation_link import ancestor_depth
+    # A pathological self-cycle must not loop forever — it is bounded.
+    parents = {"a": "b", "b": "a"}
+    depth = ancestor_depth("a", parents.get)
+    assert isinstance(depth, int)
+    assert depth >= 0
