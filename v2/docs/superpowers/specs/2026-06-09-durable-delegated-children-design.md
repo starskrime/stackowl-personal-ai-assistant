@@ -55,9 +55,9 @@ Durability gives us **L** and removes *crash-induced* loss of the work record. I
 When a durable parent delegates:
 
 1. The parent's durable scope (`task_id`, `durable_owner_id`) reaches the delegation seam via `TraceContext` (an ambient, **losable** signal — §8). The identity-determining inputs are **explicit parameters**, never ambient reads (Winston's asymmetry: *durability ambient and optional; identity explicit and mandatory*).
-2. The parent assigns a durable, monotonic **`delegate_seq`** to this delegation, recorded at delegate-intent time (§5). `child_task_id = derive(parent_task_id, delegate_seq)` — a pure function of parent-assigned, durable quantities, **never** of LLM-influenced position/args/owl.
-3. The parent **claims-or-creates** the child `DurableTask` row (`parent_task_id`, `parent_owl`), via an atomic `INSERT … ON CONFLICT DO NOTHING` + re-`SELECT` with a **single-owner lease** (§7). The claim winner executes the child; a loser (e.g. startup recovery racing the live parent) **polls** the record instead of executing.
-4. The child sub-pipeline runs **durably** under its own `child_task_id` — `_run_specialist` assembles a real `DurableSession` + checkpoint callback (§8), so the child checkpoints + ledgers under its own clean namespace. If the durable session cannot be assembled, it **fails loud** — never silently non-durable.
+2. The child id is derived from the parent's own resume-stable `delegate_task` ledger key (§5): `child_task_id = derive_child_task_id(delegate_key)`, where `delegate_key = idempotency_key(parent_task_id, ctx.iteration, "delegate_task", canonical_args)` — the same coordinate the base ledger already computes for this write-tool call. No LLM-derived counter or position.
+3. The parent **claims-or-creates** the child `DurableTask` row (`parent_task_id`, `parent_owl`, `delegate_key`), via an atomic `INSERT … ON CONFLICT(owner_id, task_id) DO NOTHING` + re-`SELECT` with a **single-owner lease** (§7). The claim winner executes the child; a loser (e.g. startup recovery racing the live parent) **polls** the record instead of executing.
+4. The child sub-pipeline runs **durably** under its own `child_task_id` — recon confirmed durability is `task_id`-driven (the execute step assembles the `DurableSession` inline from `state.task_id` + services `db_pool`), so D1 only needs to **set `child_task_id` on the child state** and ensure the child does not inherit the parent's `task_id` (§8.3). `_call_durable` already fails loud if `task_id` is set with no `db_pool`.
 5. The parent resolves its `delegate_task` result from the durable record, bounded by `commit_coupling` (§6).
 6. Child terminal status is a **projection of the parent's ledger commit** (one commit, two rows — §7), so the child can never be left a permanently-`running` zombie when the parent advances past the delegation.
 
@@ -72,46 +72,45 @@ On crash, startup recovery resumes **roots only** (`parent_task_id IS NULL`); ch
 ```sql
 ALTER TABLE tasks ADD COLUMN parent_task_id TEXT
 ALTER TABLE tasks ADD COLUMN parent_owl TEXT
-ALTER TABLE tasks ADD COLUMN delegate_seq INTEGER
+ALTER TABLE tasks ADD COLUMN delegate_key TEXT
 ALTER TABLE tasks ADD COLUMN lease_owner TEXT
 ALTER TABLE tasks ADD COLUMN superseded INTEGER NOT NULL DEFAULT 0
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(owner_id, parent_task_id)
-CREATE INDEX IF NOT EXISTS idx_tasks_roots ON tasks(owner_id, status) WHERE parent_task_id IS NULL
 ```
 
 - `parent_task_id` — NULL ⇒ root goal; non-NULL ⇒ a delegated child, links to the parent's `task_id`. Self-referential within `tasks`.
 - `parent_owl` — the delegating owl name (audit + return-path legibility).
-- `delegate_seq` — the parent-assigned monotonic delegation sequence this child was minted from (§5); NULL for roots.
+- `delegate_key` — the parent's `delegate_task` idempotency key this child was minted from (§5; audit + reaper). NULL for roots.
 - `lease_owner` — single-owner execution lease holder (§7); NULL ⇒ unclaimed.
 - `superseded` — set when a timed-out child is tombstoned so a slow eventual commit is neutralized and the next ladder rung gets a fresh id (§9).
-- `idx_tasks_roots` — partial index so roots-only recovery never full-scans as the tree grows (Winston). If the store's SQLite build does not honor the partial index for the recovery query, fall back to `idx_tasks_parent`; validate during planning.
+- `idx_tasks_parent` — covers both the child-lookup (`parent_task_id = ?`) and the roots-only recovery scan. Recon (§5) confirmed recovery lists orphans via `store.list(status=...)`, then D1 filters to `parent_task_id IS NULL` in-query; the composite index serves the `IS NULL` predicate. (A partial `WHERE parent_task_id IS NULL` index was considered and cut as premature — the durable task table is small.)
 
-`DurableTask` (`pipeline/durable/task.py`) gains `parent_task_id`, `parent_owl`, `delegate_seq`, `lease_owner`, `superseded` (all optional, defaulting to root/unleased/not-superseded). `DurableTaskStore` SELECT/INSERT/UPDATE column lists carry them.
+`DurableTask` (`pipeline/durable/task.py`) gains `parent_task_id`, `parent_owl`, `delegate_key`, `lease_owner`, `superseded` (all optional, defaulting to root/unleased/not-superseded). `DurableTaskStore` `_SELECT_FIELDS` / `_row_to_task` / `create()` carry them.
 
 ---
 
-## 5. The deterministic child id — keyed on durable identity, guarded against replay drift
+## 5. The deterministic child id — derived from the parent's own ledger coordinate
 
-**The linchpin, and the party-mode's #1 finding.** The child id must be stable across re-delegation so a resumed parent finds the *same* child and the child's writes replay exactly-once. The original design derived it from `(parent_task_id, parent_step_index, ladder_rung, target_owl)` — but **`parent_step_index`, the delegate's position-in-iteration, and `canonical_args` are all LLM-influenced and non-deterministic across replay** (Murat SEV-1). A re-sampled parent iteration can emit the delegate at a different ordinal, or phrase the sub-goal differently → a different id → the child re-runs and its writes **double-fire, silently**.
+**The linchpin, and the party-mode's #1 finding.** The child id must be stable across re-delegation so a resumed parent finds the *same* child and the child's writes replay exactly-once. The original design derived it from `(parent_task_id, parent_step_index, ladder_rung, target_owl)` — but **the delegate's position-in-iteration is LLM-influenced and non-deterministic across replay** (Murat SEV-1). Planning recon (2026-06-09) confirmed the base durable system **re-samples the LLM on resume** (it does *not* replay recorded tool-call decisions; the only thing preventing duplicate side effects is the `SideEffectLedger`, keyed on `sha256(task_id, ctx.iteration, tool_name, canonical_args)`). So a monotonic counter assigned at runtime is also wrong — a re-sampled parent could assign a different counter value to the same logical delegation.
 
-### 5.1 `delegate_seq` — parent-assigned, durable, monotonic
+### 5.1 Derive the child id from the parent's `delegate_task` idempotency key
 
-`delegate_seq` is a monotonic counter **per `parent_task_id`**, assigned to a delegation at **intent time** (before the child performs any side effect) and **persisted durably** as part of the parent's delegation intent record. It is *not* derived from iteration position, args, target owl, or any LLM output. Two delegations in the same parent iteration (parallel fan-out, §8) get distinct seqs; the *same* delegation re-encountered on resume reuses its recorded seq.
+`delegate_task` is **itself** an `action_severity="write"` tool that already passes through `ledger_guard`, so the base system already computes a resume-stable coordinate for every delegation call: `delegate_key = idempotency_key(parent_task_id, ctx.iteration, "delegate_task", canonical_args)`. The child id is derived from exactly that:
 
 ```
-child_task_id = derive(parent_task_id, delegate_seq)
+child_task_id = derive_child_task_id(delegate_key)   # e.g. f"child-{delegate_key[:32]}"
 ```
 
-A pure helper (`pipeline/durable/delegation_link.py::derive_child_task_id`). Deterministic, collision-free by construction (distinct seqs ⇒ distinct ids; same target twice ⇒ distinct seqs ⇒ distinct ids — resolves Winston's same-target-sibling collision without a convention).
+A pure helper (`pipeline/durable/delegation_link.py::derive_child_task_id`). On resume, a re-sampled parent that re-emits **the same delegation at the same iteration with the same args** computes the **same** `delegate_key` → the same `child_task_id` → it re-attaches to the existing child row (claim-or-create is a no-op, §7) instead of forking. A delegation the model *drops* on resume is never re-derived, and its result is already in the parent's ledger via the `delegate_task` tool's own commit. **This piggybacks on the exact-once guarantee that already works for every other write tool — D1 adds no new divergence machinery; it inherits the base ledger's semantics verbatim.**
 
-### 5.2 Replay-divergence guard — fail to honest, never silently fork
+### 5.2 The determinism boundary (inherited, stated honestly)
 
-The existing durable-ReAct system checkpoints completed iterations and replays recorded tool-call decisions; the non-determinism window is an iteration that **crashed before it was checkpointed** and is re-sampled on resume. For that window:
+The child id is **exactly as resume-stable as the base ledger's exactly-once guarantee** — no more, no less. Two inherited caveats, documented rather than re-solved (they are properties of the base durable system, not introduced by D1):
 
-- On resume, before acting on a re-sampled `delegate_task`, the parent looks up whether a delegation intent (and thus a `delegate_seq` + `child_task_id`) was already recorded for this durable position. If present, it **reuses** the recorded seq → same child id → the child is resumed/reused, not forked.
-- If the re-sampled iteration's delegation decision **diverges** from what was recorded (different target, materially different sub-goal), the parent **fails to `honest_uncertain`** and logs loudly — it must **never** silently create a divergent second child. (Murat's mandatory guard; this also retroactively hardens the base durable system, a "fix architecture not examples" win.)
+- **Args-rephrasing on resume:** if the re-sampled parent phrases the sub-goal differently, `canonical_args` differs → a different `delegate_key` → a different child. This is identical to the exposure the base ledger already has for *every* write tool (the `delegate_task` call's own ledger entry would also re-key and re-run). D1 does not worsen it; hardening it (a transcript-divergence guard on the base provider-resume seam) is a base-system improvement tracked separately (§12).
+- **Same-args twice in one iteration (the S9 caveat):** two identical `delegate_task` calls in one parent iteration collide on one `delegate_key` — for delegation this is *desirable* dedup. Distinct-but-identical-arg delegations needing to coexist would require an intra-iteration ordinal, the same S9 hardening the base ledger defers. Documented as the D1 equivalent of the S9 caveat (§12), not solved now.
 
-**Planning note:** the exact seq-assignment-and-replay mechanism must be validated against the real `ReActCheckpoint` / `side_effect_ledger` / provider-resume code during planning (a recon task), because it depends on whether the base system replays-vs-re-samples a completed iteration. The replay-divergence guard is mandatory **regardless** of what that recon finds.
+Within those inherited boundaries the derivation is deterministic and collision-free (distinct `delegate_key`s ⇒ distinct ids; same target with distinct args ⇒ distinct keys ⇒ distinct ids — resolves Winston's same-target-sibling collision).
 
 ---
 
@@ -148,7 +147,7 @@ This narrows `honest_uncertain` to the provably-uncertain subset rather than "re
 
 A deterministic `child_task_id` makes **creation** idempotent but does **not** make **execution** single-owner — both a live parent and startup recovery can derive the same id and each think it should run the child (Amelia #2). Required:
 
-- `create_child_task(child_task_id, parent_task_id, parent_owl, delegate_seq, owner_id, …)` performs `INSERT … ON CONFLICT(task_id) DO NOTHING` then re-`SELECT`. The DB unique constraint is the only safe creator; the loser of the create race reads the winner's row. (Do **not** change the root-task INSERT — a duplicate root id is a real bug we want surfaced; add a distinct child method.)
+- `create_child_task(child_task_id, parent_task_id, parent_owl, delegate_key, owner_id, …)` performs `INSERT … ON CONFLICT(owner_id, task_id) DO NOTHING` (via `execute_returning_rowcount` directly, **not** `_insert_owned`, which builds a plain INSERT) then re-`SELECT`. The composite-PK conflict clause is the only safe creator; the loser of the create race reads the winner's row. (Do **not** change the root-task INSERT — a duplicate root id is a real bug we want surfaced; add a distinct child method.)
 - The same call **claims a lease** (`lease_owner` stamped atomically, e.g. via `execute_returning_rowcount` CAS like the existing `claim_for_recovery`). **The claim winner executes the child; a non-winner polls the durable record** until terminal, then resolves per §6. No double-execution of a side-effecting child.
 
 ### 7.2 Parent-driven terminalization (closes Winston's far-side leak)
@@ -165,7 +164,7 @@ Defensively, a sweep (folded into startup recovery) handles any `running`/`recov
 
 ### 8.1 Threading durable scope (TraceContext, the losable signal)
 
-Add `durable_task_id: str | None` and `durable_owner_id: str | None` to `TraceContext` (`infra/observability/context.py`). The durable execute step (`pipeline/steps/execute.py:426`, which already knows `state.task_id`) sets them for the **scope of the tool execution** and resets after (the set/reset discipline below). `delegate_task` reads them to decide durable-vs-fail-open. **Only the fail-open durability flag rides the ContextVar** — it is safe to lose (you degrade to the non-durable path + `honest_uncertain`). **Identity-determining inputs (`delegate_seq`, derived `child_task_id`) are explicit parameters**, never ambient reads (Winston's asymmetry).
+`TraceContext` (`infra/trace.py`) is a plain class of per-field `ContextVar`s (not a Pydantic model), populated by `TraceContext.start(...)` and read via `TraceContext.get()`. Recon found `task_id` is **not** propagated to the tool layer today. Add `_task_id` and `_durable_owner_id` ContextVars, stamped in `TraceContext.start(...)` from `state.task_id` / `state.durable_owner_id` at the seam that already maps state→trace: **`AsyncioBackend.run`** (`pipeline/backends/asyncio_backend.py`), exactly as `delegation_depth` / `creation_ceiling` already propagate state→trace→tool. Expose `task_id` (a safe string) in `get()`; keep `durable_owner_id` readable via a dedicated accessor. `delegate_task` reads them to decide durable-vs-fail-open. **Only the fail-open durability signal rides the ContextVar** — safe to lose (you degrade to the non-durable path + `honest_uncertain`). **Identity-determining values (the derived `delegate_key` / `child_task_id`) are computed explicitly at the seam from the parent's task_id + the ledger coordinate**, never inferred from ambient mutable state (Winston's asymmetry).
 
 ### 8.2 ContextVar isolation across 4 parallel children (Amelia #1, Murat SEV-4)
 
@@ -177,9 +176,11 @@ Add `durable_task_id: str | None` and `durable_owner_id: str | None` to `TraceCo
 
 Test: 4 concurrent children each record their observed `task_id`; assert **zero crossover**, including one child that raises and one timeout-cancellation.
 
-### 8.3 Child durable backend assembly (Amelia #4 — the actual work of D1, riskiest change)
+### 8.3 Child durable execution (recon-simplified — durability is `task_id`-driven)
 
-`a2a_delegation._run_specialist` currently hand-rolls a bare `AsyncioBackend`. Setting `task_id` on the child state makes `execute.py:426` *try* the durable branch, but **a durable branch with no `DurableSession`/checkpoint store is silent non-durability** — the worst outcome. `_run_specialist` must assemble the child backend through the **same durable assembly the root runner uses** (construct a child `DurableSession(child_task_id, …)`, wire the `react_checkpoint` callback, hand it to the backend). If the session cannot be assembled, it **fails loud** (never silently non-durable — honoring the no-hidden-errors rule). ACs: `test_child_pipeline_persists_checkpoint` (child runs with `task_id` set ⇒ a checkpoint row exists for `child_task_id`); `test_child_durable_branch_without_session_fails_loud`.
+Recon corrected the original worry: the `DurableSession` is **not** held by the backend or `StepServices` — it is assembled **inline inside the execute step** (`execute.py::_call_durable`) from `state.task_id` + `get_services().db_pool`, and the `DurableReActContext` is published via a ContextVar that `ledger_guard` reads. So **any sub-pipeline whose `state.task_id` is set and whose services carry a `db_pool` runs durably automatically.** `_run_specialist` already passes the same `StepServices` (hence the same `db_pool`) to its child `AsyncioBackend`, so the *only* required change is to **set `task_id=child_task_id` (and `durable_owner_id`) on the child state** — the execute step does the rest.
+
+Two correctness points remain: **(a)** the gap recon flagged — `parent_state.evolve(...)` in `_run_specialist` does **not** reset `task_id`, so a durable parent's child would otherwise inherit the *parent's* `task_id` and collide on the parent's ledger step-index space; D1 must **explicitly set the child's own `child_task_id`** (via the fresh state built at `delegate_task.py:378`, which today sets no `task_id`). **(b)** Fail-loud is already enforced: `_call_durable` raises `RuntimeError` if `task_id` is set but `db_pool` is `None` — D1 inherits that, never silently non-durable. ACs: `test_child_pipeline_persists_checkpoint_under_child_task_id` (child runs ⇒ checkpoint + ledger rows exist under `child_task_id`, **not** the parent's); `test_durable_parent_child_does_not_inherit_parent_task_id`.
 
 ---
 
@@ -188,7 +189,7 @@ Test: 4 concurrent children each record their observed `task_id`; assert **zero 
 - **Roots-only orphan listing** (`recovery.py`): filter to `parent_task_id IS NULL`. Children are resolved transitively by the parent's resume re-deriving the same `child_task_id`. (Plus the §7.3 reaper for residual orphans.)
 - **Depth reconstructed from the tree** (Winston): `MAX_DELEGATION_DEPTH=2` must be recomputed by counting ancestors via the `parent_task_id` chain on resume, **not** from a fresh ContextVar starting at 0 — else a resumed interior node delegates a 4th level.
 - **Cancel-vs-durable-survival** (Amelia): the a2a parent **cancels** the child asyncio task on the 30s timeout. For a *durable* child, cancellation must **not** mark the durable child `failed` — the durable runner keeps it `running`/`recovering` so recovery (or the next turn) resumes it from its checkpoint. AC: `test_a2a_timeout_cancels_task_but_durable_child_survives_as_recovering`.
-- **Timeout supersession** (Winston): when the parent *gives up* on a child (timeout → ladder advances to the next rung), it stamps the child `superseded=1`. A slow child's eventual commit is then idempotently neutralized, and the next rung derives a **different** `child_task_id` (distinct `delegate_seq`), so "definite answer under timeout" does not race the very child it is adjudicating at the *decision* layer.
+- **Timeout supersession** (Winston): when the parent *gives up* on a child (timeout → ladder advances to the next rung), it stamps the child `superseded=1`. A slow child's eventual commit is then idempotently neutralized, and the next rung derives a **different** `child_task_id` (the next rung's `delegate_task` call has different `canonical_args`/iteration → a different `delegate_key`), so "definite answer under timeout" does not race the very child it is adjudicating at the *decision* layer.
 
 ---
 
@@ -205,9 +206,9 @@ Test: 4 concurrent children each record their observed `task_id`; assert **zero 
 ## 11. Testing
 
 ### 11.1 Unit
-- `derive_child_task_id` determinism: same `(parent_task_id, delegate_seq)` ⇒ same id; distinct seqs ⇒ distinct ids; **independent of args/owl/iteration** (assert the inputs are *only* parent_task_id + delegate_seq).
-- `delegate_seq` monotonic-per-parent + persisted at intent.
-- Store round-trip of `parent_task_id`/`parent_owl`/`delegate_seq`/`lease_owner`/`superseded`.
+- `derive_child_task_id` determinism: same `delegate_key` ⇒ same id; distinct keys ⇒ distinct ids; the function takes **only** `delegate_key` (no owl/iteration/args passed separately — they're already folded into the key).
+- `derive_child_task_id` is a pure function of `delegate_key` only (same key ⇒ same id; different keys ⇒ different ids).
+- Store round-trip of `parent_task_id`/`parent_owl`/`delegate_key`/`lease_owner`/`superseded`.
 - `create_child_task` idempotent under race: two coroutines, same id ⇒ one row, both return the same record; lease single-owner (winner runs, loser polls).
 - Recovery root-filter: children (`parent_task_id` non-NULL) excluded from the orphan list.
 - Depth-from-tree reconstruction at depth 2.
@@ -215,8 +216,8 @@ Test: 4 concurrent children each record their observed `task_id`; assert **zero 
 
 ### 11.2 Interleaving / correctness (Murat's demanded scenarios — assert the failure modes, not just the happy path)
 - **Merge-gate journey** (mirrors `tests/journeys/test_j1_j2_durable_kill_resume.py`, real components): durable parent → write-capable child performs write W (`transactional`) → process crash **before** `delegate_task` commits → recovery resumes the parent → W issued **exactly once** → parent goal completes.
-- **Replay-divergence:** resume a parent whose re-sampled iteration emits a *different* delegate than recorded ⇒ assert `honest_uncertain` + loud log, **never** a second child / double-fire.
-- **Two delegates in one iteration** ⇒ distinct stable `child_task_id`s (distinct `delegate_seq`).
+- **Resume re-attaches, not re-forks:** resume a parent that re-emits the *same* delegation (same args, same iteration) ⇒ the same `delegate_key` ⇒ the same `child_task_id` ⇒ `create_child_task` is a no-op and the child's writes replay `already_committed` (child runs exactly once).
+- **Two distinct delegates in one iteration** (different args) ⇒ distinct `delegate_key`s ⇒ distinct `child_task_id`s.
 - **4-way concurrent children:** zero `task_id` crossover (incl. one child raising, one cancelled).
 - **Timeout-cancel mid-`intent`:** durable child survives as `recovering` (not `failed`); parent consult returns `honest_uncertain` (not false-safe); a slow eventual commit is neutralized by `superseded`.
 - **`commit_coupling` honesty:** an `unconfirmed` effect in-flight at timeout ⇒ `honest_uncertain`; a `transactional` committed effect ⇒ definite "done"; a never-started child ⇒ definite "safe retry".
@@ -234,6 +235,8 @@ Real `DbPool`(tmp) + `MigrationRunner`, real `DurableTaskStore`/`DurableTaskRunn
 - **Push-based return-to-parent** — explicitly cut; the pull mechanism (parent's durable resume re-delegates and finds the completed child) is the design. A child does not push to a dead parent turn.
 - **Cross-restart de-leasing UI / task tree visualization** — `parent_task_id` makes the tree queryable, but a `/tasks` tree view is out of scope.
 - **Generalizing `commit_coupling` into a downstream-contract registry** — D1 ships the closed enum + per-tool map + fail-safe default; a richer contract-assertion system (verifying a remote actually honors an idempotency key) is future work. The honesty boundary is correct regardless: unverified ⇒ `unconfirmed`.
+- **Base-system transcript-divergence guard** — recon found the base durable provider-resume seam re-samples the LLM with **no** prefix-divergence check. D1 inherits this exposure (§5.2) but does not worsen it; a guard on `validate_resume_transcript` that rejects a re-sampled prefix diverging from the checkpoint is a base-system hardening tracked separately (benefits all durable tasks, not just delegated children).
+- **Intra-iteration ordinal for the ledger key (the S9 caveat)** — two distinct-but-identical-arg `delegate_task` calls in one parent iteration collide on one `delegate_key`. For delegation this is desirable dedup; coexisting identical-arg delegations would need the same intra-iteration ordinal the base ledger defers (S9). Documented, not solved.
 
 ---
 
@@ -241,24 +244,24 @@ Real `DbPool`(tmp) + `MigrationRunner`, real `DurableTaskStore`/`DurableTaskRunn
 
 | File | Change |
 |---|---|
-| `db/migrations/0053_durable_delegation_link.sql` | Create — columns + indexes (§4) |
-| `pipeline/durable/task.py` | `DurableTask` + 5 fields |
-| `pipeline/durable/store.py` | SELECT/INSERT/UPDATE carry fields; new `create_child_task` (ON CONFLICT + lease); terminalize-child; reaper query |
-| `pipeline/durable/delegation_link.py` | Create — `derive_child_task_id`, `delegate_seq` assignment, ancestor-depth helper (pure) |
-| `infra/observability/context.py` | `TraceContext` + `durable_task_id`/`durable_owner_id` (ambient, losable) |
-| `pipeline/steps/execute.py` (~:426) | Set/reset durable TraceContext fields around the tool scope |
-| `tools/agents/delegate_task.py` (~:378) | Read TraceContext; derive id (explicit params); claim child; inject `task_id` into the fresh child state; resolve per §6 + replay-divergence guard |
-| `owls/a2a_delegation.py` (`_run_specialist`) | Assemble child `DurableSession` + checkpoint callback (fail-loud); pass child scope as a value; cancel-survival |
-| `pipeline/durable/recovery.py` | Roots-only filter; depth-from-tree; orphan reaper |
-| `tools/<write tools>` + `tools/.../severities` map | Declare `commit_coupling` (audit; fail-safe `unconfirmed`) |
+| `db/migrations/0053_durable_delegation_link.sql` | Create — columns + index (§4) |
+| `pipeline/durable/task.py` | `DurableTask` + `parent_task_id`/`parent_owl`/`delegate_key`/`lease_owner`/`superseded` |
+| `pipeline/durable/store.py` | `_SELECT_FIELDS`/`_row_to_task`/`create()` carry fields; new `create_child_task` (`execute_returning_rowcount` ON CONFLICT DO NOTHING + re-SELECT); `claim_child_lease` CAS; `terminalize_child`; `list_children`/reaper query |
+| `pipeline/durable/delegation_link.py` | Create — `derive_child_task_id(delegate_key)`, ancestor-depth-from-tree helper (pure) |
+| `infra/trace.py` | `TraceContext` + `_task_id`/`_durable_owner_id` ContextVars; `start(...)` stamps them; `get()` exposes `task_id` |
+| `pipeline/backends/asyncio_backend.py` | `run()` passes `state.task_id`/`state.durable_owner_id` into `TraceContext.start(...)` |
+| `tools/agents/delegate_task.py` (~:378) | Read durable scope from TraceContext (fail-open); compute `delegate_key` + `child_task_id`; claim-or-create child; set `task_id=child_task_id`/`durable_owner_id` on the fresh child state; parent-driven terminalize on commit; resolve per §6 (commit_coupling); supersede on timeout |
+| `owls/a2a_delegation.py` (`_run_specialist`) | Pass child scope as a value (Break-A); cancel-survival (a2a timeout must not mark a durable child `failed`) |
+| `pipeline/durable/recovery.py` | Roots-only filter (`parent_task_id IS NULL`); depth-from-tree on resume; orphan-child reaper |
+| `tools/base.py` + each write/consequential tool + `tests/tools/test_tool_severities.py` sibling | `commit_coupling` field on `ToolManifest`; declare per tool (audit; fail-safe default) |
 
 ---
 
 ## 14. The load-bearing invariants (sign-off summary)
 
-1. **Identity is durable, not LLM-derived:** `child_task_id = derive(parent_task_id, delegate_seq)`; `delegate_seq` assigned + persisted at intent; replay-divergence guard fails to `honest_uncertain`, never silently forks (§5).
+1. **Identity is durable, not LLM-derived:** `child_task_id = derive_child_task_id(delegate_key)` where `delegate_key` is the parent's own resume-stable `delegate_task` ledger idempotency key; inherits the base ledger's exactly-once semantics verbatim, adds no new divergence machinery (§5).
 2. **Honesty is per-effect, not per-parent:** `commit_coupling` decides definite-vs-`honest_uncertain`; the "not-started → safe-retry" leg is the pure-profit win; `unconfirmed` in-flight stays `honest_uncertain` by design (§6).
 3. **Single-owner execution + parent-driven terminalization + reaper:** lease (winner runs, loser polls); child terminal = projection of parent's ledger commit; reaper for residual zombies (§7).
-4. **Real child durability or loud failure:** `_run_specialist` assembles a real `DurableSession`; never silently non-durable (§8.3).
+4. **Real child durability or loud failure:** durability is `task_id`-driven — setting `child_task_id` on the child state makes the execute step assemble the `DurableSession` inline; the child must not inherit the parent's `task_id`; `_call_durable` already fails loud if `task_id` is set with no `db_pool` (§8.3).
 5. **Asymmetric coupling:** durability ambient and losable (fail-open); identity explicit and mandatory; ContextVar isolation across parallel children is an AC (§8).
 6. **Recovery topology:** roots-only + transitive children + depth-from-tree + cancel-survival + supersession (§9).
