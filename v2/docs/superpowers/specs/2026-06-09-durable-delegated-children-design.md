@@ -112,6 +112,15 @@ The child id is **exactly as resume-stable as the base ledger's exactly-once gua
 
 Within those inherited boundaries the derivation is deterministic and collision-free (distinct `delegate_key`s ⇒ distinct ids; same target with distinct args ⇒ distinct keys ⇒ distinct ids — resolves Winston's same-target-sibling collision).
 
+### 5.3 The internal ladder shares one `delegate_key` — and that is correct
+
+The delegation ladder (initial → retry-same-target → fallback-to-secretary) is **internal to a single `delegate_task` tool call**, so all rungs share one `canonical_args` ⇒ one `delegate_key` ⇒ one `child_task_id`. This is *not* a collision bug, by Story D's existing capability gate:
+
+- **Same-target rungs (initial + retry):** re-deriving the same `child_task_id` is exactly the desired behavior — the retry **re-attaches/resumes the same durable child** rather than forking a second one.
+- **Different-target fallback (→ secretary):** reached **only for read-only children**. Story D's gate halts write-capable children at the honest-terminal path (`if _can_side_effect(target): return honest_uncertain_result(...)`) — they are *never* re-delegated to a different resolved owl. D1's §6 keeps this: a write-capable timeout resolves from the durable record (resume the *same* `child_task_id` or `honest_uncertain`), it does not fall back to a different target. Read-only children have **no ledgered side effects**, so the fallback reusing the same (empty-ledger) child row is harmless.
+
+Consequently a write-capable child's `child_task_id` is only ever bound to its one resolved target (re-attach on retry/resume), and **no per-rung / per-target ordinal is needed** in the derivation (YAGNI). Supersession (§9) is therefore **defensive** — it neutralizes the slow-late-commit decision-layer race even though the §6 gate already prevents re-attempting a write-capable child under a fresh id.
+
 ---
 
 ## 6. `commit_coupling` — the honesty axis (Dr. Quinn's reframe, full version)
