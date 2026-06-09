@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.memory.trust import trust_for_source
 from stackowl.tui.i18n import localize
 
 if TYPE_CHECKING:
@@ -36,8 +37,8 @@ class MemoryCallbackHandler:
 
     def __init__(
         self,
-        memory_bridge: "MemoryBridge",
-        adapter: "TelegramChannelAdapter",
+        memory_bridge: MemoryBridge,
+        adapter: TelegramChannelAdapter,
     ) -> None:
         self._memory_bridge = memory_bridge
         self._adapter = adapter
@@ -70,7 +71,7 @@ class MemoryCallbackHandler:
         try:
             # Attempt force_promote if available; fall back to high-confidence stage.
             if hasattr(self._memory_bridge, "force_promote"):
-                await self._memory_bridge.force_promote(fact_id)  # type: ignore[attr-defined]
+                await self._memory_bridge.force_promote(fact_id)
                 log.telegram.debug(
                     "[telegram] memory_callbacks.handler.handle_approve: step force_promote",
                     extra={"_fields": {"fact_id": fact_id}},
@@ -84,6 +85,7 @@ class MemoryCallbackHandler:
                     source_type="manual",
                     source_ref="telegram:approval",
                     confidence=1.0,
+                    trust=trust_for_source("manual"),
                 )
                 await self._memory_bridge.stage(fact)
                 log.telegram.debug(
@@ -163,7 +165,7 @@ class MemoryCallbackHandler:
             extra={"_fields": {"fact_id": fact_id}},
         )
 
-    def register(self, callback_router: "CallbackRouter") -> None:
+    def register(self, callback_router: CallbackRouter) -> None:
         """Attach both approve and reject handlers to ``callback_router``.
 
         Args:
