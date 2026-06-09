@@ -30,13 +30,15 @@ async def _insert_staged_raw(
     confidence: float = 0.9,
     reinforcement_count: int = 0,
     status: str = "staged",
+    trust: str = "untrusted",
 ) -> None:
     """Insert a staged_facts row directly, bypassing the bridge (for unit tests)."""
     await db.execute(
         """INSERT INTO staged_facts (
                fact_id, content, source_type, source_ref, confidence,
-               staged_at, reinforcement_count, status, embedding, embedding_model
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               staged_at, reinforcement_count, status, embedding, embedding_model,
+               trust
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fact_id,
             content,
@@ -48,6 +50,7 @@ async def _insert_staged_raw(
             status,
             b"",
             None,
+            trust,
         ),
     )
 
@@ -138,3 +141,65 @@ async def test_other_source_type_still_needs_3(tmp_db: DbPool) -> None:
         "SELECT fact_id FROM committed_facts WHERE fact_id = ?", (fact_id,)
     )
     assert not rows, "manual fact at reinforcement_count=1 must NOT be promoted"
+
+
+async def test_trust_survives_promotion_into_committed(tmp_db: DbPool) -> None:
+    """trust value from staged_facts must be copied verbatim into committed_facts."""
+    fact_id = str(uuid.uuid4())
+    await _insert_staged_raw(
+        tmp_db,
+        fact_id=fact_id,
+        content="User prefers light theme",
+        source_type="webpage",
+        confidence=0.9,
+        reinforcement_count=3,
+        trust="untrusted",
+    )
+
+    promoter = FactPromoter(
+        tmp_db,
+        confidence_threshold=0.8,
+        reinforcement_required=3,
+        conversation_fact_reinforcement_required=1,
+    )
+    promoted = await promoter.promote_eligible()
+    assert promoted == 1
+
+    rows = await tmp_db.fetch_all(
+        "SELECT trust FROM committed_facts WHERE fact_id = ?", (fact_id,)
+    )
+    assert rows, "fact must be in committed_facts"
+    assert rows[0]["trust"] == "untrusted", (
+        f"trust must be copied verbatim; got {rows[0]['trust']!r}"
+    )
+
+
+async def test_force_promote_carries_trust(tmp_db: DbPool) -> None:
+    """force_promote must copy trust into committed_facts (routes through _promote_one)."""
+    fact_id = str(uuid.uuid4())
+    await _insert_staged_raw(
+        tmp_db,
+        fact_id=fact_id,
+        content="Agent self-knowledge fact",
+        source_type="agent_self",
+        confidence=1.0,
+        reinforcement_count=3,
+        trust="self",
+    )
+
+    promoter = FactPromoter(
+        tmp_db,
+        confidence_threshold=0.8,
+        reinforcement_required=3,
+        conversation_fact_reinforcement_required=1,
+    )
+    result = await promoter.force_promote(fact_id)
+    assert result is True, "force_promote must return True for a found fact"
+
+    rows = await tmp_db.fetch_all(
+        "SELECT trust FROM committed_facts WHERE fact_id = ?", (fact_id,)
+    )
+    assert rows, "force-promoted fact must be in committed_facts"
+    assert rows[0]["trust"] == "self", (
+        f"trust 'self' must be carried through force_promote; got {rows[0]['trust']!r}"
+    )
