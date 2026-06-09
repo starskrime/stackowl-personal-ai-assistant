@@ -60,5 +60,18 @@ class DurableTask(BaseModel):
     #: Preflight-planner least-privilege envelope (E2-S3). NULL when the planner
     #: declined/failed or for legacy rows. Telemetry + presentation only.
     task_envelope: BoundsSpec | None = None
+    #: Link to the parent durable task when this task is a delegated child (D1).
+    #: NULL ⇒ a root goal; non-NULL ⇒ a child spawned through delegate_task.
+    parent_task_id: str | None = None
+    #: The delegating owl name (audit + return-path legibility). NULL for roots.
+    parent_owl: str | None = None
+    #: The parent's delegate_task idempotency key this child was minted from
+    #: (D1 §5; audit + reaper). NULL for roots.
+    delegate_key: str | None = None
+    #: Single-owner execution lease holder (D1 §7). NULL ⇒ unclaimed.
+    lease_owner: str | None = None
+    #: True when a timed-out child was tombstoned so a slow eventual commit is
+    #: neutralized and the next ladder rung gets a fresh id (D1 §9).
+    superseded: bool = False
     created_at: datetime
     updated_at: datetime

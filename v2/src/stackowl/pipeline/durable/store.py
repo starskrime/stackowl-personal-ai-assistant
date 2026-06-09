@@ -24,7 +24,9 @@ from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _SELECT_FIELDS = (
     "task_id, owner_id, goal, status, current_step, "
-    "thread_id, result, owl_name, channel, creation_ceiling, task_envelope, created_at, updated_at"
+    "thread_id, result, owl_name, channel, creation_ceiling, task_envelope, "
+    "parent_task_id, parent_owl, delegate_key, lease_owner, superseded, "
+    "created_at, updated_at"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -97,6 +99,11 @@ class DurableTaskStore(OwnedRepository):
                 if task.task_envelope is not None
                 else None
             ),
+            "parent_task_id": task.parent_task_id,
+            "parent_owl": task.parent_owl,
+            "delegate_key": task.delegate_key,
+            "lease_owner": task.lease_owner,
+            "superseded": 1 if task.superseded else 0,
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
         })
@@ -359,6 +366,11 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         if raw_env is not None
         else None
     )
+    raw_parent = row.get("parent_task_id")
+    raw_parent_owl = row.get("parent_owl")
+    raw_delegate_key = row.get("delegate_key")
+    raw_lease = row.get("lease_owner")
+    raw_superseded = row.get("superseded")
     return DurableTask(
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
@@ -371,6 +383,11 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         channel=None if raw_channel is None else str(raw_channel),
         creation_ceiling=ceiling,
         task_envelope=envelope,
+        parent_task_id=None if raw_parent is None else str(raw_parent),
+        parent_owl=None if raw_parent_owl is None else str(raw_parent_owl),
+        delegate_key=None if raw_delegate_key is None else str(raw_delegate_key),
+        lease_owner=None if raw_lease is None else str(raw_lease),
+        superseded=bool(raw_superseded),
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )
