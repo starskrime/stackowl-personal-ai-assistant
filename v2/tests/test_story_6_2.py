@@ -262,7 +262,11 @@ async def test_sqlite_bridge_retrieve_formats_context(
         (rid, "boss likes verification before completion"),
     )
     out = await bridge.retrieve("verification", session_id="sess-x")
-    assert out.startswith("Prior context:")
+    # Task 10: trust-aware renderer. This fact carries no explicit trust column,
+    # so it defaults to 'untrusted' (fail-safe) and renders in the FENCED
+    # External-reference region — never as a bare "Prior context:" bullet.
+    assert "## External reference data" in out
+    assert '<memory_reference trust="untrusted" source="manual">' in out
     assert "boss likes verification" in out
 
 
