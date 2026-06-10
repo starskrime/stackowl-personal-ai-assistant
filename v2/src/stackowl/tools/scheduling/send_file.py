@@ -46,6 +46,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.deliverer import clamp_agent_urgency
 from stackowl.notifications.router import Notification
+from stackowl.notifications.router_helpers import resolve_target_chat_id
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -222,7 +223,7 @@ class SendFileTool(Tool):
             )
 
         caption = (args.caption or "").strip()
-        status = await self._deliver(str(resolved), caption, target, trace_id)
+        status = await self._deliver(str(resolved), caption, target, trace_id, session_id)
         record: dict[str, object] = {
             "action": "send_file",
             "target": target,
@@ -301,13 +302,21 @@ class SendFileTool(Tool):
         return resolved, None
 
     async def _deliver(
-        self, file_path: str, caption: str, target: str, trace_id: object
+        self,
+        file_path: str,
+        caption: str,
+        target: str,
+        trace_id: object,
+        session_id: str,
     ) -> str:
         """Clamp + hand the file Notification to the S0 deliverer; never raises.
 
         Returns the transport ``DeliveryStatus``, or ``"deferred"`` when no
         deliverer is wired / the deliverer raises (self-healing, B5). The caption
-        rides on the Notification's ``message`` field (empty string when none).
+        rides on the Notification's ``message`` field (empty string when none). The
+        originating ``session_id`` resolves to the recipient ``chat_id`` (where the
+        channel makes that valid — telegram private chats) so the file reaches THAT
+        chat, not the adapter's shared mutable ``_last_chat_id``.
         """
         deliverer = get_services().proactive_deliverer
         if deliverer is None:
@@ -324,6 +333,7 @@ class SendFileTool(Tool):
             channel_name=target,
             idempotency_key=str(trace_id) if trace_id else None,
             file_path=file_path,
+            target_chat_id=resolve_target_chat_id(target, session_id),
         )
         try:
             status = await deliverer.deliver(notification)

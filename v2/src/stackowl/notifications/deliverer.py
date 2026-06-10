@@ -45,6 +45,21 @@ class _TargetedSender(Protocol):
     async def send_text(self, text: str, *, chat_id: int | None = ...) -> None: ...
 
 
+class _TargetedFileSender(Protocol):
+    """An adapter whose ``send_file`` accepts an explicit destination ``chat_id``.
+
+    Mirrors :class:`_TargetedSender` for the file path: the base
+    :class:`ChannelAdapter.send_file` takes only ``(file_path, caption)``; only
+    telegram's override adds ``*, chat_id``. When the deliverer has a concrete
+    target it narrows the resolved adapter to this Protocol so the file upload
+    reaches THAT chat instead of the adapter's shared ``_last_chat_id``.
+    """
+
+    async def send_file(
+        self, file_path: str, caption: str | None = ..., *, chat_id: int | None = ...
+    ) -> None: ...
+
+
 # Urgency an agent-originated notification is permitted to request. ``critical``
 # is reserved for user / job-config / system origin and is clamped down to
 # ``normal`` for agent callers (S2 heartbeat_respond, S3 send_message).
@@ -121,14 +136,21 @@ class ProactiveDeliverer:
         # text path is unchanged when file_path is None.
         if notification.file_path is not None:
             result = await self._transport_file(
-                channel, notification.file_path, notification.message
+                channel,
+                notification.file_path,
+                notification.message,
+                chat_id=notification.target_chat_id,
             )
         else:
-            # The Notification carries no explicit recipient chat_id today, so the
-            # text path passes ``None`` — the adapter falls back to its own
-            # ``_last_chat_id`` (back-compat). When a concrete target is wired onto
-            # the notification record this is the single place to thread it.
-            result = await self._transport(channel, notification.message, chat_id=None)
+            # Thread the notification's explicit recipient (when the proactive
+            # source could resolve one) through to ``send_text(chat_id=...)`` so
+            # the message reaches THAT chat — not the adapter's shared mutable
+            # ``_last_chat_id`` (which a newer inbound update could have pointed at
+            # a different chat). ``None`` keeps the back-compat ``_last_chat_id``
+            # fallback for text-only / single-terminal channels.
+            result = await self._transport(
+                channel, notification.message, chat_id=notification.target_chat_id
+            )
         self._log_exit(result, channel, t0)
         return result
 
@@ -214,9 +236,16 @@ class ProactiveDeliverer:
         return "failed"  # pragma: no cover — loop always returns
 
     async def _transport_file(
-        self, channel: str, file_path: str, caption: str
+        self, channel: str, file_path: str, caption: str, *, chat_id: int | None = None
     ) -> DeliveryStatus:
         """Resolve the adapter and upload ``file_path`` via ``send_file``.
+
+        ``chat_id`` is the EXPLICIT recipient for this file (the proactive source
+        resolved it from the originating session). When supplied it is threaded as
+        a keyword to ``send_file`` so the file reaches THAT chat rather than the
+        adapter's shared mutable ``_last_chat_id``. When ``None`` the kwarg is
+        OMITTED so text-only/file-capable adapters whose ``send_file`` takes no
+        ``chat_id`` keep working and telegram falls back to ``_last_chat_id``.
 
         Returns ``"delivered"`` on a successful upload, or ``"failed"`` (logged,
         B5) on an unknown channel, a channel that does not support file send
@@ -238,7 +267,15 @@ class ProactiveDeliverer:
 
         caption_arg = caption or None
         try:
-            await adapter.send_file(file_path, caption_arg)
+            # An explicit target is threaded as a kwarg; ``None`` omits it so a
+            # base/file-capable adapter without a ``chat_id`` param still accepts
+            # the call and telegram falls back to its ``_last_chat_id``.
+            if chat_id is not None:
+                await cast("_TargetedFileSender", adapter).send_file(
+                    file_path, caption_arg, chat_id=chat_id
+                )
+            else:
+                await adapter.send_file(file_path, caption_arg)
         except NotImplementedError as exc:  # B5 — channel cannot carry files
             log.notifications.error(
                 "[notifications] deliverer._transport_file: channel does not support files",

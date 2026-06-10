@@ -37,6 +37,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.deliverer import clamp_agent_urgency
 from stackowl.notifications.router import Notification
+from stackowl.notifications.router_helpers import resolve_target_chat_id
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.webhooks.rate_limit import TokenBucket
@@ -216,7 +217,7 @@ class SendMessageTool(Tool):
                 f"unknown channel {target!r}: use action='list' to see options.", t0
             )
 
-        status = await self._deliver(text, target, trace_id)
+        status = await self._deliver(text, target, trace_id, session_id)
         record: dict[str, object] = {
             "action": "send", "target": target, "text": text,
             "urgency": "normal", "delivery_status": status,
@@ -226,11 +227,16 @@ class SendMessageTool(Tool):
             extra={"action": "send", "channel": target, "delivery_status": status},
         )
 
-    async def _deliver(self, text: str, target: str, trace_id: object) -> str:
+    async def _deliver(
+        self, text: str, target: str, trace_id: object, session_id: str
+    ) -> str:
         """Clamp + hand the Notification to the S0 deliverer; never raises.
 
         Returns the transport ``DeliveryStatus``, or ``"deferred"`` when no
-        deliverer is wired / the deliverer raises (self-healing, B5).
+        deliverer is wired / the deliverer raises (self-healing, B5). The
+        originating ``session_id`` resolves to the recipient ``chat_id`` (where the
+        channel makes that valid — telegram private chats) so the send targets THAT
+        chat, not the adapter's shared mutable ``_last_chat_id``.
         """
         deliverer = get_services().proactive_deliverer
         if deliverer is None:
@@ -246,6 +252,7 @@ class SendMessageTool(Tool):
             category=_CATEGORY,
             channel_name=target,
             idempotency_key=str(trace_id) if trace_id else None,
+            target_chat_id=resolve_target_chat_id(target, session_id),
         )
         try:
             status = await deliverer.deliver(notification)

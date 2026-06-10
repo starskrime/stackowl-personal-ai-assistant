@@ -359,27 +359,40 @@ class TelegramChannelAdapter(ChannelAdapter):
     _VIDEO_EXTS = frozenset({".mp4", ".mov", ".webm"})
     _PHOTO_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif"})
 
-    async def send_file(self, file_path: str, caption: str | None = None) -> None:
-        """Upload ``file_path`` to the user's chat, picking the media kind by extension.
+    async def send_file(
+        self, file_path: str, caption: str | None = None, *, chat_id: int | None = None
+    ) -> None:
+        """Upload ``file_path`` to a chat, picking the media kind by extension.
 
         ``.mp4/.mov/.webm`` → ``bot.send_video``; ``.jpg/.jpeg/.png/.gif`` →
         ``bot.send_photo``; everything else → ``bot.send_document``. The file is
         opened in binary mode and passed to the Bot API; ``caption`` (optional)
-        is attached. Targets the most-recent chat (same chat resolution as
-        :meth:`send_text`); a missing chat / uninitialised bot is a logged no-op
-        (the deliverer surfaces undeliverable as ``failed``). On a send error the
-        file handle is always closed and the exception propagates to the
-        deliverer, which maps it to a structured ``failed`` — never a crash.
+        is attached. ``chat_id`` targets a specific chat (the proactive recipient
+        threaded from the notification); when omitted it falls back to
+        ``self._last_chat_id`` (same resolution as :meth:`send_text`). Resolving an
+        EXPLICIT target here is what stops a proactive file send from
+        cross-delivering to whatever chat last sent an inbound update. A missing
+        chat / uninitialised bot is a logged no-op (the deliverer surfaces
+        undeliverable as ``failed``). On a send error the file handle is always
+        closed and the exception propagates to the deliverer, which maps it to a
+        structured ``failed`` — never a crash.
         """
         from pathlib import Path
 
+        target = chat_id if chat_id is not None else self._last_chat_id
         ext = Path(file_path).suffix.lower()
         log.telegram.debug(
             "[telegram] adapter.send_file: entry",
-            extra={"_fields": {"ext": ext, "has_caption": bool(caption)}},
+            extra={
+                "_fields": {
+                    "ext": ext,
+                    "has_caption": bool(caption),
+                    "explicit_chat": chat_id is not None,
+                }
+            },
         )
         TestModeGuard.assert_not_test_mode("telegram.send_file")
-        if self._bot_app is None or self._last_chat_id is None:
+        if self._bot_app is None or target is None:
             log.telegram.warning(
                 "[telegram] adapter.send_file: no active chat — file dropped",
                 extra={"_fields": {"has_app": self._bot_app is not None}},
@@ -401,7 +414,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         # 3. STEP — open in binary and upload; always close the handle.
         handle = open(file_path, "rb")  # noqa: SIM115 — closed in finally below
         try:
-            kwargs: dict[str, Any] = {"chat_id": self._last_chat_id, arg: handle}
+            kwargs: dict[str, Any] = {"chat_id": target, arg: handle}
             if caption:
                 kwargs["caption"] = caption
             await sender(**kwargs)
@@ -409,7 +422,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             handle.close()
         log.telegram.debug(
             "[telegram] adapter.send_file: exit",
-            extra={"_fields": {"kind": arg, "chat_id": self._last_chat_id}},
+            extra={"_fields": {"kind": arg, "chat_id": target}},
         )
 
     async def download_media(self, file_id: str) -> bytes:

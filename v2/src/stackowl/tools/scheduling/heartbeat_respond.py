@@ -33,6 +33,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.deliverer import AgentUrgency, clamp_agent_urgency
 from stackowl.notifications.router import Notification
+from stackowl.notifications.router_helpers import resolve_target_chat_id
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
@@ -154,8 +155,10 @@ class HeartbeatRespondTool(Tool):
             )
             return self._err(f"heartbeat_respond: invalid arguments — {exc.errors()!r}", t0)
 
-        trace_id = str(TraceContext.get().get("trace_id") or "")
-        channel = TraceContext.get().get("channel")
+        ctx = TraceContext.get()
+        trace_id = str(ctx.get("trace_id") or "")
+        channel = ctx.get("channel")
+        session_id = str(ctx.get("session_id") or "")
 
         # 2. DECISION — once-per-turn guard: a 2nd call in this trace is refused.
         if trace_id and trace_id in self._responded:
@@ -182,7 +185,7 @@ class HeartbeatRespondTool(Tool):
             return self._ok(record, t0, note="recorded; no notification requested")
 
         urgency = clamp_agent_urgency(args.priority or "normal")
-        delivery_status = await self._deliver(args, urgency, channel)
+        delivery_status = await self._deliver(args, urgency, channel, session_id)
         if trace_id and delivery_status in ("delivered", "batched", "suppressed"):
             self._remember(trace_id)
         record = self._record(args, delivery_status=delivery_status, urgency=urgency)
@@ -197,13 +200,20 @@ class HeartbeatRespondTool(Tool):
     # ---------------------------------------------------------------- helpers
 
     async def _deliver(
-        self, args: HeartbeatRespondArgs, urgency: AgentUrgency, channel: object
+        self,
+        args: HeartbeatRespondArgs,
+        urgency: AgentUrgency,
+        channel: object,
+        session_id: str,
     ) -> str:
         """Build + hand the notification to the S0 deliverer; never raises.
 
         Returns the transport ``DeliveryStatus`` string, ``"skipped"`` when there is
         no message body, or ``"deferred"`` when no deliverer is wired / an unexpected
-        error occurs (self-healing, B5).
+        error occurs (self-healing, B5). The originating ``session_id`` resolves to
+        the recipient ``chat_id`` (where the channel makes that valid — telegram
+        private chats) so the heartbeat ping reaches THAT chat, not the adapter's
+        shared mutable ``_last_chat_id``.
         """
         message = (args.notification_text or args.summary).strip()
         if not message:
@@ -223,6 +233,7 @@ class HeartbeatRespondTool(Tool):
             urgency=urgency,
             category=_CATEGORY,
             channel_name=channel_name,
+            target_chat_id=resolve_target_chat_id(channel_name, session_id),
         )
         try:
             status = await deliverer.deliver(notification)

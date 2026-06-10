@@ -66,6 +66,17 @@ class Notification(BaseModel):
     # the text path, using ``message`` as the (optional) caption. None preserves
     # the pure-text behaviour for every existing caller.
     file_path: str | None = None
+    # Explicit recipient chat id for this send (concurrent-msg backlog fix). A
+    # proactive/heartbeat send with no recipient would ride the channel adapter's
+    # shared mutable ``_last_chat_id`` and could cross-deliver to whoever messaged
+    # last. When the originating session resolves to a concrete chat (telegram
+    # private chat: session_id == str(user_id) == chat_id), the proactive source
+    # stamps it here and the ProactiveDeliverer threads it through to
+    # ``send_text(chat_id=...)`` so the message reaches THAT chat. None keeps the
+    # back-compat ``_last_chat_id`` fallback for text-only / single-terminal
+    # channels. CAVEAT: only valid where session_id == chat_id (telegram private
+    # chats); a group chat's chat_id != user_id, so it is left None there.
+    target_chat_id: int | None = None
 
 
 class NotificationRouter:
