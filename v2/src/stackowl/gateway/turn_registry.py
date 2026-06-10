@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -9,6 +10,30 @@ from dataclasses import dataclass, field
 from stackowl.infra.observability import log
 
 _MAILBOX_MAX = 8
+
+# Per-session intake queue bound (FIFO mailbox depth). Past this, ``enqueue``
+# raises ``QueueFull`` and the orchestrator rejects-with-notice (coalesce-oldest
+# is the §4.7 backlog alternative). Kept modest: a single chat backing up dozens
+# of queued turns is already a misuse signal, not normal flow.
+_DEFAULT_PER_SESSION_QUEUE_MAX = 8
+
+
+class QueueFull(Exception):
+    """Per-session intake queue is at its bound — loud overflow, never silent growth."""
+
+
+def default_global_running_max() -> int:
+    """Host-derived ceiling on concurrent turns across ALL sessions.
+
+    No Jetson-pinned constant (all-hardware rule): scale to the host. There is
+    no dedicated host capability probe in the tree, so we derive from
+    ``os.cpu_count()`` — concurrent turns are LLM/IO-bound coordination work, so
+    we allow a small multiple of the CPU count, floored so even a 1-core box can
+    make progress and capped to avoid an unbounded fan-out on huge hosts. A
+    config override is exposed via the ``TurnRegistry`` ctor.
+    """
+    cpus = os.cpu_count() or 1
+    return max(4, min(cpus * 4, 64))
 
 
 class TurnStatus(enum.Enum):
@@ -51,7 +76,16 @@ class Turn:
 class TurnRegistry:
     """In-memory per-session turn tracking: one running turn + FIFO intake queue."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        per_session_queue_max: int = _DEFAULT_PER_SESSION_QUEUE_MAX,
+        global_running_max: int | None = None,
+    ) -> None:
+        self._per_session_queue_max = max(1, per_session_queue_max)
+        self._global_running_max = (
+            default_global_running_max() if global_running_max is None else max(1, global_running_max)
+        )
         self._turns: dict[str, Turn] = {}            # request_id -> Turn
         self._running: dict[str, str] = {}           # session_id -> request_id
         self._queues: dict[str, deque[PendingIntake]] = {}
@@ -66,6 +100,34 @@ class TurnRegistry:
         # is untouched. Holding across the LLM await is correct: same-session
         # intake is serialized BY DESIGN (≤1 running turn per session).
         self._intake_locks: dict[str, asyncio.Lock] = {}
+
+    @property
+    def per_session_queue_max(self) -> int:
+        return self._per_session_queue_max
+
+    @property
+    def global_running_max(self) -> int:
+        return self._global_running_max
+
+    def at_global_capacity(self) -> bool:
+        """True when the number of running turns across ALL sessions is at the cap.
+
+        The orchestrator consults this BEFORE dispatching a new turn: at capacity,
+        the new turn is held/queued (bounded wait) rather than silently dropped or
+        crashing the box. Loudly logged at the call site and here.
+        """
+        at_cap = len(self._running) >= self._global_running_max
+        if at_cap:
+            log.gateway.warning(
+                "[turn] at global capacity — new turns must wait",
+                extra={
+                    "_fields": {
+                        "running": len(self._running),
+                        "global_running_max": self._global_running_max,
+                    }
+                },
+            )
+        return at_cap
 
     def session_intake_lock(self, session_id: str) -> asyncio.Lock:
         """Return the stable per-session intake lock (created on first use).
@@ -129,7 +191,26 @@ class TurnRegistry:
         request_id: str,
         target: int | None,
     ) -> None:
-        self._queues.setdefault(session_id, deque()).append(
+        q = self._queues.setdefault(session_id, deque())
+        if len(q) >= self._per_session_queue_max:
+            # Loud overflow: reject-with-notice (orchestrator catches QueueFull and
+            # tells the user). Never silently grow the queue unbounded.
+            log.gateway.warning(
+                "[turn] per-session intake queue full — rejecting",
+                extra={
+                    "_fields": {
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "queue_depth": len(q),
+                        "per_session_queue_max": self._per_session_queue_max,
+                    }
+                },
+            )
+            raise QueueFull(
+                f"session {session_id} intake queue full "
+                f"({len(q)}/{self._per_session_queue_max})"
+            )
+        q.append(
             PendingIntake(request_id=request_id, original_input=original_input, target=target)
         )
 
