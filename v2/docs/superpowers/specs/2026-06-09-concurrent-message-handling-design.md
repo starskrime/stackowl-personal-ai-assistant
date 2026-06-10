@@ -61,8 +61,8 @@ Each phase ships value on its own; **P1 alone removes the blocking.** Murat's ca
 ## 4. Phase 1 — Foundation
 
 ### 4.1 Re-key the response stream by request-id
-`trace_id` becomes the load-bearing **request_id**. Three coupled edits (Amelia — it is *not* one dict rename):
-- Thread `trace_id` onto the **inbound message envelope** (the message DTO the adapters produce) — verify it is on the message object, not only a log field. Mint sites: `cli_adapter.py:141`, telegram `adapter.py:535`. **Assert uniqueness + non-empty at mint** (Winston — a colliding/empty request_id reintroduces cross-delivery one layer up).
+`trace_id` becomes the load-bearing **request_id**. Recon confirmed `IngressMessage.trace_id` (`gateway/scanner.py:45`) **already exists** and is already threaded into `PipelineState.trace_id` (`state.py:30`) by the orchestrator — so this is NOT a DTO-surgery task; it is a re-key of the registry/deliver/orchestrator from session_id → trace_id. Edits:
+- **Assert uniqueness + non-empty of `trace_id` at the mint sites** (`cli_adapter.py:140-153` counter-based; telegram `adapter.py:535` `uuid4().hex`) — a colliding/empty request_id reintroduces cross-delivery one layer up (Winston). (No new field; just a guard + test, since the field already exists.)
 - `StreamRegistry` (`pipeline/streaming.py`): `_writers` keyed by `request_id`; `create(request_id)` / `get_writer(request_id)`.
 - `deliver.py:42`: `registry.get_writer(state.trace_id)`. Pick **one** source of truth for `trace_id` at deliver — `state.trace_id` — and assert `state.trace_id == TraceContext.current().trace_id` in a test so they cannot silently diverge. Confirm `AsyncioBackend.run` writes `trace_id` onto the `PipelineState`, not only the ContextVar.
 - Delete `ClarifyPump.serialize_prior` and retire/re-key `_inflight` (grep for any teardown reader first).
@@ -92,8 +92,8 @@ Different `session_id`s are independent: separate request-id stream slots, separ
 - **Heartbeat (Winston):** model a proactive heartbeat message as a `Turn` (it *is* a turn, just not user-initiated) so it routes through the same delivery + registry path — no side door that races delivery.
 - **Stream-miss is a hard drop + log (Murat):** a `ResponseChunk` whose request_id is not registered (a late chunk after slot cleanup) is **discarded loudly, never rerouted to a default** (the response-side mirror of no-hidden-errors). Slot removal is idempotent and happens only after the final blob is handed to the channel.
 
-### 4.6 Per-owl persona/memory serialization (Winston's #1 hole)
-Cross-session concurrency introduces a real race: the **same owl** can run in two chats at once, and **DNA-evolution + memory-promotion are read-modify-write on shared, value-bearing state** (the max-delta envelope assumes serial application; concurrent promotion races dedup). The per-chat serialization does NOT cover this (it's cross-session). Guard: **serialize DNA-evolution and memory-promotion per-owl** (a per-owl async lock or a single-consumer queue), and move them **off the turn's critical path** (enqueue, drain serially). This is nondeterministic corruption of the product's core asset if missed — it passes every test and fails in the field.
+### 4.6 Per-owl persona/memory — NOT a live race (recon-confirmed)
+Winston flagged a potential race: the same owl running in two chats could trigger concurrent DNA-evolution / memory-promotion (read-modify-write on shared value-bearing state). **Planning recon disproved the inline race for this feature:** `EvolutionCoordinator` is a scheduler `JobHandler` (`evolution_batch`), and `FactPromoter.promote_eligible` is invoked only from the `DreamWorker` job — **both are already off the turn's critical path**, batched per-owl by the single scheduler, never turn-triggered. `consolidate` only stages a fact (one INSERT, no embed, no lock). So cross-session concurrency does NOT create concurrent evolution/promotion — the scheduler runs them serially on its own cadence. **No new serialization is built.** The plan instead adds a *guard test* asserting that concurrent cross-session turns do not trigger inline evolution/promotion (locking in the off-path invariant so a future change that moves them on-turn fails loudly). If a future change ever makes evolution/promotion turn-inline, the per-owl serialization above becomes required — tracked in §11.
 
 ### 4.7 Concurrency caps (Winston)
 - **Per session:** naturally 1 running turn (in-chat serialized) + a bounded intake queue (overflow policy: coalesce/supersede the oldest queued, or reject-with-notice past a hard cap — never unbounded-queue).
@@ -117,10 +117,11 @@ A steer must never land in a dead mailbox. The invariant: **a steer is either ac
 - **Teardown:** on turn teardown, **drain the mailbox and re-route survivors as queued-new turns** (a discarded steer is a lost user instruction — convert, don't GC).
 - This unifies with the fail-safe (§6): *an undeliverable steer takes the same path as classifier-uncertainty — queued-new.* One fallback path, not two.
 
-### 5.3 Cooperative stop, shielded against the D1 ledger (Murat's landmine)
-- Stop is a **flag (`stop_requested`), NOT `task.cancel()`.** `task.cancel()` raises `CancelledError` at the next await — almost always mid-tool — and a cancel between `ledger.begin()` and `ledger.commit()` leaves a begun-not-committed durable op that **D1 startup recovery REPLAYS for exactly-once** — so 'stop' would produce the *opposite* of stopping (the side effect replays on next boot).
-- **Durable side-effecting ops are uninterruptible until their ledger boundary:** wrap the `begin → commit` critical section in `asyncio.shield` so cancellation cannot tear it. Stop is **deferred-and-remembered** — the flag is honored at the next iteration boundary, after the current tool batch has committed. shell / side-effecting writes = uninterruptible-until-ledger-boundary, *period* (a `shell` that already ran `rm` cannot be aborted).
-- Consequence (documented, not a bug): a stop cannot interrupt a 90-second in-flight tool — stop is **cooperative at iteration granularity**, bounded-latency by construction, not instant. The stop point writes a "stopped" chunk and finalizes gracefully.
+### 5.3 Cooperative stop (recon-scoped: interactive turns never touch the ledger)
+- Stop is a **flag (`stop_requested`), NOT `task.cancel()`.** `task.cancel()` raises `CancelledError` at the next await — almost always mid-tool — leaving torn state.
+- The flag is checked at the **iteration boundary** (the same `on_iteration_complete` closure as steering): after the current tool batch has fully observed, the loop finalizes gracefully (writes a "stopped" chunk, closes the stream).
+- Consequence (documented, not a bug): a stop cannot interrupt a 90-second in-flight tool — stop is **cooperative at iteration granularity**, bounded-latency by construction, not instant.
+- **The D1-ledger interaction is OUT OF SCOPE for interactive steering (recon-confirmed):** interactive CLI/Telegram turns are built with **no `task_id`**, so the durable `ledger_guard` is dormant (`get_active() is None → passthrough`) — a stopped interactive turn has no begun-not-committed durable op to tear. The `asyncio.shield(begin→commit)` guard Murat called for is only needed if a **durable goal-turn** (task_id set) becomes stoppable — that is a separate, future concern tracked in §11, NOT built here. (Murat's landmine is real but lives in a path interactive steering never enters.)
 
 ### 5.4 Bounded mailbox + coalesce (Murat)
 The mailbox is bounded; if a user spams N steers at a slow turn, the loop **coalesces** — folds the latest (or a merged summary), not all N (which would blow the context window). Backpressure: a full mailbox supersedes the oldest pending steer.
@@ -197,8 +198,8 @@ cross-session: different session_id ⇒ fully parallel, own slot/history (per-ow
 1. **One running turn per chat + FIFO queue; non-blocking intake.** True parallelism is cross-session only (§4.3/§4.4). Deletes the concurrent-writers-to-one-history race by construction.
 2. **request_id is the routing identity.** Streams re-keyed by request_id; unique+non-empty at mint; `serialize_prior` deleted (§4.1).
 3. **Steer-acceptance is atomic with turn status; an undeliverable steer becomes a queued-new turn** (§5.2) — unified with all fail-safes.
-4. **Cancel never tears a durable op; stop is deferred-and-remembered, ledger-shielded** (§5.3).
-5. **Per-owl DNA-evolution + memory-promotion serialized, off the critical path** (§4.6) — the cross-session shared-state guard.
+4. **Stop is a cooperative flag at iteration granularity, never `task.cancel()`** (§5.3). The durable-ledger shield is out of scope — interactive turns don't touch the ledger (recon).
+5. **Evolution + promotion are already off the turn's critical path** (§4.6, recon) — no new serialization; a guard test locks the off-path invariant.
 6. **Hybrid relatedness: explicit signal > conservative high-confidence classifier + turn-veto > queued-new; fail-safe toward queued-new** (§6).
 7. **In-flight interactive turns are not crash-durable — stated policy** (§2).
 
@@ -210,6 +211,8 @@ cross-session: different session_id ⇒ fully parallel, own slot/history (per-ow
 - **Supersede as a first-class correction primitive** — reachable via the turn-veto path; not a separate mechanism.
 - **Crash-durable interactive turns** — explicit non-goal; durable goals via D1 remain the opt-in path.
 - **Reply-threading UX richness** (Telegram reply-to as a steer signal) — ship the basic signal; richer threading is future.
+- **Per-owl evolution/promotion serialization** — not needed today (both off-path, §4.6). Becomes required only if a future change makes evolution/promotion turn-inline; the guard test (§4.6) will fail loudly if that happens.
+- **Durable-turn stoppability + `asyncio.shield(begin→commit)`** — Murat's ledger landmine (§5.3). Out of scope: interactive turns never touch the ledger. Becomes required only if/when a durable goal-turn (task_id set) is made stoppable mid-flight.
 
 ---
 
