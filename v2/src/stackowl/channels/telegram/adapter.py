@@ -39,6 +39,20 @@ if TYPE_CHECKING:
 _UPDATE_DEGRADED_AFTER_S = 120.0
 
 
+def _mint_request_id() -> str:
+    """Mint a unique, non-empty request_id (= trace_id) for an ingress message.
+
+    ``uuid4().hex`` is probabilistically unique; the guard rejects an empty
+    id so a collision can't reintroduce cross-delivery once routing keys on
+    request_id.
+    """
+    rid = uuid4().hex
+    if not rid:
+        log.gateway.error("[mint] telegram request_id empty")
+        raise ValueError("empty request_id")
+    return rid
+
+
 class TelegramChannelAdapter(ChannelAdapter):
     """Telegram I/O channel — DM + group support, allowlist-gated."""
 
@@ -532,7 +546,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             text=stripped,
             session_id=str(user_id),
             channel=self.channel_name,
-            trace_id=uuid4().hex,
+            trace_id=_mint_request_id(),
         )
         self._queue.put_nowait(ingress)
         self._last_update_at = time.monotonic()

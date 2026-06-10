@@ -122,6 +122,20 @@ class CLIAdapter(ChannelAdapter):
     def channel_name(self) -> str:
         return "cli"
 
+    def _next_request_id(self) -> str:
+        """Mint a unique, non-empty request_id (= trace_id) for this session.
+
+        The monotonic counter guarantees uniqueness within a session; the
+        guard rejects empty/invalid ids so a collision can't reintroduce
+        cross-delivery once routing keys on request_id.
+        """
+        self._trace_counter += 1
+        rid = f"cli-{self._session_id[:8]}-{self._trace_counter}"
+        if not rid or self._trace_counter < 1:
+            log.gateway.error("[mint] cli request_id invalid", extra={"_fields": {"rid": rid}})
+            raise ValueError("empty/invalid request_id")
+        return rid
+
     def _on_compose_submitted(self, payload: object) -> None:
         """EventBus callback — synchronous; enqueue for ``receive`` to pull."""
         text = ""
@@ -137,8 +151,7 @@ class CLIAdapter(ChannelAdapter):
             # Legacy path — pull from the raw app's internal queue.
             assert isinstance(self._app, _LegacyStackOwlApp)
             text = await self._app.next_input()
-        self._trace_counter += 1
-        trace_id = f"cli-{self._session_id[:8]}-{self._trace_counter}"
+        trace_id = self._next_request_id()
         log.cli.info(
             "[cli] receive: got input",
             extra={"_fields": {
