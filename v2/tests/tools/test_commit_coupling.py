@@ -24,7 +24,7 @@ _EXPECTED: dict[str, str] = {
     "delegate_task": "unconfirmed",
     "sessions_send": "unconfirmed",
     "sessions_spawn": "unconfirmed",
-    "batch_approve": "transactional",
+    "batch_approve": "unconfirmed",
     "apply_patch": "transactional",
     "edit": "transactional",
     "undo_write": "transactional",
