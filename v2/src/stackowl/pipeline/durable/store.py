@@ -12,6 +12,7 @@ to the executor and are intentionally NOT implemented here.
 
 from __future__ import annotations
 
+import builtins
 from datetime import UTC, datetime
 from typing import Any
 
@@ -360,6 +361,74 @@ class DurableTaskStore(OwnedRepository):
             }},
         )
         return claimed
+
+    async def terminalize_child(
+        self, task_id: str, status: TaskStatus, *, result: str | None = None,
+    ) -> None:
+        """Stamp a child task terminal as a projection of the parent's commit (D1 §7.2).
+
+        The child's terminal status is written by the PARENT when it commits its
+        delegate_task ledger entry — not by the child about itself. Thin wrapper
+        over the owner-scoped status UPDATE so the call-site reads intentionally.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.terminalize_child: entry",
+            extra={"_fields": {
+                "task_id": task_id, "owner_id": self._owner_id, "status": status,
+            }},
+        )
+        await self.update_status(task_id, status, result=result)
+        # 4. EXIT
+        log.tasks.info(
+            "[tasks] store.terminalize_child: exit",
+            extra={"_fields": {"task_id": task_id, "status": status}},
+        )
+
+    async def list_children(self, parent_task_id: str) -> builtins.list[DurableTask]:
+        """All child tasks of ``parent_task_id`` for the bound owner (D1 §7)."""
+        log.tasks.debug(
+            "[tasks] store.list_children: entry",
+            extra={"_fields": {"parent_task_id": parent_task_id, "owner_id": self._owner_id}},
+        )
+        rows = await self._fetch_owned(
+            self._table, "parent_task_id = ?", (parent_task_id,)
+        )
+        kids = [_row_to_task(r) for r in rows]
+        log.tasks.debug(
+            "[tasks] store.list_children: exit",
+            extra={"_fields": {"parent_task_id": parent_task_id, "count": len(kids)}},
+        )
+        return kids
+
+    async def list_zombie_children(self) -> builtins.list[DurableTask]:
+        """Running/recovering children whose parent is already terminal (D1 §7.3).
+
+        These are unreachable by transitive resolution (the parent will never
+        re-delegate), so the reaper marks them failed/abandoned. Owner-scoped
+        self-join on the tasks table.
+        """
+        log.tasks.debug(
+            "[tasks] store.list_zombie_children: entry",
+            extra={"_fields": {"owner_id": self._owner_id}},
+        )
+        sql = (
+            "SELECT child.* FROM tasks child "  # noqa: S608 — literals only
+            "JOIN tasks parent "
+            "ON parent.owner_id = child.owner_id "
+            "AND parent.task_id = child.parent_task_id "
+            "WHERE child.owner_id = ? "
+            "AND child.parent_task_id IS NOT NULL "
+            "AND child.status IN ('running', 'recovering') "
+            "AND parent.status IN ('completed', 'failed')"
+        )
+        rows = await self._db.fetch_all(sql, (self._owner_id,))
+        zombies = [_row_to_task(r) for r in rows]
+        log.tasks.info(
+            "[tasks] store.list_zombie_children: exit",
+            extra={"_fields": {"owner_id": self._owner_id, "count": len(zombies)}},
+        )
+        return zombies
 
     async def save_checkpoint(self, task_id: str, blob: str) -> None:
         """Persist the serialised :class:`~stackowl.pipeline.durable.react_checkpoint.ReActCheckpoint`

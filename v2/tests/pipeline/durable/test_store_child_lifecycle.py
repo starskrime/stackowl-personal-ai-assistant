@@ -72,3 +72,59 @@ async def test_claim_child_lease_first_wins_second_loses(pool: DbPool) -> None:
     assert re_claim is False
     rec = await store.get("child-l")
     assert rec.lease_owner == "live-parent"
+
+
+async def test_terminalize_child_sets_terminal_status(pool: DbPool) -> None:
+    store = DurableTaskStore(pool, DEFAULT_PRINCIPAL_ID)
+    await store.create_child_task(
+        child_task_id="child-t", parent_task_id="p", parent_owl="secretary",
+        delegate_key="dk-t", goal="sub", owl_name="scout", channel="cli",
+    )
+    await store.terminalize_child("child-t", "completed", result="answer")
+    rec = await store.get("child-t")
+    assert rec.status == "completed"
+    assert rec.result == "answer"
+
+
+async def test_list_children_returns_only_that_parents_children(pool: DbPool) -> None:
+    store = DurableTaskStore(pool, DEFAULT_PRINCIPAL_ID)
+    await store.create_child_task(
+        child_task_id="c-a", parent_task_id="P", parent_owl="secretary",
+        delegate_key="dk-a", goal="a", owl_name="scout", channel="cli",
+    )
+    await store.create_child_task(
+        child_task_id="c-b", parent_task_id="OTHER", parent_owl="secretary",
+        delegate_key="dk-b", goal="b", owl_name="scout", channel="cli",
+    )
+    kids = await store.list_children("P")
+    assert {k.task_id for k in kids} == {"c-a"}
+
+
+async def test_zombie_children_under_terminal_parents(pool: DbPool) -> None:
+    from datetime import UTC, datetime
+
+    from stackowl.pipeline.durable.task import DurableTask
+
+    store = DurableTaskStore(pool, DEFAULT_PRINCIPAL_ID)
+    now = datetime.now(tz=UTC)
+    # Terminal parent.
+    await store.create(DurableTask(
+        task_id="P", owner_id=DEFAULT_PRINCIPAL_ID, goal="g", status="completed",
+        created_at=now, updated_at=now,
+    ))
+    # A still-running child under the terminal parent ⇒ a zombie.
+    await store.create_child_task(
+        child_task_id="zombie", parent_task_id="P", parent_owl="secretary",
+        delegate_key="dk-z", goal="sub", owl_name="scout", channel="cli",
+    )
+    # A child under a still-running parent ⇒ NOT a zombie.
+    await store.create(DurableTask(
+        task_id="P2", owner_id=DEFAULT_PRINCIPAL_ID, goal="g", status="running",
+        created_at=now, updated_at=now,
+    ))
+    await store.create_child_task(
+        child_task_id="live-kid", parent_task_id="P2", parent_owl="secretary",
+        delegate_key="dk-lk", goal="sub", owl_name="scout", channel="cli",
+    )
+    zombies = await store.list_zombie_children()
+    assert {z.task_id for z in zombies} == {"zombie"}
