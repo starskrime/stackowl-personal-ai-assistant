@@ -23,6 +23,8 @@ class _TraceToken(NamedTuple):
     delegation_chain: Token[tuple[str, ...]]
     owl_name: Token[str | None]
     creation_ceiling: Token[Any]
+    task_id: Token[str | None]
+    durable_owner_id: Token[str | None]
 
 
 class TraceContext:
@@ -55,6 +57,16 @@ class TraceContext:
     # Powers cycle detection: delegate_task refuses if the target is already in the
     # chain. Governor-stamped and model-untouchable. Default empty tuple.
     _delegation_chain: ContextVar[tuple[str, ...]] = ContextVar("delegation_chain", default=())
+    # D1 §8.1 — the durable task being driven by the current (sub-)pipeline, and
+    # its owning principal. delegate_task reads these off TraceContext to decide
+    # durable-vs-fail-open. ONLY the fail-open durability signal rides the
+    # ContextVar (safe to lose: you degrade to the non-durable path); the
+    # identity-determining child id is computed explicitly, never inferred from
+    # this ambient state. Default None ⇒ non-durable turn ⇒ D1 is a no-op.
+    _task_id: ContextVar[str | None] = ContextVar("durable_task_id", default=None)
+    _durable_owner_id: ContextVar[str | None] = ContextVar(
+        "durable_owner_id", default=None
+    )
 
     @classmethod
     def start(
@@ -68,6 +80,8 @@ class TraceContext:
         delegation_chain: tuple[str, ...] = (),
         owl_name: str | None = None,
         creation_ceiling: BoundsSpec | None = None,
+        task_id: str | None = None,
+        durable_owner_id: str | None = None,
     ) -> _TraceToken:
         """Set trace context for the current async task; return a token to reset later.
 
@@ -93,6 +107,8 @@ class TraceContext:
             delegation_chain=cls._delegation_chain.set(delegation_chain),
             owl_name=cls._owl_name.set(owl_name),
             creation_ceiling=cls._creation_ceiling.set(creation_ceiling),
+            task_id=cls._task_id.set(task_id),
+            durable_owner_id=cls._durable_owner_id.set(durable_owner_id),
         )
 
     @classmethod
@@ -108,6 +124,8 @@ class TraceContext:
         cls._delegation_chain.reset(token.delegation_chain)
         cls._owl_name.reset(token.owl_name)
         cls._creation_ceiling.reset(token.creation_ceiling)
+        cls._task_id.reset(token.task_id)
+        cls._durable_owner_id.reset(token.durable_owner_id)
 
     @classmethod
     @asynccontextmanager
@@ -134,6 +152,16 @@ class TraceContext:
         return cast("BoundsSpec | None", cls._creation_ceiling.get())
 
     @classmethod
+    def durable_owner_id(cls) -> str | None:
+        """The owning principal of the durable task driving this (sub-)pipeline.
+
+        Read by delegate_task alongside ``get()["task_id"]`` to assemble the
+        child's durable scope. Kept off :meth:`get` (a dedicated accessor mirrors
+        ``creation_ceiling``) — it is consumed at the delegation seam, not in logs.
+        """
+        return cls._durable_owner_id.get()
+
+    @classmethod
     def get(cls) -> dict[str, Any]:
         """Return current trace context as a dict (safe to embed in log records)."""
         return {
@@ -146,4 +174,5 @@ class TraceContext:
             "delegation_depth": cls._delegation_depth.get(),
             "delegation_chain": cls._delegation_chain.get(),
             "owl_name": cls._owl_name.get(),
+            "task_id": cls._task_id.get(),
         }
