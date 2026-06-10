@@ -478,6 +478,24 @@ async def _run_with_tools(
     # its own turn via state.trace_id (== the turn's request_id) → the
     # process-wide TurnRegistry on services. Fail-safe: no registry / no turn /
     # empty mailbox → returns None (loop proceeds normally).
+    #
+    # Task 11 FOLLOW-UP SEAM (lost-steer finalize side, NOT wired here): the
+    # registry now exposes `finalize_if_drained(request_id)` — re-check the mailbox
+    # under the turn lock and CAS RUNNING→FINALIZING only when drained — for the
+    # "execute terminal sequence" to loop on before the turn finalizes. It is NOT
+    # called here because execute.py does NOT own the ReAct loop: the provider's
+    # `complete_with_tools` drives every iteration internally and returns only the
+    # FINAL text; execute makes a single `await`, so there is no per-iteration
+    # terminal boundary in THIS function to fold a last-moment steer at. Moreover,
+    # the RUNNING→FINALIZING→DONE lifecycle is currently NOT driven for interactive
+    # turns at all (the orchestrator's _drain_next calls `deregister` directly,
+    # never transitioning status), so there is no existing finalization line to
+    # guard. Wiring finalize_if_drained correctly belongs at the point that DOES own
+    # finalization — either (a) a provider-internal hook invoked at the loop's true
+    # terminal boundary, or (b) the orchestrator's completion/_drain_next seam,
+    # which must first introduce the FINALIZING transition. The enqueue side
+    # (`try_steer`) and teardown (`drain_survivors`) are implemented + unit-tested,
+    # and the end-to-end fold is covered by tests/pipeline/test_steering_fold_end_to_end.py.
     _steering_cb = make_steering_callback(_services.turn_registry, state.trace_id)
 
     def _compose_iter_cbs(

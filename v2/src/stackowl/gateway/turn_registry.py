@@ -173,6 +173,181 @@ class TurnRegistry:
         )
         return turn
 
+    async def try_steer(
+        self,
+        request_id: str,
+        text: str,
+        *,
+        session_id: str,
+        request_id_new: str,
+        target: int | None,
+    ) -> str:
+        """Atomically route a steer to a RUNNING turn, or convert it to a new turn.
+
+        §9 invariant 1 (lost-steer guard) — the enqueue side. A steer must NEVER
+        land in a dead turn's mailbox. Under the turn's per-turn ``lock`` (so the
+        status-read and the put are ONE atomic critical section vs.
+        ``finalize_if_drained`` which holds the same lock):
+
+          * status ``RUNNING`` → ``steering_mailbox.put_nowait(text)`` and return
+            ``"STEER"`` (the live loop will fold it at its next iteration boundary).
+          * status ``FINALIZING``/``DONE`` (turn is past its finalization line) →
+            ``enqueue`` the text as a queued-new turn and return ``"NEW"`` (the
+            caller dispatches it as a fresh turn — never onto the dead mailbox).
+
+        Fail-safe: an unknown ``request_id`` (already deregistered) is treated as
+        past-finalization → convert to a queued-new turn, return ``"NEW"`` (a
+        discarded steer is a lost instruction, never silently dropped).
+
+        On a full mailbox the steer is converted to a queued-new turn instead of
+        being dropped (loud ``QueueFull`` from ``enqueue`` propagates to the caller
+        which already handles reject-with-notice).
+        """
+        turn = self._turns.get(request_id)
+        if turn is None:
+            # No live turn → already past its finalization line. Convert.
+            log.gateway.debug(
+                "[turn] try_steer: no live turn — converting to queued-new",
+                extra={"_fields": {
+                    "request_id": request_id, "request_id_new": request_id_new,
+                    "session_id": session_id,
+                }},
+            )
+            self.enqueue(
+                session_id, original_input=text, request_id=request_id_new, target=target
+            )
+            return "NEW"
+        async with turn.lock:
+            # Status-read + put-or-convert ATOMIC under the lock (no window where
+            # status reads RUNNING but the put lands after FINALIZING).
+            if turn.status is TurnStatus.RUNNING:
+                try:
+                    turn.steering_mailbox.put_nowait(text)
+                except asyncio.QueueFull:
+                    # Mailbox saturated — do NOT drop the steer. Convert to a
+                    # queued-new turn so the instruction is never lost.
+                    log.gateway.warning(
+                        "[turn] try_steer: mailbox full — converting steer to queued-new",
+                        extra={"_fields": {
+                            "request_id": request_id, "request_id_new": request_id_new,
+                            "session_id": session_id,
+                        }},
+                    )
+                    self.enqueue(
+                        session_id, original_input=text,
+                        request_id=request_id_new, target=target,
+                    )
+                    return "NEW"
+                log.gateway.debug(
+                    "[turn] try_steer: accepted by RUNNING turn",
+                    extra={"_fields": {"request_id": request_id, "session_id": session_id}},
+                )
+                return "STEER"
+            # FINALIZING / DONE — past the finalization line; never enqueue onto
+            # the dead mailbox. Convert to a queued-new turn.
+            log.gateway.debug(
+                "[turn] try_steer: turn past finalization — converting to queued-new",
+                extra={"_fields": {
+                    "request_id": request_id, "request_id_new": request_id_new,
+                    "session_id": session_id, "status": turn.status.value,
+                }},
+            )
+            self.enqueue(
+                session_id, original_input=text, request_id=request_id_new, target=target
+            )
+            return "NEW"
+
+    async def finalize_if_drained(self, request_id: str) -> bool:
+        """Re-check the mailbox under lock, then CAS RUNNING→FINALIZING if empty.
+
+        §9 invariant 1 (lost-steer guard) — the finalize side. Under the SAME
+        per-turn ``lock`` ``try_steer`` takes (so a steer arriving concurrently is
+        serialized against this check):
+
+          * mailbox non-empty → return ``False`` (a last-moment steer is pending;
+            the caller MUST loop again and fold it before finalizing — never go
+            FINALIZING with pending steers).
+          * mailbox empty → CAS ``RUNNING→FINALIZING`` and return ``True``.
+
+        An unknown ``request_id`` (already deregistered) is already past its
+        finalization line → return ``True`` (the caller stops looping; nothing to
+        finalize).
+        """
+        turn = self._turns.get(request_id)
+        if turn is None:
+            return True
+        async with turn.lock:
+            if not turn.steering_mailbox.empty():
+                log.gateway.debug(
+                    "[turn] finalize_if_drained: pending steer — not finalizing",
+                    extra={"_fields": {"request_id": request_id}},
+                )
+                return False
+            # Empty under the lock → safe to advance. Inline CAS (we already hold
+            # the lock; cas_status would re-acquire it → not re-entrant).
+            if turn.status is TurnStatus.RUNNING:
+                turn.status = TurnStatus.FINALIZING
+            log.gateway.debug(
+                "[turn] finalize_if_drained: drained — FINALIZING",
+                extra={"_fields": {"request_id": request_id, "status": turn.status.value}},
+            )
+            return True
+
+    async def drain_survivors(self, request_id: str) -> list[str]:
+        """On teardown, drain remaining mailbox items and re-route each as new.
+
+        §9 invariant 1 (lost-steer guard) — the teardown side. A steer accepted by
+        a RUNNING turn but never folded (e.g. it arrived after the loop's last
+        iteration boundary) would otherwise be GC'd with the turn — a LOST
+        instruction. Drain all remaining items under the lock and ``enqueue`` each
+        as a queued-new turn (FIFO, inheriting the turn's ``target``/``session_id``),
+        returning the drained texts so the caller can also act on them.
+
+        Each re-routed survivor gets a fresh request id derived from the turn id +
+        ordinal (``"{request_id}-survivor-{i}"``) so the orchestrator's queued-new
+        dispatch keys them uniquely. An unknown ``request_id`` → ``[]``.
+        """
+        turn = self._turns.get(request_id)
+        if turn is None:
+            return []
+        survivors: list[str] = []
+        async with turn.lock:
+            while True:
+                try:
+                    survivors.append(turn.steering_mailbox.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            for i, text in enumerate(survivors):
+                try:
+                    self.enqueue(
+                        turn.session_id,
+                        original_input=text,
+                        request_id=f"{request_id}-survivor-{i}",
+                        target=turn.target,
+                    )
+                    log.gateway.info(
+                        "[turn] drain_survivors: re-routed survivor steer as queued-new",
+                        extra={"_fields": {
+                            "request_id": request_id, "session_id": turn.session_id,
+                            "survivor_index": i,
+                        }},
+                    )
+                except QueueFull as exc:
+                    # The intake queue is full — the survivor cannot be re-routed.
+                    # Loud, never silent: the steer is dropped but logged as a lost
+                    # instruction so it is visible (the alternative — unbounded
+                    # queue growth — is worse). Remaining survivors stay in the
+                    # returned list so the caller still sees them.
+                    log.gateway.error(
+                        "[turn] drain_survivors: intake queue full — survivor steer DROPPED",
+                        exc_info=exc,
+                        extra={"_fields": {
+                            "request_id": request_id, "session_id": turn.session_id,
+                            "survivor_index": i,
+                        }},
+                    )
+        return survivors
+
     async def cas_status(self, request_id: str, expect: TurnStatus, new: TurnStatus) -> bool:
         turn = self._turns.get(request_id)
         if turn is None:
