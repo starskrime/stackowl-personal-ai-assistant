@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,8 @@ from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from stackowl.gateway.turn_registry import TurnRegistry
+    from stackowl.providers.react_callback import IterationCallback
     from stackowl.skills.store import SkillIndexStore
 
 # E8-S0 — tools a delegated child (delegation_depth>0) must NOT see, so a child
@@ -44,6 +47,58 @@ if TYPE_CHECKING:
 _CHILD_EXCLUDED_TOOLS = frozenset(
     {"delegate_task", "sessions_spawn", "sessions_send", "process", "execute_code", "owl_build"}
 )
+
+
+def make_steering_callback(
+    registry: TurnRegistry | None,
+    request_id: str,
+) -> IterationCallback | None:
+    """Build the per-turn steering-drain callback (concurrent-msg §5.1, Task 10).
+
+    Returns an ``IterationCallback`` the provider invokes at each ReAct iteration
+    boundary. It reaches THIS turn's steering mailbox via
+    ``registry.get(request_id).steering_mailbox`` (request_id == state.trace_id)
+    and drains it with ``get_nowait()`` in a loop — NEVER ``await get()``, which
+    would block the iteration boundary forever when no steering is pending. All
+    drained items are coalesced into ONE ``{"role": "user", "content": "[steering]
+    ..."}`` message folded into the loop (Task 9 splice contract).
+
+    Fail-safe by construction:
+      * No registry wired (``registry is None``) → returns ``None`` (NO callback at
+        all), so the default provider call stays byte-for-byte unchanged (no
+        ``on_iteration_complete`` kwarg) — the recon's preserved contract.
+      * Registry present but no registered turn for this request_id, or an empty
+        mailbox at an iteration boundary → the callback returns ``None`` (no
+        steering, the loop proceeds normally).
+    Never raises.
+    """
+    if registry is None:
+        return None
+
+    async def _cb(_state: ReActIterationState) -> list[dict[str, Any]] | None:
+        # 1. ENTRY / 2. DECISION — fail-safe: no turn for this request → no steering.
+        turn = registry.get(request_id)
+        if turn is None:
+            return None
+        # 3. STEP — drain to empty with get_nowait (NEVER await get(), which would
+        # block the iteration boundary forever when the mailbox is empty).
+        drained: list[str] = []
+        while True:
+            try:
+                drained.append(turn.steering_mailbox.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        if not drained:
+            return None
+        # 4. EXIT — coalesce all drained items into one [steering] user message.
+        merged = " ".join(drained)
+        log.engine.debug(
+            "[steer] folding steering messages",
+            extra={"_fields": {"request_id": request_id, "count": len(drained)}},
+        )
+        return [{"role": "user", "content": f"[steering] {merged}"}]
+
+    return _cb
 
 
 async def _compute_presented_pins(
@@ -418,6 +473,35 @@ async def _run_with_tools(
     else:
         _budget_cb = None
 
+    # Task 10 — steering closure: drain THIS turn's mailbox at each iteration
+    # boundary and fold a coalesced [steering] user message into the loop. Reaches
+    # its own turn via state.trace_id (== the turn's request_id) → the
+    # process-wide TurnRegistry on services. Fail-safe: no registry / no turn /
+    # empty mailbox → returns None (loop proceeds normally).
+    _steering_cb = make_steering_callback(_services.turn_registry, state.trace_id)
+
+    def _compose_iter_cbs(
+        cbs: list[IterationCallback],
+    ) -> IterationCallback | None:
+        """Compose ordered iteration callbacks into one that runs each in turn and
+        concatenates any folded (non-None) messages (Task 9 splice contract). Side-
+        effect-only callbacks return None and contribute nothing to the fold."""
+        active = [c for c in cbs if c is not None]
+        if not active:
+            return None
+        if len(active) == 1:
+            return active[0]
+
+        async def _composed(s: ReActIterationState) -> list[dict[str, Any]] | None:
+            folded: list[dict[str, Any]] = []
+            for c in active:
+                part = await c(s)
+                if part:
+                    folded.extend(part)
+            return folded or None
+
+        return _composed
+
     t0 = time.monotonic()
     # Only forward persistence_check when it is actually enabled (interactive,
     # depth 0). Omitting the kwarg otherwise keeps the call backward-compatible
@@ -433,8 +517,12 @@ async def _run_with_tools(
         _extra: dict[str, Any] = {}
         if persistence_check is not None:
             _extra["persistence_check"] = persistence_check
-        if _budget_cb is not None:
-            _extra["on_iteration_complete"] = _budget_cb
+        # Budget gate first (it may Raise to stop the loop), then steering fold.
+        _default_cb = _compose_iter_cbs(
+            [c for c in (_budget_cb, _steering_cb) if c is not None]
+        )
+        if _default_cb is not None:
+            _extra["on_iteration_complete"] = _default_cb
         return await provider.complete_with_tools(
             user_text=state.input_text,
             system_text=state.system_prompt,
@@ -486,21 +574,15 @@ async def _run_with_tools(
         session = durable_session_for_state(state, db)
         ctx = session.ctx
         cb = make_checkpoint_callback(ctx, session.store)
-        # E2-S4 — compose: checkpoint the completed iteration first, then gate budget.
-        # Order matters: checkpoint before budget so a breached turn is still
-        # durably recorded (the resume seam can replay from it on a Raise).
-        async def _cb_with_budget(s: ReActIterationState) -> list[dict[str, Any]] | None:
-            # Task 9 splice contract: propagate any folded messages from either
-            # composed callback. Checkpoint + budget both fold nothing (return
-            # None), but propagate explicitly so composing a future folding
-            # callback here cannot silently lose its splice.
-            folded_a = await cb(s)
-            folded_b = await _budget_cb(s)  # type: ignore[misc]  # only selected when _budget_cb is not None
-            if folded_a or folded_b:
-                return [*(folded_a or []), *(folded_b or [])]
-            return None
-
-        _iter_cb = _cb_with_budget if _budget_cb is not None else cb
+        # E2-S4 / Task 10 — compose in order: checkpoint the completed iteration
+        # first (so a breached turn is still durably recorded and the resume seam
+        # can replay from it on a Raise), THEN gate budget, THEN fold steering.
+        # Checkpoint + budget return None (no fold); steering returns the
+        # [steering] message. _compose_iter_cbs concatenates any folded messages
+        # (Task 9 splice contract) so no callback's splice is silently lost.
+        _iter_cb = _compose_iter_cbs(
+            [c for c in (cb, _budget_cb, _steering_cb) if c is not None]
+        )
 
         log.tasks.debug(
             "[tasks] execute: durable context built — activating",

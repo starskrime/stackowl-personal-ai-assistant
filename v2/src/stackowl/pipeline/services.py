@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
+    from stackowl.gateway.turn_registry import TurnRegistry
     from stackowl.interaction.clarify_gateway import ClarifyGateway
     from stackowl.interaction.cost_pause import CostPauseGuard
     from stackowl.learning.lessons_index import LessonsIndex
@@ -107,6 +108,13 @@ class StepServices:
     # the run; saturated past a bounded wait it REFUSES (typed) and nothing runs.
     # None → ungated (back-compat; the tool runs without a concurrency cap).
     sandbox_governor: SandboxGovernor | None = field(default=None)
+    # concurrent-msg Task 10 — the process-wide TurnRegistry (one running turn +
+    # FIFO intake per session, plus each turn's steering mailbox). The execute step
+    # reads THIS instance off services to build its steering-drain callback: it
+    # reaches the running turn via registry.get(state.trace_id).steering_mailbox and
+    # folds a [steering] message into the live ReAct loop. None → no steering
+    # (fail-safe; the loop proceeds normally, e.g. in non-orchestrated unit tests).
+    turn_registry: TurnRegistry | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")
