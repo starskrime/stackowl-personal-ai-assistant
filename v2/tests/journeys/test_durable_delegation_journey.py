@@ -622,5 +622,145 @@ async def test_durable_delegated_child_write_exactly_once_across_crash(pool: DbP
     )
 
 
+async def test_child_layer_exactly_once_when_parent_short_circuit_removed(pool: DbPool) -> None:
+    """CHILD-LAYER exactly-once — force the child sub-pipeline to RE-RUN, prove W replays.
+
+    The capstone test above proves exactly-once via the PARENT'S ``delegate_task``
+    ledger row: on recovery that row replays ``already_committed`` so the child
+    sub-pipeline is never re-entered (``recovering_child.dispatch_count == 0``). That
+    hides the CHILD layer — the child's OWN durable sub-task + its OWN side-effect
+    ledger — which is the defense-in-depth that closes the spec §6 window (a crash
+    AFTER the child W commits but BEFORE the parent's delegate_task commits).
+
+    This test exercises that hidden layer directly. Between ACT 1 (parent+child ran,
+    child W committed, crash) and ACT 2 (recovery) we DELETE the parent's
+    ``delegate_task`` ledger row. That removes the parent-level short-circuit, so on
+    recovery the parent's delegate_task RE-RUNS → the child sub-pipeline IS re-entered
+    (``recovering_child.dispatch_count >= 1``) → the child re-dispatches ``file_report``
+    → and the CHILD'S OWN ledger returns ``already_committed`` for W. W does NOT
+    physically re-execute (``write.runs == 1``). That is the child-layer exactly-once
+    proof.
+    """
+    # SHARED across both acts — the cross-crash execution-count proof.
+    write = _WriteW()
+
+    # ---- ACT 1 — CRASH after the child's write W committed -------------------
+    crashing_parent = _CrashingParentProvider()
+    child_provider = _ChildProvider()
+    services1 = _services(pool, crashing_parent, child_provider, write)
+    backend1 = _backend(services1)
+    store = DurableTaskStore(pool, DEFAULT_PRINCIPAL_ID)
+    runner = DurableTaskRunner(store, backend1)
+
+    final_state, parent_task_id = await runner.run(goal=_PARENT_GOAL, state=_root_state())
+
+    assert crashing_parent.delegated, "ACT 1 precondition: the parent must have delegated"
+    assert child_provider.dispatch_count == 1, (
+        f"ACT 1 precondition: the child sub-pipeline ran once, got {child_provider.dispatch_count}"
+    )
+    assert final_state.errors, "ACT 1 precondition: the crash must surface as a state error"
+    assert write.runs == 1, f"ACT 1 precondition: write W ran {write.runs}x (want 1)"
+
+    expected_child = _expected_child_id(parent_task_id)
+    children = await _children(pool)
+    assert len(children) == 1 and children[0]["task_id"] == expected_child, (
+        f"ACT 1: expected exactly one durable child under the derived id. {children}"
+    )
+    ledger = await _file_report_ledger(pool)
+    assert len(ledger) == 1 and ledger[0]["status"] == "committed", (
+        f"ACT 1: the child write must be COMMITTED in the ledger. {ledger}"
+    )
+    assert ledger[0]["task_id"] == expected_child
+
+    # Sanity: ACT 1 DID commit the parent's delegate_task ledger row (the row we
+    # are about to delete to remove the parent-level short-circuit).
+    deleg_pre = await _delegate_ledger(pool)
+    assert len(deleg_pre) == 1 and deleg_pre[0]["status"] == "committed", (
+        f"ACT 1: the parent delegate_task row must be committed before we delete it. {deleg_pre}"
+    )
+    assert deleg_pre[0]["task_id"] == parent_task_id
+
+    # Model the on-disk state a KILLED parent leaves (orphaned 'running', result NULL).
+    await pool.execute(
+        "UPDATE tasks SET status = 'running', result = NULL WHERE task_id = ?",
+        (parent_task_id,),
+    )
+
+    # ---- THE SEAM — delete the parent's delegate_task ledger row -------------
+    # Removing the PARENT-layer short-circuit forces the recovery re-delegation to
+    # actually re-run the child sub-pipeline, exercising the CHILD'S OWN ledger.
+    await pool.execute(
+        "DELETE FROM side_effect_ledger WHERE task_id = ? AND tool_name = 'delegate_task'",
+        (parent_task_id,),
+    )
+    deleg_gone = await _delegate_ledger(pool)
+    assert deleg_gone == [], (
+        f"the parent delegate_task short-circuit row must be deleted. {deleg_gone}"
+    )
+    # The child's file_report ledger row MUST survive — it is the child-layer guard.
+    ledger_still = await _file_report_ledger(pool)
+    assert len(ledger_still) == 1 and ledger_still[0]["status"] == "committed", (
+        f"the child file_report ledger row must remain (the child-layer guard). {ledger_still}"
+    )
+
+    # ---- ACT 2 — RECOVER (child sub-pipeline RE-RUNS this time) ---------------
+    recovering_parent = _RecoveringParentProvider()
+    recovering_child = _ChildProvider()
+    services2 = _services(pool, recovering_parent, recovering_child, write)  # SAME write instance
+    backend2 = _backend(services2)
+
+    recoverer = await recover_durable_tasks(pool, backend2)
+    assert recoverer.launched == 1, (
+        f"recovery should launch exactly one (root) drive, got {recoverer.launched}"
+    )
+    await recoverer.drain()
+    assert recoverer.in_flight == 0, "all background drives should have drained"
+
+    assert recovering_parent.delegated, "ACT 2: the recovered parent must re-delegate"
+
+    # ---- THE CHILD-LAYER PROOF (load-bearing) --------------------------------
+    # With the parent short-circuit gone, the re-delegation MUST re-enter the child
+    # sub-pipeline this time.
+    assert recovering_child.dispatch_count >= 1, (
+        "ACT 2: deleting the parent delegate_task ledger row must force the child "
+        "sub-pipeline to RE-RUN (the parent-level short-circuit is gone); "
+        f"the child provider was re-invoked {recovering_child.dispatch_count}x"
+    )
+    # ...yet the write W did NOT physically re-execute — the CHILD'S OWN file_report
+    # ledger row replayed it as already_committed. THIS is the child-layer
+    # exactly-once proof. (write.runs == 2 here would be a real D1 child-layer bug.)
+    assert write.runs == 1, (
+        f"D1 CHILD-LAYER FAIL: exactly-once violated — the child sub-pipeline re-ran "
+        f"({recovering_child.dispatch_count}x) and the write W physically executed "
+        f"{write.runs}x. The child's own ledger must have replayed W as already_committed."
+    )
+
+    # Exactly ONE committed file_report ledger row, still under the child_task_id
+    # (the re-run did not append a second row).
+    ledger_after = await _file_report_ledger(pool)
+    assert len(ledger_after) == 1, (
+        f"D1 CHILD-LAYER FAIL: expected exactly ONE committed file_report ledger row "
+        f"under the child_task_id (the re-run replayed, did not re-commit). {ledger_after}"
+    )
+    assert ledger_after[0]["status"] == "committed"
+    assert ledger_after[0]["task_id"] == expected_child
+
+    # Still exactly one durable child row (re-delegation re-attaches the SAME child).
+    children_after = await _children(pool)
+    assert len(children_after) == 1 and children_after[0]["task_id"] == expected_child, (
+        f"the re-delegation must re-attach the SAME child, not spawn a new one. {children_after}"
+    )
+
+    # ---- The ROOT parent goal still completes + delivers the final answer ----
+    roots_after = await _roots(pool)
+    assert len(roots_after) == 1
+    assert roots_after[0]["status"] == "completed", (
+        f"D1 FAIL: the recovered root parent did not complete. status={roots_after[0]['status']!r}"
+    )
+    assert roots_after[0]["result"] == _FINAL, (
+        f"D1 FAIL: the parent final answer was not delivered. result={roots_after[0]['result']!r}"
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
