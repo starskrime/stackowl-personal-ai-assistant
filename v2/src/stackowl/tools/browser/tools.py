@@ -143,6 +143,7 @@ class _BrowserTool(Tool):
 
     _severity: Literal["read", "write", "consequential"] = "read"
     _consent_category: str | None = None
+    _commit_coupling: Literal["transactional", "idempotent_keyed", "unconfirmed"] | None = None
 
     @property
     def manifest(self) -> ToolManifest:
@@ -151,6 +152,7 @@ class _BrowserTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity=self._severity,
+            commit_coupling=self._commit_coupling,
             consent_category=self._consent_category,
             toolset_group="browser",
         )
@@ -312,6 +314,7 @@ class BrowserExtractTool(_BrowserTool):
 
 class BrowserClickTool(_BrowserTool):
     _severity = "write"
+    _commit_coupling = "unconfirmed"
     # Engine-emitted aria refs are opaque alphanumeric tokens (e.g. "e7"). We
     # validate the shape before interpolating into the aria-ref selector so a
     # ref value can never inject selector syntax (E2-S1 click-by-ref).
@@ -391,6 +394,7 @@ class BrowserClickTool(_BrowserTool):
 
 class BrowserTypeTool(_BrowserTool):
     _severity = "write"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_type"
     @property
@@ -501,6 +505,7 @@ class BrowserScreenshotTool(_BrowserTool):
 
 class BrowserScrollTool(_BrowserTool):
     _severity = "write"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_scroll"
     @property
@@ -603,6 +608,7 @@ class BrowserWaitForTool(_BrowserTool):
 
 class BrowserEvalJsTool(_BrowserTool):
     _severity = "consequential"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_eval_js"
     @property
@@ -665,6 +671,7 @@ class BrowserEvalJsTool(_BrowserTool):
 
 class BrowserUploadTool(_BrowserTool):
     _severity = "consequential"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_upload"
     @property
@@ -717,6 +724,7 @@ class BrowserUploadTool(_BrowserTool):
 
 class BrowserDownloadTool(_BrowserTool):
     _severity = "consequential"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_download"
     @property
@@ -818,6 +826,7 @@ class BrowserCookiesGetTool(_BrowserTool):
 
 class BrowserCookiesSetTool(_BrowserTool):
     _severity = "write"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_cookies_set"
     @property
@@ -860,6 +869,7 @@ class BrowserCookiesSetTool(_BrowserTool):
 
 class BrowserCookiesClearTool(_BrowserTool):
     _severity = "write"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_cookies_clear"
     @property
@@ -940,6 +950,7 @@ class BrowserTabListTool(_BrowserTool):
 
 class BrowserTabCloseTool(_BrowserTool):
     _severity = "write"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_tab_close"
     @property
@@ -982,6 +993,7 @@ class BrowserTabCloseTool(_BrowserTool):
 
 class BrowserCloseTool(_BrowserTool):
     _severity = "write"
+    _commit_coupling = "unconfirmed"
     @property
     def name(self) -> str: return "browser_close"
     @property

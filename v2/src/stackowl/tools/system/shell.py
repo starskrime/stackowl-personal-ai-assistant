@@ -388,6 +388,7 @@ class ShellTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            commit_coupling="unconfirmed",
         )
 
     @property

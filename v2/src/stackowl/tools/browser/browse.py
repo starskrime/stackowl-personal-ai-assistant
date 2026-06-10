@@ -133,6 +133,7 @@ class BrowserBrowseTool(Tool):
         return ToolManifest(
             name=self.name, description=self.description,
             parameters=self.parameters, action_severity="consequential",
+            commit_coupling="unconfirmed",
             toolset_group="browser",
         )
 

@@ -139,6 +139,7 @@ class OwlBuildTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="consequential",
+            commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
         )
 

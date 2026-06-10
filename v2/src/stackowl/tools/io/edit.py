@@ -101,6 +101,7 @@ class EditTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            commit_coupling="transactional",
             toolset_group="code",
         )
 
