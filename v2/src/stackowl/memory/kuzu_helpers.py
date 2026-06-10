@@ -62,18 +62,19 @@ def sync_upsert_entity(
     entity_type: str,
     source_fact_id: str,
 ) -> None:
-    """Delete-then-insert by id (Kuzu < 1.0 has no MERGE)."""
+    """Upsert an Entity by id via MERGE + SET.
+
+    ``MERGE`` matches the node if it already exists (keyed on the ``id`` PK) or
+    creates it otherwise; ``SET`` then updates its properties in place. Unlike
+    the former delete-then-insert, this preserves any connected ``MENTIONS``
+    edges — Kuzu refuses to ``DELETE`` a node that still has edges, and
+    entities are shared across facts. Kuzu 0.11.3 supports ``MERGE``.
+    """
     conn.execute(
-        "MATCH (e:Entity {id: $id}) DELETE e",
-        {"id": entity_id},
-    )
-    conn.execute(
-        """CREATE (:Entity {
-            id: $id,
-            name: $name,
-            entity_type: $entity_type,
-            source_fact_id: $source_fact_id
-        })""",
+        """MERGE (e:Entity {id: $id})
+           SET e.name = $name,
+               e.entity_type = $entity_type,
+               e.source_fact_id = $source_fact_id""",
         {
             "id": entity_id,
             "name": name,
@@ -89,17 +90,17 @@ def sync_upsert_fact(
     content: str,
     confidence: float,
 ) -> None:
-    """Delete-then-insert a Fact node keyed by id."""
+    """Upsert a Fact node by id via MERGE + SET.
+
+    Matches on the ``id`` PK if present, else creates the node, then updates
+    its properties in place. This preserves any outgoing ``MENTIONS`` edges; a
+    plain ``DELETE`` would fail on a Fact that already has edges. Kuzu 0.11.3
+    supports ``MERGE``.
+    """
     conn.execute(
-        "MATCH (f:Fact {id: $id}) DELETE f",
-        {"id": fact_id},
-    )
-    conn.execute(
-        """CREATE (:Fact {
-            id: $id,
-            content: $content,
-            confidence: $confidence
-        })""",
+        """MERGE (f:Fact {id: $id})
+           SET f.content = $content,
+               f.confidence = $confidence""",
         {
             "id": fact_id,
             "content": content,
