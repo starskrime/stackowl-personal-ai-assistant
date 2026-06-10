@@ -82,17 +82,24 @@ def test_migration_0016_file_exists() -> None:
 
 
 def test_migration_count_is_16(tmp_path: Path) -> None:
-    """T15 — MigrationRunner discovers exactly 19 migration files.
+    """T15 — MigrationRunner discovers and runs EVERY migration .sql file.
 
-    Name kept historical for log searchability; updated when Story 6.6
-    (Migration 0017 dreamworker_runs) raised the count to 17, again
-    when Story 7.1 (Migration 0018 jobs_v2) raised it to 18, again
-    when Story 7.4 (Migration 0019 notification_overrides) raised it to 19,
-    and again when Story 7.5 (Migration 0020 webhook_events_log) raised it to 20.
+    Name kept historical for log searchability. The expected count is now
+    derived dynamically from the actual ``.sql`` files on disk (no more
+    manual bumps on every new migration); the invariant under test is that
+    the runner discovers all migration files with none silently skipped.
     """
+    migrations_dir = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "stackowl"
+        / "db"
+        / "migrations"
+    )
+    expected = len(sorted(migrations_dir.glob("*.sql")))
     runner = MigrationRunner(db_path=tmp_path / "count.db")
     results = runner.run()
-    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns
+    assert len(results) == expected
 
 
 # ---------------------------------------------------------------------------
