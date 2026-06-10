@@ -126,12 +126,19 @@ class CLIAdapter(ChannelAdapter):
         """Mint a unique, non-empty request_id (= trace_id) for this session.
 
         The monotonic counter guarantees uniqueness within a session; the
-        guard rejects empty/invalid ids so a collision can't reintroduce
-        cross-delivery once routing keys on request_id.
+        guard rejects an empty/blank session (which would mint a malformed
+        ``cli--{n}`` id) so a degenerate id can't reintroduce cross-delivery
+        once routing keys on request_id.
         """
+        if not self._session_id or not self._session_id.strip():
+            log.gateway.error(
+                "[mint] cli request_id invalid: empty session_id",
+                extra={"_fields": {"session_id": self._session_id}},
+            )
+            raise ValueError("empty/invalid request_id: empty session_id")
         self._trace_counter += 1
         rid = f"cli-{self._session_id[:8]}-{self._trace_counter}"
-        if not rid or self._trace_counter < 1:
+        if not rid:
             log.gateway.error("[mint] cli request_id invalid", extra={"_fields": {"rid": rid}})
             raise ValueError("empty/invalid request_id")
         return rid
