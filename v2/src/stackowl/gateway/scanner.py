@@ -43,6 +43,14 @@ class IngressMessage:
     session_id: str
     channel: str
     trace_id: str
+    # Per-message delivery target for fan-out channels (e.g. a Telegram chat_id).
+    # Telegram's ``_handle_update`` stamps the originating chat here so a turn's
+    # response routes back to ITS OWN chat under concurrency — never the shared
+    # ``_last_chat_id`` (overwritten by every newer inbound update). Single-terminal
+    # channels (CLI) leave it None; the adapter then resolves the destination
+    # itself. Defaulted so every existing ``IngressMessage(...)`` constructor is
+    # byte-for-byte unaffected.
+    chat_id: int | None = None
 
 
 @dataclass(frozen=True)

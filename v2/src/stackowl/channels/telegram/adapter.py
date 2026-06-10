@@ -128,22 +128,39 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.info("[telegram] adapter.send: entry")
         TestModeGuard.assert_not_test_mode("telegram.send")
         buffer = ""
+        # Per-turn delivery target: a turn's chunks all carry the SAME
+        # `target` (the originating chat_id stamped at deliver-time). Capture it
+        # so this turn replies to ITS OWN chat, not the shared `_last_chat_id`
+        # (which a newer concurrent inbound update may have overwritten). None →
+        # send_text falls back to `_last_chat_id` (single-terminal/back-compat).
+        target: int | None = None
         async for chunk in chunks:
             buffer += chunk.content
-        await self.send_text(self._formatter.format_response(buffer))
+            if chunk.target is not None:
+                target = chunk.target
+        await self.send_text(self._formatter.format_response(buffer), chat_id=target)
         log.telegram.info(
             "[telegram] adapter.send: exit",
-            extra={"_fields": {"total_len": len(buffer)}},
+            extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None}},
         )
 
-    async def send_text(self, text: str) -> None:
-        """Split ``text`` per Telegram's limit and send each part."""
+    async def send_text(self, text: str, *, chat_id: int | None = None) -> None:
+        """Split ``text`` per Telegram's limit and send each part.
+
+        ``chat_id`` targets a specific chat (the per-message target threaded from
+        ``IngressMessage.chat_id`` → ``ResponseChunk.target``); when omitted it
+        falls back to ``self._last_chat_id`` for back-compat callers (proactive
+        deliverer, clarify degrade-path). Resolving an EXPLICIT target here is what
+        stops a concurrent turn from cross-delivering to whatever chat last sent an
+        inbound update.
+        """
+        target = chat_id if chat_id is not None else self._last_chat_id
         log.telegram.debug(
             "[telegram] adapter.send_text: entry",
-            extra={"_fields": {"text_len": len(text)}},
+            extra={"_fields": {"text_len": len(text), "explicit_chat": chat_id is not None}},
         )
         TestModeGuard.assert_not_test_mode("telegram.send_text")
-        if self._bot_app is None or self._last_chat_id is None:
+        if self._bot_app is None or target is None:
             log.telegram.warning(
                 "[telegram] adapter.send_text: no active chat — message dropped",
                 extra={"_fields": {"has_app": self._bot_app is not None}},
@@ -160,7 +177,7 @@ class TelegramChannelAdapter(ChannelAdapter):
                 extra={"_fields": {"idx": idx, "len": len(part)}},
             )
             await self._bot_app.bot.send_message(
-                chat_id=self._last_chat_id,
+                chat_id=target,
                 text=part,
                 parse_mode="MarkdownV2",
             )
@@ -547,6 +564,10 @@ class TelegramChannelAdapter(ChannelAdapter):
             session_id=str(user_id),
             channel=self.channel_name,
             trace_id=_mint_request_id(),
+            # Stamp the ORIGINATING chat on this message so its turn delivers back
+            # to THIS chat — never the shared `_last_chat_id`, which a newer inbound
+            # update may overwrite before this turn finishes (cross-deliver fix).
+            chat_id=chat_id,
         )
         self._queue.put_nowait(ingress)
         self._last_update_at = time.monotonic()
