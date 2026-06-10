@@ -28,6 +28,14 @@ but with the OPPOSITE fail-safe direction (→ ``False``/NEW) because there a fa
 STEER poisons the running turn and loses the new ask invisibly (the expensive
 direction), while a false NEW is a cheap, visible second answer.
 
+**Stage-2 coherence veto (concurrent-msg §5.5).** :meth:`is_steer_incoherent`
+reuses the same shape AGAIN as the SECOND gate: after ``is_steer`` proposes a
+steer (refinement-vs-new), this asks the DISTINCT coherence question — would
+FOLDING the message into the running goal blend coherently (REFINE → allow) or
+REPLACE/CONTRADICT it (CONFLICT → VETO → NEW)? It fail-safes to ``True`` (VETO),
+the SAFE direction: a wrong veto only yields a separate coherent answer, while a
+wrong non-veto risks an incoherent old+new blend.
+
 Never raises. Plain class (no Pydantic) — small/OOP per the slice-D operator decision.
 Provenance: BUILD (no external agent had a multilingual answer-vs-new-request gate).
 """
@@ -73,6 +81,25 @@ _STEER_SYSTEM_PROMPT = (
     "topic change). Be conservative: answer STEER ONLY when the message clearly "
     "refines the running task. If you are unsure, or it could be a separate "
     "request, answer NEW. Reply with exactly one word: STEER or NEW."
+)
+
+# Stage-2 COHERENCE verdict (concurrent-msg §5.5). This is the running turn's OWN
+# coherence check on a message stage-1 already judged a plausible steer. The
+# question is DIFFERENT from is_steer's (refinement-vs-new): here the steer is
+# assumed plausibly-related, and we ask whether FOLDING it into the in-flight goal
+# would blend COHERENTLY (a genuine refinement/addition → REFINE) or whether it
+# REPLACES / CONTRADICTS the running goal so folding it would produce an incoherent
+# old+new mix (→ CONFLICT, veto to a separate fresh turn). Conservative & SAFE: a
+# wrong CONFLICT merely yields a separate coherent answer, while a wrong REFINE
+# risks an incoherent blend — so unsure → CONFLICT. The model emits exactly one
+# controlled token (REFINE / CONFLICT) which we parse, never the user's text.
+_COHERENCE_SYSTEM_PROMPT = (
+    "A task is already running and the user sent a follow-up message. Decide "
+    "whether folding the follow-up into the RUNNING task stays coherent. Answer "
+    "REFINE if the follow-up refines or adds to the running task so they combine "
+    "into one coherent goal. Answer CONFLICT if the follow-up would REPLACE or "
+    "CONTRADICT the running task, so combining them would be incoherent. If you "
+    "are unsure, answer CONFLICT. Reply with exactly one word: REFINE or CONFLICT."
 )
 
 
@@ -274,6 +301,100 @@ class ClarifyIntentClassifier:
         # 4. EXIT
         return steer
 
+    async def is_steer_incoherent(self, *, running_ask: str, message: str) -> bool:
+        """Stage-2 coherence VETO: would folding ``message`` blend INCOHERENTLY?
+
+        The running turn's OWN coherence judge, the SECOND gate after
+        :meth:`is_steer`'s conservative propose stage. ``is_steer`` decides
+        refinement-vs-new (would-this-be-a-steer); a CONTRADICTION ("no, I meant Y"
+        that flips the goal) can pass that stage yet, folded into the running turn,
+        produce an incoherent old+new mix. This method asks the COHERENCE question
+        instead: given the ``running_ask`` and the proposed ``message``, return
+        ``True`` to VETO (folding would REPLACE/CONTRADICT → incoherent blend → fall
+        back to NEW) or ``False`` to allow the steer (a genuine refinement/addition
+        → STEER proceeds).
+
+        **Fail-safe → ``True`` (VETO → NEW)** — the SAFE direction. A wrong veto
+        only yields a separate coherent answer (cheap, visible); a wrong non-veto
+        risks an incoherent blend (expensive, invisible). So ANY error, missing/
+        unresolvable fast provider, timeout, ambiguous/unparseable verdict, or empty
+        ``message`` yields ``True`` (veto). REFINE (allow the steer) is returned ONLY
+        on a clear REFINE verdict. Never raises. Every fallback is logged.
+
+        Mirrors :meth:`is_steer`'s fast-tier, one-token-verdict shape (DRY) but with
+        a DISTINCT prompt (coherence/contradiction, not refinement-vs-new) and the
+        VETO fail-safe direction.
+        """
+        a_len = len(running_ask)
+        m_len = len(message)
+        # 1. ENTRY
+        log.gateway.debug(
+            "intent_classifier.is_steer_incoherent: entry",
+            extra={"_fields": {"running_ask_len": a_len, "message_len": m_len}},
+        )
+
+        # An empty message carries no coherent refinement — fail-safe to VETO (the
+        # safe direction), so noise is never folded onto the running turn.
+        if not message.strip():
+            log.gateway.info(
+                "intent_classifier.is_steer_incoherent: empty message — fail-safe to veto",
+                extra={"_fields": {"veto": True}},
+            )
+            return True
+
+        provider = self._resolve_provider()
+        if provider is None:
+            log.gateway.warning(
+                "intent_classifier.is_steer_incoherent: no fast provider — fail-safe to veto",
+                extra={"_fields": {"veto": True}},
+            )
+            return True
+
+        try:
+            user_text = self._build_coherence_user_text(running_ask, message)
+            # Bound the inline call: a hung fast provider must not HOL-block the
+            # single receive loop. CancelledError (not an Exception subclass)
+            # still propagates so a cancelled receive task tears down cleanly.
+            result = await asyncio.wait_for(
+                provider.complete(
+                    [
+                        Message(role="system", content=_COHERENCE_SYSTEM_PROMPT),
+                        Message(role="user", content=user_text),
+                    ],
+                    model="",
+                    max_tokens=4,
+                ),
+                timeout=self._timeout_s,
+            )
+            verdict = (result.content or "").strip()
+        except TimeoutError:  # hung provider — fail-safe to VETO rather than stall
+            log.gateway.warning(
+                "intent_classifier.is_steer_incoherent: provider call timed out — fail-safe to veto",
+                extra={"_fields": {"veto": True, "timeout_s": self._timeout_s}},
+            )
+            return True
+        except Exception as exc:  # self-healing — a verdict call must never raise
+            log.gateway.error(
+                "intent_classifier.is_steer_incoherent: provider call failed — fail-safe to veto",
+                exc_info=exc,
+                extra={"_fields": {"veto": True}},
+            )
+            return True
+
+        veto = self._parse_coherence_verdict(verdict)
+        # 2. DECISION — the raw verdict and the parsed bool (truncated text).
+        log.gateway.info(
+            "intent_classifier.is_steer_incoherent: verdict parsed",
+            extra={
+                "_fields": {
+                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
+                    "veto": veto,
+                }
+            },
+        )
+        # 4. EXIT
+        return veto
+
     # ------------------------------------------------------------------ helpers
 
     def _resolve_provider(self) -> ModelProvider | None:
@@ -418,3 +539,65 @@ class ClarifyIntentClassifier:
             },
         )
         return False
+
+    @staticmethod
+    def _build_coherence_user_text(running_ask: str, message: str) -> str:
+        """Render the (capped) coherence (REFINE-vs-CONFLICT) prompt body.
+
+        Mirrors :meth:`_build_steer_user_text`'s capping — the running ask and the
+        follow-up are each truncated to a few hundred chars so a pathological turn
+        or message can never bloat the one-token coherence call.
+        """
+        a = running_ask[:_MAX_QUESTION_CHARS]
+        m = message[:_MAX_MESSAGE_CHARS]
+        return "\n".join(
+            [
+                f"RUNNING TASK: {a}",
+                f"FOLLOW-UP: {m}",
+                "Does folding FOLLOW-UP into RUNNING TASK stay coherent? "
+                "Reply REFINE or CONFLICT.",
+            ]
+        )
+
+    @staticmethod
+    def _parse_coherence_verdict(verdict: str) -> bool:
+        """Map the one-word coherence verdict to a VETO bool (fail-safe → ``True``).
+
+        Returns ``True`` to VETO (incoherent/contradictory → NEW) and ``False`` to
+        allow the steer (coherent refinement). The fail-safe is the SAFE VETO
+        direction (opposite of :meth:`_parse_steer_verdict`'s cheap-NEW fail-safe,
+        but the same SPIRIT — both default to a separate, recoverable answer). Case-
+        and token-order robust, parsing only the MODEL's controlled token (never the
+        user's multilingual message):
+
+        * ``conflict`` present and ``refine`` absent → ``True`` (veto).
+        * ``refine`` present and ``conflict`` absent → ``False`` (allow the steer).
+        * BOTH present → the LEADING token decides; a tie with no clear leader falls
+          through to the fail-safe.
+        * NEITHER present (empty / ambiguous / garbage like "maybe") → the fail-safe
+          default ``True`` (VETO) — the safe direction. Logged.
+        """
+        low = verdict.lower().lstrip()
+        has_refine = "refine" in low
+        has_conflict = "conflict" in low
+        if has_conflict and not has_refine:
+            return True
+        if has_refine and not has_conflict:
+            return False
+        if has_refine and has_conflict:
+            # BOTH present: defer to whichever token leads the verdict.
+            if low.startswith("conflict"):
+                return True
+            if low.startswith("refine"):
+                return False
+        log.gateway.warning(
+            "intent_classifier._parse_coherence_verdict: ambiguous verdict — fail-safe to veto",
+            extra={
+                "_fields": {
+                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
+                    "has_refine": has_refine,
+                    "has_conflict": has_conflict,
+                }
+            },
+        )
+        return True

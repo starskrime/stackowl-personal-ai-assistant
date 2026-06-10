@@ -215,6 +215,150 @@ async def test_is_steer_never_raises_across_inputs() -> None:
         assert isinstance(out, bool)
 
 
+# ============================================================ is_steer_incoherent
+# Stage-2 COHERENCE judge — the running turn's OWN veto on a proposed steer.
+# DISTINCT from is_steer: is_steer asks refinement-vs-new (propose); this asks
+# would-folding-this-blend-incoherently (coherence). Fail-safe → True (VETO→NEW),
+# the SAFE direction (a wrong veto only yields a separate coherent answer).
+
+
+@pytest.mark.asyncio
+async def test_coherent_refinement_is_not_vetoed() -> None:
+    """A genuine refinement (REFINE verdict) → False (no veto, STEER proceeds)."""
+    classifier, registry = _make_classifier(_FakeProvider("REFINE"))
+    out = await classifier.is_steer_incoherent(
+        running_ask=_RUNNING_ASK, message="also include the 2023 data",
+    )
+    assert out is False
+    assert registry.tiers_requested == ["fast"]  # fast tier, mirrors is_steer
+
+
+@pytest.mark.asyncio
+async def test_contradiction_goal_flip_is_vetoed() -> None:
+    """A contradiction/goal-flip (CONFLICT verdict) → True (veto → NEW)."""
+    classifier, _ = _make_classifier(_FakeProvider("CONFLICT"))
+    out = await classifier.is_steer_incoherent(
+        running_ask="Build the importer against MySQL.",
+        message="no, do Postgres not MySQL",
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_uncertain_verdict_fail_safe_veto() -> None:
+    """An uncertain verdict → True (VETO → NEW), the SAFE direction on doubt."""
+    classifier, _ = _make_classifier(_FakeProvider("uncertain"))
+    out = await classifier.is_steer_incoherent(
+        running_ask=_RUNNING_ASK, message=_CORRECTION,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_both_tokens_ambiguous_fail_safe_veto() -> None:
+    """BOTH tokens, no clear leader → fail-safe VETO (the safe direction)."""
+    classifier, _ = _make_classifier(_FakeProvider("unsure: refine or conflict"))
+    out = await classifier.is_steer_incoherent(
+        running_ask=_RUNNING_ASK, message=_CORRECTION,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_verbose_conflict_with_refine_token_is_vetoed() -> None:
+    """Leading token wins: 'CONFLICT — would not refine' → veto."""
+    classifier, _ = _make_classifier(
+        _FakeProvider("CONFLICT — folding this would not refine the task"),
+    )
+    out = await classifier.is_steer_incoherent(
+        running_ask=_RUNNING_ASK, message=_NEW_ASK,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_incoherent_provider_raising_fail_safe_veto() -> None:
+    classifier, _ = _make_classifier(
+        _FakeProvider(raise_on_complete=RuntimeError("boom")),
+    )
+    out = await classifier.is_steer_incoherent(
+        running_ask=_RUNNING_ASK, message=_CORRECTION,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_incoherent_no_provider_fail_safe_veto() -> None:
+    classifier, registry = _make_classifier(raise_on_get=RuntimeError("none"))
+    out = await classifier.is_steer_incoherent(
+        running_ask=_RUNNING_ASK, message=_CORRECTION,
+    )
+    assert out is True
+    assert registry.tiers_requested == ["fast"]
+
+
+@pytest.mark.asyncio
+async def test_incoherent_empty_message_fail_safe_veto_no_call() -> None:
+    provider = _FakeProvider("REFINE")  # would say REFINE if ever called
+    classifier, registry = _make_classifier(provider)
+    out = await classifier.is_steer_incoherent(running_ask=_RUNNING_ASK, message="   ")
+    assert out is True  # empty → fail-safe VETO
+    assert registry.tiers_requested == []
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_incoherent_hung_provider_fail_safe_veto_quickly() -> None:
+    classifier, _ = _make_classifier(_FakeProvider(hang_seconds=10.0), timeout_s=0.05)
+    out = await asyncio.wait_for(
+        classifier.is_steer_incoherent(running_ask=_RUNNING_ASK, message=_CORRECTION),
+        timeout=2.0,
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_is_steer_incoherent_never_raises_across_inputs() -> None:
+    cases = [
+        _make_classifier(_FakeProvider("REFINE")),
+        _make_classifier(_FakeProvider("CONFLICT")),
+        _make_classifier(_FakeProvider("maybe")),
+        _make_classifier(_FakeProvider(raise_on_complete=ValueError("x"))),
+        _make_classifier(raise_on_get=RuntimeError("none")),
+    ]
+    for classifier, _ in cases:
+        out = await classifier.is_steer_incoherent(
+            running_ask=_RUNNING_ASK, message=_CORRECTION,
+        )
+        assert isinstance(out, bool)
+
+
+@pytest.mark.asyncio
+async def test_real_coherence_judge_wired_as_veto_vetoes_contradiction() -> None:
+    """End-to-end: the REAL is_steer_incoherent wired as TurnRouter's turn_veto.
+
+    Stage-1 says STEER (high conf), stage-2 coherence judge says CONFLICT → the
+    router falls back to NEW. The veto provider is consulted via the real method.
+    """
+    classifier, _ = _make_classifier(_FakeProvider("STEER"))
+    veto_classifier, _ = _make_classifier(_FakeProvider("CONFLICT"))
+    router = TurnRouter(classifier, turn_veto=veto_classifier.is_steer_incoherent)
+    signal = await router.route(running_ask=_RUNNING_ASK, message="no, do Y instead")
+    assert signal is ExplicitSignal.NEW
+
+
+@pytest.mark.asyncio
+async def test_real_coherence_judge_wired_as_veto_allows_refinement() -> None:
+    """Stage-1 STEER + stage-2 REFINE → the real wired judge lets STEER survive."""
+    classifier, _ = _make_classifier(_FakeProvider("STEER"))
+    veto_classifier, _ = _make_classifier(_FakeProvider("REFINE"))
+    router = TurnRouter(classifier, turn_veto=veto_classifier.is_steer_incoherent)
+    signal = await router.route(
+        running_ask=_RUNNING_ASK, message="also include the 2023 data",
+    )
+    assert signal is ExplicitSignal.STEER
+
+
 # ======================================================================= route
 # The two-stage router: explicit signal → is_steer → turn-veto.
 

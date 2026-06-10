@@ -433,17 +433,21 @@ class StartupOrchestrator:
         # fast-tier ``ClarifyIntentClassifier`` (its ``is_steer`` is the
         # conservative high-confidence STEER-vs-NEW propose stage), so there is ONE
         # classifier instance for both the clarify answer-vs-new path and the
-        # steer-vs-new path (DRY; no second provider wiring). ``turn_veto=None`` →
-        # Task 15's fail-safe degraded mode (propose-only, no stage-2 coherence
-        # veto). A real two-stage coherence veto (a distinct LLM judgment asking
-        # whether a proposed steer is coherent with the running ask) is a FOLLOW-UP:
-        # ``is_steer`` cannot double as it (it IS the propose stage; re-running it as
-        # the veto is redundant, not a second judgment), and a net-new veto prompt
-        # is beyond this wiring task. Until then the conservative propose stage —
-        # which already fail-safes every uncertainty to NEW — carries the safety.
+        # steer-vs-new path (DRY; no second provider wiring). The stage-2 coherence
+        # veto (concurrent-msg §5.5) is now wired: ``turn_veto`` is the SAME
+        # classifier's ``is_steer_incoherent`` — a DISTINCT LLM judgment (the running
+        # turn's OWN coherence check) that asks whether folding a proposed steer
+        # would blend INCOHERENTLY / CONTRADICT the running goal (→ veto → NEW),
+        # rather than ``is_steer``'s refinement-vs-new propose question. It fail-safes
+        # to VETO (the safe direction — a wrong veto only yields a separate coherent
+        # answer; a wrong non-veto risks an incoherent blend). The router consults it
+        # only on a PROPOSED steer; its callable signature ``(running_ask=, message=)``
+        # matches what ``TurnRouter.route`` passes the veto.
         from stackowl.gateway.turn_router import ExplicitSignal, TurnRouter
 
-        turn_router = TurnRouter(clarify_classifier, turn_veto=None)
+        turn_router = TurnRouter(
+            clarify_classifier, turn_veto=clarify_classifier.is_steer_incoherent,
+        )
         # Periodic reaper for abandoned turn-yield clarify entries (blocking ones
         # self-reap via their own park timeout). Recurring job seeded in the
         # scheduler assembly ("clarify_sweep", every 30m).
