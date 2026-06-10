@@ -42,4 +42,14 @@ class ReActIterationState:
 # Callback type: receives the completed-iteration state and may do async work
 # (checkpoint write, metric recording, …).  If it raises, the exception
 # propagates to the caller — providers do NOT swallow callback errors.
-IterationCallback = Callable[[ReActIterationState], Awaitable[None]]
+#
+# Return contract (Task 9 — live-steer splice): the callback returns a list of
+# messages to FOLD into the provider's live ``messages`` list before the next LLM
+# round (e.g. a ``[{"role": "user", "content": "[steering] …"}]`` injection), or
+# ``None`` to fold nothing.  Side-effect-only callbacks (checkpoint, budget gate)
+# return ``None``.  Providers do ``folded = await cb(...); if folded:
+# messages.extend(folded)`` at every call site, so a returned list is observed by
+# the very next ``complete_with_tools`` LLM call.
+IterationCallback = Callable[
+    [ReActIterationState], Awaitable[list[dict[str, Any]] | None]
+]

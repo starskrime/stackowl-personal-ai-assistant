@@ -489,9 +489,16 @@ async def _run_with_tools(
         # E2-S4 — compose: checkpoint the completed iteration first, then gate budget.
         # Order matters: checkpoint before budget so a breached turn is still
         # durably recorded (the resume seam can replay from it on a Raise).
-        async def _cb_with_budget(s: ReActIterationState) -> None:
-            await cb(s)
-            await _budget_cb(s)  # type: ignore[misc]  # only selected when _budget_cb is not None
+        async def _cb_with_budget(s: ReActIterationState) -> list[dict[str, Any]] | None:
+            # Task 9 splice contract: propagate any folded messages from either
+            # composed callback. Checkpoint + budget both fold nothing (return
+            # None), but propagate explicitly so composing a future folding
+            # callback here cannot silently lose its splice.
+            folded_a = await cb(s)
+            folded_b = await _budget_cb(s)  # type: ignore[misc]  # only selected when _budget_cb is not None
+            if folded_a or folded_b:
+                return [*(folded_a or []), *(folded_b or [])]
+            return None
 
         _iter_cb = _cb_with_budget if _budget_cb is not None else cb
 

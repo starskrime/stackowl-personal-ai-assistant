@@ -38,7 +38,7 @@ def make_budget_callback(
     session_id: str,
     channel: str,
     wait_timeout_s: float = _WAIT_TIMEOUT_S,
-) -> Callable[[ReActIterationState], Awaitable[None]]:
+) -> Callable[[ReActIterationState], Awaitable[list[dict[str, Any]] | None]]:
     """Return an async callback that gates each ReAct iteration against budget caps.
 
     Args:
@@ -53,13 +53,15 @@ def make_budget_callback(
 
     Returns:
         An async callable ``(iter_state: ReActIterationState) -> None``.
-        Returns normally (no breach) or raises BudgetBreach (breach + partial).
+        Returns ``None`` always (it folds no messages — Task 9 splice contract;
+        it is a pure side-effect/gate callback) on no breach, or raises
+        BudgetBreach (breach + partial).
     """
 
-    async def _gate(iter_state: ReActIterationState) -> None:
+    async def _gate(iter_state: ReActIterationState) -> list[dict[str, Any]] | None:
         breach = governor.check(iter_state.iteration)
         if breach is None:
-            return
+            return None  # no breach — fold nothing (Task 9 splice contract)
 
         log.engine.debug(
             "[budget] gate: breach detected",
@@ -91,7 +93,7 @@ def make_budget_callback(
                     "[budget] gate: human raised cap — continuing",
                     extra={"_fields": {"cap": breach.cap}},
                 )
-                return
+                return None  # cap raised — fold nothing (Task 9 splice contract)
 
         log.engine.warning(
             "[budget] gate: cap reached — stopping",

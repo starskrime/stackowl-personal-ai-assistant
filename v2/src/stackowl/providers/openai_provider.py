@@ -293,27 +293,33 @@ class OpenAIProvider(ModelProvider):
                         # S3 — guard trip on ReAct path: fire before break so
                         # the checkpoint captures the observation that caused it.
                         if on_iteration_complete is not None:
-                            await on_iteration_complete(
+                            folded = await on_iteration_complete(
                                 ReActIterationState(
                                     iteration=_iter_idx,
                                     messages=list(messages),
                                     tool_call_records=list(all_calls),
                                 )
                             )
+                            if folded:
+                                messages.extend(folded)
                         break
                     messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
                     if react_directive:
                         messages.append({"role": "user", "content": react_directive})
                     # S3 — fire per-iteration callback after OBSERVATION appended
                     # (ReAct text path), before continuing to the next LLM round.
+                    # Task 9 — fold any returned steering messages into the live
+                    # list so the next LLM round observes them.
                     if on_iteration_complete is not None:
-                        await on_iteration_complete(
+                        folded = await on_iteration_complete(
                             ReActIterationState(
                                 iteration=_iter_idx,
                                 messages=list(messages),
                                 tool_call_records=list(all_calls),
                             )
                         )
+                        if folded:
+                            messages.extend(folded)
                     continue
                 # no action -> draft final answer. Phase D: before accepting it,
                 # ask the persistence judge whether the agent delivered or gave up.
@@ -326,15 +332,19 @@ class OpenAIProvider(ModelProvider):
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
                 )
                 # S3 — fire per-iteration callback for this terminal iteration
-                # (the final answer round, no tool calls), then return.
+                # (the final answer round, no tool calls), then return.  Task 9 —
+                # fold for contract uniformity; this is the terminal round so a
+                # fold here is not re-sent, but we never silently drop a return.
                 if on_iteration_complete is not None:
-                    await on_iteration_complete(
+                    folded = await on_iteration_complete(
                         ReActIterationState(
                             iteration=_iter_idx,
                             messages=list(messages),
                             tool_call_records=list(all_calls),
                         )
                     )
+                    if folded:
+                        messages.extend(folded)
                 return content, all_calls
 
             # Append assistant turn with tool_calls
@@ -385,14 +395,18 @@ class OpenAIProvider(ModelProvider):
             # S3 — fire per-iteration callback after all native tool results are
             # appended (before guard check / directives), so the checkpoint captures
             # the complete state of this iteration including all tool observations.
+            # Task 9 — fold any returned steering messages into the live list so
+            # the next LLM round observes them.
             if on_iteration_complete is not None:
-                await on_iteration_complete(
+                folded = await on_iteration_complete(
                     ReActIterationState(
                         iteration=_iter_idx,
                         messages=list(messages),
                         tool_call_records=list(all_calls),
                     )
                 )
+                if folded:
+                    messages.extend(folded)
             if guard.tripped():
                 log.engine.warning(
                     "[openai] complete_with_tools: loop guard tripped — "

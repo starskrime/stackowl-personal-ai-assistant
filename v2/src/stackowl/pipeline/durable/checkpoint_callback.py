@@ -55,6 +55,8 @@ addressed by S4.
 
 from __future__ import annotations
 
+from typing import Any
+
 from stackowl.infra.observability import log
 from stackowl.pipeline.durable.context import DurableReActContext
 from stackowl.pipeline.durable.react_checkpoint import ReActCheckpoint, serialize
@@ -86,7 +88,7 @@ def make_checkpoint_callback(
         it propagate and the executor (S5) owns recovery.  Nothing is swallowed.
     """
 
-    async def _on_iter(state: ReActIterationState) -> None:
+    async def _on_iter(state: ReActIterationState) -> list[dict[str, Any]] | None:
         # 1. ENTRY — a ReAct iteration completed; build its durable checkpoint.
         log.tasks.debug(
             "[tasks] checkpoint_callback: entry",
@@ -149,5 +151,7 @@ def make_checkpoint_callback(
                 "current_step": next_step,
             }},
         )
+        # Task 9 splice contract: a checkpoint callback folds no messages.
+        return None
 
     return _on_iter

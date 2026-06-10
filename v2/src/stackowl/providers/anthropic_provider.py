@@ -248,14 +248,18 @@ class AnthropicProvider(ModelProvider):
                 # S3 — fire per-iteration callback for this terminal iteration
                 # (the final answer round), then return.  Fires even when there
                 # were no tool calls so the checkpoint captures the final state.
+                # Task 9 — fold for contract uniformity; this is the terminal
+                # round so a fold here is not re-sent, but never silently dropped.
                 if on_iteration_complete is not None:
-                    await on_iteration_complete(
+                    folded = await on_iteration_complete(
                         ReActIterationState(
                             iteration=_iter_idx,
                             messages=list(messages),
                             tool_call_records=list(all_calls),
                         )
                     )
+                    if folded:
+                        messages.extend(folded)
                 return text, all_calls
 
             # Build assistant turn with all content blocks
@@ -291,14 +295,18 @@ class AnthropicProvider(ModelProvider):
             # S3 — fire per-iteration callback after tool calls + observations are
             # appended but BEFORE advancing to the next LLM round (or breaking).
             # Shallow-copy both lists so the callback cannot mutate loop state.
+            # Task 9 — fold any returned steering messages into the live list so
+            # the next LLM round observes them.
             if on_iteration_complete is not None:
-                await on_iteration_complete(
+                folded = await on_iteration_complete(
                     ReActIterationState(
                         iteration=_iter_idx,
                         messages=list(messages),
                         tool_call_records=list(all_calls),
                     )
                 )
+                if folded:
+                    messages.extend(folded)
             if guard.tripped():
                 log.engine.warning(
                     "[anthropic] complete_with_tools: loop guard tripped — "
