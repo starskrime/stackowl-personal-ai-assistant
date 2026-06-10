@@ -177,6 +177,86 @@ class TurnRegistry:
         rid = self._running.get(session_id)
         return self._turns.get(rid) if rid else None
 
+    @staticmethod
+    def _put_steer_superseding(turn: Turn, text: str) -> None:
+        """Put a steer onto the turn's mailbox, superseding the oldest if FULL.
+
+        §5.4 bounded-mailbox + supersede-oldest backpressure. The mailbox is a
+        bounded ``asyncio.Queue(maxsize=_MAILBOX_MAX)`` — under steer-spam it must
+        NOT reject the newest steer (the user's latest instruction is the most
+        relevant) NOR grow unbounded. So on a FULL mailbox we DROP the OLDEST
+        pending steer (``get_nowait()``) and then ``put_nowait(text)`` the newest —
+        the newest steer ALWAYS lands, the mailbox stays bounded. The drained side
+        (``make_steering_callback``) still folds ALL pending into ONE coalesced
+        ``[steering]`` message, so the LLM context window is never blown by N
+        separate messages.
+
+        CALLER CONTRACT: when used from ``try_steer``'s RUNNING branch, ``turn.lock``
+        MUST be held so the status-read and the put stay ONE atomic critical
+        section (Task 11 lost-steer atomicity). The drop-then-put is also done here
+        with no intervening ``await`` so it cannot interleave with a concurrent
+        drain even when called lock-free (the ``put_steer`` synchronous path).
+
+        Fail-safe: if even after dropping the oldest the put still raises
+        ``QueueFull`` (a concurrent producer refilled the freed slot — only possible
+        on the lock-free path), the steer is dropped LOUD (logged as a lost
+        instruction), never silently, and never raised at the caller.
+        """
+        try:
+            turn.steering_mailbox.put_nowait(text)
+            return
+        except asyncio.QueueFull:
+            pass
+        # FULL — supersede the oldest pending steer, then accept the newest.
+        try:
+            superseded = turn.steering_mailbox.get_nowait()
+        except asyncio.QueueEmpty:
+            superseded = None
+        log.gateway.info(
+            "[turn] steering mailbox full — superseding oldest steer (§5.4)",
+            extra={"_fields": {
+                "request_id": turn.turn_id,
+                "session_id": turn.session_id,
+                "superseded": superseded is not None,
+                "maxsize": turn.steering_mailbox.maxsize,
+            }},
+        )
+        try:
+            turn.steering_mailbox.put_nowait(text)
+        except asyncio.QueueFull as exc:
+            # Slot refilled by a concurrent producer between get and put (lock-free
+            # path only). Loud, never silent — the newest steer is dropped here but
+            # the mailbox is still bounded and a co-arriving steer survives.
+            log.gateway.error(
+                "[turn] steering mailbox still full after supersede — newest steer DROPPED",
+                exc_info=exc,
+                extra={"_fields": {
+                    "request_id": turn.turn_id, "session_id": turn.session_id,
+                }},
+            )
+
+    def put_steer(self, request_id: str, text: str) -> None:
+        """Put a steer onto a live turn's mailbox with supersede-oldest backpressure.
+
+        §5.4 — bounded mailbox + supersede-oldest. Resolves the turn by
+        ``request_id`` and folds ``text`` in via ``_put_steer_superseding`` (drop the
+        oldest pending steer on a FULL mailbox, accept the newest). Synchronous (no
+        ``await``) so the drop-then-put is atomic vs. the loop's drain without a
+        lock.
+
+        Fail-safe: an unknown ``request_id`` (already deregistered / never
+        registered) is a no-op (logged, never raised) — a steer on a finished turn
+        is harmless here (the live steer-routing decision is made in ``try_steer``).
+        """
+        turn = self._turns.get(request_id)
+        if turn is None:
+            log.gateway.debug(
+                "[turn] put_steer: no live turn — no-op",
+                extra={"_fields": {"request_id": request_id}},
+            )
+            return
+        self._put_steer_superseding(turn, text)
+
     async def register(
         self,
         request_id: str,
@@ -217,8 +297,15 @@ class TurnRegistry:
         status-read and the put are ONE atomic critical section vs.
         ``finalize_if_drained`` which holds the same lock):
 
-          * status ``RUNNING`` → ``steering_mailbox.put_nowait(text)`` and return
+          * status ``RUNNING`` → fold the steer onto ``steering_mailbox`` with
+            supersede-oldest backpressure (``_put_steer_superseding``) and return
             ``"STEER"`` (the live loop will fold it at its next iteration boundary).
+            §5.4: on a FULL mailbox we DROP the OLDEST pending steer and accept the
+            newest — bounded + newest-always-lands — rather than spawning a NEW
+            turn. (Reconciles with the earlier Task 11 "NEW on full" path: that
+            fallback is the policy for a turn past its finalization line; for a
+            RUNNING turn the §5.4 supersede-oldest policy applies so steer-spam
+            stays a single live turn, never a fan-out of queued-new turns.)
           * status ``FINALIZING``/``DONE`` (turn is past its finalization line) →
             ``enqueue`` the text as a queued-new turn and return ``"NEW"`` (the
             caller dispatches it as a fresh turn — never onto the dead mailbox).
@@ -226,10 +313,6 @@ class TurnRegistry:
         Fail-safe: an unknown ``request_id`` (already deregistered) is treated as
         past-finalization → convert to a queued-new turn, return ``"NEW"`` (a
         discarded steer is a lost instruction, never silently dropped).
-
-        On a full mailbox the steer is converted to a queued-new turn instead of
-        being dropped (loud ``QueueFull`` from ``enqueue`` propagates to the caller
-        which already handles reject-with-notice).
         """
         turn = self._turns.get(request_id)
         if turn is None:
@@ -249,25 +332,14 @@ class TurnRegistry:
             # Status-read + put-or-convert ATOMIC under the lock (no window where
             # status reads RUNNING but the put lands after FINALIZING).
             if turn.status is TurnStatus.RUNNING:
-                try:
-                    turn.steering_mailbox.put_nowait(text)
-                except asyncio.QueueFull:
-                    # Mailbox saturated — do NOT drop the steer. Convert to a
-                    # queued-new turn so the instruction is never lost.
-                    log.gateway.warning(
-                        "[turn] try_steer: mailbox full — converting steer to queued-new",
-                        extra={"_fields": {
-                            "request_id": request_id, "request_id_new": request_id_new,
-                            "session_id": session_id,
-                        }},
-                    )
-                    self.enqueue(
-                        session_id, original_input=text,
-                        request_id=request_id_new, target=target,
-                    )
-                    return "NEW"
+                # §5.4 supersede-oldest: on a FULL mailbox drop the OLDEST pending
+                # steer and accept the newest (bounded + newest-always-lands), NOT a
+                # NEW turn. Atomic with the status-read above (we hold turn.lock and
+                # _put_steer_superseding does no await), so the Task 11 lost-steer
+                # atomicity vs. finalize_if_drained/finalize_and_drain is preserved.
+                self._put_steer_superseding(turn, text)
                 log.gateway.debug(
-                    "[turn] try_steer: accepted by RUNNING turn",
+                    "[turn] try_steer: accepted by RUNNING turn (supersede-oldest if full)",
                     extra={"_fields": {"request_id": request_id, "session_id": session_id}},
                 )
                 return "STEER"
