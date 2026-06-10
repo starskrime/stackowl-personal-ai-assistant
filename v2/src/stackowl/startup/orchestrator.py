@@ -429,6 +429,21 @@ class StartupOrchestrator:
         # fail-safe→answer) so a user who pivots isn't silently answered with their
         # unrelated message. The clarify pumps consult it before resolving.
         clarify_classifier = ClarifyIntentClassifier(provider_registry)
+        # §6/§7 (P3 Task 16) — the mid-turn arrival TurnRouter. Reuses the SAME
+        # fast-tier ``ClarifyIntentClassifier`` (its ``is_steer`` is the
+        # conservative high-confidence STEER-vs-NEW propose stage), so there is ONE
+        # classifier instance for both the clarify answer-vs-new path and the
+        # steer-vs-new path (DRY; no second provider wiring). ``turn_veto=None`` →
+        # Task 15's fail-safe degraded mode (propose-only, no stage-2 coherence
+        # veto). A real two-stage coherence veto (a distinct LLM judgment asking
+        # whether a proposed steer is coherent with the running ask) is a FOLLOW-UP:
+        # ``is_steer`` cannot double as it (it IS the propose stage; re-running it as
+        # the veto is redundant, not a second judgment), and a net-new veto prompt
+        # is beyond this wiring task. Until then the conservative propose stage —
+        # which already fail-safes every uncertainty to NEW — carries the safety.
+        from stackowl.gateway.turn_router import ExplicitSignal, TurnRouter
+
+        turn_router = TurnRouter(clarify_classifier, turn_veto=None)
         # Periodic reaper for abandoned turn-yield clarify entries (blocking ones
         # self-reap via their own park timeout). Recurring job seeded in the
         # scheduler assembly ("clarify_sweep", every 30m).
@@ -1072,41 +1087,60 @@ class StartupOrchestrator:
             decision: RouteDecision,
             input_text: str,
         ) -> None:
-            """Non-blocking intake: dispatch if idle, else enqueue FIFO + ack.
+            """Non-blocking intake: dispatch if idle, ROUTE if a same-session turn
+            runs (P3), else hold under the global cap.
 
             Replaces the blocking ``serialize_prior`` gate (§4.3). Within a chat at
-            most one RUNNING turn; a second message while one runs is enqueued and
-            the user gets an instant ack — it dispatches on the running turn's
-            completion via the _drain_next hook.
+            most one RUNNING turn. §6/§7 (P3 Task 16): a message that arrives while a
+            same-session turn is in flight is ROUTED — STEER folds it into the
+            running turn's mailbox, STOP cooperatively halts it, NEW becomes a
+            queued-new turn (dispatched on completion via the _drain_next hook).
             """
-            # §4.3 race fix: hold the per-session intake lock across the WHOLE
-            # running()-check → (dispatch+register) | (enqueue) decision. This
-            # makes the "decide dispatch-vs-enqueue and claim the running slot"
-            # section mutually exclusive with the detached _drain_next (which
-            # holds the SAME lock across its resolve_or_rewrite await). So a fresh
-            # same-session message that arrives while drain is mid-decision BLOCKS
-            # here until drain has re-registered, then correctly sees the session
-            # RUNNING and enqueues — never starting a second concurrent turn.
+            # §4.3 race fix: hold the per-session intake lock across the
+            # running()-check → (dispatch+register) | (enqueue) DECISION. This makes
+            # the "decide dispatch-vs-enqueue and claim the running slot" section
+            # mutually exclusive with the detached _drain_next (which holds the SAME
+            # lock across its resolve_or_rewrite await). So a fresh same-session
+            # message that arrives while drain is mid-decision BLOCKS here until
+            # drain has re-registered, then correctly sees the session RUNNING.
             # _dispatch_turn/register do NOT re-acquire this lock (no re-entrancy).
             #
             # §4.7 cap enforcement (Task 8): the dispatch branch ALSO gates on the
             # host global cap, and EVERY enqueue is guarded against QueueFull —
             # both INSIDE this lock (check-then-act stays atomic vs _drain_next).
-            #   ack_kind == "queued"  -> same-session turn in flight (FIFO behind it)
+            #
+            # §6/§7 lock discipline (P3 Task 16): the TurnRouter.route() call is a
+            # SLOW LLM hop (is_steer + optional veto). We MUST NOT hold the intake
+            # lock across it — that would block this session's completion→drain
+            # seam. So when a same-session turn is running we CAPTURE it, RELEASE the
+            # lock, then route OUTSIDE the lock. STEER (try_steer) is atomic under
+            # the per-TURN lock and converts to queued-new if the turn finished
+            # mid-route; STOP is a flag-set; only NEW re-acquires THIS lock to
+            # enqueue under a fresh running()-recheck.
+            #   ack_kind == "queued"  -> routed NEW: queued-new turn (FIFO)
+            #   ack_kind == "steered" -> routed STEER/STOP: folded/halted, no enqueue
             #   ack_kind == "busy"    -> held because the host is at the global cap
             #   ack_kind == "overflow"-> per-session queue full: notice + DROP
             ack_kind = ""
+            running_turn = None
+            routed_signal = None  # the router's STEER/STOP/NEW verdict (if routed)
             async with turn_registry.session_intake_lock(msg.session_id):
-                session_idle = turn_registry.running(msg.session_id) is None
-                # Global cap: at capacity we do NOT spawn a new turn even on an idle
-                # session — hold it (bounded enqueue) so it runs when capacity frees.
+                running_turn = turn_registry.running(msg.session_id)
+                session_idle = running_turn is None
+                # Idle + capacity → dispatch a fresh turn now (unchanged §4.3/§4.7).
                 if session_idle and not turn_registry.at_global_capacity():
                     await _dispatch_turn(pump, channel_adapter, msg, decision, input_text)
+                elif not session_idle:
+                    # A same-session turn is RUNNING → defer to the TurnRouter, but
+                    # OUTSIDE the lock (it is a slow LLM hop). We do NOT enqueue here;
+                    # the post-lock routing decides STEER/STOP/NEW. (running_turn is
+                    # captured above for the route.)
+                    pass
                 else:
-                    # Either a same-session turn is running (FIFO) OR the host is at
-                    # the global cap (hold a fresh-session turn). P1: no relatedness
-                    # router yet -> always queue (P3 Task 16 inserts the TurnRouter
-                    # here). Park the raw message so the drain can re-dispatch it.
+                    # session_idle but at the GLOBAL cap → hold this fresh-session
+                    # turn (bounded enqueue) so it runs when capacity frees. No
+                    # routing: there is no same-session running turn to steer/stop.
+                    # Park the raw message so the global-cap WAKE seam can re-dispatch.
                     _parked_intakes[msg.trace_id] = msg
                     try:
                         turn_registry.enqueue(
@@ -1115,8 +1149,6 @@ class StartupOrchestrator:
                         )
                     except QueueFull as exc:
                         # Loud overflow: never silently grow, never crash the loop.
-                        # Remove the just-parked raw message (it never entered the
-                        # queue) and notify the user; DROP this intake.
                         _parked_intakes.pop(msg.trace_id, None)
                         log.warning(
                             "[startup] gateway: intake queue full — dropping with notice",
@@ -1130,18 +1162,110 @@ class StartupOrchestrator:
                     else:
                         # A globally-held turn sits on an idle session (no running
                         # turn to fire its completion->drain hook), so the busy ack
-                        # doubles as the signal that the global-cap-WAKE seam in
-                        # _drain_next will need to surface it when capacity frees.
-                        ack_kind = "busy" if session_idle else "queued"
+                        # doubles as the global-cap-WAKE signal for _drain_next.
+                        ack_kind = "busy"
                         log.info(
-                            "[startup] gateway: turn held — queued intake (%s)",
-                            ack_kind,
+                            "[startup] gateway: turn held — global cap (busy)",
                             extra={"_fields": {
                                 "session_id": msg.session_id,
                                 "request_id": msg.trace_id,
                                 "hold_reason": ack_kind,
                             }},
                         )
+
+            # §6/§7 (P3 Task 16) — ROUTE the mid-turn message OUTSIDE the intake lock
+            # (released above): route() is a slow LLM hop and must not block the
+            # session's completion→drain seam. STEER/STOP are acted on by the helper
+            # (atomic under the per-TURN lock / a flag-set); NEW returns ENQUEUE_NEW,
+            # which RE-ACQUIRES this intake lock briefly + RE-CHECKS running() (it may
+            # have finished during the slow route → dispatch now) before enqueueing.
+            if running_turn is not None:
+                from stackowl.gateway.inflight_router import (
+                    InflightAction,
+                    route_inflight_message,
+                )
+
+                # is_reply_to_inflight: a STRUCTURAL reply-to-the-running-message
+                # signal. IngressMessage carries no reply-link field today, so this
+                # is False (fail-safe — never a spurious structural STEER). Wiring a
+                # real Telegram reply-to-inflight link is a follow-up.
+                outcome = await route_inflight_message(
+                    router=turn_router,
+                    registry=turn_registry,
+                    running=running_turn,
+                    text=input_text,
+                    session_id=msg.session_id,
+                    request_id_new=msg.trace_id,
+                    target=msg.chat_id,
+                    is_reply_to_inflight=False,
+                )
+                routed_signal = outcome.signal
+                if outcome.action is InflightAction.HANDLED:
+                    # STEER folded into the running turn's mailbox (or converted to
+                    # queued-new by try_steer if the turn finished mid-route), or
+                    # STOP set the cooperative-stop flag. Nothing to enqueue here.
+                    ack_kind = "steered"
+                else:
+                    # NEW → queued-new. The routed body has any explicit-signal token
+                    # (/new) ALREADY STRIPPED, so we must re-route the BODY as a fresh
+                    # turn — NOT the original "/new …" command scan (which would
+                    # misroute as a slash command). Synthesize a raw IngressMessage
+                    # carrying the stripped body and RE-SCAN it; this is also what the
+                    # _drain_next pop path re-scans, so park THIS synthesized message
+                    # (its text is the body) — never the raw "/new …" message.
+                    routed_msg = IngressMessage(
+                        text=outcome.routed_text,
+                        session_id=msg.session_id,
+                        channel=msg.channel,
+                        trace_id=msg.trace_id,
+                        chat_id=msg.chat_id,
+                    )
+                    routed_decision = scanner.scan(routed_msg)
+                    routed_input = (
+                        routed_decision.stripped_text
+                        if routed_decision.stripped_text is not None
+                        else routed_msg.text
+                    )
+                    # Re-acquire the intake lock + RE-CHECK running() (the turn may
+                    # have finished during the slow route → dispatch immediately
+                    # instead of enqueueing behind nothing).
+                    async with turn_registry.session_intake_lock(msg.session_id):
+                        if (
+                            turn_registry.running(msg.session_id) is None
+                            and not turn_registry.at_global_capacity()
+                        ):
+                            await _dispatch_turn(
+                                pump, channel_adapter, routed_msg, routed_decision, routed_input
+                            )
+                            ack_kind = "dispatched"
+                        else:
+                            _parked_intakes[msg.trace_id] = routed_msg
+                            try:
+                                turn_registry.enqueue(
+                                    msg.session_id, original_input=routed_input,
+                                    request_id=msg.trace_id, target=msg.chat_id,
+                                )
+                            except QueueFull as exc:
+                                _parked_intakes.pop(msg.trace_id, None)
+                                log.warning(
+                                    "[startup] gateway: intake queue full — dropping with notice",
+                                    extra={"_fields": {
+                                        "session_id": msg.session_id,
+                                        "request_id": msg.trace_id,
+                                        "reason": str(exc),
+                                    }},
+                                )
+                                ack_kind = "overflow"
+                            else:
+                                ack_kind = "queued"
+                                log.info(
+                                    "[startup] gateway: routed NEW — queued intake",
+                                    extra={"_fields": {
+                                        "session_id": msg.session_id,
+                                        "request_id": msg.trace_id,
+                                    }},
+                                )
+
             # Ack/notice OUTSIDE the lock — the network send must not hold the
             # intake critical section (and a slow send must never block drain/intake).
             if ack_kind == "overflow":
@@ -1153,6 +1277,13 @@ class StartupOrchestrator:
             elif ack_kind == "queued":
                 with contextlib.suppress(Exception):
                     await channel_adapter.send_text("Queued — I'll start that next.")
+            elif ack_kind == "steered" and routed_signal is ExplicitSignal.STOP:
+                # A STEER folds silently into the running turn (the user sees the
+                # turn's own evolving output); a STOP gets an explicit acknowledgement.
+                with contextlib.suppress(Exception):
+                    await channel_adapter.send_text(
+                        "Stopping the current task at the next safe point."
+                    )
 
         async def _message_loop() -> None:
             log.info("[startup] gateway: message loop started")
