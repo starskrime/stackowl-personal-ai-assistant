@@ -41,10 +41,22 @@ from __future__ import annotations
 
 import enum
 import unicodedata
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from stackowl.gateway.scanner import _SLASH_CMD_RE
 from stackowl.infra.observability import log
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.interaction.intent_classifier import ClarifyIntentClassifier
+
+# The running turn's stage-2 coherence judge. Given the running ask and a proposed
+# STEER message, it returns ``True`` to VETO (the steer is incoherent with the
+# in-flight goal → fall back to NEW) or ``False`` to allow the steer. Injected so
+# the running turn supplies its OWN judgment (the D3 two-stage pattern); fully
+# mockable in tests and decoupled from the TurnRegistry internals.
+TurnVeto = Callable[..., Awaitable[bool]]
 
 # Default bare stop tokens — a small, casefolded, CONFIGURABLE set (NOT a
 # hardcoded English literal in the control flow; per the no-hardcoded-English
@@ -204,3 +216,138 @@ def parse_explicit_signal(
             extra={"_fields": {"text_len": len(text), "is_reply": is_reply_to_inflight}},
         )
         return ExplicitSignal.NONE
+
+
+class TurnRouter:
+    """Routes a mid-turn message to STOP / STEER / NEW with a conservative bias.
+
+    Two-layer decision (concurrent-msg §6.2/§6.3):
+
+      1. :func:`parse_explicit_signal` — a ZERO-cost deterministic parse. Any
+         explicit signal (``/stop``, ``/steer``, ``/new``, reply-to-inflight, a
+         bare stop token) wins immediately and the classifier is never consulted.
+      2. On ``NONE`` (UNSIGNALED), the conservative
+         :meth:`ClarifyIntentClassifier.is_steer` proposes STEER vs NEW. STEER is
+         proposed ONLY at HIGH confidence; every uncertainty defaults to NEW.
+      3. **Turn-veto (stage 2, the D3 two-stage pattern).** A *proposed* STEER is
+         offered to the running turn's own coherence judge (``turn_veto``). The
+         turn may VETO a steer that is incoherent with its in-flight goal → NEW.
+
+    The whole asymmetric-cost safety principle is: a wrong STEER poisons the
+    running turn AND loses the new ask invisibly (expensive), while a wrong NEW is
+    a recoverable, visible second answer (cheap). So the router fail-safes to NEW
+    EVERYWHERE — an uncertain classifier, a classifier error, OR a crashing veto
+    judge all collapse to NEW. ``route`` never raises.
+
+    The ``REPLY`` (pending-clarify answer) outcome is NOT decided here — the
+    orchestrator checks clarify-pending BEFORE consulting the router (see the
+    module docstring), so the router only sees messages with no pending clarify.
+    """
+
+    def __init__(
+        self,
+        classifier: ClarifyIntentClassifier,
+        *,
+        turn_veto: TurnVeto | None = None,
+    ) -> None:
+        self._classifier = classifier
+        self._turn_veto = turn_veto
+
+    async def route(
+        self,
+        *,
+        running_ask: str,
+        message: str,
+        is_reply_to_inflight: bool = False,
+        stop_tokens: StopTokens = DEFAULT_STOP_TOKENS,
+    ) -> ExplicitSignal:
+        """Resolve a mid-turn ``message`` to a routing :class:`ExplicitSignal`.
+
+        :param running_ask: the in-flight turn's original ask (context for the
+            STEER-vs-NEW classifier and the turn-veto judge).
+        :param message: the arriving mid-turn message text.
+        :param is_reply_to_inflight: structural reply-to-the-running-turn signal.
+        :param stop_tokens: configurable bare-stop token set (multilingual-safe).
+
+        Fail-safe → :data:`ExplicitSignal.NEW` on ANY classifier or veto error.
+        Never raises. Returns one of STOP / STEER / NEW (never NONE — an UNSIGNALED
+        message is always resolved by the classifier to STEER or NEW).
+        """
+        # 1. ENTRY
+        log.gateway.debug(
+            "[turn] route: entry",
+            extra={
+                "_fields": {
+                    "running_ask_len": len(running_ask),
+                    "message_len": len(message),
+                    "is_reply": is_reply_to_inflight,
+                }
+            },
+        )
+        try:
+            # Stage 0 — deterministic explicit signal (zero LLM cost).
+            signal = parse_explicit_signal(
+                message,
+                is_reply_to_inflight=is_reply_to_inflight,
+                stop_tokens=stop_tokens,
+            )
+            if signal is not ExplicitSignal.NONE:
+                log.gateway.info(
+                    "[turn] route: explicit signal — short-circuit",
+                    extra={"_fields": {"signal": signal.value}},
+                )
+                return signal
+
+            # Stage 1 — conservative STEER-vs-NEW (high-confidence STEER only).
+            proposed_steer = await self._classifier.is_steer(
+                running_ask=running_ask, message=message,
+            )
+            if not proposed_steer:
+                log.gateway.info(
+                    "[turn] route: classifier → NEW (uncertain/unrelated)",
+                    extra={"_fields": {"signal": ExplicitSignal.NEW.value}},
+                )
+                return ExplicitSignal.NEW
+
+            # Stage 2 — turn-veto: the running turn judges the steer's coherence.
+            if self._turn_veto is not None and await self._veto(running_ask, message):
+                log.gateway.info(
+                    "[turn] route: STEER vetoed by running turn — fall back to NEW",
+                    extra={"_fields": {"signal": ExplicitSignal.NEW.value}},
+                )
+                return ExplicitSignal.NEW
+
+            # 4. EXIT — a high-confidence, un-vetoed STEER.
+            log.gateway.info(
+                "[turn] route: STEER (high-confidence, not vetoed)",
+                extra={"_fields": {"signal": ExplicitSignal.STEER.value}},
+            )
+            return ExplicitSignal.STEER
+        except Exception as exc:  # self-healing — routing must NEVER crash intake.
+            log.gateway.error(
+                "[turn] route: failed — fail-safe to NEW",
+                exc_info=exc,
+                extra={"_fields": {"signal": ExplicitSignal.NEW.value}},
+            )
+            return ExplicitSignal.NEW
+
+    async def _veto(self, running_ask: str, message: str) -> bool:
+        """Invoke the turn-veto judge; a crashing judge fail-safes to VETO (→ NEW).
+
+        A proposed STEER is only honoured when the turn EXPLICITLY does not veto
+        it. If the veto judge itself errors we treat that as a veto (return
+        ``True``) so a broken judge collapses to the cheap, safe NEW direction
+        rather than letting an unvetted steer poison the running turn.
+        """
+        veto = self._turn_veto
+        if veto is None:  # pragma: no cover — guarded by the caller
+            return False
+        try:
+            return bool(await veto(running_ask=running_ask, message=message))
+        except Exception as exc:  # self-healing — a broken judge → veto (NEW).
+            log.gateway.error(
+                "[turn] route: turn-veto judge failed — treating as veto (NEW)",
+                exc_info=exc,
+                extra={"_fields": {"message_len": len(message)}},
+            )
+            return True

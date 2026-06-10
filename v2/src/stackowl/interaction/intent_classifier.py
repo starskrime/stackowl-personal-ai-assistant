@@ -22,6 +22,12 @@ unparseable verdict, or empty message yields ``True``. Rationale: defaulting to
 "answer" is no worse than today's always-swallow behaviour, whereas defaulting to
 "new" would risk discarding a genuine answer as a fresh turn. Every fallback is logged.
 
+**Generalised for STEER-vs-NEW (Task 15).** :meth:`is_steer` reuses the same
+fast-tier, one-token-verdict shape for a mid-turn message's STEER-vs-NEW routing,
+but with the OPPOSITE fail-safe direction (→ ``False``/NEW) because there a false
+STEER poisons the running turn and loses the new ask invisibly (the expensive
+direction), while a false NEW is a cheap, visible second answer.
+
 Never raises. Plain class (no Pydantic) — small/OOP per the slice-D operator decision.
 Provenance: BUILD (no external agent had a multilingual answer-vs-new-request gate).
 """
@@ -52,6 +58,21 @@ _SYSTEM_PROMPT = (
     "free-text answer, confirms or declines (e.g. a short yes/no), or corrects a "
     "prior choice (e.g. 'no, the other one'). It is NEW if it raises an unrelated "
     "request or changes the topic. Reply with exactly one word: ANSWER or NEW."
+)
+
+# STEER-vs-NEW verdict (Task 15). Asymmetric cost: a wrong STEER poisons the
+# running turn AND loses the new ask invisibly (expensive); a wrong NEW just
+# yields a second visible answer (cheap, recoverable). So the prompt is biased
+# CONSERVATIVE — STEER is reserved for messages that UNAMBIGUOUSLY refine the
+# in-flight task; ANY doubt is NEW. The model emits exactly one controlled token
+# (STEER / NEW) which we parse (never the user's multilingual text).
+_STEER_SYSTEM_PROMPT = (
+    "A task is already running. You decide whether the user's new message is a "
+    "STEER (a correction or refinement of the RUNNING task — e.g. 'no, make it "
+    "shorter', 'use the other tone') or a NEW request (an unrelated ask or a "
+    "topic change). Be conservative: answer STEER ONLY when the message clearly "
+    "refines the running task. If you are unsure, or it could be a separate "
+    "request, answer NEW. Reply with exactly one word: STEER or NEW."
 )
 
 
@@ -165,6 +186,94 @@ class ClarifyIntentClassifier:
         # 4. EXIT
         return classified
 
+    async def is_steer(self, *, running_ask: str, message: str) -> bool:
+        """Return ``True`` only on a HIGH-CONFIDENCE STEER verdict (else NEW).
+
+        Generalises :meth:`is_answer`'s fast-tier, one-token-verdict shape for the
+        STEER-vs-NEW decision a mid-turn UNSIGNALED message poses (Task 15): is the
+        ``message`` a correction/refinement of the ``running_ask`` (STEER, fold into
+        the running turn) or an unrelated request (NEW, run a fresh turn)?
+
+        **Opposite fail-safe direction from** :meth:`is_answer`. ``is_answer``
+        fail-safes to ``True`` (answer) because the cheap error there is keeping a
+        parked turn. Here the asymmetric cost is REVERSED: a false STEER poisons the
+        running turn AND loses the new ask invisibly (expensive), while a false NEW
+        is a recoverable, visible second answer (cheap). So ANY error, missing/
+        unresolvable fast provider, timeout, ambiguous/unparseable verdict, or empty
+        ``message`` yields ``False`` (NEW) — uncertainty defaults to the cheap, safe
+        direction. STEER is returned ONLY when the model emits a clear STEER verdict.
+        Never raises. Every fallback is logged.
+        """
+        a_len = len(running_ask)
+        m_len = len(message)
+        # 1. ENTRY
+        log.gateway.debug(
+            "intent_classifier.is_steer: entry",
+            extra={"_fields": {"running_ask_len": a_len, "message_len": m_len}},
+        )
+
+        # An empty message carries no intent — fail-safe to NEW (the cheap
+        # direction), so noise never folds onto / poisons the running turn.
+        if not message.strip():
+            log.gateway.info(
+                "intent_classifier.is_steer: empty message — fail-safe to new",
+                extra={"_fields": {"steer": False}},
+            )
+            return False
+
+        provider = self._resolve_provider()
+        if provider is None:
+            log.gateway.warning(
+                "intent_classifier.is_steer: no fast provider — fail-safe to new",
+                extra={"_fields": {"steer": False}},
+            )
+            return False
+
+        try:
+            user_text = self._build_steer_user_text(running_ask, message)
+            # Bound the inline call: a hung fast provider must not HOL-block the
+            # single receive loop. CancelledError (not an Exception subclass)
+            # still propagates so a cancelled receive task tears down cleanly.
+            result = await asyncio.wait_for(
+                provider.complete(
+                    [
+                        Message(role="system", content=_STEER_SYSTEM_PROMPT),
+                        Message(role="user", content=user_text),
+                    ],
+                    model="",
+                    max_tokens=4,
+                ),
+                timeout=self._timeout_s,
+            )
+            verdict = (result.content or "").strip()
+        except TimeoutError:  # hung provider — fail-safe to NEW rather than stall
+            log.gateway.warning(
+                "intent_classifier.is_steer: provider call timed out — fail-safe to new",
+                extra={"_fields": {"steer": False, "timeout_s": self._timeout_s}},
+            )
+            return False
+        except Exception as exc:  # self-healing — a verdict call must never raise
+            log.gateway.error(
+                "intent_classifier.is_steer: provider call failed — fail-safe to new",
+                exc_info=exc,
+                extra={"_fields": {"steer": False}},
+            )
+            return False
+
+        steer = self._parse_steer_verdict(verdict)
+        # 2. DECISION — the raw verdict and the parsed bool (truncated text).
+        log.gateway.info(
+            "intent_classifier.is_steer: verdict parsed",
+            extra={
+                "_fields": {
+                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
+                    "steer": steer,
+                }
+            },
+        )
+        # 4. EXIT
+        return steer
+
     # ------------------------------------------------------------------ helpers
 
     def _resolve_provider(self) -> ModelProvider | None:
@@ -250,3 +359,62 @@ class ClarifyIntentClassifier:
             },
         )
         return True
+
+    @staticmethod
+    def _build_steer_user_text(running_ask: str, message: str) -> str:
+        """Render the (capped) STEER-vs-NEW classification prompt body.
+
+        Mirrors :meth:`_build_user_text`'s capping — the running ask and the new
+        message are each truncated to a few hundred chars so a pathological turn or
+        message can never bloat the one-token call.
+        """
+        a = running_ask[:_MAX_QUESTION_CHARS]
+        m = message[:_MAX_MESSAGE_CHARS]
+        return "\n".join(
+            [
+                f"RUNNING TASK: {a}",
+                f"NEW MESSAGE: {m}",
+                "Is NEW MESSAGE a correction of the RUNNING TASK? "
+                "Reply STEER or NEW.",
+            ]
+        )
+
+    @staticmethod
+    def _parse_steer_verdict(verdict: str) -> bool:
+        """Map the model's one-word verdict to a bool (fail-safe → ``False``/NEW).
+
+        The CONSERVATIVE mirror of :meth:`_parse_verdict`: STEER is the EXPENSIVE
+        direction, so it is granted ONLY on an unambiguous STEER verdict. Case- and
+        token-order robust, parsing only the MODEL's controlled token (never the
+        user's multilingual message):
+
+        * ``steer`` present and ``new`` absent → ``True`` (a high-confidence STEER).
+        * ``new`` present and ``steer`` absent → ``False`` (a NEW request).
+        * BOTH present → ``False`` (NEW). The asymmetry is deliberate: a both-token
+          verdict ("steer or new?", "NEW — do not steer") is NOT unambiguous enough
+          to grant the expensive STEER, so it collapses to the cheap, safe NEW
+          direction. (Contrast :meth:`_parse_verdict`, whose fail-safe is the other
+          way, so it lets a leading token break a both-present tie.)
+        * NEITHER present (empty / ambiguous / garbage like "maybe") → the fail-safe
+          default ``False`` (NEW) — the cheap, visible direction. Logged.
+        """
+        low = verdict.lower().lstrip()
+        has_steer = "steer" in low
+        has_new = "new" in low
+        if has_steer and not has_new:
+            return True
+        if has_new and not has_steer:
+            return False
+        # BOTH or NEITHER present: never unambiguous enough for the expensive
+        # STEER → fail-safe to NEW (the conservative, cheap direction).
+        log.gateway.warning(
+            "intent_classifier._parse_steer_verdict: ambiguous verdict — fail-safe to new",
+            extra={
+                "_fields": {
+                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
+                    "has_steer": has_steer,
+                    "has_new": has_new,
+                }
+            },
+        )
+        return False
