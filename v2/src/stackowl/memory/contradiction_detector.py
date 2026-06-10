@@ -39,7 +39,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     mag_b = math.sqrt(sum(x * x for x in b))
     if mag_a == 0.0 or mag_b == 0.0:
         return 0.0
-    return dot / (mag_a * mag_b)
+    return max(-1.0, min(1.0, dot / (mag_a * mag_b)))
 
 
 class ContradictionDetector:
