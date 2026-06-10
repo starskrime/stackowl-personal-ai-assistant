@@ -11,11 +11,10 @@ loop needs:
   returns ``consumed=True`` so the loop starts NO new turn; a *turn-yield* resolve
   folds the question + reply into a fresh resume turn; ``/reset`` clears the
   session's pending clarify; everything else passes through untouched.
-* :meth:`serialize_prior` — because the response stream is keyed by ``session_id``
-  and :mod:`deliver` resolves the writer by ``session_id`` at delivery time, an
-  unrelated same-session turn must not reuse the slot until the prior turn has
-  finished delivering. (See ``FF-E5-B2``: re-keying streams per ``trace_id`` would
-  remove this method entirely.)
+* :meth:`serialize_prior` — the per-session ``_inflight`` SLOT (the serialize
+  gate) is keyed by ``session_id``: an unrelated same-session turn must not reuse
+  the slot until the prior turn has finished delivering. (See ``FF-E5-B2``: this
+  gate is independent of the stream key, which is now ``trace_id`` per §4.1.)
 * :meth:`spawn_send` — drain the response stream in its OWN task so the receive
   loop is free while a turn is parked. It also guards the producer: if the turn's
   producer task crashes (or is cancelled) BEFORE :mod:`deliver` closes the writer,
@@ -175,10 +174,21 @@ class ClarifyPump:
         channel_adapter: _SendableAdapter,
         reader: AsyncIterator[ResponseChunk],
         session_id: str,
+        request_id: str | None = None,
         producer: asyncio.Task[object],
         writer: StreamWriter | _ClosableWriter | None,
     ) -> None:
         """Drain the response stream in its own task; free the receive loop.
+
+        Two DISTINCT keys (FF-E5-B2 / §4.1 stream re-key):
+
+        * ``session_id`` keys the per-loop ``_inflight`` slot — the serialize
+          gate (:meth:`serialize_prior`) so a still-delivering same-session turn
+          isn't clobbered when the slot is reused.
+        * ``request_id`` (== the turn's ``trace_id``) keys the RESPONSE STREAM in
+          the registry, matching the key :mod:`deliver` resolves the writer by
+          (``state.trace_id``). The stream is reaped under THIS key. Defaults to
+          ``session_id`` for back-compat when a caller doesn't supply one.
 
         ``producer`` is the turn task (``backend.run`` / parliament / command
         stub). If it crashes or is cancelled before :mod:`deliver` closes the
@@ -186,13 +196,20 @@ class ClarifyPump:
         and wedge the session — so a producer done-callback closes the writer
         (idempotent) to guarantee the send drains and the stream is reaped.
         """
+        stream_key = request_id if request_id is not None else session_id
         send_task: asyncio.Task[None] = asyncio.create_task(
             channel_adapter.send(reader)
         )
         self._inflight[session_id] = send_task
 
-        def _cleanup(task: asyncio.Task[None], sid: str = session_id) -> None:
-            self._stream_registry.remove(sid)
+        def _cleanup(
+            task: asyncio.Task[None],
+            sid: str = session_id,
+            skey: str = stream_key,
+        ) -> None:
+            # Reap the STREAM by request_id (deliver's key); free the serialize
+            # SLOT by session_id.
+            self._stream_registry.remove(skey)
             if self._inflight.get(sid) is task:
                 self._inflight.pop(sid, None)
 

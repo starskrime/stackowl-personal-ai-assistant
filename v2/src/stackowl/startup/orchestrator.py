@@ -694,7 +694,9 @@ class StartupOrchestrator:
         clarify_gateway.register_adapter("cli", adapter)
 
         # 2. DECISION — define the message processing loop
-        async def _deliver_parliament(topic: str, owl_names: list[str], session_id: str) -> None:
+        async def _deliver_parliament(
+            topic: str, owl_names: list[str], session_id: str, trace_id: str,
+        ) -> None:
             """Run parliament and deliver the synthesis to the stream writer."""
             try:
                 session = await parliament.run(topic=topic, owl_names=owl_names, session_id=session_id)
@@ -702,18 +704,23 @@ class StartupOrchestrator:
             except Exception as exc:
                 log.error("[startup] gateway: parliament session failed", exc_info=exc)
                 synthesis = f"Parliament error: {exc}"
-            writer = stream_registry.get_writer(session_id)
+            # §4.1 stream re-key: the response stream is keyed by trace_id (the key
+            # deliver resolves by). Fetch + write the chunk under that same key.
+            writer = stream_registry.get_writer(trace_id)
             if writer is not None:
                 await writer.write(ResponseChunk(
                     content=synthesis, is_final=False, chunk_index=0,
-                    trace_id=session_id, owl_name="parliament",
+                    trace_id=trace_id, owl_name="parliament",
                 ))
                 await writer.close()
 
-        async def _deliver_command_stub(cmd: str, session_id: str, state: PipelineState, args: str) -> None:
+        async def _deliver_command_stub(
+            cmd: str, session_id: str, state: PipelineState, args: str, trace_id: str,
+        ) -> None:
             """Dispatch a slash command and stream its reply back to the user."""
             registry = CommandRegistry.instance()
-            writer = stream_registry.get_writer(session_id)
+            # §4.1 stream re-key: fetch the writer under the stream key (trace_id).
+            writer = stream_registry.get_writer(trace_id)
             try:
                 reply = await registry.dispatch(cmd, args, state)
             except CommandNotFoundError:
@@ -724,7 +731,7 @@ class StartupOrchestrator:
             if writer is not None:
                 await writer.write(ResponseChunk(
                     content=reply, is_final=False, chunk_index=0,
-                    trace_id=session_id, owl_name="system",
+                    trace_id=trace_id, owl_name="system",
                 ))
                 await writer.close()
 
@@ -769,14 +776,19 @@ class StartupOrchestrator:
                             continue
                         # Don't clobber a still-delivering same-session turn.
                         await cli_pump.serialize_prior(msg.session_id)
-                        writer, reader = stream_registry.create(msg.session_id)
+                        # §4.1 stream re-key: register the response stream by
+                        # trace_id (== the key deliver looks the writer up by), so
+                        # the owl turn's output is never stream-missed.
+                        writer, reader = stream_registry.create(msg.trace_id)
                         if decision.route == "parliament" and decision.parliament_owls:
                             log.info(
                                 "[startup] gateway: routing to parliament",
                                 extra={"_fields": {"owls": decision.parliament_owls, "session_id": msg.session_id}},
                             )
                             producer: asyncio.Task[object] = asyncio.create_task(
-                                _deliver_parliament(input_text, decision.parliament_owls, msg.session_id)
+                                _deliver_parliament(
+                                    input_text, decision.parliament_owls, msg.session_id, msg.trace_id,
+                                )
                             )
                         elif decision.route == "command":
                             log.info(
@@ -794,7 +806,9 @@ class StartupOrchestrator:
                             )
                             cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
                             producer = asyncio.create_task(
-                                _deliver_command_stub(decision.target, msg.session_id, cmd_state, cmd_args)
+                                _deliver_command_stub(
+                                    decision.target, msg.session_id, cmd_state, cmd_args, msg.trace_id,
+                                )
                             )
                         else:
                             state = PipelineState(
@@ -813,7 +827,8 @@ class StartupOrchestrator:
                         # producer crashes so the send can never wedge the session.
                         cli_pump.spawn_send(
                             channel_adapter=adapter, reader=reader,
-                            session_id=msg.session_id, producer=producer, writer=writer,
+                            session_id=msg.session_id, request_id=msg.trace_id,
+                            producer=producer, writer=writer,
                         )
                     except asyncio.CancelledError:
                         raise
@@ -823,9 +838,10 @@ class StartupOrchestrator:
                             exc_info=exc,
                             extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
                         )
-                        # Clean up the stream so it doesn't leak.
+                        # Clean up the stream so it doesn't leak. §4.1: keyed by
+                        # trace_id (the stream key), matching create/spawn_send.
                         with contextlib.suppress(Exception):
-                            stream_registry.remove(msg.session_id)
+                            stream_registry.remove(getattr(msg, "trace_id", ""))
                         continue
             except asyncio.CancelledError:
                 log.info("[startup] gateway: message loop cancelled")
@@ -930,7 +946,9 @@ class StartupOrchestrator:
                                 if consumed:
                                     continue
                                 await tg_pump.serialize_prior(msg.session_id)
-                                writer, reader = stream_registry.create(msg.session_id)
+                                # §4.1 stream re-key: register by trace_id (the key
+                                # deliver looks the writer up by).
+                                writer, reader = stream_registry.create(msg.trace_id)
                                 if decision.route == "parliament" and decision.parliament_owls:
                                     log.info(
                                         "[startup] gateway: routing to parliament (telegram)",
@@ -940,7 +958,9 @@ class StartupOrchestrator:
                                         }},
                                     )
                                     tg_producer: asyncio.Task[object] = asyncio.create_task(
-                                        _deliver_parliament(input_text, decision.parliament_owls, msg.session_id)
+                                        _deliver_parliament(
+                                            input_text, decision.parliament_owls, msg.session_id, msg.trace_id,
+                                        )
                                     )
                                 elif decision.route == "command":
                                     log.info(
@@ -958,7 +978,7 @@ class StartupOrchestrator:
                                     )
                                     tg_cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
                                     tg_producer = asyncio.create_task(_deliver_command_stub(
-                                        decision.target, msg.session_id, tg_cmd_state, tg_cmd_args,
+                                        decision.target, msg.session_id, tg_cmd_state, tg_cmd_args, msg.trace_id,
                                     ))
                                 else:
                                     state = PipelineState(
@@ -974,7 +994,8 @@ class StartupOrchestrator:
                                 tg_producer.add_done_callback(_log_pipeline_crash)
                                 tg_pump.spawn_send(
                                     channel_adapter=telegram_adapter, reader=reader,
-                                    session_id=msg.session_id, producer=tg_producer, writer=writer,
+                                    session_id=msg.session_id, request_id=msg.trace_id,
+                                    producer=tg_producer, writer=writer,
                                 )
                             except asyncio.CancelledError:
                                 raise
@@ -984,8 +1005,9 @@ class StartupOrchestrator:
                                     exc_info=exc,
                                     extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
                                 )
+                                # §4.1: keyed by trace_id (the stream key).
                                 with contextlib.suppress(Exception):
-                                    stream_registry.remove(msg.session_id)
+                                    stream_registry.remove(getattr(msg, "trace_id", ""))
                                 continue
                     except asyncio.CancelledError:
                         log.info("[startup] gateway: telegram loop cancelled")
