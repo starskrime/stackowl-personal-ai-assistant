@@ -32,7 +32,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -183,6 +183,33 @@ def _can_side_effect(owl_name: str) -> bool:
         if tool is not None and tool.manifest.action_severity in _SIDE_EFFECT_SEVERITIES:
             return True
     return False
+
+
+CommitCouplingAnswer = Literal["done", "safe_retry", "honest_uncertain"]
+
+
+def resolve_commit_coupling_answer(
+    *,
+    child_started: bool,
+    has_uncertain_effect: bool,
+    has_uncommitted_intent: bool,
+    child_terminal: bool,
+) -> CommitCouplingAnswer:
+    """The §6.2 honesty table as a pure decision (D1 §6.2).
+
+    * never started (no intent rows)                 → "safe_retry" (pure profit).
+    * an unconfirmed effect lacking a witnessed commit → "honest_uncertain".
+    * any non-transactional intent not yet committed   → "honest_uncertain".
+    * terminal AND every effect transactional/keyed    → "done".
+    * otherwise (in-flight, no uncertainty resolvable)  → "honest_uncertain".
+    """
+    if not child_started:
+        return "safe_retry"
+    if has_uncertain_effect or has_uncommitted_intent:
+        return "honest_uncertain"
+    if child_terminal:
+        return "done"
+    return "honest_uncertain"
 
 
 async def _relevance_gate(
@@ -567,7 +594,47 @@ class DelegateTaskTool(Tool):
                 return self._map_terminal(result, target, t0), False
 
             # (2) Capability gate: a write-capable target may have already acted → HALT.
-            if _can_side_effect(target):
+            #
+            # DURABLE parent (D1 §6.2): replace the Story-D _can_side_effect-only
+            # gate with a per-effect resolution over the child's durable record +
+            # the commit_coupling of the effects it ledgered. A never-started child
+            # is a DEFINITE safe-retry (pure profit); a terminal child whose every
+            # effect is transactional/idempotent_keyed is DEFINITE done; anything
+            # in-flight or carrying an unconfirmed/uncommitted effect stays honest.
+            if durable_scope.child_task_id is not None:
+                started, has_uncertain, has_uncommitted_intent, child_terminal = (
+                    await self._child_ledger_facts(durable_scope)
+                )
+                answer = resolve_commit_coupling_answer(
+                    child_started=started,
+                    has_uncertain_effect=has_uncertain,
+                    has_uncommitted_intent=has_uncommitted_intent,
+                    child_terminal=child_terminal,
+                )
+                log.tool.info(
+                    "delegate_task._run_delegation: commit_coupling resolution",
+                    extra={"_fields": {
+                        "trace_id": trace_id, "target": target, "status": result.status,
+                        "answer": answer, "child_started": started,
+                        "child_terminal": child_terminal,
+                        "has_uncertain": has_uncertain,
+                        "has_uncommitted_intent": has_uncommitted_intent,
+                    }},
+                )
+                if answer == "done":
+                    # Reuse the child's persisted answer. If the live result timed
+                    # out / went empty, return the durable child's recorded result.
+                    return await self._map_terminal_or_persisted(
+                        result, target, t0, durable_scope,
+                    ), True
+                if answer == "honest_uncertain":
+                    if result.status == "off_topic":
+                        return honest_offtopic_write_result(target, t0), False
+                    return honest_uncertain_result(target, t0), False
+                # answer == "safe_retry" → fall through to the read-only ladder below.
+            elif _can_side_effect(target):
+                # NON-durable parent (Story-D path, unchanged): a write-capable
+                # target may have already acted → HALT.
                 log.tool.warning(
                     "delegate_task._run_delegation: write-capable child not re-delegated (may have acted)",
                     extra={"_fields": {"trace_id": trace_id, "target": target, "status": result.status}},
@@ -680,6 +747,109 @@ class DelegateTaskTool(Tool):
                 exc_info=exc,
                 extra={"_fields": {"child_task_id": durable_scope.child_task_id}},
             )
+
+    async def _child_ledger_facts(
+        self, durable_scope: _DurableChildScope,
+    ) -> tuple[bool, bool, bool, bool]:
+        """Return ``(child_started, has_uncertain_effect, has_uncommitted_intent,
+        child_terminal)`` for the durable child (D1 §6.2).
+
+        Reads the child's ``side_effect_ledger`` rows (by ``owner_id`` +
+        ``task_id``) and the child's ``tasks.status``, cross-referencing each
+        ledgered tool against the registry's ``commit_coupling``:
+
+        * ``started``               any ledger row exists under the child id.
+        * ``child_terminal``        the durable child is ``completed``/``failed``.
+        * ``has_uncommitted_intent`` an ``intent``-not-``committed`` effect whose
+          coupling is NOT ``transactional``/``idempotent_keyed``.
+        * ``has_uncertain_effect``   an ``unconfirmed``-coupling effect (committed
+          or not) — a lossy-ack boundary where intent and effect can diverge.
+
+        A tool whose coupling is ``None`` (undeclared, or a tool no longer in the
+        registry) is treated as ``unconfirmed`` (fail-safe — never silently safe).
+        Fail-open: on any store/registry error return the maximally-uncertain
+        tuple ``(True, True, True, False)`` so the answer stays honest_uncertain.
+        """
+        db = get_services().db_pool
+        owner = durable_scope.durable_owner_id or DEFAULT_PRINCIPAL_ID
+        cid = durable_scope.child_task_id
+        treg = get_services().tool_registry
+        try:
+            if db is None:  # pragma: no cover — durable scope implies a db, defensive
+                return True, True, True, False
+            rows = await db.fetch_all(
+                "SELECT tool_name, status FROM side_effect_ledger "
+                "WHERE owner_id = ? AND task_id = ?",
+                (owner, cid),
+            )
+            store = DurableTaskStore(db, owner)
+            child = await store.get(str(cid))
+            started = len(rows) > 0
+            child_terminal = child.status in ("completed", "failed")
+            has_uncertain = False
+            has_uncommitted_intent = False
+            for r in rows:
+                coupling: str | None = None
+                if treg is not None:
+                    tool = treg.get(str(r["tool_name"]))
+                    if tool is not None:
+                        coupling = tool.manifest.commit_coupling
+                safe = coupling in ("transactional", "idempotent_keyed")
+                committed = str(r["status"]) == "committed"
+                if not committed and not safe:
+                    has_uncommitted_intent = True
+                if coupling == "unconfirmed":
+                    has_uncertain = True
+            return started, has_uncertain, has_uncommitted_intent, child_terminal
+        except Exception as exc:  # B5 — fail to maximally-uncertain (honest).
+            log.tool.error(
+                "delegate_task: child ledger read failed — defaulting honest_uncertain",
+                exc_info=exc,
+                extra={"_fields": {"child_task_id": cid}},
+            )
+            return True, True, True, False
+
+    async def _map_terminal_or_persisted(
+        self, result: object, target: str, t0: float, durable_scope: _DurableChildScope,
+    ) -> ToolResult:
+        """The "done" leg (D1 §6.2): reuse the child's answer.
+
+        If the live ``result`` is a clean ``ok`` terminal, map it directly
+        (``_map_terminal``). The "done" answer is otherwise reached on a
+        retriable/off_topic live status (the ``status == "ok"`` short-circuit
+        fired earlier), so the live content is unusable — instead reuse the
+        durable child's persisted ``tasks.result``. Fail-safe: if the persisted
+        result is unreadable/empty, fall back to the honest-uncertain terminal so
+        nothing is invented.
+        """
+        from stackowl.owls.a2a_delegation import A2AResult  # local import avoids circular dep
+
+        if isinstance(result, A2AResult) and result.status == "ok":
+            return self._map_terminal(result, target, t0)
+
+        persisted: str | None = None
+        try:
+            db = get_services().db_pool
+            if db is not None:
+                store = DurableTaskStore(
+                    db, durable_scope.durable_owner_id or DEFAULT_PRINCIPAL_ID,
+                )
+                child = await store.get(str(durable_scope.child_task_id))
+                persisted = child.result
+        except Exception as exc:  # B5 — fail-safe to honest-uncertain.
+            log.tool.error(
+                "delegate_task: persisted child result read failed",
+                exc_info=exc,
+                extra={"_fields": {"child_task_id": durable_scope.child_task_id}},
+            )
+            persisted = None
+        if not persisted:
+            return honest_uncertain_result(target, t0)
+        return ok_result(
+            {"status": "ok", "to_owl": target,
+             "result": persisted + provenance_footer(target)},
+            t0, note=f"{target} completed durably (reused persisted result)",
+        )
 
     def _map_terminal(self, result: object, target: str, t0: float) -> ToolResult:
         """Map an ``A2AResult`` status to a structured ToolResult (T7 reuses this)."""
