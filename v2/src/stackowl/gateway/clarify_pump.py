@@ -11,10 +11,6 @@ loop needs:
   returns ``consumed=True`` so the loop starts NO new turn; a *turn-yield* resolve
   folds the question + reply into a fresh resume turn; ``/reset`` clears the
   session's pending clarify; everything else passes through untouched.
-* :meth:`serialize_prior` — the per-session ``_inflight`` SLOT (the serialize
-  gate) is keyed by ``session_id``: an unrelated same-session turn must not reuse
-  the slot until the prior turn has finished delivering. (See ``FF-E5-B2``: this
-  gate is independent of the stream key, which is now ``trace_id`` per §4.1.)
 * :meth:`spawn_send` — drain the response stream in its OWN task so the receive
   loop is free while a turn is parked. It also guards the producer: if the turn's
   producer task crashes (or is cancelled) BEFORE :mod:`deliver` closes the writer,
@@ -75,8 +71,12 @@ class ClarifyPump:
         # unrelated message isn't swallowed as the answer. None → always treat a
         # reply as the answer (the pre-D behavior).
         self._classifier = intent_classifier
-        # Per-loop in-flight send tasks, keyed by session, so a still-delivering
-        # same-session turn isn't clobbered when the slot is reused.
+        # Per-loop in-flight send tasks, keyed by session, so loop teardown
+        # (:meth:`drain`) can await every still-delivering turn. The serialize
+        # gate that this map once backed (``serialize_prior``) is GONE — same-
+        # session ordering is now owned by the TurnRegistry (at most one RUNNING
+        # turn per session + a FIFO intake queue), so the map is purely a
+        # drain/reap ledger now (§4.3).
         self._inflight: dict[str, asyncio.Task[None]] = {}
 
     # ----------------------------------------------------------- resolve-router
@@ -157,15 +157,6 @@ class ClarifyPump:
             f"The user's reply: {input_text}\nContinue accordingly."
         )
 
-    # --------------------------------------------------------- serialize-prior
-
-    async def serialize_prior(self, session_id: str) -> None:
-        """Await a still-delivering same-session turn before reusing its slot."""
-        prior = self._inflight.get(session_id)
-        if prior is not None and not prior.done():
-            with contextlib.suppress(Exception):
-                await prior
-
     # ---------------------------------------------------------------- spawn-send
 
     def spawn_send(
@@ -182,9 +173,9 @@ class ClarifyPump:
 
         Two DISTINCT keys (FF-E5-B2 / §4.1 stream re-key):
 
-        * ``session_id`` keys the per-loop ``_inflight`` slot — the serialize
-          gate (:meth:`serialize_prior`) so a still-delivering same-session turn
-          isn't clobbered when the slot is reused.
+        * ``session_id`` keys the per-loop ``_inflight`` slot — the drain/reap
+          ledger awaited on loop teardown. Same-session ordering is owned by the
+          TurnRegistry now (§4.3), not this slot.
         * ``request_id`` (== the turn's ``trace_id``) keys the RESPONSE STREAM in
           the registry, matching the key :mod:`deliver` resolves the writer by
           (``state.trace_id``). The stream is reaped under THIS key. Defaults to
@@ -207,7 +198,7 @@ class ClarifyPump:
             sid: str = session_id,
             skey: str = stream_key,
         ) -> None:
-            # Reap the STREAM by request_id (deliver's key); free the serialize
+            # Reap the STREAM by request_id (deliver's key); free the in-flight
             # SLOT by session_id.
             self._stream_registry.remove(skey)
             if self._inflight.get(sid) is task:

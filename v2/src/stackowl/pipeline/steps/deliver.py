@@ -58,6 +58,10 @@ async def run(state: PipelineState) -> PipelineState:
                 extra={"_fields": {"chunk_request_id": chunk.trace_id, "turn_request_id": state.trace_id}},
             )
             continue
+        # Stamp this turn's reply target onto the (frozen) chunk so a fan-out
+        # channel (Telegram) routes the output back to ITS OWN chat under
+        # concurrency. None for CLI turns — the adapter resolves the destination.
+        chunk = chunk.model_copy(update={"target": state.reply_target})
         await writer.write(chunk)
     await writer.close()
 

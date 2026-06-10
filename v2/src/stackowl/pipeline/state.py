@@ -42,6 +42,15 @@ class PipelineState(BaseModel, frozen=True):
     # answer it. A forgotten flag therefore degrades safely to "clarify
     # unavailable" rather than faking a human presence.
     interactive: bool = False
+    # Per-turn delivery target for fan-out channels (e.g. a Telegram chat_id),
+    # threaded from IngressMessage.chat_id by the orchestrator at construction.
+    # The deliver step stamps it onto every outgoing ResponseChunk so a turn's
+    # output routes back to ITS OWN chat under concurrency — never the shared
+    # _last_chat_id (overwritten by every newer inbound update). CLI turns leave
+    # it None; the adapter then resolves the destination itself. Carried across
+    # evolve() like every other field; default None keeps every non-Telegram turn
+    # byte-for-byte unchanged.
+    reply_target: int | None = None
     # Recursion depth of this (sub-)pipeline in the delegation tree. 0 for a
     # top-level user turn; incremented by one each time A2ADelegator spawns a
     # specialist child (see _run_specialist). Carried across evolve() like every

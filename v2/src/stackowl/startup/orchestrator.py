@@ -8,7 +8,9 @@ import logging
 import os
 import signal
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, cast
 
 from stackowl.config.settings import Settings
 from stackowl.db.migrations.runner import MigrationRunner
@@ -21,6 +23,21 @@ from stackowl.startup.provider_probe import ProviderProbe
 from stackowl.startup.watchdog import KeepAlive, WatchdogSec
 
 log = logging.getLogger("stackowl.startup")
+
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from stackowl.pipeline.streaming import ResponseChunk
+
+
+class _IntakeAdapter(Protocol):
+    """The channel-adapter surface the §4.3 intake helpers need.
+
+    Both the CLI and Telegram adapters satisfy this: ``send`` drains a turn's
+    response stream and ``send_text`` posts the instant queued-intake ack.
+    """
+
+    async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None: ...  # noqa: D102
+
+    async def send_text(self, text: str) -> None: ...  # noqa: D102
 
 
 def _build_heuristic_store(db_pool):  # type: ignore[no-untyped-def]
@@ -172,6 +189,15 @@ class StartupOrchestrator:
         log.info("[startup] gateway: building services")
         provider_registry = ProviderRegistry.from_settings(self._settings)
         stream_registry = StreamRegistry()
+        # §4.3 non-blocking in-chat intake: one process-wide TurnRegistry SHARED by
+        # every channel loop (CLI + Telegram). Per session it tracks at most one
+        # RUNNING turn + a FIFO intake queue, so a same-session message that
+        # arrives mid-turn is enqueued (not blocked) and dispatched on completion;
+        # cross-session turns stay fully parallel. This subsumes the deleted
+        # serialize_prior gate.
+        from stackowl.gateway.turn_registry import TurnRegistry
+
+        turn_registry = TurnRegistry()
         owl_registry = OwlRegistry.from_settings(self._settings)
         owl_registry.register_builtin_personas()
         load_builtin_commands()
@@ -744,6 +770,187 @@ class StartupOrchestrator:
 
         cli_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
 
+        # §4.3 non-blocking intake — shared by BOTH channel loops. The queued
+        # PendingIntake (Task 3) carries only request_id/original_input/target, so
+        # to RE-DISPATCH a queued message faithfully (same routing, same clarify
+        # interception) the drain needs the original raw IngressMessage. Park it
+        # here keyed by request_id; pop it when the queue entry is drained.
+        from stackowl.gateway.scanner import IngressMessage, RouteDecision
+
+        _parked_intakes: dict[str, IngressMessage] = {}
+
+        async def _dispatch_turn(
+            pump: ClarifyPump,
+            channel_adapter: _IntakeAdapter,
+            msg: IngressMessage,
+            decision: RouteDecision,
+            input_text: str,
+        ) -> None:
+            """Build + launch ONE turn: create stream, route, register, spawn send.
+
+            Registers the turn in the shared TurnRegistry (marking the session
+            RUNNING) and attaches a completion hook that drains the next queued
+            intake for this session (FIFO). Mirrors the legacy inline body but is
+            shared by both loops so the intake/queue/drain semantics live in ONE
+            place.
+            """
+            # §4.1 stream re-key: register the response stream by trace_id (the key
+            # deliver looks the writer up by), so the turn's output is never
+            # stream-missed.
+            writer, reader = stream_registry.create(msg.trace_id)
+            if decision.route == "parliament" and decision.parliament_owls:
+                log.info(
+                    "[startup] gateway: routing to parliament",
+                    extra={"_fields": {"owls": decision.parliament_owls, "session_id": msg.session_id}},
+                )
+                producer: asyncio.Task[object] = asyncio.create_task(
+                    _deliver_parliament(
+                        input_text, decision.parliament_owls, msg.session_id, msg.trace_id,
+                    )
+                )
+            elif decision.route == "command":
+                log.info(
+                    "[startup] gateway: command route",
+                    extra={"_fields": {"cmd": decision.target, "session_id": msg.session_id}},
+                )
+                cmd_state = PipelineState(
+                    trace_id=msg.trace_id,
+                    session_id=msg.session_id,
+                    input_text=input_text,
+                    channel=msg.channel,
+                    owl_name="system",
+                    pipeline_step="start",
+                    interactive=True,  # real user typed a slash command
+                    reply_target=msg.chat_id,
+                )
+                cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
+                producer = asyncio.create_task(
+                    _deliver_command_stub(
+                        decision.target, msg.session_id, cmd_state, cmd_args, msg.trace_id,
+                    )
+                )
+            else:
+                state = PipelineState(
+                    trace_id=msg.trace_id,
+                    session_id=msg.session_id,
+                    input_text=input_text,
+                    channel=msg.channel,
+                    owl_name=decision.target,
+                    pipeline_step="start",
+                    interactive=True,  # real user turn
+                    reply_target=msg.chat_id,  # §4.5 — route the reply to ITS chat
+                )
+                producer = asyncio.create_task(backend.run(state))
+            producer.add_done_callback(_log_pipeline_crash)
+            # The registry only ever .done()/.cancelled()-inspects the task, so a
+            # Task[object] producer (backend.run returns the state; the deliver
+            # stubs return None) is safe under the Task[None] slot.
+            await turn_registry.register(
+                msg.trace_id, session_id=msg.session_id,
+                task=cast("asyncio.Task[None]", producer),
+                target=msg.chat_id, original_input=input_text,
+            )
+
+            # Completion -> FIFO drain seam. When the turn's producer finishes
+            # (success, crash, or cancel — all reach here), deregister it and
+            # dispatch the next queued intake for this session, so a same-session
+            # message that was enqueued mid-turn runs next. Scheduled as a task
+            # because the done-callback is sync but drain is async; the task is
+            # held in a strong ref so it isn't GC'd mid-flight.
+            def _on_done(_prod: asyncio.Task[object], sid: str = msg.session_id,
+                         rid: str = msg.trace_id) -> None:
+                drain_task = asyncio.create_task(_drain_next(pump, channel_adapter, sid, rid))
+                drain_task.add_done_callback(_log_pipeline_crash)
+
+            producer.add_done_callback(_on_done)
+
+            # Decoupled send: frees the loop so a parked clarify turn can receive
+            # its answer; the pump closes the writer if the producer crashes so the
+            # send can never wedge the session.
+            pump.spawn_send(
+                channel_adapter=channel_adapter, reader=reader,
+                session_id=msg.session_id, request_id=msg.trace_id,
+                producer=producer, writer=writer,
+            )
+
+        async def _drain_next(
+            pump: ClarifyPump,
+            channel_adapter: _IntakeAdapter,
+            session_id: str,
+            finished_request_id: str,
+        ) -> None:
+            """Deregister the finished turn, then dispatch the next queued intake.
+
+            Fail-safe: any error is logged, never raised (it runs detached in a
+            done-callback task). Re-running the dispatch path (scan +
+            resolve_or_rewrite) on the parked raw message keeps routing faithful
+            and lets a clarify that resolved meanwhile still intercept.
+            """
+            try:
+                await turn_registry.deregister(finished_request_id)
+                nxt = turn_registry.pop_next(session_id)
+                if nxt is None:
+                    return
+                parked = _parked_intakes.pop(nxt.request_id, None)
+                if parked is None:
+                    log.error(
+                        "[startup] gateway: queued intake lost its raw message — dropping",
+                        extra={"_fields": {"request_id": nxt.request_id, "session_id": session_id}},
+                    )
+                    return
+                decision = scanner.scan(parked)
+                input_text = (
+                    decision.stripped_text if decision.stripped_text is not None else parked.text
+                )
+                consumed, input_text = await pump.resolve_or_rewrite(
+                    session_id=parked.session_id, channel=parked.channel,
+                    route=decision.route, target=decision.target, input_text=input_text,
+                )
+                if consumed:
+                    # The queued message resolved a parked clarify in place — no new
+                    # turn; but the session is now idle, so drain the NEXT one.
+                    await _drain_next(pump, channel_adapter, session_id, parked.trace_id)
+                    return
+                await _dispatch_turn(pump, channel_adapter, parked, decision, input_text)
+            except Exception as exc:  # noqa: BLE001 — detached drain guard
+                log.error(
+                    "[startup] gateway: drain-next failed — session may stall",
+                    exc_info=exc,
+                    extra={"_fields": {"session_id": session_id}},
+                )
+
+        async def _intake(
+            pump: ClarifyPump,
+            channel_adapter: _IntakeAdapter,
+            msg: IngressMessage,
+            decision: RouteDecision,
+            input_text: str,
+        ) -> None:
+            """Non-blocking intake: dispatch if idle, else enqueue FIFO + ack.
+
+            Replaces the blocking ``serialize_prior`` gate (§4.3). Within a chat at
+            most one RUNNING turn; a second message while one runs is enqueued and
+            the user gets an instant ack — it dispatches on the running turn's
+            completion via the _drain_next hook.
+            """
+            if turn_registry.running(msg.session_id) is None:
+                await _dispatch_turn(pump, channel_adapter, msg, decision, input_text)
+            else:
+                # P1: no relatedness router yet -> always queue (P3 Task 16 inserts
+                # the TurnRouter here to choose STEER/STOP/QUEUE). Park the raw
+                # message so the drain can re-dispatch it faithfully.
+                _parked_intakes[msg.trace_id] = msg
+                turn_registry.enqueue(
+                    msg.session_id, original_input=input_text,
+                    request_id=msg.trace_id, target=msg.chat_id,
+                )
+                log.info(
+                    "[startup] gateway: same-session turn in flight — queued intake",
+                    extra={"_fields": {"session_id": msg.session_id, "request_id": msg.trace_id}},
+                )
+                with contextlib.suppress(Exception):
+                    await channel_adapter.send_text("Queued — I'll start that next.")
+
         async def _message_loop() -> None:
             log.info("[startup] gateway: message loop started")
             try:
@@ -774,62 +981,11 @@ class StartupOrchestrator:
                         )
                         if consumed:
                             continue
-                        # Don't clobber a still-delivering same-session turn.
-                        await cli_pump.serialize_prior(msg.session_id)
-                        # §4.1 stream re-key: register the response stream by
-                        # trace_id (== the key deliver looks the writer up by), so
-                        # the owl turn's output is never stream-missed.
-                        writer, reader = stream_registry.create(msg.trace_id)
-                        if decision.route == "parliament" and decision.parliament_owls:
-                            log.info(
-                                "[startup] gateway: routing to parliament",
-                                extra={"_fields": {"owls": decision.parliament_owls, "session_id": msg.session_id}},
-                            )
-                            producer: asyncio.Task[object] = asyncio.create_task(
-                                _deliver_parliament(
-                                    input_text, decision.parliament_owls, msg.session_id, msg.trace_id,
-                                )
-                            )
-                        elif decision.route == "command":
-                            log.info(
-                                "[startup] gateway: command route",
-                                extra={"_fields": {"cmd": decision.target, "session_id": msg.session_id}},
-                            )
-                            cmd_state = PipelineState(
-                                trace_id=msg.trace_id,
-                                session_id=msg.session_id,
-                                input_text=input_text,
-                                channel=msg.channel,
-                                owl_name="system",
-                                pipeline_step="start",
-                                interactive=True,  # real user typed a slash command
-                            )
-                            cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
-                            producer = asyncio.create_task(
-                                _deliver_command_stub(
-                                    decision.target, msg.session_id, cmd_state, cmd_args, msg.trace_id,
-                                )
-                            )
-                        else:
-                            state = PipelineState(
-                                trace_id=msg.trace_id,
-                                session_id=msg.session_id,
-                                input_text=input_text,
-                                channel=msg.channel,
-                                owl_name=decision.target,
-                                pipeline_step="start",
-                                interactive=True,  # real user turn on the CLI channel
-                            )
-                            producer = asyncio.create_task(backend.run(state))
-                        producer.add_done_callback(_log_pipeline_crash)
-                        # Decoupled send: frees the loop so a parked clarify turn
-                        # can receive its answer; the pump closes the writer if the
-                        # producer crashes so the send can never wedge the session.
-                        cli_pump.spawn_send(
-                            channel_adapter=adapter, reader=reader,
-                            session_id=msg.session_id, request_id=msg.trace_id,
-                            producer=producer, writer=writer,
-                        )
+                        # §4.3 non-blocking intake: dispatch if the session is idle,
+                        # else enqueue FIFO + instant-ack (no blocking on the running
+                        # turn — serialize_prior is GONE). The running turn's
+                        # completion drains the next queued intake.
+                        await _intake(cli_pump, adapter, msg, decision, input_text)
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001 — top-level loop guard
@@ -945,58 +1101,11 @@ class StartupOrchestrator:
                                 )
                                 if consumed:
                                     continue
-                                await tg_pump.serialize_prior(msg.session_id)
-                                # §4.1 stream re-key: register by trace_id (the key
-                                # deliver looks the writer up by).
-                                writer, reader = stream_registry.create(msg.trace_id)
-                                if decision.route == "parliament" and decision.parliament_owls:
-                                    log.info(
-                                        "[startup] gateway: routing to parliament (telegram)",
-                                        extra={"_fields": {
-                                            "owls": decision.parliament_owls,
-                                            "session_id": msg.session_id,
-                                        }},
-                                    )
-                                    tg_producer: asyncio.Task[object] = asyncio.create_task(
-                                        _deliver_parliament(
-                                            input_text, decision.parliament_owls, msg.session_id, msg.trace_id,
-                                        )
-                                    )
-                                elif decision.route == "command":
-                                    log.info(
-                                        "[startup] gateway: command route (telegram)",
-                                        extra={"_fields": {"cmd": decision.target, "session_id": msg.session_id}},
-                                    )
-                                    tg_cmd_state = PipelineState(
-                                        trace_id=msg.trace_id,
-                                        session_id=msg.session_id,
-                                        input_text=input_text,
-                                        channel=msg.channel,
-                                        owl_name="system",
-                                        pipeline_step="start",
-                                        interactive=True,  # real user typed a slash command
-                                    )
-                                    tg_cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
-                                    tg_producer = asyncio.create_task(_deliver_command_stub(
-                                        decision.target, msg.session_id, tg_cmd_state, tg_cmd_args, msg.trace_id,
-                                    ))
-                                else:
-                                    state = PipelineState(
-                                        trace_id=msg.trace_id,
-                                        session_id=msg.session_id,
-                                        input_text=input_text,
-                                        channel=msg.channel,
-                                        owl_name=decision.target,
-                                        pipeline_step="start",
-                                        interactive=True,  # real user turn on the Telegram channel
-                                    )
-                                    tg_producer = asyncio.create_task(backend.run(state))
-                                tg_producer.add_done_callback(_log_pipeline_crash)
-                                tg_pump.spawn_send(
-                                    channel_adapter=telegram_adapter, reader=reader,
-                                    session_id=msg.session_id, request_id=msg.trace_id,
-                                    producer=tg_producer, writer=writer,
-                                )
+                                # §4.3 non-blocking intake (identical to the CLI
+                                # loop): dispatch if idle, else enqueue FIFO +
+                                # instant-ack. serialize_prior is GONE; the running
+                                # turn's completion drains the next queued intake.
+                                await _intake(tg_pump, telegram_adapter, msg, decision, input_text)
                             except asyncio.CancelledError:
                                 raise
                             except Exception as exc:  # noqa: BLE001 — top-level loop guard

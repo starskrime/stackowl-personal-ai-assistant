@@ -169,20 +169,26 @@ async def test_classifier_answer_resolves() -> None:
     assert gw.resolve_calls == [("s1", "cli", "blue")]
 
 
-# ------------------------------------------------------------ serialize_prior
+# ------------------------------------------------- non-blocking intake (§4.3)
+#
+# DELIBERATE change (concurrent-msg §4.3, Task 5): ``serialize_prior`` was DELETED
+# by design — same-session ordering now lives in the TurnRegistry (at most one
+# RUNNING turn per session + a FIFO intake queue), NOT in a per-session
+# ``_inflight`` await-gate on the pump. This test is the replacement: it asserts
+# the pump no longer carries that blocking gate (the non-blocking intake itself is
+# exercised end to end against the real TurnRegistry in
+# tests/gateway/test_nonblocking_intake.py). NOT weakened — the prior assertion
+# (serialize_prior awaits the running turn) describes behavior that must NO LONGER
+# exist, so asserting its absence is the faithful inverse.
 
 
-async def test_serialize_prior_awaits_unfinished_same_session() -> None:
+async def test_serialize_prior_gate_is_gone() -> None:
     pump, _, _ = _pump()
-    done = asyncio.Event()
-
-    async def _slow() -> None:
-        await asyncio.sleep(0.02)
-        done.set()
-
-    pump._inflight["s1"] = asyncio.create_task(_slow())  # type: ignore[attr-defined]
-    await pump.serialize_prior("s1")
-    assert done.is_set()  # serialize_prior waited for the prior turn to finish
+    # The blocking serialize gate must be removed — intake never awaits a running
+    # same-session turn on the pump anymore (the TurnRegistry queues it instead).
+    assert not hasattr(pump, "serialize_prior")
+    # _inflight survives ONLY as the drain/reap ledger for spawn_send + drain().
+    assert pump._inflight == {}  # type: ignore[attr-defined]
 
 
 # ----------------------------------------------------------------- spawn_send
