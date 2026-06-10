@@ -293,6 +293,59 @@ class TurnRegistry:
             )
             return True
 
+    def _reroute_survivors_locked(self, turn: Turn, survivors: list[str]) -> None:
+        """Re-route already-drained mailbox survivors as queued-new turns.
+
+        MUST be called with ``turn.lock`` HELD (it mutates the intake queue as part
+        of the same atomic teardown critical section). Each survivor becomes a
+        queued-new turn (FIFO, inheriting the turn's ``session_id``/``target``) with
+        a fresh request id derived from the turn id + ordinal so the orchestrator's
+        queued-new dispatch keys them uniquely. Shared by ``drain_survivors`` and
+        ``finalize_and_drain`` so the enqueue-as-queued-new logic lives in ONE
+        place. A full intake queue is loud-but-non-fatal (logged, never raised) —
+        the survivor stays in the caller's returned list so it is still visible.
+        """
+        for i, text in enumerate(survivors):
+            try:
+                self.enqueue(
+                    turn.session_id,
+                    original_input=text,
+                    request_id=f"{turn.turn_id}-survivor-{i}",
+                    target=turn.target,
+                )
+                log.gateway.info(
+                    "[turn] survivor steer re-routed as queued-new",
+                    extra={"_fields": {
+                        "request_id": turn.turn_id, "session_id": turn.session_id,
+                        "survivor_index": i,
+                    }},
+                )
+            except QueueFull as exc:
+                # The intake queue is full — the survivor cannot be re-routed.
+                # Loud, never silent: the steer is dropped but logged as a lost
+                # instruction so it is visible (the alternative — unbounded queue
+                # growth — is worse). Remaining survivors stay in the returned list
+                # so the caller still sees them.
+                log.gateway.error(
+                    "[turn] survivor steer re-route failed — intake queue full, DROPPED",
+                    exc_info=exc,
+                    extra={"_fields": {
+                        "request_id": turn.turn_id, "session_id": turn.session_id,
+                        "survivor_index": i,
+                    }},
+                )
+
+    @staticmethod
+    def _drain_mailbox_locked(turn: Turn) -> list[str]:
+        """Pop every pending mailbox item (caller MUST hold ``turn.lock``)."""
+        survivors: list[str] = []
+        while True:
+            try:
+                survivors.append(turn.steering_mailbox.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return survivors
+
     async def drain_survivors(self, request_id: str) -> list[str]:
         """On teardown, drain remaining mailbox items and re-route each as new.
 
@@ -310,42 +363,57 @@ class TurnRegistry:
         turn = self._turns.get(request_id)
         if turn is None:
             return []
-        survivors: list[str] = []
         async with turn.lock:
-            while True:
-                try:
-                    survivors.append(turn.steering_mailbox.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-            for i, text in enumerate(survivors):
-                try:
-                    self.enqueue(
-                        turn.session_id,
-                        original_input=text,
-                        request_id=f"{request_id}-survivor-{i}",
-                        target=turn.target,
-                    )
-                    log.gateway.info(
-                        "[turn] drain_survivors: re-routed survivor steer as queued-new",
-                        extra={"_fields": {
-                            "request_id": request_id, "session_id": turn.session_id,
-                            "survivor_index": i,
-                        }},
-                    )
-                except QueueFull as exc:
-                    # The intake queue is full — the survivor cannot be re-routed.
-                    # Loud, never silent: the steer is dropped but logged as a lost
-                    # instruction so it is visible (the alternative — unbounded
-                    # queue growth — is worse). Remaining survivors stay in the
-                    # returned list so the caller still sees them.
-                    log.gateway.error(
-                        "[turn] drain_survivors: intake queue full — survivor steer DROPPED",
-                        exc_info=exc,
-                        extra={"_fields": {
-                            "request_id": request_id, "session_id": turn.session_id,
-                            "survivor_index": i,
-                        }},
-                    )
+            survivors = self._drain_mailbox_locked(turn)
+            self._reroute_survivors_locked(turn, survivors)
+        return survivors
+
+    async def finalize_and_drain(self, request_id: str) -> list[str]:
+        """Atomically FINALIZE the turn then drain+re-route survivors (one lock).
+
+        §9 invariant 1 (lost-steer guard) — the COMPLETION-SEAM side. The
+        orchestrator calls this when a turn's provider loop has ENDED but BEFORE
+        ``deregister``. Without it, a steer landing in that window (loop done,
+        status still RUNNING, not yet deregistered) is ``put`` onto a mailbox whose
+        loop will never fold it and is then GC'd — a silently lost instruction.
+
+        Under the turn's per-turn ``lock`` (the SAME lock ``try_steer`` takes, so
+        the two are serialized), in ONE atomic critical section:
+
+          1. CAS ``RUNNING→FINALIZING`` — so a CONCURRENT ``try_steer`` that
+             acquires the lock AFTER this now reads FINALIZING and converts its
+             steer to a queued-new turn (never onto the dead mailbox). An
+             already-FINALIZING turn is left as-is (idempotent; never regressed to
+             RUNNING, never an illegal transition).
+          2. Drain any mailbox survivors (a steer that ``try_steer`` accepted onto
+             the RUNNING turn just before this acquired the lock) and re-route each
+             as a queued-new turn via the shared ``_reroute_survivors_locked``.
+
+        The flip and the drain are ATOMIC under one lock — there is no instant
+        where status reads RUNNING but the drain already ran (which would re-open
+        the lost-steer hole). Returns the drained survivor texts (already
+        re-enqueued) so the caller can log/act on them; an unknown ``request_id``
+        (already deregistered) → ``[]`` (fail-safe, never raises).
+        """
+        turn = self._turns.get(request_id)
+        if turn is None:
+            return []
+        async with turn.lock:
+            # 1. Flip RUNNING->FINALIZING so a steer that acquires the lock AFTER
+            #    us converts to queued-new instead of landing on the dead mailbox.
+            if turn.status is TurnStatus.RUNNING:
+                turn.status = TurnStatus.FINALIZING
+            # 2. Drain + re-route any steer accepted onto the (then-RUNNING) turn
+            #    before we took the lock — same atomic section, no window.
+            survivors = self._drain_mailbox_locked(turn)
+            self._reroute_survivors_locked(turn, survivors)
+            log.gateway.debug(
+                "[turn] finalize_and_drain: finalized + drained survivors",
+                extra={"_fields": {
+                    "request_id": request_id, "session_id": turn.session_id,
+                    "status": turn.status.value, "survivors": len(survivors),
+                }},
+            )
         return survivors
 
     async def cas_status(self, request_id: str, expect: TurnStatus, new: TurnStatus) -> bool:

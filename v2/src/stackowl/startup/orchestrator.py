@@ -32,8 +32,13 @@ class _IntakeAdapter(Protocol):
     """The channel-adapter surface the §4.3 intake helpers need.
 
     Both the CLI and Telegram adapters satisfy this: ``send`` drains a turn's
-    response stream and ``send_text`` posts the instant queued-intake ack.
+    response stream, ``send_text`` posts the instant queued-intake ack, and
+    ``channel_name`` lets the §9-inv.1 completion seam stamp a re-routed survivor
+    steer's synthetic IngressMessage with the SAME channel it arrived on.
     """
+
+    @property
+    def channel_name(self) -> str: ...  # noqa: D102
 
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None: ...  # noqa: D102
 
@@ -906,6 +911,58 @@ class StartupOrchestrator:
             recurse_trace_id: str | None = None
             try:
                 async with intake_lock:
+                    # §9 inv.1 (lost-steer) — the COMPLETION SEAM. The producer
+                    # loop has ENDED but the turn is still registered RUNNING. A
+                    # steer landing in the window between loop-done and deregister
+                    # would otherwise be put onto a mailbox no loop will fold, then
+                    # GC'd — a silently lost instruction. finalize_and_drain
+                    # ATOMICALLY (under the per-TURN lock) flips RUNNING→FINALIZING
+                    # — so a CONCURRENT try_steer now reads FINALIZING and converts
+                    # its steer to a queued-new turn — THEN drains any already-
+                    # accepted survivor and re-routes each as a queued-new turn
+                    # (enqueued onto THIS session, picked up by the pop_next below /
+                    # the next drain). Fail-safe: own suppression so a teardown
+                    # error never crashes the detached drain. Lock ordering:
+                    # finalize_and_drain takes the per-TURN lock (try_steer takes the
+                    # SAME, never the session intake lock) — no inversion with the
+                    # session intake lock we already hold.
+                    with contextlib.suppress(Exception):
+                        survivors = await turn_registry.finalize_and_drain(
+                            finished_request_id
+                        )
+                        if survivors:
+                            # finalize_and_drain already ENQUEUED each survivor as a
+                            # queued-new intake keyed `{rid}-survivor-{i}`. For the
+                            # drain's pop_next path below (and subsequent drains) to
+                            # re-dispatch them faithfully — same scan + resolve +
+                            # dispatch as any queued message — each needs a parked
+                            # raw IngressMessage under that SAME key (else the drain
+                            # logs "lost its raw message" and DROPS it). Synthesize
+                            # one per survivor, inheriting this session/channel and
+                            # the finished turn's chat target so the re-routed steer
+                            # routes back to its own chat. The trace_id is the
+                            # survivor key so the stream/registry keying stays unique.
+                            finished_turn = turn_registry.get(finished_request_id)
+                            survivor_target = (
+                                finished_turn.target if finished_turn is not None else None
+                            )
+                            for i, text in enumerate(survivors):
+                                survivor_rid = f"{finished_request_id}-survivor-{i}"
+                                _parked_intakes[survivor_rid] = IngressMessage(
+                                    text=text,
+                                    session_id=session_id,
+                                    channel=channel_adapter.channel_name,
+                                    trace_id=survivor_rid,
+                                    chat_id=survivor_target,
+                                )
+                            log.info(
+                                "[startup] gateway: completion seam drained survivor steers",
+                                extra={"_fields": {
+                                    "session_id": session_id,
+                                    "request_id": finished_request_id,
+                                    "survivors": len(survivors),
+                                }},
+                            )
                     await turn_registry.deregister(finished_request_id)
                     nxt = turn_registry.pop_next(session_id)
                     if nxt is not None:
