@@ -195,7 +195,7 @@ class StartupOrchestrator:
         # arrives mid-turn is enqueued (not blocked) and dispatched on completion;
         # cross-session turns stay fully parallel. This subsumes the deleted
         # serialize_prior gate.
-        from stackowl.gateway.turn_registry import TurnRegistry
+        from stackowl.gateway.turn_registry import QueueFull, TurnRegistry
 
         turn_registry = TurnRegistry()
         owl_registry = OwlRegistry.from_settings(self._settings)
@@ -899,44 +899,113 @@ class StartupOrchestrator:
             # untouched. _dispatch_turn/register do NOT re-acquire this lock (no
             # re-entrancy — acquisition lives only here and in _intake).
             intake_lock = turn_registry.session_intake_lock(session_id)
+            # Trace id to recurse-drain on (the consumed-clarify case): None means
+            # no same-session recursion. Captured here so the post-lock recurse does
+            # NOT dereference the possibly-None `parked` (mypy-narrowing safe).
+            recurse_trace_id: str | None = None
             try:
                 async with intake_lock:
                     await turn_registry.deregister(finished_request_id)
                     nxt = turn_registry.pop_next(session_id)
-                    if nxt is None:
-                        return
-                    parked = _parked_intakes.pop(nxt.request_id, None)
-                    if parked is None:
-                        log.error(
-                            "[startup] gateway: queued intake lost its raw message — dropping",
-                            extra={"_fields": {"request_id": nxt.request_id, "session_id": session_id}},
-                        )
-                        return
-                    decision = scanner.scan(parked)
-                    input_text = (
-                        decision.stripped_text if decision.stripped_text is not None else parked.text
-                    )
-                    consumed, input_text = await pump.resolve_or_rewrite(
-                        session_id=parked.session_id, channel=parked.channel,
-                        route=decision.route, target=decision.target, input_text=input_text,
-                    )
-                    if consumed:
-                        # The queued message resolved a parked clarify in place — no
-                        # new turn; the session is now idle. Recurse OUTSIDE this
-                        # locked block (after release) to drain the NEXT one without
-                        # self-deadlocking on the same per-session lock.
-                        recurse_after = True
-                    else:
-                        await _dispatch_turn(pump, channel_adapter, parked, decision, input_text)
-                        recurse_after = False
-                if recurse_after:
-                    await _drain_next(pump, channel_adapter, session_id, parked.trace_id)
+                    if nxt is not None:
+                        parked = _parked_intakes.pop(nxt.request_id, None)
+                        if parked is None:
+                            log.error(
+                                "[startup] gateway: queued intake lost its raw message — dropping",
+                                extra={"_fields": {"request_id": nxt.request_id, "session_id": session_id}},
+                            )
+                        else:
+                            decision = scanner.scan(parked)
+                            input_text = (
+                                decision.stripped_text if decision.stripped_text is not None else parked.text
+                            )
+                            consumed, input_text = await pump.resolve_or_rewrite(
+                                session_id=parked.session_id, channel=parked.channel,
+                                route=decision.route, target=decision.target, input_text=input_text,
+                            )
+                            if consumed:
+                                # The queued message resolved a parked clarify in
+                                # place — no new turn; the session is now idle.
+                                # Recurse OUTSIDE this locked block (after release)
+                                # to drain the NEXT one without self-deadlocking on
+                                # the same per-session lock.
+                                recurse_trace_id = parked.trace_id
+                            else:
+                                await _dispatch_turn(pump, channel_adapter, parked, decision, input_text)
+                if recurse_trace_id is not None:
+                    await _drain_next(pump, channel_adapter, session_id, recurse_trace_id)
             except Exception as exc:  # noqa: BLE001 — detached drain guard
                 log.error(
                     "[startup] gateway: drain-next failed — session may stall",
                     exc_info=exc,
                     extra={"_fields": {"session_id": session_id}},
                 )
+            # §4.7 global-cap WAKE: this turn's completion freed a global slot. A
+            # turn HELD earlier because the host was at the global cap was enqueued
+            # on its OWN (idle) session, so its per-session completion hook never
+            # fires (that session has no running turn to complete). Surface one such
+            # stranded session and dispatch its head intake. Runs AFTER releasing
+            # THIS session's lock (the held turn lives on a DIFFERENT session with
+            # its own lock — never nest the two). Fail-safe: own try/except so a
+            # wake error never stalls the seam.
+            with contextlib.suppress(Exception):
+                await _wake_global_held(pump, channel_adapter)
+
+        async def _wake_global_held(
+            pump: ClarifyPump,
+            channel_adapter: _IntakeAdapter,
+        ) -> None:
+            """Dispatch one globally-held turn now that a global slot has freed.
+
+            Finds an idle session with a queued intake (the global-cap hold shape),
+            then under THAT session's intake lock re-checks capacity and dispatches
+            its head intake faithfully (same scan + resolve_or_rewrite + dispatch as
+            the per-session drain). Recurses to wake the next holder while capacity
+            remains. Fail-safe per the caller's suppression; bounded by the finite
+            number of queued holders.
+            """
+            sid = turn_registry.idle_queued_session()
+            if sid is None:
+                return
+            wake_lock = turn_registry.session_intake_lock(sid)
+            woke = False
+            async with wake_lock:
+                # Re-check under the lock: capacity may have re-saturated and the
+                # session may have started running between find and acquire.
+                if (
+                    turn_registry.running(sid) is not None
+                    or turn_registry.at_global_capacity()
+                ):
+                    return
+                nxt = turn_registry.pop_next(sid)
+                if nxt is None:
+                    return
+                parked = _parked_intakes.pop(nxt.request_id, None)
+                if parked is None:
+                    log.error(
+                        "[startup] gateway: held intake lost its raw message — dropping",
+                        extra={"_fields": {"request_id": nxt.request_id, "session_id": sid}},
+                    )
+                    return
+                decision = scanner.scan(parked)
+                input_text = (
+                    decision.stripped_text if decision.stripped_text is not None else parked.text
+                )
+                consumed, input_text = await pump.resolve_or_rewrite(
+                    session_id=parked.session_id, channel=parked.channel,
+                    route=decision.route, target=decision.target, input_text=input_text,
+                )
+                if not consumed:
+                    await _dispatch_turn(pump, channel_adapter, parked, decision, input_text)
+                    woke = True
+            # Only recurse on REAL progress (we dispatched a holder): there may be
+            # MORE holders while slots remain, so wake the next OUTSIDE this lock
+            # (the next holder has a different session lock). The re-check at the top
+            # stops the recursion once capacity re-saturates or no holder remains —
+            # gating on `woke` guarantees termination (no progress -> no recurse).
+            if woke:
+                with contextlib.suppress(Exception):
+                    await _wake_global_held(pump, channel_adapter)
 
         async def _intake(
             pump: ClarifyPump,
@@ -961,27 +1030,69 @@ class StartupOrchestrator:
             # here until drain has re-registered, then correctly sees the session
             # RUNNING and enqueues — never starting a second concurrent turn.
             # _dispatch_turn/register do NOT re-acquire this lock (no re-entrancy).
-            queued_for_ack = False
+            #
+            # §4.7 cap enforcement (Task 8): the dispatch branch ALSO gates on the
+            # host global cap, and EVERY enqueue is guarded against QueueFull —
+            # both INSIDE this lock (check-then-act stays atomic vs _drain_next).
+            #   ack_kind == "queued"  -> same-session turn in flight (FIFO behind it)
+            #   ack_kind == "busy"    -> held because the host is at the global cap
+            #   ack_kind == "overflow"-> per-session queue full: notice + DROP
+            ack_kind = ""
             async with turn_registry.session_intake_lock(msg.session_id):
-                if turn_registry.running(msg.session_id) is None:
+                session_idle = turn_registry.running(msg.session_id) is None
+                # Global cap: at capacity we do NOT spawn a new turn even on an idle
+                # session — hold it (bounded enqueue) so it runs when capacity frees.
+                if session_idle and not turn_registry.at_global_capacity():
                     await _dispatch_turn(pump, channel_adapter, msg, decision, input_text)
                 else:
-                    # P1: no relatedness router yet -> always queue (P3 Task 16
-                    # inserts the TurnRouter here to choose STEER/STOP/QUEUE). Park
-                    # the raw message so the drain can re-dispatch it faithfully.
+                    # Either a same-session turn is running (FIFO) OR the host is at
+                    # the global cap (hold a fresh-session turn). P1: no relatedness
+                    # router yet -> always queue (P3 Task 16 inserts the TurnRouter
+                    # here). Park the raw message so the drain can re-dispatch it.
                     _parked_intakes[msg.trace_id] = msg
-                    turn_registry.enqueue(
-                        msg.session_id, original_input=input_text,
-                        request_id=msg.trace_id, target=msg.chat_id,
-                    )
-                    log.info(
-                        "[startup] gateway: same-session turn in flight — queued intake",
-                        extra={"_fields": {"session_id": msg.session_id, "request_id": msg.trace_id}},
-                    )
-                    queued_for_ack = True
-            # Ack OUTSIDE the lock — the network send must not hold the intake
-            # critical section (and a slow ack must never block drain/intake).
-            if queued_for_ack:
+                    try:
+                        turn_registry.enqueue(
+                            msg.session_id, original_input=input_text,
+                            request_id=msg.trace_id, target=msg.chat_id,
+                        )
+                    except QueueFull as exc:
+                        # Loud overflow: never silently grow, never crash the loop.
+                        # Remove the just-parked raw message (it never entered the
+                        # queue) and notify the user; DROP this intake.
+                        _parked_intakes.pop(msg.trace_id, None)
+                        log.warning(
+                            "[startup] gateway: intake queue full — dropping with notice",
+                            extra={"_fields": {
+                                "session_id": msg.session_id,
+                                "request_id": msg.trace_id,
+                                "reason": str(exc),
+                            }},
+                        )
+                        ack_kind = "overflow"
+                    else:
+                        # A globally-held turn sits on an idle session (no running
+                        # turn to fire its completion->drain hook), so the busy ack
+                        # doubles as the signal that the global-cap-WAKE seam in
+                        # _drain_next will need to surface it when capacity frees.
+                        ack_kind = "busy" if session_idle else "queued"
+                        log.info(
+                            "[startup] gateway: turn held — queued intake (%s)",
+                            ack_kind,
+                            extra={"_fields": {
+                                "session_id": msg.session_id,
+                                "request_id": msg.trace_id,
+                                "hold_reason": ack_kind,
+                            }},
+                        )
+            # Ack/notice OUTSIDE the lock — the network send must not hold the
+            # intake critical section (and a slow send must never block drain/intake).
+            if ack_kind == "overflow":
+                with contextlib.suppress(Exception):
+                    await channel_adapter.send_text("Too many queued messages — please wait.")
+            elif ack_kind == "busy":
+                with contextlib.suppress(Exception):
+                    await channel_adapter.send_text("Busy — I'll start that as soon as I have capacity.")
+            elif ack_kind == "queued":
                 with contextlib.suppress(Exception):
                     await channel_adapter.send_text("Queued — I'll start that next.")
 

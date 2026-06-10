@@ -220,6 +220,23 @@ class TurnRegistry:
             return None
         return q.popleft()
 
+    def idle_queued_session(self) -> str | None:
+        """Return one session that has queued intakes but NO running turn, if any.
+
+        This is the global-cap-WAKE seam: a turn HELD because the host was at the
+        global running cap is enqueued on its own (idle) session, so the
+        per-session completion->drain hook never fires for it (that session has no
+        running turn to complete). When ANY turn finishes and global capacity
+        frees, the orchestrator's drain consults this to surface such a stranded
+        session and dispatch its head intake. Deterministic FIFO-ish: first idle
+        session (insertion order of the queues dict) with a non-empty queue.
+        Returns None when no session is in that state (the common case).
+        """
+        for sid, q in self._queues.items():
+            if q and self._running.get(sid) is None:
+                return sid
+        return None
+
     async def deregister(self, request_id: str) -> None:
         turn = self._turns.pop(request_id, None)
         if turn is None:
