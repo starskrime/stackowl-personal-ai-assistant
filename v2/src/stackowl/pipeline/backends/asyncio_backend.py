@@ -48,6 +48,8 @@ class AsyncioBackend(OrchestratorBackend):
             delegation_chain=state.delegation_chain,
             owl_name=state.owl_name,
             creation_ceiling=state.creation_ceiling,
+            task_id=state.task_id,
+            durable_owner_id=state.durable_owner_id,
         )
         current = state
         step_durations: list[tuple[str, float]] = []
