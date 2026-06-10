@@ -55,6 +55,30 @@ class TurnRegistry:
         self._turns: dict[str, Turn] = {}            # request_id -> Turn
         self._running: dict[str, str] = {}           # session_id -> request_id
         self._queues: dict[str, deque[PendingIntake]] = {}
+        # Per-session intake lock (lazily created, stable per session). It makes
+        # the "decide dispatch-vs-enqueue and claim the running slot" critical
+        # section mutually exclusive between the orchestrator's _intake and the
+        # detached _drain_next: _drain_next holds it across its
+        # resolve_or_rewrite await (the classifier yield), so a fresh same-session
+        # _intake BLOCKS on the lock until drain has re-registered (or consumed
+        # the queued message) instead of seeing a transiently-IDLE session and
+        # starting a SECOND running turn. Cross-session uses different locks and
+        # is untouched. Holding across the LLM await is correct: same-session
+        # intake is serialized BY DESIGN (≤1 running turn per session).
+        self._intake_locks: dict[str, asyncio.Lock] = {}
+
+    def session_intake_lock(self, session_id: str) -> asyncio.Lock:
+        """Return the stable per-session intake lock (created on first use).
+
+        Must be created lazily on the running event loop (an ``asyncio.Lock``
+        binds to the loop where it is first awaited), so it is built here on
+        demand rather than eagerly in ``__init__``.
+        """
+        lock = self._intake_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._intake_locks[session_id] = lock
+        return lock
 
     def get(self, request_id: str) -> Turn | None:
         return self._turns.get(request_id)

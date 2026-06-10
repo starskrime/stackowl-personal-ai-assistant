@@ -886,32 +886,51 @@ class StartupOrchestrator:
             resolve_or_rewrite) on the parked raw message keeps routing faithful
             and lets a clarify that resolved meanwhile still intercept.
             """
+            # §4.3 race fix: hold the per-session intake lock across the WHOLE
+            # decide-and-claim sequence (deregister → pop_next → resolve_or_rewrite
+            # → _dispatch_turn/register). resolve_or_rewrite AWAITS the LLM
+            # classifier when a clarify is pending and YIELDS; during that yield the
+            # session is transiently de-registered (looks IDLE). Without the lock a
+            # fresh same-session _intake would see IDLE and start a SECOND running
+            # turn (two turns for one session → register overwrites the slot,
+            # orphaning one + corrupting FIFO/drain). Holding the lock across the
+            # await is correct: same-session intake is serialized BY DESIGN (≤1
+            # running turn per session); cross-session uses a different lock and is
+            # untouched. _dispatch_turn/register do NOT re-acquire this lock (no
+            # re-entrancy — acquisition lives only here and in _intake).
+            intake_lock = turn_registry.session_intake_lock(session_id)
             try:
-                await turn_registry.deregister(finished_request_id)
-                nxt = turn_registry.pop_next(session_id)
-                if nxt is None:
-                    return
-                parked = _parked_intakes.pop(nxt.request_id, None)
-                if parked is None:
-                    log.error(
-                        "[startup] gateway: queued intake lost its raw message — dropping",
-                        extra={"_fields": {"request_id": nxt.request_id, "session_id": session_id}},
+                async with intake_lock:
+                    await turn_registry.deregister(finished_request_id)
+                    nxt = turn_registry.pop_next(session_id)
+                    if nxt is None:
+                        return
+                    parked = _parked_intakes.pop(nxt.request_id, None)
+                    if parked is None:
+                        log.error(
+                            "[startup] gateway: queued intake lost its raw message — dropping",
+                            extra={"_fields": {"request_id": nxt.request_id, "session_id": session_id}},
+                        )
+                        return
+                    decision = scanner.scan(parked)
+                    input_text = (
+                        decision.stripped_text if decision.stripped_text is not None else parked.text
                     )
-                    return
-                decision = scanner.scan(parked)
-                input_text = (
-                    decision.stripped_text if decision.stripped_text is not None else parked.text
-                )
-                consumed, input_text = await pump.resolve_or_rewrite(
-                    session_id=parked.session_id, channel=parked.channel,
-                    route=decision.route, target=decision.target, input_text=input_text,
-                )
-                if consumed:
-                    # The queued message resolved a parked clarify in place — no new
-                    # turn; but the session is now idle, so drain the NEXT one.
+                    consumed, input_text = await pump.resolve_or_rewrite(
+                        session_id=parked.session_id, channel=parked.channel,
+                        route=decision.route, target=decision.target, input_text=input_text,
+                    )
+                    if consumed:
+                        # The queued message resolved a parked clarify in place — no
+                        # new turn; the session is now idle. Recurse OUTSIDE this
+                        # locked block (after release) to drain the NEXT one without
+                        # self-deadlocking on the same per-session lock.
+                        recurse_after = True
+                    else:
+                        await _dispatch_turn(pump, channel_adapter, parked, decision, input_text)
+                        recurse_after = False
+                if recurse_after:
                     await _drain_next(pump, channel_adapter, session_id, parked.trace_id)
-                    return
-                await _dispatch_turn(pump, channel_adapter, parked, decision, input_text)
             except Exception as exc:  # noqa: BLE001 — detached drain guard
                 log.error(
                     "[startup] gateway: drain-next failed — session may stall",
@@ -933,21 +952,36 @@ class StartupOrchestrator:
             the user gets an instant ack — it dispatches on the running turn's
             completion via the _drain_next hook.
             """
-            if turn_registry.running(msg.session_id) is None:
-                await _dispatch_turn(pump, channel_adapter, msg, decision, input_text)
-            else:
-                # P1: no relatedness router yet -> always queue (P3 Task 16 inserts
-                # the TurnRouter here to choose STEER/STOP/QUEUE). Park the raw
-                # message so the drain can re-dispatch it faithfully.
-                _parked_intakes[msg.trace_id] = msg
-                turn_registry.enqueue(
-                    msg.session_id, original_input=input_text,
-                    request_id=msg.trace_id, target=msg.chat_id,
-                )
-                log.info(
-                    "[startup] gateway: same-session turn in flight — queued intake",
-                    extra={"_fields": {"session_id": msg.session_id, "request_id": msg.trace_id}},
-                )
+            # §4.3 race fix: hold the per-session intake lock across the WHOLE
+            # running()-check → (dispatch+register) | (enqueue) decision. This
+            # makes the "decide dispatch-vs-enqueue and claim the running slot"
+            # section mutually exclusive with the detached _drain_next (which
+            # holds the SAME lock across its resolve_or_rewrite await). So a fresh
+            # same-session message that arrives while drain is mid-decision BLOCKS
+            # here until drain has re-registered, then correctly sees the session
+            # RUNNING and enqueues — never starting a second concurrent turn.
+            # _dispatch_turn/register do NOT re-acquire this lock (no re-entrancy).
+            queued_for_ack = False
+            async with turn_registry.session_intake_lock(msg.session_id):
+                if turn_registry.running(msg.session_id) is None:
+                    await _dispatch_turn(pump, channel_adapter, msg, decision, input_text)
+                else:
+                    # P1: no relatedness router yet -> always queue (P3 Task 16
+                    # inserts the TurnRouter here to choose STEER/STOP/QUEUE). Park
+                    # the raw message so the drain can re-dispatch it faithfully.
+                    _parked_intakes[msg.trace_id] = msg
+                    turn_registry.enqueue(
+                        msg.session_id, original_input=input_text,
+                        request_id=msg.trace_id, target=msg.chat_id,
+                    )
+                    log.info(
+                        "[startup] gateway: same-session turn in flight — queued intake",
+                        extra={"_fields": {"session_id": msg.session_id, "request_id": msg.trace_id}},
+                    )
+                    queued_for_ack = True
+            # Ack OUTSIDE the lock — the network send must not hold the intake
+            # critical section (and a slow ack must never block drain/intake).
+            if queued_for_ack:
                 with contextlib.suppress(Exception):
                     await channel_adapter.send_text("Queued — I'll start that next.")
 
