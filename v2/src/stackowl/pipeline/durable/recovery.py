@@ -167,9 +167,18 @@ class DurableTaskRecoverer:
         seen: set[str] = set()
         orphans: list[DurableTask] = []
         for task in (*running, *recovering):
+            # D1 §9 — roots only. Children are resumed transitively when the
+            # parent re-executes its delegate_task and re-derives the same child
+            # id; listing them here would double-drive them as detached
+            # top-level goals with no one to return to.
+            if task.parent_task_id is not None:
+                continue
             if task.task_id not in seen:
                 seen.add(task.task_id)
                 orphans.append(task)
+        # D1 §7.3 — reap zombie children whose parent is already terminal (they
+        # are unreachable by transitive resolution). Fail-open (logged).
+        await self._reap_zombie_children()
         # 2. DECISION — FAST pass: claim + reconstruct each orphan (DB-only,
         #    awaited), then LAUNCH its drive in the background. Fail-open per task.
         launched = 0
@@ -219,6 +228,41 @@ class DurableTaskRecoverer:
             extra={"_fields": {"owner_id": self._owner_id, "in_flight": len(self._drives)}},
         )
         await asyncio.gather(*tuple(self._drives), return_exceptions=True)
+
+    async def _reap_zombie_children(self) -> None:
+        """Mark running/recovering children of terminal parents 'failed' (D1 §7.3).
+
+        With parent-driven terminalization this is normally empty; it is the
+        belt-and-suspenders for crash interleavings. Fail-open: a store error is
+        logged and never crashes recovery.
+        """
+        try:
+            zombies = await self._store.list_zombie_children()
+        except Exception as exc:  # noqa: BLE001 — fail-open, logged
+            log.tasks.error(
+                "[tasks] recovery: zombie-child sweep query failed — skipping",
+                exc_info=exc,
+                extra={"_fields": {"owner_id": self._owner_id}},
+            )
+            return
+        for z in zombies:
+            try:
+                await self._store.terminalize_child(
+                    z.task_id, "failed",
+                    result="abandoned: parent already terminal",
+                )
+                log.tasks.warning(
+                    "[tasks] recovery: reaped zombie child under terminal parent",
+                    extra={"_fields": {
+                        "task_id": z.task_id, "parent_task_id": z.parent_task_id,
+                    }},
+                )
+            except Exception as exc:  # noqa: BLE001 — per-zombie fail-open
+                log.tasks.error(
+                    "[tasks] recovery: reaping a zombie child failed — continuing",
+                    exc_info=exc,
+                    extra={"_fields": {"task_id": z.task_id}},
+                )
 
     async def _claim_and_reconstruct(
         self, task: DurableTask
@@ -336,6 +380,11 @@ class DurableTaskRecoverer:
         rows where those columns are NULL. ``input_text`` is the goal.
         """
         task_id = task.task_id
+        # D1 §9 depth-from-tree — only ROOTS are reconstructed here (recover()
+        # filters parent_task_id IS NULL), so depth starts at 0 correctly. Interior
+        # nodes are NEVER directly resumed: the parent re-delegates on resume and
+        # the child's depth is re-derived from delegation_chain growth, never from
+        # a stale ContextVar.
         owl_name = task.owl_name or _DEFAULT_OWL
         channel = task.channel or _DEFAULT_CHANNEL
         if task.owl_name is None or task.channel is None:
