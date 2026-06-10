@@ -95,13 +95,14 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(owner_id, parent_task_id)
 
 ### 5.1 Derive the child id from the parent's `delegate_task` idempotency key
 
-`delegate_task` is **itself** an `action_severity="write"` tool that already passes through `ledger_guard`, so the base system already computes a resume-stable coordinate for every delegation call: `delegate_key = idempotency_key(parent_task_id, ctx.iteration, "delegate_task", canonical_args)`. The child id is derived from exactly that:
+`delegate_task` is **itself** an `action_severity="write"` tool, so the same `idempotency_key(...)` primitive the base ledger uses for every write tool can compute a resume-stable coordinate for a delegation call. The seam computes its OWN delegate coordinate at delegation time and derives the child id from it:
 
 ```
+delegate_key  = idempotency_key(parent_task_id, ctx.iteration, "delegate_task", args.model_dump())
 child_task_id = derive_child_task_id(delegate_key)   # e.g. f"child-{delegate_key[:32]}"
 ```
 
-A pure helper (`pipeline/durable/delegation_link.py::derive_child_task_id`). On resume, a re-sampled parent that re-emits **the same delegation at the same iteration with the same args** computes the **same** `delegate_key` → the same `child_task_id` → it re-attaches to the existing child row (claim-or-create is a no-op, §7) instead of forking. A delegation the model *drops* on resume is never re-derived, and its result is already in the parent's ledger via the `delegate_task` tool's own commit. **This piggybacks on the exact-once guarantee that already works for every other write tool — D1 adds no new divergence machinery; it inherits the base ledger's semantics verbatim.**
+A pure helper (`pipeline/durable/delegation_link.py::derive_child_task_id`). Note on the key: the seam keys on `args.model_dump()` of the frozen `DelegateTaskArgs` (the resume-stable canonical shape — `None` defaults filled, field order fixed). This is **parallel to, but not byte-identical with, the base ledger's own `delegate_task` row** (which keys on the raw provider-supplied args at the `ledger_guard` chokepoint). That is fine and intentional: the child id only needs to be **self-consistent across the parent's own re-derivation on resume** — both the original turn and the recovery turn run the same `model_dump()` and so derive the same id. It does NOT need to equal the base ledger's delegate_task key; the two coordinates serve different purposes (the base row makes the *delegate_task tool call* exactly-once at the parent layer; the seam's key names the *child sub-task* — see §6/§11.2 for how the two ledger layers compose). On resume, a re-sampled parent that re-emits **the same delegation at the same iteration with the same args** computes the **same** `delegate_key` → the same `child_task_id` → it re-attaches to the existing child row (claim-or-create is a no-op, §7) instead of forking. **D1 adds no new divergence machinery; it reuses the base ledger's `idempotency_key` primitive and inherits its resume semantics.**
 
 ### 5.2 The determinism boundary (inherited, stated honestly)
 
@@ -268,7 +269,7 @@ Real `DbPool`(tmp) + `MigrationRunner`, real `DurableTaskStore`/`DurableTaskRunn
 
 ## 14. The load-bearing invariants (sign-off summary)
 
-1. **Identity is durable, not LLM-derived:** `child_task_id = derive_child_task_id(delegate_key)` where `delegate_key` is the parent's own resume-stable `delegate_task` ledger idempotency key; inherits the base ledger's exactly-once semantics verbatim, adds no new divergence machinery (§5).
+1. **Identity is durable, not LLM-derived:** `child_task_id = derive_child_task_id(delegate_key)` where `delegate_key = idempotency_key(parent_task_id, ctx.iteration, "delegate_task", args.model_dump())` is a resume-stable delegate coordinate computed by the seam (parallel to, not byte-identical with, the base ledger's own delegate_task row — it need only be self-consistent across the parent's resume); reuses the base ledger's `idempotency_key` primitive, adds no new divergence machinery (§5).
 2. **Honesty is per-effect, not per-parent:** `commit_coupling` decides definite-vs-`honest_uncertain`; the "not-started → safe-retry" leg is the pure-profit win; `unconfirmed` in-flight stays `honest_uncertain` by design (§6).
 3. **Single-owner execution + parent-driven terminalization + reaper:** lease (winner runs, loser polls); child terminal = projection of parent's ledger commit; reaper for residual zombies (§7).
 4. **Real child durability or loud failure:** durability is `task_id`-driven — setting `child_task_id` on the child state makes the execute step assemble the `DurableSession` inline; the child must not inherit the parent's `task_id`; `_call_durable` already fails loud if `task_id` is set with no `db_pool` (§8.3).
