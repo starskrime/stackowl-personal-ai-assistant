@@ -272,6 +272,61 @@ class DurableTaskStore(OwnedRepository):
         )
         return claimed
 
+    async def create_child_task(
+        self,
+        *,
+        child_task_id: str,
+        parent_task_id: str,
+        parent_owl: str,
+        delegate_key: str,
+        goal: str,
+        owl_name: str,
+        channel: str,
+    ) -> DurableTask:
+        """Claim-or-create a delegated child task row, then return it (D1 §7.1).
+
+        ``INSERT ... ON CONFLICT(owner_id, task_id) DO NOTHING`` so two racers
+        (a live parent + startup recovery) deriving the same deterministic id
+        produce exactly ONE row — the loser's INSERT is a no-op. Both callers
+        then re-``get`` the SAME record. This is distinct from the root-task
+        INSERT (a duplicate root id IS a bug we want surfaced); never reuse
+        :meth:`create` for children.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.create_child_task: entry",
+            extra={"_fields": {
+                "child_task_id": child_task_id, "parent_task_id": parent_task_id,
+                "owner_id": self._owner_id, "parent_owl": parent_owl,
+            }},
+        )
+        now = datetime.now(tz=UTC).isoformat()
+        sql = (
+            "INSERT INTO tasks "  # noqa: S608 — columns are literals
+            "(task_id, owner_id, goal, status, current_step, parent_task_id, "
+            "parent_owl, delegate_key, owl_name, channel, superseded, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, 'running', 0, ?, ?, ?, ?, ?, 0, ?, ?) "
+            "ON CONFLICT(owner_id, task_id) DO NOTHING"
+        )
+        params = [
+            child_task_id, self._owner_id, goal, parent_task_id, parent_owl,
+            delegate_key, owl_name, channel, now, now,
+        ]
+        # 2. DECISION — DO NOTHING means a row already exists; either way re-SELECT.
+        affected = await self._db.execute_returning_rowcount(sql, params)
+        # 3. STEP — read back the canonical record (winner's or pre-existing).
+        record = await self.get(child_task_id)
+        # 4. EXIT
+        log.tasks.info(
+            "[tasks] store.create_child_task: exit",
+            extra={"_fields": {
+                "child_task_id": child_task_id, "created": affected == 1,
+                "owner_id": self._owner_id,
+            }},
+        )
+        return record
+
     async def save_checkpoint(self, task_id: str, blob: str) -> None:
         """Persist the serialised :class:`~stackowl.pipeline.durable.react_checkpoint.ReActCheckpoint`
         blob on the task row (owner-scoped UPDATE).
