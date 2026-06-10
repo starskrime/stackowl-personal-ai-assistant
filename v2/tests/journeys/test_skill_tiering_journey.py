@@ -348,7 +348,9 @@ async def _turn(env: _Env, text: str, *, session_id: str | None = None) -> str:
     decision = GatewayScanner(owl_registry=env.owl_registry).scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     sid = session_id if session_id is not None else msg.session_id
-    _writer, reader = env.stream_registry.create(sid)
+    # DELIBERATE re-key (§4.1): the stream registry is keyed by request_id
+    # (== trace_id), not session_id — deliver resolves the writer by state.trace_id.
+    _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id, session_id=sid, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
@@ -358,7 +360,7 @@ async def _turn(env: _Env, text: str, *, session_id: str | None = None) -> str:
     out_task = asyncio.create_task(env.adapter.send(reader))
     await run_task
     await out_task
-    env.stream_registry.remove(sid)
+    env.stream_registry.remove(msg.trace_id)
     return "".join(m["text"] for m in env.bot.messages[before:] if m["reply_markup"] is None)
 
 

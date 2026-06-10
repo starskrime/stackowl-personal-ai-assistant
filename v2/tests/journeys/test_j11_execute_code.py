@@ -268,7 +268,7 @@ async def _drive(env: _Env, text: str) -> None:
     msg = await env.adapter.receive()
     decision = env.scanner.scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text  # type: ignore[attr-defined]
-    _writer, reader = env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
@@ -277,13 +277,13 @@ async def _drive(env: _Env, text: str) -> None:
     if env.delegation_depth > 0:
         # Sub-pipeline: no user-facing stream write; just run + inspect dispatch.
         await asyncio.wait_for(env.backend.run(state), timeout=30.0)
-        env.stream_registry.remove(msg.session_id)  # type: ignore[attr-defined]
+        env.stream_registry.remove(msg.trace_id)  # type: ignore[attr-defined]
         return
     run_task = asyncio.create_task(env.backend.run(state))
     send_task = asyncio.create_task(env.adapter.send(reader))
     await asyncio.wait_for(run_task, timeout=30.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.remove(msg.trace_id)  # type: ignore[attr-defined]
 
 
 def _delivered(env: _Env) -> str:

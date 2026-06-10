@@ -274,7 +274,7 @@ async def test_j9_run_wait_then_read_output_through_the_gateway() -> None:
     decision = env.scanner.scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text  # type: ignore[attr-defined]
 
-    _writer, reader = env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
@@ -283,7 +283,7 @@ async def test_j9_run_wait_then_read_output_through_the_gateway() -> None:
     send_task = asyncio.create_task(env.adapter.send(reader))
     await asyncio.wait_for(run_task, timeout=20.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.remove(msg.trace_id)  # type: ignore[attr-defined]
 
     # =================================================================
     # OUTCOME 1 — the task really STARTED through the gateway: process start

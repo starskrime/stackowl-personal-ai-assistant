@@ -210,10 +210,14 @@ async def test_asyncio_backend_step_error_captured(monkeypatch: pytest.MonkeyPat
 
 async def test_asyncio_backend_deliver_writes_to_registry() -> None:
     registry = StreamRegistry()
-    writer, reader = registry.create("sess-deliver")
+    # DELIBERATE re-key (§4.1): deliver resolves the writer by request_id
+    # (state.trace_id), not session_id. Register under the turn's trace_id and tag
+    # the chunk with the same request_id so it is delivered (not hard-dropped).
+    request_id = "trace-001"  # == _make_state default trace_id
+    writer, reader = registry.create(request_id)
 
     chunk = ResponseChunk(
-        content="world", is_final=False, chunk_index=0, trace_id="t1", owl_name="secretary"
+        content="world", is_final=False, chunk_index=0, trace_id=request_id, owl_name="secretary"
     )
     state = _make_state(session_id="sess-deliver", responses=(chunk,))
 

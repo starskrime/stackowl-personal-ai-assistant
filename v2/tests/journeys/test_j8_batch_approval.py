@@ -352,7 +352,7 @@ async def _run_turn(env: _Env, text: str) -> tuple[asyncio.Task, asyncio.Task, s
     msg = await _inbound(env, text)
     decision = env.scanner.scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text  # type: ignore[attr-defined]
-    _writer, reader = env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
@@ -360,7 +360,10 @@ async def _run_turn(env: _Env, text: str) -> tuple[asyncio.Task, asyncio.Task, s
     )
     run_task = asyncio.create_task(env.backend.run(state))
     send_task = asyncio.create_task(env.adapter.send(reader))
-    return run_task, send_task, msg.session_id  # type: ignore[attr-defined]
+    # DELIBERATE re-key (§4.1): the stream registry is keyed by request_id
+    # (== trace_id). Return the trace_id so the caller's remove() reaps the right
+    # slot.
+    return run_task, send_task, msg.trace_id  # type: ignore[attr-defined]
 
 
 # =============================================================================

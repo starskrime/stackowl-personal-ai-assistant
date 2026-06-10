@@ -124,7 +124,7 @@ async def test_new_request_during_park_cancels_clarify_and_runs_fresh() -> None:
     pump = ClarifyPump(gateway, StreamRegistry(), classifier)
 
     backend, stream_registry = _park_a_clarify_turn(owl, gateway)
-    stream_registry.create(SESSION)
+    stream_registry.create("t")  # request_id == _state().trace_id (DELIBERATE §4.1 re-key)
     owl.script.append(("clarify", {"question": "Which colour?", "choices": ["red", "blue"]}))
     run_task = asyncio.create_task(backend.run(_state()))
 
@@ -158,7 +158,7 @@ async def test_answer_during_park_resolves_turn() -> None:
     pump = ClarifyPump(gateway, StreamRegistry(), classifier)
 
     backend, stream_registry = _park_a_clarify_turn(owl, gateway)
-    stream_registry.create(SESSION)
+    stream_registry.create("t")  # request_id == _state().trace_id (DELIBERATE §4.1 re-key)
     owl.script.append(("clarify", {"question": "Which colour?", "choices": ["red", "blue"]}))
     run_task = asyncio.create_task(backend.run(_state()))
 

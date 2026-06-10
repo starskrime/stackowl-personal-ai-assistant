@@ -39,15 +39,25 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return state
 
-    writer = registry.get_writer(state.session_id)
+    # Streams are keyed by request_id (== trace_id) so each concurrent turn owns
+    # its own slot. A request_id with no registered writer is a HARD DROP — the
+    # turn output is discarded loudly and NEVER rerouted to a default/other slot
+    # (the response-side mirror of no-hidden-errors).
+    writer = registry.get_writer(state.trace_id)
     if writer is None:
         log.gateway.warning(
-            "[pipeline] deliver: no writer for session — discarding",
-            extra={"_fields": {"session_id": state.session_id}},
+            "[deliver] stream-miss: no writer for request_id; dropping turn output",
+            extra={"_fields": {"request_id": state.trace_id, "session_id": state.session_id}},
         )
         return state
 
     for chunk in state.responses:
+        if chunk.trace_id and chunk.trace_id != state.trace_id:
+            log.gateway.error(
+                "[deliver] chunk request_id mismatch — hard drop, never reroute",
+                extra={"_fields": {"chunk_request_id": chunk.trace_id, "turn_request_id": state.trace_id}},
+            )
+            continue
         await writer.write(chunk)
     await writer.close()
 

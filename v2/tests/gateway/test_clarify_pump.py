@@ -190,33 +190,42 @@ async def test_serialize_prior_awaits_unfinished_same_session() -> None:
 
 async def test_spawn_send_drains_and_reaps_on_normal_close() -> None:
     pump, _, reg = _pump()
-    writer, reader = reg.create("s1")
+    # DELIBERATE re-key (§4.1): the stream registry is now keyed by request_id
+    # (== trace_id), not session_id. Mint a request_id and drive the registry +
+    # spawn_send bookkeeping by it; the slot is reaped under that request_id.
+    request_id = "req-1"
+    writer, reader = reg.create(request_id)
     adapter = _DrainingAdapter()
 
     async def _producer() -> None:
         await writer.write(
-            ResponseChunk(content="hi", is_final=False, chunk_index=0, trace_id="t", owl_name="o")
+            ResponseChunk(
+                content="hi", is_final=False, chunk_index=0, trace_id=request_id, owl_name="o"
+            )
         )
         await writer.close()
 
     producer = asyncio.create_task(_producer())
     pump.spawn_send(
-        channel_adapter=adapter, reader=reader, session_id="s1", producer=producer, writer=writer,
+        channel_adapter=adapter, reader=reader, session_id=request_id,
+        producer=producer, writer=writer,
     )
     await asyncio.wait_for(producer, 1.0)
-    send_task = pump._inflight.get("s1")  # type: ignore[attr-defined]
+    send_task = pump._inflight.get(request_id)  # type: ignore[attr-defined]
     assert send_task is not None
     await asyncio.wait_for(send_task, 1.0)
     await asyncio.sleep(0)  # let the send task's done-callback (_cleanup) run
     assert adapter.chunks == ["hi"]
-    assert reg.get_writer("s1") is None  # stream reaped
-    assert "s1" not in pump._inflight  # type: ignore[attr-defined]
+    assert reg.get_writer(request_id) is None  # stream reaped, keyed by request_id
+    assert request_id not in pump._inflight  # type: ignore[attr-defined]
 
 
 async def test_spawn_send_does_not_wedge_when_producer_crashes_before_close() -> None:
     """B-1: a producer that raises WITHOUT closing the writer must not hang the send."""
     pump, _, reg = _pump()
-    writer, reader = reg.create("s1")
+    # DELIBERATE re-key (§4.1): registry keyed by request_id (== trace_id).
+    request_id = "req-1"
+    writer, reader = reg.create(request_id)
     adapter = _DrainingAdapter()
 
     async def _crashing_producer() -> None:
@@ -225,17 +234,18 @@ async def test_spawn_send_does_not_wedge_when_producer_crashes_before_close() ->
 
     producer = asyncio.create_task(_crashing_producer())
     pump.spawn_send(
-        channel_adapter=adapter, reader=reader, session_id="s1", producer=producer, writer=writer,
+        channel_adapter=adapter, reader=reader, session_id=request_id,
+        producer=producer, writer=writer,
     )
     # The producer crash is observed (retrieve the exception so no warning).
     with pytest.raises(RuntimeError):
         await asyncio.wait_for(producer, 1.0)
 
-    send_task = pump._inflight.get("s1")  # type: ignore[attr-defined]
+    send_task = pump._inflight.get(request_id)  # type: ignore[attr-defined]
     assert send_task is not None
     # Without the B-1 guard this awaits forever (writer never closed) -> the
     # session is wedged. With the guard the writer is closed and send drains.
     await asyncio.wait_for(send_task, 1.0)
     await asyncio.sleep(0)  # let the send task's done-callback (_cleanup) run
-    assert reg.get_writer("s1") is None  # stream reaped, not wedged
-    assert "s1" not in pump._inflight  # type: ignore[attr-defined]
+    assert reg.get_writer(request_id) is None  # stream reaped, keyed by request_id
+    assert request_id not in pump._inflight  # type: ignore[attr-defined]

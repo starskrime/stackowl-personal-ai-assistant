@@ -295,7 +295,7 @@ async def test_j6_ambiguous_request_pauses_then_resumes_with_the_answer() -> Non
     # Real stream slot for this session, then START the turn. interactive=True →
     # the TraceContext the clarify tool reads marks a human is present to answer,
     # so clarify PARKS (does not return the non-interactive sentinel).
-    _writer, reader = env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
@@ -349,7 +349,7 @@ async def test_j6_ambiguous_request_pauses_then_resumes_with_the_answer() -> Non
     # The parked turn must now RESUME and finish.
     await asyncio.wait_for(run_task, timeout=5.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.remove(msg.trace_id)  # type: ignore[attr-defined]
 
     # =================================================================
     # BUSINESS OUTCOME 2 — the SAME turn resumed and the owl PROCEEDED USING the

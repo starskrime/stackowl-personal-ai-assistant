@@ -177,7 +177,7 @@ async def test_smoke_clarify_tap_button_resumes_turn() -> None:
     env.provider.script.append(
         ("clarify", {"question": "Which colour?", "choices": ["red", "blue", "green"]})
     )
-    env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
 
     run_task = asyncio.create_task(env.backend.run(_state_for(msg)))
 

@@ -210,7 +210,7 @@ async def _turn(env: _Env, text: str) -> None:
     msg = await env.adapter.receive()
     decision = env.scanner.scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
-    _writer, reader = env.stream_registry.create(msg.session_id)
+    _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
@@ -219,7 +219,7 @@ async def _turn(env: _Env, text: str) -> None:
     out_task = asyncio.create_task(env.adapter.send(reader))
     await run_task
     await out_task
-    env.stream_registry.remove(msg.session_id)
+    env.stream_registry.remove(msg.trace_id)
 
 
 async def test_smoke_mixture_of_agents_verdict_through_telegram() -> None:

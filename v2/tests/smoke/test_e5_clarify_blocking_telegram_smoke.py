@@ -173,7 +173,7 @@ async def test_smoke_clarify_blocks_then_resumes_in_turn() -> None:
     env.provider.script.append(
         ("clarify", {"question": "Which colour do you want?", "choices": ["red", "blue"]})
     )
-    _w, _r = env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    _w, _r = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
 
     run_task = asyncio.create_task(env.backend.run(_state_for(msg)))
 
@@ -199,7 +199,7 @@ async def test_smoke_clarify_graceful_timeout() -> None:
     env = _build_env(timeout_s=0.05)
     msg = await _inbound(env, "decide for me")
     env.provider.script.append(("clarify", {"question": "Proceed with the risky step?"}))
-    env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
 
     await asyncio.wait_for(env.backend.run(_state_for(msg)), timeout=5.0)
     assert env.provider.results

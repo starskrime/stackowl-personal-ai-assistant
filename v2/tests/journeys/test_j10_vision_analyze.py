@@ -242,7 +242,7 @@ async def _run(env: _Env) -> str:
     msg = await _inbound(env, "Look at this image and tell me what's in it.")
     decision = env.scanner.scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text  # type: ignore[attr-defined]
-    _writer, reader = env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
@@ -251,7 +251,7 @@ async def _run(env: _Env) -> str:
     send_task = asyncio.create_task(env.adapter.send(reader))
     await asyncio.wait_for(run_task, timeout=20.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.remove(msg.trace_id)  # type: ignore[attr-defined]
     delivered = "\n".join(m["text"] for m in env.bot.messages if m["chat_id"] == USER_ID)
     return delivered.replace("\\", "")  # the adapter MarkdownV2-escapes punctuation
 

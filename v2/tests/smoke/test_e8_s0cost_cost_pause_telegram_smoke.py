@@ -278,7 +278,7 @@ async def _drive_to_pause(env: _Env):  # noqa: ANN202
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text  # type: ignore[attr-defined]
     await _seed_over_budget(env, msg.trace_id)  # type: ignore[attr-defined]
 
-    _writer, reader = env.stream_registry.create(msg.session_id)  # type: ignore[attr-defined]
+    _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
@@ -324,7 +324,7 @@ async def test_cost_pause_stop_aborts_the_expensive_op() -> None:
 
     await asyncio.wait_for(run_task, timeout=5.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.remove(msg.trace_id)  # type: ignore[attr-defined]
 
     # BUSINESS OUTCOME 2 — the MoA op ABORTED from REAL effects: NO proposer's
     # complete() ran (the fan-out never started) AND the tool result is the
@@ -360,7 +360,7 @@ async def test_cost_pause_continue_proceeds_with_the_op() -> None:
 
     await asyncio.wait_for(run_task, timeout=5.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(msg.session_id)  # type: ignore[attr-defined]
+    env.stream_registry.remove(msg.trace_id)  # type: ignore[attr-defined]
 
     # BUSINESS OUTCOME — the fan-out RAN: the proposers WERE consulted (real effect)
     # and MoA did NOT return the cost-budget-stopped record.

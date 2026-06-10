@@ -19,6 +19,9 @@ class ResponseChunk(BaseModel, frozen=True):
     trace_id: str
     owl_name: str
     duration_ms: float | None = None
+    # Optional delivery target for fan-out channels (e.g. a Telegram chat_id).
+    # None → the channel adapter resolves the destination itself.
+    target: int | None = None
 
 
 class StreamWriter:
@@ -59,26 +62,35 @@ class StreamReader:
 
 
 class StreamRegistry:
-    """Process-level registry of active stream writers, keyed by session_id."""
+    """Process-level registry of active stream writers, keyed by request_id.
+
+    request_id == the turn's trace_id. Keying per request (not per session) gives
+    each concurrent turn its own slot — cross-session parallelism plus
+    request↔response correlation — so a turn's output is NEVER rerouted to another
+    turn's stream.
+    """
 
     def __init__(self) -> None:
         self._writers: dict[str, StreamWriter] = {}
 
-    def create(self, session_id: str) -> tuple[StreamWriter, StreamReader]:
+    def create(self, request_id: str) -> tuple[StreamWriter, StreamReader]:
         """Create a linked writer/reader pair and register the writer."""
         queue: asyncio.Queue[ResponseChunk] = asyncio.Queue()
         writer = StreamWriter(queue)
         reader = StreamReader(queue)
-        self._writers[session_id] = writer
-        log.gateway.debug("[stream] registry.create: registered session", extra={"_fields": {"session_id": session_id}})
+        self._writers[request_id] = writer
+        log.gateway.debug(
+            "[stream] registry.create: registered request",
+            extra={"_fields": {"request_id": request_id}},
+        )
         return writer, reader
 
-    def get_writer(self, session_id: str) -> StreamWriter | None:
-        return self._writers.get(session_id)
+    def get_writer(self, request_id: str) -> StreamWriter | None:
+        return self._writers.get(request_id)
 
-    def remove(self, session_id: str) -> None:
-        self._writers.pop(session_id, None)
+    def remove(self, request_id: str) -> None:
+        self._writers.pop(request_id, None)
         log.gateway.debug(
-            "[stream] registry.remove: unregistered session",
-            extra={"_fields": {"session_id": session_id}},
+            "[stream] registry.remove: unregistered request",
+            extra={"_fields": {"request_id": request_id}},
         )

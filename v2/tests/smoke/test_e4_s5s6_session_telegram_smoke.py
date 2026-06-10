@@ -152,7 +152,7 @@ async def test_smoke_session_tools_through_telegram(tmp_db: DbPool) -> None:
         ],
     )
 
-    _writer, reader = env.stream_registry.create(msg.session_id)
+    _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id, session_id=msg.session_id, input_text=msg.text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
@@ -163,7 +163,7 @@ async def test_smoke_session_tools_through_telegram(tmp_db: DbPool) -> None:
     out_task = asyncio.create_task(env.adapter.send(reader))
     await run_task
     await out_task
-    env.stream_registry.remove(msg.session_id)
+    env.stream_registry.remove(msg.trace_id)
 
     out = provider.results[0]
     assert "deploying" in out  # the ordered transcript came back through the pipeline
