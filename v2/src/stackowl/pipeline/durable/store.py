@@ -385,6 +385,32 @@ class DurableTaskStore(OwnedRepository):
             extra={"_fields": {"task_id": task_id, "status": status}},
         )
 
+    async def supersede_child(self, task_id: str) -> None:
+        """Tombstone a timed-out child so a slow eventual commit is neutralized (D1 §9).
+
+        Sets ``superseded = 1`` via an owner-scoped UPDATE when the parent ABANDONS
+        a timed-out child and advances a ladder rung. A slow child's late commit is
+        thereby neutralized at the decision layer (defensive). Mirrors the
+        owner-scoped UPDATE pattern (:meth:`update_status` / :meth:`save_checkpoint`)
+        — the WHERE carries ``owner_id`` so a row owned by another principal can
+        never be touched.
+        """
+        log.tasks.debug(
+            "[tasks] store.supersede_child: entry",
+            extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+        )
+        sql = (
+            f"UPDATE {self._table} SET superseded = 1, updated_at = ? "  # noqa: S608 — table from class
+            "WHERE owner_id = ? AND task_id = ?"
+        )
+        await self._execute_owned(
+            sql, [datetime.now(tz=UTC).isoformat(), self._owner_id, task_id]
+        )
+        log.tasks.info(
+            "[tasks] store.supersede_child: superseded",
+            extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+        )
+
     async def list_children(self, parent_task_id: str) -> builtins.list[DurableTask]:
         """All child tasks of ``parent_task_id`` for the bound owner (D1 §7)."""
         log.tasks.debug(

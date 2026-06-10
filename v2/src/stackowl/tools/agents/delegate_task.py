@@ -644,6 +644,15 @@ class DelegateTaskTool(Tool):
                 return honest_uncertain_result(target, t0), False
 
             # ---- read-only target → safe to re-delegate -----------------------------
+            # D1 §9 — the parent is ABANDONING this timed-out/off-topic child and
+            # advancing a ladder rung (retry same owl, or fallback to secretary).
+            # Stamp the child superseded so a slow eventual commit is neutralized at
+            # the decision layer (defensive). Reached ONLY here: the "ok"/"done"
+            # (answer reused) and "honest_uncertain" (child halted) terminals all
+            # returned above, so this never fires on a done/reuse path. No-op +
+            # fail-open on the non-durable path.
+            await self._supersede_durable_child(durable_scope)
+
             # (3) Transport failure → ONE same-owl retry. off_topic SKIPS the retry
             # (it is not a transport failure) and proceeds straight to fallback.
             if result.status in self._RETRIABLE:
@@ -744,6 +753,35 @@ class DelegateTaskTool(Tool):
         except Exception as exc:  # B5 — reaper is the backstop; never fail the turn.
             log.tool.error(
                 "delegate_task: terminalize child failed — reaper will reconcile",
+                exc_info=exc,
+                extra={"_fields": {"child_task_id": durable_scope.child_task_id}},
+            )
+
+    async def _supersede_durable_child(self, durable_scope: _DurableChildScope) -> None:
+        """Tombstone the durable child when the parent advances past it (D1 §9).
+
+        Called ONLY where the parent abandons a timed-out/off-topic child and
+        advances a ladder rung (retry / fallback) — never on a done or
+        answer-reused terminal. No-op on the non-durable path (child_task_id is
+        None); fail-open on store error (logged, never crashes the parent).
+        """
+        if durable_scope.child_task_id is None:
+            return
+        try:
+            db = get_services().db_pool
+            if db is None:  # pragma: no cover — durable scope implies a db, defensive
+                return
+            store = DurableTaskStore(
+                db, durable_scope.durable_owner_id or DEFAULT_PRINCIPAL_ID,
+            )
+            await store.supersede_child(durable_scope.child_task_id)
+            log.tool.info(
+                "delegate_task: superseded durable child (ladder advanced)",
+                extra={"_fields": {"child_task_id": durable_scope.child_task_id}},
+            )
+        except Exception as exc:  # B5 — supersession is defensive; never fail the turn.
+            log.tool.error(
+                "delegate_task: supersede child failed",
                 exc_info=exc,
                 extra={"_fields": {"child_task_id": durable_scope.child_task_id}},
             )
