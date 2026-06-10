@@ -250,6 +250,12 @@ class A2ADelegator:
             # T3 — append this hop to the audit chain so every child state
             # carries the full ancestry (parent chain + its own owl name).
             delegation_chain=parent_state.delegation_chain + (to_owl,),
+            # D1 §8.2 Break-A — the durable scope (task_id/durable_owner_id) is
+            # carried by VALUE on sub_state (parent_state already holds the child
+            # id) and stamped fresh inside backend.run's own TraceContext.start,
+            # never via a .set() on the parent coroutine's ContextVar. evolve()
+            # preserves task_id/durable_owner_id unless overridden — do NOT clear
+            # them here.
         )
         backend = AsyncioBackend(services=self._services)
 
@@ -288,9 +294,19 @@ class A2ADelegator:
             reply_status = "child_error"
             reply_detail = _sanitize(str(exc))
         except asyncio.CancelledError:
+            # D1 §9 cancel-survival — an a2a timeout cancels THIS asyncio task, but
+            # for a DURABLE child we must NOT finalize the tasks row to 'failed':
+            # the row stays running/recovering so startup recovery (or the next
+            # turn) resumes it from its checkpoint. We deliberately re-raise WITHOUT
+            # touching the durable store here. (CancelledError is BaseException-only,
+            # so the durable runner's `except Exception` paths never see it either.)
             log.engine.warning(
-                "[a2a-delegator] _run_specialist: cancelled",
-                extra={"_fields": {"trace_id": parent_state.trace_id, "to": to_owl}},
+                "[a2a-delegator] _run_specialist: cancelled — durable child (if any) "
+                "left running/recovering for recovery",
+                extra={"_fields": {
+                    "trace_id": parent_state.trace_id, "to": to_owl,
+                    "durable_task_id": parent_state.task_id,
+                }},
             )
             raise
 
