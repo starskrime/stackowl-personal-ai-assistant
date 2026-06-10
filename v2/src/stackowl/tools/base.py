@@ -40,6 +40,20 @@ class ToolManifest(BaseModel):
     # when its toolset_group is in that profile (ADR-11 / E1-S4). Distinct from
     # consent_category (which is about consent, not grouping).
     toolset_group: str | None = None
+    # D1 §6 — how tightly the tool's REAL-WORLD effect is coupled to our local
+    # ledger commit. Decides definite-answer-vs-honest_uncertain after a durable
+    # child times out / is recovered:
+    #   "transactional"     — effect + ledger entry are atomic (L ⟺ E). "Committed
+    #                         → done" is honest (e.g. a write to our own SQLite).
+    #   "idempotent_keyed"  — effect is replay-safe under a key we own AND the
+    #                         downstream contractually honors it (L ⟹ E).
+    #   "unconfirmed"       — effect crosses a lossy-ack boundary (SMTP/POST/remote
+    #                         FS/Telegram); L and E can diverge irreducibly.
+    # None ⇒ undeclared. The resolver (delegate_task) treats undeclared write/
+    # consequential tools as "unconfirmed" (fail-safe — never silently "safe").
+    commit_coupling: Literal[
+        "transactional", "idempotent_keyed", "unconfirmed"
+    ] | None = None
 
 
 class Tool(ABC):
