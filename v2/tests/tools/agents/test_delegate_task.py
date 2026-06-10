@@ -770,6 +770,7 @@ async def test_dedup_memo_prevents_second_delegate_call_for_same_ok_key() -> Non
             session_id: str,
             channel: str,
             t0: float,
+            durable_scope: object = None,
         ) -> object:
             from stackowl.infra.trace import TraceContext
             from stackowl.owls.a2a_delegation import A2AResult

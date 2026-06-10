@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -45,9 +46,14 @@ from stackowl.owls.delegation_limits import (
     MAX_DELEGATION_DEPTH,
 )
 from stackowl.pipeline.authz_compose import child_floor, resolve_owl_bounds
+from stackowl.pipeline.durable.context import get_active
+from stackowl.pipeline.durable.delegation_link import derive_child_task_id
+from stackowl.pipeline.durable.ledger import idempotency_key
+from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.persistence import _structurally_irrelevant, judge_relevance
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 from stackowl.tools.agents.resolver import resolve_target
 from stackowl.tools.agents.results import (
     child_error_result,
@@ -75,6 +81,74 @@ if TYPE_CHECKING:
 
 _TOOLSET_GROUP = "agents"
 _DEFAULT_CALLER = "secretary"
+
+
+@dataclass(frozen=True)
+class _DurableChildScope:
+    """The resolved durable scope for one delegation, or all-None when fail-open."""
+
+    child_task_id: str | None = None
+    durable_owner_id: str | None = None
+    parent_task_id: str | None = None
+    delegate_key: str | None = None
+
+
+async def _resolve_durable_child_scope(
+    *, caller: str, args_dict: dict[str, object],
+) -> _DurableChildScope:
+    """Compute the durable child scope, or a no-op scope (fail-open) (D1 §8).
+
+    Durable ONLY when ALL hold: parent task_id present on TraceContext, an active
+    DurableReActContext (for ctx.iteration), and a db_pool. Identity-determining
+    values are computed explicitly from the parent task_id + ledger coordinate —
+    never inferred from ambient mutable state. Any store error fails OPEN (logged)
+    to the non-durable path for THIS delegation.
+    """
+    tctx = TraceContext.get()
+    parent_task_id = tctx.get("task_id")
+    durable_owner = TraceContext.durable_owner_id()
+    rctx = get_active()
+    db = get_services().db_pool
+    if parent_task_id is None or rctx is None or db is None:
+        log.tool.debug(
+            "delegate_task: non-durable parent — fail-open to today's path",
+            extra={"_fields": {
+                "has_parent_task": parent_task_id is not None,
+                "has_react_ctx": rctx is not None, "has_db": db is not None,
+            }},
+        )
+        return _DurableChildScope()
+    owner = durable_owner or DEFAULT_PRINCIPAL_ID
+    try:
+        delegate_key = idempotency_key(
+            str(parent_task_id), int(rctx.iteration), "delegate_task", args_dict,
+        )
+        child_task_id = derive_child_task_id(delegate_key)
+        store = DurableTaskStore(db, owner)
+        await store.create_child_task(
+            child_task_id=child_task_id, parent_task_id=str(parent_task_id),
+            parent_owl=caller, delegate_key=delegate_key,
+            goal=str(args_dict.get("goal", "")), owl_name=caller, channel="internal",
+        )
+        claimed = await store.claim_child_lease(child_task_id, lease_owner=str(parent_task_id))
+        log.tool.info(
+            "delegate_task: durable child scope resolved",
+            extra={"_fields": {
+                "parent_task_id": parent_task_id, "child_task_id": child_task_id,
+                "lease_won": claimed,
+            }},
+        )
+        return _DurableChildScope(
+            child_task_id=child_task_id, durable_owner_id=owner,
+            parent_task_id=str(parent_task_id), delegate_key=delegate_key,
+        )
+    except Exception as exc:  # B5 — fail-open: durability is additive, never breaks delegation.
+        log.tool.error(
+            "delegate_task: durable child setup failed — fail-open to non-durable path",
+            exc_info=exc,
+            extra={"_fields": {"parent_task_id": parent_task_id}},
+        )
+        return _DurableChildScope()
 
 
 def _normalize_subtask(s: str) -> str:
@@ -310,12 +384,17 @@ class DelegateTaskTool(Tool):
                 ),
             )
 
-        # 3. STEP — run the delegation round-trip; always release the width slot.
+        # 3. STEP — resolve the durable child scope (fail-open), then delegate;
+        # always release the width slot.
+        durable_scope = await _resolve_durable_child_scope(
+            caller=caller, args_dict=args.model_dump(),
+        )
         try:
             return await self._run_delegation(
                 delegator=delegator, args=args, caller=caller, target=target, depth=depth,
                 trace_id=trace_id, session_id=str(ctx.get("session_id") or ""),
                 channel=str(ctx.get("channel") or "internal"), t0=t0,
+                durable_scope=durable_scope,
             )
         finally:
             self._release(trace_id)
@@ -337,6 +416,7 @@ class DelegateTaskTool(Tool):
         session_id: str,
         channel: str,
         t0: float,
+        durable_scope: _DurableChildScope,
     ) -> ToolResult:
         """Build parent_state once, then run the bounded recovery ladder.
 
@@ -385,6 +465,11 @@ class DelegateTaskTool(Tool):
             creation_ceiling=child_floor(
                 caller, TraceContext.creation_ceiling(), get_services().owl_registry
             ),
+            # D1 §8.3 — when durable, the child runs under ITS OWN child_task_id so
+            # the execute step assembles a durable session for it; it must NOT
+            # inherit the parent's task_id. None on the non-durable / fail-open path.
+            task_id=durable_scope.child_task_id,
+            durable_owner_id=durable_scope.durable_owner_id,
         )
         log.tool.debug(
             "delegate_task._run_delegation: parent_state built, beginning ladder",
