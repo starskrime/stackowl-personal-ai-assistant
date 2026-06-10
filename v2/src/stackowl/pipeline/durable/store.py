@@ -327,6 +327,40 @@ class DurableTaskStore(OwnedRepository):
         )
         return record
 
+    async def claim_child_lease(self, task_id: str, *, lease_owner: str) -> bool:
+        """Atomically claim the single-owner execution lease for a child (D1 §7.1).
+
+        CAS: ``UPDATE tasks SET lease_owner=? WHERE owner_id=? AND task_id=? AND
+        lease_owner IS NULL``. Returns True iff THIS call won (rows-affected == 1).
+        The winner executes the child; a loser polls the durable record. Mirrors
+        :meth:`claim_for_recovery`'s direct-SQL CAS bypass.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.claim_child_lease: entry",
+            extra={"_fields": {
+                "task_id": task_id, "owner_id": self._owner_id, "lease_owner": lease_owner,
+            }},
+        )
+        sql = (
+            f"UPDATE {self._table} SET lease_owner = ?, updated_at = ? "  # noqa: S608 — table from class
+            "WHERE owner_id = ? AND task_id = ? AND lease_owner IS NULL"
+        )
+        params = [
+            lease_owner, datetime.now(tz=UTC).isoformat(), self._owner_id, task_id,
+        ]
+        # 3. STEP — atomic CAS; rows-affected reveals the race winner.
+        affected = await self._db.execute_returning_rowcount(sql, params)
+        claimed = affected == 1
+        # 4. EXIT
+        log.tasks.info(
+            "[tasks] store.claim_child_lease: exit",
+            extra={"_fields": {
+                "task_id": task_id, "claimed": claimed, "rows_affected": affected,
+            }},
+        )
+        return claimed
+
     async def save_checkpoint(self, task_id: str, blob: str) -> None:
         """Persist the serialised :class:`~stackowl.pipeline.durable.react_checkpoint.ReActCheckpoint`
         blob on the task row (owner-scoped UPDATE).

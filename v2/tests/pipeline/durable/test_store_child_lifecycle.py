@@ -53,3 +53,22 @@ async def test_create_child_task_is_idempotent_under_race(pool: DbPool) -> None:
     assert a == b == "child-x"
     rows = await pool.fetch_all("SELECT task_id FROM tasks WHERE task_id = 'child-x'", ())
     assert len(rows) == 1, f"exactly one row expected, got {rows}"
+
+
+async def test_claim_child_lease_first_wins_second_loses(pool: DbPool) -> None:
+    store = DurableTaskStore(pool, DEFAULT_PRINCIPAL_ID)
+    await store.create_child_task(
+        child_task_id="child-l", parent_task_id="p", parent_owl="secretary",
+        delegate_key="dk-l", goal="sub", owl_name="scout", channel="cli",
+    )
+    first = await store.claim_child_lease("child-l", lease_owner="live-parent")
+    second = await store.claim_child_lease("child-l", lease_owner="recovery")
+    # A same-owner re-claim also loses: once lease_owner is set, the
+    # `lease_owner IS NULL` CAS predicate no longer matches, so it returns False
+    # and leaves the existing holder untouched (idempotent, no double-execute).
+    re_claim = await store.claim_child_lease("child-l", lease_owner="live-parent")
+    assert first is True
+    assert second is False
+    assert re_claim is False
+    rec = await store.get("child-l")
+    assert rec.lease_owner == "live-parent"
