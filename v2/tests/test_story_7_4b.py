@@ -251,7 +251,16 @@ def test_migration_0019_file_exists() -> None:
 
 
 def test_migration_count_is_19(tmp_path: Path) -> None:
-    # Historical name; bumped to 20 when Story 7.5 added 0020_webhook_rate_log.
+    # Historical name kept for log searchability; expected count is now derived
+    # dynamically from the actual .sql files on disk (no more manual bumps).
+    migrations_dir = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "stackowl"
+        / "db"
+        / "migrations"
+    )
+    expected = len(sorted(migrations_dir.glob("*.sql")))
     runner = MigrationRunner(db_path=tmp_path / "mig.db")
     results = runner.run()
-    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns
+    assert len(results) == expected

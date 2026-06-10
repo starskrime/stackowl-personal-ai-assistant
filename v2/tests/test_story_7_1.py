@@ -248,16 +248,19 @@ class TestMigration0018:
         )
         assert path.exists()
 
-    def test_migration_count_is_18(self) -> None:
-        # Migration 0019 (Story 7.4 notification_overrides) raised the count to 19;
-        # Migration 0020 (Story 7.5 webhook_events_log) raised it to 20;
-        # Migration 0021 (Story 8.4 onboarding) raised it to 21;
-        # this test's name is kept historical for log searchability.
+    def test_migration_count_is_18(self, tmp_path: Path) -> None:
+        # Name kept historical for log searchability. Asserts the runner applies
+        # exactly the migration .sql files present on disk; the expected count is
+        # derived dynamically from the actual .sql files (no more manual bumps on
+        # every new migration).
+        from stackowl.db.migrations.runner import MigrationRunner
+
         migrations_dir = (
             Path(__file__).resolve().parent.parent / "src/stackowl/db/migrations"
         )
-        sql_files = sorted(migrations_dir.glob("*.sql"))
-        assert len(sql_files) == 35
+        expected = len(sorted(migrations_dir.glob("*.sql")))
+        results = MigrationRunner(db_path=tmp_path / "count.db").run()
+        assert len(results) == expected
 
 
 # ---------------------------------------------------------------------------

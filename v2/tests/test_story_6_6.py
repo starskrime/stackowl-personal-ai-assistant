@@ -123,16 +123,24 @@ def test_migration_0017_file_exists() -> None:
 
 
 def test_migration_count_is_17(tmp_path: Path) -> None:
-    """T14 — MigrationRunner discovers exactly 19 migration files.
+    """T14 — MigrationRunner discovers and runs EVERY migration .sql file.
 
-    Name kept historical; bumped to 18 when Story 7.1 added 0018_jobs_v2,
-    to 19 when Story 7.4 added 0019_notification_overrides, and to 20
-    when Story 7.5 added 0020_webhook_rate_log.
+    Name kept historical for log searchability. The expected count is now
+    derived dynamically from the actual ``.sql`` files on disk (no more manual
+    bumps on every new migration); the invariant under test is that the runner
+    discovers all migration files with none silently skipped.
     """
+    migrations_dir = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "stackowl"
+        / "db"
+        / "migrations"
+    )
+    expected = len(sorted(migrations_dir.glob("*.sql")))
     runner = MigrationRunner(db_path=tmp_path / "count.db")
     results = runner.run()
-    # ACTUAL migration-file count — bump by one whenever a migration is added.
-    assert len(results) == 41  # +0039, +0040, +0041 dreamworker status
+    assert len(results) == expected
 
 
 def test_dream_worker_checkpoint_field_types() -> None:

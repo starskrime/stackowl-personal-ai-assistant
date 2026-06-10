@@ -13,8 +13,18 @@ from stackowl.infra.trace import TraceContext
 
 
 def test_migration_runner_fixture(migration_runner: Any) -> None:
+    # Expected count is derived dynamically from the actual .sql files on disk
+    # (no more manual bumps on every new migration).
+    migrations_dir = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "stackowl"
+        / "db"
+        / "migrations"
+    )
+    expected = len(sorted(migrations_dir.glob("*.sql")))
     results = migration_runner.run()
-    assert len(results) == 38  # +0038 E7-S0 notification_queue body + attempts columns
+    assert len(results) == expected
     assert all(r.action == "applied" for r in results)
 
 

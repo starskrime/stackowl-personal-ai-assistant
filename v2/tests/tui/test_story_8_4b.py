@@ -241,9 +241,16 @@ def test_migration_0021_onboarding_exists() -> None:
     assert "onboarding" in body
 
 
-def test_migration_count_is_21() -> None:
-    files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
-    assert len(files) == 35
+def test_migration_count_is_21(tmp_path: Path) -> None:
+    # Name kept historical for log searchability. Asserts the runner applies
+    # exactly the migration .sql files present on disk; the expected count is
+    # derived dynamically from the actual .sql files (no more manual bumps on
+    # every new migration).
+    from stackowl.db.migrations.runner import MigrationRunner
+
+    expected = len(sorted(_MIGRATIONS_DIR.glob("*.sql")))
+    results = MigrationRunner(db_path=tmp_path / "count.db").run()
+    assert len(results) == expected
 
 
 # E. Onboarding store + check_onboarding -----------------------------------

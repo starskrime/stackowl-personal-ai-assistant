@@ -227,17 +227,19 @@ def test_migration_0015_exists() -> None:
 
 
 def test_migration_count_is_15(migration_runner: Any) -> None:
-    # Migration 0016 (Story 6.5 kuzu_sync_log) raised the count to 16;
-    # Migration 0017 (Story 6.6 dreamworker_runs) raised it to 17;
-    # Migration 0018 (Story 7.1 jobs_v2) raised it to 18;
-    # Migration 0019 (Story 7.4 notification_overrides) raised it to 19;
-    # Migration 0020 (Story 7.5 webhook_events_log) raised it to 20;
-    # Migration 0036 (E4 staged_facts agent_self source_type) raised it to 36;
-    # this fixture's name is kept historical for log searchability.
-    # NOTE: this is the ACTUAL count of migration files — bump it by one every
-    # time a new migration is added (0041 dreamworker status → 41).
+    # Name kept historical for log searchability; expected count is now derived
+    # dynamically from the actual .sql files on disk (no more manual bumps on
+    # every new migration).
+    migrations_dir = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "stackowl"
+        / "db"
+        / "migrations"
+    )
+    expected = len(sorted(migrations_dir.glob("*.sql")))
     results = migration_runner.run()
-    assert len(results) == 41  # +0039 conversation_fact, +0040 occurrence idempotency, +0041 dreamworker status
+    assert len(results) == expected
 
 
 async def test_reindex_queue_table_present(tmp_path: Path) -> None:
