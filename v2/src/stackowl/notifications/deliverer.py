@@ -21,7 +21,7 @@ Design (kept thin — this is StackOwl glue, not a vendor port):
 from __future__ import annotations
 
 import time as _time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from stackowl.infra.observability import log
 from stackowl.notifications.router import DeliveryStatus
@@ -30,6 +30,19 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.channels.registry import ChannelRegistry
     from stackowl.config.settings import Settings
     from stackowl.notifications.router import Notification, NotificationRouter
+
+
+class _TargetedSender(Protocol):
+    """An adapter whose ``send_text`` accepts an explicit destination ``chat_id``.
+
+    The base :class:`ChannelAdapter.send_text` is text-only; only telegram's
+    override takes ``*, chat_id`` (the per-message target). When the deliverer
+    has a concrete ``chat_id`` it narrows the resolved adapter to this Protocol
+    so the typed call is exact — at runtime an explicit ``chat_id`` is only ever
+    produced for a chat-addressable (telegram) channel.
+    """
+
+    async def send_text(self, text: str, *, chat_id: int | None = ...) -> None: ...
 
 
 # Urgency an agent-originated notification is permitted to request. ``critical``
@@ -111,7 +124,11 @@ class ProactiveDeliverer:
                 channel, notification.file_path, notification.message
             )
         else:
-            result = await self._transport(channel, notification.message)
+            # The Notification carries no explicit recipient chat_id today, so the
+            # text path passes ``None`` — the adapter falls back to its own
+            # ``_last_chat_id`` (back-compat). When a concrete target is wired onto
+            # the notification record this is the single place to thread it.
+            result = await self._transport(channel, notification.message, chat_id=None)
         self._log_exit(result, channel, t0)
         return result
 
@@ -127,10 +144,23 @@ class ProactiveDeliverer:
             "[notifications] deliverer.transport: entry",
             extra={"_fields": {"channel": channel}},
         )
-        return await self._transport(channel, message)
+        return await self._transport(channel, message, chat_id=None)
 
-    async def _transport(self, channel: str, message: str) -> DeliveryStatus:
+    async def _transport(
+        self, channel: str, message: str, *, chat_id: int | None = None
+    ) -> DeliveryStatus:
         """Resolve the adapter and send ``message``; retry-once on send error.
+
+        ``chat_id`` is the EXPLICIT destination for this notification — under
+        concurrency a bare proactive send would target the adapter's shared
+        mutable ``_last_chat_id`` and could deliver to the wrong chat. When a
+        concrete ``chat_id`` is supplied it is passed through as a keyword to
+        ``send_text`` so the message reaches THAT chat. When ``None`` (the
+        current proactive path — the ``Notification`` record carries no
+        recipient), the ``chat_id`` kwarg is OMITTED entirely so that
+        text-only adapters (cli/slack/discord/whatsapp, whose ``send_text``
+        takes no ``chat_id``) keep working and telegram falls back to its
+        ``_last_chat_id`` (back-compat).
 
         Returns ``"delivered"`` on success or ``"failed"`` (logged) on an
         unknown channel or a send that still fails after one retry. Never raises.
@@ -147,10 +177,24 @@ class ProactiveDeliverer:
 
         for attempt in (1, 2):
             try:
-                await adapter.send_text(message)
+                # An explicit target is threaded as a kwarg; ``None`` omits the
+                # kwarg so text-only adapters (no ``chat_id`` param) still accept
+                # the call and telegram falls back to its ``_last_chat_id``.
+                if chat_id is not None:
+                    await cast("_TargetedSender", adapter).send_text(
+                        message, chat_id=chat_id
+                    )
+                else:
+                    await adapter.send_text(message)
                 log.notifications.debug(
                     "[notifications] deliverer._transport: sent",
-                    extra={"_fields": {"channel": channel, "attempt": attempt}},
+                    extra={
+                        "_fields": {
+                            "channel": channel,
+                            "attempt": attempt,
+                            "explicit_target": chat_id is not None,
+                        }
+                    },
                 )
                 return "delivered"
             except Exception as exc:  # B5 — transient/permanent send failure
