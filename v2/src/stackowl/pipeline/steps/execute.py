@@ -16,6 +16,7 @@ from stackowl.exceptions import (
     OwlTimeoutError,
     OwlTokenLimitError,
     ProviderNotFoundError,
+    TurnStopped,
 )
 from stackowl.infra.observability import log
 from stackowl.owls.guards import OwlResourceGuard
@@ -49,11 +50,20 @@ _CHILD_EXCLUDED_TOOLS = frozenset(
 )
 
 
+def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
+    """Most-recent assistant text in the live message list (partial work on stop)."""
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+            return str(m["content"])
+    return ""
+
+
 def make_steering_callback(
     registry: TurnRegistry | None,
     request_id: str,
 ) -> IterationCallback | None:
-    """Build the per-turn steering-drain callback (concurrent-msg §5.1, Task 10).
+    """Build the per-turn steering-drain + cooperative-stop callback (concurrent-msg
+    §5.1 Task 10, §5.3 Task 12).
 
     Returns an ``IterationCallback`` the provider invokes at each ReAct iteration
     boundary. It reaches THIS turn's steering mailbox via
@@ -63,6 +73,18 @@ def make_steering_callback(
     drained items are coalesced into ONE ``{"role": "user", "content": "[steering]
     ..."}`` message folded into the loop (Task 9 splice contract).
 
+    Cooperative STOP (§5.3): the SAME boundary checks the turn's ``stop_requested``
+    FLAG. When set, the callback raises ``TurnStopped`` to END the loop GRACEFULLY
+    — NOT ``task.cancel()`` (a cancel raises mid-tool → torn state). The exception
+    propagates out of the provider's ``complete_with_tools`` (the same path
+    ``BudgetBreach`` uses — the provider awaits the callback directly, only
+    ``openai.APIError`` is caught around the API call, never the callback) and is
+    caught by the execute step, which finalizes with a "stopped" chunk carrying the
+    partial work. Stop is honored at the iteration BOUNDARY: the in-flight tool
+    batch is fully observed first (cooperative at iteration granularity). The flag
+    is checked AFTER draining so a co-arriving steer is never silently swallowed by
+    the stop.
+
     Fail-safe by construction:
       * No registry wired (``registry is None``) → returns ``None`` (NO callback at
         all), so the default provider call stays byte-for-byte unchanged (no
@@ -70,7 +92,8 @@ def make_steering_callback(
       * Registry present but no registered turn for this request_id, or an empty
         mailbox at an iteration boundary → the callback returns ``None`` (no
         steering, the loop proceeds normally).
-    Never raises.
+    Raises ONLY the controlled ``TurnStopped`` (a control-flow signal), never an
+    error.
     """
     if registry is None:
         return None
@@ -88,6 +111,26 @@ def make_steering_callback(
                 drained.append(turn.steering_mailbox.get_nowait())
             except asyncio.QueueEmpty:
                 break
+        # §5.3 — honor cooperative STOP at this iteration boundary. Checked AFTER
+        # draining so any co-arriving steer is preserved (it is captured in the
+        # tool_call_records/messages we hand to the finalizer, not silently lost).
+        # FLAG only — we raise a controlled TurnStopped, NEVER task.cancel().
+        if turn.stop_requested:
+            log.engine.info(
+                "[steer] stop flag honored at iteration boundary — finalizing gracefully",
+                extra={"_fields": {
+                    "request_id": request_id,
+                    "iteration": _state.iteration,
+                    "pending_steers": len(drained),
+                }},
+            )
+            from stackowl.exceptions import TurnStopped
+
+            raise TurnStopped(
+                request_id,
+                partial_text=_last_assistant_text(_state.messages),
+                tool_call_records=list(_state.tool_call_records),
+            )
         if not drained:
             return None
         # 4. EXIT — coalesce all drained items into one [steering] user message.
@@ -664,6 +707,43 @@ async def _run_with_tools(
         return state.evolve(
             durable_parked=True,
             errors=(*state.errors, marker),
+        )
+    except TurnStopped as exc:
+        # Cooperative STOP (concurrent-msg §5.3) — the steering callback honored the
+        # turn's stop_requested FLAG at an iteration boundary and raised this to END
+        # the loop gracefully (NEVER task.cancel() → no torn mid-tool state). Finalize
+        # with a "stopped" chunk carrying any partial work the model produced so the
+        # user sees the turn stopped cleanly rather than vanishing. Caught BEFORE the
+        # bare except so a stop is a clean terminal, not a logged error.
+        log.engine.info(
+            "[pipeline] execute: turn stopped cooperatively — finalizing gracefully",
+            extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name,
+                               "request_id": exc.request_id,
+                               "tool_calls": len(exc.tool_call_records)}},
+        )
+        _stopped_note = "[stopped: you asked me to stop — ending this turn here.]"
+        _stopped_content = (
+            f"{exc.partial_text}\n\n{_stopped_note}" if exc.partial_text else _stopped_note
+        )
+        _stopped_chunks = (ResponseChunk(
+            content=_stopped_content, is_final=False, chunk_index=0,
+            trace_id=state.trace_id, owl_name=state.owl_name,
+        ),)
+        _stopped_raw: list[dict[str, Any]] = exc.tool_call_records
+        _stopped_tool_records = tuple(
+            ToolCall(
+                tool_name=str(rc.get("name", "")),
+                args=dict(rc.get("args") or {}),
+                result=str(rc.get("result", "")),
+                error=None,
+                duration_ms=0.0,
+            )
+            for rc in _stopped_raw
+        )
+        return state.evolve(
+            responses=(*state.responses, *_stopped_chunks),
+            tool_calls=(*state.tool_calls, *_stopped_tool_records),
+            errors=(*state.errors, f"turn:stopped:{exc.request_id}"),
         )
     except BudgetBreach as exc:
         log.engine.info(

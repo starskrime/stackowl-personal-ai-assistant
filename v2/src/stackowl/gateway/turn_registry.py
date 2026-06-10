@@ -145,6 +145,34 @@ class TurnRegistry:
     def get(self, request_id: str) -> Turn | None:
         return self._turns.get(request_id)
 
+    def request_stop(self, request_id: str) -> None:
+        """Set a running turn's cooperative-stop FLAG (concurrent-msg §5.3).
+
+        A 'stop' steer routes here. We set ``turn.stop_requested = True`` — a FLAG,
+        NEVER ``task.cancel()`` (a cancel raises mid-tool → torn state). The running
+        ReAct loop's iteration-boundary callback (``make_steering_callback``) reads
+        the flag at its NEXT boundary, after the current tool batch is fully
+        observed, and raises ``TurnStopped`` to finalize gracefully. Stop is
+        cooperative at iteration granularity (bounded latency: it cannot interrupt a
+        long in-flight tool — documented, not a bug).
+
+        Fail-safe: an unknown ``request_id`` (already deregistered / never
+        registered) is a no-op (logged, never raised) — a stop on a turn that has
+        already finished is harmless.
+        """
+        turn = self._turns.get(request_id)
+        if turn is None:
+            log.gateway.debug(
+                "[turn] request_stop: no live turn — no-op",
+                extra={"_fields": {"request_id": request_id}},
+            )
+            return
+        turn.stop_requested = True
+        log.gateway.info(
+            "[turn] request_stop: stop flag set (cooperative, NOT cancel)",
+            extra={"_fields": {"request_id": request_id, "session_id": turn.session_id}},
+        )
+
     def running(self, session_id: str) -> Turn | None:
         rid = self._running.get(session_id)
         return self._turns.get(rid) if rid else None

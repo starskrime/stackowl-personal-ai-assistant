@@ -481,3 +481,28 @@ class BudgetBreach(Exception):
         self.partial_text = partial_text
         self.tool_call_records = tool_call_records or []
         super().__init__(f"budget cap reached: {cap} limit={limit} actual={actual}")
+
+
+class TurnStopped(Exception):
+    """Raised (via the steering callback) when a turn's stop flag is honored.
+
+    Cooperative stop (concurrent-msg §5.3): a 'stop' steer sets the turn's
+    ``stop_requested`` flag; the running ReAct loop's iteration-boundary callback
+    reads it and raises THIS to END the loop GRACEFULLY at the boundary — NOT via
+    ``task.cancel()`` (a cancel raises mid-tool → torn state). It propagates out of
+    the provider's ``complete_with_tools`` (same path ``BudgetBreach`` uses) and is
+    caught by the execute step, which finalizes with a "stopped" chunk carrying the
+    partial work. A control-flow signal, not an error.
+    """
+
+    def __init__(
+        self,
+        request_id: str,
+        *,
+        partial_text: str = "",
+        tool_call_records: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.request_id = request_id
+        self.partial_text = partial_text
+        self.tool_call_records = tool_call_records or []
+        super().__init__(f"turn stopped cooperatively: request_id={request_id}")
