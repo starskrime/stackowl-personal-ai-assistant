@@ -941,7 +941,7 @@ class StartupOrchestrator:
                     # finalize_and_drain takes the per-TURN lock (try_steer takes the
                     # SAME, never the session intake lock) — no inversion with the
                     # session intake lock we already hold.
-                    with contextlib.suppress(Exception):
+                    try:
                         survivors = await turn_registry.finalize_and_drain(
                             finished_request_id
                         )
@@ -978,6 +978,18 @@ class StartupOrchestrator:
                                     "survivors": len(survivors),
                                 }},
                             )
+                    except Exception as exc:  # noqa: BLE001 — backstop: never crash the detached drain
+                        # No-silent-catch: the completion-seam teardown is non-fatal
+                        # (we still proceed to deregister + pop_next below), but a
+                        # swallowed error here must be LOUD, not silent.
+                        log.error(
+                            "[startup] gateway: finalize_and_drain backstop caught — survivor steers may be lost",
+                            exc_info=exc,
+                            extra={"_fields": {
+                                "session_id": session_id,
+                                "request_id": finished_request_id,
+                            }},
+                        )
                     await turn_registry.deregister(finished_request_id)
                     nxt = turn_registry.pop_next(session_id)
                     if nxt is not None:
@@ -1021,8 +1033,17 @@ class StartupOrchestrator:
             # THIS session's lock (the held turn lives on a DIFFERENT session with
             # its own lock — never nest the two). Fail-safe: own try/except so a
             # wake error never stalls the seam.
-            with contextlib.suppress(Exception):
+            try:
                 await _wake_global_held(pump, channel_adapter)
+            except Exception as exc:  # noqa: BLE001 — backstop: never stall the seam
+                # No-silent-catch: a wake error is non-fatal (this turn's seam is
+                # done; the held turn can be woken by a later completion), but it
+                # must be LOUD, not silent.
+                log.error(
+                    "[startup] gateway: _wake_global_held backstop caught — a globally-held turn may stay parked",
+                    exc_info=exc,
+                    extra={"_fields": {"session_id": session_id}},
+                )
 
         async def _wake_global_held(
             pump: ClarifyPump,

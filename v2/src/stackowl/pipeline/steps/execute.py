@@ -112,9 +112,11 @@ def make_steering_callback(
             except asyncio.QueueEmpty:
                 break
         # §5.3 — honor cooperative STOP at this iteration boundary. Checked AFTER
-        # draining so any co-arriving steer is preserved (it is captured in the
-        # tool_call_records/messages we hand to the finalizer, not silently lost).
-        # FLAG only — we raise a controlled TurnStopped, NEVER task.cancel().
+        # draining so we observe (and count via `pending_steers`) any co-arriving
+        # steer before we stop. Those drained steers are then DISCARDED — the turn
+        # is stopping, so there is no further iteration to fold them into; this is
+        # intentional, not a lost-steer bug. FLAG only — we raise a controlled
+        # TurnStopped, NEVER task.cancel().
         if turn.stop_requested:
             log.engine.info(
                 "[steer] stop flag honored at iteration boundary — finalizing gracefully",
