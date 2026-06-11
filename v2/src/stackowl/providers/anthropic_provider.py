@@ -252,6 +252,33 @@ class AnthropicProvider(ModelProvider):
 
             if response.stop_reason != "tool_use":
                 text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                # W4.T17 — the iteration callback (steer drain + cooperative stop +
+                # budget gate) runs BEFORE the give-up nudge at this final-answer
+                # boundary. This closes three exit-path hazards: a TurnStopped /
+                # BudgetBreach raised by the callback PROPAGATES (a user-stop / a
+                # budget-kill is NOT a give-up — never nudge it), and a folded
+                # live-steer message PRE-EMPTS the nudge (the user redirected;
+                # re-nudging toward the OLD goal is wrong — steer wins). Only when
+                # the callback neither raises nor folds does the give-up judge run.
+                folded = (
+                    await on_iteration_complete(
+                        ReActIterationState(
+                            iteration=_iter_idx,
+                            messages=list(messages),
+                            tool_call_records=list(all_calls),
+                        )
+                    )
+                    if on_iteration_complete is not None
+                    else None
+                )
+                if folded:
+                    messages.extend(folded)
+                    log.engine.info(
+                        "[anthropic] complete_with_tools: steer folded at give-up "
+                        "boundary — pre-empting give-up nudge",
+                        extra={"_fields": {"provider": self._name}},
+                    )
+                    continue
                 # Phase D: before accepting the draft, ask the persistence judge
                 # whether the agent delivered or gave up.
                 directive = await _enforce(text)
@@ -262,21 +289,6 @@ class AnthropicProvider(ModelProvider):
                     "[anthropic] complete_with_tools: exit",
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
                 )
-                # S3 — fire per-iteration callback for this terminal iteration
-                # (the final answer round), then return.  Fires even when there
-                # were no tool calls so the checkpoint captures the final state.
-                # Task 9 — fold for contract uniformity; this is the terminal
-                # round so a fold here is not re-sent, but never silently dropped.
-                if on_iteration_complete is not None:
-                    folded = await on_iteration_complete(
-                        ReActIterationState(
-                            iteration=_iter_idx,
-                            messages=list(messages),
-                            tool_call_records=list(all_calls),
-                        )
-                    )
-                    if folded:
-                        messages.extend(folded)
                 return text, all_calls
 
             # Build assistant turn with all content blocks

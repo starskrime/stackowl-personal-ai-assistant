@@ -333,8 +333,36 @@ class OpenAIProvider(ModelProvider):
                         if folded:
                             messages.extend(folded)
                     continue
-                # no action -> draft final answer. Phase D: before accepting it,
-                # ask the persistence judge whether the agent delivered or gave up.
+                # no action -> draft final answer.
+                # W4.T17 — the iteration callback (steer drain + cooperative stop +
+                # budget gate) runs BEFORE the give-up nudge at this final-answer
+                # boundary. This closes three exit-path hazards: a TurnStopped /
+                # BudgetBreach raised by the callback PROPAGATES (a user-stop / a
+                # budget-kill is NOT a give-up — never nudge it), and a folded
+                # live-steer message PRE-EMPTS the nudge (the user redirected;
+                # re-nudging toward the OLD goal is wrong — steer wins). Only when
+                # the callback neither raises nor folds does the give-up judge run.
+                folded = (
+                    await on_iteration_complete(
+                        ReActIterationState(
+                            iteration=_iter_idx,
+                            messages=list(messages),
+                            tool_call_records=list(all_calls),
+                        )
+                    )
+                    if on_iteration_complete is not None
+                    else None
+                )
+                if folded:
+                    messages.extend(folded)
+                    log.engine.info(
+                        "[openai] complete_with_tools: steer folded at give-up "
+                        "boundary — pre-empting give-up nudge",
+                        extra={"_fields": {"provider": self._name}},
+                    )
+                    continue
+                # Phase D: before accepting it, ask the persistence judge whether
+                # the agent delivered or gave up.
                 directive = await _enforce(content)
                 if directive:
                     messages.append({"role": "user", "content": directive})
@@ -343,20 +371,6 @@ class OpenAIProvider(ModelProvider):
                     "[openai] complete_with_tools: exit",
                     extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
                 )
-                # S3 — fire per-iteration callback for this terminal iteration
-                # (the final answer round, no tool calls), then return.  Task 9 —
-                # fold for contract uniformity; this is the terminal round so a
-                # fold here is not re-sent, but we never silently drop a return.
-                if on_iteration_complete is not None:
-                    folded = await on_iteration_complete(
-                        ReActIterationState(
-                            iteration=_iter_idx,
-                            messages=list(messages),
-                            tool_call_records=list(all_calls),
-                        )
-                    )
-                    if folded:
-                        messages.extend(folded)
                 return content, all_calls
 
             # Append assistant turn with tool_calls
