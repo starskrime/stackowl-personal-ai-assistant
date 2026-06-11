@@ -198,6 +198,132 @@ async def test_unknown_scope_in_action_denies() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Security: only the OFFERED scope is honored (unoffered token → DENY)
+# ---------------------------------------------------------------------------
+
+
+async def test_forged_window_scope_denies_not_approve() -> None:
+    """A forged ``window`` token (never drawn) must NOT resolve to an approving grant.
+
+    The prompter only draws {session|once} + deny_session. ``window`` is a valid
+    enum value but was never offered for this rid → fail-closed to DENY.
+    """
+    adapter = _FakeAdapter()
+    prompter = SlackConsentPrompter(adapter, timeout_seconds=5.0)
+
+    async def _resolve() -> None:
+        await adapter.posted_event.wait()
+        rid = _action_for(adapter.client.posts[0], "session").split(":")[1]
+        await prompter.handle_action(f"consent:{rid}:window")
+
+    results = await asyncio.gather(
+        asyncio.wait_for(prompter.prompt(_req()), timeout=5.0), _resolve()
+    )
+    assert results[0] is ConsentScope.DENY
+    assert results[0] is not ConsentScope.WINDOW
+
+
+async def test_unoffered_once_when_session_offered_denies() -> None:
+    """``once`` is unoffered when ``session`` was the offered approve → DENY."""
+    adapter = _FakeAdapter()
+    prompter = SlackConsentPrompter(adapter, timeout_seconds=5.0)
+
+    async def _resolve() -> None:
+        await adapter.posted_event.wait()
+        rid = _action_for(adapter.client.posts[0], "session").split(":")[1]
+        await prompter.handle_action(f"consent:{rid}:once")
+
+    results = await asyncio.gather(
+        asyncio.wait_for(prompter.prompt(_req(allow_relaxation=True)), timeout=5.0),
+        _resolve(),
+    )
+    assert results[0] is ConsentScope.DENY
+
+
+async def test_unoffered_session_when_once_offered_denies() -> None:
+    """``session`` is unoffered when ``once`` was the offered approve → DENY."""
+    adapter = _FakeAdapter()
+    prompter = SlackConsentPrompter(adapter, timeout_seconds=5.0)
+
+    async def _resolve() -> None:
+        await adapter.posted_event.wait()
+        rid = _action_for(adapter.client.posts[0], "once").split(":")[1]
+        await prompter.handle_action(f"consent:{rid}:session")
+
+    results = await asyncio.gather(
+        asyncio.wait_for(prompter.prompt(_req(allow_relaxation=False)), timeout=5.0),
+        _resolve(),
+    )
+    assert results[0] is ConsentScope.DENY
+
+
+async def test_bare_deny_token_unoffered_denies() -> None:
+    """A bare ``deny`` token (never drawn — only deny_session is) → DENY (fail-closed)."""
+    adapter = _FakeAdapter()
+    prompter = SlackConsentPrompter(adapter, timeout_seconds=5.0)
+
+    async def _resolve() -> None:
+        await adapter.posted_event.wait()
+        rid = _action_for(adapter.client.posts[0], "session").split(":")[1]
+        await prompter.handle_action(f"consent:{rid}:deny")
+
+    results = await asyncio.gather(
+        asyncio.wait_for(prompter.prompt(_req()), timeout=5.0), _resolve()
+    )
+    assert results[0] is ConsentScope.DENY
+
+
+async def test_offered_session_approve_still_works() -> None:
+    """The offered approve token (session, relaxation allowed) still resolves SESSION."""
+    adapter = _FakeAdapter()
+    prompter = SlackConsentPrompter(adapter, timeout_seconds=5.0)
+
+    async def _resolve() -> None:
+        await adapter.posted_event.wait()
+        rid = _action_for(adapter.client.posts[0], "session").split(":")[1]
+        await prompter.handle_action(f"consent:{rid}:session")
+
+    results = await asyncio.gather(
+        asyncio.wait_for(prompter.prompt(_req(allow_relaxation=True)), timeout=5.0),
+        _resolve(),
+    )
+    assert results[0] is ConsentScope.SESSION
+
+
+async def test_offered_once_approve_still_works() -> None:
+    """The offered approve token (once, no relaxation) still resolves ONCE."""
+    adapter = _FakeAdapter()
+    prompter = SlackConsentPrompter(adapter, timeout_seconds=5.0)
+
+    async def _resolve() -> None:
+        await adapter.posted_event.wait()
+        rid = _action_for(adapter.client.posts[0], "once").split(":")[1]
+        await prompter.handle_action(f"consent:{rid}:once")
+
+    results = await asyncio.gather(
+        asyncio.wait_for(prompter.prompt(_req(allow_relaxation=False)), timeout=5.0),
+        _resolve(),
+    )
+    assert results[0] is ConsentScope.ONCE
+
+
+async def test_offered_deny_session_still_works() -> None:
+    """deny_session is always offered (the deny button) → still resolves DENY_SESSION."""
+    adapter = _FakeAdapter()
+    prompter = SlackConsentPrompter(adapter, timeout_seconds=5.0)
+
+    async def _resolve() -> None:
+        await adapter.posted_event.wait()
+        rid = _action_for(adapter.client.posts[0], "session").split(":")[1]
+        await prompter.handle_action(f"consent:{rid}:deny_session")
+
+    results = await asyncio.gather(
+        asyncio.wait_for(prompter.prompt(_req()), timeout=5.0), _resolve()
+    )
+    assert results[0] is ConsentScope.DENY_SESSION
+
+
+# ---------------------------------------------------------------------------
 # Keyboard / Block Kit shape
 # ---------------------------------------------------------------------------
 

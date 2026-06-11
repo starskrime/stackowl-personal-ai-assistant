@@ -67,6 +67,10 @@ class _Pending:
     channel: str
     message_ts: str | None
     summary: str
+    # The single APPROVING scope actually drawn for this request (session-if-
+    # relaxation-else-once). handle_action honors ONLY this token + deny_session;
+    # any other valid-but-unoffered enum value (e.g. window) fails closed to DENY.
+    approve_scope: ConsentScope
 
 
 class SlackConsentPrompter:
@@ -107,9 +111,15 @@ class SlackConsentPrompter:
         future: asyncio.Future[ConsentScope] = loop.create_future()
         # Stash the action summary so handle_action can rewrite the message to
         # "{symbol} {summary}" without re-deriving it. message_ts is filled in
-        # once the post returns the timestamp.
+        # once the post returns the timestamp. approve_scope is the single
+        # APPROVING token we actually draw — handle_action validates taps against
+        # it so an unoffered-but-valid enum value (e.g. window) fails closed.
         self._pending[rid] = _Pending(
-            future=future, channel=dest, message_ts=None, summary=req.summary
+            future=future,
+            channel=dest,
+            message_ts=None,
+            summary=req.summary,
+            approve_scope=self._approve_scope_for(req),
         )
 
         blocks = self._build_blocks(rid, req)
@@ -195,6 +205,24 @@ class SlackConsentPrompter:
                 extra={"_fields": {"scope_raw": scope_raw}},
             )
             scope = ConsentScope.DENY
+        else:
+            # A consent gate must only ever honor a button it ACTUALLY DREW. For
+            # this rid we drew exactly {approve_scope, deny_session}; any other
+            # valid-but-unoffered enum value (e.g. window, or once when session
+            # was offered, or a bare deny) fails CLOSED to DENY.
+            offered = {pending.approve_scope, ConsentScope.DENY_SESSION}
+            if scope not in offered:
+                log.slack.warning(
+                    "[slack] consent: unoffered scope token — denying",
+                    extra={
+                        "_fields": {
+                            "rid": rid,
+                            "received": scope.value,
+                            "offered_approve": pending.approve_scope.value,
+                        }
+                    },
+                )
+                scope = ConsentScope.DENY
         # Resolve the decision FIRST — the prompt() coroutine must wake regardless
         # of whether the cosmetic message update below succeeds (fail-open UX).
         pending.future.set_result(scope)
@@ -243,10 +271,13 @@ class SlackConsentPrompter:
     # internals
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _approve_scope_for(req: ConsentRequest) -> ConsentScope:
+        """The single APPROVING scope this prompt draws: session if relaxation, else once."""
+        return ConsentScope.SESSION if req.allow_relaxation else ConsentScope.ONCE
+
     def _build_blocks(self, rid: str, req: ConsentRequest) -> list[dict[str, object]]:
-        approve_scope = (
-            ConsentScope.SESSION if req.allow_relaxation else ConsentScope.ONCE
-        )
+        approve_scope = self._approve_scope_for(req)
         prompt_block = SectionBlock(text=PlainText(text=self._build_text(req)))
         approve = ButtonElement(
             text=PlainText(text=localize("consent.btn.approve", self._lang)),
