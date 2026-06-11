@@ -557,7 +557,7 @@ class SlackChannelAdapter(ChannelAdapter):
             latency_ms=latency,
         )
 
-    def register_with_registry(self, registry: "ChannelRegistry | None" = None) -> None:
+    def register_with_registry(self, registry: ChannelRegistry | None = None) -> None:
         """Register this adapter with the singleton :class:`ChannelRegistry`."""
         from stackowl.channels.registry import ChannelRegistry
 

@@ -185,24 +185,25 @@ class SlackBlockKitFormatter:
     ) -> list[dict[str, object]]:
         """Render a memory-promotion nudge with approve/reject buttons.
 
-        The button ``action_id`` values are stable so the slash bridge can
-        route them back to the memory router without leaking the full fact_id
-        into the payload (we keep only the first 8 chars).
+        The button ``action_id`` carries the FULL ``fact_id`` so the action
+        router can route it straight back to the memory bridge, which exact-
+        matches the full UUID. (A truncated prefix never matches and would
+        silently no-op the promote/delete.) Slack permits action_ids up to 255
+        chars, so a 36-char UUID fits comfortably.
         """
         log.slack.debug(
             "[slack] formatter.format_memory_nudge: entry",
             extra={"_fields": {"fact_id_short": fact_id[:8], "content_len": len(content)}},
         )
-        short = fact_id[:8]
         approve = ButtonElement(
             text=PlainText(text=localize("slack.memory.approve", lang="en")),
-            action_id=f"memory_approve_{short}",
-            value=short,
+            action_id=f"memory_approve_{fact_id}",
+            value=fact_id,
         )
         reject = ButtonElement(
             text=PlainText(text=localize("slack.memory.reject", lang="en")),
-            action_id=f"memory_reject_{short}",
-            value=short,
+            action_id=f"memory_reject_{fact_id}",
+            value=fact_id,
         )
         blocks: list[BaseModel] = [
             _section(content),

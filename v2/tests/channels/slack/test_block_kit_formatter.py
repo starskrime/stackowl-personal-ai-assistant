@@ -62,8 +62,10 @@ def test_memory_nudge_has_buttons() -> None:
     assert isinstance(elements, list)
     assert len(elements) == 2
     action_ids = [el["action_id"] for el in elements]
-    assert f"memory_approve_{fact_id[:8]}" in action_ids
-    assert f"memory_reject_{fact_id[:8]}" in action_ids
+    # B2 review I-1: the action_id must carry the FULL fact_id (not a truncated
+    # 8-char prefix) so the bridge's exact-match SQL actually finds the fact.
+    assert f"memory_approve_{fact_id}" in action_ids
+    assert f"memory_reject_{fact_id}" in action_ids
 
 
 def test_all_labels_via_localize() -> None:
