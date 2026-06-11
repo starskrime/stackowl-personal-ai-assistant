@@ -8,7 +8,7 @@ handler re-exports it.
 from __future__ import annotations
 
 import json
-import uuid
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
@@ -114,8 +114,8 @@ FROM committed_facts
 """
 
 _INSERT_AUDIT_SQL = """
-INSERT INTO audit_log (audit_id, event_type, actor, target, timestamp, details)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO audit_log (event_type, actor, target, timestamp, details)
+VALUES (?, ?, ?, ?, ?)
 """
 
 
@@ -366,7 +366,6 @@ async def mark_audit_contradictions(
         "[memory] dream_worker_helpers.mark_audit_contradictions: entry",
         extra={"_fields": {"report_count": len(reports)}},
     )
-    now_iso = datetime.now(UTC).isoformat()
     for report in reports:
         try:
             details = json.dumps(
@@ -380,11 +379,10 @@ async def mark_audit_contradictions(
             await db.execute(
                 _INSERT_AUDIT_SQL,
                 (
-                    str(uuid.uuid4()),
                     _AUDIT_EVENT_TYPE,
                     "dream_worker",
                     report.fact_id_a,
-                    now_iso,
+                    time.time(),
                     details,
                 ),
             )
