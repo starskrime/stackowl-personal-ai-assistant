@@ -127,7 +127,7 @@ async def route_inflight_message(
     text: str,
     session_id: str,
     request_id_new: str,
-    target: int | None,
+    target: int | str | None,
     is_reply_to_inflight: bool = False,
 ) -> InflightOutcome:
     """Route a mid-turn ``text`` against the ``running`` turn and act on STEER/STOP.

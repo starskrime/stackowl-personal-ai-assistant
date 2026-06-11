@@ -143,6 +143,47 @@ async def test_explicit_steer_folds_body_into_running_turn() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# (a2) STRING target (Slack thread_ts/channel) forwards through to try_steer.
+#      A1-widen completion: route_inflight_message's `target` param must accept
+#      int | str | None (not just int | None) so a Slack string steer reaches the
+#      already-widened try_steer(target=...) unchanged on the mid-turn STEER path.
+# --------------------------------------------------------------------------- #
+
+
+async def test_string_target_forwards_into_try_steer() -> None:
+    reg = TurnRegistry()
+    router = TurnRouter(_MockClassifier(verdict=True))  # type: ignore[arg-type]
+    turn, task = await _register_running(reg, rid="r1", sid="s1", ask="task A")
+
+    captured: dict[str, object] = {}
+    real_try_steer = reg.try_steer
+
+    async def _spy_try_steer(request_id, text, *, session_id, request_id_new, target):  # type: ignore[no-untyped-def]
+        captured["target"] = target
+        return await real_try_steer(
+            request_id, text,
+            session_id=session_id, request_id_new=request_id_new, target=target,
+        )
+
+    reg.try_steer = _spy_try_steer  # type: ignore[method-assign]
+    try:
+        outcome = await asyncio.wait_for(
+            route_inflight_message(
+                router=router, registry=reg, running=turn,
+                text="/steer also handle slack", session_id="s1",
+                request_id_new="r2", target="C123-1700000000.000100",
+            ),
+            2.0,
+        )
+        assert outcome.action is InflightAction.HANDLED
+        assert outcome.signal is ExplicitSignal.STEER
+        # The STRING target threaded through the seam into try_steer unchanged.
+        assert captured["target"] == "C123-1700000000.000100"
+    finally:
+        task.cancel()
+
+
+# --------------------------------------------------------------------------- #
 # (b) explicit /stop → request_stop sets the running turn's stop flag.
 # --------------------------------------------------------------------------- #
 

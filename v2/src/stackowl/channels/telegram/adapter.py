@@ -136,8 +136,19 @@ class TelegramChannelAdapter(ChannelAdapter):
         target: int | None = None
         async for chunk in chunks:
             buffer += chunk.content
-            if chunk.target is not None:
-                target = chunk.target
+            raw = chunk.target
+            if isinstance(raw, str):
+                # Telegram only ever delivers int chat_id targets; a str (Slack
+                # channel/thread_ts) cannot reach the Telegram adapter by
+                # construction (each turn is delivered by its OWN channel adapter).
+                # Log loudly if one ever does, then fall back to _last_chat_id.
+                log.telegram.warning(
+                    "[telegram] adapter.send: unexpected str target — falling back to _last_chat_id",
+                    extra={"_fields": {"target": raw}},
+                )
+                target = None
+            elif isinstance(raw, int):
+                target = raw
         await self.send_text(self._formatter.format_response(buffer), chat_id=target)
         log.telegram.info(
             "[telegram] adapter.send: exit",
