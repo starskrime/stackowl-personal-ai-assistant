@@ -7,6 +7,8 @@ import time
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
+from stackowl.pipeline import lesson_context as lc
+from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.registry import PIPELINE_STEPS
@@ -51,6 +53,7 @@ class AsyncioBackend(OrchestratorBackend):
             task_id=state.task_id,
             durable_owner_id=state.durable_owner_id,
         )
+        lesson_token = lc.bind()
         current = state
         step_durations: list[tuple[str, float]] = []
         try:
@@ -81,6 +84,9 @@ class AsyncioBackend(OrchestratorBackend):
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
             current = await surface_critical_failure(current, self._services)
+            # Pillar ④ — append the applied-lesson explanation line when the model
+            # self-reported via note_applied_lesson this turn. Self-healing; never raises.
+            current = await surface_applied_lessons(current)
 
             current = current.evolve(pipeline_step="deliver")
             deliver_t0 = time.monotonic()
@@ -104,6 +110,7 @@ class AsyncioBackend(OrchestratorBackend):
                 )
                 current = current.evolve(errors=(*current.errors, error_msg))
         finally:
+            lc.reset(lesson_token)
             TraceContext.reset(trace_token)
             reset_services(token)
 
