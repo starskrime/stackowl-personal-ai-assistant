@@ -21,7 +21,59 @@ from stackowl.tools.browser._extraction import extract_markdown, index_dom_eleme
 from stackowl.tools.browser._fingerprint import detect_captcha, is_domain_allowed
 from stackowl.tools.browser._logging import truncate_for_error, url_path_only
 
+try:  # Playwright's TimeoutError lets us classify timeouts by TYPE, not by prose.
+    from playwright.async_api import TimeoutError as _PlaywrightTimeout
+except Exception:  # pragma: no cover — playwright always present in this package.
+    _PlaywrightTimeout = None  # type: ignore[assignment, misc]
+
 _DEFAULT_NAV_TIMEOUT_MS = 30_000
+
+# Stable Playwright/Gecko error-code substrings → structural classification
+# IDENTIFIERS (never user-facing prose; never localized). Order matters: the
+# first matching code wins. Connection-reset variants share one label.
+_NAV_ERROR_CODES: tuple[tuple[str, str], ...] = (
+    ("NS_ERROR_UNKNOWN_HOST", "unknown_host"),
+    ("NS_ERROR_UNKNOWN_PROXY_HOST", "unknown_host"),
+    ("ERR_NAME_NOT_RESOLVED", "unknown_host"),
+    ("NS_ERROR_CONNECTION_REFUSED", "connection_reset"),
+    ("NS_ERROR_NET_RESET", "connection_reset"),
+    ("NS_ERROR_NET_INTERRUPT", "connection_reset"),
+    ("ECONNRESET", "connection_reset"),
+    ("ECONNREFUSED", "connection_reset"),
+    ("ERR_CONNECTION_REFUSED", "connection_reset"),
+    ("ERR_CONNECTION_RESET", "connection_reset"),
+)
+
+
+class _NavigationError(Exception):
+    """Internal sentinel: a CLASSIFIED, handled navigation failure.
+
+    Raised at a ``page.goto`` site to unwind to the seed-navigation handler with
+    a clean structured summary instead of letting the raw Playwright error
+    propagate (which ``tools/base.py`` would log as an unhandled ERROR). Carries
+    only the already-scrubbed, code-classified summary string.
+    """
+
+
+def _classify_nav_error(exc: BaseException) -> str:
+    """Map a navigation exception to a stable code-based classification label.
+
+    Classifies by Playwright's exception TYPE (timeout) and by stable Gecko/
+    Chromium error CODES embedded in the message — NEVER by localized prose.
+    Returns one of: ``timeout``, ``unknown_host``, ``connection_reset``,
+    ``navigation_failed`` (the catch-all for any recognized-but-uncategorized
+    navigation failure).
+    """
+    if _PlaywrightTimeout is not None and isinstance(exc, _PlaywrightTimeout):
+        return "timeout"
+    msg = str(exc)
+    for code, label in _NAV_ERROR_CODES:
+        if code in msg:
+            return label
+    # Some builds surface the timeout as a generic Error carrying a stable marker.
+    if "Timeout" in msg and "exceeded" in msg:
+        return "timeout"
+    return "navigation_failed"
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)```", re.DOTALL)
 # Consecutive identical (page-state, action) repeats that count as "stuck".
 # The streak counts repeats after the first occurrence, so the loop breaks on
@@ -226,7 +278,33 @@ class BrowserBrowseTool(Tool):
                 # If seed URL given, navigate first.
                 if target_url:
                     await runtime.acquire_domain_slot(target_url)
-                    await page.goto(target_url, wait_until="domcontentloaded", timeout=_DEFAULT_NAV_TIMEOUT_MS)
+                    try:
+                        await page.goto(
+                            target_url, wait_until="domcontentloaded", timeout=_DEFAULT_NAV_TIMEOUT_MS,
+                        )
+                    except Exception as exc:
+                        from stackowl.infra.resilience import looks_like_dead_handle
+
+                        if looks_like_dead_handle(exc):
+                            raise  # a dead handle is unexpected here — let it propagate/wrap
+                        kind = _classify_nav_error(exc)
+                        status = "nav_error"
+                        final_summary = (
+                            f"navigation failed: {kind} for {url_path_only(target_url)}"
+                        )
+                        # Handled, expected failure — WARNING, not an unhandled ERROR.
+                        log.tool.warning(
+                            "browser_browse: seed navigation failed",
+                            exc_info=exc,
+                            extra={"_fields": {
+                                "nav_error": kind, "url": url_path_only(target_url),
+                            }},
+                        )
+                        batch.add_step({
+                            "action": "navigate", "url": url_path_only(target_url),
+                            "seed": True, "nav_error": kind,
+                        })
+                        raise _NavigationError(final_summary) from exc
                     await runtime.record_navigation()
                     urls_visited.append(url_path_only(page.url))
                     batch.add_step({"action": "navigate", "url": url_path_only(target_url), "seed": True})
@@ -381,7 +459,35 @@ class BrowserBrowseTool(Tool):
                             )
                             break
                         await runtime.acquire_domain_slot(nav_url)
-                        await page.goto(nav_url, wait_until="domcontentloaded", timeout=_DEFAULT_NAV_TIMEOUT_MS)
+                        try:
+                            await page.goto(
+                                nav_url, wait_until="domcontentloaded",
+                                timeout=_DEFAULT_NAV_TIMEOUT_MS,
+                            )
+                        except Exception as exc:
+                            from stackowl.infra.resilience import looks_like_dead_handle
+
+                            if looks_like_dead_handle(exc):
+                                raise  # dead handle is unexpected — propagate/wrap
+                            kind = _classify_nav_error(exc)
+                            status = "nav_error"
+                            final_summary = (
+                                f"navigation failed: {kind} for {url_path_only(nav_url)}"
+                            )
+                            # Handled, expected failure — WARNING, not unhandled ERROR.
+                            log.tool.warning(
+                                "browser_browse: navigation failed",
+                                exc_info=exc,
+                                extra={"_fields": {
+                                    "nav_error": kind, "url": url_path_only(nav_url),
+                                    "step": step_idx,
+                                }},
+                            )
+                            batch.add_step({
+                                "step": step_idx, "action": "navigate",
+                                "url": url_path_only(nav_url), "nav_error": kind,
+                            })
+                            break
                         await runtime.record_navigation()
                         urls_visited.append(url_path_only(page.url))
                         last_navigated_url = url_path_only(page.url)
@@ -447,6 +553,11 @@ class BrowserBrowseTool(Tool):
                 else:
                     status = "max_steps_reached"
                     final_summary = f"hit max_steps={max_steps} without 'done'"
+            except _NavigationError:
+                # Handled, classified navigation failure (status/final_summary
+                # already set at the goto site). Swallow so it never reaches
+                # base.py as an unhandled exception — it's a clean failed result.
+                pass
             finally:
                 if new_session:
                     with contextlib.suppress(Exception):
