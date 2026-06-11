@@ -35,6 +35,7 @@ __all__ = [
     "judge_error_count",
     "judge_relevance",
     "summarize_tool_outcomes",
+    "is_structural_giveup",
     "_structurally_irrelevant",
 ]
 
@@ -105,6 +106,20 @@ def _structurally_irrelevant(content: str) -> bool:
     if len(c) < _MIN_RELEVANT_CHARS:
         return True
     return TOOL_FAILED_MARKER in content
+
+
+def is_structural_giveup(*, tool_failures: int, successful_tool_calls: int, draft: str) -> bool:
+    """Structural give-up signal — language-agnostic, no model call.
+
+    True only for the genuine zombie shape: at least one tool failed, NOTHING
+    succeeded, AND the draft is trivial/refusing (a substantive knowledge-answer
+    or negative-result draft is NOT a give-up). Gates out the false-positive class.
+    """
+    return (
+        tool_failures >= 1
+        and successful_tool_calls == 0
+        and _structurally_irrelevant(draft)
+    )
 
 
 async def judge_relevance(
