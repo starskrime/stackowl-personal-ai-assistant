@@ -172,3 +172,153 @@ async def test_applied_lesson_explanation_reaches_user() -> None:
         f"Applied-lesson explanation (what_you_did) missing from delivered text. "
         f"Got: {delivered!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Negative-scenario providers
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedNoLessonOwl:
+    """Scripted provider that returns a plain answer WITHOUT calling note_applied_lesson."""
+
+    protocol = "anthropic"
+
+    @property
+    def name(self) -> str:
+        return "secretary"
+
+    async def complete_with_tools(  # noqa: ANN001
+        self,
+        *,
+        user_text: str,
+        system_text: str,
+        tool_schemas: object,
+        tool_dispatcher: object,
+        history: object = None,
+        **_kw: object,
+    ) -> tuple[str, list[object]]:
+        # Deliberately does NOT call note_applied_lesson — no lesson was used
+        return ("Plain answer, no lesson used.", [])
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        return CompletionResult(
+            content="Plain answer, no lesson used.",
+            input_tokens=4,
+            output_tokens=6,
+            model="no-lesson-model",
+            provider_name="secretary",
+            duration_ms=1.0,
+        )
+
+    async def stream(self, *_a: object, **_kw: object):  # pragma: no cover
+        if False:
+            yield ""
+
+
+class _ScriptedBogusIdOwl:
+    """Scripted provider that calls note_applied_lesson with an unknown lesson id."""
+
+    protocol = "anthropic"
+
+    @property
+    def name(self) -> str:
+        return "secretary"
+
+    async def complete_with_tools(  # noqa: ANN001
+        self,
+        *,
+        user_text: str,
+        system_text: str,
+        tool_schemas: object,
+        tool_dispatcher: object,
+        history: object = None,
+        **_kw: object,
+    ) -> tuple[str, list[object]]:
+        # L99 was never surfaced this turn — unknown id
+        await tool_dispatcher(  # type: ignore[operator]
+            "note_applied_lesson",
+            {"lesson_id": "L99", "what_you_did": "applied a vague intuition"},
+        )
+        return ("Answer with a bogus citation.", [])
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        return CompletionResult(
+            content="Answer with a bogus citation.",
+            input_tokens=4,
+            output_tokens=6,
+            model="bogus-id-model",
+            provider_name="secretary",
+            duration_ms=1.0,
+        )
+
+    async def stream(self, *_a: object, **_kw: object):  # pragma: no cover
+        if False:
+            yield ""
+
+
+# ---------------------------------------------------------------------------
+# Negative journey tests
+# ---------------------------------------------------------------------------
+
+
+async def test_no_claim_when_tool_not_called() -> None:
+    """FR3 (no overclaim): if the model never calls note_applied_lesson, the
+    delivered response must contain no learning/avoidance claim."""
+    registry = ToolRegistry()
+    registry.register(NoteAppliedLessonTool())
+    owl_registry = OwlRegistry.with_default_secretary()
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(_ScriptedNoLessonOwl()),  # type: ignore[arg-type]
+        tool_registry=registry,
+        consent_gate=ConsequentialActionGate(),
+        owl_registry=owl_registry,
+    )
+    backend = AsyncioBackend(services=services)
+    delivered = await _run_turn(backend, "give me a plain answer")
+
+    # OUTCOME 1 — the plain answer IS present
+    assert "Plain answer, no lesson used." in delivered, (
+        f"Expected plain answer in delivered text. Got: {delivered!r}"
+    )
+
+    # OUTCOME 2 — no learning claim must appear (FR3 honesty invariant)
+    assert "I drew on something I learned" not in delivered, (
+        f"Overclaim detected: learning claim present even though note_applied_lesson "
+        f"was never called. Got: {delivered!r}"
+    )
+    assert "ℹ️" not in delivered, (
+        f"Overclaim detected: ℹ️ marker present even though note_applied_lesson "
+        f"was never called. Got: {delivered!r}"
+    )
+
+
+async def test_unknown_id_does_not_error_and_uses_what_you_did() -> None:
+    """FR4 (graceful id mismatch): citing an unknown lesson id must not error,
+    and the explanation must derive from what_you_did regardless of id resolution."""
+    registry = ToolRegistry()
+    registry.register(NoteAppliedLessonTool())
+    owl_registry = OwlRegistry.with_default_secretary()
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(_ScriptedBogusIdOwl()),  # type: ignore[arg-type]
+        tool_registry=registry,
+        consent_gate=ConsequentialActionGate(),
+        owl_registry=owl_registry,
+    )
+    backend = AsyncioBackend(services=services)
+    delivered = await _run_turn(backend, "give me an answer citing a lesson")
+
+    # OUTCOME 1 — the turn completed (no exception raised) and the answer IS present
+    assert "Answer with a bogus citation." in delivered, (
+        f"Expected answer in delivered text. Got: {delivered!r}"
+    )
+
+    # OUTCOME 2 — what_you_did IS present in the explanation (fallback from id mismatch)
+    assert "applied a vague intuition" in delivered, (
+        f"Expected what_you_did fallback in delivered text when lesson id is unknown. "
+        f"Got: {delivered!r}"
+    )
