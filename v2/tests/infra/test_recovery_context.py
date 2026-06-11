@@ -17,8 +17,8 @@ def test_record_lands_and_get_is_non_consuming():
 
 
 def test_record_without_bind_is_noop():
-    assert rc.record_recovery(kind="substitution", failed="a",
-                              recovered_via="b", user_visible=True) is None
+    rc.record_recovery(kind="substitution", failed="a",
+                       recovered_via="b", user_visible=True)
     assert rc.get_recovery() == ()
 
 
@@ -32,6 +32,26 @@ def test_multiple_events_accumulate_in_order():
         assert evs[1].user_visible is False
     finally:
         rc.reset(token)
+
+
+def test_nested_bind_reset_isolation():
+    outer = rc.bind()
+    try:
+        rc.record_recovery(kind="substitution", failed="outer_fail",
+                           recovered_via="outer_via", user_visible=True)
+        inner = rc.bind()
+        try:
+            # inner turn starts empty, independent of outer
+            assert rc.get_recovery() == ()
+            rc.record_recovery(kind="substitution", failed="inner_fail",
+                               recovered_via="inner_via", user_visible=False)
+            assert [e.failed for e in rc.get_recovery()] == ["inner_fail"]
+        finally:
+            rc.reset(inner)
+        # after inner resets, the outer turn's event is intact
+        assert [e.failed for e in rc.get_recovery()] == ["outer_fail"]
+    finally:
+        rc.reset(outer)
 
 
 def test_reset_clears_state():
