@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import signal
 import time
 from collections.abc import AsyncIterator
@@ -1486,6 +1487,190 @@ class StartupOrchestrator:
         else:
             log.info("[startup] gateway: no Telegram bot_token — skipping")
 
+        # 3b. STEP — start the Slack adapter if configured (mirrors the Telegram
+        # block). Socket Mode needs BOTH the bot token (xoxb-) and the app-level
+        # token (xapp-, connections:write); without both we skip. The Bolt app +
+        # socket handler are constructed INSIDE this block (so slack_bolt is only
+        # imported when Slack is actually configured), the socket connection runs
+        # as a BACKGROUND task (never blocks boot), and the inbound events route
+        # through the SHARED gateway machinery via `_slack_loop` (byte-for-byte
+        # the Telegram loop with a Slack pump/adapter).
+        slack_adapter = None
+        slack_loop_task = None
+        slack_socket_task = None
+        slack_socket_handler = None
+        slack_cfg = self._settings.slack_channel
+        if slack_cfg.bot_token and slack_cfg.app_token:
+            log.info("[startup] gateway: starting Slack adapter")
+            try:
+                resolved_bot_token = SecretResolver.resolve(slack_cfg.bot_token)
+                resolved_app_token = SecretResolver.resolve(slack_cfg.app_token)
+                resolved_signing_secret = (
+                    SecretResolver.resolve(slack_cfg.signing_secret)
+                    if slack_cfg.signing_secret
+                    else ""
+                )
+            except ConfigurationError as exc:
+                log.error(
+                    "[startup] gateway: Slack secret resolution failed — skipping",
+                    exc_info=exc,
+                )
+            else:
+                from stackowl.channels.slack.adapter import SlackChannelAdapter
+
+                resolved_slack_settings = slack_cfg.model_copy(
+                    update={
+                        "bot_token": resolved_bot_token,
+                        "app_token": resolved_app_token,
+                        "signing_secret": resolved_signing_secret,
+                    }
+                )
+                slack_adapter = SlackChannelAdapter(resolved_slack_settings)
+
+                # Build the live Bolt app + wire it to the adapter. The imports
+                # live INSIDE this block so slack_bolt is only required when Slack
+                # is configured (parallel to PTB inside the Telegram block).
+                from slack_bolt.adapter.socket_mode.async_handler import (
+                    AsyncSocketModeHandler,
+                )
+                from slack_bolt.async_app import AsyncApp
+
+                from stackowl.channels.slack.slash_bridge import (
+                    SlackSlashCommandBridge,
+                )
+
+                app = AsyncApp(
+                    token=resolved_bot_token, signing_secret=resolved_signing_secret
+                )
+                slack_adapter.set_bolt_app(app)
+
+                # Resolve the bot's own user id so self-mentions are stripped.
+                # Skip-on-failure (log loudly) — an auth_test hiccup must NOT
+                # wedge boot; mention-stripping degrades, the channel still runs.
+                try:
+                    auth = await app.client.auth_test()
+                    slack_adapter.set_bot_user_id(str(auth["user_id"]))
+                    log.info("[startup] gateway: Slack auth_test resolved bot user id")
+                except Exception as exc:
+                    log.error(
+                        "[startup] gateway: Slack auth_test failed — bot mentions "
+                        "may not be stripped; continuing",
+                        exc_info=exc,
+                    )
+
+                # Inbound event handlers: route Slack events → the adapter, which
+                # filters (allowlist), strips the self-mention, and enqueues an
+                # IngressMessage for `_slack_loop` to pump through the gateway.
+                slack_slash_bridge = SlackSlashCommandBridge()
+
+                @app.event("message")
+                async def _slack_on_message(event: dict[str, object], say: object) -> None:
+                    # A bot's own posts echo back as message events — ignore them
+                    # (no user → not a real inbound turn) to avoid a self-loop.
+                    if event.get("bot_id") is not None or event.get("subtype") is not None:
+                        return
+                    user_id = str(event.get("user", ""))
+                    text = str(event.get("text", ""))
+                    if not user_id:
+                        return
+                    await slack_adapter.handle_event(event, user_id, text)
+
+                @app.event("app_mention")
+                async def _slack_on_app_mention(event: dict[str, object], say: object) -> None:
+                    user_id = str(event.get("user", ""))
+                    text = str(event.get("text", ""))
+                    if not user_id:
+                        return
+                    await slack_adapter.handle_event(event, user_id, text)
+
+                @app.command(re.compile(r".*"))
+                async def _slack_on_command(ack: object, command: dict[str, object], respond: object) -> None:
+                    # Bolt requires the slash command be acked within 3s.
+                    with contextlib.suppress(Exception):
+                        await ack()  # type: ignore[operator]
+                    name = str(command.get("command", ""))
+                    text = str(command.get("text", ""))
+                    user_id = str(command.get("user_id", ""))
+                    try:
+                        reply = await slack_slash_bridge.handle_slash_command(
+                            name, text, user_id
+                        )
+                        await respond(reply)  # type: ignore[operator]
+                    except Exception as exc:  # noqa: BLE001 — handler guard
+                        log.error(
+                            "[startup] gateway: Slack slash command failed",
+                            exc_info=exc,
+                            extra={"_fields": {"command": name}},
+                        )
+
+                slack_adapter.register_with_registry()
+                # Let the clarify gateway deliver questions over Slack, and give
+                # the Slack loop its own clarify-aware dispatch pump.
+                clarify_gateway.register_adapter("slack", slack_adapter)
+                slack_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
+
+                # Open the Socket Mode connection as a BACKGROUND task — boot must
+                # never block on the live WebSocket handshake.
+                slack_socket_handler = AsyncSocketModeHandler(app, resolved_app_token)
+                slack_socket_task = asyncio.create_task(
+                    slack_socket_handler.start_async()  # type: ignore[no-untyped-call]
+                )
+
+                async def _slack_loop() -> None:
+                    log.info("[startup] gateway: slack loop started")
+                    try:
+                        while True:
+                            try:
+                                msg = await slack_adapter.receive()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:  # noqa: BLE001 — top-level loop guard
+                                log.error(
+                                    "[startup] gateway: slack receive failed — sleeping then retrying",
+                                    exc_info=exc,
+                                )
+                                await asyncio.sleep(2.0)
+                                continue
+                            try:
+                                log.info(
+                                    "[startup] gateway: slack message received",
+                                    extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                                )
+                                decision = scanner.scan(msg)
+                                input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
+                                # E5 — resolve a reply into its parked clarify turn.
+                                consumed, input_text = await slack_pump.resolve_or_rewrite(
+                                    session_id=msg.session_id, channel=msg.channel,
+                                    route=decision.route, target=decision.target, input_text=input_text,
+                                )
+                                if consumed:
+                                    continue
+                                # §4.3 non-blocking intake (identical to the CLI/
+                                # Telegram loops): dispatch if idle, else enqueue
+                                # FIFO + instant-ack; the running turn's completion
+                                # drains the next queued intake.
+                                await _intake(slack_pump, slack_adapter, msg, decision, input_text)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:  # noqa: BLE001 — top-level loop guard
+                                log.error(
+                                    "[startup] gateway: slack message processing failed — continuing",
+                                    exc_info=exc,
+                                    extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                                )
+                                # §4.1: keyed by trace_id (the stream key).
+                                with contextlib.suppress(Exception):
+                                    stream_registry.remove(getattr(msg, "trace_id", ""))
+                                continue
+                    except asyncio.CancelledError:
+                        log.info("[startup] gateway: slack loop cancelled")
+                        raise
+
+                slack_loop_task = asyncio.create_task(_slack_loop())
+                log.info("[startup] gateway: Slack adapter started")
+        else:
+            log.info("[startup] gateway: no Slack bot_token/app_token — skipping")
+
         # 4. STEP — start the CLI loop and block on the adapter
         log.info("[startup] gateway: starting CLI adapter")
         loop_task = asyncio.create_task(_message_loop())
@@ -1569,6 +1754,24 @@ class StartupOrchestrator:
             if telegram_adapter is not None:
                 with contextlib.suppress(Exception):
                     await telegram_adapter.stop()
+            # Slack shutdown (mirrors Telegram): cancel the message loop, stop the
+            # Socket Mode connection (cancel the background socket task + close the
+            # handler), then stop the adapter. All guarded so a shutdown never
+            # raises out of the finally block.
+            if slack_loop_task is not None:
+                slack_loop_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await slack_loop_task
+            if slack_socket_task is not None:
+                slack_socket_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await slack_socket_task
+            if slack_socket_handler is not None:
+                with contextlib.suppress(Exception):
+                    await slack_socket_handler.close_async()  # type: ignore[no-untyped-call]
+            if slack_adapter is not None and hasattr(slack_adapter, "stop"):
+                with contextlib.suppress(Exception):
+                    await slack_adapter.stop()
             loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await loop_task
