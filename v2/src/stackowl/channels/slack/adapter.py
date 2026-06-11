@@ -55,6 +55,20 @@ class SlackChannelAdapter(ChannelAdapter):
         self._bot_user_id: str = ""
         self._session_counter = 0
         self._last_ping_at: datetime | None = None
+        # Session→target map (load-bearing): session_id → the Slack channel id
+        # that this session's replies route to. Phase B's consent + clarify
+        # resolve the Slack destination from THIS map because the session_id
+        # (``slack:{hash}``) is NOT itself a send target. ``_last_target`` is the
+        # single-terminal fallback when a chunk carries no explicit target.
+        self._targets: dict[str, str] = {}
+        self._last_target: str | None = None
+        # Parallel thread map: session_id → thread_ts. A reply to a channel
+        # message threads under the originating thread; a DM (no thread) replies
+        # to the channel directly. chunk.target carries only the channel id (a
+        # simple routing string) — the thread_ts is resolved adapter-side at
+        # send time, keyed by the same id used as the target.
+        self._threads: dict[str, str] = {}
+        self._last_thread: str | None = None
         # The live AsyncApp is injected by the integration runner — we keep an
         # untyped reference so the adapter remains importable without
         # slack_bolt being on the path at import time.
@@ -71,6 +85,15 @@ class SlackChannelAdapter(ChannelAdapter):
     @property
     def channel_name(self) -> str:
         return "slack"
+
+    def target_for_session(self, session_id: str) -> str | None:
+        """Resolve the Slack send destination (channel id) for a session.
+
+        Phase B (consent / clarify) calls this to find where to deliver an
+        out-of-band prompt, since the ``slack:{hash}`` session_id is not itself
+        a send target. Returns ``None`` for an unknown session.
+        """
+        return self._targets.get(session_id)
 
     async def start(self) -> None:
         """Prepare the adapter for live use (no network I/O happens here)."""
@@ -106,33 +129,73 @@ class SlackChannelAdapter(ChannelAdapter):
         TestModeGuard.assert_not_test_mode("slack.send")
         log.slack.debug("[slack] adapter.send: entry")
         buffer = ""
+        # Per-turn delivery target: a turn's chunks all carry the SAME `target`
+        # (the originating channel id stamped at deliver-time). Capture it so this
+        # turn replies to ITS OWN channel, not the shared `_last_target` (which a
+        # newer concurrent inbound event may have overwritten). None →
+        # send_text falls back to `_last_target` (single-terminal/back-compat).
+        target: str | None = None
         async for chunk in chunks:
             buffer += chunk.content
+            raw = chunk.target
+            if isinstance(raw, str):
+                target = raw
+            elif isinstance(raw, int):
+                # Slack only ever delivers str channel-id targets; an int
+                # (Telegram chat_id) cannot reach the Slack adapter by
+                # construction (each turn is delivered by its OWN channel
+                # adapter). Log loudly, then fall back to `_last_target`.
+                log.slack.warning(
+                    "[slack] adapter.send: unexpected int target — falling back to _last_target",
+                    extra={"_fields": {"target": raw}},
+                )
+                target = None
         log.slack.debug(
             "[slack] adapter.send: decision collected",
-            extra={"_fields": {"total_len": len(buffer)}},
+            extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None}},
         )
-        parts = self._splitter.split(buffer)
-        log.slack.debug(
-            "[slack] adapter.send: step split",
-            extra={"_fields": {"part_count": len(parts)}},
-        )
-        for idx, part in enumerate(parts):
-            await self._post_text(part, index=idx)
+        await self.send_text(buffer, target=target)
         log.slack.debug(
             "[slack] adapter.send: exit",
-            extra={"_fields": {"part_count": len(parts)}},
+            extra={"_fields": {"explicit_target": target is not None}},
         )
 
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str, *, target: str | None = None) -> None:
+        """Split ``text`` per Slack's limit and post each part to ``target``.
+
+        ``target`` is a Slack channel id (the per-message destination threaded
+        from ``IngressMessage.chat_id`` → ``ResponseChunk.target``); when omitted
+        it falls back to ``self._last_target`` for back-compat callers (proactive
+        deliverer, clarify degrade-path). The thread_ts (if any) is resolved
+        adapter-side from the channel id so a channel reply threads correctly and
+        a DM reply goes to the channel directly.
+        """
         TestModeGuard.assert_not_test_mode("slack.send_text")
+        dest = target if target is not None else self._last_target
+        # Resolve the originating thread for this channel: a per-channel thread
+        # map populated in handle_event. None → reply to the channel (DM path).
+        thread_ts = self._threads.get(dest) if dest is not None else None
+        if thread_ts is None and dest == self._last_target:
+            thread_ts = self._last_thread
         log.slack.debug(
             "[slack] adapter.send_text: entry",
-            extra={"_fields": {"text_len": len(text)}},
+            extra={
+                "_fields": {
+                    "text_len": len(text),
+                    "explicit_target": target is not None,
+                    "threaded": thread_ts is not None,
+                }
+            },
         )
+        if dest is None:
+            log.slack.warning(
+                "[slack] adapter.send_text: no target channel — message dropped",
+                extra={"_fields": {"text_len": len(text)}},
+            )
+            return
         parts = self._splitter.split(text)
         for idx, part in enumerate(parts):
-            await self._post_text(part, index=idx)
+            await self._post_text(part, index=idx, channel=dest, thread_ts=thread_ts)
         log.slack.debug(
             "[slack] adapter.send_text: exit",
             extra={"_fields": {"part_count": len(parts)}},
@@ -195,13 +258,46 @@ class SlackChannelAdapter(ChannelAdapter):
         )
 
         self._session_counter += 1
+        session_id = f"slack:{hash_user_id(user_id)}"
         trace_id = f"slack-{hash_user_id(user_id)}-{self._session_counter}"
+
+        # Resolve the Slack send destination. The event carries `channel` (the
+        # routing key) and optionally `thread_ts`/`ts`. The chunk.target is kept
+        # a SIMPLE channel-id string; the thread_ts is resolved adapter-side at
+        # send time. So a channel message threads its reply under the originating
+        # thread, while a DM (no thread_ts) replies to the channel directly.
+        channel_id = str(event.get("channel", ""))
+        raw_thread = event.get("thread_ts") or event.get("ts")
+        thread_ts = str(raw_thread) if raw_thread is not None else None
+        log.slack.debug(
+            "[slack] adapter.handle_event: decision target_resolved",
+            extra={
+                "_fields": {
+                    "channel": channel_id,
+                    "threaded": thread_ts is not None,
+                }
+            },
+        )
+
         msg = IngressMessage(
             text=cleaned,
-            session_id=f"slack:{hash_user_id(user_id)}",
+            session_id=session_id,
             channel=self.channel_name,
             trace_id=trace_id,
+            # Stamp the routing channel id so this turn delivers back to ITS OWN
+            # channel — never the shared `_last_target`, which a newer concurrent
+            # inbound event may overwrite before this turn finishes.
+            chat_id=channel_id,
         )
+        # Record the session→target map (Phase B) + the per-channel thread map +
+        # single-terminal fallbacks, all consulted at send time.
+        self._targets[session_id] = channel_id
+        self._last_target = channel_id
+        if thread_ts is not None:
+            self._threads[channel_id] = thread_ts
+        else:
+            self._threads.pop(channel_id, None)
+        self._last_thread = thread_ts
         await self._queue.put(msg)
         log.slack.debug(
             "[slack] adapter.handle_event: exit — queued",
@@ -255,8 +351,21 @@ class SlackChannelAdapter(ChannelAdapter):
     # Internal helpers
     # ------------------------------------------------------------------ #
 
-    async def _post_text(self, text: str, *, index: int) -> None:
+    async def _post_text(
+        self,
+        text: str,
+        *,
+        index: int,
+        channel: str,
+        thread_ts: str | None = None,
+    ) -> None:
         """Send a single message part via the attached Bolt app, if any.
+
+        ``channel`` is the resolved Slack destination (channel id) — replacing
+        the former hardcoded ``"@stackowl"`` so replies reach the originating
+        conversation. ``thread_ts`` (when set) threads the reply under the
+        originating message; when ``None`` the reply posts to the channel root
+        (DM path).
 
         When no app is attached (unit test path) we only log — the
         TestModeGuard above already protected against accidental live I/O.
@@ -264,7 +373,15 @@ class SlackChannelAdapter(ChannelAdapter):
         msg_id = uuid.uuid4().hex[:12]
         log.slack.debug(
             "[slack] adapter._post_text: entry",
-            extra={"_fields": {"msg_id": msg_id, "part_index": index, "len": len(text)}},
+            extra={
+                "_fields": {
+                    "msg_id": msg_id,
+                    "part_index": index,
+                    "len": len(text),
+                    "channel": channel,
+                    "threaded": thread_ts is not None,
+                }
+            },
         )
         if self._app is None:
             log.slack.debug(
@@ -282,11 +399,14 @@ class SlackChannelAdapter(ChannelAdapter):
                 extra={"_fields": {"msg_id": msg_id}},
             )
             return
+        post_kwargs: dict[str, object] = {"channel": channel, "text": text}
+        if thread_ts is not None:
+            post_kwargs["thread_ts"] = thread_ts
         try:
-            await client.chat_postMessage(channel="@stackowl", text=text)
+            await client.chat_postMessage(**post_kwargs)
             log.slack.debug(
                 "[slack] adapter._post_text: exit posted",
-                extra={"_fields": {"msg_id": msg_id}},
+                extra={"_fields": {"msg_id": msg_id, "channel": channel}},
             )
         except Exception as err:  # noqa: BLE001
             log.slack.error(
