@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from stackowl.infra.observability import log
 
@@ -46,8 +47,7 @@ _applied: ContextVar[tuple[AppliedLesson, ...] | None] = ContextVar(
 )
 
 
-@dataclass
-class _LessonToken:
+class _LessonToken(NamedTuple):
     surfaced: Token[tuple[SurfacedLesson, ...]]
     applied: Token[tuple[AppliedLesson, ...] | None]
 
@@ -65,7 +65,7 @@ def reset(token: _LessonToken) -> None:
 
 def set_surfaced(lessons: tuple[SurfacedLesson, ...]) -> None:
     """Record the lessons surfaced this turn (called by the classify step)."""
-    _surfaced.set(tuple(lessons))
+    _surfaced.set(lessons)
 
 
 def get_surfaced() -> tuple[SurfacedLesson, ...]:
@@ -84,7 +84,7 @@ def record_applied(lesson_id: str, what_you_did: str) -> SurfacedLesson | None:
         return None
     match = next((s for s in _surfaced.get() if s.lesson_id == lesson_id), None)
     if match is None:
-        log.engine.info(
+        log.engine.debug(
             "[lesson_context] record_applied: unknown lesson id",
             extra={"_fields": {"lesson_id": lesson_id}},
         )

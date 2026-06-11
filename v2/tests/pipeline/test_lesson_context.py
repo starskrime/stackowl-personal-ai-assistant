@@ -45,8 +45,28 @@ def test_record_without_bind_is_noop():
 
 def test_reset_clears_state():
     token = lc.bind()
-    lc.set_surfaced(_surfaced())
-    lc.record_applied("L1", "x")
-    lc.reset(token)
+    try:
+        lc.set_surfaced(_surfaced())
+        lc.record_applied("L1", "x")
+    finally:
+        lc.reset(token)
     assert lc.drain_applied() == ()
     assert lc.get_surfaced() == ()
+
+
+def test_multiple_records_accumulate_and_surfaced_roundtrips():
+    token = lc.bind()
+    try:
+        lessons = _surfaced()
+        lc.set_surfaced(lessons)
+        assert lc.get_surfaced() == lessons
+        lc.record_applied("L1", "used fetch instead of browse_url")
+        lc.record_applied("L2", "chose fetch over scrape as instructed")
+        applied = lc.drain_applied()
+        assert len(applied) == 2
+        assert applied[0].lesson_id == "L1"
+        assert applied[1].lesson_id == "L2"
+        assert applied[0].lesson_summary == "browse_url tends to fail on PDF hosts"
+        assert applied[1].lesson_summary == "prefer fetch over scrape"
+    finally:
+        lc.reset(token)
