@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from stackowl.infra.observability import log
+
 # Map of (key, lang) -> translated string.
 # Production would load from locale files; this stub returns the key for any lang
 # not explicitly listed here.
@@ -33,6 +35,30 @@ _STRINGS: dict[tuple[str, str], str] = {
         "No API key required. Using MockProvider for all responses.\n"
         "Run: stackowl serve --provider mock"
     ),
+    # Self-heal turn supervisor floor — 5 slots: {goal} {failed_capability} {attempts} {partial} {error}
+    ("self_heal_floor", "en"): (
+        "I couldn't fully complete this: {goal}. "
+        "The capability that failed: {failed_capability}. "
+        "What I tried: {attempts}. "
+        "{partial}"
+        "Technical detail: {error}"
+    ),
+    ("self_heal_floor", "de"): (
+        "Ich konnte dies nicht vollständig erledigen: {goal}. "
+        "Die fehlgeschlagene Fähigkeit: {failed_capability}. "
+        "Was ich versucht habe: {attempts}. "
+        "{partial}"
+        "Technisches Detail: {error}"
+    ),
+    # Static minimal fallback for the floor (used when template interpolation fails)
+    ("self_heal_floor_minimal", "en"): (
+        "I hit a problem completing this and couldn't finish; "
+        "the technical detail is in the logs."
+    ),
+    ("self_heal_floor_minimal", "de"): (
+        "Bei der Ausführung ist ein Problem aufgetreten und ich konnte nicht fertigstellen; "
+        "das technische Detail befindet sich in den Protokollen."
+    ),
 }
 
 
@@ -45,3 +71,28 @@ def localize(key: str, lang: str = "en") -> str:
     if en_result is not None:
         return en_result
     return key
+
+
+class _SafeDict(dict):  # type: ignore[type-arg]
+    """dict subclass whose __missing__ returns an empty string for unknown slots."""
+
+    def __missing__(self, key: str) -> str:  # noqa: D105
+        return ""
+
+
+def localize_format(key: str, lang: str = "en", **slots: object) -> str:
+    """Return the localised template for *key*/*lang* with *slots* interpolated.
+
+    Safe: missing slots produce an empty string (never a KeyError). Any
+    unexpected error falls back to the raw template string.  Never raises,
+    never returns empty.
+    """
+    log.gateway.debug("localize_format: entry", {"key": key, "lang": lang, "slot_keys": list(slots)})
+    template = localize(key, lang)
+    try:
+        result = template.format_map(_SafeDict({k: str(v) for k, v in slots.items()}))
+        log.gateway.debug("localize_format: exit", {"key": key, "result_len": len(result)})
+        return result
+    except Exception as exc:  # noqa: BLE001
+        log.gateway.error("localize_format: interpolation failed", exc, {"key": key, "lang": lang})
+        return template
