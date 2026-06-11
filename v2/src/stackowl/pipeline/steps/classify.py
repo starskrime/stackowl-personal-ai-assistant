@@ -12,6 +12,8 @@ import hashlib
 import re
 
 from stackowl.infra.observability import log
+from stackowl.learning.heuristic_ranking import rank_lessons
+from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import Message
@@ -366,20 +368,28 @@ async def _gather_lessons(query: str, limit: int = 3) -> str:
             "[pipeline] classify._gather_lessons: exit — only-skill or no hits",
         )
         return ""
-    # 4. EXIT — format as a system-prompt block
-    lines = ["## Cross-Source Lessons"]
-    for h in non_skill_hits:
+    # 4. EXIT — rank heuristics by confidence, assign turn-local ids, stash + format.
+    ranked = rank_lessons(non_skill_hits)
+    surfaced: list[lc.SurfacedLesson] = []
+    lines = [
+        "## Cross-Source Lessons",
+        "If a lesson below changed what you did, call note_applied_lesson with its id.",
+    ]
+    for i, h in enumerate(ranked, start=1):
+        lid = f"L{i}"
         snippet = h.content[:300]
-        lines.append(
-            f"- **[{h.source_type}]** ({h.similarity:.2f}) {snippet}",
-        )
+        lines.append(f"- [{lid}] **[{h.source_type}]** ({h.similarity:.2f}) {snippet}")
+        surfaced.append(lc.SurfacedLesson(
+            lesson_id=lid, source_type=h.source_type, content=h.content, similarity=h.similarity,
+        ))
+    lc.set_surfaced(tuple(surfaced))
     result = "\n".join(lines)
     log.engine.debug(
         "[pipeline] classify._gather_lessons: exit",
         extra={"_fields": {
-            "n_hits": len(non_skill_hits),
+            "n_hits": len(ranked),
             "block_len": len(result),
-            "top_sim": non_skill_hits[0].similarity if non_skill_hits else None,
+            "top_sim": ranked[0].similarity if ranked else None,
         }},
     )
     return result
