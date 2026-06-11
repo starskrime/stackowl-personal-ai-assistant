@@ -23,6 +23,8 @@ from langgraph.types import Send
 from stackowl.exceptions import InfrastructureError
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.pipeline import lesson_context as lc
+from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
 from stackowl.pipeline.critical_failure import surface_critical_failure
@@ -33,13 +35,17 @@ from stackowl.pipeline.steps import deliver
 
 
 async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
-    """Surface a critical-step failure (shared helper), then deliver.
+    """Surface a critical-step failure (shared helper), append applied-lesson
+    explanation (pillar ④), then deliver.
 
     Services are read from the ambient pipeline-services context (set by ``run``),
-    matching how every other step resolves its dependencies. The surfacing helper
-    is self-healing and never raises, so deliver always runs afterwards.
+    matching how every other step resolves its dependencies. Both surfacing helpers
+    are self-healing and never raise, so deliver always runs afterwards.
     """
-    surfaced = await surface_critical_failure(state, get_services())
+    # Applied-lesson annotation BEFORE critical-failure surfacing (see asyncio_backend
+    # for the ordering rationale — prevents a learning claim on a failed turn).
+    surfaced = await surface_applied_lessons(state)
+    surfaced = await surface_critical_failure(surfaced, get_services())
     return await deliver.run(surfaced)
 
 try:
@@ -114,6 +120,7 @@ class LangGraphBackend(OrchestratorBackend):
             task_id=state.task_id,
             durable_owner_id=state.durable_owner_id,
         )
+        lesson_token = lc.bind()
         try:
             compiled = await self._ensure_compiled()
             # Isolate per-task checkpoints: a durable task gets its own thread so
@@ -149,6 +156,7 @@ class LangGraphBackend(OrchestratorBackend):
             )
             raise InfrastructureError(f"LangGraph backend invocation failed: {type(exc).__name__}: {exc}") from exc
         finally:
+            lc.reset(lesson_token)
             TraceContext.reset(trace_token)
             reset_services(token)
 

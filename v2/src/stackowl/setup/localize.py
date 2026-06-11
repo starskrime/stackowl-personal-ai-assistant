@@ -62,6 +62,12 @@ _STRINGS: dict[tuple[str, str], str] = {
         "[Hinweis: '{failed}' war nicht verfügbar, daher hat die gleichwertige "
         "Fähigkeit '{sibling}' stattdessen das folgende Ergebnis geliefert.]"
     ),
+    # Applied-lesson explainability (pillar ④) — appended after a real answer when
+    # the model self-reported via note_applied_lesson. 1 slot: {what_you_did}.
+    ("self_heal_applied_lesson", "en"): "ℹ️ I drew on something I learned: {what_you_did}",
+    ("self_heal_applied_lesson", "de"): "ℹ️ Ich habe Gelerntes genutzt: {what_you_did}",
+    ("self_heal_applied_lesson", "fr"): "ℹ️ Je me suis appuyé sur un acquis : {what_you_did}",
+    ("self_heal_applied_lesson", "es"): "ℹ️ Me apoyé en algo que aprendí: {what_you_did}",
     # Static minimal fallback for the floor (used when template interpolation fails)
     ("self_heal_floor_minimal", "en"): (
         "I hit a problem completing this and couldn't finish; "

@@ -53,7 +53,7 @@ If a lesson below changed what you did, call note_applied_lesson with its id.
 **State field:** `PipelineState.applied_lessons: tuple[AppliedLesson, ...] = ()` (immutable, via `.evolve()`), plus `surfaced_lessons: tuple[SurfacedLesson, ...]` so the tool can resolve IDs. `AppliedLesson`/`SurfacedLesson` are frozen dataclasses.
 
 ### C. `surface_applied_lessons()` — render step at the delivery chokepoint
-**Location:** a new single-purpose module `pipeline/applied_lessons.py` exposing `surface_applied_lessons(state) -> PipelineState`, called once per turn pre-delivery in **both** backends at the same point as `surface_critical_failure` (`asyncio_backend.py`, `langgraph_backend.py`) at the same point `surface_critical_failure` is called.
+**Location:** a new single-purpose module `pipeline/applied_lessons.py` exposing `surface_applied_lessons(state) -> PipelineState`, called once per turn pre-delivery in **both** backends (`asyncio_backend.py`, `langgraph_backend.py`) at the same point `surface_critical_failure` is called.
 **Behavior:** If `state.applied_lessons` is non-empty AND `state.responses` is non-empty (there is a real answer to annotate), append one `ResponseChunk` built from a localized template. One line per applied lesson, capped (e.g. ≤2) to avoid noise.
 **Template:** new key in `setup/localize.py`, e.g. `self_heal_applied_lesson = "ℹ️ I drew on something I learned: {what_you_did}"` (localized; no hardcoded English in logic). Appended after the genuine answer.
 **Ordering vs critical-failure:** runs only on the success/partial path; if `surface_critical_failure` already injected a floor/apology (no real answer), applied-lesson annotation is skipped (nothing to annotate).

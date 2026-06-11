@@ -7,6 +7,8 @@ import time
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
+from stackowl.pipeline import lesson_context as lc
+from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.registry import PIPELINE_STEPS
@@ -51,6 +53,7 @@ class AsyncioBackend(OrchestratorBackend):
             task_id=state.task_id,
             durable_owner_id=state.durable_owner_id,
         )
+        lesson_token = lc.bind()
         current = state
         step_durations: list[tuple[str, float]] = []
         try:
@@ -77,6 +80,12 @@ class AsyncioBackend(OrchestratorBackend):
                     )
                     current = current.evolve(errors=(*current.errors, error_msg))
 
+            # Applied-lesson annotation runs BEFORE critical-failure surfacing: on a
+            # failed turn there is no real answer yet, so the honesty guard suppresses
+            # the note; on a success turn the answer is present and gets annotated,
+            # after which critical-failure surfacing no-ops. Order matters — see the
+            # learning-explainability journey's critical-failure test.
+            current = await surface_applied_lessons(current)
             # Phase 2 #2 — surface a CRITICAL (execute) step failure to the user
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
@@ -104,6 +113,7 @@ class AsyncioBackend(OrchestratorBackend):
                 )
                 current = current.evolve(errors=(*current.errors, error_msg))
         finally:
+            lc.reset(lesson_token)
             TraceContext.reset(trace_token)
             reset_services(token)
 
