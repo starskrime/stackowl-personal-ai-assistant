@@ -32,6 +32,7 @@ from .helpers import (
     hash_user_id,
     is_authorized,
     strip_bot_mention,
+    to_slack_mrkdwn,
 )
 from .settings import SlackSettings
 
@@ -77,6 +78,13 @@ class SlackChannelAdapter(ChannelAdapter):
         # send time, keyed by the same id used as the target.
         self._threads: dict[str, str] = {}
         self._last_thread: str | None = None
+        # Inbound-files map (C2): session_id → the Slack file id(s) attached to
+        # the latest inbound event for that session. ``IngressMessage`` carries
+        # no media field (it would ripple through the frozen dataclass + whole
+        # pipeline), so file ids are surfaced here — keyed by the SAME session_id
+        # the turn already owns — for a turn to fetch via ``download_media``.
+        # Mirrors the per-session ``_targets``/``_threads`` maps.
+        self._inbound_files: dict[str, list[str]] = {}
         # The live AsyncApp is injected by the integration runner — we keep an
         # untyped reference so the adapter remains importable without
         # slack_bolt being on the path at import time.
@@ -102,6 +110,16 @@ class SlackChannelAdapter(ChannelAdapter):
         a send target. Returns ``None`` for an unknown session.
         """
         return self._targets.get(session_id)
+
+    def inbound_files_for_session(self, session_id: str) -> list[str]:
+        """Return the Slack file id(s) attached to the latest event for a session.
+
+        Closes the C1 backlog: an inbound event's ``files`` array is surfaced
+        here so the turn can fetch each file's bytes via :meth:`download_media`.
+        Returns an empty list for an unknown session or an event with no files —
+        never fabricates ids.
+        """
+        return list(self._inbound_files.get(session_id, []))
 
     async def start(self) -> None:
         """Prepare the adapter for live use (no network I/O happens here)."""
@@ -201,7 +219,20 @@ class SlackChannelAdapter(ChannelAdapter):
                 extra={"_fields": {"text_len": len(text)}},
             )
             return
-        parts = self._splitter.split(text)
+        # Convert assistant GFM → Slack mrkdwn BEFORE splitting so the splitter
+        # counts final mrkdwn chars (e.g. ``**bold**``→``*bold*`` shrinks the
+        # text). Code spans/fences are preserved verbatim by the converter.
+        # NOTE (split-safety): the splitter cuts on paragraph/sentence/grapheme
+        # boundaries and retreats out of an open code fence, but it is NOT
+        # ``<url|text>``-aware — a link straddling the ~3900-char limit could be
+        # severed. Real assistant replies almost never place a single link
+        # across a chunk boundary, so this is a documented edge, not a fix here.
+        mrkdwn = to_slack_mrkdwn(text)
+        log.slack.debug(
+            "[slack] adapter.send_text: decision converted to mrkdwn",
+            extra={"_fields": {"in_len": len(text), "out_len": len(mrkdwn)}},
+        )
+        parts = self._splitter.split(mrkdwn)
         for idx, part in enumerate(parts):
             await self._post_text(part, index=idx, channel=dest, thread_ts=thread_ts)
         log.slack.debug(
@@ -618,12 +649,27 @@ class SlackChannelAdapter(ChannelAdapter):
         channel_id = str(event.get("channel", ""))
         raw_thread = event.get("thread_ts") or event.get("ts")
         thread_ts = str(raw_thread) if raw_thread is not None else None
+
+        # C2 — surface inbound files so the turn can fetch them via
+        # ``download_media``. Slack puts uploads in an event-level ``files``
+        # array, each carrying an ``id``. We extract the ids only (never log raw
+        # file contents) and key them by session_id so the turn already owns the
+        # lookup. Non-list/missing → no files (no fabricated ids).
+        raw_files = event.get("files")
+        file_ids: list[str] = []
+        if isinstance(raw_files, list):
+            for f in raw_files:
+                if isinstance(f, dict):
+                    fid = f.get("id")
+                    if isinstance(fid, str) and fid:
+                        file_ids.append(fid)
         log.slack.debug(
             "[slack] adapter.handle_event: decision target_resolved",
             extra={
                 "_fields": {
                     "channel": channel_id,
                     "threaded": thread_ts is not None,
+                    "file_count": len(file_ids),
                 }
             },
         )
@@ -647,6 +693,12 @@ class SlackChannelAdapter(ChannelAdapter):
         else:
             self._threads.pop(channel_id, None)
         self._last_thread = thread_ts
+        # Record (or clear) this session's inbound file ids so the turn can fetch
+        # them via download_media; an event with no files clears any stale ids.
+        if file_ids:
+            self._inbound_files[session_id] = file_ids
+        else:
+            self._inbound_files.pop(session_id, None)
         await self._queue.put(msg)
         log.slack.debug(
             "[slack] adapter.handle_event: exit — queued",

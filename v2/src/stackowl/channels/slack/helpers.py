@@ -7,6 +7,7 @@ multilingual; no English literals are embedded directly.
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -24,6 +25,7 @@ __all__ = [
     "hash_user_id",
     "is_authorized",
     "strip_bot_mention",
+    "to_slack_mrkdwn",
 ]
 
 
@@ -54,6 +56,110 @@ def strip_bot_mention(text: str, bot_user_id: str) -> str:
     """
     needle = f"<@{bot_user_id}>"
     return text.replace(needle, "").strip()
+
+
+# --------------------------------------------------------------------------- #
+# GFM → Slack mrkdwn conversion
+# --------------------------------------------------------------------------- #
+#
+# The assistant emits GitHub-flavored Markdown (GFM); Slack renders *mrkdwn*,
+# which differs: bold is ``*single*`` (GFM ``**double**``), strike ``~tilde~``
+# (GFM ``~~double~~``), links ``<url|text>`` (GFM ``[text](url)``). Inline code
+# (`` `code` ``) and fenced (```` ```code``` ````) are identical and MUST be left
+# byte-for-byte untouched — including any markup INSIDE them (a code block that
+# literally shows ``**x**`` must not be re-formatted). Slack has no headers, so
+# GFM headers render as bold.
+#
+# Strategy: fenced blocks and inline code spans are extracted to placeholders
+# FIRST (so their contents are never touched), the remaining text is converted,
+# then the placeholders are restored. Placeholders use a private-use codepoint
+# so they cannot collide with any user content.
+
+# Matches fenced ```...``` blocks (greedy-safe, non-overlapping) then inline
+# `code` spans. Unicode-aware; no English literals.
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL | re.UNICODE)
+_INLINE_CODE_RE = re.compile(r"`[^`]*`", re.UNICODE)
+# GFM bold: **text** or __text__ → *text* (mrkdwn). Non-greedy, no nested fence.
+_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL | re.UNICODE)
+_BOLD_UNDER_RE = re.compile(r"__(.+?)__", re.DOTALL | re.UNICODE)
+# GFM strike: ~~text~~ → ~text~ (mrkdwn).
+_STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL | re.UNICODE)
+# GFM inline link: [text](url) → <url|text>. ``text`` excludes brackets, ``url``
+# excludes whitespace and the closing paren.
+_LINK_RE = re.compile(r"\[([^\]]+)\]\((\S+?)\)", re.UNICODE)
+# GFM ATX header: 1–6 leading ``#`` then the heading text → bold (Slack has no
+# headers). Multiline so each line is matched independently.
+_HEADER_RE = re.compile(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$", re.UNICODE)
+
+# Private-use codepoint sentinel — cannot appear in normal text.
+_PLACEHOLDER = ""
+
+
+def to_slack_mrkdwn(text: str) -> str:
+    """Convert assistant GitHub-flavored Markdown to Slack *mrkdwn*.
+
+    Conversions applied OUTSIDE code spans/fences:
+
+    * ``**bold**`` / ``__bold__`` → ``*bold*``
+    * ``~~strike~~`` → ``~strike~``
+    * ``[text](url)`` → ``<url|text>`` (bare autolinks are left alone)
+    * GFM ATX headers (``# H`` … ``###### H``) → ``*H*`` (Slack has no headers)
+
+    Inline code (`` `code` ``) and fenced (```` ```code``` ````) blocks — and any
+    markup INSIDE them — are preserved literally. Underscore italic (``_x_``)
+    already matches mrkdwn and is left untouched.
+
+    Known limitation: GFM single-asterisk italic (``*italic*``) collides with
+    Slack's single-asterisk bold and is NOT disambiguated here; converting it
+    would corrupt the far more common bold case. Underscore italic should be
+    preferred upstream. This is deliberate — correctness of bold over a fragile
+    italic heuristic.
+    """
+    log.slack.debug(
+        "[slack] to_slack_mrkdwn: entry",
+        extra={"_fields": {"text_len": len(text)}},
+    )
+    if not text:
+        return text
+
+    # 1. Protect code (fences first, then inline) so their contents are never
+    #    transformed and never accidentally re-matched.
+    protected: list[str] = []
+
+    def _stash(match: re.Match[str]) -> str:
+        protected.append(match.group(0))
+        return f"{_PLACEHOLDER}{len(protected) - 1}{_PLACEHOLDER}"
+
+    work = _FENCE_RE.sub(_stash, text)
+    work = _INLINE_CODE_RE.sub(_stash, work)
+    log.slack.debug(
+        "[slack] to_slack_mrkdwn: decision protected code segments",
+        extra={"_fields": {"protected_count": len(protected)}},
+    )
+
+    # 2. Convert markup on the unprotected remainder. Order matters: strike's
+    #    ``~~`` before any single-tilde handling; headers operate per-line.
+    work = _HEADER_RE.sub(r"*\1*", work)
+    work = _BOLD_STAR_RE.sub(r"*\1*", work)
+    work = _BOLD_UNDER_RE.sub(r"*\1*", work)
+    work = _STRIKE_RE.sub(r"~\1~", work)
+    work = _LINK_RE.sub(r"<\2|\1>", work)
+    log.slack.debug("[slack] to_slack_mrkdwn: step markup converted")
+
+    # 3. Restore the protected code segments verbatim.
+    def _restore(match: re.Match[str]) -> str:
+        idx = int(match.group(1))
+        return protected[idx]
+
+    restore_re = re.compile(
+        f"{_PLACEHOLDER}(\\d+){_PLACEHOLDER}", re.UNICODE
+    )
+    result = restore_re.sub(_restore, work)
+    log.slack.debug(
+        "[slack] to_slack_mrkdwn: exit",
+        extra={"_fields": {"result_len": len(result)}},
+    )
+    return result
 
 
 # --------------------------------------------------------------------------- #

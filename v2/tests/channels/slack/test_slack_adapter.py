@@ -667,6 +667,72 @@ async def test_download_media_fetch_error_raises(monkeypatch: pytest.MonkeyPatch
         await adapter.download_media("F123")
 
 
+# --------------------------------------------------------------------------- #
+# C2 — outbound GFM→mrkdwn conversion + inbound files surfacing
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_send_converts_gfm_bold_to_mrkdwn() -> None:
+    """Outbound ``**bold**`` (GFM) is converted to ``*bold*`` (mrkdwn) before posting."""
+    adapter = _make_adapter()
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+    await adapter.send(_drain(_chunk("**hi**", target="C1")))
+    assert len(app.client.calls) == 1
+    assert app.client.calls[0]["text"] == "*hi*"
+
+
+@pytest.mark.asyncio
+async def test_send_text_converts_gfm_link_to_mrkdwn() -> None:
+    """Outbound ``[t](u)`` (GFM) is converted to ``<u|t>`` (mrkdwn) before posting."""
+    adapter = _make_adapter()
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+    await adapter.send_text("[t](https://x.io)", target="C2")
+    assert app.client.calls[0]["text"] == "<https://x.io|t>"
+
+
+@pytest.mark.asyncio
+async def test_send_text_leaves_code_span_literal() -> None:
+    """Markup inside a code span is NOT converted on the outbound path."""
+    adapter = _make_adapter()
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+    await adapter.send_text("`**x**`", target="C3")
+    assert app.client.calls[0]["text"] == "`**x**`"
+
+
+@pytest.mark.asyncio
+async def test_handle_event_surfaces_inbound_file_ids() -> None:
+    """An event with a ``files`` array surfaces the file id(s) per session."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    await adapter.handle_event(
+        {
+            "type": "message",
+            "channel": "C123",
+            "files": [{"id": "F111"}, {"id": "F222"}],
+        },
+        user_id="U_allowed",
+        text="see attached",
+    )
+    msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
+    assert adapter.inbound_files_for_session(msg.session_id) == ["F111", "F222"]
+
+
+@pytest.mark.asyncio
+async def test_handle_event_no_files_means_empty() -> None:
+    """An event without files surfaces no file ids (no fabricated entries)."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    await adapter.handle_event(
+        {"type": "message", "channel": "C123"},
+        user_id="U_allowed",
+        text="plain",
+    )
+    msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
+    assert adapter.inbound_files_for_session(msg.session_id) == []
+
+
 @pytest.mark.asyncio
 async def test_health_check_no_ping() -> None:
     adapter = _make_adapter()
