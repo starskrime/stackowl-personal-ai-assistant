@@ -264,7 +264,19 @@ class A2ADelegator:
         reply_detail: str = ""
         try:
             final_state = await self._run_under_governor(backend, sub_state)
+            # FULL text (including any never-empty FLOOR chunk) rides up to the parent
+            # as the honest "I couldn't complete this" detail.
             response_text = "".join(chunk.content for chunk in final_state.responses)
+            # STATUS-DECIDING text EXCLUDES floor chunks: the self-heal never-empty
+            # floor (is_floor=True) is the zero-content backstop, NOT a real delivery.
+            # A floor-ONLY child therefore decides "empty" (honest failure), mirroring
+            # critical_failure._has_usable_response — never a fake "ok" that would hide
+            # the failure from the parent's re-route/recovery ladder.
+            usable_text = "".join(
+                chunk.content
+                for chunk in final_state.responses
+                if not getattr(chunk, "is_floor", False)
+            )
             # Governor-decide the child outcome from observed facts — never from content.
             if final_state.errors:
                 if any(e.startswith("budget:stop:") for e in final_state.errors):
@@ -283,7 +295,7 @@ class A2ADelegator:
                         }
                     },
                 )
-            elif not response_text.strip():
+            elif not usable_text.strip():
                 reply_status = "empty"
         except StackOwlError as exc:
             log.engine.error(
