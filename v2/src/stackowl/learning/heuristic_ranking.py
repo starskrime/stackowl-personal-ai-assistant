@@ -41,6 +41,10 @@ def rank_lessons(hits: list[LessonHit]) -> list[LessonHit]:
     heuristics = [h for h in hits if h.source_type == _HEURISTIC_SOURCE]
     others = [h for h in hits if h.source_type != _HEURISTIC_SOURCE]
     if len(heuristics) <= 1:
+        log.engine.debug(
+            "[learning] rank_lessons: no ranking needed",
+            extra={"_fields": {"n_heuristic": len(heuristics), "n_other": len(others)}},
+        )
         return [*heuristics, *others]
     total_n = max(math.e, float(sum(_evidence(h) or 0 for h in heuristics)))
     ln_n = math.log(total_n)
@@ -55,6 +59,6 @@ def rank_lessons(hits: list[LessonHit]) -> list[LessonHit]:
     log.engine.debug(
         "[learning] rank_lessons: ranked heuristics",
         extra={"_fields": {"n_heuristic": len(ranked), "n_other": len(others),
-                            "top_ref": ranked[0].source_ref if ranked else None}},
+                            "top_ref": ranked[0].source_ref}},
     )
     return [*ranked, *others]

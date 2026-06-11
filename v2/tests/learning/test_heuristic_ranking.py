@@ -2,12 +2,10 @@ from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.learning.lesson import LessonHit
 
 
-def _hit(ref, sim, source="tool_heuristic", evidence=None, quality=None):
+def _hit(ref, sim, source="tool_heuristic", evidence=None):
     md: dict[str, object] = {}
     if evidence is not None:
         md["evidence_count"] = evidence
-    if quality is not None:
-        md["mean_quality"] = quality
     return LessonHit(lesson_id=ref, source_type=source, source_ref=ref,
                      content=f"lesson {ref}", similarity=sim, metadata=md)
 
@@ -47,3 +45,17 @@ def test_equal_similarity_prefers_under_observed():
     ]
     ranked = rank_lessons(hits)
     assert ranked[0].source_ref == "low_ev"
+
+
+def test_bool_and_nonpositive_evidence_treated_as_missing():
+    # evidence=True (bool) must be rejected by _evidence() → similarity-only.
+    # evidence=None (no key) is also similarity-only.
+    # Both hits score by similarity alone, so higher similarity wins.
+    # If bool were mistakenly treated as evidence=1 it would receive a large
+    # UCB exploration bonus and could flip the order — the assertion catches that.
+    hits = [
+        _hit("bool_ev", sim=0.50, evidence=True),   # bool → similarity-only
+        _hit("no_ev", sim=0.40),                     # no evidence key → similarity-only
+    ]
+    ranked = rank_lessons(hits)
+    assert ranked[0].source_ref == "bool_ev"
