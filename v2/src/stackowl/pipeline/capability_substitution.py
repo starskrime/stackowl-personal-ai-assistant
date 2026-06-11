@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, Protocol
 
 from stackowl.infra.observability import log
 
@@ -180,5 +181,147 @@ def build_args_for(
             "capability_substitution.build_args_for: failed",
             exc_info=exc,
             extra={"_fields": {"tool": tool}},
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Substitute selection (W3.T14) — the recovery actuator's choice function.
+# ---------------------------------------------------------------------------
+# A sibling is eligible for AUTO-substitution only when it is NON-consequential
+# (read/write). A consequential sibling is NEVER auto-run: it would bypass the
+# consent gate. So the consent boundary is preserved BY CONSTRUCTION here.
+
+# Severity ranking — read before write (deterministic priority: prefer the
+# least-privileged sibling that can serve the same capability). Consequential is
+# absent from this map → excluded from substitution entirely.
+_SUBSTITUTABLE_SEVERITY_RANK: dict[str, int] = {"read": 0, "write": 1}
+
+
+class _RegistryLike(Protocol):
+    """Minimal registry surface ``find_substitute`` needs (kept narrow so the
+    function stays testable without importing the real ToolRegistry).
+
+    Returns are ``Any`` so any registry whose tools expose ``.name`` /
+    ``.manifest`` satisfies the protocol (list invariance would otherwise reject
+    the concrete ``ToolRegistry.all() -> list[Tool]``)."""
+
+    def get(self, name: str) -> Any: ...
+
+    def all(self) -> list[Any]: ...
+
+
+def find_substitute(
+    failed_tool: str,
+    failed_args: dict[str, object],
+    *,
+    registry: _RegistryLike,
+    in_bounds: Callable[[str], bool],
+    already_substituted: set[str],
+) -> tuple[str, dict[str, object]] | None:
+    """Pick a NON-consequential, in-bounds sibling that can serve the same
+    capability as a just-failed tool, or ``None``.
+
+    Selection rules (ALL must hold for a candidate sibling ``s``):
+      (a) ``s`` shares ``failed_tool``'s ``capability_tag`` (and the tag is set),
+      (b) ``s.manifest.action_severity`` ∈ {"read", "write"} — NOT consequential
+          (CONSENT-SAFETY: a consequential sibling is never auto-run),
+      (c) the capability tag is not already in ``already_substituted`` (one
+          substitution per capability per turn),
+      (d) ``in_bounds(s.name)`` is True (bounds-safety),
+      (e) ``build_args_for(s.name, normalized_input_for(failed_tool, failed_args))``
+          returns non-None (the sibling can actually be served).
+
+    Deterministic priority: read before write, then registry enumeration order.
+    Returns ``(sibling_name, built_args)`` for the highest-priority match, else
+    ``None``. NEVER raises — on any internal error it logs and returns ``None``
+    (honest degradation: the caller falls through to the original failure).
+    """
+    log.engine.debug(
+        "capability_substitution.find_substitute: entry",
+        extra={"_fields": {
+            "failed_tool": failed_tool,
+            "already_substituted": sorted(already_substituted),
+        }},
+    )
+    try:
+        failed = registry.get(failed_tool)
+        tag = getattr(getattr(failed, "manifest", None), "capability_tag", None)
+        # (a) the failed tool must declare a capability tag; (c) and not already used.
+        if not tag:
+            log.engine.debug(
+                "capability_substitution.find_substitute: failed tool has no tag",
+                extra={"_fields": {"failed_tool": failed_tool}},
+            )
+            return None
+        if tag in already_substituted:
+            log.engine.debug(
+                "capability_substitution.find_substitute: tag already substituted this turn",
+                extra={"_fields": {"failed_tool": failed_tool, "tag": tag}},
+            )
+            return None
+
+        normalized = normalized_input_for(failed_tool, failed_args)
+        if normalized is None:
+            log.engine.debug(
+                "capability_substitution.find_substitute: no normalized input",
+                extra={"_fields": {"failed_tool": failed_tool}},
+            )
+            return None
+
+        candidates: list[tuple[int, int, str, dict[str, object]]] = []
+        for idx, tool in enumerate(registry.all()):
+            manifest = getattr(tool, "manifest", None)
+            name = getattr(tool, "name", None)
+            if manifest is None or not isinstance(name, str):
+                continue
+            if name == failed_tool:
+                continue
+            if getattr(manifest, "capability_tag", None) != tag:
+                continue
+            # (b) CONSENT-SAFETY — only read/write may be auto-substituted.
+            severity = getattr(manifest, "action_severity", None)
+            rank = _SUBSTITUTABLE_SEVERITY_RANK.get(str(severity))
+            if rank is None:
+                continue  # consequential (or unknown) → never auto-run
+            # (d) bounds-safety.
+            try:
+                if not in_bounds(name):
+                    continue
+            except Exception as exc:  # noqa: BLE001 — a bounds-probe fault excludes (safe)
+                log.engine.warning(
+                    "capability_substitution.find_substitute: in_bounds raised — skipping",
+                    exc_info=exc,
+                    extra={"_fields": {"sibling": name}},
+                )
+                continue
+            # (e) servable — the sibling can be built from the normalized input.
+            built = build_args_for(name, normalized)
+            if built is None:
+                continue
+            candidates.append((rank, idx, name, built))
+
+        if not candidates:
+            log.engine.debug(
+                "capability_substitution.find_substitute: no eligible sibling",
+                extra={"_fields": {"failed_tool": failed_tool, "tag": tag}},
+            )
+            return None
+
+        # Deterministic: lowest severity rank first, then registry order.
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        _rank, _idx, chosen_name, chosen_args = candidates[0]
+        log.engine.info(
+            "capability_substitution.find_substitute: exit — sibling chosen",
+            extra={"_fields": {
+                "failed_tool": failed_tool, "tag": tag, "sibling": chosen_name,
+            }},
+        )
+        return chosen_name, chosen_args
+    except Exception as exc:  # noqa: BLE001 — the actuator must never crash a turn
+        log.engine.error(
+            "capability_substitution.find_substitute: failed",
+            exc_info=exc,
+            extra={"_fields": {"failed_tool": failed_tool}},
         )
         return None

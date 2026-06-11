@@ -297,6 +297,100 @@ def _exclude_spawn_tools(schemas: list[dict[str, object]]) -> list[dict[str, obj
     return [s for s in schemas if _schema_tool_name(s) not in _CHILD_EXCLUDED_TOOLS]
 
 
+async def _try_substitute(
+    *,
+    failed_tool: str,
+    failed_args: dict[str, object],
+    tool_registry: ToolRegistry,
+    effective: Any,
+    substituted_tags: set[str],
+    trace_id: str,
+) -> str | None:
+    """The W3.T14 recovery actuator (route around a broken capability).
+
+    Find an in-bounds, NON-consequential sibling sharing the failed tool's
+    capability_tag, run it through the SAME guarded path (ledger_guard), and on
+    success return its output as a fresh observation prefixed with a neutral
+    localized note. Returns ``None`` (caller falls through to TOOL_FAILED) when:
+    no sibling is eligible, the sibling itself fails, or ANY actuator error
+    occurs. NEVER raises — the substitution must never crash the turn.
+
+    CONSENT-SAFETY: ``find_substitute`` only ever returns read/write siblings, so
+    a consequential tool is never auto-run here (no consent bypass). BOUNDS-SAFETY:
+    the ``in_bounds`` callable reuses the SAME ``check_effective_bounds`` verdict.
+    """
+    from stackowl.authz.bounds_guard import check_effective_bounds
+    from stackowl.pipeline.capability_substitution import find_substitute
+    from stackowl.pipeline.durable.ledger_guard import ledger_guard
+    from stackowl.setup.localize import localize_format
+
+    try:
+        match = find_substitute(
+            failed_tool,
+            failed_args,
+            registry=tool_registry,
+            in_bounds=lambda n: check_effective_bounds(effective, n) is None,
+            already_substituted=substituted_tags,
+        )
+        if match is None:
+            return None
+        sibling_name, sibling_args = match
+        sib = tool_registry.get(sibling_name)
+        if sib is None:  # raced/unregistered — degrade honestly
+            log.engine.warning(
+                "[pipeline] execute: substitute sibling vanished from registry",
+                extra={"_fields": {"sibling": sibling_name, "trace_id": trace_id}},
+            )
+            return None
+        log.engine.info(
+            "[pipeline] execute: self-heal substitution — routing around failed tool",
+            extra={"_fields": {
+                "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
+            }},
+        )
+        # Run the sibling through the SAME guarded path the primary used. The
+        # sibling is read/write (find_substitute guarantees it), so under a durable
+        # context ledger_guard treats a read as passthrough and a write as
+        # exactly-once — identical to a direct dispatch of that tool.
+        sib_result = await ledger_guard(
+            sibling_name, sibling_args, sib.manifest.action_severity,
+            lambda: sib(**sibling_args),
+        )
+        if not sib_result.success:
+            log.engine.info(
+                "[pipeline] execute: substitute sibling also failed — falling through",
+                extra={"_fields": {
+                    "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
+                }},
+            )
+            return None
+        # SUCCESS — record the capability so this turn does not substitute again
+        # for the same class, and return the sibling's output as a fresh
+        # observation with a neutral localized note so the model knows an
+        # alternative produced it.
+        tag = sib.manifest.capability_tag
+        if tag:
+            substituted_tags.add(tag)
+        note = localize_format(
+            "self_heal_substituted", "en", failed=failed_tool, sibling=sibling_name,
+        )
+        log.engine.info(
+            "[pipeline] execute: self-heal substitution succeeded",
+            extra={"_fields": {
+                "failed_tool": failed_tool, "sibling": sibling_name,
+                "tag": tag, "trace_id": trace_id,
+            }},
+        )
+        return f"{note}\n{sib_result.output}"
+    except Exception as exc:  # noqa: BLE001 — the actuator must never crash the turn
+        log.engine.error(
+            "[pipeline] execute: self-heal substitution actuator failed — falling through",
+            exc_info=exc,
+            extra={"_fields": {"failed_tool": failed_tool, "trace_id": trace_id}},
+        )
+        return None
+
+
 async def _run_with_tools(
     state: PipelineState,
     provider: ModelProvider,
@@ -364,6 +458,10 @@ async def _run_with_tools(
     denied_this_run: set[str] = set()
     # E2-S3 — off-plan tools already drift-logged this run (de-duplicate per tool).
     drift_audited: set[str] = set()
+    # W3.T14 — capability_tags already auto-substituted this turn (one route-around
+    # per capability per turn; a second failure of the same class falls through to
+    # the honest TOOL_FAILED marker rather than substituting again).
+    substituted_tags: set[str] = set()
 
     async def _dispatch(name: str, args: dict[str, object]) -> str:
         # F3.1 / E2-S1 loop-stop — a tool already denied this run (by consent OR by
@@ -526,10 +624,29 @@ async def _run_with_tools(
                 )
         if tr.success:
             return tr.output
-        # FAILED — prefix the rendered error with the structural marker so the
-        # give-up judge (which sees only these rendered strings) can tell a failed
-        # action from a successful one. Language-agnostic; the model still reads a
-        # normal error message after the (invisible-ish) sentinel.
+        # FAILED — W3.T14 recovery actuator: before surrendering to the marker,
+        # deterministically route around the broken capability. If this tool
+        # declares a capability_tag, look for an in-bounds, NON-consequential
+        # sibling that produces the same KIND of result and run IT through the
+        # SAME guarded path, feeding its success back as a fresh observation.
+        # CONSENT-SAFE by construction: find_substitute excludes consequential
+        # siblings, so no consent gate is ever bypassed. BOUNDS-SAFE: the same
+        # check_effective_bounds verdict gates the sibling. One substitution per
+        # capability per turn. Any actuator error → fall through to the marker.
+        sub = await _try_substitute(
+            failed_tool=name,
+            failed_args=args,
+            tool_registry=tool_registry,
+            effective=effective,
+            substituted_tags=substituted_tags,
+            trace_id=state.trace_id,
+        )
+        if sub is not None:
+            return sub
+        # No route-around — prefix the rendered error with the structural marker so
+        # the give-up judge (which sees only these rendered strings) can tell a
+        # failed action from a successful one. Language-agnostic; the model still
+        # reads a normal error message after the (invisible-ish) sentinel.
         from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 
         return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"

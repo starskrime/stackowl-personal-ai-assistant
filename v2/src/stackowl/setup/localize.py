@@ -50,6 +50,18 @@ _STRINGS: dict[tuple[str, str], str] = {
         "{partial} "
         "Technisches Detail: {error}"
     ),
+    # Self-heal substitution note (W3.T14) — prepended to a substituted observation
+    # so the model knows an ALTERNATIVE capability produced this result. 2 slots:
+    # {failed} (the tool that failed) {sibling} (the in-bounds non-consequential
+    # sibling that served the same capability class).
+    ("self_heal_substituted", "en"): (
+        "[note: '{failed}' was unavailable, so the equivalent capability "
+        "'{sibling}' produced the following result instead.]"
+    ),
+    ("self_heal_substituted", "de"): (
+        "[Hinweis: '{failed}' war nicht verfügbar, daher hat die gleichwertige "
+        "Fähigkeit '{sibling}' stattdessen das folgende Ergebnis geliefert.]"
+    ),
     # Static minimal fallback for the floor (used when template interpolation fails)
     ("self_heal_floor_minimal", "en"): (
         "I hit a problem completing this and couldn't finish; "
