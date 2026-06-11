@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import PERSISTENCE_DIRECTIVE, is_structural_giveup
+from stackowl.setup.localize import localize, localize_format
+
+_ERROR_MAX_LEN = 500
 
 
 def tally_tool_outcomes(all_calls: list[dict[str, object]]) -> tuple[int, int]:
@@ -98,3 +101,105 @@ def decide_nudge(
         },
     )
     return directive, new_budget, current
+
+
+def synthesize_floor(
+    goal: str | None,
+    error: str | None,
+    attempts: list[str] | None,
+    partial: str | None,
+    *,
+    failed_capability: str | None = None,
+    lang: str = "en",
+) -> str:
+    """Pure, deterministic never-empty honest floor message — NO model, NO await, NO I/O.
+
+    The TerminalResponseGuarantee core synthesizer. Builds an honest "couldn't
+    finish" message from whatever turn data survived, via
+    :func:`localize_format`. Guarantees a non-empty string on ANY exit path: on
+    any error (including ``None`` inputs causing issues) it returns the static
+    localized minimal fallback. NEVER raises, NEVER returns empty.
+
+    ``failed_capability`` — when ``None`` it is derived from ``attempts[0]``;
+    :func:`synthesize_from_calls` passes the precise failed tool name.
+
+    This function ONLY produces a string — it never touches ``errors`` or
+    pipeline state (the responses-only invariant is enforced at the call sites).
+    """
+    log.engine.debug(
+        "supervisor.synthesize_floor: entry",
+        extra={
+            "_fields": {
+                "has_goal": goal is not None,
+                "has_error": error is not None,
+                "n_attempts": len(attempts) if attempts else 0,
+                "has_partial": bool(partial),
+                "failed_capability": failed_capability,
+                "lang": lang,
+            }
+        },
+    )
+    try:
+        attempts_list = list(attempts) if attempts else []
+        derived_capability = failed_capability
+        if derived_capability is None:
+            derived_capability = attempts_list[0] if attempts_list else ""
+        result = localize_format(
+            "self_heal_floor",
+            lang,
+            goal=goal or "",
+            failed_capability=derived_capability or "",
+            attempts=", ".join(attempts_list) if attempts_list else "",
+            partial=partial or "",
+            error=error or "",
+        )
+        if not result:
+            raise ValueError("empty floor result")
+        log.engine.debug(
+            "supervisor.synthesize_floor: exit",
+            extra={"_fields": {"result_len": len(result)}},
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        log.engine.error("supervisor.synthesize_floor: falling back to minimal", exc)
+        return localize("self_heal_floor_minimal", lang)
+
+
+def synthesize_from_calls(
+    goal: str | None,
+    all_calls: list[dict[str, object]],
+    partial: str | None,
+    *,
+    lang: str = "en",
+) -> str:
+    """Floor entry point for the provider empty-wrap-up path (has ``all_calls``).
+
+    Derives the precise ``failed_capability`` (FIRST call whose ``failed`` bool
+    is truthy), the ``attempts`` list and the failing ``error`` from the tool
+    records, then delegates to :func:`synthesize_floor`. Pure; never raises.
+    """
+    log.engine.debug(
+        "supervisor.synthesize_from_calls: entry",
+        extra={"_fields": {"n_calls": len(all_calls) if all_calls else 0, "lang": lang}},
+    )
+    try:
+        calls = list(all_calls) if all_calls else []
+        failed_capability = ""
+        error = ""
+        for c in calls:
+            if bool(c.get("failed")):
+                failed_capability = str(c.get("name") or "")
+                error = str(c.get("result") or "")[:_ERROR_MAX_LEN]
+                break
+        attempts = [str(c.get("name") or "") for c in calls]
+        return synthesize_floor(
+            goal,
+            error,
+            attempts,
+            partial,
+            failed_capability=failed_capability,
+            lang=lang,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.engine.error("supervisor.synthesize_from_calls: falling back to minimal", exc)
+        return localize("self_heal_floor_minimal", lang)
