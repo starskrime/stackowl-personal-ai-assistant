@@ -66,6 +66,41 @@ def _log_pipeline_crash(task: asyncio.Task) -> None:  # type: ignore[type-arg]
         )
 
 
+class _SlackMemoryBridgeComposite:
+    """Bridge facade exposing BOTH ``force_promote`` and ``delete`` for Slack memory taps.
+
+    The ``SlackMemoryActionHandler`` (Slack B2) needs a single bridge object that
+    can both PROMOTE an approved fact (``force_promote``, which lives on
+    :class:`~stackowl.memory.fact_promoter.FactPromoter`) and DELETE a rejected
+    one (``delete``, which lives on the :class:`~stackowl.memory.bridge.MemoryBridge`).
+    Neither object exposes both, so this composite delegates each operation to the
+    component that owns it — ``force_promote`` → the promoter (the approve path),
+    everything else (``delete``, and any other bridge call) → the bridge. Keeping
+    this a thin delegator (not a subclass) avoids fabricating a fake bridge while
+    giving the handler the exact two-method surface it probes for.
+    """
+
+    def __init__(self, *, bridge: object, promoter: object) -> None:
+        self._bridge = bridge
+        self._promoter = promoter
+
+    async def force_promote(self, fact_id: str) -> bool:
+        """Promote an approved staged fact via the FactPromoter (the approve path)."""
+        log.debug(
+            "[startup] slack memory composite: force_promote",
+            extra={"_fields": {"fact_id": fact_id}},
+        )
+        return await self._promoter.force_promote(fact_id)  # type: ignore[attr-defined,no-any-return]
+
+    async def delete(self, fact_id: str) -> None:
+        """Delete a rejected staged fact via the bridge (the reject path)."""
+        log.debug(
+            "[startup] slack memory composite: delete",
+            extra={"_fields": {"fact_id": fact_id}},
+        )
+        await self._bridge.delete(fact_id)  # type: ignore[attr-defined]
+
+
 def _pid_path() -> Path:
     return StackowlHome.pid_file()
 
@@ -1544,6 +1579,17 @@ class StartupOrchestrator:
                 )
                 slack_adapter.set_bolt_app(app)
 
+                # Slack B3 — wire the consent round-trip BEFORE the socket starts
+                # (mirrors Telegram ~register-before-start): a consent request
+                # arriving at boot must never miss its prompter and spuriously
+                # deny. The prompter only needs the adapter object; the @app.action
+                # seam that FEEDS its handle_action is registered just below (Bolt
+                # registers handlers on the app before the socket connects).
+                from stackowl.channels.slack.consent import SlackConsentPrompter
+
+                slack_consent_prompter = SlackConsentPrompter(slack_adapter)
+                consent_routing.register("slack", slack_consent_prompter)
+
                 # Resolve the bot's own user id so self-mentions are stripped.
                 # Skip-on-failure (log loudly) — an auth_test hiccup must NOT
                 # wedge boot; mention-stripping degrades, the channel still runs.
@@ -1602,6 +1648,85 @@ class StartupOrchestrator:
                             exc_info=exc,
                             extra={"_fields": {"command": name}},
                         )
+
+                # Slack B3 — the inbound INTERACTIVITY seam: a tapped Block Kit
+                # button (consent / clarify / memory) arrives as a Bolt
+                # block_actions event. Build the prefix router + per-prefix
+                # handlers, then register a catch-all @app.action that acks FIRST
+                # (Bolt's 3s deadline) and routes the tap. Registered BEFORE the
+                # socket starts (handlers attach on the app pre-connect), so the
+                # very first tap is routed. Mirrors the Telegram callback wiring.
+                try:
+                    from stackowl.channels.slack.callbacks import SlackActionRouter
+                    from stackowl.channels.slack.clarify import SlackClarifyResolver
+                    from stackowl.channels.slack.memory_callbacks import (
+                        SlackMemoryActionHandler,
+                    )
+
+                    slack_router = SlackActionRouter()
+                    slack_router.register(
+                        "consent:", slack_consent_prompter.handle_action
+                    )
+                    # NOTE: consent and clarify share this router but resolve very
+                    # differently — consent awaits a local Future, clarify resolves
+                    # a gateway Event across the decoupled pump (mirrors the
+                    # Telegram do-not-unify note).
+                    slack_clarify_resolver = SlackClarifyResolver(clarify_gateway)
+                    slack_router.register(
+                        "clarify:", slack_clarify_resolver.handle_action
+                    )
+                    # The memory approve/reject taps need a bridge exposing BOTH
+                    # force_promote (FactPromoter) AND delete (the bridge); neither
+                    # alone has both, so hand the handler a composite that
+                    # delegates each op to its owner.
+                    slack_memory_bridge = _SlackMemoryBridgeComposite(
+                        bridge=memory_bridge,
+                        promoter=memory_components.promoter,
+                    )
+                    slack_memory_handler = SlackMemoryActionHandler(
+                        slack_memory_bridge  # type: ignore[arg-type]
+                    )
+                    slack_memory_handler.register(slack_router)
+
+                    @app.action(re.compile(r".*"))
+                    async def _slack_on_action(
+                        ack: object, body: dict[str, object]
+                    ) -> None:
+                        # Ack within Bolt's 3s deadline FIRST — a slow/raising
+                        # route must never miss the ack and wedge the socket.
+                        with contextlib.suppress(Exception):
+                            await ack()  # type: ignore[operator]
+                        try:
+                            actions = body.get("actions") or []
+                            action = actions[0] if isinstance(actions, list) and actions else {}
+                            action_id = str(
+                                action.get("action_id") or action.get("value") or ""
+                            )
+                            # A unique-per-delivery id for at-least-once de-dup
+                            # (Bolt re-delivers on hiccups): the action's ts, else
+                            # the interaction trigger id, else the action id.
+                            delivery_id = str(
+                                action.get("action_ts")
+                                or body.get("trigger_id")
+                                or action_id
+                            )
+                            await slack_router.route(action_id, delivery_id=delivery_id)
+                        except Exception as exc:  # noqa: BLE001 — handler guard
+                            log.error(
+                                "[startup] gateway: Slack action routing failed",
+                                exc_info=exc,
+                            )
+
+                    log.info(
+                        "[startup] gateway: Slack consent + clarify + memory "
+                        "interactivity wired"
+                    )
+                except Exception as exc:
+                    log.error(
+                        "[startup] gateway: Slack interactivity wiring failed — "
+                        "consequential actions on Slack will fail closed",
+                        exc_info=exc,
+                    )
 
                 slack_adapter.register_with_registry()
                 # Let the clarify gateway deliver questions over Slack, and give
