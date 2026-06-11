@@ -14,7 +14,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from stackowl.channels.base import ChannelAdapter
 from stackowl.channels.splitter import SlackMessageSplitter
@@ -24,7 +24,15 @@ from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
 from stackowl.pipeline.streaming import ResponseChunk
 
-from .helpers import hash_user_id, is_authorized, strip_bot_mention
+from .helpers import (
+    ActionsBlock,
+    ButtonElement,
+    PlainText,
+    SectionBlock,
+    hash_user_id,
+    is_authorized,
+    strip_bot_mention,
+)
 from .settings import SlackSettings
 
 if TYPE_CHECKING:
@@ -200,6 +208,223 @@ class SlackChannelAdapter(ChannelAdapter):
             "[slack] adapter.send_text: exit",
             extra={"_fields": {"part_count": len(parts)}},
         )
+
+    async def send_clarify(
+        self,
+        session_id: str,
+        question: str,
+        choices: tuple[str, ...] | list[str],
+        clarify_id: str,
+    ) -> None:
+        """Deliver a clarify question as tap-buttons (one Block Kit button/choice).
+
+        The Slack destination is resolved from ``target_for_session(session_id)``
+        — the ``slack:{hash}`` session_id is NOT itself a send target. When that
+        returns ``None`` we degrade to the numbered-text fallback (best-effort to
+        ``_last_target``) rather than guessing a channel.
+
+        Each non-blank choice becomes a button whose ``action_id``/``value`` is
+        ``clarify:{clarify_id}:{idx}`` — a tap is routed to
+        :class:`~stackowl.channels.slack.clarify.SlackClarifyResolver`, which maps
+        ``idx`` back to the choice text and wakes the parked turn. The ORIGINAL
+        index is PRESERVED even when earlier choices are blank (mirrors Telegram),
+        so ``clarify:{id}:{idx}`` always indexes the gateway's stored
+        ``entry.choices[idx]``. Open-ended questions (no non-blank choices) post
+        as plain text and are answered by typing.
+
+        Self-healing: an unresolved target, a missing client, or any delivery
+        error degrades to a best-effort numbered-text post — a delivery failure
+        must never crash the turn (the gateway treats ``send_clarify`` as
+        best-effort).
+        """
+        n_nonblank = sum(1 for c in choices if str(c).strip())
+        log.slack.debug(
+            "[slack] adapter.send_clarify: entry",
+            extra={"_fields": {"n_choices": n_nonblank, "clarify_id": clarify_id}},
+        )
+        # 2. DECISION — resolve the Slack destination from the session→channel map.
+        dest = self.target_for_session(session_id)
+        if dest is None:
+            log.slack.warning(
+                "[slack] adapter.send_clarify: no target for session — text fallback",
+                extra={"_fields": {"session_id": session_id, "clarify_id": clarify_id}},
+            )
+            await self._send_clarify_text_fallback(question, choices, channel=None)
+            return
+
+        if not n_nonblank:
+            # Open-ended question — answered by typing (no buttons).
+            log.slack.debug(
+                "[slack] adapter.send_clarify: decision no_choices — plain text",
+                extra={"_fields": {"channel": dest}},
+            )
+            await self._send_clarify_text_fallback(question, choices, channel=dest)
+            return
+
+        client = self._client()
+        if client is None:
+            log.slack.warning(
+                "[slack] adapter.send_clarify: no Bolt client — text fallback",
+                extra={"_fields": {"clarify_id": clarify_id}},
+            )
+            await self._send_clarify_text_fallback(question, choices, channel=dest)
+            return
+
+        try:
+            buttons: list[ButtonElement] = []
+            for idx, choice in enumerate(choices):
+                label = str(choice).strip()
+                if not label:
+                    continue
+                action = f"clarify:{clarify_id}:{idx}"
+                buttons.append(
+                    ButtonElement(
+                        text=PlainText(text=label),
+                        action_id=action,
+                        value=action,
+                    )
+                )
+            blocks = [
+                SectionBlock(text=PlainText(text=question)).model_dump(),
+                ActionsBlock(elements=buttons).model_dump(),
+            ]
+            log.slack.debug(
+                "[slack] adapter.send_clarify: step blocks_built",
+                extra={"_fields": {"channel": dest, "n_buttons": len(buttons)}},
+            )
+            post_kwargs: dict[str, object] = {
+                "channel": dest,
+                "text": question,
+                "blocks": blocks,
+            }
+            thread_ts = self._threads.get(dest)
+            if thread_ts is not None:
+                post_kwargs["thread_ts"] = thread_ts
+            await client.chat_postMessage(**post_kwargs)
+        except Exception as exc:  # self-healing — any failure → best-effort text
+            log.slack.error(
+                "[slack] adapter.send_clarify: button delivery failed — text fallback",
+                exc_info=exc,
+                extra={"_fields": {"channel": dest, "clarify_id": clarify_id}},
+            )
+            await self._send_clarify_text_fallback(question, choices, channel=dest)
+            return
+        log.slack.debug(
+            "[slack] adapter.send_clarify: exit",
+            extra={"_fields": {"channel": dest, "delivered": True}},
+        )
+
+    async def _send_clarify_text_fallback(
+        self,
+        question: str,
+        choices: tuple[str, ...] | list[str],
+        *,
+        channel: str | None,
+    ) -> None:
+        """Best-effort numbered-text delivery of a clarify question (never raises).
+
+        Renders ``question`` followed by a numbered list of the non-blank choices
+        (a glyph-free, language-neutral ``N. choice`` cadence). Posts directly via
+        the Bolt client so it works regardless of TestModeGuard; ``channel=None``
+        falls back to ``_last_target`` (single-terminal/back-compat path).
+        """
+        dest = channel if channel is not None else self._last_target
+        lines = [question]
+        n = 0
+        for choice in choices:
+            label = str(choice).strip()
+            if not label:
+                continue
+            n += 1
+            lines.append(f"{n}. {label}")
+        body = "\n".join(lines)
+        try:
+            client = self._client()
+            if client is None or dest is None:
+                log.slack.warning(
+                    "[slack] adapter.send_clarify: text fallback has no target/client — dropped",
+                    extra={"_fields": {"has_client": client is not None, "has_dest": dest is not None}},
+                )
+                return
+            post_kwargs: dict[str, object] = {"channel": dest, "text": body}
+            thread_ts = self._threads.get(dest)
+            if thread_ts is not None:
+                post_kwargs["thread_ts"] = thread_ts
+            await client.chat_postMessage(**post_kwargs)
+            log.slack.debug(
+                "[slack] adapter.send_clarify: text fallback posted",
+                extra={"_fields": {"channel": dest, "n_choices": n}},
+            )
+        except Exception as exc:  # truly best-effort — never raise into the turn
+            log.slack.error(
+                "[slack] adapter.send_clarify: text fallback post failed",
+                exc_info=exc,
+                extra={"_fields": {"channel": dest}},
+            )
+
+    async def acknowledge_callback(self, callback_id: str, text: str = "") -> None:
+        """No-op for Slack — block_actions are ack'd per-handler by Bolt's ``ack()``.
+
+        Slack requires the ``block_actions`` HTTP handler to call ``ack()`` within
+        3 seconds; that acknowledgement is owned by the Bolt ``@app.action``
+        handler (B3), NOT by an out-of-band call here. This method exists to honor
+        the channel-adapter contract shared with Telegram (whose
+        ``acknowledge_callback`` answers a callback_query) so cross-channel callers
+        (e.g. the memory handlers) stay uniform; on Slack it is a documented no-op.
+        """
+        log.slack.debug(
+            "[slack] adapter.acknowledge_callback: no-op (ack owned by Bolt handler)",
+            extra={"_fields": {"callback_id_len": len(callback_id), "has_text": bool(text)}},
+        )
+
+    async def _chat_update(
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, object]] | None = None,
+    ) -> bool:
+        """Best-effort rewrite of an existing message (drops buttons by default).
+
+        Used to turn an interactive prompt into a resolved decision after a tap so
+        it can't be re-tapped. Fail-open: any Bolt failure is LOGGED and returns
+        ``False`` rather than raising — a failed cosmetic update must never break a
+        decision that is already recorded.
+        """
+        log.slack.debug(
+            "[slack] adapter._chat_update: entry",
+            extra={"_fields": {"channel": channel, "text_len": len(text)}},
+        )
+        client = self._client()
+        if client is None:
+            log.slack.warning("[slack] adapter._chat_update: no client — skipped")
+            return False
+        update_kwargs: dict[str, object] = {"channel": channel, "ts": ts, "text": text}
+        if blocks is not None:
+            update_kwargs["blocks"] = blocks
+        try:
+            await client.chat_update(**update_kwargs)
+            log.slack.debug("[slack] adapter._chat_update: exit updated")
+            return True
+        except Exception as exc:  # fail-open — decision already recorded
+            log.slack.error(
+                "[slack] adapter._chat_update: update failed",
+                exc_info=exc,
+                extra={"_fields": {"channel": channel}},
+            )
+            return False
+
+    def _client(self) -> Any | None:
+        """Return the live Bolt client (``app.client``), or None when unattached.
+
+        Typed ``Any`` so the dynamically-shaped Bolt client (``chat_postMessage`` /
+        ``chat_update``) stays callable without importing slack_sdk at module load
+        — mirrors the consent prompter's ``_client`` seam.
+        """
+        app = self._app
+        if app is None:
+            return None
+        return getattr(app, "client", None)
 
     # ------------------------------------------------------------------ #
     # Integration hooks called by the live AsyncApp

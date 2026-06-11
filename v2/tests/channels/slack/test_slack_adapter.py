@@ -276,6 +276,171 @@ async def test_send_falls_back_to_last_target() -> None:
     assert app.client.calls[0]["thread_ts"] == "9.9"
 
 
+# --------------------------------------------------------------------------- #
+# B2 — send_clarify Block Kit buttons + target resolution + text fallback
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_session(adapter: SlackChannelAdapter, channel: str) -> str:
+    """Drive an inbound event so the session→target map is populated."""
+    await adapter.handle_event(
+        {"type": "message", "channel": channel},
+        user_id="U_allowed",
+        text="hi",
+    )
+    msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
+    return msg.session_id
+
+
+def _actions_elements(call: dict[str, object]) -> list[dict]:
+    blocks = call.get("blocks")
+    if not isinstance(blocks, list):
+        # A text-fallback post carries no blocks → no action buttons.
+        return []
+    elements: list[dict] = []
+    for block in blocks:
+        if isinstance(block, dict) and block.get("type") == "actions":
+            elements.extend(block.get("elements", []))
+    return elements
+
+
+@pytest.mark.asyncio
+async def test_send_clarify_posts_block_kit_buttons() -> None:
+    """One button per non-blank choice, action_id/value = clarify:{cid}:{idx}."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    session_id = await _seed_session(adapter, "C123")
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    await adapter.send_clarify(
+        session_id,
+        question="Pick a color",
+        choices=("red", "green", "blue"),
+        clarify_id="cid",
+    )
+
+    assert len(app.client.calls) == 1
+    call = app.client.calls[0]
+    assert call["channel"] == "C123"
+    elements = _actions_elements(call)
+    assert len(elements) == 3
+    assert [e["action_id"] for e in elements] == [
+        "clarify:cid:0",
+        "clarify:cid:1",
+        "clarify:cid:2",
+    ]
+    assert [e["value"] for e in elements] == [
+        "clarify:cid:0",
+        "clarify:cid:1",
+        "clarify:cid:2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_clarify_preserves_original_index_with_blanks() -> None:
+    """Blank choices are skipped but the ORIGINAL index is preserved in the id."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    session_id = await _seed_session(adapter, "C123")
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    await adapter.send_clarify(
+        session_id,
+        question="Q",
+        choices=("a", "", "c"),
+        clarify_id="cid",
+    )
+
+    elements = _actions_elements(app.client.calls[0])
+    # The blank middle choice is skipped, but indices 0 and 2 are preserved.
+    assert [e["action_id"] for e in elements] == ["clarify:cid:0", "clarify:cid:2"]
+
+
+@pytest.mark.asyncio
+async def test_send_clarify_unresolved_target_degrades_to_text() -> None:
+    """No target for the session → degrade to the numbered-text fallback."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+    # Pin a fallback terminal so the text path has somewhere to land.
+    adapter._last_target = "C_fallback"  # type: ignore[attr-defined]
+
+    # Session never seen → target_for_session returns None.
+    await adapter.send_clarify(
+        "slack:unknownsession",
+        question="Pick",
+        choices=("a", "b"),
+        clarify_id="cid",
+    )
+
+    # A message was still delivered (text fallback), and it carries NO buttons.
+    assert len(app.client.calls) == 1
+    call = app.client.calls[0]
+    assert _actions_elements(call) == []
+    text = call.get("text")
+    assert isinstance(text, str)
+    # The numbered fallback lists each choice.
+    assert "a" in text
+    assert "b" in text
+
+
+@pytest.mark.asyncio
+async def test_send_clarify_no_choices_sends_plain_text() -> None:
+    """Open-ended question (no non-blank choices) → plain text, no buttons."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    session_id = await _seed_session(adapter, "C123")
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    await adapter.send_clarify(
+        session_id,
+        question="What is your name?",
+        choices=(),
+        clarify_id="cid",
+    )
+
+    assert len(app.client.calls) == 1
+    assert _actions_elements(app.client.calls[0]) == []
+
+
+@pytest.mark.asyncio
+async def test_send_clarify_post_failure_degrades_to_text() -> None:
+    """A Block Kit post failure self-heals to the text fallback."""
+
+    class _FailThenOkClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+            self._first = True
+
+        async def chat_postMessage(self, **kwargs: object) -> dict[str, object]:
+            self.calls.append(dict(kwargs))
+            if self._first and kwargs.get("blocks"):
+                self._first = False
+                raise RuntimeError("blocks rejected")
+            return {"ok": True}
+
+    class _FailApp:
+        def __init__(self) -> None:
+            self.client = _FailThenOkClient()
+
+    adapter = _make_adapter(allowed=["U_allowed"])
+    session_id = await _seed_session(adapter, "C123")
+    app = _FailApp()
+    adapter.set_bolt_app(app)
+    TestModeGuard.deactivate()
+
+    await adapter.send_clarify(
+        session_id,
+        question="Pick",
+        choices=("a", "b"),
+        clarify_id="cid",
+    )
+
+    # First (block) post failed; a second text-fallback post was attempted.
+    assert len(app.client.calls) == 2
+    assert _actions_elements(app.client.calls[1]) == []
+
+
 @pytest.mark.asyncio
 async def test_health_check_no_ping() -> None:
     adapter = _make_adapter()
