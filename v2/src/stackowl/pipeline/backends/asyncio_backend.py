@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from stackowl.infra import recovery_context
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
@@ -11,6 +12,7 @@ from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.critical_failure import surface_critical_failure
+from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
@@ -54,6 +56,7 @@ class AsyncioBackend(OrchestratorBackend):
             durable_owner_id=state.durable_owner_id,
         )
         lesson_token = lc.bind()
+        recovery_token = recovery_context.bind()
         current = state
         step_durations: list[tuple[str, float]] = []
         try:
@@ -86,6 +89,7 @@ class AsyncioBackend(OrchestratorBackend):
             # after which critical-failure surfacing no-ops. Order matters — see the
             # learning-explainability journey's critical-failure test.
             current = await surface_applied_lessons(current)
+            current = await surface_recovery(current)
             # Phase 2 #2 — surface a CRITICAL (execute) step failure to the user
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
@@ -113,6 +117,20 @@ class AsyncioBackend(OrchestratorBackend):
                 )
                 current = current.evolve(errors=(*current.errors, error_msg))
         finally:
+            _rec_events = recovery_context.get_recovery()
+            if _rec_events:
+                log.engine.info(
+                    "[recovery] turn summary",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id,
+                        "events": [
+                            {"kind": e.kind, "failed": e.failed,
+                             "recovered_via": e.recovered_via, "user_visible": e.user_visible}
+                            for e in _rec_events
+                        ],
+                    }},
+                )
+            recovery_context.reset(recovery_token)
             lc.reset(lesson_token)
             TraceContext.reset(trace_token)
             reset_services(token)
