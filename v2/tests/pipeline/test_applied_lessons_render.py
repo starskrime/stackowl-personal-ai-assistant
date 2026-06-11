@@ -43,6 +43,27 @@ async def test_no_applied_means_unchanged():
 
 
 @pytest.mark.asyncio
+async def test_cap_at_two_applied_lessons():
+    token = lc.bind()
+    try:
+        lc.set_surfaced((
+            lc.SurfacedLesson("L1", "tool_heuristic", "x", 0.9),
+            lc.SurfacedLesson("L2", "tool_heuristic", "y", 0.8),
+            lc.SurfacedLesson("L3", "tool_heuristic", "z", 0.7),
+        ))
+        lc.record_applied("L1", "used fetch instead of browse")
+        lc.record_applied("L2", "skipped retry on 404")
+        lc.record_applied("L3", "lowered temperature")
+        out = await surface_applied_lessons(_state(responses=(_answer_chunk(),)))
+        # 1 real answer + exactly 2 annotation lines (cap enforced)
+        assert len(out.responses) == 3
+        assert "used fetch instead of browse" in out.responses[1].content
+        assert "skipped retry on 404" in out.responses[2].content
+    finally:
+        lc.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_floor_only_response_gets_no_annotation():
     token = lc.bind()
     try:

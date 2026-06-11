@@ -38,6 +38,7 @@ async def surface_applied_lessons(state: PipelineState) -> PipelineState:
         base_index = len(state.responses)
         for offset, a in enumerate(applied[:_MAX_LINES]):
             text = localize_format("self_heal_applied_lesson", _LANG, what_you_did=a.what_you_did)
+            # Annotation chunks appended after the real answer; is_final stays False — they are not terminal responses.
             new_chunks.append(ResponseChunk(
                 content=text, is_final=False, chunk_index=base_index + offset,
                 trace_id=state.trace_id, owl_name=state.owl_name,
