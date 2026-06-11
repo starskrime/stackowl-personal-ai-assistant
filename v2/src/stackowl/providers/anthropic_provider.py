@@ -13,6 +13,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
+from stackowl.pipeline.supervisor import decide_nudge
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
 from stackowl.providers._react import LoopGuard
 from stackowl.providers._truncate import (
@@ -171,33 +172,49 @@ class AnthropicProvider(ModelProvider):
         # None => empty list (unchanged).
         all_calls: list[dict[str, Any]] = list(resume_tool_calls) if resume_tool_calls else []
         # Phase D — bounded persistence enforcement: at most 2 corrective nudges
-        # per turn, so a stubborn give-up cannot explode cost/loops.
+        # per turn, so a stubborn give-up cannot explode cost/loops. The structural
+        # veto (decide_nudge) is the backstop for a lying/erroring judge, and the
+        # escalation-reward cap (calls_at_last_nudge) spends budget only on a
+        # re-refusal, never on a turn where the model actually escalated.
         nudge_budget = 2
+        calls_at_last_nudge: int | None = None
 
         async def _enforce(content: str) -> str | None:
-            """Run the persistence check for a draft final answer (fail-OPEN)."""
-            nonlocal nudge_budget
-            if persistence_check is None or nudge_budget <= 0:
+            """Run the persistence check for a draft final answer (fail-OPEN).
+
+            The judge verdict is fed through :func:`decide_nudge`, which applies
+            the always-on structural veto (overriding a hallucinated/erroring
+            DELIVERED on a structural give-up) and the escalation-reward budget
+            rule. The judge itself fails OPEN — on any error it returns None and
+            the veto then decides from the authoritative ``failed`` bools.
+            """
+            nonlocal nudge_budget, calls_at_last_nudge
+            if persistence_check is None:
                 return None
             try:
-                directive = await persistence_check(
+                judge_directive = await persistence_check(
                     content, summarize_tool_outcomes(all_calls)
                 )
             except Exception as exc:  # fail OPEN — never block/loop on a judge error
                 log.engine.error(
-                    "[anthropic] complete_with_tools: persistence_check raised — accepting answer",
+                    "[anthropic] complete_with_tools: persistence_check raised — failing open to veto",
                     exc_info=exc,
                     extra={"_fields": {"provider": self._name}},
                 )
-                return None
+                judge_directive = None
+            directive, nudge_budget, calls_at_last_nudge = decide_nudge(
+                judge_directive=judge_directive,
+                all_calls=all_calls,
+                draft=content,
+                nudge_budget=nudge_budget,
+                calls_at_last_nudge=calls_at_last_nudge,
+            )
             if directive:
-                nudge_budget -= 1
                 log.engine.info(
                     "[anthropic] complete_with_tools: persistence nudge — continuing loop",
                     extra={"_fields": {"provider": self._name, "nudge_budget": nudge_budget}},
                 )
-                return directive
-            return None
+            return directive
 
         budget = (
             int(self._config.context_chars * 0.8)
