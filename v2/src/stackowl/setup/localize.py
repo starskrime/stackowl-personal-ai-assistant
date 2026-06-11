@@ -40,14 +40,14 @@ _STRINGS: dict[tuple[str, str], str] = {
         "I couldn't fully complete this: {goal}. "
         "The capability that failed: {failed_capability}. "
         "What I tried: {attempts}. "
-        "{partial}"
+        "{partial} "
         "Technical detail: {error}"
     ),
     ("self_heal_floor", "de"): (
         "Ich konnte dies nicht vollständig erledigen: {goal}. "
         "Die fehlgeschlagene Fähigkeit: {failed_capability}. "
         "Was ich versucht habe: {attempts}. "
-        "{partial}"
+        "{partial} "
         "Technisches Detail: {error}"
     ),
     # Static minimal fallback for the floor (used when template interpolation fails)
@@ -87,12 +87,22 @@ def localize_format(key: str, lang: str = "en", **slots: object) -> str:
     unexpected error falls back to the raw template string.  Never raises,
     never returns empty.
     """
-    log.gateway.debug("localize_format: entry", {"key": key, "lang": lang, "slot_keys": list(slots)})
+    log.setup.debug(
+        "localize_format: entry",
+        extra={"_fields": {"key": key, "lang": lang, "slot_keys": list(slots)}},
+    )
     template = localize(key, lang)
     try:
         result = template.format_map(_SafeDict({k: str(v) for k, v in slots.items()}))
-        log.gateway.debug("localize_format: exit", {"key": key, "result_len": len(result)})
+        log.setup.debug(
+            "localize_format: exit",
+            extra={"_fields": {"key": key, "result_len": len(result)}},
+        )
         return result
     except Exception as exc:  # noqa: BLE001
-        log.gateway.error("localize_format: interpolation failed", exc, {"key": key, "lang": lang})
+        log.setup.error(
+            "localize_format: interpolation failed",
+            exc_info=exc,
+            extra={"_fields": {"key": key, "lang": lang}},
+        )
         return template

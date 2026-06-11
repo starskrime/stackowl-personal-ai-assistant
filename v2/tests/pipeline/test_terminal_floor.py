@@ -14,7 +14,12 @@ def test_synthesize_from_calls_picks_first_failed_capability():
         {"name": "browser_browse", "failed": True, "result": "DNS fail"},
     ]
     out = synthesize_from_calls(goal="g", all_calls=calls, partial="")
-    assert "browser_browse" in out  # the FAILED tool is named, not the ok one
+    # Prove the FAILED tool occupies the "capability that failed" slot (real
+    # template phrasing) and the OK tool is NOT named there. A bare
+    # "browser_browse in out" would pass even if the wrong tool were chosen,
+    # because browser_browse also appears in the {attempts} list regardless.
+    assert "The capability that failed: browser_browse." in out
+    assert "The capability that failed: shell." not in out
 
 
 def test_synthesize_floor_degraded_when_no_calls():

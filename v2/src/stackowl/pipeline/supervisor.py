@@ -161,7 +161,11 @@ def synthesize_floor(
         )
         return result
     except Exception as exc:  # noqa: BLE001
-        log.engine.error("supervisor.synthesize_floor: falling back to minimal", exc)
+        log.engine.error(
+            "supervisor.synthesize_floor: falling back to minimal",
+            exc_info=exc,
+            extra={"_fields": {"has_goal": goal is not None, "lang": lang}},
+        )
         return localize("self_heal_floor_minimal", lang)
 
 
@@ -201,5 +205,9 @@ def synthesize_from_calls(
             lang=lang,
         )
     except Exception as exc:  # noqa: BLE001
-        log.engine.error("supervisor.synthesize_from_calls: falling back to minimal", exc)
+        log.engine.error(
+            "supervisor.synthesize_from_calls: falling back to minimal",
+            exc_info=exc,
+            extra={"_fields": {"n_calls": len(all_calls) if all_calls else 0, "lang": lang}},
+        )
         return localize("self_heal_floor_minimal", lang)
