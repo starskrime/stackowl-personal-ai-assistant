@@ -17,7 +17,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
-from stackowl.pipeline.supervisor import decide_nudge
+from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import message_has_blocks, openai_user_content
 from stackowl.providers._react import LoopGuard, parse_react_action
 from stackowl.providers._truncate import (
@@ -438,6 +438,9 @@ class OpenAIProvider(ModelProvider):
         # user always gets a coherent answer (best result + remaining blocker +
         # next step). Fail-open: any provider error falls back to the last assistant
         # text already gathered, so a hard failure never produces silence here.
+        # Capture the partial BEFORE appending WRAPUP_DIRECTIVE so the floor's
+        # {partial} reflects real progress, never an echo of the directive.
+        partial = _last_assistant_text(messages)
         try:
             messages = trim_messages_to_budget(messages, budget)
             messages.append({"role": "user", "content": WRAPUP_DIRECTIVE})
@@ -461,10 +464,19 @@ class OpenAIProvider(ModelProvider):
                 exc_info=exc,
                 extra={"_fields": {"provider": self._name}},
             )
-        fallback = _last_assistant_text(messages)
+        fallback = partial
         if fallback.strip():
             return fallback, all_calls
-        return "", all_calls
+        # W2.T9 — the wrap-up produced nothing AND no prior assistant text exists.
+        # Never hand the user "" — synthesize the honest never-empty floor naming
+        # the failed capability. synthesize_from_calls is pure and never returns
+        # empty, so `floored` is guaranteed non-empty.
+        log.engine.warning(
+            "[openai] complete_with_tools: empty wrap-up — flooring honest answer",
+            extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
+        )
+        floored = synthesize_from_calls(user_text, all_calls, partial)
+        return floored, all_calls
 
     async def _record_usage_safe(self, response: Any, duration_ms: float) -> None:
         """Record one tool-loop round's cost from an OpenAI response (B5 fail-open).
