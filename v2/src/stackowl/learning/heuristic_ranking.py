@@ -1,15 +1,21 @@
 """Confidence-aware ranking of tool-heuristic lesson hits (UCB-style).
 
-Pillar ③: a noisy, low-evidence heuristic should not outrank a well-proven one
-purely on semantic similarity. We reorder ONLY ``tool_heuristic`` hits by
+Pillar ③: similarity dominates ranking, but a newly-mined, highly-relevant lesson
+must not be permanently buried by an over-counted stale one. We reorder ONLY
+``tool_heuristic`` hits by
 
-    score(h) = similarity(h) - c * sqrt( ln(N) / evidence_count(h) )
+    score(h) = similarity(h) + c * sqrt( ln(N) / evidence_count(h) )
 
-with c = sqrt(2) and N = sum of evidence over the heuristic candidates (>= e, so
-the log is non-negative). High similarity dominates; the penalty term demotes
-under-evidenced (noisy) heuristics — low evidence inflates the term and lowers rank. Hits with no ``evidence_count`` in
-metadata (legacy rows / non-heuristic) score as similarity-only — fail-safe.
-Non-heuristic hits keep their original relative order, appended after heuristics.
+with c = 0.15 and N = sum of evidence over the heuristic candidates (>= e, so
+the log is non-negative).
+
+Semantics: similarity is the primary signal. The small ``+`` exploration term
+gives under-observed heuristics a gentle nudge so a newly-mined, highly-relevant
+lesson is not permanently buried by an over-counted stale one. With c = 0.15 the
+exploration term is a tie-breaker only — it cannot overcome a clear similarity
+gap. Hits with no ``evidence_count`` in metadata (legacy rows / non-heuristic)
+score as similarity-only — fail-safe. Non-heuristic hits keep their original
+relative order, appended after heuristics.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from stackowl.infra.observability import log
 from stackowl.learning.lesson import LessonHit
 
 _HEURISTIC_SOURCE = "tool_heuristic"
-_C = math.sqrt(2.0)
+_C = 0.15
 
 
 def _evidence(hit: LessonHit) -> int | None:
@@ -43,7 +49,7 @@ def rank_lessons(hits: list[LessonHit]) -> list[LessonHit]:
         ev = _evidence(h)
         if ev is None:
             return h.similarity
-        return h.similarity - _C * math.sqrt(ln_n / ev)
+        return h.similarity + _C * math.sqrt(ln_n / ev)
 
     ranked = sorted(heuristics, key=score, reverse=True)
     log.engine.debug(

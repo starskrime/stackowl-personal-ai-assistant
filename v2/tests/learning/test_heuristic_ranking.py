@@ -36,3 +36,14 @@ def test_missing_evidence_metadata_scores_as_similarity_only():
     hits = [_hit("x", sim=0.30, evidence=None), _hit("y", sim=0.40, evidence=None)]
     ranked = rank_lessons(hits)
     assert [h.source_ref for h in ranked] == ["y", "x"]
+
+
+def test_equal_similarity_prefers_under_observed():
+    # With equal similarity (0.70), the lower-evidence hit should rank first
+    # because the UCB exploration term sqrt(ln(N)/ev) is larger for small ev.
+    hits = [
+        _hit("high_ev", sim=0.70, evidence=50),
+        _hit("low_ev", sim=0.70, evidence=3),
+    ]
+    ranked = rank_lessons(hits)
+    assert ranked[0].source_ref == "low_ev"
