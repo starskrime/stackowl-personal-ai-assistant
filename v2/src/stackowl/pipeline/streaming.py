@@ -21,7 +21,8 @@ class ResponseChunk(BaseModel, frozen=True):
     duration_ms: float | None = None
     # Optional delivery target for fan-out channels (e.g. a Telegram chat_id).
     # None → the channel adapter resolves the destination itself.
-    target: int | None = None
+    # String targets are for Slack (channel id / thread_ts); int for Telegram chat_id.
+    target: int | str | None = None
 
 
 class StreamWriter:

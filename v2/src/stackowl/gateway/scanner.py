@@ -50,7 +50,8 @@ class IngressMessage:
     # channels (CLI) leave it None; the adapter then resolves the destination
     # itself. Defaulted so every existing ``IngressMessage(...)`` constructor is
     # byte-for-byte unaffected.
-    chat_id: int | None = None
+    # String targets are for Slack (channel id / thread_ts); int for Telegram chat_id.
+    chat_id: int | str | None = None
 
 
 @dataclass(frozen=True)

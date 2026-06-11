@@ -50,7 +50,8 @@ class PipelineState(BaseModel, frozen=True):
     # it None; the adapter then resolves the destination itself. Carried across
     # evolve() like every other field; default None keeps every non-Telegram turn
     # byte-for-byte unchanged.
-    reply_target: int | None = None
+    # String targets are for Slack (channel id / thread_ts); int for Telegram chat_id.
+    reply_target: int | str | None = None
     # Recursion depth of this (sub-)pipeline in the delegation tree. 0 for a
     # top-level user turn; incremented by one each time A2ADelegator spawns a
     # specialist child (see _run_specialist). Carried across evolve() like every

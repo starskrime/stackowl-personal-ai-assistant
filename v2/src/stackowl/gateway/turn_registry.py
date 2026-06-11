@@ -53,7 +53,8 @@ _NEXT: dict[TurnStatus, TurnStatus] = {
 class PendingIntake:
     request_id: str
     original_input: str
-    target: int | None
+    # String targets for Slack (channel id / thread_ts); int for Telegram chat_id.
+    target: int | str | None
 
 
 @dataclass
@@ -61,7 +62,8 @@ class Turn:
     turn_id: str  # == request_id
     session_id: str
     task: asyncio.Task[None] | None
-    target: int | None
+    # String targets for Slack (channel id / thread_ts); int for Telegram chat_id.
+    target: int | str | None
     original_input: str
     status: TurnStatus = TurnStatus.RUNNING
     stop_requested: bool = False
@@ -263,7 +265,7 @@ class TurnRegistry:
         *,
         session_id: str,
         task: asyncio.Task[None] | None,
-        target: int | None,
+        target: int | str | None,
         original_input: str,
     ) -> Turn:
         turn = Turn(
@@ -288,7 +290,7 @@ class TurnRegistry:
         *,
         session_id: str,
         request_id_new: str,
-        target: int | None,
+        target: int | str | None,
     ) -> str:
         """Atomically route a steer to a RUNNING turn, or convert it to a new turn.
 
@@ -532,7 +534,7 @@ class TurnRegistry:
         *,
         original_input: str,
         request_id: str,
-        target: int | None,
+        target: int | str | None,
     ) -> None:
         q = self._queues.setdefault(session_id, deque())
         if len(q) >= self._per_session_queue_max:
