@@ -67,3 +67,19 @@ async def test_floor_only_response_gets_no_recovery_line():
         assert out.responses == s.responses
     finally:
         rc.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_cap_at_two_recovery_events():
+    token = rc.bind()
+    try:
+        for i in range(3):
+            rc.record_recovery(kind="substitution", failed=f"tool{i}",
+                               recovered_via=f"sib{i}", user_visible=True)
+        out = await surface_recovery(_state(responses=(_answer(),)))
+        # 1 real answer + capped 2 annotation lines = 3 chunks
+        assert len(out.responses) == 3
+        assert "tool0" in out.responses[1].content and "sib0" in out.responses[1].content
+        assert "tool1" in out.responses[2].content and "sib1" in out.responses[2].content
+    finally:
+        rc.reset(token)
