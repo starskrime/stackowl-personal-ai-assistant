@@ -26,6 +26,7 @@ from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message, ModelProvider
 from stackowl.providers.react_callback import ReActIterationState
 from stackowl.providers.registry import ProviderRegistry
@@ -836,7 +837,33 @@ async def _run_with_tools(
             exc_info=exc,
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
-        return state.evolve(errors=(*state.errors, f"execute: {type(exc).__name__}: {exc}"))
+        # LOAD-BEARING responses-only invariant (W2.T10): the floor ONLY ever ADDS
+        # to `responses`. The original error STAYS in `errors` so the durable
+        # status map / A2A status / parliament (all infer success from
+        # error-absence) keep seeing this turn as FAILED — an honest message to
+        # the user must never flip a real failure into a fake success.
+        # `{attempts}` degrades to [] here: the provider's tool records died with
+        # its stack frame (not attached to the exception), so the floor stays
+        # honest from goal + error + the last partial response only.
+        _prior = state.responses[-1].content if state.responses else ""
+        floor = synthesize_floor(
+            goal=state.input_text,
+            error=str(exc),
+            attempts=[],
+            partial=_prior,
+        )
+        floor_chunk = ResponseChunk(
+            content=floor,
+            is_final=False,
+            chunk_index=0,
+            trace_id=state.trace_id,
+            owl_name=state.owl_name,
+            is_floor=True,
+        )
+        return state.evolve(
+            responses=(*state.responses, floor_chunk),
+            errors=(*state.errors, f"execute: {type(exc).__name__}: {exc}"),
+        )
 
     duration_ms = (time.monotonic() - t0) * 1000
     tool_records = tuple(
@@ -857,6 +884,24 @@ async def _run_with_tools(
             chunk_index=0,
             trace_id=state.trace_id,
             owl_name=state.owl_name,
+        ),)
+    else:
+        # Empty-final safety (W2.T10): loop exhaustion / an empty model wrap-up must
+        # never hand the user zero chunks. Floor a non-empty honest chunk. This is
+        # the NORMAL (no-error) exit — responses-only, errors stay untouched.
+        floor = synthesize_floor(
+            goal=state.input_text,
+            error="",
+            attempts=[],
+            partial=state.responses[-1].content if state.responses else "",
+        )
+        chunks = (ResponseChunk(
+            content=floor,
+            is_final=False,
+            chunk_index=0,
+            trace_id=state.trace_id,
+            owl_name=state.owl_name,
+            is_floor=True,
         ),)
     log.engine.info(
         "[pipeline] execute: tool_loop exit",

@@ -182,7 +182,15 @@ def _state(owl_name: str = "secretary", *, session: str = "sess-crit") -> Pipeli
 
 
 async def test_execute_failure_surfaces_user_message(tmp_db: DbPool) -> None:
-    """execute fails (no response) → a localized apology is delivered, not silence.
+    """execute fails → the LOCALIZED apology (cascade) is delivered, not the floor.
+
+    COMPOSED behavior (W2.T10): the execute site now writes a deterministic
+    never-empty FLOOR chunk (``is_floor=True``) as the zero-provider backstop. The
+    cascade is the PREFERRED layer: because a floor-only response is treated as
+    NOT-yet-usable, the critical-failure cascade STILL runs and — when a healthy
+    fallback provider exists — REPLACES the floor with the localized apology. This
+    test proves the floor did NOT pre-empt the apology: the delivered text is the
+    localized apology, and the superseded floor chunk is gone.
 
     GATEWAY INTEGRATION: drives the real GatewayScanner.scan → state construction
     → backend.run path (the production entry path).
@@ -241,7 +249,13 @@ async def test_execute_failure_surfaces_user_message(tmp_db: DbPool) -> None:
     assert apology.complete_calls >= 1, "apology cascade did not run"
     assert apology._reply in delivered, f"expected localized apology in delivered text, got {delivered!r}"
 
-    # Telemetry still sees the execute failure (still visible to devs).
+    # The cascade REPLACED the floor — the floor did NOT pre-empt the apology.
+    assert not any(c.is_floor for c in final.responses), (
+        f"floor chunk must be dropped once the cascade localized an apology; got {final.responses!r}"
+    )
+
+    # Telemetry still sees the execute failure (still visible to devs) — the
+    # responses-only invariant holds through the cascade replacement.
     assert any(e.startswith("execute: ") for e in final.errors), (
         f"execute failure must still be recorded in state.errors; got {final.errors}"
     )
@@ -302,8 +316,18 @@ async def test_non_critical_failure_does_not_inject_user_error(tmp_db: DbPool) -
 
 
 async def test_apology_falls_back_to_neutral_when_cascade_also_fails(tmp_db: DbPool) -> None:
-    """execute fails AND the apology cascade also fails (total outage) → a
-    non-empty neutral fallback is still delivered (never silence, never raises)."""
+    """execute fails AND the apology cascade also fails (total outage) → the
+    deterministic FLOOR is the delivered backstop (never silence, never raises).
+
+    COMPOSED behavior (W2.T10): the execute site already wrote a deterministic
+    never-empty FLOOR (``is_floor=True``). When ALL providers are down the cascade
+    cannot localize, so it KEEPS that floor — which supersedes the old neutral
+    ``⚠ [marker]`` as the better honest zero-provider fallback. Choice documented:
+    the floor (an honest, goal-bearing message) is strictly more informative than
+    the bare ``⚠ [RuntimeError]`` marker, so the composed outcome is the floor; the
+    neutral marker survives only for the no-floor paths (e.g. swallowed delegation).
+    The key invariant: the user is NEVER left empty and ``errors`` stays non-empty.
+    """
     bridge = SqliteMemoryBridge(db=tmp_db)
     owl_registry = OwlRegistry.with_default_secretary()
     tool_registry = ToolRegistry.with_defaults()
@@ -327,7 +351,18 @@ async def test_apology_falls_back_to_neutral_when_cascade_also_fails(tmp_db: DbP
     final = await backend.run(_state(session="sess-neutral"))
 
     delivered = _delivered_text(final)
-    assert delivered, "neutral fallback must still deliver a non-empty message — never silence"
-    # The neutral marker carries the failure class for debuggability.
-    assert "RuntimeError" in delivered, f"neutral marker should carry failure class; got {delivered!r}"
+    assert delivered, "floor backstop must still deliver a non-empty message — never silence"
+    # The cascade was down, so the deterministic floor is KEPT (not the neutral
+    # marker, not a localized apology). It is honest and goal-bearing: it echoes the
+    # user's goal and carries the technical error detail from the execute exception.
+    assert final.responses[-1].is_floor, (
+        f"the kept backstop must be the deterministic floor chunk; got {final.responses!r}"
+    )
+    assert "provider down (tool loop)" in delivered, (
+        f"floor should carry the execute failure's technical detail; got {delivered!r}"
+    )
+    # The floor is the better neutral fallback — the old ⚠ marker is NOT appended on
+    # top of it (no double message).
+    assert "⚠" not in delivered, f"floor supersedes the neutral marker; got {delivered!r}"
+    # Durable invariant: the execute failure stays recorded (errors non-empty).
     assert any(e.startswith("execute: ") for e in final.errors)

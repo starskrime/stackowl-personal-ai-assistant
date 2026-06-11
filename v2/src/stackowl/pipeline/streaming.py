@@ -23,6 +23,12 @@ class ResponseChunk(BaseModel, frozen=True):
     # None → the channel adapter resolves the destination itself.
     # String targets are for Slack (channel id / thread_ts); int for Telegram chat_id.
     target: int | str | None = None
+    # True when this chunk is the deterministic never-empty FLOOR (the zero-provider
+    # backstop synthesized at the execute site). A response consisting ONLY of floor
+    # chunks is the honest last resort: the critical-failure cascade treats it as
+    # NOT-yet-usable so a localized LLM apology (better UX) can REPLACE it when any
+    # provider is alive. A genuine (non-floor) response short-circuits the cascade.
+    is_floor: bool = False
 
 
 class StreamWriter:

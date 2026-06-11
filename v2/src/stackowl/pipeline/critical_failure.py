@@ -56,8 +56,29 @@ _NEUTRAL_PREFIX = "⚠ "  # warning sign
 
 
 def _has_usable_response(state: PipelineState) -> bool:
-    """True when at least one accumulated chunk carries non-empty content."""
-    return any(c.content for c in state.responses)
+    """True when at least one accumulated chunk carries a GENUINE (non-floor) answer.
+
+    The execute site writes a deterministic never-empty FLOOR chunk (``is_floor``)
+    as the zero-provider backstop. A response made up ONLY of floor chunks is the
+    honest last resort — NOT a real answer — so it must NOT short-circuit the
+    critical-failure cascade: a localized LLM apology (better UX) should still get
+    the chance to REPLACE it while any provider is alive. A genuine chunk (non-empty
+    content, ``is_floor`` False) is a real answer and DOES short-circuit the cascade.
+    """
+    return any(c.content and not c.is_floor for c in state.responses)
+
+
+def _has_floor_only(state: PipelineState) -> bool:
+    """True when the response is non-empty but consists SOLELY of floor chunks.
+
+    This is the replaceable backstop: the cascade ran because there is no genuine
+    answer, yet a deterministic floor is already present. When the cascade produces
+    a localized apology we DROP these floor chunks and substitute the apology; when
+    the cascade ALSO fails we KEEP them (the floor already supersedes the neutral
+    ``⚠ [marker]`` as the better honest fallback).
+    """
+    floors = [c for c in state.responses if c.content and c.is_floor]
+    return bool(floors) and not _has_usable_response(state)
 
 
 def _critical_failure_classes(state: PipelineState) -> list[str]:
@@ -216,8 +237,20 @@ async def surface_critical_failure(
                 "error_count": len(state.errors),
             }},
         )
+        floor_only = _has_floor_only(state)
         text = await _generate_localized_apology(state, services)
         if not text:
+            # Cascade failed (no healthy provider). If a deterministic floor is
+            # already present, KEEP it — it is the honest zero-provider backstop and
+            # already supersedes the neutral ``⚠ [marker]``. Only when there is NO
+            # floor (e.g. the swallowed-delegation path) do we emit the neutral
+            # last-resort so the user is never left in silence.
+            if floor_only:
+                log.engine.warning(
+                    "[critical_failure] surfacing: cascade down — keeping deterministic floor",
+                    extra={"_fields": {"trace_id": state.trace_id}},
+                )
+                return state
             text = _neutral_fallback(state)
             log.engine.warning(
                 "[critical_failure] surfacing: using neutral last-resort (no i18n)",
@@ -230,6 +263,13 @@ async def surface_critical_failure(
             trace_id=state.trace_id,
             owl_name=state.owl_name,
         )
+        # When the cascade produced a localized apology AND a floor backstop is
+        # present, the apology is the preferred layer: DROP the floor chunk(s) and
+        # substitute the apology. ``errors`` is never touched here — the responses-only
+        # invariant holds, so durable status / A2A / parliament still see a FAILURE.
+        if floor_only:
+            kept = tuple(c for c in state.responses if not c.is_floor)
+            return state.evolve(responses=(*kept, chunk))
         return state.evolve(responses=(*state.responses, chunk))
     except Exception as exc:  # B5 — the surfacing helper must never break the run
         log.engine.error(
