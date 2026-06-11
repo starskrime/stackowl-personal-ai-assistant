@@ -80,13 +80,16 @@ class AsyncioBackend(OrchestratorBackend):
                     )
                     current = current.evolve(errors=(*current.errors, error_msg))
 
+            # Applied-lesson annotation runs BEFORE critical-failure surfacing: on a
+            # failed turn there is no real answer yet, so the honesty guard suppresses
+            # the note; on a success turn the answer is present and gets annotated,
+            # after which critical-failure surfacing no-ops. Order matters — see the
+            # learning-explainability journey's critical-failure test.
+            current = await surface_applied_lessons(current)
             # Phase 2 #2 — surface a CRITICAL (execute) step failure to the user
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
             current = await surface_critical_failure(current, self._services)
-            # Pillar ④ — append the applied-lesson explanation line when the model
-            # self-reported via note_applied_lesson this turn. Self-healing; never raises.
-            current = await surface_applied_lessons(current)
 
             current = current.evolve(pipeline_step="deliver")
             deliver_t0 = time.monotonic()

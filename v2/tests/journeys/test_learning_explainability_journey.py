@@ -18,6 +18,9 @@ result-capture as ``test_self_heal_substitution.py``).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
+
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
@@ -26,7 +29,9 @@ from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.streaming import StreamRegistry
 from stackowl.providers.base import CompletionResult, Message
+from stackowl.providers.react_callback import IterationCallback
 from stackowl.tools.meta.note_applied_lesson import NoteAppliedLessonTool
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
@@ -320,5 +325,108 @@ async def test_unknown_id_does_not_error_and_uses_what_you_did() -> None:
     # OUTCOME 2 — what_you_did IS present in the explanation (fallback from id mismatch)
     assert "applied a vague intuition" in delivered, (
         f"Expected what_you_did fallback in delivered text when lesson id is unknown. "
+        f"Got: {delivered!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Critical-failure + applied-lesson honesty test
+# ---------------------------------------------------------------------------
+
+
+_APOLOGY_TEXT = "Sorry, I could not complete your request right now."
+
+
+class _LessonThenCrashOwl:
+    """Scripted provider that calls ``note_applied_lesson`` then RAISES, causing a
+    critical execute-step failure with no usable response. Its ``complete`` SUCCEEDS
+    (returns a localized apology), so ``surface_critical_failure`` injects that apology
+    as a ResponseChunk with ``is_floor=False`` — this is the exact chunk the bug
+    mistakes for a real answer, causing a false learning claim."""
+
+    protocol = "anthropic"
+
+    @property
+    def name(self) -> str:
+        return "secretary"
+
+    async def complete_with_tools(
+        self,
+        *,
+        user_text: str,
+        system_text: str,
+        tool_schemas: list[dict[str, Any]],
+        tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
+        max_iterations: int = 8,
+        history: list[Any] | None = None,
+        persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
+        on_iteration_complete: IterationCallback | None = None,
+        resume_messages: list[dict[str, Any]] | None = None,
+        resume_tool_calls: list[dict[str, Any]] | None = None,
+        **_kw: object,
+    ) -> tuple[str, list[object]]:
+        # Record the lesson FIRST, then crash — this is the honesty bug scenario:
+        # the lesson was "applied" but the turn then critically failed with no answer.
+        await tool_dispatcher(
+            "note_applied_lesson",
+            {"lesson_id": "L1", "what_you_did": "tried the learned shortcut"},
+        )
+        raise RuntimeError("provider crashed after lesson note (simulated outage)")
+
+    async def complete(self, *_a: object, **_kw: object) -> CompletionResult:
+        # The apology cascade calls this and it SUCCEEDS — returning a localized apology.
+        # surface_critical_failure injects this as a ResponseChunk with is_floor=False.
+        # PRE-FIX: surface_applied_lessons then sees this is_floor=False chunk and
+        # incorrectly treats it as a "real answer", appending the learning claim.
+        # POST-FIX: surface_applied_lessons runs BEFORE surface_critical_failure, so
+        # on the failed turn there is no apology chunk yet and the guard fires correctly.
+        return CompletionResult(
+            content=_APOLOGY_TEXT,
+            input_tokens=4,
+            output_tokens=12,
+            model="apology-model",
+            provider_name="secretary",
+            duration_ms=1.0,
+        )
+
+    async def stream(self, *_a: object, **_kw: object) -> AsyncIterator[str]:  # pragma: no cover
+        if False:
+            yield ""
+
+
+async def test_no_learning_claim_on_critically_failed_turn() -> None:
+    """HONESTY GATE: note_applied_lesson was called this turn but the turn ended
+    in a CRITICAL execute-step failure with no real answer. The delivered text
+    must NOT contain a learning claim — even though the lesson tool was called.
+
+    Pre-fix (wrong order): surface_critical_failure injects the apology chunk
+    (is_floor=False), which the has_real_answer guard in surface_applied_lessons
+    mistook for a real answer, causing a false learning claim on a failed turn.
+    Post-fix (correct order): surface_applied_lessons runs BEFORE
+    surface_critical_failure; on a failed turn responses are empty / floor-only
+    at that point, so the guard correctly suppresses the annotation.
+    """
+    registry = ToolRegistry()
+    registry.register(NoteAppliedLessonTool())
+    owl_registry = OwlRegistry.with_default_secretary()
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(_LessonThenCrashOwl()),  # type: ignore[arg-type]
+        tool_registry=registry,
+        consent_gate=ConsequentialActionGate(),
+        owl_registry=owl_registry,
+        stream_registry=StreamRegistry(),
+    )
+    backend = AsyncioBackend(services=services)
+    delivered = await _run_turn(backend, "please do the task that uses a learned shortcut")
+
+    # OUTCOME — no learning claim must appear even though note_applied_lesson was called.
+    # The turn critically failed; appending "I drew on something I learned" onto a
+    # failure apology / floor is a false success claim and must be suppressed.
+    assert "I drew on something I learned" not in delivered, (
+        f"HONESTY BUG: learning claim appeared on a critically-failed turn. "
+        f"Got: {delivered!r}"
+    )
+    assert "ℹ️" not in delivered, (
+        f"HONESTY BUG: ℹ️ marker appeared on a critically-failed turn. "
         f"Got: {delivered!r}"
     )

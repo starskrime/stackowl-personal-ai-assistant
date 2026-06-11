@@ -42,10 +42,10 @@ async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
     matching how every other step resolves its dependencies. Both surfacing helpers
     are self-healing and never raise, so deliver always runs afterwards.
     """
-    surfaced = await surface_critical_failure(state, get_services())
-    # Pillar ④ — append the applied-lesson explanation line when the model
-    # self-reported via note_applied_lesson this turn. Self-healing; never raises.
-    surfaced = await surface_applied_lessons(surfaced)
+    # Applied-lesson annotation BEFORE critical-failure surfacing (see asyncio_backend
+    # for the ordering rationale — prevents a learning claim on a failed turn).
+    surfaced = await surface_applied_lessons(state)
+    surfaced = await surface_critical_failure(surfaced, get_services())
     return await deliver.run(surfaced)
 
 try:
