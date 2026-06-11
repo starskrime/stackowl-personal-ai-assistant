@@ -51,7 +51,10 @@ class _ScriptedProvider:
     def __init__(self) -> None:
         self.seen_history_lengths: list[int] = []
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001, ANN204
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001, ANN204
         prior = list(history or [])
         self.seen_history_lengths.append(len(prior))
         return (f"reply to {user_text!r} (saw {len(prior)} prior turns)", [])

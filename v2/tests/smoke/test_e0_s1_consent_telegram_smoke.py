@@ -108,7 +108,10 @@ class _FakeProvider:
     def __init__(self, tool_name: str) -> None:
         self._tool_name = tool_name
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         result = await tool_dispatcher(self._tool_name, {})
         return (result, [{"name": self._tool_name, "args": {}, "result": result}])
 

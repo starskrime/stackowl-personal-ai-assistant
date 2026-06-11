@@ -75,7 +75,10 @@ class _DialogProvider:
                       "action": "accept", "dialog_id": dialog_id}
         self.result = ""
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         self.result = await tool_dispatcher("browser_dialog", dict(self._args))
         return ("handled dialog", [{"name": "browser_dialog", "args": {}, "result": self.result}])
 

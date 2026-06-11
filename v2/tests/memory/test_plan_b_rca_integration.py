@@ -123,6 +123,7 @@ class _RecordingProvider(ModelProvider):
         tool_dispatcher,
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        **_kwargs: object,  # absorb persistence_check (now passed on every turn)
     ) -> tuple[str, list]:
         self.tool_loop_calls += 1
         return "noted", []

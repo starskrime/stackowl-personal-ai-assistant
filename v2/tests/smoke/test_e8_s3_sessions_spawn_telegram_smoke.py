@@ -84,7 +84,10 @@ class _ScriptedProvider:
     def __init__(self) -> None:
         self.tool_outputs: list[str] = []
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         label = user_text.strip()
         out = await tool_dispatcher("sessions_spawn", {"label": label, "owl": "scout"})
         self.tool_outputs.append(out)

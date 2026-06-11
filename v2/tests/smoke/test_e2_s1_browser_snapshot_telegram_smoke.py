@@ -80,7 +80,10 @@ class _SnapshotThenClickProvider:
         self._ph = page_handle
         self.calls: list[str] = []
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         # Thread session_id + page_handle exactly as a real model would after
         # browser_navigate returned them (so the tools act on the live page).
         args = {"session_id": self._sid, "page_handle": self._ph}
@@ -182,7 +185,10 @@ class _MultiToolProvider:
         self._args = {"session_id": session_id, "page_handle": page_handle}
         self.results: dict[str, str] = {}
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         self.results["get_images"] = await tool_dispatcher("browser_get_images", dict(self._args))
         self.results["press"] = await tool_dispatcher("browser_press", {**self._args, "key": "Tab"})
         self.results["back"] = await tool_dispatcher("browser_back", dict(self._args))
@@ -318,7 +324,10 @@ class _ConsoleProvider:
         self._args = {"session_id": session_id, "page_handle": page_handle}
         self.result = ""
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         self.result = await tool_dispatcher("browser_console", dict(self._args))
         return ("read console", [{"name": "browser_console", "args": {}, "result": self.result}])
 

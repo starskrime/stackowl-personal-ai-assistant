@@ -90,7 +90,10 @@ class _ScriptedProvider:
     def __init__(self) -> None:
         self.tool_outputs: list[str] = []
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         names = {_name(s) for s in tool_schemas}
         # The scout's continue-run sees no spawn/send tools (depth>0 exclusion) —
         # it is the session owl answering, so just reply with the seen-history count.

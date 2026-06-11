@@ -92,7 +92,7 @@ class _ScriptedProvider:
         self.sub_states_seen: list[object] = []
 
     async def complete_with_tools(self, *, user_text, system_text, tool_schemas,
-                                   tool_dispatcher, history=None):  # noqa: ANN001, ANN204
+                                   tool_dispatcher, history=None, **_kwargs):  # noqa: ANN001, ANN204
         return (f"reply to {user_text!r}", [])
 
     async def complete(self, *a, **k):  # pragma: no cover

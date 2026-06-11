@@ -150,7 +150,10 @@ class _ScriptedSecretary:
         self.send_out: str = ""
         self.final: str = ""
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         calls: list[dict] = []
 
         # 1. Extract the REAL PDF (real pypdf text extraction, Mode A).

@@ -73,7 +73,10 @@ class _SkillProvider:
     def __init__(self) -> None:
         self.result = ""
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         self.result = await tool_dispatcher(
             "skill_manage", {"action": "create", "name": "greet-politely", "content": _SKILL_MD}
         )

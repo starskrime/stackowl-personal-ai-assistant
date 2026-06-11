@@ -91,7 +91,10 @@ class _SecretaryProvider:
     def name(self) -> str:
         return "secretary"
 
-    async def complete_with_tools(self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None):  # noqa: ANN001
+    async def complete_with_tools(
+        self, *, user_text, system_text, tool_schemas,
+        tool_dispatcher, history=None, **_kwargs,
+    ):  # noqa: ANN001
         out = await tool_dispatcher("mixture_of_agents", {"question": user_text})
         self.tool_results.append(out)
         record = json.loads(out).get("record", {})

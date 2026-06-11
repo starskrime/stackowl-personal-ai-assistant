@@ -95,6 +95,7 @@ class _RecordingProvider(ModelProvider):
         tool_dispatcher,
         max_iterations: int = 8,
         history: list[Message] | None = None,
+        **_kwargs: object,  # absorb persistence_check (now passed on every turn)
     ) -> tuple[str, list]:
         """Tool-loop path: record system_text and history."""
         self._call_count += 1
