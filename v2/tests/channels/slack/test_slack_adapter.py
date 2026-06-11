@@ -145,14 +145,25 @@ async def test_handle_event_authorized() -> None:
 
 
 class _FakeClient:
-    """Captures every chat_postMessage kwargs dict the adapter emits."""
+    """Captures every chat_postMessage / files_* kwargs dict the adapter emits."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.upload_calls: list[dict[str, object]] = []
+        self.info_calls: list[dict[str, object]] = []
+        self.url_private: str = "https://files.slack.test/u/url_private"
 
     async def chat_postMessage(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(dict(kwargs))
         return {"ok": True}
+
+    async def files_upload_v2(self, **kwargs: object) -> dict[str, object]:
+        self.upload_calls.append(dict(kwargs))
+        return {"ok": True}
+
+    async def files_info(self, **kwargs: object) -> dict[str, object]:
+        self.info_calls.append(dict(kwargs))
+        return {"ok": True, "file": {"id": kwargs.get("file"), "url_private": self.url_private}}
 
 
 class _FakeApp:
@@ -439,6 +450,221 @@ async def test_send_clarify_post_failure_degrades_to_text() -> None:
     # First (block) post failed; a second text-fallback post was attempted.
     assert len(app.client.calls) == 2
     assert _actions_elements(app.client.calls[1]) == []
+
+
+# --------------------------------------------------------------------------- #
+# C1 — send_file (files_upload_v2 + thread) + download_media (authorized fetch)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_send_file_uploads_to_resolved_channel_in_thread(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """send_file resolves the per-channel thread and uploads via files_upload_v2."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    await adapter.handle_event(
+        {"type": "message", "channel": "C123", "thread_ts": "111.222", "ts": "333.444"},
+        user_id="U_allowed",
+        text="hi",
+    )
+    msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    f = tmp_path / "report.pdf"
+    f.write_bytes(b"%PDF-1.4 data")
+    await adapter.send_file(str(f), caption="the report", target=msg.chat_id)
+
+    assert len(app.client.upload_calls) == 1
+    call = app.client.upload_calls[0]
+    assert call["channel"] == "C123"
+    assert call["thread_ts"] == "111.222"
+    assert call["file"] == str(f)
+    assert call["initial_comment"] == "the report"
+
+
+@pytest.mark.asyncio
+async def test_send_file_dm_no_thread(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A DM event (no thread) → upload to the channel with no thread_ts kwarg."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    await adapter.handle_event(
+        {"type": "message", "channel": "D999"},
+        user_id="U_allowed",
+        text="hey",
+    )
+    msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    f = tmp_path / "note.txt"
+    f.write_bytes(b"hello")
+    await adapter.send_file(str(f), target=msg.chat_id)
+
+    assert len(app.client.upload_calls) == 1
+    call = app.client.upload_calls[0]
+    assert call["channel"] == "D999"
+    assert call.get("thread_ts") is None
+    # No caption → initial_comment is None.
+    assert call.get("initial_comment") is None
+
+
+@pytest.mark.asyncio
+async def test_send_file_falls_back_to_last_target(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """No explicit target → upload to the last inbound channel."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    await adapter.handle_event(
+        {"type": "message", "channel": "C555"},
+        user_id="U_allowed",
+        text="x",
+    )
+    await asyncio.wait_for(adapter.receive(), timeout=1.0)
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    f = tmp_path / "a.bin"
+    f.write_bytes(b"\x00\x01")
+    await adapter.send_file(str(f))
+
+    assert len(app.client.upload_calls) == 1
+    assert app.client.upload_calls[0]["channel"] == "C555"
+
+
+@pytest.mark.asyncio
+async def test_send_file_no_client_is_graceful_noop(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """No Bolt app attached → graceful no-op (no crash, no upload)."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    adapter._last_target = "C123"  # type: ignore[attr-defined]
+    TestModeGuard.deactivate()
+    f = tmp_path / "x.txt"
+    f.write_bytes(b"y")
+    # Must not raise even though no app is attached.
+    await adapter.send_file(str(f))
+
+
+@pytest.mark.asyncio
+async def test_send_file_no_target_is_graceful_noop(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """No resolvable destination → graceful no-op (no upload attempted)."""
+    adapter = _make_adapter()
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+    f = tmp_path / "x.txt"
+    f.write_bytes(b"y")
+    await adapter.send_file(str(f))  # _last_target is None
+    assert len(app.client.upload_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_send_file_test_mode_guard_raises(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """TestModeGuard active → send_file raises (live-IO guard)."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    _attach_live(adapter)
+    adapter._last_target = "C123"  # type: ignore[attr-defined]
+    f = tmp_path / "x.txt"
+    f.write_bytes(b"y")
+    from stackowl.config.test_mode import TestModeViolation
+
+    TestModeGuard.activate()
+    try:
+        with pytest.raises(TestModeViolation):
+            await adapter.send_file(str(f))
+    finally:
+        TestModeGuard.deactivate()
+
+
+@pytest.mark.asyncio
+async def test_send_file_upload_error_does_not_crash(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An upload error is logged but never crashes the turn (self-healing)."""
+
+    class _FailClient(_FakeClient):
+        async def files_upload_v2(self, **kwargs: object) -> dict[str, object]:
+            raise RuntimeError("upload boom")
+
+    class _FailApp:
+        def __init__(self) -> None:
+            self.client = _FailClient()
+
+    adapter = _make_adapter(allowed=["U_allowed"])
+    adapter.set_bolt_app(_FailApp())
+    adapter._last_target = "C123"  # type: ignore[attr-defined]
+    TestModeGuard.deactivate()
+    f = tmp_path / "x.txt"
+    f.write_bytes(b"y")
+    # Must swallow the error (logged), not propagate.
+    await adapter.send_file(str(f))
+
+
+@pytest.mark.asyncio
+async def test_download_media_fetches_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_media resolves url_private via files_info then authorized GET."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        content = b"FILEBYTES"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeAsyncClient:
+        def __init__(self, *a: object, **k: object) -> None:
+            pass
+
+        async def __aenter__(self) -> _FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+        async def get(self, url: str, *, headers: dict[str, str]) -> _FakeResponse:
+            captured["url"] = url
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient)
+
+    data = await adapter.download_media("F123")
+    assert data == b"FILEBYTES"
+    # files_info was queried for the url_private.
+    assert app.client.info_calls[0]["file"] == "F123"
+    # The GET targeted the resolved url_private with a Bearer auth header.
+    assert captured["url"] == app.client.url_private
+    assert captured["headers"]["Authorization"] == "Bearer xoxb-test"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_download_media_no_client_raises() -> None:
+    """No Bolt client → download genuinely fails: raise loudly (no silent empty)."""
+    adapter = _make_adapter()
+    TestModeGuard.deactivate()
+    with pytest.raises(RuntimeError):
+        await adapter.download_media("F123")
+
+
+@pytest.mark.asyncio
+async def test_download_media_fetch_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fetch error surfaces loudly (per no-hidden-errors), not a silent b''."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    class _BoomClient:
+        def __init__(self, *a: object, **k: object) -> None:
+            pass
+
+        async def __aenter__(self) -> _BoomClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+        async def get(self, url: str, *, headers: dict[str, str]) -> object:
+            raise RuntimeError("network down")
+
+    monkeypatch.setattr("httpx.AsyncClient", _BoomClient)
+    with pytest.raises(RuntimeError):
+        await adapter.download_media("F123")
 
 
 @pytest.mark.asyncio

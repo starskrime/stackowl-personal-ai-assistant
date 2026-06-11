@@ -209,6 +209,130 @@ class SlackChannelAdapter(ChannelAdapter):
             extra={"_fields": {"part_count": len(parts)}},
         )
 
+    async def send_file(
+        self, file_path: str, caption: str | None = None, *, target: str | None = None
+    ) -> None:
+        """Upload ``file_path`` to a Slack channel via ``files_upload_v2``.
+
+        The destination is resolved EXACTLY as :meth:`send_text` does: an explicit
+        ``target`` (the per-message channel id) wins, otherwise ``self._last_target``
+        (single-terminal/back-compat). The per-channel ``thread_ts`` (if any) threads
+        the upload under the originating message — a channel reply threads, a DM
+        uploads to the channel root. ``caption`` becomes Slack's ``initial_comment``.
+
+        Self-healing: a missing client or an unresolved destination is a logged
+        no-op (the :class:`ProactiveDeliverer` maps undeliverable to ``failed``);
+        any upload error is logged and swallowed so a file send never crashes the
+        turn. ``TestModeGuard`` blocks live I/O in tests.
+        """
+        dest = target if target is not None else self._last_target
+        thread_ts = self._threads.get(dest) if dest is not None else None
+        if thread_ts is None and dest == self._last_target:
+            thread_ts = self._last_thread
+        log.slack.debug(
+            "[slack] adapter.send_file: entry",
+            extra={
+                "_fields": {
+                    "explicit_target": target is not None,
+                    "has_caption": bool(caption),
+                    "threaded": thread_ts is not None,
+                }
+            },
+        )
+        TestModeGuard.assert_not_test_mode("slack.send_file")
+        client = self._client()
+        if client is None or dest is None:
+            log.slack.warning(
+                "[slack] adapter.send_file: no client/target — file dropped",
+                extra={
+                    "_fields": {"has_client": client is not None, "has_dest": dest is not None}
+                },
+            )
+            return
+        upload_kwargs: dict[str, object] = {
+            "channel": dest,
+            "file": file_path,
+            "initial_comment": caption or None,
+        }
+        if thread_ts is not None:
+            upload_kwargs["thread_ts"] = thread_ts
+        log.slack.debug(
+            "[slack] adapter.send_file: step upload",
+            extra={"_fields": {"channel": dest, "threaded": thread_ts is not None}},
+        )
+        try:
+            await client.files_upload_v2(**upload_kwargs)
+            log.slack.debug(
+                "[slack] adapter.send_file: exit uploaded",
+                extra={"_fields": {"channel": dest}},
+            )
+        except Exception as exc:  # self-healing — a file send must not crash the turn
+            log.slack.error(
+                "[slack] adapter.send_file: upload failed",
+                exc_info=exc,
+                extra={"_fields": {"channel": dest}},
+            )
+
+    async def download_media(self, file_id: str) -> bytes:
+        """Download an inbound Slack file's bytes by its file id.
+
+        Slack inbound files carry a ``url_private`` reachable only with the bot
+        token. The Bolt client doesn't expose a raw byte-fetch, so we resolve the
+        ``url_private`` via ``files_info(file=file_id)`` then perform an authorized
+        ``GET`` (``Authorization: Bearer <bot_token>``) with ``httpx`` (already a
+        project dependency). Per the no-hidden-errors rule a genuine download
+        failure (no client, missing url, network/HTTP error) is logged loudly and
+        re-raised — never a silent empty ``b""``.
+        """
+        log.slack.debug(
+            "[slack] adapter.download_media: entry",
+            extra={"_fields": {"file_id_len": len(file_id)}},
+        )
+        TestModeGuard.assert_not_test_mode("slack.download_media")
+        client = self._client()
+        if client is None:
+            log.slack.error(
+                "[slack] adapter.download_media: no Bolt client — cannot download",
+                extra={"_fields": {"file_id_len": len(file_id)}},
+            )
+            raise RuntimeError("slack download_media: no Bolt client attached")
+        try:
+            log.slack.debug("[slack] adapter.download_media: step files_info")
+            info = await client.files_info(file=file_id)
+            file_obj = info.get("file") if isinstance(info, dict) else None
+            url_private = (
+                file_obj.get("url_private") if isinstance(file_obj, dict) else None
+            )
+            if not isinstance(url_private, str) or not url_private:
+                log.slack.error(
+                    "[slack] adapter.download_media: files_info returned no url_private",
+                    extra={"_fields": {"file_id_len": len(file_id)}},
+                )
+                raise RuntimeError("slack download_media: no url_private for file")
+            log.slack.debug(
+                "[slack] adapter.download_media: step authorized GET",
+                extra={"_fields": {"has_url": True}},
+            )
+            import httpx
+
+            headers = {"Authorization": f"Bearer {self._settings.bot_token}"}
+            async with httpx.AsyncClient() as http:
+                resp = await http.get(url_private, headers=headers)
+                resp.raise_for_status()
+                data = bytes(resp.content)
+        except Exception as exc:
+            log.slack.error(
+                "[slack] adapter.download_media: fetch failed",
+                exc_info=exc,
+                extra={"_fields": {"file_id_len": len(file_id)}},
+            )
+            raise
+        log.slack.debug(
+            "[slack] adapter.download_media: exit",
+            extra={"_fields": {"bytes_len": len(data)}},
+        )
+        return data
+
     async def send_clarify(
         self,
         session_id: str,
