@@ -8,7 +8,7 @@ fenced blocks is left literal.
 
 from __future__ import annotations
 
-from stackowl.channels.slack.helpers import to_slack_mrkdwn
+from stackowl.channels.slack.helpers import _PLACEHOLDER, to_slack_mrkdwn
 
 
 def test_bold_double_asterisk() -> None:
@@ -75,3 +75,35 @@ def test_empty_string() -> None:
 def test_multiline_mixed() -> None:
     src = "# Title\n\n**bold** and [link](http://x.io)"
     assert to_slack_mrkdwn(src) == "*Title*\n\n*bold* and <http://x.io|link>"
+
+
+# --------------------------------------------------------------------------- #
+# C2 review — PUA sentinel can no longer collide with user content.
+# --------------------------------------------------------------------------- #
+
+
+def test_sentinel_in_input_does_not_crash() -> None:
+    # A raw sentinel-shaped fragment in user/assistant text (Nerd-Font / PUA
+    # glyph, LLM output) used to build a colliding placeholder and crash the
+    # restore step with IndexError. It must now be neutralized, never raise.
+    out = to_slack_mrkdwn(f"a{_PLACEHOLDER}0{_PLACEHOLDER}bc")
+    assert _PLACEHOLDER not in out
+    # Surrounding text survives (sentinel chars stripped, digits/letters kept).
+    assert "a" in out and "bc" in out
+
+
+def test_code_span_with_sentinel_not_corrupted() -> None:
+    # Two code spans where a naive restore would swap their contents because
+    # the first span literally contains the sentinel placeholder pattern.
+    src = f"`{_PLACEHOLDER}1{_PLACEHOLDER}` and `real`"
+    out = to_slack_mrkdwn(src)
+    # The second span restores to its OWN content, never the first's.
+    assert "`real`" in out
+    # No live sentinel leaks into the output.
+    assert _PLACEHOLDER not in out
+
+
+def test_no_sentinel_input_byte_for_byte_unchanged() -> None:
+    # Regression: the common path (no sentinel anywhere) is untouched.
+    assert to_slack_mrkdwn("**b**") == "*b*"
+    assert to_slack_mrkdwn("`**x**`") == "`**x**`"

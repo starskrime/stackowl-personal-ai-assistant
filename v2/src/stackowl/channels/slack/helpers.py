@@ -72,8 +72,11 @@ def strip_bot_mention(text: str, bot_user_id: str) -> str:
 #
 # Strategy: fenced blocks and inline code spans are extracted to placeholders
 # FIRST (so their contents are never touched), the remaining text is converted,
-# then the placeholders are restored. Placeholders use a private-use codepoint
-# so they cannot collide with any user content.
+# then the placeholders are restored. Placeholders use a private-use codepoint;
+# any pre-existing occurrence of that codepoint is stripped from the input on
+# entry (U+E000 is a real PUA glyph that CAN appear in fonts/LLM output), and
+# the restore lookup is index-tolerant, so placeholders can never collide with
+# user content.
 
 # Matches fenced ```...``` blocks (greedy-safe, non-overlapping) then inline
 # `code` spans. Unicode-aware; no English literals.
@@ -91,7 +94,9 @@ _LINK_RE = re.compile(r"\[([^\]]+)\]\((\S+?)\)", re.UNICODE)
 # headers). Multiline so each line is matched independently.
 _HEADER_RE = re.compile(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$", re.UNICODE)
 
-# Private-use codepoint sentinel — cannot appear in normal text.
+# Private-use codepoint sentinel. It CAN appear in real text (a printable PUA
+# glyph), so any occurrence is stripped from the input on entry and the restore
+# lookup is index-tolerant — together these neutralize all collisions.
 _PLACEHOLDER = ""
 
 
@@ -122,6 +127,19 @@ def to_slack_mrkdwn(text: str) -> str:
     if not text:
         return text
 
+    # 0. Strip any pre-existing sentinel codepoint from the input so a
+    #    placeholder built from it can never collide with real content (U+E000
+    #    is a printable PUA glyph that can occur in fonts / LLM output). Losing
+    #    a non-semantic PUA control char is far safer than a crash or silent
+    #    code corruption.
+    if _PLACEHOLDER in text:
+        stripped = text.count(_PLACEHOLDER)
+        text = text.replace(_PLACEHOLDER, "")
+        log.slack.debug(
+            "[slack] to_slack_mrkdwn: step stripped sentinel from input",
+            extra={"_fields": {"stripped_count": stripped}},
+        )
+
     # 1. Protect code (fences first, then inline) so their contents are never
     #    transformed and never accidentally re-matched.
     protected: list[str] = []
@@ -149,7 +167,17 @@ def to_slack_mrkdwn(text: str) -> str:
     # 3. Restore the protected code segments verbatim.
     def _restore(match: re.Match[str]) -> str:
         idx = int(match.group(1))
-        return protected[idx]
+        # Fail-safe: an index with no protected segment means the placeholder
+        # pattern did not originate from _stash. Leave the literal match in
+        # place rather than indexing out of range (belt-and-suspenders with the
+        # entry strip above).
+        if 0 <= idx < len(protected):
+            return protected[idx]
+        log.slack.debug(
+            "[slack] to_slack_mrkdwn: step restore index out of range, keeping literal",
+            extra={"_fields": {"idx": idx, "protected_count": len(protected)}},
+        )
+        return match.group(0)
 
     restore_re = re.compile(
         f"{_PLACEHOLDER}(\\d+){_PLACEHOLDER}", re.UNICODE
