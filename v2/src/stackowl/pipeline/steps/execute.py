@@ -18,6 +18,7 @@ from stackowl.exceptions import (
     ProviderNotFoundError,
     TurnStopped,
 )
+from stackowl.infra import recovery_context
 from stackowl.infra.observability import log
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
@@ -368,6 +369,12 @@ async def _try_substitute(
         # for the same class, and return the sibling's output as a fresh
         # observation with a neutral localized note so the model knows an
         # alternative produced it.
+        # Record the recovery so the user can be told (machinery-recorded, true by
+        # construction) and the turn's recovery log captures it.
+        recovery_context.record_recovery(
+            kind="substitution", failed=failed_tool,
+            recovered_via=sibling_name, user_visible=True,
+        )
         tag = sib.manifest.capability_tag
         if tag:
             substituted_tags.add(tag)
