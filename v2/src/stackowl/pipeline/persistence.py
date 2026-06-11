@@ -29,6 +29,7 @@ from stackowl.memory.json_parser import parse_json_response
 from stackowl.providers.base import Message, ModelProvider
 
 __all__ = [
+    "JUDGE_ERROR_REASON",
     "PERSISTENCE_DIRECTIVE",
     "TOOL_FAILED_MARKER",
     "judge_delivery",
@@ -46,6 +47,12 @@ __all__ = [
 # successful one. It is a structural token, NOT a domain/language word, so it works
 # in any language and for any tool.
 TOOL_FAILED_MARKER = "\x00TOOL_FAILED\x00"
+
+# Sentinel ``reason`` returned by judge_delivery when it FAILS OPEN (provider error
+# / unparseable output). judge_delivery never raises — it returns (True, this) — so a
+# caller wanting a fallback judge tier (see build_persistence_check) detects a failed
+# primary by this reason, not by catching an exception. Structural token, not prose.
+JUDGE_ERROR_REASON = "judge-error"
 
 # GLOBAL corrective directive — injected when the judge rules the agent gave up.
 # Deliberately capability-oriented and case-free: no domain words, no tool brand
@@ -354,7 +361,7 @@ async def judge_delivery(
             "[persistence] judge_delivery: provider.complete failed — failing open",
             exc_info=exc,
         )
-        return True, "judge-error"
+        return True, JUDGE_ERROR_REASON
 
     # 2. DECISION — parse strict JSON (fail open on unparseable / wrong type)
     obj = parse_json_response(result.content, required_keys=["delivered"])
@@ -363,14 +370,14 @@ async def judge_delivery(
             "[persistence] judge_delivery: unparseable judge output — failing open",
             extra={"_fields": {"raw_preview": result.content[:200]}},
         )
-        return True, "judge-error"
+        return True, JUDGE_ERROR_REASON
     delivered = obj.get("delivered")
     if not isinstance(delivered, bool):
         log.engine.error(
             "[persistence] judge_delivery: 'delivered' not a bool — failing open",
             extra={"_fields": {"got": type(delivered).__name__}},
         )
-        return True, "judge-error"
+        return True, JUDGE_ERROR_REASON
     reason = obj.get("reason")
     reason_str = reason if isinstance(reason, str) else ""
 

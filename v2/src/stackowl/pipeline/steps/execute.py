@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from stackowl.authz.bounds import ResourceCaps
@@ -33,8 +33,13 @@ from stackowl.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from stackowl.gateway.turn_registry import TurnRegistry
+    from stackowl.pipeline.services import StepServices
     from stackowl.providers.react_callback import IterationCallback
     from stackowl.skills.store import SkillIndexStore
+
+# W1.T3 — the deliver-vs-giveup checker the provider loop calls just before
+# accepting a final answer: (draft, tools_tried) -> corrective directive | None.
+PersistenceCheck = Callable[[str, list[str]], Awaitable[str | None]]
 
 # E8-S0 — tools a delegated child (delegation_depth>0) must NOT see, so a child
 # cannot recurse into a fork-bomb. Names are matched defensively (the tools are
@@ -56,6 +61,91 @@ def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
         if m.get("role") == "assistant" and isinstance(m.get("content"), str):
             return str(m["content"])
     return ""
+
+
+def build_persistence_check(
+    state: PipelineState,
+    services: StepServices,
+    *,
+    primary: ModelProvider | None = None,
+    fallback: ModelProvider | None = None,
+) -> PersistenceCheck:
+    """Build the deliver-vs-giveup checker the provider loop invokes per turn.
+
+    W1.T3 — covers ALL turns (no interactive/depth gate) and adds a fallback judge
+    tier: the primary judge (``preg.get_with_cascade("fast")``) and, on its failure,
+    a DIFFERENT local/always-available judge (``preg.get_with_cascade("local")``) so
+    a single model erroring no longer silently accepts a give-up.
+
+    ``primary``/``fallback`` may be injected (tests); when None they are resolved
+    lazily from ``services.provider_registry`` at call time so a hot provider reload
+    is picked up. Fail-OPEN: if neither judge can rule (no registry, both raise) the
+    checker returns ``None`` — the answer is accepted and the turn never hangs/loops;
+    the structural veto in the provider remains the backstop.
+    """
+    from stackowl.pipeline.persistence import (
+        JUDGE_ERROR_REASON,
+        PERSISTENCE_DIRECTIVE,
+        judge_delivery,
+    )
+
+    async def _persistence_check(draft: str, tools_tried: list[str]) -> str | None:
+        preg = services.provider_registry
+        # PRIMARY judge — resolve (injected or "fast" tier) and rule. judge_delivery
+        # is itself fail-OPEN: on a provider/parse error it returns
+        # (True, JUDGE_ERROR_REASON) instead of raising. So a primary failure shows
+        # up EITHER as a raised exception (provider lookup) OR as that sentinel —
+        # both route to the fallback tier rather than silently accepting a give-up.
+        try:
+            judge = primary if primary is not None else (
+                preg.get_with_cascade("fast") if preg is not None else None
+            )
+            if judge is None:  # no registry → cannot judge; accept (fail open)
+                return None
+            delivered, reason = await judge_delivery(
+                judge, state.input_text, draft, tools_tried
+            )
+        except Exception as exc:  # primary provider lookup raised
+            log.engine.warning(
+                "[pipeline] execute: primary persistence judge raised — "
+                "trying fallback judge",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": state.trace_id}},
+            )
+            delivered, reason = True, JUDGE_ERROR_REASON
+
+        if reason == JUDGE_ERROR_REASON:  # primary failed open — try the fallback tier
+            log.engine.warning(
+                "[pipeline] execute: primary persistence judge failed — "
+                "trying fallback judge",
+                extra={"_fields": {"trace_id": state.trace_id}},
+            )
+            try:
+                fb = fallback if fallback is not None else (
+                    preg.get_with_cascade("local") if preg is not None else None
+                )
+                if fb is None:  # no fallback available — accept (fail open)
+                    return None
+                delivered, reason = await judge_delivery(
+                    fb, state.input_text, draft, tools_tried
+                )
+            except Exception as exc2:  # fallback lookup also raised — final fail OPEN
+                log.engine.error(
+                    "[pipeline] execute: fallback persistence judge also failed — "
+                    "accepting answer",
+                    exc_info=exc2,
+                    extra={"_fields": {"trace_id": state.trace_id}},
+                )
+                return None
+        if not delivered:
+            log.engine.info(
+                "[pipeline] execute: persistence judge ruled give-up — nudging",
+                extra={"_fields": {"trace_id": state.trace_id, "reason": reason[:120]}},
+            )
+            return PERSISTENCE_DIRECTIVE
+        return None
+
+    return _persistence_check
 
 
 def make_steering_callback(
@@ -445,46 +535,11 @@ async def _run_with_tools(
 
     # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback
     # the provider loop calls just before accepting a final answer. The provider
-    # cannot reach the provider_registry; execute (which has services) can — so we
-    # close over it here. GATING: only interactive user turns at delegation depth 0
-    # get enforced, so cron/parliament/delegated sub-pipelines are never nudged.
-    persistence_check = None
-    if state.interactive and state.delegation_depth == 0:
-        from stackowl.pipeline.persistence import (
-            PERSISTENCE_DIRECTIVE,
-            judge_delivery,
-        )
-
-        async def _persistence_check(draft: str, tools_tried: list[str]) -> str | None:
-            """Judge the draft answer; return the corrective directive on give-up.
-
-            Fail-OPEN: any error (no judge provider, judge raises) returns None so
-            the answer is accepted and the turn never hangs/loops.
-            """
-            try:
-                preg = get_services().provider_registry
-                if preg is None:  # no registry → cannot judge; accept (fail open)
-                    return None
-                judge_provider = preg.get_with_cascade("fast")
-                delivered, reason = await judge_delivery(
-                    judge_provider, state.input_text, draft, tools_tried
-                )
-            except Exception as exc:  # fail OPEN — never block the turn
-                log.engine.error(
-                    "[pipeline] execute: persistence judge failed — accepting answer",
-                    exc_info=exc,
-                    extra={"_fields": {"trace_id": state.trace_id}},
-                )
-                return None
-            if not delivered:
-                log.engine.info(
-                    "[pipeline] execute: persistence judge ruled give-up — nudging",
-                    extra={"_fields": {"trace_id": state.trace_id, "reason": reason[:120]}},
-                )
-                return PERSISTENCE_DIRECTIVE
-            return None
-
-        persistence_check = _persistence_check
+    # cannot reach the provider_registry; execute (which has services) can — so the
+    # factory closes over services here. W1.T3: the give-up enforcer now covers ALL
+    # turns (no interactive/depth gate) so cron/parliament/delegated sub-pipelines
+    # are also caught, and the judge has a fallback tier (see build_persistence_check).
+    persistence_check = build_persistence_check(state, get_services())
 
     # E2-S4 — budget governor: enforce the acting owl's effective caps (cost best-
     # effort, steps + time) once per ReAct iteration via on_iteration_complete.

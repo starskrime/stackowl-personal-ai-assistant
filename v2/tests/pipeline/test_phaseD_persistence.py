@@ -647,11 +647,19 @@ def _state_from_decision(
 
 
 async def _drive_gateway(
-    tmp_db: DbPool, *, with_persistence: bool
+    tmp_db: DbPool,
+    *,
+    with_persistence: bool,
+    monkeypatch: pytest.MonkeyPatch | None = None,
 ) -> tuple[_DoWorkTool, PipelineState, _FakeClient]:
-    """Run scanner->backend->execute once. ``with_persistence`` toggles the wiring
-    by switching the state's gating flags so we can prove the wiring is load-bearing
-    without editing src (depth>0 disables enforcement)."""
+    """Run scanner->backend->execute once. ``with_persistence`` toggles the wiring:
+    when False the persistence-check factory is patched to return ``None`` so the
+    provider loop receives NO checker — the gate-drop-proof "wiring removed"
+    equivalent that must make the no-giveup assertion FAIL.
+
+    (W1.T3: enforcement is no longer gated on delegation_depth/interactive, so the
+    old depth>0 lever no longer disables it — we remove the wiring at its source.)
+    """
     # Call 1: a give-up (no ACTION, plain refusal). Call 2 (after nudge): ACTION.
     giveup = _FakeMessage(content="Sorry, I am unable to complete this.", tool_calls=None)
     act = _FakeMessage(
@@ -682,9 +690,14 @@ async def _drive_gateway(
         channel=msg.channel, raw_text=msg.text,
     )
     if not with_persistence:
-        # delegation_depth>0 disables enforcement gating in execute.py — this is the
-        # "wiring removed" equivalent that must make the no-giveup assertion FAIL.
-        state = state.evolve(delegation_depth=1)
+        # Remove the wiring at its source: the factory returns no checker, so the
+        # provider loop never judges and the give-up is accepted (gate-independent).
+        assert monkeypatch is not None, "with_persistence=False requires monkeypatch"
+        from stackowl.pipeline.steps import execute as _execute_mod
+
+        monkeypatch.setattr(
+            _execute_mod, "build_persistence_check", lambda *a, **k: None
+        )
     final_state = await backend.run(state)
     return tool, final_state, client
 
@@ -714,7 +727,9 @@ async def test_gateway_fail_if_persistence_disabled(
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
     # With enforcement gated OFF (depth>0), the give-up is accepted and the tool
     # NEVER runs — proving the persistence wiring is what makes the agent continue.
-    tool, _final_state, _client = await _drive_gateway(tmp_db, with_persistence=False)
+    tool, _final_state, _client = await _drive_gateway(
+        tmp_db, with_persistence=False, monkeypatch=monkeypatch
+    )
     assert not tool.calls, (
         "Control FAIL: the tool ran even with persistence disabled — the gateway "
         "test would pass even if the wiring were removed, so it proves nothing."

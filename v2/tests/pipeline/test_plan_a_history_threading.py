@@ -38,7 +38,7 @@ async def test_execute_tool_loop_passes_history_and_system_prompt(monkeypatch):
 
         async def complete_with_tools(
             self, user_text, system_text, tool_schemas, tool_dispatcher,
-            max_iterations=8, history=None,
+            max_iterations=8, history=None, **_kwargs,
         ):
             captured["system_text"] = system_text
             captured["history"] = history
