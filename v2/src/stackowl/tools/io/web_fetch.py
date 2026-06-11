@@ -15,7 +15,7 @@ from typing import Any
 from stackowl.infra.net.ssrf_guard import SsrfGuard
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.browser._extraction import extract_links, extract_markdown
 from stackowl.tools.browser._logging import url_path_only
 from stackowl.tools.browser._retry import with_browser_retry
@@ -84,6 +84,16 @@ class WebFetchTool(Tool):
             },
             "required": ["url"],
         }
+
+    @property
+    def manifest(self) -> ToolManifest:
+        return ToolManifest(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters,
+            action_severity="read",
+            capability_tag="web_knowledge",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         url = str(kwargs.get("url", ""))

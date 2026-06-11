@@ -40,6 +40,10 @@ class ToolManifest(BaseModel):
     # when its toolset_group is in that profile (ADR-11 / E1-S4). Distinct from
     # consent_category (which is about consent, not grouping).
     toolset_group: str | None = None
+    # Capability tag groups tools that produce the same KIND of result, enabling
+    # self-healing substitution: when a tool in a capability class fails, the
+    # supervisor can route to a sibling with the same tag (W3 substitution actuator).
+    capability_tag: str | None = None
     # D1 §6 — how tightly the tool's REAL-WORLD effect is coupled to our local
     # ledger commit. Decides definite-answer-vs-honest_uncertain after a durable
     # child times out / is recovered:

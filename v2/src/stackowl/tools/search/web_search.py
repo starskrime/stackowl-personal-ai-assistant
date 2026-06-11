@@ -73,6 +73,7 @@ class WebSearchTool(Tool):
             parameters=self.parameters,
             action_severity="read",
             toolset_group=_TOOLSET_GROUP,
+            capability_tag="web_knowledge",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

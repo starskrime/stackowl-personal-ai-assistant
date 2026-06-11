@@ -135,6 +135,7 @@ class BrowserBrowseTool(Tool):
             parameters=self.parameters, action_severity="consequential",
             commit_coupling="unconfirmed",
             toolset_group="browser",
+            capability_tag="web_knowledge",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
