@@ -456,6 +456,22 @@ async def test_no_recovery_line_when_all_healthy(
         f"Got: {delivered!r}"
     )
 
+    # =========================================================================
+    # FR2 OUTCOME 3 — powerful provider answered; backup's scripted text absent.
+    # The fast provider may be called by the SecretaryRouter (tier routing), but
+    # its canned reply ("SHOULD NOT BE REACHED") must never surface as the answer.
+    # Proved by: answer contains "Paris" (powerful's script) AND the backup's
+    # distinctive scripted text is absent.
+    # =========================================================================
+    assert "Paris" in delivered, (
+        f"FR2 FAIL: powerful provider answer ('Paris') absent — wrong provider answered. "
+        f"Got: {delivered!r}"
+    )
+    assert "SHOULD NOT BE REACHED" not in delivered, (
+        f"FR2 FAIL: backup's scripted text leaked into delivered — backup answered "
+        f"instead of the powerful provider. Got: {delivered!r}"
+    )
+
 
 # =========================================================================== #
 # FR5 — all circuits open → floor + NO recovery line.
@@ -502,6 +518,21 @@ async def test_all_open_floors_without_recovery_line(
         "sess-circuit-routing-fr5",
         "trace-circuit-routing-5",
         backend,
+    )
+
+    # =========================================================================
+    # FR5 POSITIVE FLOOR GATE — the floor/critical-failure content MUST be present.
+    # When all circuits are OPEN the neutral last-resort marker is injected:
+    # "⚠ [AllProvidersUnavailableError]".  Without this assertion the honesty
+    # checks below would pass vacuously on an empty delivered string.
+    # =========================================================================
+    assert delivered.strip(), (
+        "FR5 FAIL: expected a floor message but got an empty delivered string."
+    )
+    assert "⚠" in delivered or "AllProvidersUnavailableError" in delivered, (
+        f"FR5 FAIL: neither '⚠' nor 'AllProvidersUnavailableError' found in the "
+        f"floor message — the neutral last-resort marker was not injected. "
+        f"Got: {delivered!r}"
     )
 
     # =========================================================================
