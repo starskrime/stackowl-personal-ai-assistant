@@ -280,6 +280,7 @@ class TestTriageStep:
         finally:
             reset_services(token)
         assert result.owl_name == "ResearchOwl"
+        assert result.intent_class == "standard"
         # Mock provider should have been called exactly once for routing.
         assert mock.call_count == 1
 

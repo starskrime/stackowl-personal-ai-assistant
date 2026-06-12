@@ -14,7 +14,7 @@ import difflib
 import time
 import unicodedata
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from stackowl.infra.observability import log
 from stackowl.providers.base import Message
@@ -37,7 +37,7 @@ class RouteResult:
     """Immutable router output: chosen owl name + coarse turn classification."""
 
     owl_name: str
-    intent_class: str
+    intent_class: Literal["conversational", "standard"]
 
 
 def _levenshtein(a: str, b: str) -> int:
@@ -183,13 +183,15 @@ class SecretaryRouter:
             return candidate
         return _DEFAULT_FALLBACK
 
-    def _parse_intent_class(self, raw: str) -> str:
+    def _parse_intent_class(self, raw: str) -> Literal["conversational", "standard"]:
         """OPTIONAL 2nd line = intent class. Fail-safe → 'standard'."""
         lines = (raw or "").strip().splitlines()
         if len(lines) < 2:
             return "standard"
         token = lines[1].strip().strip("\"'`.,:;()[]{}<>").lower()
-        return token if token in _VALID_CLASSES else "standard"
+        if token == "conversational":
+            return "conversational"
+        return "standard"
 
     async def route(self, state: PipelineState) -> RouteResult:
         """Call the fast-tier provider and return RouteResult(owl_name, intent_class).
