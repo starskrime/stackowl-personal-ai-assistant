@@ -1240,8 +1240,7 @@ async def run(state: PipelineState) -> PipelineState:
             ),
         }},
     )
-    if _use_tools:
-        assert tool_registry is not None  # narrowed by _use_tools construction
+    if _use_tools and tool_registry is not None:
         return await _run_with_tools(state, provider, tool_registry)
 
     messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]
