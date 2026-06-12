@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import time
 import unicodedata
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
@@ -27,6 +28,16 @@ _DEFAULT_FALLBACK = "secretary"
 _FAST_TIER = "fast"
 _ROUTING_MAX_TOKENS = 32
 _ROUTING_TEMPERATURE = 0.0
+
+_VALID_CLASSES = {"conversational", "standard"}
+
+
+@dataclass(frozen=True)
+class RouteResult:
+    """Immutable router output: chosen owl name + coarse turn classification."""
+
+    owl_name: str
+    intent_class: str
 
 
 def _levenshtein(a: str, b: str) -> int:
@@ -154,7 +165,10 @@ class SecretaryRouter:
             "Available owls:\n"
             f"{roster}\n\n"
             f"User request: {user_text}\n\n"
-            "Reply with exactly one owl name:"
+            "Reply with exactly two lines:\n"
+            "Line 1: the owl name (required).\n"
+            "Line 2: exactly 'conversational' if the request is only a greeting "
+            "or small-talk with no task, else 'standard'."
         )
 
     def _parse_choice(self, raw: str, known_names: set[str]) -> str:
@@ -169,11 +183,21 @@ class SecretaryRouter:
             return candidate
         return _DEFAULT_FALLBACK
 
-    async def route(self, state: PipelineState) -> str:
-        """Call the fast-tier provider and return the chosen owl name.
+    def _parse_intent_class(self, raw: str) -> str:
+        """OPTIONAL 2nd line = intent class. Fail-safe → 'standard'."""
+        lines = (raw or "").strip().splitlines()
+        if len(lines) < 2:
+            return "standard"
+        token = lines[1].strip().strip("\"'`.,:;()[]{}<>").lower()
+        return token if token in _VALID_CLASSES else "standard"
 
-        Falls back to ``secretary`` on any provider failure, empty reply, or
-        unknown owl. The routing LLM call's cost is recorded by the PROVIDER
+    async def route(self, state: PipelineState) -> RouteResult:
+        """Call the fast-tier provider and return RouteResult(owl_name, intent_class).
+
+        Falls back to ``secretary`` / ``standard`` on any provider failure, empty
+        reply, or unknown owl. Owl selection is line-1-only (byte-identical to
+        prior behavior). Intent class is an OPTIONAL line-2 token; fail-safe to
+        ``standard``. The routing LLM call's cost is recorded by the PROVIDER
         itself (E8-S0cost single recording site), so the router records nothing.
         """
         log.engine.debug(
@@ -209,7 +233,7 @@ class SecretaryRouter:
                 exc_info=exc,
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
-            return _DEFAULT_FALLBACK
+            return RouteResult(_DEFAULT_FALLBACK, "standard")
 
         log.engine.debug(
             "[router] route: provider selected",
@@ -237,7 +261,7 @@ class SecretaryRouter:
                     }
                 },
             )
-            return _DEFAULT_FALLBACK
+            return RouteResult(_DEFAULT_FALLBACK, "standard")
 
         duration_ms = (time.monotonic() - t0) * 1000
         log.engine.debug(
@@ -254,24 +278,31 @@ class SecretaryRouter:
             },
         )
 
-        chosen = self._parse_choice(result.content, known_names)
+        owl = self._parse_choice(result.content, known_names)  # UNCHANGED owl parse
+        intent_class = self._parse_intent_class(result.content)
 
         # E8-S0cost — the routing call's cost is recorded by the PROVIDER inside
         # provider.complete (single recording site), so the router records nothing
         # here — recording it again would DOUBLE-COUNT the routing spend.
 
+        log.engine.debug(
+            "[router] route: exit",
+            extra={"_fields": {"owl": owl, "intent_class": intent_class}},
+        )
         log.engine.info(
-            "[router] selected %s (LLM decision, %.1fms)",
-            chosen,
+            "[router] selected %s intent_class=%s (LLM decision, %.1fms)",
+            owl,
+            intent_class,
             duration_ms,
             extra={
                 "_fields": {
                     "trace_id": state.trace_id,
-                    "owl": chosen,
+                    "owl": owl,
+                    "intent_class": intent_class,
                     "latency_ms": duration_ms,
                     "provider": provider.name,
                 }
             },
         )
 
-        return chosen
+        return RouteResult(owl, intent_class)
