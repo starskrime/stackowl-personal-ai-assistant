@@ -1164,8 +1164,14 @@ def _select_tool_provider(
                 extra={"_fields": {"owl": state.owl_name}},
             )
 
-    # --- Step 4: Resolve by tier (get_by_tier warns loudly on a degraded miss) ---
-    provider = registry.get_by_tier(desired)
+    # --- Step 4: Resolve by tier — circuit-aware (falls back if the tier provider's
+    # circuit is OPEN; the pins above are honored as-is). ---
+    provider, degraded_from = registry.resolve_tier_with_fallback(desired)
+    if degraded_from is not None:
+        recovery_context.record_recovery(
+            kind="provider_fallback", failed=degraded_from,
+            recovered_via=provider.name, user_visible=True,
+        )
     log.engine.info(
         "[pipeline] execute: tool provider selected",
         extra={"_fields": {
