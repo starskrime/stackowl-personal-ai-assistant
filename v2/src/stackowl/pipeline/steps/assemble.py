@@ -61,9 +61,17 @@ async def run(state: PipelineState) -> PipelineState:
             extra={"_fields": {"owl": state.owl_name}},
         )
     # Inject owned-skill playbooks — fail-open (never crash the turn).
+    # Conversational turns are lean: classify already skips marketplace skills for
+    # them, and assemble must match: no skills block so a conversational turn does
+    # not carry needless playbook tokens in its system prompt.
     skills_block = ""
     store = services.skill_store
-    if store is not None and manifest is not None and manifest.skills:
+    if (
+        store is not None
+        and manifest is not None
+        and manifest.skills
+        and state.intent_class != "conversational"
+    ):
         try:
             owned = await store.get_many_by_name(manifest.skills)
             pinned = set(manifest.pinned_skills) & set(manifest.skills)  # owned-only pins

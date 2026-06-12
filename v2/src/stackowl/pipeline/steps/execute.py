@@ -1223,6 +1223,7 @@ async def run(state: PipelineState) -> PipelineState:
         and tool_registry is not None
         and tool_registry.all()
     )
+    _sp_tokens = _est_tokens(state.system_prompt)
     _hist_tokens = sum(_est_tokens(getattr(m, "content", "")) for m in state.history)
     log.engine.info(
         "[pipeline] execute: context budget",
@@ -1230,14 +1231,11 @@ async def run(state: PipelineState) -> PipelineState:
             "trace_id": state.trace_id,
             "intent_class": state.intent_class,
             "tools_used": bool(_use_tools),
-            "system_prompt_tokens": _est_tokens(state.system_prompt),
+            "system_prompt_tokens": _sp_tokens,
+            # diagnostic only — assemble folds memory_context into system_prompt; NOT added to total
             "memory_context_tokens": _est_tokens(state.memory_context),
             "history_tokens": _hist_tokens,
-            "total_est_tokens": (
-                _est_tokens(state.system_prompt)
-                + _est_tokens(state.memory_context)
-                + _hist_tokens
-            ),
+            "total_est_tokens": _sp_tokens + _hist_tokens,
         }},
     )
     if _use_tools and tool_registry is not None:
