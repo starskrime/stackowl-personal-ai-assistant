@@ -457,6 +457,50 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         raise AllProvidersUnavailableError(details)
 
+    def resolve_tier_with_fallback(
+        self, tier: str,
+    ) -> tuple[ModelProvider, str | None]:
+        """Tier resolution that is circuit-aware ONLY when the chosen provider is OPEN.
+
+        Returns ``(provider, degraded_from)``. ``degraded_from`` is the name of the
+        provider we fell back FROM (its circuit was OPEN), or ``None`` when no
+        fallback occurred. Happy path (chosen provider healthy) is byte-identical
+        to :meth:`get_by_tier`; the cascade is only invoked when the chosen
+        provider's circuit is OPEN. Raises :class:`AllProvidersUnavailableError`
+        if every provider is OPEN (caller floors).
+        """
+        log.engine.debug(
+            "[registry] resolve_tier_with_fallback: entry",
+            extra={"_fields": {"tier": tier}},
+        )
+        providers = self._providers
+        tiers = self._tiers
+        breakers = self._breakers
+        primary_name: str | None = None
+        for name, ptier in tiers.items():
+            if ptier == tier and name in providers:
+                primary_name = name
+                break
+        if primary_name is None:
+            log.engine.debug(
+                "[registry] resolve_tier_with_fallback: no tier match — config degrade",
+                extra={"_fields": {"tier": tier}},
+            )
+            return self.get_by_tier(tier), None
+        breaker = breakers.get(primary_name)
+        if breaker is None or breaker.state is not CircuitState.OPEN:
+            log.engine.debug(
+                "[registry] resolve_tier_with_fallback: exit — healthy primary",
+                extra={"_fields": {"tier": tier, "primary": primary_name}},
+            )
+            return providers[primary_name], None
+        log.engine.info(
+            "[registry] resolve_tier_with_fallback: primary circuit OPEN — cascading",
+            extra={"_fields": {"tier": tier, "degraded_from": primary_name}},
+        )
+        healthy = self.get_with_cascade(tier)
+        return healthy, primary_name
+
     def healthy_distinct(self, limit: int | None = None) -> list[ModelProvider]:
         """Return providers whose CircuitBreaker is NOT OPEN, distinct underlying.
 

@@ -17,6 +17,11 @@ from stackowl.setup.localize import localize_format
 _MAX_LINES = 2
 _LANG = "en"  # turn language plumbing is out of scope; localize falls back to en
 
+_TEMPLATE_BY_KIND = {
+    "substitution": "self_heal_recovery_note",          # slots: failed, recovered_via
+    "provider_fallback": "self_heal_recovery_provider",  # generic, no slots
+}
+
 
 async def surface_recovery(state: PipelineState) -> PipelineState:
     """Append one localized line per user-visible recovery (capped). Self-healing."""
@@ -36,10 +41,18 @@ async def surface_recovery(state: PipelineState) -> PipelineState:
         new_chunks: list[ResponseChunk] = []
         base_index = len(state.responses)
         for offset, e in enumerate(events[:_MAX_LINES]):
-            text = localize_format(
-                "self_heal_recovery_note", _LANG,
-                failed=e.failed, recovered_via=e.recovered_via,
-            )
+            key = _TEMPLATE_BY_KIND.get(e.kind)
+            if key is None:
+                log.engine.debug(
+                    "[recovery_summary] skip — unmapped recovery kind",
+                    extra={"_fields": {"trace_id": state.trace_id, "kind": e.kind}},
+                )
+                continue
+            if key == "self_heal_recovery_provider":
+                text = localize_format(key, _LANG)  # generic, no names
+            else:
+                text = localize_format(key, _LANG, failed=e.failed,
+                                       recovered_via=e.recovered_via)
             # Annotation chunk appended after the real answer; is_final stays False
             # (not a terminal response).
             new_chunks.append(ResponseChunk(
