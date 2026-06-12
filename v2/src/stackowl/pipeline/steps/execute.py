@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from stackowl.authz.bounds import ResourceCaps
 from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
+    AllProvidersUnavailableError,
     BudgetBreach,
     DurableReplayUncertain,
     OwlConcurrencyError,
@@ -1087,8 +1088,8 @@ def _select_tool_provider(
        On ProviderNotFoundError warn and fall through to tier routing.
     2. Desired tier = get_session_tier(session_id) OR manifest.model_tier OR "powerful".
        Session pref beats manifest; manifest beats default.
-    3. Resolve via registry.get_by_tier(desired_tier). When no provider serves
-       that tier, get_by_tier itself emits a loud, actionable degrade warning.
+    3. Resolve via registry.resolve_tier_with_fallback(desired_tier) — circuit-aware
+       (falls back if the tier provider's circuit is OPEN).
     """
     log.engine.debug(
         "[pipeline] execute: _select_tool_provider: entry",
@@ -1197,7 +1198,17 @@ async def run(state: PipelineState) -> PipelineState:
         log.engine.warning("[pipeline] execute: no provider_registry — pass-through")
         return state
 
-    provider = _select_tool_provider(registry, services, state)
+    try:
+        provider = _select_tool_provider(registry, services, state)
+    except AllProvidersUnavailableError as exc:
+        log.engine.error(
+            "[pipeline] execute: all providers unavailable — flooring",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+        )
+        return state.evolve(
+            errors=(*state.errors, f"execute: AllProvidersUnavailableError: {exc}"),
+        )
 
     # Tool loop path: use complete_with_tools() when tools are available
     if tool_registry is not None and tool_registry.all():

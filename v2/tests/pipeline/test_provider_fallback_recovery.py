@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from stackowl.infra import recovery_context as rc
-from stackowl.pipeline.services import StepServices
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.steps import execute as exe
 from stackowl.pipeline.steps.execute import _select_tool_provider
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
@@ -49,6 +52,23 @@ def test_healthy_tier_records_nothing():
         assert rc.get_recovery() == ()
     finally:
         rc.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_run_floors_when_all_providers_open():
+    reg = ProviderRegistry()
+    reg.register_mock("powerful_a", MockProvider(name="powerful_a"), tier="powerful")
+    _open_breaker(reg, "powerful_a")
+    services = StepServices(provider_registry=reg)   # tool_registry None → plain-stream path
+    stoken = set_services(services)
+    token = rc.bind()
+    try:
+        out = await exe.run(_state())
+        assert any("AllProvidersUnavailableError" in e for e in out.errors)
+        assert rc.get_recovery() == ()   # selection raised before any fallback recorded
+    finally:
+        rc.reset(token)
+        reset_services(stoken)
 
 
 def test_owl_named_pin_with_open_circuit_is_honored_no_fallback():
