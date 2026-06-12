@@ -74,6 +74,20 @@ _STRINGS: dict[tuple[str, str], str] = {
     ("self_heal_recovery_note", "de"): "ℹ️ '{failed}' war nicht verfügbar, daher habe ich '{recovered_via}' verwendet.",
     ("self_heal_recovery_note", "fr"): "ℹ️ '{failed}' était indisponible, j'ai donc utilisé '{recovered_via}'.",
     ("self_heal_recovery_note", "es"): "ℹ️ '{failed}' no estaba disponible, así que usé '{recovered_via}'.",
+    # Provider fallback recovery (pillar ④) — GENERIC, no provider/tier names leaked
+    # to the user (names live in the [recovery] turn summary log only). No slots.
+    ("self_heal_recovery_provider", "en"): (
+        "ℹ️ The usual model was unavailable, so a backup completed this."
+    ),
+    ("self_heal_recovery_provider", "de"): (
+        "ℹ️ Das übliche Modell war nicht verfügbar, daher hat ein Ersatzmodell dies erledigt."
+    ),
+    ("self_heal_recovery_provider", "fr"): (
+        "ℹ️ Le modèle habituel était indisponible, un modèle de secours a donc traité cette demande."
+    ),
+    ("self_heal_recovery_provider", "es"): (
+        "ℹ️ El modelo habitual no estaba disponible, así que un modelo de respaldo completó esto."
+    ),
     # Static minimal fallback for the floor (used when template interpolation fails)
     ("self_heal_floor_minimal", "en"): (
         "I hit a problem completing this and couldn't finish; "

@@ -83,3 +83,32 @@ async def test_cap_at_two_recovery_events():
         assert "tool1" in out.responses[2].content and "sib1" in out.responses[2].content
     finally:
         rc.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_provider_fallback_renders_generic_line_without_names():
+    token = rc.bind()
+    try:
+        rc.record_recovery(kind="provider_fallback", failed="gpt-secret-name",
+                           recovered_via="other-secret-name", user_visible=True)
+        out = await surface_recovery(_state(responses=(_answer(),)))
+        assert len(out.responses) == 2
+        line = out.responses[-1].content
+        assert "backup" in line.lower()
+        assert "gpt-secret-name" not in line
+        assert "other-secret-name" not in line
+    finally:
+        rc.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_unknown_kind_is_not_surfaced():
+    token = rc.bind()
+    try:
+        rc.record_recovery(kind="some_future_kind", failed="a",
+                           recovered_via="b", user_visible=True)
+        s = _state(responses=(_answer(),))
+        out = await surface_recovery(s)
+        assert out.responses == s.responses
+    finally:
+        rc.reset(token)
