@@ -489,6 +489,10 @@ class ProviderRegistry(RegistryAccessorsMixin):
             return self.get_by_tier(tier), None
         breaker = breakers.get(primary_name)
         if breaker is None or breaker.state is not CircuitState.OPEN:
+            log.engine.debug(
+                "[registry] resolve_tier_with_fallback: exit — healthy primary",
+                extra={"_fields": {"tier": tier, "primary": primary_name}},
+            )
             return providers[primary_name], None
         log.engine.info(
             "[registry] resolve_tier_with_fallback: primary circuit OPEN — cascading",
