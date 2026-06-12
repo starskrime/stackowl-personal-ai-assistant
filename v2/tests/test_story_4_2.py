@@ -7,13 +7,12 @@ import pytest
 from stackowl.gateway.scanner import GatewayScanner, IngressMessage
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.owls.router import FuzzyMatcher, SecretaryRouter, _levenshtein
+from stackowl.owls.router import FuzzyMatcher, RouteResult, SecretaryRouter, _levenshtein
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import triage
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -215,51 +214,52 @@ class TestSecretaryRouter:
         providers = _provider_registry_with_mock(mock)
         router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
         state = _make_state(input_text="find me papers on persistent memory")
-        chosen = await router.route(state)
-        assert chosen == "ResearchOwl"
+        result = await router.route(state)
+        assert isinstance(result, RouteResult)
+        assert result.owl_name == "ResearchOwl"
 
     async def test_garbage_falls_back_to_secretary(self) -> None:
         registry = _make_registry(["ResearchOwl"])
         mock = MockProvider(name="mock-fast", canned_text="!!! nonsense ???")
         providers = _provider_registry_with_mock(mock)
         router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
-        chosen = await router.route(_make_state())
-        assert chosen == "secretary"
+        result = await router.route(_make_state())
+        assert result.owl_name == "secretary"
 
     async def test_empty_reply_falls_back_to_secretary(self) -> None:
         registry = _make_registry(["ResearchOwl"])
         mock = MockProvider(name="mock-fast", canned_text="")
         providers = _provider_registry_with_mock(mock)
         router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
-        assert await router.route(_make_state()) == "secretary"
+        assert (await router.route(_make_state())).owl_name == "secretary"
 
     async def test_unknown_owl_name_falls_back(self) -> None:
         registry = _make_registry(["ResearchOwl"])
         mock = MockProvider(name="mock-fast", canned_text="GhostOwl")
         providers = _provider_registry_with_mock(mock)
         router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
-        assert await router.route(_make_state()) == "secretary"
+        assert (await router.route(_make_state())).owl_name == "secretary"
 
     async def test_strips_quotes_and_whitespace(self) -> None:
         registry = _make_registry(["ResearchOwl"])
         mock = MockProvider(name="mock-fast", canned_text='  "ResearchOwl".  ')
         providers = _provider_registry_with_mock(mock)
         router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
-        assert await router.route(_make_state()) == "ResearchOwl"
+        assert (await router.route(_make_state())).owl_name == "ResearchOwl"
 
     async def test_takes_first_line_of_multiline_reply(self) -> None:
         registry = _make_registry(["ResearchOwl"])
         mock = MockProvider(name="mock-fast", canned_text="ResearchOwl\nbecause it fits")
         providers = _provider_registry_with_mock(mock)
         router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
-        assert await router.route(_make_state()) == "ResearchOwl"
+        assert (await router.route(_make_state())).owl_name == "ResearchOwl"
 
     async def test_secretary_always_acceptable_as_reply(self) -> None:
         registry = _make_registry(["ResearchOwl"])
         mock = MockProvider(name="mock-fast", canned_text="secretary")
         providers = _provider_registry_with_mock(mock)
         router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
-        assert await router.route(_make_state()) == "secretary"
+        assert (await router.route(_make_state())).owl_name == "secretary"
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +280,7 @@ class TestTriageStep:
         finally:
             reset_services(token)
         assert result.owl_name == "ResearchOwl"
+        assert result.intent_class == "standard"
         # Mock provider should have been called exactly once for routing.
         assert mock.call_count == 1
 

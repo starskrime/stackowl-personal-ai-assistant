@@ -58,6 +58,11 @@ _CHILD_EXCLUDED_TOOLS = frozenset(
 )
 
 
+def _est_tokens(text: str | None) -> int:
+    """Cheap token estimate (~4 chars/token). Never raises."""
+    return (len(text) // 4) if text else 0
+
+
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
     """Most-recent assistant text in the live message list (partial work on stop)."""
     for m in reversed(messages):
@@ -1210,8 +1215,30 @@ async def run(state: PipelineState) -> PipelineState:
             errors=(*state.errors, f"execute: AllProvidersUnavailableError: {exc}"),
         )
 
-    # Tool loop path: use complete_with_tools() when tools are available
-    if tool_registry is not None and tool_registry.all():
+    # Tool loop path: use complete_with_tools() when tools are available AND the
+    # turn is not conversational.  Conversational turns take the plain-stream path
+    # with zero tools so a small/weak model cannot spiral into a tool loop.
+    _use_tools = (
+        state.intent_class != "conversational"
+        and tool_registry is not None
+        and tool_registry.all()
+    )
+    _sp_tokens = _est_tokens(state.system_prompt)
+    _hist_tokens = sum(_est_tokens(getattr(m, "content", "")) for m in state.history)
+    log.engine.info(
+        "[pipeline] execute: context budget",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "intent_class": state.intent_class,
+            "tools_used": bool(_use_tools),
+            "system_prompt_tokens": _sp_tokens,
+            # diagnostic only — assemble folds memory_context into system_prompt; NOT added to total
+            "memory_context_tokens": _est_tokens(state.memory_context),
+            "history_tokens": _hist_tokens,
+            "total_est_tokens": _sp_tokens + _hist_tokens,
+        }},
+    )
+    if _use_tools and tool_registry is not None:
         return await _run_with_tools(state, provider, tool_registry)
 
     messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]

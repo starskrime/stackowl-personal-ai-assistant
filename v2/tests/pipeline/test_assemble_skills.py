@@ -84,3 +84,24 @@ async def test_assemble_fallback_when_no_query_embedding():
     state = _state(owl_name="o", query_embedding=None)
     out = await assemble.run(state)
     assert "a" in (out.system_prompt or "")  # still injected via manifest-order fallback
+
+
+@pytest.mark.asyncio
+async def test_conversational_turn_gets_no_skills_block():
+    """A conversational intent_class turn must NOT carry skill-block tokens even when
+    the owl owns skills.  assemble gates the skills block on intent_class != 'conversational'
+    so lean turns stay lean (no playbook tokens added to system_prompt)."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    reg.register(OwlAgentManifest(name="rsr", role="research", system_prompt="P",
+                                  model_tier="fast", skills=("research_skill",)))
+    set_services(StepServices(owl_registry=reg, skill_store=_FakeStore([_Sk("research_skill")])))
+    from stackowl.pipeline.steps import assemble
+    out = await assemble.run(_state(intent_class="conversational"))
+    sp = out.system_prompt or ""
+    assert "Do the thing." not in sp, (
+        f"skill summary leaked into conversational system_prompt: {sp!r}"
+    )
+    assert "research_skill" not in sp, (
+        f"skill name leaked into conversational system_prompt: {sp!r}"
+    )

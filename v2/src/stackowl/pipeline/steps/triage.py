@@ -98,9 +98,9 @@ async def run(state: PipelineState) -> PipelineState:
         extra={"_fields": {"trace_id": state.trace_id}},
     )
 
-    chosen = await router.route(state)
+    result = await router.route(state)
     log.engine.info(
         "[pipeline] triage: routed",
-        extra={"_fields": {"trace_id": state.trace_id, "owl": chosen}},
+        extra={"_fields": {"trace_id": state.trace_id, "owl": result.owl_name, "intent_class": result.intent_class}},
     )
-    return state.evolve(owl_name=chosen)
+    return state.evolve(owl_name=result.owl_name, intent_class=result.intent_class)
