@@ -332,12 +332,17 @@ async def test_conversational_hi_is_lean_no_tool_loop(
     backend = AsyncioBackend(services=services)
 
     with caplog.at_level(logging.INFO, logger="stackowl.engine"):
-        delivered, _final = await _execute_turn(
+        delivered, final_state = await _execute_turn(
             "hi",
             "sess-conv-bypass-fr4fr5",
             "trace-conv-bypass-1",
             backend,
         )
+
+    # ===================================================================
+    # No-error guard — a floor-on-error reply must not silently pass.
+    # ===================================================================
+    assert not final_state.errors, f"unexpected errors: {final_state.errors}"
 
     # ===================================================================
     # FR5 OUTCOME 1 — the greeting was delivered (non-empty reply).
@@ -374,7 +379,15 @@ async def test_conversational_hi_is_lean_no_tool_loop(
         f"Got _fields: {fields!r}"
     )
     total_tokens = fields.get("total_est_tokens", 99999)
-    assert isinstance(total_tokens, int) and total_tokens < 4000, (
+    # Lower bound: the secretary persona + base prompt are assembled before execute,
+    # so total_est_tokens must be > 0 — a zero here means assemble is unwired/broken.
+    # Upper bound: conversational turns must stay lean (< 4000 tokens).
+    # Observed value with default secretary persona + base prompt: ~756 tokens.
+    assert isinstance(total_tokens, int) and total_tokens > 0, (
+        f"FR4 FAIL: total_est_tokens={total_tokens!r} is 0 — system_prompt was not "
+        f"assembled (assemble step unwired or persona missing). Got _fields: {fields!r}"
+    )
+    assert total_tokens < 4000, (
         f"FR4 FAIL: total_est_tokens={total_tokens!r} is not < 4000 — prompt is bloated. "
         f"Got _fields: {fields!r}"
     )
@@ -445,12 +458,17 @@ async def test_standard_turn_enters_tool_loop(
     backend = AsyncioBackend(services=services_with_gate)
 
     with caplog.at_level(logging.INFO, logger="stackowl.engine"):
-        delivered, _final = await _execute_turn(
+        delivered, final_state = await _execute_turn(
             "what is the capital of France?",
             "sess-standard-fr6",
             "trace-standard-fr6-1",
             backend,
         )
+
+    # ===================================================================
+    # No-error guard — a floor-on-error reply must not silently pass.
+    # ===================================================================
+    assert not final_state.errors, f"unexpected errors: {final_state.errors}"
 
     # ===================================================================
     # FR6 OUTCOME 1 — the answer was delivered (sanity check).
