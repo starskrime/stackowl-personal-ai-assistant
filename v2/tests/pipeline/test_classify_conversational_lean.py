@@ -85,8 +85,8 @@ async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch
     assert called["reflections"] is False, "reflections must NOT be called for conversational"
     assert called["graph"] is False, "graph must NOT be called for conversational"
     assert called["actions"] is False, "actions must NOT be called for conversational"
-    # State must still be returned — just with minimal/no memory context.
-    assert out is not None
+    # State must be returned with no memory context — heavy blocks were skipped.
+    assert out.memory_context is None
 
 
 @pytest.mark.asyncio
