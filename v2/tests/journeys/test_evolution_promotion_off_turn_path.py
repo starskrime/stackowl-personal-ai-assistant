@@ -90,6 +90,7 @@ class _RecordingProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check=None,
+        **_kwargs,
     ) -> tuple[str, list]:
         self.tool_loop_calls += 1
         return "canned reply", []
