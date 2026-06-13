@@ -21,7 +21,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from stackowl.exceptions import InfrastructureError
-from stackowl.infra import recovery_context
+from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline import lesson_context as lc
@@ -125,6 +125,7 @@ class LangGraphBackend(OrchestratorBackend):
         )
         lesson_token = lc.bind()
         recovery_token = recovery_context.bind()
+        ledger_token = tool_outcome_ledger.bind()
         try:
             compiled = await self._ensure_compiled()
             # Isolate per-task checkpoints: a durable task gets its own thread so
@@ -173,6 +174,7 @@ class LangGraphBackend(OrchestratorBackend):
                         ],
                     }},
                 )
+            tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
             lc.reset(lesson_token)
             TraceContext.reset(trace_token)

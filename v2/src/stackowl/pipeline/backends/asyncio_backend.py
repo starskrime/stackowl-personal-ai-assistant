@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from stackowl.infra import recovery_context
+from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
@@ -57,6 +57,7 @@ class AsyncioBackend(OrchestratorBackend):
         )
         lesson_token = lc.bind()
         recovery_token = recovery_context.bind()
+        ledger_token = tool_outcome_ledger.bind()
         current = state
         step_durations: list[tuple[str, float]] = []
         try:
@@ -130,6 +131,7 @@ class AsyncioBackend(OrchestratorBackend):
                         ],
                     }},
                 )
+            tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
             lc.reset(lesson_token)
             TraceContext.reset(trace_token)
