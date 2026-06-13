@@ -12,6 +12,8 @@ import hashlib
 import re
 
 from stackowl.infra.observability import log
+from stackowl.learning.heuristic_ranking import rank_lessons
+from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import Message
@@ -366,20 +368,28 @@ async def _gather_lessons(query: str, limit: int = 3) -> str:
             "[pipeline] classify._gather_lessons: exit — only-skill or no hits",
         )
         return ""
-    # 4. EXIT — format as a system-prompt block
-    lines = ["## Cross-Source Lessons"]
-    for h in non_skill_hits:
+    # 4. EXIT — rank heuristics by confidence, assign turn-local ids, stash + format.
+    ranked = rank_lessons(non_skill_hits)
+    surfaced: list[lc.SurfacedLesson] = []
+    lines = [
+        "## Cross-Source Lessons",
+        "If a lesson below changed what you did, call note_applied_lesson with its id.",
+    ]
+    for i, h in enumerate(ranked, start=1):
+        lid = f"L{i}"
         snippet = h.content[:300]
-        lines.append(
-            f"- **[{h.source_type}]** ({h.similarity:.2f}) {snippet}",
-        )
+        lines.append(f"- [{lid}] **[{h.source_type}]** ({h.similarity:.2f}) {snippet}")
+        surfaced.append(lc.SurfacedLesson(
+            lesson_id=lid, source_type=h.source_type, content=h.content, similarity=h.similarity,
+        ))
+    lc.set_surfaced(tuple(surfaced))
     result = "\n".join(lines)
     log.engine.debug(
         "[pipeline] classify._gather_lessons: exit",
         extra={"_fields": {
-            "n_hits": len(non_skill_hits),
+            "n_hits": len(ranked),
             "block_len": len(result),
-            "top_sim": non_skill_hits[0].similarity if non_skill_hits else None,
+            "top_sim": ranked[0].similarity if ranked else None,
         }},
     )
     return result
@@ -444,35 +454,48 @@ async def run(state: PipelineState) -> PipelineState:
     except Exception:
         short_term_window = 6
     history = await _gather_history(state.session_id, short_term_window)
+    # Lean gate: conversational turns (greetings/small-talk) skip every heavy
+    # block that would only balloon the prompt for no task-relevant gain.
+    # "standard" (the default) is byte-identical to prior behavior.
+    _lean = state.intent_class == "conversational"
+    if _lean:
+        log.engine.info(
+            "[pipeline] classify: conversational — lean assembly (skipping heavy blocks)",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
     # Long-term graph context.
-    graph_context = await _gather_graph_context(state.input_text)
-    # Persisted user preferences (high priority — pin to top).
+    graph_context = "" if _lean else await _gather_graph_context(state.input_text)
+    # Persisted user preferences (high priority — pin to top, always included).
     prefs_block = await _gather_preferences(state.session_id)
     # Reflexion-style learnings from past failures (Commit 2).
-    reflections_block = await _gather_recent_reflections(state.owl_name, limit=3)
+    reflections_block = "" if _lean else await _gather_recent_reflections(state.owl_name, limit=3)
     # Live action recall — what the agent DID on prior turns this session
     # (excludes the in-flight turn). Lets it answer "what did you just do?".
-    actions_block = await _gather_recent_actions(
+    actions_block = "" if _lean else await _gather_recent_actions(
         state.session_id, state.trace_id, limit=3,
     )
     # Voyager-style skills relevant to this query (Commit 3 sub-phase 3d).
     # Suppress owned skills so they don't appear at two altitudes.
+    # Owned-skill lookup is only used by _gather_relevant_skills — skip on lean.
     owned: set[str] = set()
-    _reg = get_services().owl_registry
-    if _reg is not None:
-        try:
-            owned = set(_reg.get(state.owl_name).skills)
-        except Exception as exc:  # unknown owl / lookup failure → no suppression (safe)
-            log.engine.debug(
-                "[pipeline] classify: owned-skill lookup failed — no suppression",
-                exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
-            )
-            owned = set()
+    if not _lean:
+        _reg = get_services().owl_registry
+        if _reg is not None:
+            try:
+                owned = set(_reg.get(state.owl_name).skills)
+            except Exception as exc:  # unknown owl / lookup failure → no suppression (safe)
+                log.engine.debug(
+                    "[pipeline] classify: owned-skill lookup failed — no suppression",
+                    exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
+                )
+                owned = set()
     # Compute the query embedding once (semantic-guarded) and stash on state so the
     # assemble step can score owned skills without re-embedding. Story B.
     # NOTE: _gather_relevant_skills will also embed internally — accepted double-embed
     # since changing its signature would risk breaking existing tests (small call site,
     # low cost, correctness first).
+    # The embedding is NOT gated on _lean: assemble uses it for owned-skill tiering
+    # independently of the heavy gather blocks.
     query_embedding: tuple[float, ...] | None = None
     emb_reg = get_services().embedding_registry
     if emb_reg is not None and getattr(emb_reg, "is_semantic", False) and state.input_text.strip():
@@ -486,10 +509,10 @@ async def run(state: PipelineState) -> PipelineState:
                 exc_info=exc,
                 extra={"_fields": {"owl": state.owl_name}},
             )
-    skills_block = await _gather_relevant_skills(state.input_text, limit=3, owned=owned)
+    skills_block = "" if _lean else await _gather_relevant_skills(state.input_text, limit=3, owned=owned)
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
     # pellets from the unified LanceDB lessons index.
-    lessons_block = await _gather_lessons(state.input_text, limit=3)
+    lessons_block = "" if _lean else await _gather_lessons(state.input_text, limit=3)
     # Combine: prefs first (always in view), then skills (what tactics apply),
     # then lessons (cross-source learnings), then reflections (what went wrong
     # before), then long-term context, then graph.

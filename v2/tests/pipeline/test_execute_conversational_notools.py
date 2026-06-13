@@ -1,0 +1,185 @@
+"""T3 — conversational turns take the zero-tools plain-stream path.
+
+``execute.run`` must:
+  * for ``intent_class="conversational"``: skip ``_run_with_tools`` entirely,
+    even when ``tool_registry.all()`` is non-empty.
+  * for ``intent_class="standard"``: enter ``_run_with_tools`` as before.
+
+The test monkeypatches ``exe._run_with_tools`` so we can observe which branch
+was taken without running the real tool loop or a real provider.  The plain-stream
+path needs a provider with a working ``stream()`` — we supply one here.
+
+Harness mirrors ``tests/pipeline/steps/test_execute_budget.py``.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.registry import OwlRegistry
+from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.steps import execute as exe
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.tools.registry import ToolRegistry
+
+
+# ---------------------------------------------------------------------------
+# Minimal tool — gives tool_registry.all() a non-empty result
+# ---------------------------------------------------------------------------
+
+
+class _DummyTool(Tool):
+    @property
+    def name(self) -> str:
+        return "dummy_tool"
+
+    @property
+    def description(self) -> str:
+        return "Dummy tool for conversational no-tools test."
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self) -> ToolManifest:
+        return ToolManifest(
+            name="dummy_tool",
+            description=self.description,
+            parameters=self.parameters,
+            action_severity="read",
+        )
+
+    async def execute(self, **kwargs: object) -> ToolResult:
+        return ToolResult(success=True, output="dummy", duration_ms=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Scripted provider — stream() yields one token (plain-stream path)
+# ---------------------------------------------------------------------------
+
+
+class _StreamingProvider:
+    """Provider whose stream() yields a single token for the plain-stream path."""
+
+    protocol = "anthropic"
+
+    async def stream(  # noqa: ANN201
+        self,
+        messages: list[Any],
+        model: str,
+        **kwargs: object,
+    ):
+        yield "hello"
+
+    async def complete_with_tools(  # pragma: no cover
+        self,
+        *,
+        user_text: str,
+        system_text: str,
+        tool_schemas: list[dict[str, object]],
+        tool_dispatcher: Any,
+        history: list[Any] | None = None,
+        on_iteration_complete: Any = None,
+        **_kwargs: object,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        return ("should not be called", [])
+
+
+class _FakeProviderRegistry:
+    def __init__(self, provider: _StreamingProvider) -> None:
+        self._p = provider
+
+    def get(self, name: str) -> _StreamingProvider:
+        return self._p
+
+    def get_by_tier(self, tier: str) -> _StreamingProvider:
+        return self._p
+
+    def get_with_cascade(self, preferred_tier: str) -> _StreamingProvider:
+        return self._p
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_state(intent: str) -> PipelineState:
+    return PipelineState(
+        trace_id="t",
+        session_id="s",
+        input_text="hi",
+        channel="cli",
+        owl_name="secretary",
+        pipeline_step="execute",
+        intent_class=intent,  # type: ignore[arg-type]
+        system_prompt="You are a helper.",
+    )
+
+
+def _make_services() -> StepServices:
+    provider = _StreamingProvider()
+    tool_registry = ToolRegistry()
+    tool_registry.register(_DummyTool())
+
+    owl_registry = OwlRegistry.with_default_secretary()
+
+    return StepServices(
+        provider_registry=_FakeProviderRegistry(provider),  # type: ignore[arg-type]
+        tool_registry=tool_registry,
+        owl_registry=owl_registry,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_conversational_does_not_enter_tool_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A conversational turn must NOT call _run_with_tools even with tools registered."""
+    entered: dict[str, bool] = {"tools": False}
+
+    async def _spy(*a: object, **k: object) -> Any:
+        entered["tools"] = True
+        return a[0]  # return state unchanged
+
+    monkeypatch.setattr(exe, "_run_with_tools", _spy)
+
+    stoken = set_services(_make_services())
+    try:
+        await exe.run(_make_state("conversational"))
+    finally:
+        reset_services(stoken)
+
+    assert entered["tools"] is False, (
+        "conversational turn incorrectly entered _run_with_tools"
+    )
+
+
+@pytest.mark.asyncio
+async def test_standard_enters_tool_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A standard turn MUST call _run_with_tools when tools are registered."""
+    entered: dict[str, bool] = {"tools": False}
+
+    async def _spy(*a: object, **k: object) -> Any:
+        entered["tools"] = True
+        return a[0]  # return state unchanged
+
+    monkeypatch.setattr(exe, "_run_with_tools", _spy)
+
+    stoken = set_services(_make_services())
+    try:
+        await exe.run(_make_state("standard"))
+    finally:
+        reset_services(stoken)
+
+    assert entered["tools"] is True, (
+        "standard turn failed to enter _run_with_tools"
+    )

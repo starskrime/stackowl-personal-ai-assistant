@@ -105,6 +105,7 @@ class _CannedProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check=None,
+        **_kwargs,
     ) -> tuple[str, list]:
         return "OWL_REPLY", []
 

@@ -7,9 +7,10 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from stackowl.authz.bounds import ResourceCaps
+from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS, DEFAULT_TURN_MAX_TIME_S, ResourceCaps
 from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
+    AllProvidersUnavailableError,
     BudgetBreach,
     DurableReplayUncertain,
     OwlConcurrencyError,
@@ -18,6 +19,7 @@ from stackowl.exceptions import (
     ProviderNotFoundError,
     TurnStopped,
 )
+from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
@@ -54,6 +56,11 @@ PersistenceCheck = Callable[[str, list[str]], Awaitable[str | None]]
 _CHILD_EXCLUDED_TOOLS = frozenset(
     {"delegate_task", "sessions_spawn", "sessions_send", "process", "execute_code", "owl_build"}
 )
+
+
+def _est_tokens(text: str | None) -> int:
+    """Cheap token estimate (~4 chars/token). Never raises."""
+    return (len(text) // 4) if text else 0
 
 
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
@@ -356,6 +363,9 @@ async def _try_substitute(
             sibling_name, sibling_args, sib.manifest.action_severity,
             lambda: sib(**sibling_args),
         )
+        tool_outcome_ledger.record_tool_outcome(
+            name=sibling_name, action_severity=sib.manifest.action_severity, success=sib_result.success,
+        )
         if not sib_result.success:
             log.engine.info(
                 "[pipeline] execute: substitute sibling also failed — falling through",
@@ -368,6 +378,12 @@ async def _try_substitute(
         # for the same class, and return the sibling's output as a fresh
         # observation with a neutral localized note so the model knows an
         # alternative produced it.
+        # Record the recovery so the user can be told (machinery-recorded, true by
+        # construction) and the turn's recovery log captures it.
+        recovery_context.record_recovery(
+            kind="substitution", failed=failed_tool,
+            recovered_via=sibling_name, user_visible=True,
+        )
         tag = sib.manifest.capability_tag
         if tag:
             substituted_tags.add(tag)
@@ -603,6 +619,9 @@ async def _run_with_tools(
         from stackowl.pipeline.durable.ledger_guard import ledger_guard
 
         tr = await ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args))
+        tool_outcome_ledger.record_tool_outcome(
+            name=name, action_severity=t.manifest.action_severity, success=tr.success,
+        )
         # Learning Commit 5 — post-execute heuristic match + event emission.
         # Zero behavior change; downstream subscribers (classify, future hooks)
         # see "tool.heuristic_match" when a known-bad pattern fires.
@@ -661,7 +680,7 @@ async def _run_with_tools(
 
     # E2-S4 — budget governor: enforce the acting owl's effective caps (cost best-
     # effort, steps + time) once per ReAct iteration via on_iteration_complete.
-    # No caps / unbounded owl → a no-op gate (every current turn unchanged).
+    # No caps / unbounded owl → default backstop applied (see _default_backstop below).
     _services = get_services()
     try:
         _eff = compute_effective_bounds(state, _services.owl_registry)
@@ -676,20 +695,29 @@ async def _run_with_tools(
         def monotonic(self) -> float:
             return time.monotonic()
 
-    _has_caps = any(
+    _has_explicit_caps = any(
         c is not None for c in (_caps.max_steps, _caps.max_time_s, _caps.max_cost_usd)
     )
-    if _has_caps:
-        _governor = BudgetGovernor(
-            _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
-            started_monotonic=time.monotonic(), clock=_MonotonicClock(),
-        )
-        _budget_cb = make_budget_callback(
-            _governor, interactive=state.interactive, clarify=_services.clarify_gateway,
-            session_id=state.session_id, channel=state.channel,
-        )
-    else:
-        _budget_cb = None
+    # Default safety backstop: when the owl set NO explicit caps, apply a default
+    # time/step bound so the (already-tested) BudgetGovernor always runs and every
+    # turn terminates in bounded time even when a weak model spirals. NON-interactive
+    # (just stop + deliver — no "Raise?" prompt; that UX is for explicit owl caps).
+    _default_backstop = not _has_explicit_caps
+    if _default_backstop:
+        _caps = _caps.model_copy(update={
+            "max_time_s": DEFAULT_TURN_MAX_TIME_S,
+            "max_steps": DEFAULT_TURN_MAX_STEPS,
+        })
+    _governor = BudgetGovernor(
+        _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
+        started_monotonic=time.monotonic(), clock=_MonotonicClock(),
+    )
+    _budget_cb = make_budget_callback(
+        _governor,
+        interactive=(state.interactive and not _default_backstop),
+        clarify=_services.clarify_gateway,
+        session_id=state.session_id, channel=state.channel,
+    )
 
     # Task 10 — steering closure: drain THIS turn's mailbox at each iteration
     # boundary and fold a coalesced [steering] user message into the loop. Reaches
@@ -926,11 +954,6 @@ async def _run_with_tools(
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name,
                                "cap": exc.cap, "limit": exc.limit, "actual": exc.actual}},
         )
-        note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
-        _breach_chunks = (ResponseChunk(
-            content=(exc.partial_text + note), is_final=False, chunk_index=0,
-            trace_id=state.trace_id, owl_name=state.owl_name,
-        ),)
         _breach_raw: list[dict[str, Any]] = exc.tool_call_records
         _breach_tool_records = tuple(
             ToolCall(
@@ -943,6 +966,49 @@ async def _run_with_tools(
             for rc in _breach_raw
         )
         marker = f"budget:stop:{exc.cap}:limit={exc.limit}:actual={exc.actual}"
+        if _default_backstop:
+            # Default safety backstop: deliver clean best-available partial with no
+            # developer-facing budget marker in the content.  If partial is empty,
+            # route to the synthesize_floor path (same never-empty guarantee as the
+            # general exception handler).
+            if exc.partial_text:
+                _breach_chunks = (ResponseChunk(
+                    content=exc.partial_text, is_final=False, chunk_index=0,
+                    trace_id=state.trace_id, owl_name=state.owl_name,
+                ),)
+                return state.evolve(
+                    responses=(*state.responses, *_breach_chunks),
+                    tool_calls=(*state.tool_calls, *_breach_tool_records),
+                    errors=(*state.errors, marker),
+                )
+            # Empty partial under the default backstop → synthesize_floor.
+            _prior = state.responses[-1].content if state.responses else ""
+            floor = synthesize_floor(
+                goal=state.input_text,
+                error=str(exc),
+                attempts=[],
+                partial=_prior,
+            )
+            floor_chunk = ResponseChunk(
+                content=floor,
+                is_final=False,
+                chunk_index=0,
+                trace_id=state.trace_id,
+                owl_name=state.owl_name,
+                is_floor=True,
+            )
+            return state.evolve(
+                responses=(*state.responses, floor_chunk),
+                tool_calls=(*state.tool_calls, *_breach_tool_records),
+                errors=(*state.errors, marker),
+            )
+        # Explicit cap: deliver partial with a human-visible budget note.
+        note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
+        _stop_content = (exc.partial_text + note) if exc.partial_text else note
+        _breach_chunks = (ResponseChunk(
+            content=_stop_content, is_final=False, chunk_index=0,
+            trace_id=state.trace_id, owl_name=state.owl_name,
+        ),)
         return state.evolve(
             responses=(*state.responses, *_breach_chunks),
             tool_calls=(*state.tool_calls, *_breach_tool_records),
@@ -1080,8 +1146,8 @@ def _select_tool_provider(
        On ProviderNotFoundError warn and fall through to tier routing.
     2. Desired tier = get_session_tier(session_id) OR manifest.model_tier OR "powerful".
        Session pref beats manifest; manifest beats default.
-    3. Resolve via registry.get_by_tier(desired_tier). When no provider serves
-       that tier, get_by_tier itself emits a loud, actionable degrade warning.
+    3. Resolve via registry.resolve_tier_with_fallback(desired_tier) — circuit-aware
+       (falls back if the tier provider's circuit is OPEN).
     """
     log.engine.debug(
         "[pipeline] execute: _select_tool_provider: entry",
@@ -1157,8 +1223,14 @@ def _select_tool_provider(
                 extra={"_fields": {"owl": state.owl_name}},
             )
 
-    # --- Step 4: Resolve by tier (get_by_tier warns loudly on a degraded miss) ---
-    provider = registry.get_by_tier(desired)
+    # --- Step 4: Resolve by tier — circuit-aware (falls back if the tier provider's
+    # circuit is OPEN; the pins above are honored as-is). ---
+    provider, degraded_from = registry.resolve_tier_with_fallback(desired)
+    if degraded_from is not None:
+        recovery_context.record_recovery(
+            kind="provider_fallback", failed=degraded_from,
+            recovered_via=provider.name, user_visible=True,
+        )
     log.engine.info(
         "[pipeline] execute: tool provider selected",
         extra={"_fields": {
@@ -1184,10 +1256,42 @@ async def run(state: PipelineState) -> PipelineState:
         log.engine.warning("[pipeline] execute: no provider_registry — pass-through")
         return state
 
-    provider = _select_tool_provider(registry, services, state)
+    try:
+        provider = _select_tool_provider(registry, services, state)
+    except AllProvidersUnavailableError as exc:
+        log.engine.error(
+            "[pipeline] execute: all providers unavailable — flooring",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+        )
+        return state.evolve(
+            errors=(*state.errors, f"execute: AllProvidersUnavailableError: {exc}"),
+        )
 
-    # Tool loop path: use complete_with_tools() when tools are available
-    if tool_registry is not None and tool_registry.all():
+    # Tool loop path: use complete_with_tools() when tools are available AND the
+    # turn is not conversational.  Conversational turns take the plain-stream path
+    # with zero tools so a small/weak model cannot spiral into a tool loop.
+    _use_tools = (
+        state.intent_class != "conversational"
+        and tool_registry is not None
+        and tool_registry.all()
+    )
+    _sp_tokens = _est_tokens(state.system_prompt)
+    _hist_tokens = sum(_est_tokens(getattr(m, "content", "")) for m in state.history)
+    log.engine.info(
+        "[pipeline] execute: context budget",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "intent_class": state.intent_class,
+            "tools_used": bool(_use_tools),
+            "system_prompt_tokens": _sp_tokens,
+            # diagnostic only — assemble folds memory_context into system_prompt; NOT added to total
+            "memory_context_tokens": _est_tokens(state.memory_context),
+            "history_tokens": _hist_tokens,
+            "total_est_tokens": _sp_tokens + _hist_tokens,
+        }},
+    )
+    if _use_tools and tool_registry is not None:
         return await _run_with_tools(state, provider, tool_registry)
 
     messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -33,6 +33,11 @@ class PipelineState(BaseModel, frozen=True):
     channel: str
     owl_name: str
     pipeline_step: str
+    # Coarse turn classification stamped by the triage step via SecretaryRouter.
+    # Fail-safe default "standard" = byte-identical to pre-classification behavior.
+    # "conversational" marks trivial greetings/small-talk (no task) so downstream
+    # steps can choose a lean path and skip heavy prompt assembly.
+    intent_class: Literal["conversational", "standard"] = "standard"
     # True when a user is present on the originating channel and can answer a
     # mid-turn clarify question. FAIL-CLOSED: defaults to False — a human is
     # assumed ABSENT unless a user-facing channel (CLI/Telegram/etc.) EXPLICITLY

@@ -354,6 +354,7 @@ class ToolRegistry:
         from stackowl.tools.media.image_generate import ImageGenerateTool
         from stackowl.tools.media.tts import TtsTool
         from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
+        from stackowl.tools.meta.note_applied_lesson import NoteAppliedLessonTool
         from stackowl.tools.meta.owl_build import OwlBuildTool
         from stackowl.tools.meta.tool_build import ToolBuildTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
@@ -443,6 +444,9 @@ class ToolRegistry:
         # primitive per ADR-11; tool_describe is its inspect sibling).
         registry.register(ToolSearchTool())
         registry.register(ToolDescribeTool())
+        # note_applied_lesson — non-consequential pillar ④ self-report: the model
+        # honestly records that a surfaced lesson changed its actions this turn.
+        registry.register(NoteAppliedLessonTool())
         # tool_build — self-extension meta-tool (H4): the agent authors a NEW
         # declarative tool (validate → security-scan → consent → persist →
         # register live → reload on every boot). Authored tools run only via the

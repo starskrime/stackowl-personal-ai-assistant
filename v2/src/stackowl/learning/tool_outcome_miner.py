@@ -155,6 +155,7 @@ class ToolOutcomeMiner:
                     "predicted_outcome": predicted_outcome,
                     "failure_class": failure_label,
                     "evidence_count": len(members),
+                    "mean_quality": mean_q,
                 },
             ))
         # 3. STEP — push lesson drafts in one batch

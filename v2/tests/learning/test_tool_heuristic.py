@@ -5,12 +5,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.learning.heuristic_matcher import (
     _extract_error_class,
     match_and_emit,
 )
+from stackowl.learning.lessons_index import LessonDraft
 from stackowl.learning.tool_heuristic_store import (
     ToolHeuristicStore,
     heuristic_summary,
@@ -158,6 +161,52 @@ async def test_miner_writes_success_heuristic_too(tmp_db: DbPool) -> None:
     assert len(rows) == 1
     assert rows[0].condition_value == "succeeded"
     assert rows[0].predicted_outcome == "succeeds"
+
+
+async def test_miner_heuristic_lesson_metadata_includes_mean_quality(
+    tmp_db: DbPool,
+) -> None:
+    """Heuristic LessonDraft.metadata must carry both evidence_count and mean_quality."""
+    # Seed 3 failures with known quality scores (all 0.4) so mean_quality == 0.4
+    store = TaskOutcomeStore(tmp_db)
+    for i in range(3):
+        tid = f"mq-fail-{i}"
+        await store.record(
+            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            success=False, latency_ms=3000.0, tool_call_count=1,
+            failure_class="ToolTimeoutError", step_durations={},
+            input_text=f"task {i}", response_text="(error)",
+            tool_sequence=("web_fetch",),
+        )
+        o = await store.get_by_trace_id(tid)
+        await store.set_quality_score(o.outcome_id, 0.4)
+
+    # Capturing fake — implements only what miner.mine() calls on the lessons side.
+    class _CapturingIndex:
+        def __init__(self) -> None:
+            self.captured: list[LessonDraft] = []
+
+        async def publish_many(self, drafts: list[LessonDraft]) -> int:
+            self.captured.extend(drafts)
+            return len(drafts)
+
+    capturing = _CapturingIndex()
+    miner = ToolOutcomeMiner(
+        outcome_store=store,
+        heuristic_store=ToolHeuristicStore(tmp_db),
+        lessons_index=capturing,  # type: ignore[arg-type]
+        min_evidence=3,
+    )
+    await miner.mine()
+
+    heuristic_drafts = [
+        d for d in capturing.captured if d.source_type == "tool_heuristic"
+    ]
+    assert len(heuristic_drafts) >= 1, "expected at least one heuristic lesson draft"
+    draft = heuristic_drafts[0]
+    assert "evidence_count" in draft.metadata
+    assert "mean_quality" in draft.metadata
+    assert draft.metadata["mean_quality"] == pytest.approx(0.4)
 
 
 # ---------- HeuristicMatcher ----------------------------------------------

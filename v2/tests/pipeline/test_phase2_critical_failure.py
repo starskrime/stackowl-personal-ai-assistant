@@ -67,6 +67,7 @@ class _FailingExecuteProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check=None,
+        **_kwargs,
     ) -> tuple[str, list]:
         raise RuntimeError("provider down (tool loop)")
 
@@ -114,6 +115,7 @@ class _ApologyProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check=None,
+        **_kwargs,
     ) -> tuple[str, list]:
         return self._reply, []
 
@@ -155,6 +157,7 @@ class _HappyProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check=None,
+        **_kwargs,
     ) -> tuple[str, list]:
         return self._reply, []
 

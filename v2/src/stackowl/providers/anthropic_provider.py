@@ -12,6 +12,7 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
+from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
@@ -178,6 +179,7 @@ class AnthropicProvider(ModelProvider):
         # re-refusal, never on a turn where the model actually escalated.
         nudge_budget = 2
         calls_at_last_nudge: int | None = None
+        nudges_issued = 0
 
         async def _enforce(content: str) -> str | None:
             """Run the persistence check for a draft final answer (fail-OPEN).
@@ -188,7 +190,7 @@ class AnthropicProvider(ModelProvider):
             rule. The judge itself fails OPEN — on any error it returns None and
             the veto then decides from the authoritative ``failed`` bools.
             """
-            nonlocal nudge_budget, calls_at_last_nudge
+            nonlocal nudge_budget, calls_at_last_nudge, nudges_issued
             if persistence_check is None:
                 return None
             try:
@@ -208,11 +210,20 @@ class AnthropicProvider(ModelProvider):
                 draft=content,
                 nudge_budget=nudge_budget,
                 calls_at_last_nudge=calls_at_last_nudge,
+                consequential_giveup=is_consequential_giveup_now(),
+                nudges_issued=nudges_issued,
             )
             if directive:
+                nudges_issued += 1
                 log.engine.info(
                     "[anthropic] complete_with_tools: persistence nudge — continuing loop",
-                    extra={"_fields": {"provider": self._name, "nudge_budget": nudge_budget}},
+                    extra={
+                        "_fields": {
+                            "provider": self._name,
+                            "nudge_budget": nudge_budget,
+                            "nudges_issued": nudges_issued,
+                        }
+                    },
                 )
             return directive
 

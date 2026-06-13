@@ -233,8 +233,9 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("memory/sqlite_bridge.py", "staged_facts"),
         ("memory/sqlite_helpers.py", "committed_facts"),
         # --- owl evolution engine (raw SQL; not a Store subclass) ---
-        # TODO(Epic 9 multi-user): owner-scope owl_dna/messages/conversations in evolution
-        ("owls/evolution.py", "owl_dna"),
+        # TODO(Epic 9 multi-user): owner-scope messages/conversations in evolution
+        # NOTE: owl_dna removed — evolution.py delegates DNA persistence to
+        # dna_storage.upsert_owl_dna (no owl_dna SQL literal in evolution.py).
         ("owls/evolution.py", "messages"),
         ("owls/evolution.py", "conversations"),
         # --- knowledge/scheduling tools (agent-callable; not Store subclasses) ---
