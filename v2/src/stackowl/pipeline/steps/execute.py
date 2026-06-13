@@ -19,7 +19,7 @@ from stackowl.exceptions import (
     ProviderNotFoundError,
     TurnStopped,
 )
-from stackowl.infra import recovery_context
+from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
@@ -363,6 +363,9 @@ async def _try_substitute(
             sibling_name, sibling_args, sib.manifest.action_severity,
             lambda: sib(**sibling_args),
         )
+        tool_outcome_ledger.record_tool_outcome(
+            name=sibling_name, action_severity=sib.manifest.action_severity, success=sib_result.success,
+        )
         if not sib_result.success:
             log.engine.info(
                 "[pipeline] execute: substitute sibling also failed — falling through",
@@ -616,6 +619,9 @@ async def _run_with_tools(
         from stackowl.pipeline.durable.ledger_guard import ledger_guard
 
         tr = await ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args))
+        tool_outcome_ledger.record_tool_outcome(
+            name=name, action_severity=t.manifest.action_severity, success=tr.success,
+        )
         # Learning Commit 5 — post-execute heuristic match + event emission.
         # Zero behavior change; downstream subscribers (classify, future hooks)
         # see "tool.heuristic_match" when a known-bad pattern fires.

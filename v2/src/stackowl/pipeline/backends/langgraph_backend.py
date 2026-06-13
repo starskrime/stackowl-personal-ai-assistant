@@ -21,7 +21,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from stackowl.exceptions import InfrastructureError
-from stackowl.infra import recovery_context
+from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline import lesson_context as lc
@@ -29,6 +29,7 @@ from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
 from stackowl.pipeline.critical_failure import surface_critical_failure
+from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
@@ -48,6 +49,11 @@ async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
     # for the ordering rationale — prevents a learning claim on a failed turn).
     surfaced = await surface_applied_lessons(state)
     surfaced = await surface_recovery(surfaced)
+    # Judge-independent gate: if a consequential/write action failed with no
+    # success, REPLACE the (potentially dressed-up) draft with an honest floor
+    # naming the failed capability. Runs BEFORE surface_critical_failure so the
+    # critical-failure cascade sees an honest state (never hides behind a giveup).
+    surfaced = await surface_consequential_giveup_floor(surfaced)
     surfaced = await surface_critical_failure(surfaced, get_services())
     return await deliver.run(surfaced)
 
@@ -125,6 +131,7 @@ class LangGraphBackend(OrchestratorBackend):
         )
         lesson_token = lc.bind()
         recovery_token = recovery_context.bind()
+        ledger_token = tool_outcome_ledger.bind()
         try:
             compiled = await self._ensure_compiled()
             # Isolate per-task checkpoints: a durable task gets its own thread so
@@ -173,6 +180,7 @@ class LangGraphBackend(OrchestratorBackend):
                         ],
                     }},
                 )
+            tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
             lc.reset(lesson_token)
             TraceContext.reset(trace_token)

@@ -16,6 +16,7 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
+from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import message_has_blocks, openai_user_content
@@ -228,6 +229,7 @@ class OpenAIProvider(ModelProvider):
                 draft=content,
                 nudge_budget=nudge_budget,
                 calls_at_last_nudge=calls_at_last_nudge,
+                consequential_giveup=is_consequential_giveup_now(),
             )
             if directive:
                 log.engine.info(
