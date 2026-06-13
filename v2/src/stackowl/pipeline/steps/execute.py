@@ -7,7 +7,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from stackowl.authz.bounds import ResourceCaps
+from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS, DEFAULT_TURN_MAX_TIME_S, ResourceCaps
 from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
     AllProvidersUnavailableError,
@@ -680,7 +680,7 @@ async def _run_with_tools(
 
     # E2-S4 — budget governor: enforce the acting owl's effective caps (cost best-
     # effort, steps + time) once per ReAct iteration via on_iteration_complete.
-    # No caps / unbounded owl → a no-op gate (every current turn unchanged).
+    # No caps / unbounded owl → default backstop applied (see _default_backstop below).
     _services = get_services()
     try:
         _eff = compute_effective_bounds(state, _services.owl_registry)
@@ -695,20 +695,29 @@ async def _run_with_tools(
         def monotonic(self) -> float:
             return time.monotonic()
 
-    _has_caps = any(
+    _has_explicit_caps = any(
         c is not None for c in (_caps.max_steps, _caps.max_time_s, _caps.max_cost_usd)
     )
-    if _has_caps:
-        _governor = BudgetGovernor(
-            _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
-            started_monotonic=time.monotonic(), clock=_MonotonicClock(),
-        )
-        _budget_cb = make_budget_callback(
-            _governor, interactive=state.interactive, clarify=_services.clarify_gateway,
-            session_id=state.session_id, channel=state.channel,
-        )
-    else:
-        _budget_cb = None
+    # Default safety backstop: when the owl set NO explicit caps, apply a default
+    # time/step bound so the (already-tested) BudgetGovernor always runs and every
+    # turn terminates in bounded time even when a weak model spirals. NON-interactive
+    # (just stop + deliver — no "Raise?" prompt; that UX is for explicit owl caps).
+    _default_backstop = not _has_explicit_caps
+    if _default_backstop:
+        _caps = _caps.model_copy(update={
+            "max_time_s": DEFAULT_TURN_MAX_TIME_S,
+            "max_steps": DEFAULT_TURN_MAX_STEPS,
+        })
+    _governor = BudgetGovernor(
+        _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
+        started_monotonic=time.monotonic(), clock=_MonotonicClock(),
+    )
+    _budget_cb = make_budget_callback(
+        _governor,
+        interactive=(state.interactive and not _default_backstop),
+        clarify=_services.clarify_gateway,
+        session_id=state.session_id, channel=state.channel,
+    )
 
     # Task 10 — steering closure: drain THIS turn's mailbox at each iteration
     # boundary and fold a coalesced [steering] user message into the loop. Reaches
@@ -945,11 +954,6 @@ async def _run_with_tools(
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name,
                                "cap": exc.cap, "limit": exc.limit, "actual": exc.actual}},
         )
-        note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
-        _breach_chunks = (ResponseChunk(
-            content=(exc.partial_text + note), is_final=False, chunk_index=0,
-            trace_id=state.trace_id, owl_name=state.owl_name,
-        ),)
         _breach_raw: list[dict[str, Any]] = exc.tool_call_records
         _breach_tool_records = tuple(
             ToolCall(
@@ -962,6 +966,49 @@ async def _run_with_tools(
             for rc in _breach_raw
         )
         marker = f"budget:stop:{exc.cap}:limit={exc.limit}:actual={exc.actual}"
+        if _default_backstop:
+            # Default safety backstop: deliver clean best-available partial with no
+            # developer-facing budget marker in the content.  If partial is empty,
+            # route to the synthesize_floor path (same never-empty guarantee as the
+            # general exception handler).
+            if exc.partial_text:
+                _breach_chunks = (ResponseChunk(
+                    content=exc.partial_text, is_final=False, chunk_index=0,
+                    trace_id=state.trace_id, owl_name=state.owl_name,
+                ),)
+                return state.evolve(
+                    responses=(*state.responses, *_breach_chunks),
+                    tool_calls=(*state.tool_calls, *_breach_tool_records),
+                    errors=(*state.errors, marker),
+                )
+            # Empty partial under the default backstop → synthesize_floor.
+            _prior = state.responses[-1].content if state.responses else ""
+            floor = synthesize_floor(
+                goal=state.input_text,
+                error=str(exc),
+                attempts=[],
+                partial=_prior,
+            )
+            floor_chunk = ResponseChunk(
+                content=floor,
+                is_final=False,
+                chunk_index=0,
+                trace_id=state.trace_id,
+                owl_name=state.owl_name,
+                is_floor=True,
+            )
+            return state.evolve(
+                responses=(*state.responses, floor_chunk),
+                tool_calls=(*state.tool_calls, *_breach_tool_records),
+                errors=(*state.errors, marker),
+            )
+        # Explicit cap: deliver partial with a human-visible budget note.
+        note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
+        _stop_content = (exc.partial_text + note) if exc.partial_text else note
+        _breach_chunks = (ResponseChunk(
+            content=_stop_content, is_final=False, chunk_index=0,
+            trace_id=state.trace_id, owl_name=state.owl_name,
+        ),)
         return state.evolve(
             responses=(*state.responses, *_breach_chunks),
             tool_calls=(*state.tool_calls, *_breach_tool_records),

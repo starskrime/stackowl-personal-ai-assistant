@@ -159,6 +159,7 @@ class _ControllableProvider(ModelProvider):
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check=None,
+        **_kwargs,
     ) -> tuple[str, list]:
         self.calls += 1
         self.in_flight.set()
