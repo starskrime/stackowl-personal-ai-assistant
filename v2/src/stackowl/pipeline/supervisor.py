@@ -11,6 +11,10 @@ from stackowl.setup.localize import localize, localize_format
 
 _ERROR_MAX_LEN = 500
 
+# Escalation waives the per-nudge budget cost but never suspends this absolute ceiling.
+# A tool-spamming weak model that makes a new call every round would otherwise nudge forever.
+MAX_TURN_NUDGES = 6
+
 
 def tally_tool_outcomes(all_calls: list[dict[str, object]]) -> tuple[int, int]:
     """Count failed/successful tool calls from the AUTHORITATIVE typed ``failed`` bool.
@@ -72,6 +76,8 @@ def decide_nudge(
     nudge_budget: int,
     calls_at_last_nudge: int | None,
     consequential_giveup: bool = False,
+    nudges_issued: int = 0,
+    max_nudges: int = MAX_TURN_NUDGES,
 ) -> tuple[str | None, int, int | None]:
     """Decide whether to nudge, applying the veto THEN the escalation-reward cap.
 
@@ -100,6 +106,13 @@ def decide_nudge(
        (no growth) both decrement. The marker always advances to
        ``len(all_calls)``.
     """
+    if nudges_issued >= max_nudges:
+        log.engine.info(
+            "supervisor.decide_nudge: absolute nudge ceiling reached — accepting (floor is the backstop)",
+            extra={"_fields": {"nudges_issued": nudges_issued, "max_nudges": max_nudges}},
+        )
+        return None, nudge_budget, calls_at_last_nudge
+
     directive = apply_structural_veto(
         judge_directive=judge_directive,
         all_calls=all_calls,
