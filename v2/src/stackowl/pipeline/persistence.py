@@ -29,6 +29,7 @@ from stackowl.memory.json_parser import parse_json_response
 from stackowl.providers.base import Message, ModelProvider
 
 __all__ = [
+    "CAPABILITY_GAP_DIRECTIVE",
     "JUDGE_ERROR_REASON",
     "PERSISTENCE_DIRECTIVE",
     "TOOL_FAILED_MARKER",
@@ -37,6 +38,7 @@ __all__ = [
     "judge_relevance",
     "summarize_tool_outcomes",
     "is_structural_giveup",
+    "is_unachieved_consequential_giveup",
     "_structurally_irrelevant",
 ]
 
@@ -113,6 +115,26 @@ def _structurally_irrelevant(content: str) -> bool:
     if len(c) < _MIN_RELEVANT_CHARS:
         return True
     return TOOL_FAILED_MARKER in content
+
+
+def is_unachieved_consequential_giveup(*, cons_failures: int, cons_successes: int) -> bool:
+    """Severity-aware give-up: a consequential/write action failed and NONE succeeded.
+
+    The user's consequential outcome was not achieved — a give-up regardless of
+    trivial successes or how confident/substantive the draft reads. Catches the
+    dressed-up case the zombie signal (is_structural_giveup) misses.
+    """
+    return cons_failures >= 1 and cons_successes == 0
+
+
+CAPABILITY_GAP_DIRECTIVE = (
+    "A consequential action you attempted FAILED and is NOT done. Do ONE of: "
+    "(a) build the missing capability with the tool_build tool and use it to "
+    "actually perform the action; (b) achieve the outcome via a different working "
+    "capability; or (c) tell the user plainly that you could NOT do it and the "
+    "exact blocker. Do NOT give the user manual steps to do it themselves, and do "
+    "NOT claim it is done or that you 'built' it when the action did not complete."
+)
 
 
 def is_structural_giveup(*, tool_failures: int, successful_tool_calls: int, draft: str) -> bool:

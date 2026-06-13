@@ -202,12 +202,16 @@ class AnthropicProvider(ModelProvider):
                     extra={"_fields": {"provider": self._name}},
                 )
                 judge_directive = None
+            from stackowl.infra import tool_outcome_ledger
+            _cf, _cs = tool_outcome_ledger.consequential_tally()
             directive, nudge_budget, calls_at_last_nudge = decide_nudge(
                 judge_directive=judge_directive,
                 all_calls=all_calls,
                 draft=content,
                 nudge_budget=nudge_budget,
                 calls_at_last_nudge=calls_at_last_nudge,
+                cons_failures=_cf,
+                cons_successes=_cs,
             )
             if directive:
                 log.engine.info(
