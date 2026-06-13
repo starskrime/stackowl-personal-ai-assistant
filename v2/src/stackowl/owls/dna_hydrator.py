@@ -8,17 +8,26 @@ from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.owls.dna import _MUTABLE_TRAITS, OwlDNA
 from stackowl.owls.registry import OwlRegistry
+from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 
 # Canonical owl_dna read — the one place that knows the trait column list.
+# owner_id predicate is mandatory: without it a boot hydration would read every
+# principal's evolved DNA into the requesting principal's registry (tenant leak).
 _SELECT_ALL_DNA = (
     "SELECT owl_name, challenge_level, verbosity, curiosity, formality, "
-    "creativity, precision FROM owl_dna"
+    "creativity, precision FROM owl_dna WHERE owner_id = ?"
 )
 
 
-async def read_all_owl_dna(db: DbPool) -> dict[str, dict[str, float]]:
-    """Fetch every row from owl_dna; return mapping owl_name → trait dict."""
-    rows = await db.fetch_all(_SELECT_ALL_DNA, ())
+async def read_all_owl_dna(
+    db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID
+) -> dict[str, dict[str, float]]:
+    """Fetch owl_dna rows for *owner_id*; return mapping owl_name → trait dict.
+
+    Defaults to :data:`~stackowl.tenancy.principal.DEFAULT_PRINCIPAL_ID` so
+    all existing single-user call sites require no change.
+    """
+    rows = await db.fetch_all(_SELECT_ALL_DNA, (owner_id,))
     return {str(r["owl_name"]): {t: r[t] for t in _MUTABLE_TRAITS} for r in rows}
 
 
@@ -71,8 +80,16 @@ def _coerce_dna(base: OwlDNA, row: dict[str, float]) -> OwlDNA:
     return base.model_copy(update=updates)
 
 
-async def hydrate_dna(registry: OwlRegistry, db: DbPool) -> int:
+async def hydrate_dna(
+    registry: OwlRegistry,
+    db: DbPool,
+    owner_id: str = DEFAULT_PRINCIPAL_ID,
+) -> int:
     """Overlay persisted owl_dna onto registry manifests at boot.
+
+    Scoped to *owner_id* (defaults to :data:`~stackowl.tenancy.principal.DEFAULT_PRINCIPAL_ID`)
+    so only that principal's evolved DNA is loaded into the registry — no
+    cross-tenant bleed at boot.
 
     Fail-safe per row: a corrupt value is clamped; an orphan owl_dna row is
     skipped with a warning; a per-row exception keeps the authored DNA and logs.
@@ -80,10 +97,13 @@ async def hydrate_dna(registry: OwlRegistry, db: DbPool) -> int:
 
     Returns the count of owls successfully hydrated.
     """
-    log.startup.debug("[owls] hydrate_dna: entry")
+    log.startup.debug(
+        "[owls] hydrate_dna: entry",
+        extra={"_fields": {"owner_id": owner_id}},
+    )
     hydrated = 0
     try:
-        all_dna = await read_all_owl_dna(db)
+        all_dna = await read_all_owl_dna(db, owner_id)
     except Exception as exc:
         log.startup.warning(
             "[owls] hydrate_dna: read failed — authored DNA kept",
@@ -92,7 +112,7 @@ async def hydrate_dna(registry: OwlRegistry, db: DbPool) -> int:
         return 0
     log.startup.debug(
         "[owls] hydrate_dna: rows fetched",
-        extra={"_fields": {"row_count": len(all_dna)}},
+        extra={"_fields": {"owner_id": owner_id, "row_count": len(all_dna)}},
     )
     for name, traits in all_dna.items():
         try:
@@ -119,6 +139,6 @@ async def hydrate_dna(registry: OwlRegistry, db: DbPool) -> int:
             )
     log.startup.info(
         "[owls] hydrate_dna: exit",
-        extra={"_fields": {"hydrated": hydrated}},
+        extra={"_fields": {"owner_id": owner_id, "hydrated": hydrated}},
     )
     return hydrated
