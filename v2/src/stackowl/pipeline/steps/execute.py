@@ -7,7 +7,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from stackowl.authz.bounds import ResourceCaps
+from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS, DEFAULT_TURN_MAX_TIME_S, ResourceCaps
 from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
     AllProvidersUnavailableError,
@@ -695,20 +695,26 @@ async def _run_with_tools(
         def monotonic(self) -> float:
             return time.monotonic()
 
-    _has_caps = any(
+    _has_explicit_caps = any(
         c is not None for c in (_caps.max_steps, _caps.max_time_s, _caps.max_cost_usd)
     )
-    if _has_caps:
-        _governor = BudgetGovernor(
-            _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
-            started_monotonic=time.monotonic(), clock=_MonotonicClock(),
-        )
-        _budget_cb = make_budget_callback(
-            _governor, interactive=state.interactive, clarify=_services.clarify_gateway,
-            session_id=state.session_id, channel=state.channel,
-        )
-    else:
-        _budget_cb = None
+    # Default safety backstop: when the owl set NO explicit caps, apply a default
+    # time/step bound so the (already-tested) BudgetGovernor always runs and every
+    # turn terminates in bounded time even when a weak model spirals. NON-interactive
+    # (just stop + deliver — no "Raise?" prompt; that UX is for explicit owl caps).
+    _default_backstop = not _has_explicit_caps
+    if _default_backstop:
+        _caps = ResourceCaps(max_time_s=DEFAULT_TURN_MAX_TIME_S, max_steps=DEFAULT_TURN_MAX_STEPS)
+    _governor = BudgetGovernor(
+        _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
+        started_monotonic=time.monotonic(), clock=_MonotonicClock(),
+    )
+    _budget_cb = make_budget_callback(
+        _governor,
+        interactive=(state.interactive and not _default_backstop),
+        clarify=_services.clarify_gateway,
+        session_id=state.session_id, channel=state.channel,
+    )
 
     # Task 10 — steering closure: drain THIS turn's mailbox at each iteration
     # boundary and fold a coalesced [steering] user message into the loop. Reaches
