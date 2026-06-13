@@ -24,21 +24,34 @@ _EFFECTFUL = {"write", "consequential"}
 _BRIDGING_RECOVERY_KINDS = {"substitution"}
 
 
+def _unrecovered_consequential_failures() -> set[str]:
+    """Names of consequential/write tools that FAILED this turn and were NOT
+    bridged by a successful substitution. Empty ⇒ every effect was achieved or
+    recovered. Impure: reads the turn ledger + recovery context."""
+    failed = {
+        o.name for o in tool_outcome_ledger.get_outcomes()
+        if o.action_severity in _EFFECTFUL and not o.success
+    }
+    recovered = {
+        e.failed for e in recovery_context.get_recovery()
+        if e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
+    }
+    return failed - recovered
+
+
 def is_consequential_giveup_now() -> bool:
     """True iff a consequential/write action was attempted-and-failed with NO
-    consequential success AND no capability substitution bridged the gap this turn.
+    consequential success AND at least one such failure was not bridged by a
+    capability substitution this turn.
     Impure: reads the turn-scoped tool-outcome ledger + recovery context. Never raises.
     The SINGLE source of truth for both the nudge veto and the terminal floor."""
     try:
         cf, cs = tool_outcome_ledger.consequential_tally()
         if not is_unachieved_consequential_giveup(cons_failures=cf, cons_successes=cs):
             return False
-        # A successful substitution bridged the capability gap → recovered, not a give-up.
-        bridged = any(
-            e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
-            for e in recovery_context.get_recovery()
-        )
-        return not bridged
+        # Every failed consequential must be individually bridged — a single
+        # substitution does NOT cover sibling failures (per-tool recovery check).
+        return bool(_unrecovered_consequential_failures())
     except Exception as exc:  # never raise into the loop / delivery
         log.engine.error(
             "[giveup_floor] is_consequential_giveup_now failed",
@@ -69,9 +82,10 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
             return state
+        unrecovered = _unrecovered_consequential_failures()
         failed_name = next(
             (o.name for o in tool_outcome_ledger.get_outcomes()
-             if o.action_severity in _EFFECTFUL and not o.success),
+             if o.action_severity in _EFFECTFUL and not o.success and o.name in unrecovered),
             None,
         )
         # 3. STEP — build honest floor (pure, deterministic, no model call)
