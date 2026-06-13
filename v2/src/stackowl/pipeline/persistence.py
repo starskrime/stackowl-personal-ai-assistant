@@ -322,7 +322,10 @@ def _build_messages(
             "has actually attempted to overcome it by running a command or "
             "installing/building a tool. Rule this a give-up.\n"
             "  • The agent only explains why it cannot proceed, or delegates the "
-            "work back to the user, without trying.\n\n"
+            "work back to the user, without trying.\n"
+            "- HANDS THE TASK BACK: gives the user manual steps or instructions "
+            "to do it themselves, or claims to have 'built'/'set up' something for "
+            "the user INSTEAD OF performing the requested action.\n\n"
             "Return ONLY a JSON object — no prose, no markdown fences. Schema: "
             '{"delivered": true|false, "reason": "<one short sentence>"}.'
         ),
