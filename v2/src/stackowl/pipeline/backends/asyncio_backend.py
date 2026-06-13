@@ -12,6 +12,7 @@ from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.critical_failure import surface_critical_failure
+from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -91,6 +92,11 @@ class AsyncioBackend(OrchestratorBackend):
             # learning-explainability journey's critical-failure test.
             current = await surface_applied_lessons(current)
             current = await surface_recovery(current)
+            # Judge-independent gate: if a consequential/write action failed with no
+            # success, REPLACE the (potentially dressed-up) draft with an honest floor
+            # naming the failed capability. Runs BEFORE surface_critical_failure so the
+            # critical-failure cascade sees an honest state (never hides behind a giveup).
+            current = await surface_consequential_giveup_floor(current)
             # Phase 2 #2 — surface a CRITICAL (execute) step failure to the user
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
