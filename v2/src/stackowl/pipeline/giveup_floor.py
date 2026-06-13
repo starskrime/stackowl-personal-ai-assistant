@@ -24,6 +24,29 @@ _EFFECTFUL = {"write", "consequential"}
 _BRIDGING_RECOVERY_KINDS = {"substitution"}
 
 
+def is_consequential_giveup_now() -> bool:
+    """True iff a consequential/write action was attempted-and-failed with NO
+    consequential success AND no capability substitution bridged the gap this turn.
+    Impure: reads the turn-scoped tool-outcome ledger + recovery context. Never raises.
+    The SINGLE source of truth for both the nudge veto and the terminal floor."""
+    try:
+        cf, cs = tool_outcome_ledger.consequential_tally()
+        if not is_unachieved_consequential_giveup(cons_failures=cf, cons_successes=cs):
+            return False
+        # A successful substitution bridged the capability gap → recovered, not a give-up.
+        bridged = any(
+            e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
+            for e in recovery_context.get_recovery()
+        )
+        return not bridged
+    except Exception as exc:  # never raise into the loop / delivery
+        log.engine.error(
+            "[giveup_floor] is_consequential_giveup_now failed",
+            exc_info=exc,
+        )
+        return False
+
+
 async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineState:
     """Replace a dressed-up give-up draft with an honest floor.
 
@@ -39,21 +62,11 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
             "[giveup_floor] surface_consequential_giveup_floor: entry",
             extra={"_fields": {"trace_id": state.trace_id, "n_responses": len(state.responses)}},
         )
-        cf, cs = tool_outcome_ledger.consequential_tally()
-        # 2. DECISION — fast exits before the replace path
-        if not is_unachieved_consequential_giveup(cons_failures=cf, cons_successes=cs):
+        # 2. DECISION — fast exit: shared predicate covers ledger tally + substitution guard
+        if not is_consequential_giveup_now():
             log.engine.debug(
                 "[giveup_floor] surface_consequential_giveup_floor: no unachieved consequential — no-op",
-                extra={"_fields": {"trace_id": state.trace_id, "cons_failures": cf, "cons_successes": cs}},
-            )
-            return state
-        # A successful substitution bridges the capability gap — the sibling
-        # achieved what the primary couldn't, so this is NOT a give-up.
-        recovery_events = recovery_context.get_recovery()
-        if any(e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via for e in recovery_events):
-            log.engine.debug(
-                "[giveup_floor] surface_consequential_giveup_floor: substitution bridged gap — no-op",
-                extra={"_fields": {"trace_id": state.trace_id, "n_recovery_events": len(recovery_events)}},
+                extra={"_fields": {"trace_id": state.trace_id}},
             )
             return state
         failed_name = next(

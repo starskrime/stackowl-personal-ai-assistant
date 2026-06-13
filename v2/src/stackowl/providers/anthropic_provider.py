@@ -11,8 +11,8 @@ import anthropic
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
-from stackowl.infra import tool_outcome_ledger
 from stackowl.infra.observability import log
+from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
@@ -203,15 +203,13 @@ class AnthropicProvider(ModelProvider):
                     extra={"_fields": {"provider": self._name}},
                 )
                 judge_directive = None
-            _cf, _cs = tool_outcome_ledger.consequential_tally()
             directive, nudge_budget, calls_at_last_nudge = decide_nudge(
                 judge_directive=judge_directive,
                 all_calls=all_calls,
                 draft=content,
                 nudge_budget=nudge_budget,
                 calls_at_last_nudge=calls_at_last_nudge,
-                cons_failures=_cf,
-                cons_successes=_cs,
+                consequential_giveup=is_consequential_giveup_now(),
             )
             if directive:
                 log.engine.info(

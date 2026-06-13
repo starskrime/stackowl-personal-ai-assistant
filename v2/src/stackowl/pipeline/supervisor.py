@@ -6,7 +6,6 @@ from stackowl.pipeline.persistence import (
     CAPABILITY_GAP_DIRECTIVE,
     PERSISTENCE_DIRECTIVE,
     is_structural_giveup,
-    is_unachieved_consequential_giveup,
 )
 from stackowl.setup.localize import localize, localize_format
 
@@ -35,8 +34,7 @@ def apply_structural_veto(
     judge_directive: str | None,
     all_calls: list[dict[str, object]],
     draft: str,
-    cons_failures: int = 0,
-    cons_successes: int = 0,
+    consequential_giveup: bool = False,
 ) -> str | None:
     """Always-on structural veto over the judge's verdict.
 
@@ -44,9 +42,11 @@ def apply_structural_veto(
     1. Explicit ``judge_directive`` — kept verbatim if set.
     2. Zombie structural signal (``is_structural_giveup``) — no tool succeeded AND
        draft is trivial/refusing.
-    3. Consequential-gap signal (``is_unachieved_consequential_giveup``) — a
-       write/consequential action failed and NONE succeeded, regardless of how
-       substantive the draft reads (catches the dressed-up case the zombie misses).
+    3. Consequential-gap signal (``consequential_giveup``) — a write/consequential
+       action failed and NONE succeeded AND no substitution bridged the gap,
+       regardless of how substantive the draft reads (catches the dressed-up case
+       the zombie misses). Computed by the caller via
+       :func:`~stackowl.pipeline.giveup_floor.is_consequential_giveup_now`.
 
     Pure; never raises; defaults preserve the previous two-signal behavior.
     """
@@ -56,10 +56,9 @@ def apply_structural_veto(
     if is_structural_giveup(tool_failures=failures, successful_tool_calls=successes, draft=draft):
         log.engine.debug("supervisor.veto: overriding judge DELIVERED on structural give-up")
         return PERSISTENCE_DIRECTIVE
-    if is_unachieved_consequential_giveup(cons_failures=cons_failures, cons_successes=cons_successes):
+    if consequential_giveup:
         log.engine.info(
             "supervisor.veto: consequential outcome not achieved — capability-gap directive",
-            extra={"_fields": {"cons_failures": cons_failures, "cons_successes": cons_successes}},
         )
         return CAPABILITY_GAP_DIRECTIVE
     return None
@@ -72,13 +71,17 @@ def decide_nudge(
     draft: str,
     nudge_budget: int,
     calls_at_last_nudge: int | None,
-    cons_failures: int = 0,
-    cons_successes: int = 0,
+    consequential_giveup: bool = False,
 ) -> tuple[str | None, int, int | None]:
     """Decide whether to nudge, applying the veto THEN the escalation-reward cap.
 
-    Pure; never raises. Reused by every provider's enforce loop (anthropic now,
-    openai in a later task) so the self-heal budget logic lives in ONE place.
+    Pure; never raises. Reused by every provider's enforce loop so the self-heal
+    budget logic lives in ONE place.
+
+    ``consequential_giveup`` must be pre-computed by the caller via
+    :func:`~stackowl.pipeline.giveup_floor.is_consequential_giveup_now`, which
+    reads the turn-scoped ledger + recovery context and accounts for substitution
+    recovery (so a bridged capability gap does NOT look like a give-up).
 
     Returns ``(directive_or_None, new_budget, new_calls_at_last_nudge)``:
 
@@ -101,8 +104,7 @@ def decide_nudge(
         judge_directive=judge_directive,
         all_calls=all_calls,
         draft=draft,
-        cons_failures=cons_failures,
-        cons_successes=cons_successes,
+        consequential_giveup=consequential_giveup,
     )
     if directive is None:
         return None, nudge_budget, calls_at_last_nudge

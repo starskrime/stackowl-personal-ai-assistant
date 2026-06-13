@@ -1,5 +1,5 @@
 import pytest
-from stackowl.infra import tool_outcome_ledger as tol
+from stackowl.infra import recovery_context, tool_outcome_ledger as tol
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
@@ -48,3 +48,30 @@ async def test_no_replace_when_no_consequential_attempt():
         assert out.responses == s.responses
     finally:
         tol.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_no_replace_when_substitution_bridged_the_gap():
+    """Ledger shows an unachieved consequential outcome BUT a substitution recovery
+    event is present — the capability gap was bridged, so the floor must NOT fire."""
+    tol_token = tol.bind()
+    rc_token = recovery_context.bind()
+    try:
+        # A consequential tool failed, no consequential success — raw ledger looks like give-up.
+        tol.record_tool_outcome(name="browser_browse", action_severity="consequential", success=False)
+        # A substitution recovery event says web_search bridged the gap.
+        recovery_context.record_recovery(
+            kind="substitution",
+            failed="browser_browse",
+            recovered_via="web_search",
+            user_visible=True,
+        )
+        s = _state("I found it using an alternative search: sunny 24C.")
+        out = await surface_consequential_giveup_floor(s)
+        # The floor must NOT replace — the substitution already delivered the result.
+        assert out.responses == s.responses, (
+            "floor fired on a substitution-bridged turn — shared predicate did not guard it"
+        )
+    finally:
+        tol.reset(tol_token)
+        recovery_context.reset(rc_token)
