@@ -21,7 +21,6 @@ import pytest
 from stackowl.infra import tool_outcome_ledger as tol
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
-
 # ---------------------------------------------------------------------------
 # Minimal fake tool — mirrors _CapabilityTool from test_substitution_records_recovery
 # ---------------------------------------------------------------------------
