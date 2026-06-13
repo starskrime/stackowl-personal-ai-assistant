@@ -11,6 +11,7 @@ import anthropic
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
+from stackowl.infra import tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
@@ -202,7 +203,6 @@ class AnthropicProvider(ModelProvider):
                     extra={"_fields": {"provider": self._name}},
                 )
                 judge_directive = None
-            from stackowl.infra import tool_outcome_ledger
             _cf, _cs = tool_outcome_ledger.consequential_tally()
             directive, nudge_budget, calls_at_last_nudge = decide_nudge(
                 judge_directive=judge_directive,

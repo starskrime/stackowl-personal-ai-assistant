@@ -1,14 +1,17 @@
 """Severity-aware consequential give-up veto — failing tests (Task 3, Step 1)."""
-from stackowl.pipeline.supervisor import apply_structural_veto
 from stackowl.pipeline.persistence import (
-    CAPABILITY_GAP_DIRECTIVE, PERSISTENCE_DIRECTIVE, is_unachieved_consequential_giveup,
+    CAPABILITY_GAP_DIRECTIVE,
+    PERSISTENCE_DIRECTIVE,
+    is_unachieved_consequential_giveup,
 )
+from stackowl.pipeline.supervisor import apply_structural_veto
 
 
 def test_signal():
     assert is_unachieved_consequential_giveup(cons_failures=1, cons_successes=0) is True
     assert is_unachieved_consequential_giveup(cons_failures=1, cons_successes=1) is False
     assert is_unachieved_consequential_giveup(cons_failures=0, cons_successes=0) is False
+    assert is_unachieved_consequential_giveup(cons_failures=0, cons_successes=1) is False
 
 
 def test_veto_returns_capability_gap_when_consequential_unachieved():
