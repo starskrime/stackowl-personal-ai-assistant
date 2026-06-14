@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,7 @@ from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message, ModelProvider
+from stackowl.providers.model_window import resolve_window
 from stackowl.providers.react_callback import ReActIterationState
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.registry import ToolRegistry
@@ -447,8 +449,44 @@ async def _run_with_tools(
     # envelope, restrict the presented set to plan ∪ discovery (drift
     # prevention). None envelope → restrict_to=None → byte-for-byte S2.
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
-    tool_schemas = tool_registry.to_provider_schema(
-        provider.protocol, profile=profile, pins=pins, restrict_to=restrict_to
+    # Per-model context budget: size the presented tool set to the model's real
+    # window so a weak/small-window model is not drowned in tool schemas.
+    _cfg = getattr(provider, "_config", None)
+    _window = await resolve_window(
+        provider_name=getattr(provider, "name", "") or "",
+        base_url=_cfg.base_url if _cfg is not None else None,
+        model=(_cfg.default_model if _cfg is not None else "") or "",
+        context_chars=(_cfg.context_chars if _cfg is not None else None),
+        protocol=getattr(provider, "protocol", "") or "",
+    )
+    _fixed_cost = _est_tokens(state.system_prompt) + sum(
+        _est_tokens(getattr(m, "content", "")) for m in state.history
+    )
+    if restrict_to is not None:
+        tool_schemas = tool_registry.to_provider_schema(
+            provider.protocol, profile=profile, pins=pins, restrict_to=restrict_to
+        )
+    else:
+        tool_schemas = tool_registry.to_provider_schema(
+            provider.protocol, profile=profile, pins=pins,
+            request_text=state.input_text,
+            budget={"window": _window, "fixed_cost_tokens": _fixed_cost},
+        )
+    _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
+    log.engine.info(
+        "[pipeline] execute: context budget",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "intent_class": state.intent_class,
+            "tools_used": True,
+            "model_window": _window,
+            "response_reserve": 2048,
+            "system_prompt_tokens": _est_tokens(state.system_prompt),
+            "history_tokens": sum(_est_tokens(getattr(m, "content", "")) for m in state.history),
+            "tools_count": len(tool_schemas),
+            "tools_tokens": _tools_tokens,
+            "total_est_tokens": _fixed_cost + _tools_tokens,
+        }},
     )
     # E8-S0 — child-toolset exclusion (PRIMARY fork-bomb cap): a delegated child
     # (delegation_depth>0) may not itself spawn/delegate, so remove those two
@@ -1278,19 +1316,20 @@ async def run(state: PipelineState) -> PipelineState:
     )
     _sp_tokens = _est_tokens(state.system_prompt)
     _hist_tokens = sum(_est_tokens(getattr(m, "content", "")) for m in state.history)
-    log.engine.info(
-        "[pipeline] execute: context budget",
-        extra={"_fields": {
-            "trace_id": state.trace_id,
-            "intent_class": state.intent_class,
-            "tools_used": bool(_use_tools),
-            "system_prompt_tokens": _sp_tokens,
-            # diagnostic only — assemble folds memory_context into system_prompt; NOT added to total
-            "memory_context_tokens": _est_tokens(state.memory_context),
-            "history_tokens": _hist_tokens,
-            "total_est_tokens": _sp_tokens + _hist_tokens,
-        }},
-    )
+    if not _use_tools:   # tool turns now log a truthful budget line in _run_with_tools
+        log.engine.info(
+            "[pipeline] execute: context budget",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "intent_class": state.intent_class,
+                "tools_used": bool(_use_tools),
+                "system_prompt_tokens": _sp_tokens,
+                # diagnostic only — assemble folds memory_context into system_prompt; NOT added to total
+                "memory_context_tokens": _est_tokens(state.memory_context),
+                "history_tokens": _hist_tokens,
+                "total_est_tokens": _sp_tokens + _hist_tokens,
+            }},
+        )
     if _use_tools and tool_registry is not None:
         return await _run_with_tools(state, provider, tool_registry)
 
