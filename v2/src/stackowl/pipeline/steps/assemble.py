@@ -32,13 +32,48 @@ async def run(state: PipelineState) -> PipelineState:
         "[pipeline] assemble: entry", extra={"_fields": {"trace_id": state.trace_id}}
     )
     services = get_services()
+
+    # Model-aware lean charter/DNA: resolve THIS turn's window (shared selection +
+    # Slice-1 resolve_window, memoized) so a small-window/weak model gets the lean
+    # charter + suppressed backfiring DNA. Fail-safe: any error → full prompt.
+    lean = False
+    model_window: int | None = None
+    try:
+        if services.provider_registry is not None:
+            from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
+            from stackowl.pipeline.provider_select import select_tool_provider
+            from stackowl.providers.model_window import resolve_window
+            _p = select_tool_provider(
+                services.provider_registry, services, state, log_selection=False,
+            )
+            _pc = getattr(_p, "_config", None)
+            model_window = await resolve_window(
+                provider_name=getattr(_p, "name", "") or "",
+                base_url=_pc.base_url if _pc is not None else None,
+                model=(_pc.default_model if _pc is not None else "") or "",
+                context_chars=(_pc.context_chars if _pc is not None else None),
+                protocol=getattr(_p, "protocol", "") or "",
+            )
+            lean = model_window <= LEAN_WINDOW_THRESHOLD
+            log.engine.debug(
+                "[pipeline] assemble: model window resolved",
+                extra={"_fields": {"trace_id": state.trace_id, "model_window": model_window, "lean": lean}},
+            )
+    except Exception as exc:  # no-hidden-errors: degrade to the FULL prompt, never crash
+        log.engine.warning(
+            "[pipeline] assemble: window resolution failed — full charter",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        lean = False
+        model_window = None
+
     registry = services.owl_registry
     manifest = None
     persona = ""
     if registry is not None:
         try:
             manifest = registry.get(state.owl_name)
-            persona = _injector.inject(manifest, manifest.dna)
+            persona = _injector.inject(manifest, manifest.dna, lean=lean)
             log.engine.debug(
                 "[pipeline] assemble: persona resolved",
                 extra={"_fields": {"owl": state.owl_name, "persona_len": len(persona)}},
@@ -98,7 +133,7 @@ async def run(state: PipelineState) -> PipelineState:
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
     try:
-        base = build_base_prompt(now_local())
+        base = build_base_prompt(now_local(), lean=lean)
     except Exception as exc:  # no-hidden-errors: never let prompt-building crash the turn
         log.engine.error(
             "[pipeline] assemble: base prompt build FAILED — persona-only",
@@ -116,4 +151,4 @@ async def run(state: PipelineState) -> PipelineState:
             "system_len": len(system_prompt or ""),
         }},
     )
-    return state.evolve(system_prompt=system_prompt)
+    return state.evolve(system_prompt=system_prompt, model_window=model_window)

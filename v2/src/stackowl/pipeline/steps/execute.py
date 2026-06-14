@@ -450,8 +450,10 @@ async def _run_with_tools(
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
     # Per-model context budget: size the presented tool set to the model's real
     # window so a weak/small-window model is not drowned in tool schemas.
+    # Prefer the already-resolved value stamped by assemble (Task 4: avoids a
+    # redundant probe; resolve_window is memoized so a cache miss is cheap).
     _cfg = getattr(provider, "_config", None)
-    _window = await resolve_window(
+    _window = state.model_window if state.model_window is not None else await resolve_window(
         provider_name=getattr(provider, "name", "") or "",
         base_url=_cfg.base_url if _cfg is not None else None,
         model=(_cfg.default_model if _cfg is not None else "") or "",
