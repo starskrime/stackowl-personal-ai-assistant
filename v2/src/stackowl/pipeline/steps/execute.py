@@ -26,6 +26,7 @@ from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
+from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
@@ -480,7 +481,7 @@ async def _run_with_tools(
             "intent_class": state.intent_class,
             "tools_used": True,
             "model_window": _window,
-            "response_reserve": 2048,
+            "response_reserve": RESPONSE_RESERVE_TOKENS,
             "system_prompt_tokens": _est_tokens(state.system_prompt),
             "history_tokens": sum(_est_tokens(getattr(m, "content", "")) for m in state.history),
             "tools_count": len(tool_schemas),
