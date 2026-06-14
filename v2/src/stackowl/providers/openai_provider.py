@@ -106,8 +106,9 @@ class OpenAIProvider(ModelProvider):
             stream_resp = await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs),
+                max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
                 stream=True,
+                **self._ollama_extra_body(resolved_model),
             )
             async for chunk in stream_resp:  # type: ignore[union-attr]
                 delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -280,6 +281,8 @@ class OpenAIProvider(ModelProvider):
             # must never break the loop).
             await self._record_usage_safe(response, (time.monotonic() - _t_call) * 1000)
 
+            if not response.choices:
+                raise ProviderError(self._name, ValueError("empty choices"))
             choice = response.choices[0]
             if not choice.message.tool_calls:
                 content = choice.message.content or ""
@@ -478,6 +481,8 @@ class OpenAIProvider(ModelProvider):
                 **self._ollama_extra_body(resolved_model),
             )
             await self._record_usage_safe(wrapup, (time.monotonic() - _t_wrap) * 1000)
+            if not wrapup.choices:
+                raise ProviderError(self._name, ValueError("empty choices"))
             text = wrapup.choices[0].message.content or ""
             if text.strip():
                 log.engine.debug(
@@ -559,7 +564,8 @@ class OpenAIProvider(ModelProvider):
             response = await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs),
+                max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
+                **self._ollama_extra_body(resolved_model),
             )
         except openai.APIError as exc:
             log.engine.error(
@@ -569,6 +575,8 @@ class OpenAIProvider(ModelProvider):
             )
             raise ProviderError(self._name, exc) from exc
         duration_ms = (time.monotonic() - t0) * 1000
+        if not response.choices:
+            raise ProviderError(self._name, ValueError("empty choices"))
         choice = response.choices[0]
         usage = response.usage
         result = CompletionResult(

@@ -56,13 +56,13 @@ def _binary_present() -> Path | None:
     return None
 
 
-def _check_lib(lib_prefix: str) -> bool:
+async def _check_lib(lib_prefix: str) -> bool:
     """Best-effort check that a shared library is present on Linux via ldconfig."""
     ldconfig = shutil.which("ldconfig")
     if ldconfig is None:
         return True  # cannot verify — assume ok rather than blocking
     try:
-        out = os.popen(f"{ldconfig} -p").read()
+        out = await asyncio.to_thread(lambda: os.popen(f"{ldconfig} -p").read())
     except OSError:
         return True
     return lib_prefix in out
@@ -78,7 +78,7 @@ class BrowserProbe:
 
     async def check(self, *, fetch_if_missing: bool = True) -> BrowserProbeResult:
         log.debug("[startup] browser_probe.check: entry offline=%s fetch=%s", self._offline, fetch_if_missing)
-        libs_ok = self._check_libs()
+        libs_ok = await self._check_libs()
         xvfb_ok = self._check_xvfb()
 
         binary = _binary_present()
@@ -115,10 +115,10 @@ class BrowserProbe:
         )
         return result
 
-    def _check_libs(self) -> bool:
+    async def _check_libs(self) -> bool:
         if not sys.platform.startswith("linux"):
             return True
-        missing = [lib for lib in _REQUIRED_LIBS_LINUX if not _check_lib(lib)]
+        missing = [lib for lib in _REQUIRED_LIBS_LINUX if not await _check_lib(lib)]
         if missing:
             log.warning(
                 "[startup] browser_probe: missing system libraries %s — install with "

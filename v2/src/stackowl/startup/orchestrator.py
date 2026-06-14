@@ -25,6 +25,11 @@ from stackowl.startup.watchdog import KeepAlive, WatchdogSec
 
 log = logging.getLogger("stackowl.startup")
 
+# Long-lived strong refs for fire-and-forget completion-drain tasks so the loop
+# can't GC them mid-flight (asyncio only weakly references tasks). Each task
+# discards itself on completion via add_done_callback below.
+_drain_tasks: set[asyncio.Task[object]] = set()
+
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.pipeline.streaming import ResponseChunk
 
@@ -921,6 +926,8 @@ class StartupOrchestrator:
             def _on_done(_prod: asyncio.Task[object], sid: str = msg.session_id,
                          rid: str = msg.trace_id) -> None:
                 drain_task = asyncio.create_task(_drain_next(pump, channel_adapter, sid, rid))
+                _drain_tasks.add(drain_task)
+                drain_task.add_done_callback(_drain_tasks.discard)
                 drain_task.add_done_callback(_log_pipeline_crash)
 
             producer.add_done_callback(_on_done)

@@ -269,15 +269,27 @@ def find_substitute(
             )
             return None
 
-        candidates: list[tuple[int, int, str, dict[str, object]]] = []
+        # Build a capability_tag -> [(idx, tool)] index in one pass and only walk
+        # the failed tag's bucket, instead of severity/bounds/build-checking every
+        # registered tool on each failed-tool recovery attempt (F097). The original
+        # enumerate() index is preserved as the deterministic tiebreak key.
+        tag_index: dict[str, list[tuple[int, Any]]] = {}
         for idx, tool in enumerate(registry.all()):
+            manifest = getattr(tool, "manifest", None)
+            if manifest is None:
+                continue
+            t_tag = getattr(manifest, "capability_tag", None)
+            if not t_tag:
+                continue
+            tag_index.setdefault(str(t_tag), []).append((idx, tool))
+
+        candidates: list[tuple[int, int, str, dict[str, object]]] = []
+        for idx, tool in tag_index.get(tag, []):
             manifest = getattr(tool, "manifest", None)
             name = getattr(tool, "name", None)
             if manifest is None or not isinstance(name, str):
                 continue
             if name == failed_tool:
-                continue
-            if getattr(manifest, "capability_tag", None) != tag:
                 continue
             # (b) CONSENT-SAFETY — only read/write may be auto-substituted.
             severity = getattr(manifest, "action_severity", None)

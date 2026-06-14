@@ -9,8 +9,6 @@ from stackowl.embeddings.registry import EmbeddingRegistry
 from stackowl.infra.observability import log
 from stackowl.parliament.models import ParliamentRound
 
-_DEGRADED_WARNED = False
-
 
 class ConvergenceDetector:
     """Detects when Parliament owls have reached sufficient agreement.
@@ -28,6 +26,7 @@ class ConvergenceDetector:
     ) -> None:
         self._threshold = threshold
         self._embedding_registry = embedding_registry
+        self._degraded_warned = False
 
     async def check(self, round_: ParliamentRound) -> bool:
         """Return True if the round's responses show ``mean_sim >= threshold``."""
@@ -50,14 +49,13 @@ class ConvergenceDetector:
             return False
 
         if self._embedding_registry is None:
-            global _DEGRADED_WARNED
-            if not _DEGRADED_WARNED:
+            if not self._degraded_warned:
                 log.parliament.warning(
                     "[parliament] convergence: no embedding registry — "
                     "convergence detection disabled (always returns False)",
                     extra={"_fields": {"threshold": self._threshold}},
                 )
-                _DEGRADED_WARNED = True
+                self._degraded_warned = True
             return False
 
         t0 = time.monotonic()

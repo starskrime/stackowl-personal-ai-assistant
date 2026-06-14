@@ -1,6 +1,7 @@
 """GoogleCalendarAdapter — Google Calendar integration via OAuth 2.0 (Story 11.3)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import webbrowser
@@ -122,7 +123,9 @@ class GoogleCalendarAdapter(IntegrationAdapter):
                 client_id=self._client_id,
                 client_secret=self._client_secret,
             )
-            creds.refresh(google.auth.transport.requests.Request())
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: creds.refresh(google.auth.transport.requests.Request())
+            )
             token_data["token"] = creds.token
             if creds.expiry:
                 token_data["expiry"] = creds.expiry.isoformat()

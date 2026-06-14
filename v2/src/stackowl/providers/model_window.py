@@ -35,6 +35,22 @@ def cached_window(provider_name: str, model: str) -> int | None:
     return _WINDOW_CACHE.get((provider_name, model))
 
 
+def invalidate(provider_name: str) -> None:
+    """Drop every memoized window for ``provider_name`` (all of its models).
+
+    Called on hot config reload when a provider is added/changed/rotated so a
+    new base_url or context_chars for an unchanged (name, model) does not keep
+    serving the stale window for the life of the process (F123).
+    """
+    stale = [k for k in _WINDOW_CACHE if k[0] == provider_name]
+    for k in stale:
+        _WINDOW_CACHE.pop(k, None)
+    if stale:
+        log.engine.debug(
+            "[model_window] invalidate", extra={"_fields": {"provider": provider_name, "dropped": len(stale)}}
+        )
+
+
 async def _probe_ollama(base_url: str, model: str) -> int | None:
     base = base_url.rstrip("/")
     if base.endswith("/v1"):

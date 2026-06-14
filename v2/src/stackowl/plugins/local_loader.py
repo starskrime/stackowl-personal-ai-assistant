@@ -108,6 +108,11 @@ class LocalPluginLoader:
                     abc_mod = importlib.import_module(mod_path)
                     abc_cls = getattr(abc_mod, abc_name)
                 except Exception:
+                    log.warning(
+                        "[plugins] local_loader: extension-point ABC unresolvable — skipping",
+                        exc_info=True,
+                        extra={"_fields": {"abc_name": abc_name, "mod_path": mod_path}},
+                    )
                     continue
                 if issubclass(obj, abc_cls) and obj is not abc_cls:
                     registry = self._registries.get(abc_name)

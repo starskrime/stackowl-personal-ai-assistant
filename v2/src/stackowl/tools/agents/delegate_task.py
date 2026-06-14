@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from stackowl.exceptions import AllProvidersUnavailableError
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.cost_pause import gate_or_continue
@@ -472,7 +471,9 @@ class DelegateTaskTool(Tool):
         fast_provider: object = None
         try:
             fast_provider = get_services().provider_registry.get_with_cascade("fast")  # type: ignore[union-attr]
-        except (AllProvidersUnavailableError, Exception) as exc:
+        except Exception as exc:  # noqa: BLE001 — fail-open is intentional: provider/registry errors
+            # (incl. an unwired None registry) must degrade to structural-only relevance, never crash
+            # the delegation ladder. Drops the misleading redundant `(AllProvidersUnavailableError, Exception)`.
             log.tool.warning(
                 "delegate: no fast provider for relevance judge — structural pre-filter only",
                 exc_info=exc,

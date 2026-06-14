@@ -33,7 +33,10 @@ class ParliamentOrchestrator:
     """
 
     _active_session: ClassVar[ParliamentSession | None] = None
-    _active_session_lock: ClassVar[asyncio.Lock | None] = None
+    # Eager init avoids a lazy check-then-set TOCTOU (two coroutines each
+    # creating a separate lock → mutual exclusion silently lost). asyncio.Lock()
+    # at class-definition time is safe on Python 3.10+ (no loop bound at create).
+    _active_session_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     def __init__(
         self,
@@ -72,12 +75,6 @@ class ParliamentOrchestrator:
             delegation_governor=delegation_governor,
         )
 
-    @classmethod
-    def _get_lock(cls) -> asyncio.Lock:
-        if cls._active_session_lock is None:
-            cls._active_session_lock = asyncio.Lock()
-        return cls._active_session_lock
-
     async def run(
         self,
         topic: str,
@@ -103,7 +100,7 @@ class ParliamentOrchestrator:
             owl_names=owl_names,
         )
         await self._store.create(session)
-        lock = self._get_lock()
+        lock = self._active_session_lock
         async with lock:
             ParliamentOrchestrator._active_session = session
         try:
@@ -159,7 +156,7 @@ class ParliamentOrchestrator:
             "[parliament] orchestrator.inject_interjection: entry",
             extra={"_fields": {"msg_len": len(message)}},
         )
-        lock = self._get_lock()
+        lock = self._active_session_lock
         async with lock:
             current = ParliamentOrchestrator._active_session
             if current is None:
@@ -186,7 +183,7 @@ class ParliamentOrchestrator:
             "[parliament] orchestrator._run_session: entry",
             extra={"_fields": {"session_id": session.session_id}},
         )
-        lock = self._get_lock()
+        lock = self._active_session_lock
         converged = False
         for round_number in range(1, self._max_rounds + 1):
             async with lock:

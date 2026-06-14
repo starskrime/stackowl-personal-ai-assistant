@@ -694,7 +694,6 @@ def stop() -> None:
     """Stop a running StackOwl instance by sending SIGTERM to its PID file."""
     import os
     import signal
-    import sys
     import time
 
     from stackowl.service.pid_manager import PidManager
@@ -724,10 +723,10 @@ def stop() -> None:
 
     # 3. STEP — send signal
     try:
-        if sys.platform == "win32":
-            os.kill(pid, signal.SIGTERM)
-        else:
-            os.kill(pid, signal.SIGTERM)
+        # NOTE: os.kill(pid, SIGTERM) is graceful on POSIX. On Windows it maps to
+        # TerminateProcess (hard kill); a real graceful Windows stop would need
+        # CTRL_BREAK_EVENT / taskkill — left as a single call until that is added.
+        os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         typer.echo(f"Process {pid} is not running — removing stale PID file")
         pid_manager.release()

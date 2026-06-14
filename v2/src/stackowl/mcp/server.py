@@ -250,7 +250,7 @@ def _wire_handlers(
     mcp_server: Any, registry: ToolRegistry, exposure: McpToolExposurePolicy,
 ) -> None:
     """Register list_tools and call_tool handlers on the mcp.Server."""
-    from mcp.types import TextContent, Tool as McpSdkTool  # type: ignore[import]
+    from mcp.types import CallToolResult, TextContent, Tool as McpSdkTool  # type: ignore[import]
 
     @mcp_server.list_tools()  # type: ignore[misc]
     async def _list_tools() -> list[McpSdkTool]:
@@ -260,16 +260,27 @@ def _wire_handlers(
         ]
 
     @mcp_server.call_tool()  # type: ignore[misc]
-    async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
+    async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent] | CallToolResult:
         tool = registry.get(name)
         if tool is None:
             log.warning("mcp.server.call_tool: unknown tool", extra={"_fields": {"tool": name}})
-            return [TextContent(type="text", text=f"Unknown tool: {name}")]
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Unknown tool: {name}")], isError=True
+            )
         if not exposure.is_exposed(tool):
             log.warning(
                 "mcp.server.call_tool: tool denied by exposure policy",
                 extra={"_fields": {"tool": name}},
             )
-            return [TextContent(type="text", text=exposure.denial_message(name))]
+            return CallToolResult(
+                content=[TextContent(type="text", text=exposure.denial_message(name))], isError=True
+            )
         result = await tool.execute(**arguments)
-        return [TextContent(type="text", text=result.output if result.success else (result.error or ""))]
+        if result.success:
+            return [TextContent(type="text", text=result.output)]
+        # Surface failures with the MCP error convention so clients can tell a
+        # failed tool from a successful empty result; never an empty error text.
+        return CallToolResult(
+            content=[TextContent(type="text", text=result.error or "tool failed (no detail)")],
+            isError=True,
+        )

@@ -78,6 +78,9 @@ class ClarifyPump:
         # turn per session + a FIFO intake queue), so the map is purely a
         # drain/reap ledger now (§4.3).
         self._inflight: dict[str, asyncio.Task[None]] = {}
+        # Strong refs for the B-1 producer-failure writer-close tasks so the loop
+        # can't GC them before they close the writer (asyncio weak-refs tasks).
+        self._close_tasks: set[asyncio.Task[None]] = set()
 
     # ----------------------------------------------------------- resolve-router
 
@@ -223,7 +226,9 @@ class ClarifyPump:
                     extra={"_fields": {"session_id": sid}},
                 )
                 with contextlib.suppress(RuntimeError):
-                    asyncio.create_task(self._safe_close(w))  # type: ignore[arg-type]
+                    close_task = asyncio.create_task(self._safe_close(w))  # type: ignore[arg-type]
+                    self._close_tasks.add(close_task)
+                    close_task.add_done_callback(self._close_tasks.discard)
 
             producer.add_done_callback(_close_on_producer_failure)
 
@@ -244,5 +249,11 @@ class ClarifyPump:
         """Await any in-flight send tasks (used on loop teardown)."""
         pending = [t for t in self._inflight.values() if not t.done()]
         for task in pending:
-            with contextlib.suppress(Exception):
+            try:
                 await task
+            except Exception as exc:
+                log.gateway.warning(
+                    "clarify_pump.drain: in-flight send failed on teardown",
+                    exc_info=exc,
+                    extra={"_fields": {"error": str(exc)}},
+                )

@@ -109,7 +109,7 @@ UPDATE dreamworker_runs
 
 _SELECT_COMMITTED_FACTS_SQL = """
 SELECT fact_id, content, embedding, embedding_model, committed_at,
-       source_type, source_ref, tags
+       source_type, source_ref, tags, trust
 FROM committed_facts
 """
 
@@ -336,6 +336,7 @@ async def load_committed_for_scan(db: DbPool) -> list[MemoryRecord]:
                     source_type=row["source_type"],
                     source_ref=row["source_ref"],
                     tags=list(tags) if isinstance(tags, list) else [],
+                    trust=row["trust"],
                 )
             )
         except Exception as exc:

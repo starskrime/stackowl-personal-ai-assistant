@@ -117,14 +117,9 @@ class MigrationRunner:
         try:
             conn.execute(_CREATE_SCHEMA_MIGRATIONS)
             results: list[MigrationResult] = []
-            highest: str | None = None
             for version, name, path in files:
                 result = self._apply(conn, version, name, path)
                 results.append(result)
-                if result.action == "applied":
-                    highest = version
-            if highest is not None:
-                self._set_schema_version(conn, highest)
             return results
         finally:
             conn.close()
@@ -157,6 +152,10 @@ class MigrationRunner:
                     "INSERT INTO schema_migrations (version, name, applied_at, checksum) VALUES (?, ?, ?, ?)",
                     (version, name, datetime.now(tz=UTC).isoformat(), checksum),
                 )
+                # Advance the stackowl_meta.schema_version pointer inside the SAME
+                # exclusive tx so the convenience pointer and the per-migration
+                # ledger row commit atomically (no post-loop autocommit lag).
+                self._set_schema_version(conn, version)
         except MigrationError:
             raise
         except Exception as exc:

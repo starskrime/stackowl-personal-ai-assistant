@@ -352,8 +352,13 @@ class BrowserSessionRegistry:
 
     @staticmethod
     async def _safe_dismiss(dialog: Any) -> None:
-        with contextlib.suppress(Exception):
+        try:
             await dialog.dismiss()
+        except Exception as exc:
+            log.engine.debug(
+                "[browser] sessions._safe_dismiss: dialog dismiss failed — page may be gone",
+                exc_info=exc,
+            )
 
     def _spawn_bg(self, coro: Any) -> None:
         """Run a fire-and-forget coroutine, holding a strong ref so it isn't GC'd."""

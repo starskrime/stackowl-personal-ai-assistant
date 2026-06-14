@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from stackowl.infra.observability import log
@@ -44,7 +45,7 @@ class ReadFileTool(Tool):
             )
             return ToolResult(success=False, output="", error="Path traversal denied", duration_ms=duration_ms)
         try:
-            content = target.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(target.read_text, encoding="utf-8")
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.debug(
                 "read_file.execute: exit",

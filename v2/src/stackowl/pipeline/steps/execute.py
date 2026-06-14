@@ -585,7 +585,14 @@ async def _run_with_tools(
                     name,
                 )
                 denied_by = "owl" if owl_only is not None else "task"
-            except Exception:  # noqa: BLE001 — provenance is best-effort, never fatal
+            except Exception as exc:  # noqa: BLE001 — provenance is best-effort, never fatal
+                log.engine.debug(
+                    "[pipeline] execute: deny-provenance recompute failed",
+                    exc_info=exc,
+                    extra={"_fields": {
+                        "tool": name, "owl": state.owl_name, "trace_id": state.trace_id,
+                    }},
+                )
                 denied_by = "unknown"
             log.engine.warning(
                 "[pipeline] execute: tool refused by bounds",
@@ -806,9 +813,10 @@ async def _run_with_tools(
         return _composed
 
     t0 = time.monotonic()
-    # Only forward persistence_check when it is actually enabled (interactive,
-    # depth 0). Omitting the kwarg otherwise keeps the call backward-compatible
-    # with every provider implementation (no new kwarg on the non-interactive path).
+    # persistence_check now covers ALL turns (no interactive/depth gate — see
+    # build_persistence_check's docstring); it is forwarded whenever it is non-None.
+    # Omitting the kwarg when None keeps the call backward-compatible with every
+    # provider implementation (no new kwarg on providers that don't accept it).
     #
     # B2 durable-react — when state.task_id is set this turn belongs to a durable
     # task: activate a DurableReActContext for the drive so the (dormant) S2
