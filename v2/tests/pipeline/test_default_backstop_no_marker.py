@@ -270,9 +270,9 @@ async def test_default_backstop_breach_empty_partial_floors() -> None:
     )
 
     # LOAD-BEARING: no raw developer marker in content ('budget:stop:...' form).
-    # Note: synthesize_floor may include the exception text ("budget cap reached")
-    # as an honest diagnostic — that is fine.  What must NOT appear is the
-    # structured 'budget:stop:' marker string.
+    # The empty-partial default backstop now routes to the graceful slot-free
+    # floor (intent-classification-hardening), so neither the 'budget:stop:'
+    # marker nor the 'budget cap reached' exception text appears in content.
     assert "budget:stop" not in all_content, (
         f"DEFAULT BACKSTOP EMPTY-PARTIAL FAIL: 'budget:stop' marker in delivered content. "
         f"Content: {all_content!r}"
