@@ -265,6 +265,7 @@ class OpenAIProvider(ModelProvider):
                     messages=messages,  # type: ignore[arg-type]
                     max_tokens=self._config.max_output_tokens,
                     tools=tool_schemas,  # type: ignore[arg-type]
+                    **self._ollama_extra_body(resolved_model),
                 )
             except openai.APIError as exc:
                 log.engine.error(
@@ -474,6 +475,7 @@ class OpenAIProvider(ModelProvider):
                 model=resolved_model,
                 messages=messages,  # type: ignore[arg-type]
                 max_tokens=self._config.max_output_tokens,
+                **self._ollama_extra_body(resolved_model),
             )
             await self._record_usage_safe(wrapup, (time.monotonic() - _t_wrap) * 1000)
             text = wrapup.choices[0].message.content or ""
@@ -525,6 +527,17 @@ class OpenAIProvider(ModelProvider):
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
         )
+
+    def _ollama_extra_body(self, resolved_model: str) -> dict[str, Any]:
+        """For an ollama-family base_url, send the budgeted window as num_ctx so the
+        server honors exactly the window we budgeted (else ollama truncates to its
+        own default). Empty dict for non-ollama providers / unknown window."""
+        base = self._config.base_url or ""
+        if ":11434" not in base and "ollama" not in base.lower():
+            return {}
+        from stackowl.providers.model_window import cached_window
+        w = cached_window(self._name, resolved_model)
+        return {"extra_body": {"options": {"num_ctx": w}}} if w else {}
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("openai.complete")
