@@ -813,9 +813,10 @@ async def _run_with_tools(
         return _composed
 
     t0 = time.monotonic()
-    # Only forward persistence_check when it is actually enabled (interactive,
-    # depth 0). Omitting the kwarg otherwise keeps the call backward-compatible
-    # with every provider implementation (no new kwarg on the non-interactive path).
+    # persistence_check now covers ALL turns (no interactive/depth gate — see
+    # build_persistence_check's docstring); it is forwarded whenever it is non-None.
+    # Omitting the kwarg when None keeps the call backward-compatible with every
+    # provider implementation (no new kwarg on providers that don't accept it).
     #
     # B2 durable-react — when state.task_id is set this turn belongs to a durable
     # task: activate a DurableReActContext for the drive so the (dormant) S2

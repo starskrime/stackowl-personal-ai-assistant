@@ -311,6 +311,13 @@ class ProviderRegistry(RegistryAccessorsMixin):
             self._configs = new_configs
             self._resolved_keys = new_resolved_keys
 
+            # Drop any memoized context window for providers that were added/changed,
+            # rotated, or removed so a new base_url / context_chars (even with an
+            # unchanged model id) is re-resolved instead of serving a stale window (F123).
+            from stackowl.providers import model_window
+            for _name in (*added, *rotated, *removed):
+                model_window.invalidate(_name)
+
             log.engine.info(
                 "[registry] apply_settings: exit",
                 extra={

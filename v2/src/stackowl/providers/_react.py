@@ -64,6 +64,10 @@ class LoopGuard:
         self._warned: set[str] = set()
 
     def _signature(self, name: str, args: Any) -> str:
+        # NOTE: default=str coerces any non-JSON-serializable arg to str(); two
+        # genuinely different objects whose str() coincides collapse to one
+        # signature (possible false-positive loop trip). Accepted as a heuristic —
+        # typical JSON-shaped tool args are unaffected.
         try:
             return f"{name}|{json.dumps(args, sort_keys=True, default=str)}"
         except Exception:

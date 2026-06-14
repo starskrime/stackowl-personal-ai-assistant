@@ -245,7 +245,10 @@ async def _gather_recent_actions(
 
 
 async def _gather_relevant_skills(
-    query: str, limit: int = 3, owned: set[str] | None = None
+    query: str,
+    limit: int = 3,
+    owned: set[str] | None = None,
+    pre_embedded: tuple[float, ...] | None = None,
 ) -> str:
     """Best-effort: surface up to K skills semantically relevant to ``query``.
 
@@ -272,15 +275,19 @@ async def _gather_relevant_skills(
             "[pipeline] classify._gather_relevant_skills: exit — wires absent",
         )
         return ""
-    # 3. STEP — embed the user query
-    try:
-        vectors = await embedding_registry.get().embed([query])
-    except Exception as exc:  # B5
-        log.engine.warning(
-            "[pipeline] classify._gather_relevant_skills: embed failed — skipping",
-            exc_info=exc, extra={"_fields": {"query_len": len(query)}},
-        )
-        return ""
+    # 3. STEP — embed the user query (reuse a pre-embedded vector when the caller
+    # already computed it this turn, avoiding a redundant embedding of the same text)
+    if pre_embedded is not None:
+        vectors: list[list[float]] = [list(pre_embedded)]
+    else:
+        try:
+            vectors = await embedding_registry.get().embed([query])
+        except Exception as exc:  # B5
+            log.engine.warning(
+                "[pipeline] classify._gather_relevant_skills: embed failed — skipping",
+                exc_info=exc, extra={"_fields": {"query_len": len(query)}},
+            )
+            return ""
     if not vectors or not vectors[0]:
         log.engine.debug(
             "[pipeline] classify._gather_relevant_skills: exit — empty embedding",
@@ -491,9 +498,8 @@ async def run(state: PipelineState) -> PipelineState:
                 owned = set()
     # Compute the query embedding once (semantic-guarded) and stash on state so the
     # assemble step can score owned skills without re-embedding. Story B.
-    # NOTE: _gather_relevant_skills will also embed internally — accepted double-embed
-    # since changing its signature would risk breaking existing tests (small call site,
-    # low cost, correctness first).
+    # The same vector is threaded into _gather_relevant_skills (pre_embedded) so the
+    # query is embedded once per turn instead of twice (F065).
     # The embedding is NOT gated on _lean: assemble uses it for owned-skill tiering
     # independently of the heavy gather blocks.
     query_embedding: tuple[float, ...] | None = None
@@ -509,7 +515,13 @@ async def run(state: PipelineState) -> PipelineState:
                 exc_info=exc,
                 extra={"_fields": {"owl": state.owl_name}},
             )
-    skills_block = "" if _lean else await _gather_relevant_skills(state.input_text, limit=3, owned=owned)
+    skills_block = (
+        ""
+        if _lean
+        else await _gather_relevant_skills(
+            state.input_text, limit=3, owned=owned, pre_embedded=query_embedding
+        )
+    )
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
     # pellets from the unified LanceDB lessons index.
     lessons_block = "" if _lean else await _gather_lessons(state.input_text, limit=3)

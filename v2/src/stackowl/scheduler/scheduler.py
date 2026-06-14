@@ -61,7 +61,7 @@ class JobScheduler(SupervisedTask):
         TestModeGuard.assert_not_test_mode("scheduler.execute")
         now_iso = datetime.now(UTC).isoformat()
         rows = await self._db.fetch_all(
-            "SELECT * FROM jobs WHERE next_run_at <= ? AND status = 'pending'",
+            "SELECT * FROM jobs WHERE next_run_at <= ? AND status = 'pending' AND enabled = 1",
             (now_iso,),
         )
         for row in rows:

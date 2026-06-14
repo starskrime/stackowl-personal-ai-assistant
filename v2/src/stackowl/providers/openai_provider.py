@@ -106,8 +106,9 @@ class OpenAIProvider(ModelProvider):
             stream_resp = await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs),
+                max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
                 stream=True,
+                **self._ollama_extra_body(resolved_model),
             )
             async for chunk in stream_resp:  # type: ignore[union-attr]
                 delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -563,7 +564,8 @@ class OpenAIProvider(ModelProvider):
             response = await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs),
+                max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
+                **self._ollama_extra_body(resolved_model),
             )
         except openai.APIError as exc:
             log.engine.error(
