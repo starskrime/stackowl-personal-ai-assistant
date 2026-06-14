@@ -234,6 +234,8 @@ class ToolRegistry:
         pins: list[str] | None = None,
         hydrated: set[str] | None = None,
         restrict_to: frozenset[str] | None = None,
+        request_text: str | None = None,
+        budget: dict[str, int] | None = None,
     ) -> list[dict[str, object]]:
         """Emit tool schemas for the given provider protocol.
 
@@ -247,7 +249,24 @@ class ToolRegistry:
         ``always_present`` (discovery) ∪ (``restrict_to`` ∩ catalog). The broad
         base set + profile groups are dropped for this turn. ``is not None``,
         NOT truthiness — ``frozenset()`` yields discovery-only, never base+groups.
+
+        ``budget`` (opt-in, Task 4): when supplied as ``{"window": N,
+        "fixed_cost_tokens": M}``, ranks candidates via
+        :class:`ToolPresentation.rank_candidates` and greedy-fits them into the
+        measured token budget via :func:`fit_items`. Guaranteed (base + always-
+        present) are never dropped. When ``None`` (default) behavior is byte-
+        identical to the previous implementation. ``request_text`` is forwarded
+        to the relevance ranker when ``budget`` is set.
         """
+
+        def _schema_for(t: Tool) -> dict[str, object]:
+            if protocol == "anthropic":
+                return {"name": t.name, "description": t.description, "input_schema": t.parameters}
+            return {
+                "type": "function",
+                "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+            }
+
         if restrict_to is not None:
             from stackowl.tools._infra.presentation import ToolPresentation
 
@@ -255,7 +274,29 @@ class ToolRegistry:
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
                 restrict_to=restrict_to,
             )
-        elif profile is None and pins is None and hydrated is None:
+            return [_schema_for(t) for t in tools]
+
+        if budget is not None:
+            import json
+
+            from stackowl.pipeline.context_budget import fit_items, tool_budget_tokens
+            from stackowl.tools._infra.presentation import ToolPresentation
+
+            guaranteed, ranked = ToolPresentation().rank_candidates(
+                all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
+                request_text=request_text,
+            )
+            b = tool_budget_tokens(
+                window=budget["window"], fixed_cost_tokens=budget["fixed_cost_tokens"],
+            )
+
+            def _size(t: Tool) -> int:
+                return len(json.dumps(_schema_for(t))) // 4
+
+            fitted = fit_items(guaranteed=guaranteed, candidates=ranked, budget=b, size_of=_size)
+            return [_schema_for(t) for t in fitted]
+
+        if profile is None and pins is None and hydrated is None:
             tools = self.all()
         else:
             from stackowl.tools._infra.presentation import ToolPresentation
@@ -263,18 +304,7 @@ class ToolRegistry:
             tools = ToolPresentation().select(
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated
             )
-        if protocol == "anthropic":
-            return [
-                {"name": t.name, "description": t.description, "input_schema": t.parameters}
-                for t in tools
-            ]
-        return [
-            {
-                "type": "function",
-                "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
-            }
-            for t in tools
-        ]
+        return [_schema_for(t) for t in tools]
 
     def render_text_catalog(self, schemas: list[dict[str, Any]]) -> str:
         """Render presented tool schemas into a compact text block for text-protocol mode.
