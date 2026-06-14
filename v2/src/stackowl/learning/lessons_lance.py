@@ -170,6 +170,10 @@ def _table_names(conn: DBConnection) -> list[str]:
         try:
             return list(response)
         except TypeError:
+            log.memory.warning(
+                "[learning] lessons_lance._table_names: response not iterable — treating as empty",
+                extra={"_fields": {"type": type(response).__name__}},
+            )
             return []
     return list(names)
 
@@ -248,7 +252,12 @@ def _sync_search(
             metadata = json.loads(raw.get("metadata") or "{}")
             if not isinstance(metadata, dict):
                 metadata = {}
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            log.memory.warning(
+                "[learning] lessons_lance.search: corrupt metadata JSON — using empty",
+                exc_info=exc,
+                extra={"_fields": {"lesson_id": raw.get("lesson_id")}},
+            )
             metadata = {}
         distance = float(raw.get("_distance", 0.0))
         similarity = 1.0 / (1.0 + distance)

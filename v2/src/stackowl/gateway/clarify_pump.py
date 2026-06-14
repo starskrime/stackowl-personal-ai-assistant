@@ -244,5 +244,11 @@ class ClarifyPump:
         """Await any in-flight send tasks (used on loop teardown)."""
         pending = [t for t in self._inflight.values() if not t.done()]
         for task in pending:
-            with contextlib.suppress(Exception):
+            try:
                 await task
+            except Exception as exc:
+                log.gateway.warning(
+                    "clarify_pump.drain: in-flight send failed on teardown",
+                    exc_info=exc,
+                    extra={"_fields": {"error": str(exc)}},
+                )

@@ -121,9 +121,26 @@ class NotificationAssembly:
             # Best-effort persistence — never block the focus change on a DB issue.
             import asyncio
 
-            with __import__("contextlib").suppress(Exception):
-                asyncio.create_task(  # noqa: RUF006 — fire-and-forget persistence
+            def _log_persist_result(task: asyncio.Task) -> None:  # type: ignore[type-arg]
+                exc = task.exception()
+                if exc is not None:
+                    log.notifications.error(
+                        "[notifications] assembly.set_focus_mode: persistence task failed",
+                        exc_info=exc,
+                        extra={"_fields": {"mode": mode}},
+                    )
+
+            try:
+                _persist_task = asyncio.create_task(  # noqa: RUF006 — fire-and-forget persistence
                     preference_store.set(_FOCUS_PREF_OWNER, _FOCUS_PREF_KEY, mode),
+                )
+                _persist_task.add_done_callback(_log_persist_result)
+            except RuntimeError as exc:
+                # No running event loop — focus change applied in-memory but not persisted.
+                log.notifications.warning(
+                    "[notifications] assembly.set_focus_mode: no event loop — focus not persisted",
+                    exc_info=exc,
+                    extra={"_fields": {"mode": mode}},
                 )
 
         router.set_focus_mode = _persisting_set_focus_mode  # type: ignore[method-assign]

@@ -163,8 +163,12 @@ class FactPromoter:
                 await self._promote_one(fact)
                 promoted += 1
             except Exception as exc:
-                # B5 — never skip a fact silently
-                log.memory.warning(
+                # B5 — never skip a fact silently. NOTE: the returned `promoted`
+                # count masks skipped rows (skipped == len(rows) - promoted); the
+                # bool/int return signature is intentionally left unchanged here —
+                # surfacing a (promoted, skipped) tuple is a larger caller-contract
+                # change. Logged at ERROR so a skip is observable.
+                log.memory.error(
                     "[memory] fact_promoter.promote_eligible: row failed — skipping",
                     exc_info=exc,
                     extra={"_fields": {"fact_id": row.get("fact_id")}},
@@ -196,7 +200,18 @@ class FactPromoter:
             )
             return False
         fact = row_to_staged(rows[0])
-        await self._promote_one(fact)
+        try:
+            await self._promote_one(fact)
+        except Exception as exc:
+            # Honor the documented bool contract — a per-row failure on the
+            # interactive approve path must return False, not throw a raw
+            # exception into the channel handler.
+            log.memory.error(
+                "[memory] fact_promoter.force_promote: promote failed",
+                exc_info=exc,
+                extra={"_fields": {"fact_id": fact_id}},
+            )
+            return False
         # 4. EXIT
         log.memory.info(
             "[memory] fact_promoter.force_promote: exit",

@@ -585,7 +585,14 @@ async def _run_with_tools(
                     name,
                 )
                 denied_by = "owl" if owl_only is not None else "task"
-            except Exception:  # noqa: BLE001 — provenance is best-effort, never fatal
+            except Exception as exc:  # noqa: BLE001 — provenance is best-effort, never fatal
+                log.engine.debug(
+                    "[pipeline] execute: deny-provenance recompute failed",
+                    exc_info=exc,
+                    extra={"_fields": {
+                        "tool": name, "owl": state.owl_name, "trace_id": state.trace_id,
+                    }},
+                )
                 denied_by = "unknown"
             log.engine.warning(
                 "[pipeline] execute: tool refused by bounds",

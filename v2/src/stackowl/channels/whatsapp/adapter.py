@@ -223,12 +223,13 @@ class WhatsAppChannelAdapter(ChannelAdapter):
             self._poll_task.cancel()
             try:
                 await self._poll_task
-            except (asyncio.CancelledError, Exception) as exc:
-                if not isinstance(exc, asyncio.CancelledError):
-                    log.whatsapp.error(
-                        "[whatsapp] adapter.stop: poll_task raised on cancel",
-                        exc_info=exc,
-                    )
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                log.whatsapp.error(
+                    "[whatsapp] adapter.stop: poll_task raised on cancel",
+                    exc_info=exc,
+                )
         log.whatsapp.debug("[whatsapp] adapter.stop: step stopping_browser")
         await self._browser.stop()
         log.whatsapp.debug("[whatsapp] adapter.stop: exit")
