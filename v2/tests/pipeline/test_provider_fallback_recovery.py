@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 
 from stackowl.infra import recovery_context as rc
+from stackowl.pipeline.provider_select import select_tool_provider as _select_tool_provider
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import execute as exe
-from stackowl.pipeline.steps.execute import _select_tool_provider
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 
