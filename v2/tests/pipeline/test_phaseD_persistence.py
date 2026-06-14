@@ -367,11 +367,12 @@ async def test_judge_prompt_conveys_failed_tool_is_not_delivery() -> None:
     # (b) the prompt RELABELS the tools line to convey outcomes (name and outcome),
     # not bare names.
     assert "outcome" in prompt
-    # (c) the load-bearing rule: a tool appearing here does NOT mean it succeeded;
-    # a failed backing tool call means NOT delivered. Assert the concepts co-occur
-    # in one stretch of the prompt (global wording — no tool/site/task names).
+    # (c) the load-bearing rule: a failed backing tool call means NOT delivered.
+    # The reframed prompt conveys this as "A failed tool call is NOT delivery" and
+    # "name(failed) means that call did NOT do what it was supposed to".
+    # Assert the concepts co-occur in the prompt (global wording — no tool/site/task names).
     assert "failed" in prompt
-    assert "does not mean it succeeded" in prompt or "not mean it succeeded" in prompt
+    assert "not delivery" in prompt or "not delivered" in prompt or "did not do what it was supposed to" in prompt
 
 
 # =========================================================================== #
