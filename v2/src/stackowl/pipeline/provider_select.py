@@ -22,6 +22,7 @@ def select_tool_provider(
     state: PipelineState,
     *,
     log_selection: bool = True,
+    record_recovery: bool = True,
 ) -> ModelProvider:
     """Resolve the ModelProvider for the tool-use loop.
 
@@ -117,7 +118,10 @@ def select_tool_provider(
     # --- Step 4: Resolve by tier — circuit-aware (falls back if the tier provider's
     # circuit is OPEN; the pins above are honored as-is). ---
     provider, degraded_from = registry.resolve_tier_with_fallback(desired)
-    if degraded_from is not None:
+    # record_recovery gates the user-visible fallback event: a side-effect-free
+    # window-probe selection (assemble) must NOT record it, else the same
+    # provider_fallback is surfaced twice (assemble + execute) on one turn.
+    if degraded_from is not None and record_recovery:
         recovery_context.record_recovery(
             kind="provider_fallback", failed=degraded_from,
             recovered_via=provider.name, user_visible=True,

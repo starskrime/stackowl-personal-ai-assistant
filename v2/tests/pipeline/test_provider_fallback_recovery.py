@@ -21,6 +21,23 @@ def _state(owl="someowl", session="s1"):
                          channel="cli", owl_name=owl, pipeline_step="execute")
 
 
+def test_record_recovery_false_suppresses_event_on_open_circuit():
+    # assemble's quiet window-probe selection must NOT record the provider_fallback
+    # (else execute's real selection records the SAME event → duplicate user line).
+    reg = ProviderRegistry()
+    reg.register_mock("powerful_a", MockProvider(name="powerful_a"), tier="powerful")
+    reg.register_mock("fast_b", MockProvider(name="fast_b"), tier="fast")
+    _open_breaker(reg, "powerful_a")
+    services = StepServices(provider_registry=reg)
+    token = rc.bind()
+    try:
+        provider = _select_tool_provider(reg, services, _state(), record_recovery=False)
+        assert provider.name == "fast_b"          # still degrades to the fallback
+        assert rc.get_recovery() == ()            # but records NOTHING
+    finally:
+        rc.reset(token)
+
+
 def test_tier_fallback_records_provider_recovery():
     reg = ProviderRegistry()
     reg.register_mock("powerful_a", MockProvider(name="powerful_a"), tier="powerful")

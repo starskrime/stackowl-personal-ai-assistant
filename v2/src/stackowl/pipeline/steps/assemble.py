@@ -43,8 +43,11 @@ async def run(state: PipelineState) -> PipelineState:
             from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
             from stackowl.pipeline.provider_select import select_tool_provider
             from stackowl.providers.model_window import resolve_window
+            # Quiet, side-effect-free window probe: no INFO log AND no recovery
+            # event (execute's real selection records the provider_fallback once).
             _p = select_tool_provider(
-                services.provider_registry, services, state, log_selection=False,
+                services.provider_registry, services, state,
+                log_selection=False, record_recovery=False,
             )
             _pc = getattr(_p, "_config", None)
             model_window = await resolve_window(
