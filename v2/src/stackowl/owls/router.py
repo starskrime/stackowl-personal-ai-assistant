@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 _DEFAULT_FALLBACK = "secretary"
 _FAST_TIER = "fast"
-_ROUTING_MAX_TOKENS = 32
+_ROUTING_MAX_TOKENS = 64
 _ROUTING_TEMPERATURE = 0.0
 
 _VALID_CLASSES = {"conversational", "standard"}
@@ -167,8 +167,10 @@ class SecretaryRouter:
             f"User request: {user_text}\n\n"
             "Reply with exactly two lines:\n"
             "Line 1: the owl name (required).\n"
-            "Line 2: exactly 'conversational' if the request is only a greeting "
-            "or small-talk with no task, else 'standard'."
+            "Line 2: 'conversational' if the user is ONLY being social — a "
+            "greeting, thanks, a compliment, an opinion or reaction, or chit-chat "
+            "— with NO request to do, find, make, change, or look up anything. "
+            "Otherwise 'standard'. Judge by meaning, in any language."
         )
 
     def _parse_choice(self, raw: str, known_names: set[str]) -> str:
@@ -184,13 +186,12 @@ class SecretaryRouter:
         return _DEFAULT_FALLBACK
 
     def _parse_intent_class(self, raw: str) -> Literal["conversational", "standard"]:
-        """OPTIONAL 2nd line = intent class. Fail-safe → 'standard'."""
+        """Scan every line AFTER the owl-name line for the class token. Fail-safe → 'standard'."""
         lines = (raw or "").strip().splitlines()
-        if len(lines) < 2:
-            return "standard"
-        token = lines[1].strip().strip("\"'`.,:;()[]{}<>").lower()
-        if token == "conversational":
-            return "conversational"
+        for line in lines[1:]:
+            token = line.strip().strip("\"'`.,:;()[]{}<>").lower()
+            if token in _VALID_CLASSES:
+                return "conversational" if token == "conversational" else "standard"
         return "standard"
 
     async def route(self, state: PipelineState) -> RouteResult:

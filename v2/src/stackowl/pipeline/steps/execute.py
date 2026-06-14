@@ -981,13 +981,13 @@ async def _run_with_tools(
                     tool_calls=(*state.tool_calls, *_breach_tool_records),
                     errors=(*state.errors, marker),
                 )
-            # Empty partial under the default backstop → synthesize_floor.
-            _prior = state.responses[-1].content if state.responses else ""
+            # Empty partial under the default backstop → graceful slot-free floor
+            # (no raw budget error / blank capability fields surfaced to the user).
             floor = synthesize_floor(
                 goal=state.input_text,
-                error=str(exc),
+                error=None,
                 attempts=[],
-                partial=_prior,
+                partial=None,
             )
             floor_chunk = ResponseChunk(
                 content=floor,

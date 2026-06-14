@@ -14,7 +14,11 @@ import pytest
 
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.owls.router import RouteResult, SecretaryRouter
+from stackowl.owls.router import (
+    _ROUTING_MAX_TOKENS,
+    RouteResult,
+    SecretaryRouter,
+)
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
@@ -110,3 +114,49 @@ async def test_owl_selection_unchanged_with_class_line(router_env: _RouterEnv) -
     router_env.set_reply("research_owl\nstandard")
     res = await router_env.router.route(router_env.state("research X"))
     assert res.owl_name == "research_owl"
+
+
+# ---------------------------------------------------------------------------
+# Direct-parse unit tests — no provider/registry needed (parse-only)
+# ---------------------------------------------------------------------------
+
+
+def _r() -> SecretaryRouter:
+    return SecretaryRouter(provider_registry=None, owl_registry=None)  # type: ignore[arg-type]
+
+
+def test_token_cap_raised() -> None:
+    assert _ROUTING_MAX_TOKENS == 64
+
+
+def test_class_on_line_2() -> None:
+    assert _r()._parse_intent_class("secretary\nconversational") == "conversational"
+
+
+def test_class_on_later_line_is_scanned() -> None:
+    assert _r()._parse_intent_class("secretary\n\nconversational") == "conversational"
+    assert _r()._parse_intent_class("secretary\nlet me think\nconversational") == "conversational"
+
+
+def test_class_token_with_punctuation() -> None:
+    assert _r()._parse_intent_class("secretary\n'conversational'.") == "conversational"
+
+
+def test_standard_when_explicit() -> None:
+    assert _r()._parse_intent_class("secretary\nstandard") == "standard"
+
+
+def test_failsafe_standard_when_no_class_token() -> None:
+    assert _r()._parse_intent_class("secretary") == "standard"
+    assert _r()._parse_intent_class("secretary\nblah blah") == "standard"
+
+
+def test_owl_name_line_not_treated_as_class() -> None:
+    assert _r()._parse_intent_class("standard\nconversational") == "conversational"
+
+
+def test_prompt_mentions_compliment_and_no_task() -> None:
+    p = _r()._build_prompt([("secretary", "general")], "i liked your style")
+    low = p.lower()
+    assert "conversational" in low and "standard" in low
+    assert "compliment" in low or "social" in low
