@@ -158,3 +158,63 @@ class ToolPresentation:
             extra={"_fields": {"presented": len(selected), "guaranteed": len(guaranteed), "dropped": dropped}},
         )
         return selected
+
+    def rank_candidates(
+        self,
+        *,
+        all_tools: list[Tool],
+        profile: list[str] | None,
+        pins: list[str] | None,
+        hydrated: set[str] | None,
+        request_text: str | None,
+    ) -> tuple[list[Tool], list[Tool]]:
+        """Return (guaranteed, discretionary-ranked) for budgeted presentation.
+
+        Guaranteed = always_present ∪ base (non-evictable). Discretionary =
+        pins ∪ hydrated ∪ group-tools; when `profile`/pins/hydrated are all empty,
+        ALL non-guaranteed tools are eligible (no full-catalog bypass). Discretionary
+        is ordered by lexical relevance to `request_text` (reusing rank_tools);
+        unmatched tools follow in a deterministic by-name tail so none are dropped.
+        """
+        from stackowl.tools.meta.tool_search import CatalogEntry, rank_tools
+
+        cfg = self._cfg
+        by_name = {t.name: t for t in all_tools}
+        guaranteed_names = sorted(
+            n for n in (cfg.always_present | cfg.base_tools) if n in by_name
+        )
+        guaranteed = [by_name[n] for n in guaranteed_names]
+        gset = set(guaranteed_names)
+
+        profile_groups = {g for g in (profile or []) if isinstance(g, str)}
+        pin_names = {p for p in (pins or []) if isinstance(p, str)}
+        hydrated_names = hydrated or set()
+
+        def _eligible(t: Tool) -> bool:
+            if t.name in gset:
+                return False
+            if not profile_groups and not pin_names and not hydrated_names:
+                return True
+            return (
+                t.name in pin_names
+                or t.name in hydrated_names
+                or t.manifest.toolset_group in profile_groups
+            )
+
+        candidates = [t for t in all_tools if _eligible(t)]
+        if request_text:
+            entries = [CatalogEntry(t.name, t.description, None) for t in candidates]
+            hit_names = [e.name for e in rank_tools(entries, request_text, limit=len(entries))]
+            order = {n: i for i, n in enumerate(hit_names)}
+            ranked = sorted(candidates, key=lambda t: (order.get(t.name, len(order)), t.name))
+        else:
+            ranked = sorted(candidates, key=lambda t: t.name)
+
+        log.tool.debug(
+            "[presentation] rank_candidates: exit",
+            extra={"_fields": {
+                "guaranteed": len(guaranteed), "candidates": len(ranked),
+                "no_profile": not profile_groups,
+            }},
+        )
+        return guaranteed, ranked
