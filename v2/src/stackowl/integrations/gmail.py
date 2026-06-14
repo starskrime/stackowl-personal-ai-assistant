@@ -178,8 +178,9 @@ class GmailAdapter(IntegrationAdapter):
                 client_id=self._client_id,
                 client_secret=self._client_secret,
             )
-            req = google.auth.transport.requests.Request()
-            creds.refresh(req)
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: creds.refresh(google.auth.transport.requests.Request())
+            )
             token_data["token"] = creds.token
             if creds.expiry:
                 token_data["expiry"] = creds.expiry.isoformat()

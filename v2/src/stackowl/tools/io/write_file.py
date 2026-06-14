@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from stackowl.infra.observability import log
@@ -69,8 +70,8 @@ class WriteFileTool(Tool):
             log.tool.warning("write_file.execute: path traversal denied", extra={"_fields": {"path": path_str}})
             return ToolResult(success=False, output="", error="Path traversal denied", duration_ms=duration_ms)
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(target.write_text, content, encoding="utf-8")
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.debug(
                 "write_file.execute: exit",
