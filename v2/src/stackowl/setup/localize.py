@@ -97,6 +97,25 @@ _STRINGS: dict[tuple[str, str], str] = {
         "Bei der Ausführung ist ein Problem aufgetreten und ich konnte nicht fertigstellen; "
         "das technische Detail befindet sich in den Protokollen."
     ),
+    # Graceful floor for a give-up with NO real capability data (e.g. a bare
+    # time/step backstop timeout): warm + honest, NO slots so nothing internal
+    # (raw error, blank fields) can leak. Used by synthesize_floor's no-data branch.
+    ("self_heal_floor_graceful", "en"): (
+        "Sorry — I got tangled up working on that and didn't finish cleanly. "
+        "Could you tell me a bit more, or say it another way?"
+    ),
+    ("self_heal_floor_graceful", "de"): (
+        "Entschuldigung — ich habe mich dabei verheddert und es nicht sauber "
+        "abgeschlossen. Kannst du es anders formulieren oder mehr dazu sagen?"
+    ),
+    ("self_heal_floor_graceful", "fr"): (
+        "Désolé — je me suis emmêlé et je n'ai pas terminé proprement. "
+        "Peux-tu reformuler ou m'en dire un peu plus ?"
+    ),
+    ("self_heal_floor_graceful", "es"): (
+        "Perdona — me hice un lío con eso y no terminé bien. "
+        "¿Puedes decirlo de otra forma o darme algún detalle más?"
+    ),
 }
 
 

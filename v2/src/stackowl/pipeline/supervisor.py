@@ -185,6 +185,16 @@ def synthesize_floor(
         derived_capability = failed_capability
         if derived_capability is None:
             derived_capability = attempts_list[0] if attempts_list else ""
+        # No real capability data (e.g. a bare time/step backstop timeout) → a warm,
+        # honest, slot-free message instead of the blank capability template.
+        if not derived_capability and not attempts_list and not partial:
+            graceful = localize("self_heal_floor_graceful", lang)
+            if graceful:
+                log.engine.debug(
+                    "supervisor.synthesize_floor: graceful (no capability data)",
+                    extra={"_fields": {"lang": lang}},
+                )
+                return graceful
         result = localize_format(
             "self_heal_floor",
             lang,

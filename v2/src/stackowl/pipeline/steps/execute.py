@@ -985,9 +985,9 @@ async def _run_with_tools(
             _prior = state.responses[-1].content if state.responses else ""
             floor = synthesize_floor(
                 goal=state.input_text,
-                error=str(exc),
+                error=None,
                 attempts=[],
-                partial=_prior,
+                partial=None,
             )
             floor_chunk = ResponseChunk(
                 content=floor,
