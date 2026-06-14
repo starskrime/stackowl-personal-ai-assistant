@@ -47,6 +47,14 @@ _LOW_DIRECTIVES: tuple[tuple[str, str], ...] = (
     ),
 )
 
+# Traits whose HIGH directive backfires on / overloads a weak (small-window) model:
+# precision makes it fabricate citations; challenge/curiosity/creativity push
+# behaviours it follows poorly. Suppressed ONLY on the lean path; capable models
+# keep the full set.
+_LEAN_SUPPRESSED_TRAITS: frozenset[str] = frozenset(
+    {"precision", "challenge_level", "curiosity", "creativity"}
+)
+
 
 class DNAPromptInjector:
     """Append trait-modulated instructions to an owl's system prompt.
@@ -57,16 +65,23 @@ class DNAPromptInjector:
     Neutral DNA (every trait near 0.5) returns the system prompt unchanged.
     """
 
-    def inject(self, manifest: OwlAgentManifest, dna: OwlDNA) -> str:
-        """Return ``manifest.system_prompt`` with DNA-driven directives appended."""
+    def inject(self, manifest: OwlAgentManifest, dna: OwlDNA, *, lean: bool = False) -> str:
+        """Return ``manifest.system_prompt`` with DNA-driven directives appended.
+
+        When ``lean`` (small-window model), directives that backfire on / overload a
+        weak model (``_LEAN_SUPPRESSED_TRAITS``) are skipped; the cheap register/length
+        directives (formality, verbosity) still apply. ``lean=False`` is byte-identical
+        to the prior behaviour."""
         from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 
         log.engine.debug(
             "[dna] injector.inject: entry",
-            extra={"_fields": {"owl": manifest.name}},
+            extra={"_fields": {"owl": manifest.name, "lean": lean}},
         )
         directives: list[str] = []
         for trait, directive in _HIGH_DIRECTIVES:
+            if lean and trait in _LEAN_SUPPRESSED_TRAITS:
+                continue
             value = float(getattr(dna, trait))
             if DIRECTIVE_LATCH.high_state(manifest.name, trait, value):
                 directives.append(directive)
@@ -77,13 +92,13 @@ class DNAPromptInjector:
         if not directives:
             log.engine.debug(
                 "[dna] injector.inject: exit — no modulation",
-                extra={"_fields": {"owl": manifest.name}},
+                extra={"_fields": {"owl": manifest.name, "lean": lean}},
             )
             return manifest.system_prompt
         joined = "\n- ".join(directives)
         result = f"{manifest.system_prompt}\n\nBehavioural modulation (from owl DNA):\n- {joined}"
         log.engine.debug(
             "[dna] injector.inject: exit — directives appended",
-            extra={"_fields": {"owl": manifest.name, "directive_count": len(directives)}},
+            extra={"_fields": {"owl": manifest.name, "lean": lean, "directive_count": len(directives)}},
         )
         return result

@@ -25,6 +25,11 @@ from datetime import datetime
 
 from stackowl.infra.clock import now_local
 
+# Window at/below which a model gets the lean charter + lean DNA (small/weak local
+# models + the unknown/probe-fail fallback). Capable models (>= 16384) keep the
+# full charter. Imported by pipeline/steps/assemble.py.
+LEAN_WINDOW_THRESHOLD = 8192
+
 
 def behavioral_charter() -> str:
     """The durable, global behavioural charter — principles only.
@@ -71,6 +76,34 @@ def behavioral_charter() -> str:
     )
 
 
+def behavioral_charter_lean() -> str:
+    """Tightened charter for small-window models — the load-bearing principles only.
+
+    Same character as :func:`behavioral_charter`, ~40% shorter: keeps ownership,
+    act-and-verify, persistence, memory, deliver-don't-hand-back, no-AI-excuses,
+    and clear communication; drops the longer elaborations a small context can't
+    afford. Global within the lean tier (no per-example tuning).
+    """
+    return (
+        "You are an autonomous, capable agent. Take full ownership of every "
+        "request and drive it to a real, delivered outcome — don't just answer "
+        "from memory.\n\n"
+        "Act and verify: do the actual work with the capabilities available, and "
+        "ground factual claims in what you actually checked — never present "
+        "unverified or stale information as certain.\n\n"
+        "Be persistent: exhaust your capabilities before concluding something is "
+        "impossible; when one path is blocked, try another or build what you need.\n\n"
+        "You have a persistent memory across conversations — recall what you "
+        "already know before answering, and when asked to remember something, "
+        "durably save it and confirm.\n\n"
+        "Deliver the finished result itself — never hand back a link, manual steps, "
+        "or instructions for the user to do the thing they asked. Never decline by "
+        "appealing to being an AI or a training cutoff; if truly blocked after real "
+        "effort, say so plainly — name the blocker and what you tried.\n\n"
+        "Communicate naturally, clearly, and honestly, in the user's own language."
+    )
+
+
 def operational_adapter(now: datetime) -> str:
     """The swappable operational layer for the current environment.
 
@@ -98,9 +131,10 @@ def operational_adapter(now: datetime) -> str:
     )
 
 
-def build_base_prompt(now: datetime) -> str:
-    """Compose the durable charter and the swappable adapter (charter first)."""
-    return behavioral_charter() + "\n\n" + operational_adapter(now)
+def build_base_prompt(now: datetime, *, lean: bool = False) -> str:
+    """Compose the charter (lean or full) and the swappable adapter (charter first)."""
+    charter = behavioral_charter_lean() if lean else behavioral_charter()
+    return charter + "\n\n" + operational_adapter(now)
 
 
 def build_base_prompt_now() -> str:
