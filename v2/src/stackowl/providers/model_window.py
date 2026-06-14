@@ -86,7 +86,7 @@ async def resolve_window(
             "[model_window] resolved via probe",
             extra={"_fields": {"model": model, "probed": probed, "window": w}},
         )
-    elif protocol in ("anthropic", "openai", "gemini") and base_url is None:
+    elif protocol in ("anthropic", "openai", "gemini", "grok") and base_url is None:
         w = _clamp(_CLOUD_DEFAULT)
         log.engine.debug("[model_window] cloud default", extra={"_fields": {"model": model, "window": w}})
     else:
